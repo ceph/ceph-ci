@@ -3022,7 +3022,7 @@ void RGWPutObj::execute()
 			  << op_ret << dendl;
         goto done;
       }
-
+      /* need_to_wait == true and op_ret == -EEXIST */
       ldout(s->cct, 5) << "NOTICE: processor->throttle_data() returned -EEXIST, need to restart write" << dendl;
 
       /* restore original data */
