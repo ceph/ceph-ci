@@ -199,6 +199,13 @@ public:
   virtual RGWOpType get_type() { return RGW_OP_GET_OBJ; }
   virtual uint32_t op_mask() { return RGW_OP_TYPE_READ; }
   virtual bool need_object_expiration() { return false; }
+  /**
+   * calculates filter used to decrypt RGW objects data
+   */
+  virtual int get_decrypt_filter(RGWGetDataCB** filter, RGWGetDataCB* cb) {
+    *filter = NULL;
+    return 0;
+  }
 };
 
 class RGWGetObj_CB : public RGWGetDataCB

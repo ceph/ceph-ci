@@ -3360,7 +3360,7 @@ public:
 
   //virtual int handle_data(bufferlist& bl, off_t ofs, void **phandle, rgw_obj *pobj, bool *again);
   //virtual int throttle_data(void *handle, const rgw_obj& obj, bool need_to_wait) = 0;
-  int complete(size_t accounted_size, string& etag, 
+  int complete(size_t accounted_size, const string& etag, 
                ceph::real_time *mtime, ceph::real_time set_mtime,
                map<string, bufferlist>& attrs, ceph::real_time delete_at,
                const char *if_match = NULL, const char *if_nomatch = NULL);
@@ -3462,11 +3462,7 @@ public:
                                 unique_tag(_t) {}
   int prepare(RGWRados *store, string *oid_rand);
   virtual bool immutable_head() { return false; }
-  void set_extra_data_len(uint64_t len) {
-    extra_data_len = len;
-  }
   virtual int handle_data(bufferlist& bl, off_t ofs, void **phandle, rgw_obj *pobj, bool *again);
-  bufferlist& get_extra_data() { return extra_data_bl; }
 
   void set_olh_epoch(uint64_t epoch) {
     olh_epoch = epoch;
