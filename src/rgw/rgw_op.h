@@ -760,6 +760,10 @@ public:
   virtual RGWPutObjProcessor *select_processor(RGWObjectCtx& obj_ctx, bool *is_multipart);
   void dispose_processor(RGWPutObjDataProcessor *processor);
 
+  virtual int get_encrypt_filter(RGWPutObjDataProcessor** filter, RGWPutObjDataProcessor* cb) {
+     *filter = NULL;
+     return 0;
+  }
   int verify_permission();
   void pre_exec();
   void execute();
@@ -830,6 +834,14 @@ public:
   void pre_exec();
   void execute();
 
+#if AKAKAK
+  RGWPutObjProcessor *select_processor(RGWObjectCtx& obj_ctx);
+  void dispose_processor(RGWPutObjProcessor *processor);
+#endif
+  virtual int get_encrypt_filter(RGWPutObjDataProcessor** filter, RGWPutObjDataProcessor* cb) {
+    *filter = NULL;
+    return 0;
+  }
   virtual int get_params() = 0;
   virtual int get_data(bufferlist& bl) = 0;
   virtual void send_response() = 0;
@@ -1610,23 +1622,29 @@ static inline int put_data_and_throttle(RGWPutObjDataProcessor *processor,
 {
   bool again = false;
   do {
-    void *handle;
+    void *handle = nullptr;
     rgw_obj obj;
-
     int ret = processor->handle_data(data, ofs, &handle, &obj, &again);
     if (ret < 0)
       return ret;
-
-    ret = processor->throttle_data(handle, obj, need_to_wait);
-    if (ret < 0)
-      return ret;
-
+    if (handle != nullptr)
+    {
+      ret = processor->throttle_data(handle, obj, need_to_wait);
+      if (ret < 0)
+        return ret;
+    }
+    else
+      break;
     need_to_wait = false; /* the need to wait only applies to the first
 			   * iteration */
   } while (again);
 
   return 0;
 } /* put_data_and_throttle */
+
+
+
+
 
 static inline int get_system_versioning_params(req_state *s,
 					      uint64_t *olh_epoch,
