@@ -3053,7 +3053,6 @@ void RGWPutObj::execute()
         delete encrypt;
       }
       processor = select_processor(*static_cast<RGWObjectCtx *>(s->obj_ctx), &multipart);
-
       filter = processor;
 
       string oid_rand;
@@ -3076,7 +3075,6 @@ void RGWPutObj::execute()
       op_ret = get_encrypt_filter(&encrypt, filter);
       if (encrypt != nullptr)
 	filter = encrypt;
-
       if (op_ret < 0) {
 	goto done;
       }

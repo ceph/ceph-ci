@@ -28,7 +28,7 @@ public:
   virtual ~RGWGetObj_Decompress() {}
 
   virtual int handle_data(bufferlist& bl, off_t bl_ofs, off_t bl_len) override;
-  virtual void fixup_range(off_t& ofs, off_t& end) override;
+  virtual int fixup_range(off_t& ofs, off_t& end) override;
 
 };
 

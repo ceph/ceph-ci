@@ -245,8 +245,8 @@ public:
   /**
    * Allows filter to extend range required for successful filtering
    */
-  virtual void fixup_range(off_t& ofs, off_t& end) override {
-    next->fixup_range(ofs, end);
+  virtual int fixup_range(off_t& ofs, off_t& end) override {
+    return next->fixup_range(ofs, end);
   }
 };
 
