@@ -1434,6 +1434,7 @@ void RGWGetObj::execute()
     }
     return;
   }
+
   attr_iter = attrs.find(RGW_ATTR_SLO_MANIFEST);
   if (attr_iter != attrs.end()) {
     is_slo = true;
@@ -2633,7 +2634,6 @@ int RGWPutObjProcessor_Multipart::prepare(RGWRados *store, string *oid_rand)
   head_obj = manifest_gen.get_cur_obj();
   head_obj.index_hash_source = obj_str;
   cur_obj = head_obj;
-
   return 0;
 }
 
@@ -2872,7 +2872,6 @@ void RGWPutObj::execute()
   boost::optional<RGWPutObj_Compress> compressor;
 
   bool need_calc_md5 = (dlo_manifest == NULL) && (slo_info == NULL);
-
   perfcounter->inc(l_rgw_put);
   op_ret = -EINVAL;
   if (s->object.empty()) {
@@ -4628,6 +4627,21 @@ void RGWInitMultipart::execute()
   attrs[RGW_ATTR_ACL] = aclbl;
 
   populate_with_generic_attrs(s, attrs);
+
+  /* select encryption mode */
+  if (s->cct->_conf->rgw_crypt_default_encryption_key != "")
+  {
+    bufferlist mode;
+    ::encode("RGW-AUTO",mode);
+    attrs.emplace(RGW_ATTR_CRYPT_MODE, std::move(mode));
+
+    std::string key_selector("abcdefghijabcdefghijabcdefghijab"); //todo MAKE ME RANDOM
+    bufferlist sel;
+    ::encode(key_selector,sel);
+    //emplace_attr
+    attrs.emplace(RGW_ATTR_CRYPT_KEY, std::move(sel));
+  }
+
   rgw_get_request_metadata(s->cct, s->info, attrs);
 
   do {
@@ -4831,7 +4845,6 @@ void RGWCompleteMultipart::execute()
   op_ret = get_params();
   if (op_ret < 0)
     return;
-
   op_ret = get_system_versioning_params(s, &olh_epoch, &version_id);
   if (op_ret < 0) {
     return;
@@ -4889,6 +4902,7 @@ void RGWCompleteMultipart::execute()
   meta_obj.index_hash_source = s->object.name;
 
   op_ret = get_obj_attrs(store, s, meta_obj, attrs);
+
   if (op_ret < 0) {
     ldout(s->cct, 0) << "ERROR: failed to get obj attrs, obj=" << meta_obj
 		     << " ret=" << op_ret << dendl;
