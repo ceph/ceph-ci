@@ -99,7 +99,8 @@ set(rgw_a_srcs
   rgw_website.cc
   rgw_xml.cc
   rgw_xml_enc.cc
-  rgw_torrent.cc)
+  rgw_torrent.cc
+  rgw_crypt.cc)
 
 add_library(rgw_a STATIC ${rgw_a_srcs})
 

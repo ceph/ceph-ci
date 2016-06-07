@@ -202,7 +202,7 @@ public:
   /**
    * calculates filter used to decrypt RGW objects data
    */
-  virtual int get_decrypt_filter(RGWGetDataCB** filter, RGWGetDataCB& cb, bufferlist* manifest_bl) {
+  virtual int get_decrypt_filter(RGWGetDataCB** filter, RGWGetDataCB* cb, bufferlist* manifest_bl) {
     *filter = NULL;
     return 0;
   }
@@ -726,6 +726,7 @@ protected:
   uint64_t olh_epoch;
   string version_id;
   bufferlist bl_aux;
+  map<string, string> crypt_http_responses;
 
   ceph::real_time delete_at;
 

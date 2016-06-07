@@ -1404,7 +1404,9 @@ void RGWGetObj::execute()
     decompress.emplace(s->cct, &cs_info, partial_content, filter);
     filter = &*decompress;
   }
-  op_ret = this->get_decrypt_filter(&decrypt, filter);
+  attr_iter = attrs.find(RGW_ATTR_MANIFEST);
+  op_ret = this->get_decrypt_filter(&decrypt, filter, 
+                                    attr_iter != attrs.end() ? &(attr_iter->second) : nullptr);
   if (decrypt != nullptr) {
     filter = decrypt;
   }
