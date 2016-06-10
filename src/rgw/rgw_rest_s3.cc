@@ -395,7 +395,7 @@ int RGWGetObj_ObjStore_S3::get_decrypt_filter(RGWGetDataCB** filter, RGWGetDataC
       goto done;
     }
     std::string attr_key_selector;
-    attr_iter = attrs.find(RGW_ATTR_CRYPT_KEY);
+    attr_iter = attrs.find(RGW_ATTR_CRYPT_KEYSEL);
     if (attr_iter == attrs.end()) {
       res = - EIO;
       goto done;
@@ -1530,6 +1530,21 @@ static int get_obj_attrs(RGWRados *store, struct req_state *s, rgw_obj& obj, map
   return read_op.prepare();
 }
 
+static inline void set_attr(map<string, bufferlist>& attrs, const char* key, const std::string& value)
+{
+  bufferlist bl;
+  ::encode(value,bl);
+  attrs.emplace(key, std::move(bl));
+}
+
+static inline void set_attr(map<string, bufferlist>& attrs, const char* key, const char* value)
+{
+  bufferlist bl;
+  ::encode(value,bl);
+  attrs.emplace(key, std::move(bl));
+}
+
+
 int RGWPutObj_ObjStore_S3::get_encrypt_filter(RGWPutObjDataProcessor** filter, RGWPutObjDataProcessor* cb)
 {
   int res = 0;
@@ -1601,9 +1616,9 @@ int RGWPutObj_ObjStore_S3::get_encrypt_filter(RGWPutObjDataProcessor** filter, R
           res = -EIO;
           goto done;
         }
-        std::string attr_key_selector = get_str_attribute(xattrs, RGW_ATTR_CRYPT_KEY);
+        std::string attr_key_selector = get_str_attribute(xattrs, RGW_ATTR_CRYPT_KEYSEL);
         if (attr_key_selector.size() != AES_256_CTR::AES_256_KEYSIZE) {
-          ldout(s->cct, 0) << "ERROR: missing or invalid " RGW_ATTR_CRYPT_KEY << dendl;
+          ldout(s->cct, 0) << "ERROR: missing or invalid " RGW_ATTR_CRYPT_KEYSEL << dendl;
           res = -EIO;
           goto done;
         }
@@ -1652,12 +1667,10 @@ int RGWPutObj_ObjStore_S3::get_encrypt_filter(RGWPutObjDataProcessor** filter, R
         res = -ERR_INVALID_DIGEST;
         goto done;
       }
-      bufferlist mode;
-      ::encode("SSE-C-AES256",mode);
-      emplace_attr(RGW_ATTR_CRYPT_MODE, std::move(mode));
-      bufferlist md5;
-      ::encode(keymd5_bin, md5);
-      emplace_attr(RGW_ATTR_CRYPT_KEYMD5, std::move(md5));
+
+      set_attr(attrs, RGW_ATTR_CRYPT_MODE, "SSE-C-AES256");
+      set_attr(attrs, RGW_ATTR_CRYPT_KEYMD5, keymd5_bin);
+
       AES_256_CTR* aes=new AES_256_CTR(s->cct);
       aes->set_key((uint8_t*)key_bin.c_str(), AES_256_CTR::AES_256_KEYSIZE);
       *filter=new RGWPutObj_BlockEncrypt(s->cct, *cb, aes);
@@ -1676,14 +1689,10 @@ int RGWPutObj_ObjStore_S3::get_encrypt_filter(RGWPutObjDataProcessor** filter, R
         /* not an error to return; missing encryption does not inhibit processing */
         goto done;
       }
-      bufferlist mode;
-      ::encode("RGW-AUTO",mode);
-      emplace_attr(RGW_ATTR_CRYPT_MODE, std::move(mode));
 
-      std::string key_selector("abcdefghijabcdefghijabcdefghijab"); //todo MAKE ME RANDOM
-      bufferlist sel;
-      ::encode(key_selector,sel);
-      emplace_attr(RGW_ATTR_CRYPT_KEY, std::move(sel));
+      set_attr(attrs, RGW_ATTR_CRYPT_MODE, "RGW-AUTO");
+      std::string key_selector = create_random_key_selector();
+      set_attr(attrs, RGW_ATTR_CRYPT_KEYSEL, key_selector);
 
       uint8_t actual_key[AES_256_KEYSIZE];
       if (AES_256_ECB_encrypt((uint8_t*)master_encryption_key.c_str(), AES_256_KEYSIZE,
@@ -2507,12 +2516,10 @@ int RGWPostObj_ObjStore_S3::get_encrypt_filter(RGWPutObjDataProcessor** filter, 
       res = -ERR_INVALID_DIGEST;
       goto done;
     }
-    bufferlist mode;
-    ::encode("SSE-C-AES256",mode);
-    emplace_attr(RGW_ATTR_CRYPT_MODE, std::move(mode));
-    bufferlist md5;
-    ::encode(keymd5_bin, md5);
-    emplace_attr(RGW_ATTR_CRYPT_KEYMD5, std::move(md5));
+
+    set_attr(attrs, RGW_ATTR_CRYPT_MODE, "SSE-C-AES256");
+    set_attr(attrs, RGW_ATTR_CRYPT_KEYMD5, keymd5_bin);
+
     AES_256_CTR* aes=new AES_256_CTR(s->cct);
     aes->set_key((uint8_t*)key_bin.c_str(), AES_256_CTR::AES_256_KEYSIZE);
     *filter=new RGWPutObj_BlockEncrypt(s->cct, *cb, aes);
@@ -2527,14 +2534,9 @@ int RGWPostObj_ObjStore_S3::get_encrypt_filter(RGWPutObjDataProcessor** filter, 
       goto done;
     }
 
-    bufferlist mode;
-    ::encode("RGW-AUTO",mode);
-    emplace_attr(RGW_ATTR_CRYPT_MODE, std::move(mode));
-
-    std::string key_selector("abcdefghijabcdefghijabcdefghijab"); //todo MAKE ME RANDOM
-    bufferlist sel;
-    ::encode(key_selector,sel);
-    emplace_attr(RGW_ATTR_CRYPT_KEY, std::move(sel));
+    set_attr(attrs, RGW_ATTR_CRYPT_MODE, "RGW-AUTO");
+    std::string key_selector = create_random_key_selector();
+    set_attr(attrs, RGW_ATTR_CRYPT_KEYSEL, key_selector);
 
     uint8_t actual_key[AES_256_KEYSIZE];
     if (AES_256_ECB_encrypt((uint8_t*)master_encryption_key.c_str(), AES_256_KEYSIZE,
@@ -3096,25 +3098,17 @@ int RGWInitMultipart_ObjStore_S3::prepare_encryption(map<string, bufferlist>& at
       res = -ERR_INVALID_DIGEST;
       goto done;
     }
-    bufferlist mode;
-    ::encode("SSE-C-AES256",mode);
-    attrs.emplace(RGW_ATTR_CRYPT_MODE, std::move(mode));
-    bufferlist md5_bl;
-    ::encode(keymd5_bin, md5_bl);
-    attrs.emplace(RGW_ATTR_CRYPT_KEYMD5, std::move(md5_bl));
+
+    set_attr(attrs, RGW_ATTR_CRYPT_MODE, "SSE-C-AES256");
+    set_attr(attrs, RGW_ATTR_CRYPT_KEYMD5, keymd5_bin);
+
     goto done;
   }
   if (s->cct->_conf->rgw_crypt_default_encryption_key != "")
   {
-    bufferlist mode;
-    ::encode("RGW-AUTO",mode);
-    attrs.emplace(RGW_ATTR_CRYPT_MODE, std::move(mode));
-
-    std::string key_selector("abcdefghijabcdefghijabcdefghijab"); //todo MAKE ME RANDOM
-    bufferlist sel;
-    ::encode(key_selector,sel);
-    //emplace_attr
-    attrs.emplace(RGW_ATTR_CRYPT_KEY, std::move(sel));
+    set_attr(attrs, RGW_ATTR_CRYPT_MODE, "RGW-AUTO");
+    std::string key_selector = create_random_key_selector();
+    set_attr(attrs, RGW_ATTR_CRYPT_KEYSEL, key_selector);
   }
   done:
   return res;
