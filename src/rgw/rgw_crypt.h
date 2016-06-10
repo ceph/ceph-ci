@@ -105,7 +105,7 @@ public:
 }; /* RGWPutObj_BlockEncrypt */
 
 std::string create_random_key_selector();
-int get_actual_key_from_kms(CephContext *cct, const char* key_id, const std::string& key_selector, std::string& actual_key);
+int get_actual_key_from_kms(CephContext *cct, const std::string& key_id, const std::string& key_selector, std::string& actual_key);
 
 
 #endif

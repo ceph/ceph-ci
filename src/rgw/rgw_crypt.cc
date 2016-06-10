@@ -8,7 +8,7 @@
 #include <crypto++/cryptlib.h>
 #include <crypto++/modes.h>
 #include <crypto++/aes.h>
-
+#include <auth/Crypto.h>
 #define dout_subsys ceph_subsys_rgw
 
 using namespace CryptoPP;
@@ -392,9 +392,15 @@ int RGWPutObj_BlockEncrypt::throttle_data(void *handle, const rgw_obj& obj, bool
 }
 
 std::string create_random_key_selector() {
-  return "0123456789012345";
+  char random[16];
+  if (get_random_bytes(&random[0], 16) != 16) {
+    dout(0) << "ERROR: cannot get_random_bytes. " << dendl;
+    for (char& v:random) v=rand();
+  }
+  return std::string(random, 16);
 }
-int get_actual_key_from_kms(CephContext *cct, const char* key_id, const std::string& key_selector, std::string& actual_key) {
+
+int get_actual_key_from_kms(CephContext *cct, const std::string& key_id, const std::string& key_selector, std::string& actual_key) {
   actual_key = "abcdefghijabcdef";
   return 0;
 }
