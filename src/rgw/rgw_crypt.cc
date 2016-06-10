@@ -29,7 +29,7 @@ public:
   /**
    * Sets key and nonce.
    */
-  bool set_key(uint8_t* _key, size_t key_size) {
+  bool set_key(const uint8_t* _key, size_t key_size) {
     if (key_size != AES_256_KEYSIZE) {
       return false;
     }
@@ -118,7 +118,7 @@ AES_256_CTR::AES_256_CTR(CephContext* cct) {
 AES_256_CTR::~AES_256_CTR() {
   delete pimpl;
 }
-bool AES_256_CTR::set_key(uint8_t* key, size_t key_size) {
+bool AES_256_CTR::set_key(const uint8_t* key, size_t key_size) {
   return pimpl->set_key(key, key_size);
 }
 size_t AES_256_CTR::get_block_size() {
@@ -391,5 +391,12 @@ int RGWPutObj_BlockEncrypt::throttle_data(void *handle, const rgw_obj& obj, bool
   return next.throttle_data(handle, obj, need_to_wait);
 }
 
+std::string create_random_key_selector() {
+  return "0123456789012345";
+}
+int get_actual_key_from_kms(CephContext *cct, const char* key_id, const std::string& key_selector, std::string& actual_key) {
+  actual_key = "abcdefghijabcdef";
+  return 0;
+}
 
 

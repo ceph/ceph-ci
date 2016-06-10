@@ -61,7 +61,7 @@ public:
   /**
    * Sets key and nonce.
    */
-  bool set_key(uint8_t* key, size_t key_size);
+  bool set_key(const uint8_t* key, size_t key_size);
   virtual size_t get_block_size() override;
   virtual bool encrypt(bufferlist& input, off_t in_ofs, size_t size, bufferlist& output, off_t stream_offset) override;
   virtual bool decrypt(bufferlist& input, off_t in_ofs, size_t size, bufferlist& output, off_t stream_offset) override;
@@ -103,5 +103,9 @@ public:
   virtual int handle_data(bufferlist& bl, off_t ofs, void **phandle, rgw_obj *pobj, bool *again) override;
   virtual int throttle_data(void *handle, const rgw_obj& obj, bool need_to_wait) override;
 }; /* RGWPutObj_BlockEncrypt */
+
+std::string create_random_key_selector();
+int get_actual_key_from_kms(CephContext *cct, const char* key_id, const std::string& key_selector, std::string& actual_key);
+
 
 #endif
