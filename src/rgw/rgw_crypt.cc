@@ -9,9 +9,14 @@
 #include <crypto++/modes.h>
 #include <crypto++/aes.h>
 #include <auth/Crypto.h>
+#include <rgw/rgw_b64.h>
+
+#include "include/assert.h"
+
 #define dout_subsys ceph_subsys_rgw
 
 using namespace CryptoPP;
+using namespace rgw;
 
 class AES_256_CTR_impl {
   static const size_t AES_256_KEYSIZE = 256 / 8;
@@ -392,17 +397,275 @@ int RGWPutObj_BlockEncrypt::throttle_data(void *handle, const rgw_obj& obj, bool
 }
 
 std::string create_random_key_selector() {
-  char random[16];
-  if (get_random_bytes(&random[0], 16) != 16) {
+  char random[AES_256_KEYSIZE];
+  if (get_random_bytes(&random[0], sizeof(random)) != 0) {
     dout(0) << "ERROR: cannot get_random_bytes. " << dendl;
     for (char& v:random) v=rand();
   }
-  return std::string(random, 16);
+  return std::string(random, sizeof(random));
 }
 
 int get_actual_key_from_kms(CephContext *cct, const std::string& key_id, const std::string& key_selector, std::string& actual_key) {
   actual_key = "abcdefghijabcdef";
   return 0;
 }
+
+static inline void set_attr(map<string, bufferlist>& attrs, const char* key, const std::string& value)
+{
+  bufferlist bl;
+  ::encode(value,bl);
+  attrs.emplace(key, std::move(bl));
+}
+
+static inline void set_attr(map<string, bufferlist>& attrs, const char* key, const char* value)
+{
+  bufferlist bl;
+  ::encode(value,bl);
+  attrs.emplace(key, std::move(bl));
+}
+
+static inline std::string get_str_attribute(map<string, bufferlist>& attrs, const std::string& name, const std::string& default_value="") {
+  std::string value;
+  auto iter = attrs.find(name);
+  if (iter == attrs.end() ) {
+    value = default_value;
+  } else {
+    try {
+      ::decode(value, iter->second);
+    } catch (buffer::error& err) {
+      value = default_value;
+      dout(0) << "ERROR: failed to decode attr:" << name << dendl;
+    }
+  }
+  return value;
+}
+
+int s3_prepare_encrypt(struct req_state* s, map<string, bufferlist>& attrs, BlockCrypt** block_crypt, std::string& crypt_http_responses)
+{
+  int res = 0;
+  crypt_http_responses = "";
+  if (block_crypt) *block_crypt = nullptr;
+  {
+  const char* req_sse_ca = s->info.env->get("HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_ALGORITHM", NULL);
+  if (req_sse_ca != NULL) {
+    if (strcmp(req_sse_ca, "AES256") != 0) {
+      res = -ERR_INVALID_REQUEST;
+      goto done;
+    }
+    const char* key = s->info.env->get("HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_KEY", NULL);
+    std::string key_bin = (key ? from_base64(key) : "");
+    if (key_bin.size() != AES_256_CTR::AES_256_KEYSIZE) {
+      res = -ERR_INVALID_REQUEST;
+      goto done;
+    }
+    std::string keymd5 = s->info.env->get("HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_KEY_MD5", "");
+    std::string keymd5_bin = from_base64(keymd5);
+    if (keymd5_bin.size() != CEPH_CRYPTO_MD5_DIGESTSIZE) {
+      res = -ERR_INVALID_DIGEST;
+      goto done;
+    }
+    MD5 key_hash;
+    uint8_t key_hash_res[CEPH_CRYPTO_MD5_DIGESTSIZE];
+    key_hash.Update((uint8_t*)key_bin.c_str(), key_bin.size());
+    key_hash.Final(key_hash_res);
+
+    if (memcmp(key_hash_res, keymd5_bin.c_str(), CEPH_CRYPTO_MD5_DIGESTSIZE) != 0) {
+      res = -ERR_INVALID_DIGEST;
+      goto done;
+    }
+
+    set_attr(attrs, RGW_ATTR_CRYPT_MODE, "SSE-C-AES256");
+    set_attr(attrs, RGW_ATTR_CRYPT_KEYMD5, keymd5_bin);
+
+    if (block_crypt) {
+      AES_256_CTR* aes = new AES_256_CTR(s->cct);
+      aes->set_key(reinterpret_cast<const uint8_t*>(key_bin.c_str()), AES_256_KEYSIZE);
+      *block_crypt = aes;
+    }
+
+    crypt_http_responses =
+                "x-amz-server-side-encryption-customer-algorithm: AES256\r\n"
+                "x-amz-server-side-encryption-customer-key-MD5: " + keymd5 + "\r\n";
+    goto done;
+  }
+  /* AMAZON server side encryption with KMS (key management service) */
+  const char* req_sse = s->info.env->get("HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION", NULL);
+  if (req_sse != NULL) {
+    if (strcmp(req_sse, "aws:kms") != 0) {
+      res = -ERR_INVALID_REQUEST;
+      goto done;
+    }
+    const char* key_id = s->info.env->get("HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_AWS_KMS_KEY_ID", NULL);
+    if (key_id == NULL) {
+      /* TODO!!! retrieve key_id from bucket */
+      res = -ERR_INVALID_ACCESS_KEY;
+      goto done;
+    }
+    /* try to retrieve actual key */
+    std::string key_selector = create_random_key_selector();
+    std::string actual_key;
+    res = get_actual_key_from_kms(s->cct, key_id, key_selector, actual_key);
+    if (res != 0)
+      goto done;
+    if (actual_key.size() != AES_256_KEYSIZE) {
+      ldout(s->cct, 0) << "ERROR: key obtained from key_id:" <<
+          key_id << " is not 256 bit size" << dendl;
+      res = -ERR_INVALID_ACCESS_KEY;
+      goto done;
+    }
+
+    set_attr(attrs, RGW_ATTR_CRYPT_MODE, "SSE-KMS");
+    set_attr(attrs, RGW_ATTR_CRYPT_KEYID, key_id);
+    set_attr(attrs, RGW_ATTR_CRYPT_KEYSEL, key_selector);
+
+    if (block_crypt) {
+      AES_256_CTR* aes = new AES_256_CTR(s->cct);
+      aes->set_key(reinterpret_cast<const uint8_t*>(actual_key.c_str()), AES_256_KEYSIZE);
+      *block_crypt = aes;
+    }
+    goto done;
+  }
+
+  /* no other encryption mode, check if default encryption is selected */
+  if (s->cct->_conf->rgw_crypt_default_encryption_key != "") {
+    std::string master_encryption_key = from_base64(std::string(s->cct->_conf->rgw_crypt_default_encryption_key));
+    if (master_encryption_key.size() != 256 / 8) {
+      ldout(s->cct, 0) << "ERROR: failed to decode 'rgw crypt default encryption key' to 256 bit string" << dendl;
+      /* not an error to return; missing encryption does not inhibit processing */
+      goto done;
+    }
+
+    set_attr(attrs, RGW_ATTR_CRYPT_MODE, "RGW-AUTO");
+    std::string key_selector = create_random_key_selector();
+    set_attr(attrs, RGW_ATTR_CRYPT_KEYSEL, key_selector);
+
+    uint8_t actual_key[AES_256_KEYSIZE];
+    if (AES_256_ECB_encrypt((uint8_t*)master_encryption_key.c_str(), AES_256_KEYSIZE,
+                            (uint8_t*)key_selector.c_str(),
+                            actual_key, AES_256_KEYSIZE) != true) {
+      res = -EIO;
+      goto done;
+    }
+    if (block_crypt) {
+      AES_256_CTR* aes = new AES_256_CTR(s->cct);
+      aes->set_key(actual_key, AES_256_KEYSIZE);
+      *block_crypt = aes;
+    }
+
+    goto done;
+  }
+  }
+  done:
+  return res;
+}
+
+int s3_prepare_decrypt(
+    struct req_state* s,
+    map<string, bufferlist>& attrs,
+    BlockCrypt** block_crypt,
+    std::map<std::string, std::string>& crypt_http_responses)
+{
+  int res = 0;
+  std::string stored_mode = get_str_attribute(attrs, RGW_ATTR_CRYPT_MODE);
+  ldout(s->cct, 15) << "Encryption mode: " << stored_mode << dendl;
+
+  if (stored_mode == "SSE-C-AES256") {
+    const char *req_cust_alg = s->info.env->get("HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_ALGORITHM", NULL);
+    if ((nullptr == req_cust_alg) || (strcmp(req_cust_alg, "AES256") != 0)) {
+      res = -ERR_INVALID_REQUEST;
+      goto done;
+    }
+
+    std::string key_bin = from_base64(s->info.env->get("HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_KEY", ""));
+    if (key_bin.size() != AES_256_CTR::AES_256_KEYSIZE) {
+      res = -ERR_INVALID_REQUEST;
+      goto done;
+    }
+
+    std::string keymd5 = s->info.env->get("HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_KEY_MD5", "");
+    std::string keymd5_bin = from_base64(keymd5);
+    if (keymd5_bin.size() != CEPH_CRYPTO_MD5_DIGESTSIZE) {
+      res = -ERR_INVALID_DIGEST;
+      goto done;
+    }
+    MD5 key_hash;
+    uint8_t key_hash_res[CEPH_CRYPTO_MD5_DIGESTSIZE];
+    key_hash.Update((uint8_t*)key_bin.c_str(), key_bin.size());
+    key_hash.Final(key_hash_res);
+
+    if ((memcmp(key_hash_res, keymd5_bin.c_str(), CEPH_CRYPTO_MD5_DIGESTSIZE) != 0) ||
+        (get_str_attribute(attrs, RGW_ATTR_CRYPT_KEYMD5) != keymd5_bin)) {
+      res = -ERR_INVALID_DIGEST;
+      goto done;
+    }
+    AES_256_CTR* aes = new AES_256_CTR(s->cct);
+    aes->set_key((uint8_t*)key_bin.c_str(), AES_256_CTR::AES_256_KEYSIZE);
+    if (block_crypt) *block_crypt = aes;
+
+    crypt_http_responses =
+        "x-amz-server-side-encryption-customer-algorithm: AES256\r\n"
+        "x-amz-server-side-encryption-customer-key-MD5: " + keymd5 + "\r\n";
+    goto done;
+  }
+
+  if (stored_mode == "SSE-KMS") {
+    /* try to retrieve actual key */
+    std::string key_id = get_str_attribute(attrs, RGW_ATTR_CRYPT_KEYID);
+    std::string key_selector = get_str_attribute(attrs, RGW_ATTR_CRYPT_KEYSEL);
+    std::string actual_key;
+    res = get_actual_key_from_kms(s->cct, key_id, key_selector, actual_key);
+    if (res != 0) {
+      ldout(s->cct, 10) << "No encryption key for key-id=" << key_id << dendl;
+      goto done;
+    }
+    if (actual_key.size() != AES_256_KEYSIZE) {
+      ldout(s->cct, 0) << "ERROR: key obtained from key_id:" <<
+          key_id << " is not 256 bit size" << dendl;
+      res = -ERR_INVALID_ACCESS_KEY;
+      goto done;
+    }
+
+    AES_256_CTR* aes = new AES_256_CTR(s->cct);
+    aes->set_key(reinterpret_cast<const uint8_t*>(actual_key.c_str()), AES_256_KEYSIZE);
+
+    if (block_crypt) *block_crypt = aes;
+
+    crypt_http_responses =
+        "x-amz-server-side-encryption: aws:kms\r\n"
+        "x-amz-server-side-encryption-aws-kms-key-id: " + key_id + "\r\n";
+    goto done;
+  }
+
+  if (stored_mode == "RGW-AUTO") {
+    std::string master_encryption_key = from_base64(std::string(s->cct->_conf->rgw_crypt_default_encryption_key));
+    if (master_encryption_key.size() != 256 / 8) {
+      ldout(s->cct, 0) << "ERROR: failed to decode 'rgw crypt default encryption key' to 256 bit string" << dendl;
+      res = -EIO;
+      goto done;
+    }
+    std::string attr_key_selector = get_str_attribute(attrs, RGW_ATTR_CRYPT_KEYSEL);
+    if (attr_key_selector.size() != AES_256_CTR::AES_256_KEYSIZE) {
+      ldout(s->cct, 0) << "ERROR: missing or invalid " RGW_ATTR_CRYPT_KEYSEL << dendl;
+      res = -EIO;
+      goto done;
+    }
+    uint8_t actual_key[AES_256_KEYSIZE];
+    if (AES_256_ECB_encrypt((uint8_t*)master_encryption_key.c_str(), AES_256_KEYSIZE,
+                            (uint8_t*)attr_key_selector.c_str(),
+                            actual_key, AES_256_KEYSIZE) != true) {
+      res = -EIO;
+      goto done;
+    }
+    AES_256_CTR* aes = new AES_256_CTR(s->cct);
+    aes->set_key(actual_key, AES_256_KEYSIZE);
+
+    if (block_crypt) *block_crypt = aes;
+    goto done;
+  }
+
+  done:
+  return res;
+}
+
 
 
