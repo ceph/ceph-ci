@@ -7,6 +7,8 @@
 #define CEPH_RGW_CRYPT_H
 
 #include <rgw/rgw_op.h>
+#include <rgw/rgw_rest_s3.h>
+#include <boost/utility/string_ref.hpp>
 
 class BlockCrypt {
 public:
@@ -105,18 +107,18 @@ public:
 }; /* RGWPutObj_BlockEncrypt */
 
 std::string create_random_key_selector();
-int get_actual_key_from_kms(CephContext *cct, const std::string& key_id, const std::string& key_selector, std::string& actual_key);
+//int get_actual_key_from_kms(CephContext *cct, const std::string& key_id, const std::string& key_selector, std::string& actual_key);
+int get_actual_key_from_kms(CephContext *cct, boost::string_ref key_id, boost::string_ref key_selector, std::string& actual_key);
 
-int s3_prepare_encrypt(
-    struct req_state* s,
-    map<string, bufferlist>& attrs,
-    BlockCrypt** block_crypt,
-    std::map<std::string, std::string>& crypt_http_responses);
-int s3_prepare_decrypt(
-    struct req_state* s,
-    map<string, bufferlist>& attrs,
-    BlockCrypt** block_crypt,
-    std::map<std::string, std::string>& crypt_http_responses);
+int s3_prepare_encrypt(struct req_state* s,
+                       map<string, bufferlist>& attrs,
+                       map<string, post_form_part, const ltstr_nocase>* parts,
+                       BlockCrypt** block_crypt,
+                       std::map<std::string, std::string>& crypt_http_responses);
+int s3_prepare_decrypt(struct req_state* s,
+                       map<string, bufferlist>& attrs,
+                       BlockCrypt** block_crypt,
+                       std::map<std::string, std::string>& crypt_http_responses);
 
 
 #endif

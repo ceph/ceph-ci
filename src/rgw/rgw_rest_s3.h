@@ -16,6 +16,7 @@
 #include "rgw_keystone.h"
 #include "rgw_rest_conn.h"
 #include "rgw_ldap.h"
+#include "rgw_rest.h"
 
 #include "rgw_token.h"
 #include "include/assert.h"
