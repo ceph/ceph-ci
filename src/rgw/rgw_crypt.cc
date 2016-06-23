@@ -406,9 +406,33 @@ std::string create_random_key_selector() {
   return std::string(random, sizeof(random));
 }
 
-int get_actual_key_from_kms(CephContext *cct, boost::string_ref key_id, boost::string_ref key_selector, std::string& actual_key) {
-  actual_key = "abcdefghijabcdef";
-  return 0;
+int get_actual_key_from_kms(CephContext *cct, boost::string_ref key_id, boost::string_ref key_selector, std::string& actual_key)
+{
+  int res = 0;
+  ldout(cct, 20) << "Getting KMS encryption key for key=" << key_id << dendl;
+  if (key_id.starts_with("testkey-")) {
+    /* test keys for testing purposes */
+    boost::string_ref key = key_id.substr(sizeof("testkey-")-1);
+    std::string master_key;
+    if (key == "1")       master_key = "012345678901234567890123456789012345";
+    else if (key == "2")  master_key = "abcdefghijklmnopqrstuvwxyzabcdefghij";
+    else {
+      res = -EIO;
+      return res;
+    }
+    uint8_t _actual_key[AES_256_KEYSIZE];
+    if (AES_256_ECB_encrypt((uint8_t*)master_key.c_str(), AES_256_KEYSIZE,
+                            (uint8_t*)key_selector.data(),
+                            _actual_key, AES_256_KEYSIZE)) {
+      actual_key = std::string((char*)&_actual_key[0], AES_256_KEYSIZE);
+    } else {
+      res = -EIO;
+    }
+  }
+  else {
+    actual_key = "abcdefghijabcdef";
+  }
+  return res;
 }
 
 static inline void set_attr(map<string, bufferlist>& attrs, const char* key, const std::string& value)
@@ -470,7 +494,7 @@ static const crypt_option_names crypt_options[] = {
     {"HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_KEY",        "x-amz-server-side-encryption-customer-key"},
     {"HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_KEY_MD5",    "x-amz-server-side-encryption-customer-key-md5"},
     {"HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION",                     "x-amz-server-side-encryption"},
-    {"HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_AWS_KMS_KEY_ID",      "x-amz-server-side-encryption-aws-kms-key-is"},
+    {"HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_AWS_KMS_KEY_ID",      "x-amz-server-side-encryption-aws-kms-key-id"},
 };
 
 boost::string_ref rgw_trim_whitespace(const boost::string_ref& src)
@@ -508,9 +532,8 @@ static boost::string_ref get_crypt_attribute(RGWEnv* env,
       = parts->find(crypt_options[option].post_part_name);
     if (iter == parts->end())
       return boost::string_ref();
-
     bufferlist& data = iter->second.data;
-    string str = string(data.c_str(), data.length());
+    boost::string_ref str = boost::string_ref(data.c_str(), data.length());
     return rgw_trim_whitespace(str);
   } else {
     const char* hdr = env->get(crypt_options[option].http_header_name, nullptr);
@@ -580,7 +603,7 @@ int s3_prepare_encrypt(struct req_state* s,
     boost::string_ref req_sse =
         get_crypt_attribute(s->info.env, parts, X_AMZ_SERVER_SIDE_ENCRYPTION);
     if (! req_sse.empty()) {
-      if (req_sse == "aws:kms") {
+      if (req_sse != "aws:kms") {
         res = -ERR_INVALID_REQUEST;
         goto done;
       }
@@ -603,7 +626,6 @@ int s3_prepare_encrypt(struct req_state* s,
         res = -ERR_INVALID_ACCESS_KEY;
         goto done;
       }
-
       set_attr(attrs, RGW_ATTR_CRYPT_MODE, "SSE-KMS");
       set_attr(attrs, RGW_ATTR_CRYPT_KEYID, key_id);
       set_attr(attrs, RGW_ATTR_CRYPT_KEYSEL, key_selector);
@@ -756,6 +778,4 @@ int s3_prepare_decrypt(
   done:
   return res;
 }
-
-
 
