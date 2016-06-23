@@ -63,6 +63,8 @@ public:
                               std::string& url);
   static int get_keystone_admin_token(CephContext * const cct,
                                       std::string& token);
+  static int get_keystone_barbican_token(CephContext * const cct,
+                                         std::string& token);
 };
 
 class KeystoneToken {
@@ -163,6 +165,7 @@ class RGWKeystoneTokenCache {
   CephContext * const cct;
 
   std::string admin_token_id;
+  std::string barbican_token_id;
   std::map<std::string, token_entry> tokens;
   std::list<std::string> tokens_lru;
 
@@ -193,8 +196,10 @@ public:
 
   bool find(const string& token_id, KeystoneToken& token);
   bool find_admin(KeystoneToken& token);
+  bool find_barbican(KeystoneToken& token);
   void add(const string& token_id, const KeystoneToken& token);
   void add_admin(const KeystoneToken& token);
+  void add_barbican(const KeystoneToken& token);
   void invalidate(const string& token_id);
   bool going_down() const;
 private:
@@ -225,6 +230,26 @@ class KeystoneAdminTokenRequestVer3 : public KeystoneAdminTokenRequest {
 
 public:
   KeystoneAdminTokenRequestVer3(CephContext * const _cct)
+    : cct(_cct) {
+  }
+  void dump(Formatter *f) const;
+};
+
+class KeystoneBarbicanTokenRequestVer2 : public KeystoneAdminTokenRequest {
+  CephContext *cct;
+
+public:
+  KeystoneBarbicanTokenRequestVer2(CephContext * const _cct)
+    : cct(_cct) {
+  }
+  void dump(Formatter *f) const;
+};
+
+class KeystoneBarbicanTokenRequestVer3 : public KeystoneAdminTokenRequest {
+  CephContext *cct;
+
+public:
+  KeystoneBarbicanTokenRequestVer3(CephContext * const _cct)
     : cct(_cct) {
   }
   void dump(Formatter *f) const;

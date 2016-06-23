@@ -241,6 +241,73 @@ int KeystoneService::get_keystone_admin_token(CephContext * const cct,
   return 0;
 }
 
+int KeystoneService::get_keystone_barbican_token(CephContext * const cct,
+                                              std::string& token)
+{
+  std::string token_url;
+
+  if (get_keystone_url(cct, token_url) < 0) {
+    return -EINVAL;
+  }
+
+  KeystoneToken t;
+
+  /* Try cache first. */
+  if (RGWKeystoneTokenCache::get_instance().find_barbican(t)) {
+    ldout(cct, 20) << "found cached barbican token" << dendl;
+    token = t.token.id;
+    return 0;
+  }
+
+  bufferlist token_bl;
+  RGWKeystoneHTTPTransceiver token_req(cct, &token_bl);
+  token_req.append_header("Content-Type", "application/json");
+  JSONFormatter jf;
+
+  const auto keystone_version = KeystoneService::get_api_version();
+  if (keystone_version == KeystoneApiVersion::VER_2) {
+    KeystoneBarbicanTokenRequestVer2 req_serializer(cct);
+    req_serializer.dump(&jf);
+
+    std::stringstream ss;
+    jf.flush(ss);
+    token_req.set_post_data(ss.str());
+    token_req.set_send_length(ss.str().length());
+    token_url.append("v2.0/tokens");
+
+  } else if (keystone_version == KeystoneApiVersion::VER_3) {
+    KeystoneBarbicanTokenRequestVer3 req_serializer(cct);
+    req_serializer.dump(&jf);
+
+    std::stringstream ss;
+    jf.flush(ss);
+    token_req.set_post_data(ss.str());
+    token_req.set_send_length(ss.str().length());
+    token_url.append("v3/auth/tokens");
+  } else {
+    return -ENOTSUP;
+  }
+
+  const int ret = token_req.process("POST", token_url.c_str());
+  if (ret < 0) {
+    return ret;
+  }
+
+  /* Detect rejection earlier than during the token parsing step. */
+  if (token_req.get_http_status() ==
+      RGWKeystoneHTTPTransceiver::HTTP_STATUS_UNAUTHORIZED) {
+    return -EACCES;
+  }
+
+  if (t.parse(cct, token_req.get_subject_token(), token_bl) != 0) {
+    return -EINVAL;
+  }
+
+  RGWKeystoneTokenCache::get_instance().add_barbican(t);
+  token = t.token.id;
+  return 0;
+}
+
 bool KeystoneToken::has_role(const string& r) const
 {
   list<Role>::const_iterator iter;
@@ -339,6 +406,13 @@ bool RGWKeystoneTokenCache::find_admin(KeystoneToken& token)
   return find_locked(admin_token_id, token);
 }
 
+bool RGWKeystoneTokenCache::find_barbican(KeystoneToken& token)
+{
+  Mutex::Locker l(lock);
+
+  return find(barbican_token_id, token);
+}
+
 void RGWKeystoneTokenCache::add(const string& token_id,
                                 const KeystoneToken& token)
 {
@@ -376,6 +450,14 @@ void RGWKeystoneTokenCache::add_admin(const KeystoneToken& token)
 
   rgw_get_token_id(token.token.id, admin_token_id);
   add_locked(admin_token_id, token);
+}
+
+void RGWKeystoneTokenCache::add_barbican(const KeystoneToken& token)
+{
+  Mutex::Locker l(lock);
+
+  rgw_get_token_id(token.token.id, barbican_token_id);
+  add(barbican_token_id, token);
 }
 
 void RGWKeystoneTokenCache::invalidate(const string& token_id)
