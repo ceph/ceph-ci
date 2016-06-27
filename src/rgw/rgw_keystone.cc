@@ -288,8 +288,10 @@ int KeystoneService::get_keystone_barbican_token(CephContext * const cct,
     return -ENOTSUP;
   }
 
+  ldout(cct, 20) << "Requesting secret from barbican url=" << token_url << dendl;
   const int ret = token_req.process("POST", token_url.c_str());
   if (ret < 0) {
+    ldout(cct, 20) << "Barbican process error:" << token_bl.c_str() << dendl;
     return ret;
   }
 

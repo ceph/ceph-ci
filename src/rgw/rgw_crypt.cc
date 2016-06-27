@@ -13,6 +13,7 @@
 #include <rgw/rgw_rest_s3.h>
 #include "include/assert.h"
 #include <boost/utility/string_ref.hpp>
+#include <rgw/rgw_keystone.h>
 
 #define dout_subsys ceph_subsys_rgw
 
@@ -406,6 +407,44 @@ std::string create_random_key_selector() {
   return std::string(random, sizeof(random));
 }
 
+//-H "Accept: application/octet-stream" -H "X-Auth-Token: fa7067ae04e942fb879eaf37f46411a5"
+//curl -v -H "Accept: application/octet-stream" -H "X-Auth-Token: fa7067ae04e942fb879eaf37f46411a5" http://localhost:9311/v1/secrets/5206dbad-7970-4a7a-82de-bd7df9a016db
+
+int request_key_from_barbican(CephContext *cct,
+                              boost::string_ref key_id,
+                              boost::string_ref key_selector,
+                              const std::string& barbican_token,
+                              std::string& actual_key) {
+  int res;
+  bufferlist secret_bl;
+  RGWHTTPTransceiver secret_req(cct, &secret_bl);
+  secret_req.append_header("Accept", "application/octet-stream");
+  secret_req.append_header("X-Auth-Token", barbican_token);
+
+  std::string secret_url;
+  secret_url = "http://localhost:9311/v1/secrets/" + std::string(key_id);
+
+
+  res = secret_req.process("GET", secret_url.c_str());
+  if (res < 0) {
+    return res;
+  }
+  if (secret_req.get_http_status() ==
+      RGWHTTPTransceiver::HTTP_STATUS_UNAUTHORIZED) {
+    return -EACCES;
+  }
+
+  if (secret_req.get_http_status() >=200 &&
+      secret_req.get_http_status() < 300 &&
+      secret_bl.length() == AES_256_KEYSIZE) {
+    actual_key = std::string(secret_bl.c_str(), secret_bl.length());
+    } else {
+      res = -EACCES;
+    }
+  return res;
+}
+
+
 int get_actual_key_from_kms(CephContext *cct, boost::string_ref key_id, boost::string_ref key_selector, std::string& actual_key)
 {
   int res = 0;
@@ -430,7 +469,21 @@ int get_actual_key_from_kms(CephContext *cct, boost::string_ref key_id, boost::s
     }
   }
   else {
-    actual_key = "abcdefghijabcdef";
+    std::string token;
+    if (KeystoneService::get_keystone_barbican_token(cct, token) < 0) {
+      ldout(cct, 20) << "Failed to retrieve token for barbican" << dendl;
+      res = -EINVAL;
+      return res;
+    }
+
+    res = request_key_from_barbican(cct, key_id, key_selector, token, actual_key);
+    if (res == 0) {
+      ldout(cct, 20) << "Key_id=" << key_id << " key_selector=" << key_selector << " actual_key=" << actual_key << dendl;
+    } else {
+      ldout(cct, 20) << "Failed to retrieve secret from barbican" << dendl;
+    }
+
+    //actual_key = "abcdefghijabcdef";
   }
   return res;
 }
