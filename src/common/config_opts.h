@@ -1440,6 +1440,7 @@ OPTION(rgw_healthcheck_disabling_path, OPT_STR, "") // path that existence cause
 OPTION(rgw_s3_auth_use_rados, OPT_BOOL, true)  // should we try to use the internal credentials for s3?
 OPTION(rgw_s3_auth_use_keystone, OPT_BOOL, false)  // should we try to use keystone for s3?
 OPTION(rgw_s3_auth_aws4_force_boto2_compat, OPT_BOOL, true) // force aws4 auth boto2 compatibility
+OPTION(rgw_barbican_url, OPT_STR, "")  // url for barbican server
 
 /* OpenLDAP-style LDAP parameter strings */
 /* rgw_ldap_uri  space-separated list of LDAP servers in URI format */

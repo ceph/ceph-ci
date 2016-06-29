@@ -410,20 +410,38 @@ std::string create_random_key_selector() {
 //-H "Accept: application/octet-stream" -H "X-Auth-Token: fa7067ae04e942fb879eaf37f46411a5"
 //curl -v -H "Accept: application/octet-stream" -H "X-Auth-Token: fa7067ae04e942fb879eaf37f46411a5" http://localhost:9311/v1/secrets/5206dbad-7970-4a7a-82de-bd7df9a016db
 
+int get_barbican_url(CephContext * const cct,
+                     std::string& url)
+{
+  url = cct->_conf->rgw_barbican_url;
+  if (url.empty()) {
+    ldout(cct, 0) << "ERROR: conf rgw_barbican_url is not set" << dendl;
+    return -EINVAL;
+  }
+
+  if (url[url.size() - 1] != '/') {
+    url.append("/");
+  }
+
+  return 0;
+}
+
 int request_key_from_barbican(CephContext *cct,
                               boost::string_ref key_id,
                               boost::string_ref key_selector,
                               const std::string& barbican_token,
                               std::string& actual_key) {
+  std::string secret_url;
+  if (get_barbican_url(cct, secret_url) < 0) {
+     return -EINVAL;
+  }
+  secret_url += "v1/secrets/" + std::string(key_id);
+
   int res;
   bufferlist secret_bl;
   RGWHTTPTransceiver secret_req(cct, &secret_bl);
   secret_req.append_header("Accept", "application/octet-stream");
   secret_req.append_header("X-Auth-Token", barbican_token);
-
-  std::string secret_url;
-  secret_url = "http://localhost:9311/v1/secrets/" + std::string(key_id);
-
 
   res = secret_req.process("GET", secret_url.c_str());
   if (res < 0) {
@@ -477,13 +495,9 @@ int get_actual_key_from_kms(CephContext *cct, boost::string_ref key_id, boost::s
     }
 
     res = request_key_from_barbican(cct, key_id, key_selector, token, actual_key);
-    if (res == 0) {
-      ldout(cct, 20) << "Key_id=" << key_id << " key_selector=" << key_selector << " actual_key=" << actual_key << dendl;
-    } else {
-      ldout(cct, 20) << "Failed to retrieve secret from barbican" << dendl;
+    if (res != 0) {
+      ldout(cct, 0) << "Failed to retrieve secret from barbican:" << key_id << dendl;
     }
-
-    //actual_key = "abcdefghijabcdef";
   }
   return res;
 }
