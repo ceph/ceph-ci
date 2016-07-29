@@ -19,7 +19,6 @@
 [submodule "ceph-erasure-code-corpus"]
 	path = ceph-erasure-code-corpus
 	url = https://github.com/ceph/ceph-erasure-code-corpus.git
-
 [submodule "src/googletest"]
 	path = src/googletest
 	url = https://github.com/ceph/googletest
@@ -47,3 +46,6 @@
 [submodule "src/dpdk"]
 	path = src/dpdk
 	url = https://github.com/ceph/dpdk
+[submodule "src/isa-l_crypto"]
+	path = src/isa-l_crypto
+	url = https://github.com/01org/isa-l_crypto
