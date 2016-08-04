@@ -504,7 +504,6 @@ set(libcommon_files
   ${arch_files}
   ${auth_files}
   $<TARGET_OBJECTS:compressor_objs>
-  $<TARGET_OBJECTS:isal_crypto_plugin_objs>
   ${mds_files})
 if(LINUX)
   list(APPEND libcommon_files msg/async/EventEpoll.cc)
