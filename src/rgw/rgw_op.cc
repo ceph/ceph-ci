@@ -1340,7 +1340,7 @@ void RGWGetObj::execute()
   RGWGetObj_CB cb(this);
   RGWGetDataCB* filter = (RGWGetDataCB*)&cb;
   boost::optional<RGWGetObj_Decompress> decompress;
-  RGWGetDataCB* decrypt = nullptr;
+  std::unique_ptr<RGWGetDataCB> decrypt;
   map<string, bufferlist>::iterator attr_iter;
 
   perfcounter->inc(l_rgw_get);
@@ -1408,7 +1408,7 @@ void RGWGetObj::execute()
   op_ret = this->get_decrypt_filter(&decrypt, filter, 
                                     attr_iter != attrs.end() ? &(attr_iter->second) : nullptr);
   if (decrypt != nullptr) {
-    filter = decrypt;
+    filter = decrypt.get();
   }
   if (op_ret < 0) {
     goto done_err;
@@ -1488,12 +1488,10 @@ void RGWGetObj::execute()
   if (op_ret < 0) {
     goto done_err;
   }
-  delete decrypt;
   return;
 
 done_err:
   send_response_data_error();
-  delete decrypt;
 }
 
 int RGWGetObj::init_common()
@@ -2855,7 +2853,7 @@ void RGWPutObj::execute()
 {
   RGWPutObjProcessor *processor = NULL;
   RGWPutObjDataProcessor *filter = nullptr;
-  RGWPutObjDataProcessor *encrypt = nullptr;
+  std::unique_ptr<RGWPutObjDataProcessor> encrypt;
   char supplied_md5_bin[CEPH_CRYPTO_MD5_DIGESTSIZE + 1];
   char supplied_md5[CEPH_CRYPTO_MD5_DIGESTSIZE * 2 + 1];
   char calc_md5[CEPH_CRYPTO_MD5_DIGESTSIZE * 2 + 1];
@@ -2967,7 +2965,7 @@ void RGWPutObj::execute()
   }
   op_ret = get_encrypt_filter(&encrypt, filter);
   if (encrypt != nullptr)
-    filter = encrypt;
+    filter = encrypt.get();
 
   if (op_ret < 0) {
     goto done;
@@ -3034,9 +3032,6 @@ void RGWPutObj::execute()
       /* restart processing with different oid suffix */
 
       dispose_processor(processor);
-      if (encrypt) {
-        delete encrypt;
-      }
       processor = select_processor(*static_cast<RGWObjectCtx *>(s->obj_ctx), &multipart);
       filter = processor;
 
@@ -3059,9 +3054,9 @@ void RGWPutObj::execute()
       
       op_ret = get_encrypt_filter(&encrypt, filter);
       if (encrypt != nullptr)
-	filter = encrypt;
+        filter = encrypt.get();
       if (op_ret < 0) {
-	goto done;
+        goto done;
       }
 
       op_ret = put_data_and_throttle(filter, data, ofs, false);
@@ -3208,9 +3203,6 @@ void RGWPutObj::execute()
 
 done:
   dispose_processor(processor);
-  if (encrypt) {
-    delete encrypt;
-  }
   perfcounter->tinc(l_rgw_put_lat,
 		    (ceph_clock_now() - s->time));
 }
@@ -3243,8 +3235,8 @@ void RGWPostObj::pre_exec()
 
 void RGWPostObj::execute()
 {
-  RGWPutObjDataProcessor *filter = NULL;
-  RGWPutObjDataProcessor *encrypt = nullptr;
+  RGWPutObjDataProcessor *filter = nullptr;
+  std::unique_ptr<RGWPutObjDataProcessor> encrypt;
   char calc_md5[CEPH_CRYPTO_MD5_DIGESTSIZE * 2 + 1];
   unsigned char m[CEPH_CRYPTO_MD5_DIGESTSIZE];
   MD5 hash;
@@ -3306,9 +3298,9 @@ void RGWPostObj::execute()
 
   op_ret = get_encrypt_filter(&encrypt, filter);
   if (encrypt != nullptr)
-    filter = encrypt;
+    filter = encrypt.get();
   if (op_ret < 0) {
-    goto done;
+    return;
   }
 
   while (data_pending) {
@@ -3378,11 +3370,6 @@ void RGWPostObj::execute()
 
   op_ret = processor.complete(s->obj_size, etag, NULL, real_time(), attrs, delete_at);
 
-  //AKAKAKAK return skips deleteing encrypt
-done:
-  if (encrypt) {
-    delete encrypt;
-  }
 }
 
 

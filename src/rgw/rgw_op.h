@@ -202,8 +202,8 @@ public:
   /**
    * calculates filter used to decrypt RGW objects data
    */
-  virtual int get_decrypt_filter(RGWGetDataCB** filter, RGWGetDataCB* cb, bufferlist* manifest_bl) {
-    *filter = NULL;
+  virtual int get_decrypt_filter(std::unique_ptr<RGWGetDataCB>* filter, RGWGetDataCB* cb, bufferlist* manifest_bl) {
+    *filter = nullptr;
     return 0;
   }
 };
@@ -761,8 +761,8 @@ public:
   virtual RGWPutObjProcessor *select_processor(RGWObjectCtx& obj_ctx, bool *is_multipart);
   void dispose_processor(RGWPutObjDataProcessor *processor);
 
-  virtual int get_encrypt_filter(RGWPutObjDataProcessor** filter, RGWPutObjDataProcessor* cb) {
-     *filter = NULL;
+  virtual int get_encrypt_filter(std::unique_ptr<RGWPutObjDataProcessor> *filter, RGWPutObjDataProcessor* cb) {
+     *filter = nullptr;
      return 0;
   }
   int verify_permission();
@@ -835,12 +835,8 @@ public:
   void pre_exec();
   void execute();
 
-#if AKAKAK
-  RGWPutObjProcessor *select_processor(RGWObjectCtx& obj_ctx);
-  void dispose_processor(RGWPutObjProcessor *processor);
-#endif
-  virtual int get_encrypt_filter(RGWPutObjDataProcessor** filter, RGWPutObjDataProcessor* cb) {
-    *filter = NULL;
+  virtual int get_encrypt_filter(std::unique_ptr<RGWPutObjDataProcessor> *filter, RGWPutObjDataProcessor* cb) {
+    *filter = nullptr;
     return 0;
   }
   virtual int get_params() = 0;

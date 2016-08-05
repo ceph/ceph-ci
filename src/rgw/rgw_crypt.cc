@@ -92,7 +92,7 @@ public:
       off_t cnt = std::min((off_t)(iter->length() - plaintext_pos), (off_t)(size - crypt_pos));
       byte* src = (byte*)iter->c_str() + plaintext_pos;
       byte* dst = (byte*)buf.c_str() + crypt_pos;
-      for (off_t i=0; i<cnt; i++) {
+      for (off_t i = 0; i < cnt; i++) {
         dst[i] ^= src[i];
       }
       ++iter;
@@ -559,15 +559,22 @@ bool AES_256_ECB_encrypt(CephContext* cct, uint8_t* key, size_t key_size, uint8_
 
 
 
-RGWGetObj_BlockDecrypt::RGWGetObj_BlockDecrypt(CephContext* cct, RGWGetDataCB* next, BlockCrypt* crypt):
+RGWGetObj_BlockDecrypt::RGWGetObj_BlockDecrypt(CephContext* cct,
+                                               RGWGetDataCB* next,
+                                               std::unique_ptr<BlockCrypt> crypt):
     RGWGetObj_Filter(next),
     cct(cct),
-    crypt(crypt),
-    enc_begin_skip(0), ofs(0), end(0), cache() {
-  block_size = crypt->get_block_size();
-  }
+    crypt(std::move(crypt)),
+    enc_begin_skip(0),
+    ofs(0),
+    end(0),
+    cache()
+{
+  block_size = this->crypt->get_block_size();
+}
 
-RGWGetObj_BlockDecrypt::~RGWGetObj_BlockDecrypt() {}
+RGWGetObj_BlockDecrypt::~RGWGetObj_BlockDecrypt() {
+}
 
 int RGWGetObj_BlockDecrypt::read_manifest(bufferlist& manifest_bl) {
   parts_len.clear();
@@ -600,8 +607,8 @@ int RGWGetObj_BlockDecrypt::fixup_range(off_t& bl_ofs, off_t& bl_end) {
   off_t inp_ofs = bl_ofs;
   off_t inp_end = bl_end;
   if (parts_len.size() > 0) {
-    off_t in_ofs=bl_ofs;
-    off_t in_end=bl_end;
+    off_t in_ofs = bl_ofs;
+    off_t in_end = bl_end;
 
     size_t i = 0;
     while (i<parts_len.size() && (in_ofs > (off_t)parts_len[i])) {
@@ -631,8 +638,8 @@ int RGWGetObj_BlockDecrypt::fixup_range(off_t& bl_ofs, off_t& bl_end) {
   else
   {
     enc_begin_skip = bl_ofs & (block_size - 1);
-    ofs=bl_ofs & ~(block_size - 1);
-    end=bl_end;
+    ofs = bl_ofs & ~(block_size - 1);
+    end = bl_end;
     bl_ofs = bl_ofs & ~(block_size - 1);
     bl_end = ( bl_end & ~(block_size - 1) ) + (block_size - 1);
   }
@@ -724,14 +731,14 @@ int RGWGetObj_BlockDecrypt::flush() {
   return res;
 }
 
-RGWPutObj_BlockEncrypt::RGWPutObj_BlockEncrypt(CephContext* cct, RGWPutObjDataProcessor* next, BlockCrypt* crypt):
-      RGWPutObj_Filter(next), cct(cct), crypt(crypt),
+RGWPutObj_BlockEncrypt::RGWPutObj_BlockEncrypt(CephContext* cct, RGWPutObjDataProcessor* next,
+                                               std::unique_ptr<BlockCrypt> crypt):
+      RGWPutObj_Filter(next), cct(cct), crypt(std::move(crypt)),
       ofs(0), cache() {
-  block_size = crypt->get_block_size();
+  block_size = this->crypt->get_block_size();
 }
 
 RGWPutObj_BlockEncrypt::~RGWPutObj_BlockEncrypt() {
-  delete crypt;
 }
 
 int RGWPutObj_BlockEncrypt::handle_data(bufferlist& bl, off_t in_ofs, void **phandle, rgw_obj *pobj, bool *again) {
@@ -790,14 +797,14 @@ int RGWPutObj_BlockEncrypt::handle_data(bufferlist& bl, off_t in_ofs, void **pha
       /*flush cached data*/
       bufferlist data;
       crypt->encrypt(cache, 0, cache.length(), data, ofs);
-      res=next->handle_data(data, ofs, phandle, pobj, again);
-      ofs+=cache.length();
+      res = next->handle_data(data, ofs, phandle, pobj, again);
+      ofs += cache.length();
       cache.clear();
       if (res != 0)
         return res;
     }
     /*replicate 0-sized handle_data*/
-    res=next->handle_data(cache, ofs, phandle, pobj, again);
+    res = next->handle_data(cache, ofs, phandle, pobj, again);
   }
   return res;
 }
@@ -1020,12 +1027,11 @@ static boost::string_ref get_crypt_attribute(RGWEnv* env,
 int s3_prepare_encrypt(struct req_state* s,
                        map<string, bufferlist>& attrs,
                        map<string, post_form_part, const ltstr_nocase>* parts,
-                       BlockCrypt** block_crypt,
+                       std::unique_ptr<BlockCrypt>* block_crypt,
                        std::map<std::string, std::string>& crypt_http_responses)
 {
   int res = 0;
   crypt_http_responses.clear();
-  if (block_crypt) *block_crypt = nullptr;
   {
     boost::string_ref req_sse_ca =
         get_crypt_attribute(s->info.env, parts, X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_ALGORITHM);
@@ -1061,9 +1067,9 @@ int s3_prepare_encrypt(struct req_state* s,
       set_attr(attrs, RGW_ATTR_CRYPT_KEYMD5, keymd5_bin);
 
       if (block_crypt) {
-        AES_256_CBC* aes = new AES_256_CBC(s->cct);
+        auto aes = std::unique_ptr<AES_256_CBC>(new AES_256_CBC(s->cct));
         aes->set_key(reinterpret_cast<const uint8_t*>(key_bin.c_str()), AES_256_KEYSIZE);
-        *block_crypt = aes;
+        *block_crypt = std::move(aes);
       }
 
       crypt_http_responses["x-amz-server-side-encryption-customer-algorithm"] = "AES256";
@@ -1102,9 +1108,9 @@ int s3_prepare_encrypt(struct req_state* s,
       set_attr(attrs, RGW_ATTR_CRYPT_KEYSEL, key_selector);
 
       if (block_crypt) {
-        AES_256_CBC* aes = new AES_256_CBC(s->cct);
+        auto aes = std::unique_ptr<AES_256_CBC>(new AES_256_CBC(s->cct));
         aes->set_key(reinterpret_cast<const uint8_t*>(actual_key.c_str()), AES_256_KEYSIZE);
-        *block_crypt = aes;
+        *block_crypt = std::move(aes);
       }
       goto done;
     }
@@ -1131,9 +1137,9 @@ int s3_prepare_encrypt(struct req_state* s,
         goto done;
       }
       if (block_crypt) {
-        AES_256_CBC* aes = new AES_256_CBC(s->cct);
-        aes->set_key(actual_key, AES_256_KEYSIZE);
-        *block_crypt = aes;
+        auto aes = std::unique_ptr<AES_256_CBC>(new AES_256_CBC(s->cct));
+        aes->set_key(reinterpret_cast<const uint8_t*>(actual_key), AES_256_KEYSIZE);
+        *block_crypt = std::move(aes);
       }
 
       goto done;
@@ -1143,11 +1149,10 @@ int s3_prepare_encrypt(struct req_state* s,
   return res;
 }
 
-int s3_prepare_decrypt(
-    struct req_state* s,
-    map<string, bufferlist>& attrs,
-    BlockCrypt** block_crypt,
-    std::map<std::string, std::string>& crypt_http_responses)
+int s3_prepare_decrypt(struct req_state* s,
+                       map<string, bufferlist>& attrs,
+                       std::unique_ptr<BlockCrypt>* block_crypt,
+                       std::map<std::string, std::string>& crypt_http_responses)
 {
   int res = 0;
   std::string stored_mode = get_str_attribute(attrs, RGW_ATTR_CRYPT_MODE);
@@ -1182,9 +1187,9 @@ int s3_prepare_decrypt(
       res = -ERR_INVALID_DIGEST;
       goto done;
     }
-    AES_256_CBC* aes = new AES_256_CBC(s->cct);
+    auto aes = std::unique_ptr<AES_256_CBC>(new AES_256_CBC(s->cct));
     aes->set_key((uint8_t*)key_bin.c_str(), AES_256_CBC::AES_256_KEYSIZE);
-    if (block_crypt) *block_crypt = aes;
+    if (block_crypt) *block_crypt = std::move(aes);
 
     crypt_http_responses["x-amz-server-side-encryption-customer-algorithm"] = "AES256";
     crypt_http_responses["x-amz-server-side-encryption-customer-key-MD5"] = keymd5;
@@ -1208,10 +1213,10 @@ int s3_prepare_decrypt(
       goto done;
     }
 
-    AES_256_CBC* aes = new AES_256_CBC(s->cct);
+    auto aes = std::unique_ptr<AES_256_CBC>(new AES_256_CBC(s->cct));
     aes->set_key(reinterpret_cast<const uint8_t*>(actual_key.c_str()), AES_256_KEYSIZE);
 
-    if (block_crypt) *block_crypt = aes;
+    if (block_crypt) *block_crypt = std::move(aes);
 
     crypt_http_responses["x-amz-server-side-encryption"] = "aws:kms";
     crypt_http_responses["x-amz-server-side-encryption-aws-kms-key-id"] = key_id;
@@ -1239,10 +1244,9 @@ int s3_prepare_decrypt(
       res = -EIO;
       goto done;
     }
-    AES_256_CBC* aes = new AES_256_CBC(s->cct);
+    auto aes = std::unique_ptr<AES_256_CBC>(new AES_256_CBC(s->cct));
     aes->set_key(actual_key, AES_256_KEYSIZE);
-
-    if (block_crypt) *block_crypt = aes;
+    if (block_crypt) *block_crypt = std::move(aes);
     goto done;
   }
 
