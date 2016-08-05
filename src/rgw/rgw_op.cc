@@ -1365,7 +1365,7 @@ void RGWGetObj::execute()
   RGWGetObj_CB cb(this);
   RGWGetDataCB* filter = (RGWGetDataCB*)&cb;
   boost::optional<RGWGetObj_Decompress> decompress;
-  RGWGetDataCB* decrypt = nullptr;
+  std::unique_ptr<RGWGetDataCB> decrypt;
   map<string, bufferlist>::iterator attr_iter;
 
   perfcounter->inc(l_rgw_get);
@@ -1425,20 +1425,10 @@ void RGWGetObj::execute()
     goto done_err;
   }
   if (need_decompress) {
-    s->obj_size = cs_info.orig_size;
-    decompress.emplace(s->cct, &cs_info, partial_content, filter);
-    filter = &*decompress;
+      s->obj_size = cs_info.orig_size;
+      decompress.emplace(s->cct, &cs_info, partial_content, filter);
+      filter = &*decompress;
   }
-  attr_iter = attrs.find(RGW_ATTR_MANIFEST);
-  op_ret = this->get_decrypt_filter(&decrypt, filter, 
-                                    attr_iter != attrs.end() ? &(attr_iter->second) : nullptr);
-  if (decrypt != nullptr) {
-    filter = decrypt;
-  }
-  if (op_ret < 0) {
-    goto done_err;
-  }
-
   // for range requests with obj size 0
   if (range_str && !(s->obj_size)) {
     total_len = 0;
@@ -1493,6 +1483,16 @@ void RGWGetObj::execute()
     return;
   }
 
+  attr_iter = attrs.find(RGW_ATTR_MANIFEST);
+  op_ret = this->get_decrypt_filter(&decrypt, filter,
+                                    attr_iter != attrs.end() ? &(attr_iter->second) : nullptr);
+  if (decrypt != nullptr) {
+    filter = decrypt.get();
+  }
+  if (op_ret < 0) {
+    goto done_err;
+  }
+
   perfcounter->inc(l_rgw_get_b, end - ofs);
 
   ofs_x = ofs;
@@ -1513,12 +1513,10 @@ void RGWGetObj::execute()
   if (op_ret < 0) {
     goto done_err;
   }
-  delete decrypt;
   return;
 
 done_err:
   send_response_data_error();
-  delete decrypt;
 }
 
 int RGWGetObj::init_common()
@@ -2809,9 +2807,10 @@ int RGWPutObj::get_data(const off_t fst, const off_t lst, bufferlist& bl)
   RGWPutObj_CB cb(this);
   RGWGetDataCB* filter = &cb;
   boost::optional<RGWGetObj_Decompress> decompress;
+  std::unique_ptr<RGWGetDataCB> decrypt;
   RGWCompressionInfo cs_info;
   map<string, bufferlist> attrs;
-
+  map<string, bufferlist>::iterator attr_iter;
   int ret = 0;
 
   uint64_t obj_size;
@@ -2845,6 +2844,18 @@ int RGWPutObj::get_data(const off_t fst, const off_t lst, bufferlist& bl)
     obj_size = cs_info.orig_size;
     decompress.emplace(s->cct, &cs_info, partial_content, filter);
     filter = &*decompress;
+  }
+
+  attr_iter = attrs.find(RGW_ATTR_MANIFEST);
+  op_ret = this->get_decrypt_filter(&decrypt,
+                                    filter,
+                                    attrs,
+                                    attr_iter != attrs.end() ? &(attr_iter->second) : nullptr);
+  if (decrypt != nullptr) {
+    filter = decrypt.get();
+  }
+  if (op_ret < 0) {
+    return ret;
   }
 
   ret = read_op.range_to_ofs(obj_size, new_ofs, new_end);
@@ -2889,7 +2900,7 @@ void RGWPutObj::execute()
 {
   RGWPutObjProcessor *processor = NULL;
   RGWPutObjDataProcessor *filter = nullptr;
-  RGWPutObjDataProcessor *encrypt = nullptr;
+  std::unique_ptr<RGWPutObjDataProcessor> encrypt;
   char supplied_md5_bin[CEPH_CRYPTO_MD5_DIGESTSIZE + 1];
   char supplied_md5[CEPH_CRYPTO_MD5_DIGESTSIZE * 2 + 1];
   char calc_md5[CEPH_CRYPTO_MD5_DIGESTSIZE * 2 + 1];
@@ -2989,22 +3000,25 @@ void RGWPutObj::execute()
 
   fst = copy_source_range_fst;
   lst = copy_source_range_lst;
-  if (compression_type != "none") {
-    plugin = get_compressor_plugin(s, compression_type);
-    if (!plugin) {
-      ldout(s->cct, 1) << "Cannot load plugin for compression type "
-          << compression_type << dendl;
-    } else {
-      compressor.emplace(s->cct, plugin, filter);
-      filter = &*compressor;
-    }
-  }
-  op_ret = get_encrypt_filter(&encrypt, filter);
-  if (encrypt != nullptr)
-    filter = encrypt;
 
+  op_ret = get_encrypt_filter(&encrypt, filter);
   if (op_ret < 0) {
     goto done;
+  }
+  if (encrypt != nullptr) {
+    filter = encrypt.get();
+  } else {
+    //no encryption, we can try compression
+    if (compression_type != "none") {
+      plugin = get_compressor_plugin(s, compression_type);
+      if (!plugin) {
+        ldout(s->cct, 1) << "Cannot load plugin for compression type "
+            << compression_type << dendl;
+      } else {
+        compressor.emplace(s->cct, plugin, filter);
+        filter = &*compressor;
+      }
+    }
   }
 
   do {
@@ -3068,9 +3082,6 @@ void RGWPutObj::execute()
       /* restart processing with different oid suffix */
 
       dispose_processor(processor);
-      if (encrypt) {
-        delete encrypt;
-      }
       processor = select_processor(*static_cast<RGWObjectCtx *>(s->obj_ctx), &multipart);
       filter = processor;
 
@@ -3086,18 +3097,18 @@ void RGWPutObj::execute()
         goto done;
       }
 
-      if (compressor) {
-        compressor.emplace(s->cct, plugin, filter);
-        filter = &*compressor;
-      }
-      
       op_ret = get_encrypt_filter(&encrypt, filter);
-      if (encrypt != nullptr)
-	filter = encrypt;
       if (op_ret < 0) {
-	goto done;
+        goto done;
       }
-
+      if (encrypt != nullptr) {
+        filter = encrypt.get();
+      } else {
+        if (compressor) {
+          compressor.emplace(s->cct, plugin, filter);
+          filter = &*compressor;
+        }
+      }
       op_ret = put_data_and_throttle(filter, data, ofs, false);
       if (op_ret < 0) {
         goto done;
@@ -3242,9 +3253,6 @@ void RGWPutObj::execute()
 
 done:
   dispose_processor(processor);
-  if (encrypt) {
-    delete encrypt;
-  }
   perfcounter->tinc(l_rgw_put_lat,
 		    (ceph_clock_now() - s->time));
 }
@@ -3277,14 +3285,15 @@ void RGWPostObj::pre_exec()
 
 void RGWPostObj::execute()
 {
-  RGWPutObjDataProcessor *filter = NULL;
-  RGWPutObjDataProcessor *encrypt = nullptr;
+  RGWPutObjDataProcessor *filter = nullptr;
+  std::unique_ptr<RGWPutObjDataProcessor> encrypt;
   char calc_md5[CEPH_CRYPTO_MD5_DIGESTSIZE * 2 + 1];
   unsigned char m[CEPH_CRYPTO_MD5_DIGESTSIZE];
   MD5 hash;
   buffer::list bl, aclbl;
   int len = 0;
   boost::optional<RGWPutObj_Compress> compressor;
+  CompressorRef plugin;
 
   // read in the data from the POST form
   op_ret = get_params();
@@ -3324,25 +3333,25 @@ void RGWPostObj::execute()
   if (op_ret < 0)
     return;
 
-  const auto& compression_type = store->get_zone_params().get_compression_type(
-      s->bucket_info.placement_rule);
-  CompressorRef plugin;
-  if (compression_type != "none") {
-    plugin = Compressor::create(s->cct, compression_type);
-    if (!plugin) {
-      ldout(s->cct, 1) << "Cannot load plugin for compression type "
-          << compression_type << dendl;
-    } else {
-      compressor.emplace(s->cct, plugin, filter);
-      filter = &*compressor;
-    }
-  }
-
   op_ret = get_encrypt_filter(&encrypt, filter);
-  if (encrypt != nullptr)
-    filter = encrypt;
   if (op_ret < 0) {
-    goto done;
+    return;
+  }
+  if (encrypt != nullptr) {
+    filter = encrypt.get();
+  } else {
+    const auto& compression_type = store->get_zone_params().get_compression_type(
+        s->bucket_info.placement_rule);
+    if (compression_type != "none") {
+      plugin = Compressor::create(s->cct, compression_type);
+      if (!plugin) {
+        ldout(s->cct, 1) << "Cannot load plugin for compression type "
+            << compression_type << dendl;
+      } else {
+        compressor.emplace(s->cct, plugin, filter);
+        filter = &*compressor;
+      }
+    }
   }
 
   while (data_pending) {
@@ -3412,11 +3421,6 @@ void RGWPostObj::execute()
 
   op_ret = processor.complete(s->obj_size, etag, NULL, real_time(), attrs, delete_at);
 
-  //AKAKAKAK return skips deleteing encrypt
-done:
-  if (encrypt) {
-    delete encrypt;
-  }
 }
 
 
