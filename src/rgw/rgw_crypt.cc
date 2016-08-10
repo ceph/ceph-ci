@@ -478,6 +478,15 @@ public:
   }
 };
 
+
+std::unique_ptr<BlockCrypt> AES_256_CBC_create(CephContext* cct, const uint8_t* key, size_t len)
+{
+  auto cbc = std::unique_ptr<AES_256_CBC>(new AES_256_CBC(cct));
+  cbc->set_key(key, AES_256_KEYSIZE);
+  return std::move(cbc);
+}
+
+
 const uint8_t AES_256_CBC::IV[AES_256_CBC::AES_256_IVSIZE] =
     { 'a', 'e', 's', '2', '5', '6', 'i', 'v', '_', 'c', 't', 'r', '1', '3', '3', '7' };
 
@@ -671,7 +680,13 @@ int RGWGetObj_BlockDecrypt::handle_data(bufferlist& bl, off_t bl_ofs, off_t bl_l
       bufferlist data;
       crypt->decrypt(cache, 0, block_size, data, part_ofs);
       part_ofs += block_size;
-      res = next->handle_data(data, enc_begin_skip, block_size - enc_begin_skip);
+
+      off_t send_size = block_size - enc_begin_skip;
+      if (ofs + enc_begin_skip + send_size > end + 1) {
+        send_size = end + 1 - ofs - enc_begin_skip;
+      }
+      res = next->handle_data(data, enc_begin_skip, send_size);
+
       enc_begin_skip = 0;
       cache.clear();
       ofs += block_size;
@@ -682,11 +697,10 @@ int RGWGetObj_BlockDecrypt::handle_data(bufferlist& bl, off_t bl_ofs, off_t bl_l
   if (bl_len > 0) {
     off_t aligned_size = bl_len & ~(block_size - 1);
     //save remainder
-    off_t remainder = bl.length() - (bl_ofs + aligned_size);
+    off_t remainder = bl_len - aligned_size;
     if(remainder > 0) {
       cache.append(bl.get_contiguous(bl_ofs + aligned_size, remainder), remainder);
     }
-
     if (aligned_size > 0) {
       bufferlist data;
       crypt->decrypt(bl, bl_ofs, aligned_size, data, part_ofs);
@@ -698,7 +712,6 @@ int RGWGetObj_BlockDecrypt::handle_data(bufferlist& bl, off_t bl_ofs, off_t bl_l
       res = next->handle_data(data, enc_begin_skip, send_size);
       enc_begin_skip = 0;
       ofs += aligned_size;
-
       if (res != 0)
         return res;
     }
