@@ -142,8 +142,259 @@ TEST(TestRGWCrypto, verify_AES_256_CBC_identity)
       bufferlist decrypted;
       ASSERT_TRUE(aes->decrypt(encrypted, 0, end - begin, decrypted, offset));
 
+      ASSERT_EQ(decrypted.length(), end - begin);
       ASSERT_EQ(boost::string_ref(input.c_str() + begin, end - begin),
                 boost::string_ref(decrypted.c_str(), end - begin) );
+    }
+  }
+}
+
+
+TEST(TestRGWCrypto, verify_AES_256_CBC_identity_2)
+{
+  //create some input for encryption
+  const size_t test_range = 1024*1024;
+  buffer::ptr buf(test_range);
+  char* p = buf.c_str();
+  for(size_t i = 0; i < buf.length(); i++)
+    p[i] = i + i*i + (i >> 2);
+
+  bufferlist input;
+  input.append(buf);
+
+  for (unsigned int step : {1, 2, 3, 5, 7, 11, 13, 17})
+  {
+    //make some random key
+    uint8_t key[32];
+    for(size_t i=0;i<sizeof(key);i++)
+      key[i]=i*step;
+
+    auto aes(AES_256_CBC_create(g_ceph_context, &key[0], 32));
+    ASSERT_NE(aes.get(), nullptr);
+
+    size_t block_size = aes->get_block_size();
+    ASSERT_NE(block_size, 0);
+
+    for (size_t end = 1; end < 6096 ; end+=3)
+    {
+      off_t begin = 0;
+      off_t offset = end*end*end*end*end % (1000*1000*1000);
+      offset = offset - offset % block_size;
+
+      ASSERT_EQ(begin % block_size, 0);
+      ASSERT_LE(end, test_range);
+      ASSERT_EQ(offset % block_size, 0);
+
+      bufferlist encrypted;
+      ASSERT_TRUE(aes->encrypt(input, begin, end, encrypted, offset));
+      bufferlist decrypted;
+      ASSERT_TRUE(aes->decrypt(encrypted, 0, end, decrypted, offset));
+
+      ASSERT_EQ(decrypted.length(), end);
+      ASSERT_EQ(boost::string_ref(input.c_str(), end),
+                boost::string_ref(decrypted.c_str(), end) );
+    }
+  }
+}
+
+
+TEST(TestRGWCrypto, verify_AES_256_CBC_identity_3)
+{
+  //create some input for encryption
+  const size_t test_range = 1024*1024;
+  buffer::ptr buf(test_range);
+  char* p = buf.c_str();
+  for(size_t i = 0; i < buf.length(); i++)
+    p[i] = i + i*i + (i >> 2);
+
+  bufferlist input;
+  input.append(buf);
+
+  for (unsigned int step : {1, 2, 3, 5, 7, 11, 13, 17})
+  {
+    //make some random key
+    uint8_t key[32];
+    for(size_t i=0;i<sizeof(key);i++)
+      key[i]=i*step;
+
+    auto aes(AES_256_CBC_create(g_ceph_context, &key[0], 32));
+    ASSERT_NE(aes.get(), nullptr);
+
+    size_t block_size = aes->get_block_size();
+    ASSERT_NE(block_size, 0);
+    size_t rr = 111;
+    for (size_t r = 97; r < 123 ; r++)
+    {
+      off_t begin = 0;
+      off_t end = begin + r*r*r*r*r*r*r % (test_range - begin);
+      //sometimes make aligned
+      if (r % 3)
+        end = end - end % block_size;
+      off_t offset = r*r*r*r*r*r*r*r % (1000*1000*1000);
+      offset = offset - offset % block_size;
+
+      ASSERT_EQ(begin % block_size, 0);
+      ASSERT_LE(end, test_range);
+      ASSERT_EQ(offset % block_size, 0);
+
+      bufferlist encrypted1;
+      bufferlist encrypted2;
+
+      off_t pos = begin;
+      off_t chunk;
+      while (pos < end) {
+        chunk = block_size + (rr/3)*(rr+17)*(rr+71)*(rr+123)*(rr+131) % 50000;
+        chunk = chunk - chunk % block_size;
+        if (pos + chunk > end)
+          chunk = end - pos;
+        bufferlist tmp;
+        ASSERT_TRUE(aes->encrypt(input, pos, chunk, tmp, offset + pos));
+        encrypted1.append(tmp);
+        pos += chunk;
+        rr++;
+      }
+
+      pos = begin;
+      while (pos < end) {
+        chunk = block_size + (rr/3)*(rr+97)*(rr+151)*(rr+213)*(rr+251) % 50000;
+        chunk = chunk - chunk % block_size;
+        if (pos + chunk > end)
+          chunk = end - pos;
+        bufferlist tmp;
+        ASSERT_TRUE(aes->encrypt(input, pos, chunk, tmp, offset + pos));
+        encrypted2.append(tmp);
+        pos += chunk;
+        rr++;
+      }
+      ASSERT_EQ(encrypted1.length(), end);
+      ASSERT_EQ(encrypted2.length(), end);
+      ASSERT_EQ(boost::string_ref(encrypted1.c_str(), end),
+                boost::string_ref(encrypted2.c_str(), end) );
+    }
+  }
+}
+
+
+TEST(TestRGWCrypto, verify_AES_256_CBC_size_0_15)
+{
+  //create some input for encryption
+  const size_t test_range = 1024*1024;
+  buffer::ptr buf(test_range);
+  char* p = buf.c_str();
+  for(size_t i = 0; i < buf.length(); i++)
+    p[i] = i + i*i + (i >> 2);
+
+  bufferlist input;
+  input.append(buf);
+
+  for (unsigned int step : {1, 2, 3, 5, 7, 11, 13, 17})
+  {
+    //make some random key
+    uint8_t key[32];
+    for(size_t i=0;i<sizeof(key);i++)
+      key[i]=i*step;
+
+    auto aes(AES_256_CBC_create(g_ceph_context, &key[0], 32));
+    ASSERT_NE(aes.get(), nullptr);
+
+    size_t block_size = aes->get_block_size();
+    ASSERT_NE(block_size, 0);
+    for (size_t r = 97; r < 123 ; r++)
+    {
+      off_t begin = 0;
+      off_t end = begin + r*r*r*r*r*r*r % (16);
+
+      off_t offset = r*r*r*r*r*r*r*r % (1000*1000*1000);
+      offset = offset - offset % block_size;
+
+      ASSERT_EQ(begin % block_size, 0);
+      ASSERT_LE(end, test_range);
+      ASSERT_EQ(offset % block_size, 0);
+
+      bufferlist encrypted;
+      bufferlist decrypted;
+      ASSERT_TRUE(aes->encrypt(input, 0, end, encrypted, offset));
+      ASSERT_TRUE(aes->encrypt(encrypted, 0, end, decrypted, offset));
+      ASSERT_EQ(encrypted.length(), end);
+      ASSERT_EQ(decrypted.length(), end);
+      ASSERT_EQ(boost::string_ref(input.c_str(), end),
+                boost::string_ref(decrypted.c_str(), end) );
+    }
+  }
+}
+
+
+TEST(TestRGWCrypto, verify_AES_256_CBC_identity_last_block)
+{
+  //create some input for encryption
+  const size_t test_range = 1024*1024;
+  buffer::ptr buf(test_range);
+  char* p = buf.c_str();
+  for(size_t i = 0; i < buf.length(); i++)
+    p[i] = i + i*i + (i >> 2);
+
+  bufferlist input;
+  input.append(buf);
+
+  for (unsigned int step : {1, 2, 3, 5, 7, 11, 13, 17})
+  {
+    //make some random key
+    uint8_t key[32];
+    for(size_t i=0;i<sizeof(key);i++)
+      key[i]=i*step;
+
+    auto aes(AES_256_CBC_create(g_ceph_context, &key[0], 32));
+    ASSERT_NE(aes.get(), nullptr);
+
+    size_t block_size = aes->get_block_size();
+    ASSERT_NE(block_size, 0);
+    size_t rr = 111;
+    for (size_t r = 97; r < 123 ; r++)
+    {
+      off_t begin = 0;
+      off_t end = r*r*r*r*r*r*r % (test_range - 16);
+      end = end - end % block_size;
+      end = end + (r+3)*(r+5)*(r+7) % 16;
+
+      off_t offset = r*r*r*r*r*r*r*r % (1000*1000*1000);
+      offset = offset - offset % block_size;
+
+      ASSERT_EQ(begin % block_size, 0);
+      ASSERT_LE(end, test_range);
+      ASSERT_EQ(offset % block_size, 0);
+
+      bufferlist encrypted1;
+      bufferlist encrypted2;
+
+      off_t pos = begin;
+      off_t chunk;
+      while (pos < end) {
+        chunk = block_size + (rr/3)*(rr+17)*(rr+71)*(rr+123)*(rr+131) % 50000;
+        chunk = chunk - chunk % block_size;
+        if (pos + chunk > end)
+          chunk = end - pos;
+        bufferlist tmp;
+        ASSERT_TRUE(aes->encrypt(input, pos, chunk, tmp, offset + pos));
+        encrypted1.append(tmp);
+        pos += chunk;
+        rr++;
+      }
+      pos = begin;
+      while (pos < end) {
+        chunk = block_size + (rr/3)*(rr+97)*(rr+151)*(rr+213)*(rr+251) % 50000;
+        chunk = chunk - chunk % block_size;
+        if (pos + chunk > end)
+          chunk = end - pos;
+        bufferlist tmp;
+        ASSERT_TRUE(aes->encrypt(input, pos, chunk, tmp, offset + pos));
+        encrypted2.append(tmp);
+        pos += chunk;
+        rr++;
+      }
+      ASSERT_EQ(encrypted1.length(), end);
+      ASSERT_EQ(encrypted2.length(), end);
+      ASSERT_EQ(boost::string_ref(encrypted1.c_str(), end),
+                boost::string_ref(encrypted2.c_str(), end) );
     }
   }
 }

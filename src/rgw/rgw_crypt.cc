@@ -388,31 +388,30 @@ public:
     buffer::ptr buf(aligned_size + AES_256_IVSIZE);
     unsigned char* buf_raw = reinterpret_cast<unsigned char*>(buf.c_str());
     unsigned char* input_raw = reinterpret_cast<unsigned char*>(input.c_str());
-    unsigned char iv[AES_256_IVSIZE];
+
+    /* encrypt main bulk of data */
     result = cbc_transform(buf_raw,
                            input_raw + in_ofs,
                            aligned_size,
                            stream_offset, key, true);
-
-    if (result && (unaligned_rest_size != 0)) {
-      if (aligned_size > 0) {
-        /*use last chunk for unaligned part*/
-        static_assert(sizeof(iv) >= AES_256_IVSIZE, "Must fit counter");
-        memset(iv, 0, AES_256_IVSIZE);
-        result = cbc_transform(
-            buf_raw + aligned_size,
-            buf_raw + aligned_size - AES_256_IVSIZE,
-            AES_256_IVSIZE,
-            iv, key, true);
+    if (result && (unaligned_rest_size > 0)) {
+      /* remainder to encrypt */
+      if (aligned_size % CHUNK_SIZE > 0) {
+        /* use last chunk for unaligned part */
+        unsigned char iv[AES_256_IVSIZE] = {0};
+        result = cbc_transform(buf_raw + aligned_size,
+                               buf_raw + aligned_size - AES_256_IVSIZE,
+                               AES_256_IVSIZE,
+                               iv, key, true);
       } else {
-        /*use IV as base for unaligned part*/
-        unsigned char fake_iv[AES_256_IVSIZE] = {0};
-        prepare_iv(iv, stream_offset);
-        result = cbc_transform(
-            buf_raw + aligned_size,
-            iv,
-            AES_256_IVSIZE,
-            fake_iv, key, true);
+        /* 0 full blocks in current chunk, use IV as base for unaligned part */
+        unsigned char iv[AES_256_IVSIZE] = {0};
+        unsigned char data[AES_256_IVSIZE];
+        prepare_iv(data, stream_offset + aligned_size);
+        result = cbc_transform(buf_raw + aligned_size,
+                               data,
+                               AES_256_IVSIZE,
+                               iv, key, true);
       }
       if (result) {
         for(size_t i = aligned_size; i < size; i++) {
@@ -444,47 +443,35 @@ public:
     buffer::ptr buf(aligned_size + AES_256_IVSIZE);
     unsigned char* buf_raw = reinterpret_cast<unsigned char*>(buf.c_str());
     unsigned char* input_raw = reinterpret_cast<unsigned char*>(input.c_str());
-    unsigned char iv[AES_256_IVSIZE];
 
-    if (aligned_size > 0) {
-      if (unaligned_rest_size == 0) {
-        /* size of data is just perfect */
-        prepare_iv(iv, stream_offset);
-        result = cbc_transform(
-            (unsigned char*)buf.raw_c_str(),
-            (unsigned char*)input.c_str() + in_ofs,
-            aligned_size,
-            stream_offset, key, false);
-      } else {
+    /* decrypt main bulk of data */
+    result = cbc_transform(buf_raw,
+                           input_raw + in_ofs,
+                           aligned_size,
+                           stream_offset, key, false);
+    if (result && unaligned_rest_size > 0) {
+      /* remainder to decrypt */
+      if (aligned_size % CHUNK_SIZE > 0) {
         /*use last chunk for unaligned part*/
-        static_assert(sizeof(iv) >= AES_256_IVSIZE, "Must fit counter");
-        memset(iv, 0, AES_256_IVSIZE);
-        result = cbc_transform(
-            buf_raw + aligned_size,
-            input_raw + in_ofs + aligned_size - AES_256_IVSIZE,
-            AES_256_IVSIZE,
-            iv, key, true);
-        if (result) {
-          prepare_iv(iv, stream_offset);
-          result = cbc_transform(buf_raw,
-                                 input_raw + in_ofs,
-                                 aligned_size,
-                                 stream_offset, key, false);
-        }
+        unsigned char iv[AES_256_IVSIZE] = {0};
+        result = cbc_transform(buf_raw + aligned_size,
+                               input_raw + in_ofs + aligned_size - AES_256_IVSIZE,
+                               AES_256_IVSIZE,
+                               iv, key, true);
+      } else {
+        /* 0 full blocks in current chunk, use IV as base for unaligned part */
+        unsigned char iv[AES_256_IVSIZE] = {0};
+        unsigned char data[AES_256_IVSIZE];
+        prepare_iv(data, stream_offset + aligned_size);
+        result = cbc_transform(buf_raw + aligned_size,
+                               data,
+                               AES_256_IVSIZE,
+                               iv, key, true);
       }
-    } else {
-      /*0 full blocks, use IV as base for unaligned part*/
-      unsigned char fake_iv[AES_256_IVSIZE] = {0};
-      prepare_iv(iv, stream_offset);
-      result = cbc_transform(
-          buf_raw + aligned_size,
-          iv,
-          AES_256_IVSIZE,
-          fake_iv, key, true);
-    }
-    if (result) {
-      for(size_t i = aligned_size; i < size; i++) {
-        *(buf_raw + i) ^= *(input_raw + in_ofs + i);
+      if (result) {
+        for(size_t i = aligned_size; i < size; i++) {
+          *(buf_raw + i) ^= *(input_raw + in_ofs + i);
+        }
       }
     }
     if (result) {
@@ -498,7 +485,7 @@ public:
   }
 
 
-  void prepare_iv(byte iv[AES_256_IVSIZE], off_t offset) {
+  void prepare_iv(byte (&iv)[AES_256_IVSIZE], off_t offset) {
     off_t index = offset / AES_256_IVSIZE;
     off_t i = AES_256_IVSIZE - 1;
     unsigned int val;
