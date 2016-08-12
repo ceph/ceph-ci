@@ -170,7 +170,7 @@ public:
 #else
 #error Must define USE_CRYPTOPP or USE_NSS
 #endif
-
+  /* in CTR encrypt is the same as decrypt */
   bool decrypt(bufferlist& input, off_t in_ofs, size_t size, bufferlist& output, off_t stream_offset) {
 	  return encrypt(input, in_ofs, size, output, stream_offset);
   }
@@ -215,8 +215,29 @@ CryptoAccelRef get_crypto_accel(CephContext *cct)
 
 
 /**
- * Encryption in CBC mode. Chunked to 4K blocks. offset is used as IV for 4K block.
+ * Encryption in CBC mode. Chunked to 4K blocks. Offset is used as IV for each 4K block.
+ *
+ * A. Encryption
+ * 1. Input is split to 4K chunks + remainder in one, smaller chunk
+ * 2. Each full chunk is encrypted separately with CBC chained mode, with initial IV derived from offset
+ * 3. Last chunk is 16*m + n.
+ * 4. 16*m bytes are encrypted with CBC chained mode, with initial IV derived from offset
+ * 5. Last n bytes are xor-ed with pattern obtained by CBC encryption of
+ *    last encrypted 16 byte block <16m-16, 16m-15) with IV = {0}.
+ * 6. (Special case) If m == 0 then last n bytes are xor-ed with pattern
+ *    obtained by CBC encryption of {0} with IV derived from offset
+ *
+ * B. Decryption
+ * 1. Input is split to 4K chunks + remainder in one, smaller chunk
+ * 2. Each full chunk is decrypted separately with CBC chained mode, with initial IV derived from offset
+ * 3. Last chunk is 16*m + n.
+ * 4. 16*m bytes are decrypted with CBC chained mode, with initial IV derived from offset
+ * 5. Last n bytes are xor-ed with pattern obtained by CBC ENCRYPTION of
+ *    last (still encrypted) 16 byte block <16m-16,16m-15) with IV = {0}
+ * 6. (Special case) If m == 0 then last n bytes are xor-ed with pattern
+ *    obtained by CBC ENCRYPTION of {0} with IV derived from offset
  */
+
 class AES_256_CBC : public BlockCrypt {
 public:
   static const size_t AES_256_KEYSIZE = 256 / 8;
@@ -244,10 +265,13 @@ public:
 
 #ifdef USE_CRYPTOPP
 
-  bool cbc_transform(unsigned char* out, const unsigned char* in, size_t size,
+  bool cbc_transform(unsigned char* out,
+                     const unsigned char* in,
+                     size_t size,
                      const unsigned char (&iv)[AES_256_IVSIZE],
                      const unsigned char (&key)[AES_256_KEYSIZE],
-                     bool encrypt) {
+                     bool encrypt)
+  {
     if (encrypt) {
       CBC_Mode< AES >::Encryption e;
       e.SetKeyWithIV(key, AES_256_KEYSIZE, iv, AES_256_IVSIZE);
@@ -262,10 +286,13 @@ public:
 
 #elif defined(USE_NSS)
 
-  bool cbc_transform(unsigned char* out, const unsigned char* in, size_t size,
-                   const unsigned char (&iv)[AES_256_IVSIZE],
-                   const unsigned char (&key)[AES_256_KEYSIZE],
-                   bool encrypt) {
+  bool cbc_transform(unsigned char* out,
+                     const unsigned char* in,
+                     size_t size,
+                     const unsigned char (&iv)[AES_256_IVSIZE],
+                     const unsigned char (&key)[AES_256_KEYSIZE],
+                     bool encrypt)
+  {
     bool result = false;
     PK11SlotInfo *slot;
     SECItem keyItem;
@@ -317,14 +344,14 @@ public:
 #error Must define USE_CRYPTOPP or USE_NSS
 #endif
 
-
-
-  bool cbc_transform(unsigned char* out, const unsigned char* in, size_t size,
+  bool cbc_transform(unsigned char* out,
+                     const unsigned char* in,
+                     size_t size,
                      off_t stream_offset,
                      const unsigned char (&key)[AES_256_KEYSIZE],
-                     bool encrypt) {
+                     bool encrypt)
+  {
     static CryptoAccelRef crypto_accel = get_crypto_accel(cct);
-    //compressor(Compressor::create(c, c->_conf->async_compressor_type))
     bool result = true;
     unsigned char iv[AES_256_IVSIZE];
     for (size_t offset = 0; result && (offset < size); offset += CHUNK_SIZE) {
@@ -347,10 +374,14 @@ public:
     return result;
   }
 
-  bool encrypt(bufferlist& input, off_t in_ofs, size_t size, bufferlist& output, off_t stream_offset)
+
+  bool encrypt(bufferlist& input,
+               off_t in_ofs,
+               size_t size,
+               bufferlist& output,
+               off_t stream_offset)
   {
     bool result = false;
-
     size_t aligned_size = size / AES_256_IVSIZE * AES_256_IVSIZE;
     size_t unaligned_rest_size = size - aligned_size;
     output.clear();
@@ -399,10 +430,14 @@ public:
     return result;
   }
 
-  bool decrypt(bufferlist& input, off_t in_ofs, size_t size, bufferlist& output, off_t stream_offset)
+
+  bool decrypt(bufferlist& input,
+               off_t in_ofs,
+               size_t size,
+               bufferlist& output,
+               off_t stream_offset)
   {
     bool result = false;
-
     size_t aligned_size = size / AES_256_IVSIZE * AES_256_IVSIZE;
     size_t unaligned_rest_size = size - aligned_size;
     output.clear();
@@ -493,7 +528,13 @@ const uint8_t AES_256_CBC::IV[AES_256_CBC::AES_256_IVSIZE] =
 
 #ifdef USE_CRYPTOPP
 
-bool AES_256_ECB_encrypt(CephContext* cct, uint8_t* key, size_t key_size, uint8_t* data_in, uint8_t* data_out, size_t data_size) {
+bool AES_256_ECB_encrypt(CephContext* cct,
+                         const uint8_t* key,
+                         size_t key_size,
+                         const uint8_t* data_in,
+                         uint8_t* data_out,
+                         size_t data_size)
+{
   bool res = false;
   if (key_size == AES_256_KEYSIZE) {
     try {
@@ -563,9 +604,6 @@ bool AES_256_ECB_encrypt(CephContext* cct, uint8_t* key, size_t key_size, uint8_
 #else
 #error Must define USE_CRYPTOPP or USE_NSS
 #endif
-
-
-
 
 
 RGWGetObj_BlockDecrypt::RGWGetObj_BlockDecrypt(CephContext* cct,
@@ -657,6 +695,7 @@ int RGWGetObj_BlockDecrypt::fixup_range(off_t& bl_ofs, off_t& bl_end) {
   return 0;
 }
 
+
 int RGWGetObj_BlockDecrypt::handle_data(bufferlist& bl, off_t bl_ofs, off_t bl_len) {
   int res = 0;
   ldout(cct, 25) << "Decrypt " << bl_len << " bytes" << dendl;
@@ -744,10 +783,15 @@ int RGWGetObj_BlockDecrypt::flush() {
   return res;
 }
 
-RGWPutObj_BlockEncrypt::RGWPutObj_BlockEncrypt(CephContext* cct, RGWPutObjDataProcessor* next,
+RGWPutObj_BlockEncrypt::RGWPutObj_BlockEncrypt(CephContext* cct,
+                                               RGWPutObjDataProcessor* next,
                                                std::unique_ptr<BlockCrypt> crypt):
-      RGWPutObj_Filter(next), cct(cct), crypt(std::move(crypt)),
-      ofs(0), cache() {
+    RGWPutObj_Filter(next),
+    cct(cct),
+    crypt(std::move(crypt)),
+    ofs(0),
+    cache()
+{
   block_size = this->crypt->get_block_size();
 }
 
@@ -887,7 +931,10 @@ int request_key_from_barbican(CephContext *cct,
   return res;
 }
 
-int get_actual_key_from_kms(CephContext *cct, boost::string_ref key_id, boost::string_ref key_selector, std::string& actual_key)
+int get_actual_key_from_kms(CephContext *cct,
+                            boost::string_ref key_id,
+                            boost::string_ref key_selector,
+                            std::string& actual_key)
 {
   int res = 0;
   ldout(cct, 20) << "Getting KMS encryption key for key=" << key_id << dendl;
@@ -1014,6 +1061,7 @@ boost::string_ref rgw_trim_whitespace(const boost::string_ref& src)
   return src.substr(start, end - start + 1);
 }
 
+
 static boost::string_ref get_crypt_attribute(RGWEnv* env,
                                        map<string, post_form_part, const ltstr_nocase>* parts,
                                        crypt_option_e option)
@@ -1036,6 +1084,7 @@ static boost::string_ref get_crypt_attribute(RGWEnv* env,
     }
   }
 }
+
 
 int s3_prepare_encrypt(struct req_state* s,
                        map<string, bufferlist>& attrs,
@@ -1161,6 +1210,7 @@ int s3_prepare_encrypt(struct req_state* s,
   done:
   return res;
 }
+
 
 int s3_prepare_decrypt(struct req_state* s,
                        map<string, bufferlist>& attrs,

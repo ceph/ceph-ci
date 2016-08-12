@@ -176,7 +176,7 @@ TEST(TestRGWCrypto, verify_RGWGetObj_BlockDecrypt_ranges)
     ut_get_sink get_sink;
     auto cbc = AES_256_CBC_create(g_ceph_context, &key[0], 32);
     ASSERT_NE(cbc.get(), nullptr);
-    RGWGetObj_BlockDecrypt decrypt(g_ceph_context, get_sink, std::move(cbc) );
+    RGWGetObj_BlockDecrypt decrypt(g_ceph_context, &get_sink, std::move(cbc) );
 
     //random ranges
     off_t begin = (r/3)*r*(r+13)*(r+23)*(r+53)*(r+71) % test_range;
@@ -220,7 +220,7 @@ TEST(TestRGWCrypto, verify_RGWGetObj_BlockDecrypt_chunks)
     ut_get_sink get_sink;
     auto cbc = AES_256_CBC_create(g_ceph_context, &key[0], 32);
     ASSERT_NE(cbc.get(), nullptr);
-    RGWGetObj_BlockDecrypt decrypt(g_ceph_context, get_sink, std::move(cbc) );
+    RGWGetObj_BlockDecrypt decrypt(g_ceph_context, &get_sink, std::move(cbc) );
 
     //random
     off_t begin = (r/3)*r*(r+13)*(r+23)*(r+53)*(r+71) % test_range;
@@ -263,7 +263,7 @@ TEST(TestRGWCrypto, check_RGWGetObj_BlockDecrypt_fixup)
 {
   ut_get_sink get_sink;
   auto nonecrypt = std::unique_ptr<BlockCrypt>(new BlockCryptNone);
-  RGWGetObj_BlockDecrypt decrypt(g_ceph_context, get_sink,
+  RGWGetObj_BlockDecrypt decrypt(g_ceph_context, &get_sink,
                                  std::move(nonecrypt));
   ASSERT_EQ(fixup_range(&decrypt,0,0),     range_t(0,255));
   ASSERT_EQ(fixup_range(&decrypt,1,256),   range_t(0,511));
@@ -295,7 +295,7 @@ TEST(TestRGWCrypto, verify_RGWPutObj_BlockEncrypt_chunks)
     ut_put_sink put_sink;
     auto cbc = AES_256_CBC_create(g_ceph_context, &key[0], 32);
     ASSERT_NE(cbc.get(), nullptr);
-    RGWPutObj_BlockEncrypt encrypt(g_ceph_context, put_sink,
+    RGWPutObj_BlockEncrypt encrypt(g_ceph_context, &put_sink,
                                    std::move(cbc) );
 
     off_t test_size = (r/5)*(r+7)*(r+13)*(r+101)*(r*103) % (test_range - 1) + 1;
@@ -362,7 +362,7 @@ TEST(TestRGWCrypto, verify_Encrypt_Decrypt)
     memset(test_in, test_size & 0xff, test_size);
 
     ut_put_sink put_sink;
-    RGWPutObj_BlockEncrypt encrypt(g_ceph_context, put_sink,
+    RGWPutObj_BlockEncrypt encrypt(g_ceph_context, &put_sink,
                                      std::move(AES_256_CBC_create(g_ceph_context, &key[0], 32)) );
     bufferlist bl;
     bl.append((char*)test_in, test_size);
@@ -379,7 +379,7 @@ TEST(TestRGWCrypto, verify_Encrypt_Decrypt)
     ASSERT_EQ(bl.length(), test_size);
 
     ut_get_sink get_sink;
-    RGWGetObj_BlockDecrypt decrypt(g_ceph_context, get_sink,
+    RGWGetObj_BlockDecrypt decrypt(g_ceph_context, &get_sink,
                                    std::move(AES_256_CBC_create(g_ceph_context, &key[0], 32)) );
 
     off_t bl_ofs = 0;
