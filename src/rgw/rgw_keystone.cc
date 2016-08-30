@@ -412,7 +412,7 @@ bool RGWKeystoneTokenCache::find_barbican(KeystoneToken& token)
 {
   Mutex::Locker l(lock);
 
-  return find(barbican_token_id, token);
+  return find_locked(barbican_token_id, token);
 }
 
 void RGWKeystoneTokenCache::add(const string& token_id,
@@ -459,7 +459,7 @@ void RGWKeystoneTokenCache::add_barbican(const KeystoneToken& token)
   Mutex::Locker l(lock);
 
   rgw_get_token_id(token.token.id, barbican_token_id);
-  add(barbican_token_id, token);
+  add_locked(barbican_token_id, token);
 }
 
 void RGWKeystoneTokenCache::invalidate(const string& token_id)
