@@ -1207,9 +1207,9 @@ int s3_prepare_decrypt(struct req_state* s,
   int res = 0;
   std::string stored_mode = get_str_attribute(attrs, RGW_ATTR_CRYPT_MODE);
   ldout(s->cct, 15) << "Encryption mode: " << stored_mode << dendl;
-
   if (stored_mode == "SSE-C-AES256") {
     const char *req_cust_alg = s->info.env->get("HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_ALGORITHM", NULL);
+
     if ((nullptr == req_cust_alg) || (strcmp(req_cust_alg, "AES256") != 0)) {
       res = -ERR_INVALID_REQUEST;
       goto done;
@@ -1227,6 +1227,7 @@ int s3_prepare_decrypt(struct req_state* s,
       res = -ERR_INVALID_DIGEST;
       goto done;
     }
+
     MD5 key_hash;
     uint8_t key_hash_res[CEPH_CRYPTO_MD5_DIGESTSIZE];
     key_hash.Update((uint8_t*)key_bin.c_str(), key_bin.size());

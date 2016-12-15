@@ -1399,21 +1399,6 @@ void RGWGetObj::execute()
     lderr(s->cct) << "ERROR: failed to decode compression info, cannot decompress" << dendl;
     goto done_err;
   }
-  if (need_decompress) {
-    s->obj_size = cs_info.orig_size;
-    decompress.emplace(s->cct, &cs_info, partial_content, filter);
-    filter = &*decompress;
-  }
-  attr_iter = attrs.find(RGW_ATTR_MANIFEST);
-  op_ret = this->get_decrypt_filter(&decrypt, filter, 
-                                    attr_iter != attrs.end() ? &(attr_iter->second) : nullptr);
-  if (decrypt != nullptr) {
-    filter = decrypt.get();
-  }
-  if (op_ret < 0) {
-    goto done_err;
-  }
-
   // for range requests with obj size 0
   if (range_str && !(s->obj_size)) {
     total_len = 0;
@@ -1466,6 +1451,21 @@ void RGWGetObj::execute()
   if (!get_data || ofs > end) {
     send_response_data(bl, 0, 0);
     return;
+  }
+
+  if (need_decompress) {
+    s->obj_size = cs_info.orig_size;
+    decompress.emplace(s->cct, &cs_info, partial_content, filter);
+    filter = &*decompress;
+  }
+  attr_iter = attrs.find(RGW_ATTR_MANIFEST);
+  op_ret = this->get_decrypt_filter(&decrypt, filter,
+                                    attr_iter != attrs.end() ? &(attr_iter->second) : nullptr);
+  if (decrypt != nullptr) {
+    filter = decrypt.get();
+  }
+  if (op_ret < 0) {
+    goto done_err;
   }
 
   perfcounter->inc(l_rgw_get_b, end - ofs);
@@ -2772,9 +2772,10 @@ int RGWPutObj::get_data(const off_t fst, const off_t lst, bufferlist& bl)
   RGWPutObj_CB cb(this);
   RGWGetDataCB* filter = &cb;
   boost::optional<RGWGetObj_Decompress> decompress;
+  std::unique_ptr<RGWGetDataCB> decrypt;
   RGWCompressionInfo cs_info;
   map<string, bufferlist> attrs;
-
+  map<string, bufferlist>::iterator attr_iter;
   int ret = 0;
 
   uint64_t obj_size;
@@ -2809,6 +2810,18 @@ int RGWPutObj::get_data(const off_t fst, const off_t lst, bufferlist& bl)
     obj_size = cs_info.orig_size;
     decompress.emplace(s->cct, &cs_info, partial_content, filter);
     filter = &*decompress;
+  }
+
+  attr_iter = attrs.find(RGW_ATTR_MANIFEST);
+  op_ret = this->get_decrypt_filter(&decrypt,
+                                    filter,
+                                    attrs,
+                                    attr_iter != attrs.end() ? &(attr_iter->second) : nullptr);
+  if (decrypt != nullptr) {
+    filter = decrypt.get();
+  }
+  if (op_ret < 0) {
+    return ret;
   }
 
   ret = read_op.range_to_ofs(obj_size, new_ofs, new_end);

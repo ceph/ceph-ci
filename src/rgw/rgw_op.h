@@ -761,6 +761,14 @@ public:
   virtual RGWPutObjProcessor *select_processor(RGWObjectCtx& obj_ctx, bool *is_multipart);
   void dispose_processor(RGWPutObjDataProcessor *processor);
 
+  /* this is for cases when copying data from other object */
+  virtual int get_decrypt_filter(std::unique_ptr<RGWGetDataCB>* filter,
+                                 RGWGetDataCB* cb,
+                                 map<string, bufferlist>& attrs,
+                                 bufferlist* manifest_bl) {
+    *filter = nullptr;
+    return 0;
+  }
   virtual int get_encrypt_filter(std::unique_ptr<RGWPutObjDataProcessor> *filter, RGWPutObjDataProcessor* cb) {
      *filter = nullptr;
      return 0;

@@ -187,6 +187,10 @@ public:
 
   int get_encrypt_filter(std::unique_ptr<RGWPutObjDataProcessor>* filter,
                          RGWPutObjDataProcessor* cb) override;
+  int get_decrypt_filter(std::unique_ptr<RGWGetDataCB>* filter,
+                         RGWGetDataCB* cb,
+                         map<string, bufferlist>& attrs,
+                         bufferlist* manifest_bl) override;
 };
 
 struct post_part_field {
