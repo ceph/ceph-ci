@@ -2966,22 +2966,25 @@ void RGWPutObj::execute()
 
   fst = copy_source_range_fst;
   lst = copy_source_range_lst;
-  if (compression_type != "none") {
-    plugin = get_compressor_plugin(s, compression_type);
-    if (!plugin) {
-      ldout(s->cct, 1) << "Cannot load plugin for compression type "
-          << compression_type << dendl;
-    } else {
-      compressor.emplace(s->cct, plugin, filter);
-      filter = &*compressor;
-    }
-  }
-  op_ret = get_encrypt_filter(&encrypt, filter);
-  if (encrypt != nullptr)
-    filter = encrypt.get();
 
+  op_ret = get_encrypt_filter(&encrypt, filter);
   if (op_ret < 0) {
     goto done;
+  }
+  if (encrypt != nullptr) {
+    filter = encrypt.get();
+  } else {
+    //no encryption, we can try compression
+    if (compression_type != "none") {
+      plugin = get_compressor_plugin(s, compression_type);
+      if (!plugin) {
+        ldout(s->cct, 1) << "Cannot load plugin for compression type "
+            << compression_type << dendl;
+      } else {
+        compressor.emplace(s->cct, plugin, filter);
+        filter = &*compressor;
+      }
+    }
   }
 
   do {
@@ -3060,18 +3063,18 @@ void RGWPutObj::execute()
         goto done;
       }
 
-      if (compressor) {
-        compressor.emplace(s->cct, plugin, filter);
-        filter = &*compressor;
-      }
-      
       op_ret = get_encrypt_filter(&encrypt, filter);
-      if (encrypt != nullptr)
-        filter = encrypt.get();
       if (op_ret < 0) {
         goto done;
       }
-
+      if (encrypt != nullptr) {
+        filter = encrypt.get();
+      } else {
+        if (compressor) {
+          compressor.emplace(s->cct, plugin, filter);
+          filter = &*compressor;
+        }
+      }
       op_ret = put_data_and_throttle(filter, data, ofs, false);
       if (op_ret < 0) {
         goto done;
@@ -3256,6 +3259,7 @@ void RGWPostObj::execute()
   buffer::list bl, aclbl;
   int len = 0;
   boost::optional<RGWPutObj_Compress> compressor;
+  CompressorRef plugin;
 
   // read in the data from the POST form
   op_ret = get_params();
@@ -3295,25 +3299,25 @@ void RGWPostObj::execute()
   if (op_ret < 0)
     return;
 
-  const auto& compression_type = store->get_zone_params().get_compression_type(
-      s->bucket_info.placement_rule);
-  CompressorRef plugin;
-  if (compression_type != "none") {
-    plugin = Compressor::create(s->cct, compression_type);
-    if (!plugin) {
-      ldout(s->cct, 1) << "Cannot load plugin for compression type "
-          << compression_type << dendl;
-    } else {
-      compressor.emplace(s->cct, plugin, filter);
-      filter = &*compressor;
-    }
-  }
-
   op_ret = get_encrypt_filter(&encrypt, filter);
-  if (encrypt != nullptr)
-    filter = encrypt.get();
   if (op_ret < 0) {
     return;
+  }
+  if (encrypt != nullptr) {
+    filter = encrypt.get();
+  } else {
+    const auto& compression_type = store->get_zone_params().get_compression_type(
+        s->bucket_info.placement_rule);
+    if (compression_type != "none") {
+      plugin = Compressor::create(s->cct, compression_type);
+      if (!plugin) {
+        ldout(s->cct, 1) << "Cannot load plugin for compression type "
+            << compression_type << dendl;
+      } else {
+        compressor.emplace(s->cct, plugin, filter);
+        filter = &*compressor;
+      }
+    }
   }
 
   while (data_pending) {
