@@ -5,6 +5,8 @@
 #include "test/librbd/test_support.h"
 #include "test/librados_test_stub/MockTestMemIoCtxImpl.h"
 #include "librbd/managed_lock/ReleaseRequest.h"
+#include "librbd/managed_lock/BreakLockRequest.h"
+#include "librbd/managed_lock/GetLockOwnerRequest.h"
 #include "common/WorkQueue.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -17,7 +19,36 @@ struct Traits<MockImageCtx> {
   typedef librbd::MockImageWatcher Watcher;
 };
 }
-}
+
+namespace managed_lock {
+
+template <>
+struct BreakLockRequest<librbd::MockImageCtx> {
+  static BreakLockRequest *create(librados::IoCtx& ioctx,
+                                  ContextWQ *work_queue, const std::string& oid,
+                                  const typename ManagedLock<librbd::MockImageCtx>::LockOwner &owner,
+                                  bool blacklist_lock_owner,
+                                  Context *on_finish) {
+    return nullptr;
+  }
+
+  MOCK_METHOD0(send, void());
+};
+
+template <>
+struct GetLockOwnerRequest<librbd::MockImageCtx> {
+  static GetLockOwnerRequest *create(librados::IoCtx& ioctx,
+                                     const std::string& oid,
+                                     typename ManagedLock<librbd::MockImageCtx>::LockOwner *owner,
+                                     Context *on_finish) {
+    return nullptr;
+  }
+
+  MOCK_METHOD0(send, void());
+};
+
+} // namespace managed_lock
+} // namespace librbd
 
 // template definitions
 #include "librbd/managed_lock/ReleaseRequest.cc"
