@@ -181,55 +181,6 @@ private:
   Commands commands;
 };
 
-class MirrorStatusWatchCtx {
-public:
-  MirrorStatusWatchCtx(librados::IoCtx &ioctx, ContextWQ *work_queue) {
-    m_ioctx.dup(ioctx);
-    m_watcher = new Watcher(m_ioctx, work_queue);
-  }
-
-  ~MirrorStatusWatchCtx() {
-    delete m_watcher;
-  }
-
-  int register_watch() {
-    C_SaferCond cond;
-    m_watcher->register_watch(&cond);
-    return cond.wait();
-  }
-
-  int unregister_watch() {
-    C_SaferCond cond;
-    m_watcher->unregister_watch(&cond);
-    return cond.wait();
-  }
-
-  std::string get_oid() const {
-    return m_watcher->get_oid();
-  }
-
-private:
-  class Watcher : public librbd::Watcher {
-  public:
-    Watcher(librados::IoCtx &ioctx, ContextWQ *work_queue) :
-      librbd::Watcher(ioctx, work_queue, RBD_MIRRORING) {
-    }
-
-    virtual std::string get_oid() const {
-      return RBD_MIRRORING;
-    }
-
-    virtual void handle_notify(uint64_t notify_id, uint64_t handle,
-                               uint64_t notifier_id, bufferlist &bl) {
-      bufferlist out;
-      acknowledge_notify(notify_id, handle, out);
-    }
-  };
-
-  librados::IoCtx m_ioctx;
-  Watcher *m_watcher;
-};
-
 Replayer::Replayer(Threads *threads, std::shared_ptr<ImageDeleter> image_deleter,
                    ImageSyncThrottlerRef<> image_sync_throttler,
                    int64_t local_pool_id, const peer_t &peer,
@@ -258,6 +209,7 @@ Replayer::~Replayer()
   if (m_replayer_thread.is_started()) {
     m_replayer_thread.join();
   }
+  m_leader_watcher->shut_down();
 }
 
 bool Replayer::is_blacklisted() const {
@@ -300,6 +252,15 @@ int Replayer::init()
   m_remote_pool_id = m_remote_io_ctx.get_id();
 
   dout(20) << "connected to " << m_peer << dendl;
+
+  m_leader_watcher.reset(new LeaderWatcher(m_local_io_ctx,
+                                           m_threads->work_queue,
+                                           m_lock, m_cond));
+  r = m_leader_watcher->init();
+  if (r < 0) {
+    derr << "error initializing leader watcher: " << cpp_strerror(r) << dendl;
+    return r;
+  }
 
   // Bootstrap existing mirroring images
   init_local_mirroring_images();
@@ -435,6 +396,13 @@ void Replayer::run()
 {
   dout(20) << "enter" << dendl;
 
+  ImageIds empty_sources;
+  const int heartbeat_interval = 5;
+  const int set_sources_interval =
+    g_ceph_context->_conf->rbd_mirror_image_state_check_interval;
+
+  utime_t last_set_sources;
+  utime_t last_heartbeat;
   while (!m_stopping.read()) {
 
     std::string asok_hook_name = m_local_io_ctx.get_pool_name() + " " +
@@ -452,20 +420,37 @@ void Replayer::run()
       m_blacklisted = true;
       m_stopping.set(1);
     } else if (!m_manual_stop) {
-      set_sources(m_pool_watcher->get_images());
+      utime_t now = ceph_clock_now();
+      if (m_leader_watcher->is_leader()) {
+        if (now > last_set_sources + set_sources_interval) {
+          set_sources(m_pool_watcher->get_images());
+          last_set_sources = now;
+        }
+	if (now > last_heartbeat + heartbeat_interval) {
+	  C_SaferCond cond;
+	  m_leader_watcher->notify_heartbeat(&cond);
+	  m_lock.Unlock();
+	  int r = cond.wait();
+	  m_lock.Lock();
+	  if (r < 0) {
+	    derr << "error sending heartbeat: " << cpp_strerror(r) << dendl;
+	  } else {
+	    last_heartbeat = now;
+	  }
+	}
+      } else {
+	m_leader_watcher->check_leader_alive(now, heartbeat_interval);
+      }
     }
 
     if (m_blacklisted) {
       break;
     }
-    m_cond.WaitInterval(m_lock,
-			utime_t(g_ceph_context->_conf
-				->rbd_mirror_image_state_check_interval, 0));
+    m_cond.WaitInterval(m_lock, utime_t(1, 0));
   }
 
-  ImageIds empty_sources;
+  Mutex::Locker locker(m_lock);
   while (true) {
-    Mutex::Locker l(m_lock);
     set_sources(empty_sources);
     if (m_image_replayers.empty()) {
       break;
@@ -484,6 +469,7 @@ void Replayer::print_status(Formatter *f, stringstream *ss)
     f->open_object_section("replayer_status");
     f->dump_string("pool", m_local_io_ctx.get_pool_name());
     f->dump_stream("peer") << m_peer;
+    f->dump_bool("leader", m_leader_watcher->is_leader());
     f->open_array_section("image_replayers");
   };
 
@@ -615,9 +601,6 @@ void Replayer::set_sources(const ImageIds &image_ids)
   }
 
   if (image_ids.empty()) {
-    if (existing_image_replayers && m_image_replayers.empty()) {
-      mirror_image_status_shut_down();
-    }
     return;
   }
 
@@ -639,14 +622,6 @@ void Replayer::set_sources(const ImageIds &image_ids)
     return;
   }
 
-  if (m_image_replayers.empty() && !existing_image_replayers) {
-    // create entry for pool if it doesn't exist
-    r = mirror_image_status_init();
-    if (r < 0) {
-      return;
-    }
-  }
-
   for (auto &image_id : image_ids) {
     auto it = m_image_replayers.find(image_id.id);
     if (it == m_image_replayers.end()) {
@@ -663,47 +638,6 @@ void Replayer::set_sources(const ImageIds &image_ids)
     }
     start_image_replayer(it->second, image_id.id, image_id.name);
   }
-}
-
-int Replayer::mirror_image_status_init() {
-  assert(!m_status_watcher);
-
-  uint64_t instance_id = librados::Rados(m_local_io_ctx).get_instance_id();
-  dout(20) << "pool_id=" << m_local_pool_id << ", "
-           << "instance_id=" << instance_id << dendl;
-
-  librados::ObjectWriteOperation op;
-  librbd::cls_client::mirror_image_status_remove_down(&op);
-  int r = m_local_io_ctx.operate(RBD_MIRRORING, &op);
-  if (r < 0) {
-    derr << "error initializing " << RBD_MIRRORING << "object: "
-	 << cpp_strerror(r) << dendl;
-    return r;
-  }
-
-  unique_ptr<MirrorStatusWatchCtx> watch_ctx(
-    new MirrorStatusWatchCtx(m_local_io_ctx, m_threads->work_queue));
-
-  r = watch_ctx->register_watch();
-  if (r < 0) {
-    derr << "error registering watcher for " << watch_ctx->get_oid()
-	 << " object: " << cpp_strerror(r) << dendl;
-    return r;
-  }
-
-  m_status_watcher = std::move(watch_ctx);
-  return 0;
-}
-
-void Replayer::mirror_image_status_shut_down() {
-  assert(m_status_watcher);
-
-  int r = m_status_watcher->unregister_watch();
-  if (r < 0) {
-    derr << "error unregistering watcher for " << m_status_watcher->get_oid()
-	 << " object: " << cpp_strerror(r) << dendl;
-  }
-  m_status_watcher.reset();
 }
 
 void Replayer::start_image_replayer(unique_ptr<ImageReplayer<> > &image_replayer,

@@ -17,6 +17,7 @@
 
 #include "ClusterWatcher.h"
 #include "ImageReplayer.h"
+#include "LeaderWatcher.h"
 #include "PoolWatcher.h"
 #include "ImageDeleter.h"
 #include "types.h"
@@ -26,7 +27,6 @@ namespace mirror {
 
 struct Threads;
 class ReplayerAdminSocketHook;
-class MirrorStatusWatchCtx;
 
 /**
  * Controls mirroring for a single remote cluster.
@@ -64,9 +64,6 @@ private:
                             const boost::optional<std::string>& image_name);
   bool stop_image_replayer(unique_ptr<ImageReplayer<> > &image_replayer);
 
-  int mirror_image_status_init();
-  void mirror_image_status_shut_down();
-
   int init_rados(const std::string &cluster_name, const std::string &client_name,
                  const std::string &description, RadosRef *rados_ref);
 
@@ -92,7 +89,7 @@ private:
 
   std::unique_ptr<PoolWatcher> m_pool_watcher;
   std::map<std::string, std::unique_ptr<ImageReplayer<> > > m_image_replayers;
-  std::unique_ptr<MirrorStatusWatchCtx> m_status_watcher;
+  std::unique_ptr<LeaderWatcher> m_leader_watcher;
 
   std::string m_asok_hook_name;
   ReplayerAdminSocketHook *m_asok_hook;

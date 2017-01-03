@@ -8,6 +8,7 @@
 #include "librbd/Utils.h"
 #include "librbd/watcher/Types.h"
 
+#define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_rbd_mirror
 #undef dout_prefix
 #define dout_prefix *_dout << "rbd::mirror::LeaderWatcher: " \
@@ -36,12 +37,8 @@ LeaderWatcher::LeaderWatcher(librados::IoCtx &io_ctx, ContextWQ *work_queue,
 int LeaderWatcher::init() {
   dout(20) << dendl;
 
-  assert(m_lock.is_locked());
-
-  if (m_leader_lock) {
-    dout(20) << "already initialized" << dendl;
-    return 0;
-  }
+  Mutex::Locker locker(m_lock);
+  assert(!m_leader_lock);
 
   int r = m_ioctx.create(m_oid, false);
   if (r < 0) {
@@ -60,7 +57,8 @@ int LeaderWatcher::init() {
   }
 
   m_leader_lock.reset(new LeaderLock(m_ioctx, m_work_queue, get_oid(), this));
-  m_leader_last_heartbeat = ceph_clock_now(nullptr);
+  m_leader_last_heartbeat = ceph_clock_now();
+
   acquire_leader_lock();
 
   return 0;
@@ -69,37 +67,30 @@ int LeaderWatcher::init() {
 void LeaderWatcher::shut_down() {
   dout(20) << dendl;
 
-  assert(m_lock.is_locked());
-
-  if (!m_leader_lock) {
-    dout(20) << "not initialized" << dendl;
-    return;
-  }
-
-  unique_ptr<LeaderLock> leader_lock(m_leader_lock.release());
-
-  if (m_leader) { // XXXMG: race?
-    C_SaferCond release_lock_ctx;
-    release_leader_lock(&release_lock_ctx);
-    m_lock.Unlock();
-    release_lock_ctx.wait();
-  } else {
-    m_lock.Unlock();
-  }
-
-  C_SaferCond shutdown_lock_ctx;
-  leader_lock->shut_down(&shutdown_lock_ctx);
-  shutdown_lock_ctx.wait();
-
   C_SaferCond unregister_ctx;
   unregister_watch(&unregister_ctx);
   int r = unregister_ctx.wait();
   if (r < 0) {
-    derr << "error unregistering leader watcher for " << m_oid
-         << " object: " << cpp_strerror(r) << dendl;
+    derr << "error unregistering leader watcher for " << m_oid << " object: "
+	 << cpp_strerror(r) << dendl;
   }
 
-  m_lock.Lock();
+  C_SaferCond shutdown_lock_ctx;
+  {
+    Mutex::Locker locker(m_lock);
+    assert(m_leader_lock);
+
+    if (m_leader) {
+      C_SaferCond release_lock_ctx;
+      release_leader_lock(&release_lock_ctx);
+      m_lock.Unlock();
+      release_lock_ctx.wait();
+      m_lock.Lock();
+    }
+    m_leader_lock->shut_down(&shutdown_lock_ctx);
+  }
+
+  shutdown_lock_ctx.wait();
 }
 
 void LeaderWatcher::check_leader_alive(utime_t &now, int heartbeat_interval) {
@@ -164,10 +155,8 @@ void LeaderWatcher::handle_acquire_leader_lock(int r) {
           m_leader_lock_owner = {};
         } else {
           m_leader_lock_owner = m_lock_owner;
-          m_leader_last_heartbeat = ceph_clock_now(nullptr);
+          m_leader_last_heartbeat = ceph_clock_now();
         }
-        m_leader = false;
-        m_cond.Signal();
       });
 
     m_leader_lock->get_lock_owner(&m_lock_owner, ctx);
@@ -219,6 +208,9 @@ void LeaderWatcher::release_leader_lock(Context *on_finish) {
   assert(m_status_watcher);
 
   MirrorStatusWatcher *status_watcher = m_status_watcher.release();
+  m_leader = false;
+  m_leader_last_heartbeat = ceph_clock_now();
+  m_cond.Signal();
 
   on_finish = new FunctionContext(
     [this, status_watcher, on_finish](int r) {
@@ -228,9 +220,6 @@ void LeaderWatcher::release_leader_lock(Context *on_finish) {
       }
       Mutex::Locker locker(m_lock);
       delete status_watcher;
-      m_leader = false;
-      m_leader_last_heartbeat = ceph_clock_now(nullptr);
-      m_cond.Signal();
       on_finish->complete(r);
     });
 
@@ -298,7 +287,8 @@ void LeaderWatcher::handle_heartbeat(Context *on_notify_ack) {
     if (m_leader) {
       derr << "got another leader heartbeat" << dendl;
     }
-    m_leader_last_heartbeat = ceph_clock_now(nullptr);
+
+    m_leader_last_heartbeat = ceph_clock_now();
   }
 
   on_notify_ack->complete(0);
@@ -309,8 +299,9 @@ void LeaderWatcher::handle_lock_acquired(Context *on_notify_ack) {
 
   {
     Mutex::Locker locker(m_lock);
-    m_leader = false;
-    m_cond.Signal();
+    if (m_leader) {
+      derr << "got another leader lock_acquired" << dendl;
+    }
 
     FunctionContext *ctx = new FunctionContext(
       [this](int r) {
@@ -322,7 +313,7 @@ void LeaderWatcher::handle_lock_acquired(Context *on_notify_ack) {
           m_leader_lock_owner = {};
         } else {
           m_leader_lock_owner = m_lock_owner;
-          m_leader_last_heartbeat = ceph_clock_now(nullptr);
+          m_leader_last_heartbeat = ceph_clock_now();
         }
       });
 
@@ -337,6 +328,11 @@ void LeaderWatcher::handle_lock_released(Context *on_notify_ack) {
 
   {
     Mutex::Locker locker(m_lock);
+
+    if (m_leader) {
+      derr << "got another leader lock_released" << dendl;
+    }
+
     acquire_leader_lock();
   }
 
