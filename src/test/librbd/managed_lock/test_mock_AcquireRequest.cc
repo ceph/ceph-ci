@@ -42,14 +42,24 @@ using ::testing::WithArg;
 
 static const std::string TEST_COOKIE("auto 123");
 
+MATCHER_P(IsLockType, exclusive, "") {
+  cls_lock_lock_op op;
+  bufferlist bl(arg);
+  bufferlist::iterator iter = bl.begin();
+  ::decode(op, iter);
+  return op.type == (exclusive ? LOCK_EXCLUSIVE : LOCK_SHARED);
+}
+
 class TestMockManagedLockAcquireRequest : public TestMockFixture {
 public:
   typedef AcquireRequest<MockImageCtx> MockAcquireRequest;
   typedef ManagedLock<MockImageCtx> MockManagedLock;
 
-  void expect_lock(MockImageCtx &mock_image_ctx, int r) {
+  void expect_lock(MockImageCtx &mock_image_ctx, int r,
+                             bool exclusive = true) {
     EXPECT_CALL(get_mock_io_ctx(mock_image_ctx.md_ctx),
-                exec(mock_image_ctx.header_oid, _, StrEq("lock"), StrEq("lock"), _, _, _))
+                exec(mock_image_ctx.header_oid, _, StrEq("lock"),
+                     StrEq("lock"), IsLockType(exclusive), _, _))
                   .WillOnce(Return(r));
   }
 
@@ -123,7 +133,7 @@ public:
 
 };
 
-TEST_F(TestMockManagedLockAcquireRequest, Success) {
+TEST_F(TestMockManagedLockAcquireRequest, SuccessExclusive) {
 
   librbd::ImageCtx *ictx;
   ASSERT_EQ(0, open_image(m_image_name, &ictx));
@@ -136,7 +146,25 @@ TEST_F(TestMockManagedLockAcquireRequest, Success) {
   C_SaferCond ctx;
   MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx.md_ctx,
      mock_image_ctx.image_watcher, ictx->op_work_queue, mock_image_ctx.header_oid,
-     TEST_COOKIE, &ctx);
+     TEST_COOKIE, true, &ctx);
+  req->send();
+  ASSERT_EQ(0, ctx.wait());
+}
+
+TEST_F(TestMockManagedLockAcquireRequest, SuccessShared) {
+
+  librbd::ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+
+  MockImageCtx mock_image_ctx(*ictx);
+
+  InSequence seq;
+  expect_lock(mock_image_ctx, 0, false);
+
+  C_SaferCond ctx;
+  MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx.md_ctx,
+     mock_image_ctx.image_watcher, ictx->op_work_queue, mock_image_ctx.header_oid,
+     TEST_COOKIE, false, &ctx);
   req->send();
   ASSERT_EQ(0, ctx.wait());
 }
@@ -161,7 +189,7 @@ TEST_F(TestMockManagedLockAcquireRequest, LockBusy) {
   C_SaferCond ctx;
   MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx.md_ctx,
      mock_image_ctx.image_watcher, ictx->op_work_queue, mock_image_ctx.header_oid,
-     TEST_COOKIE, &ctx);
+     TEST_COOKIE, true, &ctx);
   req->send();
   ASSERT_EQ(-ENOENT, ctx.wait());
 }
@@ -180,7 +208,7 @@ TEST_F(TestMockManagedLockAcquireRequest, GetLockInfoError) {
   C_SaferCond ctx;
   MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx.md_ctx,
      mock_image_ctx.image_watcher, ictx->op_work_queue, mock_image_ctx.header_oid,
-     TEST_COOKIE, &ctx);
+     TEST_COOKIE, true, &ctx);
   req->send();
   ASSERT_EQ(-EINVAL, ctx.wait());
 }
@@ -200,7 +228,7 @@ TEST_F(TestMockManagedLockAcquireRequest, GetLockInfoEmpty) {
   C_SaferCond ctx;
   MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx.md_ctx,
      mock_image_ctx.image_watcher, ictx->op_work_queue, mock_image_ctx.header_oid,
-     TEST_COOKIE, &ctx);
+     TEST_COOKIE, true, &ctx);
   req->send();
   ASSERT_EQ(-EINVAL, ctx.wait());
 }
@@ -219,7 +247,7 @@ TEST_F(TestMockManagedLockAcquireRequest, GetLockInfoExternalTag) {
   C_SaferCond ctx;
   MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx.md_ctx,
      mock_image_ctx.image_watcher, ictx->op_work_queue, mock_image_ctx.header_oid,
-     TEST_COOKIE, &ctx);
+     TEST_COOKIE, true, &ctx);
   req->send();
   ASSERT_EQ(-EBUSY, ctx.wait());
 }
@@ -239,7 +267,7 @@ TEST_F(TestMockManagedLockAcquireRequest, GetLockInfoShared) {
   C_SaferCond ctx;
   MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx.md_ctx,
      mock_image_ctx.image_watcher, ictx->op_work_queue, mock_image_ctx.header_oid,
-     TEST_COOKIE, &ctx);
+     TEST_COOKIE, true, &ctx);
   req->send();
   ASSERT_EQ(-EBUSY, ctx.wait());
 }
@@ -259,7 +287,7 @@ TEST_F(TestMockManagedLockAcquireRequest, GetLockInfoExternalCookie) {
   C_SaferCond ctx;
   MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx.md_ctx,
      mock_image_ctx.image_watcher, ictx->op_work_queue, mock_image_ctx.header_oid,
-     TEST_COOKIE, &ctx);
+     TEST_COOKIE, true, &ctx);
   req->send();
   ASSERT_EQ(-EBUSY, ctx.wait());
 }
@@ -280,7 +308,7 @@ TEST_F(TestMockManagedLockAcquireRequest, GetWatchersError) {
   C_SaferCond ctx;
   MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx.md_ctx,
      mock_image_ctx.image_watcher, ictx->op_work_queue, mock_image_ctx.header_oid,
-     TEST_COOKIE, &ctx);
+     TEST_COOKIE, true, &ctx);
   req->send();
   ASSERT_EQ(-EINVAL, ctx.wait());
 }
@@ -301,7 +329,7 @@ TEST_F(TestMockManagedLockAcquireRequest, GetWatchersAlive) {
   C_SaferCond ctx;
   MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx.md_ctx,
      mock_image_ctx.image_watcher, ictx->op_work_queue, mock_image_ctx.header_oid,
-     TEST_COOKIE, &ctx);
+     TEST_COOKIE, true, &ctx);
   req->send();
   ASSERT_EQ(-EAGAIN, ctx.wait());
 }
@@ -326,7 +354,7 @@ TEST_F(TestMockManagedLockAcquireRequest, BlacklistDisabled) {
   C_SaferCond ctx;
   MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx.md_ctx,
      mock_image_ctx.image_watcher, ictx->op_work_queue, mock_image_ctx.header_oid,
-     TEST_COOKIE, &ctx);
+     TEST_COOKIE, true, &ctx);
   req->send();
   ASSERT_EQ(-ENOENT, ctx.wait());
 
@@ -350,7 +378,7 @@ TEST_F(TestMockManagedLockAcquireRequest, BlacklistError) {
   C_SaferCond ctx;
   MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx.md_ctx,
      mock_image_ctx.image_watcher, ictx->op_work_queue, mock_image_ctx.header_oid,
-     TEST_COOKIE, &ctx);
+     TEST_COOKIE, true, &ctx);
   req->send();
   ASSERT_EQ(-EINVAL, ctx.wait());
 }
@@ -374,7 +402,7 @@ TEST_F(TestMockManagedLockAcquireRequest, BreakLockMissing) {
   C_SaferCond ctx;
   MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx.md_ctx,
      mock_image_ctx.image_watcher, ictx->op_work_queue, mock_image_ctx.header_oid,
-     TEST_COOKIE, &ctx);
+     TEST_COOKIE, true, &ctx);
   req->send();
   ASSERT_EQ(-EINVAL, ctx.wait());
 }
@@ -397,7 +425,7 @@ TEST_F(TestMockManagedLockAcquireRequest, BreakLockError) {
   C_SaferCond ctx;
   MockAcquireRequest *req = MockAcquireRequest::create(mock_image_ctx.md_ctx,
      mock_image_ctx.image_watcher, ictx->op_work_queue, mock_image_ctx.header_oid,
-     TEST_COOKIE, &ctx);
+     TEST_COOKIE, true, &ctx);
   req->send();
   ASSERT_EQ(-EINVAL, ctx.wait());
 }

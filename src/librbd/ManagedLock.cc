@@ -43,13 +43,14 @@ const std::string ManagedLock<I>::WATCHER_LOCK_TAG("internal");
 
 template <typename I>
 ManagedLock<I>::ManagedLock(librados::IoCtx &ioctx, ContextWQ *work_queue,
-                            const string& oid, Watcher *watcher)
+                            const string& oid, Watcher *watcher, Mode mode)
   : m_lock(util::unique_lock_name("librbd::ManagedLock<I>::m_lock", this)),
     m_state(STATE_UNLOCKED),
     m_ioctx(ioctx), m_cct(reinterpret_cast<CephContext *>(ioctx.cct())),
     m_work_queue(work_queue),
     m_oid(oid),
-    m_watcher(watcher) {
+    m_watcher(watcher),
+    m_mode(mode) {
 }
 
 template <typename I>
@@ -379,7 +380,7 @@ void ManagedLock<I>::handle_pre_acquire_lock(int r) {
 
   using managed_lock::AcquireRequest;
   AcquireRequest<I>* req = AcquireRequest<I>::create(m_ioctx, m_watcher,
-      m_work_queue, m_oid, m_cookie,
+      m_work_queue, m_oid, m_cookie, m_mode == EXCLUSIVE,
       util::create_context_callback<
         ManagedLock<I>, &ManagedLock<I>::handle_acquire_lock>(this));
   m_work_queue->queue(new C_SendLockRequest<AcquireRequest<I>>(req), 0);
@@ -466,7 +467,7 @@ void ManagedLock<I>::send_reacquire_lock() {
 
   using managed_lock::ReacquireRequest;
   ReacquireRequest<I>* req = ReacquireRequest<I>::create(m_ioctx, m_oid,
-      m_cookie, m_new_cookie,
+      m_cookie, m_new_cookie, m_mode == EXCLUSIVE,
       util::create_context_callback<
         ManagedLock, &ManagedLock<I>::handle_reacquire_lock>(this));
   m_work_queue->queue(new C_SendLockRequest<ReacquireRequest<I>>(req));

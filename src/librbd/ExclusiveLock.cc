@@ -26,7 +26,7 @@ using ML = ManagedLock<I>;
 template <typename I>
 ExclusiveLock<I>::ExclusiveLock(I &image_ctx)
   : ML<I>(image_ctx.md_ctx, image_ctx.op_work_queue, image_ctx.header_oid,
-          image_ctx.image_watcher),
+          image_ctx.image_watcher, ML<I>::EXCLUSIVE),
     m_image_ctx(image_ctx), m_pre_post_callback(nullptr),
     m_shutting_down(false)  {
   ML<I>::m_state = ML<I>::STATE_UNINITIALIZED;

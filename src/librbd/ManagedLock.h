@@ -27,13 +27,19 @@ private:
 public:
   static const std::string WATCHER_LOCK_TAG;
 
+  enum Mode {
+    EXCLUSIVE,
+    SHARED
+  };
+
   static ManagedLock *create(librados::IoCtx& ioctx, ContextWQ *work_queue,
-                             const std::string& oid, Watcher *watcher) {
-    return new ManagedLock(ioctx, work_queue, oid, watcher);
+                             const std::string& oid, Watcher *watcher,
+                             Mode mode) {
+    return new ManagedLock(ioctx, work_queue, oid, watcher, mode);
   }
 
   ManagedLock(librados::IoCtx& ioctx, ContextWQ *work_queue,
-              const std::string& oid, Watcher *watcher);
+              const std::string& oid, Watcher *watcher, Mode mode);
   virtual ~ManagedLock();
 
   bool is_lock_owner() const;
@@ -151,6 +157,7 @@ private:
   ContextWQ *m_work_queue;
   std::string m_oid;
   Watcher *m_watcher;
+  Mode m_mode;
 
   std::string m_cookie;
   std::string m_new_cookie;
