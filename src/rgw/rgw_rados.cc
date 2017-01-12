@@ -6708,7 +6708,7 @@ public:
       src_attrs.erase(RGW_ATTR_MANIFEST); // not interested in original object layout
     }
 
-    if (!plugin && src_attrs.find(RGW_ATTR_CRYPT_MODE) == src_attrs.end()) {
+    if (plugin && src_attrs.find(RGW_ATTR_CRYPT_MODE) == src_attrs.end()) {
       //do not compress if object is encrypted
       compressor = boost::in_place(cct, plugin, filter);
       filter = &*compressor;
