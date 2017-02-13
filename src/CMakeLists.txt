@@ -827,7 +827,7 @@ add_subdirectory(compressor)
 
 add_subdirectory(tools)
 
-add_subdirectory(isa-l_crypto_plugin)
+add_subdirectory(crypto/isa-l)
 
 if(WITH_TESTS)
 
