@@ -1478,11 +1478,6 @@ void RGWGetObj::execute()
     return;
   }
 
-  if (!get_data || ofs > end) {
-    send_response_data(bl, 0, 0);
-    return;
-  }
-
   attr_iter = attrs.find(RGW_ATTR_MANIFEST);
   op_ret = this->get_decrypt_filter(&decrypt, filter,
                                     attr_iter != attrs.end() ? &(attr_iter->second) : nullptr);
@@ -1491,6 +1486,11 @@ void RGWGetObj::execute()
   }
   if (op_ret < 0) {
     goto done_err;
+  }
+
+  if (!get_data || ofs > end) {
+    send_response_data(bl, 0, 0);
+    return;
   }
 
   perfcounter->inc(l_rgw_get_b, end - ofs);

@@ -1641,6 +1641,7 @@ OPTION(mgr_beacon_period, OPT_INT, 5)  // How frequently to send beacon
 OPTION(mgr_stats_period, OPT_INT, 5) // How frequently to send stats
 OPTION(mon_mgr_digest_period, OPT_INT, 5)  // How frequently to send digests
 OPTION(mon_mgr_beacon_grace, OPT_INT, 30)  // How long to wait to failover
+OPTION(rgw_crypt_require_ssl, OPT_BOOL, true) // requests including encryption key headers must be sent over ssl
 OPTION(rgw_crypt_default_encryption_key, OPT_STR, "") // base64 encoded key for encryption of rgw objects
 OPTION(rgw_crypt_s3_kms_encryption_keys, OPT_STR, "") // extra keys that may be used for aws:kms
                                                       // defined as map "key1=YmluCmJvb3N0CmJvb3N0LQ== key2=b3V0CnNyYwpUZXN0aW5nCg=="
