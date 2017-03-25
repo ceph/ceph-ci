@@ -11,7 +11,6 @@ int ceph_arch_probe(void)
   if (ceph_arch_probed)
     return 1;
 
-  ceph_arch_intel_probe();
   ceph_arch_arm_probe();
 
   ceph_arch_probed = 1;

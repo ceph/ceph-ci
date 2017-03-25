@@ -36,7 +36,6 @@ public:
   {
     if (cryptoaccel == nullptr)
     {
-      ceph_arch_probe();
       if (ceph_arch_intel_aesni && ceph_arch_intel_sse41) {
         cryptoaccel = CryptoAccelRef(new ISALCryptoAccel);
       }

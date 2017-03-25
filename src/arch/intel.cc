@@ -93,3 +93,11 @@ int ceph_arch_intel_probe(void)
 }
 
 #endif // __x86_64__
+
+struct arch_prober
+{
+  arch_prober()
+  {
+    ceph_arch_intel_probe();
+  }
+} static_initialization_prober;

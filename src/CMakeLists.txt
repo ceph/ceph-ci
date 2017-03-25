@@ -289,7 +289,7 @@ configure_file(
 
 set(arch_files
   arch/arm.c
-  arch/intel.c
+  arch/intel.cc
   arch/probe.cc)
 
 set(auth_files
