@@ -7,6 +7,7 @@ import { AuthService } from '~/app/shared/api/auth.service';
 import { Credentials } from '~/app/shared/models/credentials';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
 import { ModalService } from '~/app/shared/services/modal.service';
+import { environment } from '~/environments/environment';
 
 @Component({
   selector: 'cd-login',
@@ -18,6 +19,11 @@ export class LoginComponent implements OnInit {
   isLoginActive = false;
   returnUrl: string;
   postInstalled = false;
+  environment = environment;
+  docItems: any[] = [
+    { section: 'privacy', text: $localize`Privacy` },
+    { section: 'terms', text: $localize`Terms of use` }
+  ];
 
   constructor(
     private authService: AuthService,

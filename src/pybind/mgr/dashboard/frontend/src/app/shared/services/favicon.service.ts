@@ -36,7 +36,7 @@ export class FaviconService implements OnDestroy {
 
     const favicon = this.document.getElementById('cdFavicon');
     const faviconSize = 16;
-    const radius = faviconSize / 4;
+    const radius = faviconSize / 5;
 
     const canvas = this.document.createElement('canvas');
     canvas.width = faviconSize;
@@ -48,7 +48,7 @@ export class FaviconService implements OnDestroy {
 
     img.onload = () => {
       // Draw Original Favicon as Background
-      context.drawImage(img, 0, 0, faviconSize, faviconSize);
+      context.drawImage(img, -1, 2, faviconSize, faviconSize);
 
       if (Object.keys(HealthColor).includes(status as HealthColor)) {
         // Cut notification circle area

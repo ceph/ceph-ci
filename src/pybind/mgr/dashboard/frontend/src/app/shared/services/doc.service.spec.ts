@@ -21,14 +21,14 @@ describe('DocService', () => {
   });
 
   it('should return full URL', () => {
-    expect(service.urlGenerator('iscsi', 'foo')).toBe(
-      'https://docs.ceph.com/en/foo/mgr/dashboard/#enabling-iscsi-management'
+    expect(service.urlGenerator('iscsi', '7')).toBe(
+      'https://access.redhat.com/documentation/en-us/red_hat_ceph_storage/7/html/dashboard_guide/management-of-block-devices-using-the-ceph-dashboard#management-of-iscsi-functions-on-the-ceph-dashboard'
     );
   });
 
-  it('should return latest version URL for main', () => {
-    expect(service.urlGenerator('orch', 'main')).toBe(
-      'https://docs.ceph.com/en/latest/mgr/orchestrator'
+  it('should return latest version URL for 5', () => {
+    expect(service.urlGenerator('orch', '7')).toBe(
+      'https://access.redhat.com/documentation/en-us/red_hat_ceph_storage/7/html/operations_guide/introduction-to-the-ceph-orchestrator'
     );
   });
 
@@ -64,9 +64,9 @@ describe('DocService', () => {
       expect(i).toBe(0);
       expect(result).toEqual(undefined);
 
-      nextSummary('foo');
+      nextSummary('6');
       expect(result).toEqual(
-        'https://docs.ceph.com/en/foo/mgr/dashboard/#enabling-prometheus-alerting'
+        'https://access.redhat.com/documentation/en-us/red_hat_ceph_storage/7/html/dashboard_guide/management-of-alerts-on-the-ceph-dashboard'
       );
       expect(i).toBe(1);
       expect(subscriber.closed).toBe(true);

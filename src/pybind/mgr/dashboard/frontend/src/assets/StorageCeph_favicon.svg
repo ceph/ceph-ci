@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="16px" height="16px" viewBox="0 0 16 16" version="1.1">
+<defs>
+<filter id="alpha" filterUnits="objectBoundingBox" x="0%" y="0%" width="100%" height="100%">
+  <feColorMatrix type="matrix" in="SourceGraphic" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0"/>
+</filter>
+<image id="image7" width="16" height="16" xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABmJLR0QA/wD/AP+gvaeTAAABQUlEQVQ4jbVSv0tCYRS9r0/MKBADJbAfBA1BDdEu+HgFNjk02L/QJATSkiAIjo0NWUtjazlGQVBb4eCU0AOXR4U/CJ497xen4UUYvk9fQxfudO4995zDJfqvAiMJNu/cRtL/otNZARuXkPk6HDMDx8y4JAd7aIuIetHOxSFTJ5BpC71yFrVi8AerFYNgJPExs0REhMbOxCCB3HgFV0toirDyiLU+CTsX7yfvIxAYau36NgCubIK3LiAFIAXAKPgmIPoOtnu16A2OUuDlWzn8YkwNxVXH8H4cg/0wh3MhQELzQzAGRsENZa1DofF9CpxNU/RG0+hzZCYeCpajeG6ElHhThMHVEqT+5j3QFhHI2Db4MDXwSL1yFjJtQRqnsOdn1Sq6iQXI3aNfryzzdXCiAudx1b8dbungp3u3W7rvxb/WF/PE2Qijkh4VAAAAAElFTkSuQmCC"/>
+<mask id="mask0">
+  <g filter="url(#alpha)">
+<use xlink:href="#image7"/>
+  </g>
+</mask>
+<linearGradient id="linear0" gradientUnits="userSpaceOnUse" x1="0" y1="32" x2="32" y2="0" gradientTransform="matrix(0.5,0,0,0.5,0,0)">
+<stop offset="0.1" style="stop-color:rgb(3.137255%,74.117647%,72.941176%);stop-opacity:1;"/>
+<stop offset="0.9" style="stop-color:rgb(5.882353%,38.431373%,99.607843%);stop-opacity:1;"/>
+</linearGradient>
+<clipPath id="clip1">
+  <rect x="0" y="0" width="16" height="16"/>
+</clipPath>
+<g id="surface6" clip-path="url(#clip1)">
+<rect x="0" y="0" width="16" height="16" style="fill:url(#linear0);stroke:none;"/>
+</g>
+</defs>
+<g id="surface1">
+<path style=" stroke:none;fill-rule:nonzero;fill:rgb(0%,11.372549%,42.352941%);fill-opacity:1;" d="M 10.5 6.84375 L 10.5 9.15625 C 10.5 9.332031 10.40625 9.5 10.25 9.589844 L 8.25 10.742188 C 8.09375 10.832031 7.90625 10.832031 7.75 10.742188 L 5.75 9.589844 C 5.59375 9.5 5.5 9.332031 5.5 9.15625 L 5.5 6.84375 C 5.5 6.667969 5.59375 6.5 5.75 6.414062 L 7.75 5.257812 C 7.90625 5.167969 8.09375 5.167969 8.25 5.257812 L 10.25 6.414062 C 10.40625 6.5 10.5 6.667969 10.5 6.84375 Z M 9.5 8.867188 L 9.5 7.132812 L 8 6.269531 L 6.5 7.132812 L 6.5 8.867188 L 8 9.734375 Z M 9.5 8.867188 "/>
+<use xlink:href="#surface6" mask="url(#mask0)"/>
+</g>
+</svg>

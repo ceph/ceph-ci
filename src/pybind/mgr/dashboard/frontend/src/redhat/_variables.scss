@@ -1,0 +1,30 @@
+/* Vendor specific variables
+
+Example:
+$my-accent-color: #a18fff
+*/
+@use '@patternfly/patternfly/sass-utilities/colors';
+
+$navbar-bg: colors.$pf-color-black-900 !default;
+$sidebar-bg: colors.$pf-color-black-850 !default;
+$navbar-hover: colors.$pf-color-black-800 !default;
+$disable-color: colors.$pf-color-black-600;
+$log-bg-color: colors.$pf-color-black-200;
+$btn-light-border: colors.$pf-color-black-200;
+$btn-border-bottom: colors.$pf-color-black-500;
+$hover-border: #ced4da;
+$nav-tab-hover: colors.$pf-color-black-300;
+$badge-success: colors.$pf-color-green-50;
+$table-active-row: #80bfff;
+$gray-200: colors.$pf-color-black-200;
+
+$primary: colors.$pf-color-blue-400;
+$secondary: colors.$pf-color-black-850;
+$success: colors.$pf-color-green-500;
+$info: colors.$pf-color-blue-300;
+$warning: colors.$pf-color-gold-500;
+$danger: colors.$pf-color-red-100;
+$light: colors.$pf-color-black-300;
+$black: colors.$pf-color-black-1000;
+$white: colors.$pf-color-white;
+$navbar-height: 50px;

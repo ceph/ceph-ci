@@ -97,7 +97,12 @@
             "styles": [
               "node_modules/swagger-ui/dist/swagger-ui.css",
               "node_modules/ngx-toastr/toastr.css",
-              "src/styles.scss"
+              "src/styles.scss",
+              {
+                "input": "src/redhat/rh_overrides.scss",
+                "bundleName": "rh-overrides",
+                "inject": false
+              }
             ],
             "stylePreprocessorOptions": {
               "includePaths": [
@@ -131,7 +136,35 @@
                   "replace": "src/environments/environment.ts",
                   "with": "src/environments/environment.prod.ts"
                 }
-              ]
+              ],
+              "stylePreprocessorOptions": {
+                "includePaths": [
+                  "src/redhat"
+                ]
+              },
+              "outputPath": "dist-redhat"
+            },
+            "production-ibm": {
+              "budgets": [
+                {
+                  "type": "anyComponentStyle",
+                  "maximumWarning": "6kb"
+                }
+              ],
+              "optimization": true,
+              "outputHashing": "all",
+              "sourceMap": false,
+              "namedChunks": false,
+              "extractLicenses": true,
+              "vendorChunk": false,
+              "buildOptimizer": true,
+              "fileReplacements": [
+                {
+                  "replace": "src/environments/environment.ts",
+                  "with": "src/environments/environment.ibm.ts"
+                }
+              ],
+              "outputPath": "dist-ibm"
             },
             "cs": {
               "localize": [
