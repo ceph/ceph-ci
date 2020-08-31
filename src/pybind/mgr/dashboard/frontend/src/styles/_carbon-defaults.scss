@@ -9,7 +9,7 @@
 @use '@carbon/styles/scss/compat/themes' as compat;
 @use '@carbon/styles/scss/themes';
 @use '@carbon/styles/scss/theme' with (
-  $theme: default.$theme,
+  $theme: compat.$g100,
   $fallback: compat.$g90,
   );
 

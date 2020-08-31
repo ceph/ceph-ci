@@ -2,3 +2,326 @@
 
 Custom styles, third-party libraries, frameworks, design systems, ...
 */
+@use './src/styles/vendor/variables' as vv;
+@use '@carbon/colors';
+
+$bg-color-dark: #161616;
+
+input:-webkit-autofill {
+  box-shadow: none !important;
+  -webkit-text-fill-color: $bg-color-dark !important;
+}
+
+.login {
+  background-image: url('../../assets/ibm/IBMCephLoginBG.png') !important;
+  background-position: center;
+  background-size: cover;
+
+  a.cds--header__menu-item {
+    background-color: transparent !important;
+  }
+
+  .list-inline {
+    margin-left: calc(50vw - (100% / 2)) !important;
+    width: 100%;
+  }
+
+  cd-login-password-form {
+    h2 {
+      margin-left: calc(50vw - (100% / 2));
+      margin-top: calc(50vh - (100% / 2));
+      width: 100%;
+    }
+
+    h4,
+    form {
+      margin-left: calc(50vw - (100% / 2));
+      width: 100%;
+    }
+
+    form {
+      .form-group {
+        background-color: transparent !important;
+        border-left: 0 !important;
+
+        &:focus-within {
+          border-left: 0 !important;
+        }
+      }
+    }
+  }
+
+  .container {
+    margin: 0;
+    max-width: 825px;
+    padding: 0;
+
+    .branding-info {
+      visibility: hidden;
+    }
+
+    .login-form {
+      padding: 0;
+
+      cd-login {
+        .container {
+          background-color: vv.$white;
+          margin-left: calc(50vw - (100% / 2));
+          margin-top: calc(50vh - (100% / 2));
+
+          .pl-4 {
+            padding-left: 1rem !important;
+          }
+
+          .form-group:focus-within {
+            border-left: 0 !important;
+          }
+
+          form {
+            padding: 16px;
+            // form title is inside before tag so this is the only way to add margin on top
+            padding-top: 1rem;
+
+            &::before {
+              color: colors.$gray-100;
+              content: 'Log in \A \A';
+              font-size: 2rem;
+              margin-bottom: 48px !important;
+            }
+
+            .form-group {
+              background-color: transparent !important;
+              margin-bottom: 0 !important;
+              padding-left: 0 !important;
+
+              &:focus-within {
+                border-left: 0 !important;
+              }
+
+              .form-group-append {
+                display: flex;
+                flex-direction: row;
+                justify-content: flex-end;
+                margin-left: calc(100% - 3rem) !important;
+                margin-top: 2.3rem;
+                position: absolute;
+
+                .btn-password {
+                  background-color: transparent !important;
+                  border-color: transparent !important;
+                  box-shadow: none !important;
+                  color: vv.$primary;
+                }
+              }
+
+              label {
+                color: colors.$gray-70;
+                font-weight: normal;
+                margin-top: 24px;
+                padding-left: 0 !important;
+              }
+            }
+
+            .login-buttons {
+              height: 64px;
+              margin-top: 40px;
+            }
+
+            .btn-accent {
+              background-color: vv.$primary;
+              border: 0 !important;
+              border-radius: 0 !important;
+              color: colors.$white;
+              height: 100%;
+              margin: 0;
+              padding: 1rem !important;
+              text-align: left;
+              width: 100%;
+
+              &::after {
+                content: url('../../assets/ibm/arrow--right.svg');
+              }
+
+              &:disabled {
+                background-color: vv.$gray-300 !important;
+                color: vv.$gray-500 !important;
+              }
+            }
+
+            .btn-arrow {
+              bottom: 100%;
+              content: url('../../assets/ibm/arrow--right.svg');
+              left: calc(100% - 2rem);
+              margin-top: 1.5rem !important;
+              position: relative;
+              width: 16px;
+            }
+
+            .btn-arrow-disabled {
+              content: url('../../assets/ibm/arrow--right-black.svg') !important;
+            }
+
+            .btn-password {
+              margin-top: 1.7rem;
+            }
+
+            .fa-eye {
+              color: colors.$gray-100;
+            }
+
+            .placeholder {
+              color: vv.$primary;
+              margin-bottom: 0.5rem;
+              padding: 0 !important;
+            }
+
+            .form-control {
+              background-color: colors.$gray-10 !important;
+              background-image: none !important;
+              border-bottom: 1px solid colors.$gray-100;
+              border-radius: 0%;
+              color: colors.$gray-100 !important;
+
+              &:focus {
+                box-shadow: none !important;
+                color: colors.$gray-100 !important;
+                outline: 2px solid colors.$blue-60;
+              }
+
+              &:placeholder {
+                content: 'User name';
+              }
+            }
+
+            .invalid-feedback {
+              margin-top: 0.25rem !important;
+              padding: 0 !important;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// About modal branding
+cd-about {
+  .about-container {
+    background: fixed;
+    background-color: $bg-color-dark !important;
+    height: 40rem;
+    margin: 0;
+    margin-top: 1rem;
+    width: 50rem;
+  }
+
+  .modal-header {
+    padding-bottom: 0 !important;
+    padding-top: 0.5rem !important;
+  }
+
+  .modal-body {
+    padding-left: 40px !important;
+
+    img {
+      height: 96px !important;
+      width: 96px !important;
+    }
+  }
+
+  button {
+    font-size: unset !important;
+  }
+
+  .close {
+    font-size: unset !important;
+    font-weight: 100 !important;
+    text-shadow: none !important;
+  }
+
+  button::after {
+    content: '\f00d' !important;
+    font-size: 1rem !important;
+  }
+
+  h3 {
+    // @include carbon--type-style('productive-heading-04');
+    position: relative;
+    visibility: hidden;
+
+    strong {
+      display: none;
+    }
+  }
+
+  h3::after {
+    content: 'IBM Storage Ceph';
+    font-size: unset !important;
+    position: absolute;
+    visibility: visible;
+    width: 150%;
+  }
+
+  .product-versions {
+    // @include carbon--type-style('body-short-02');
+    // color: $text-secondary !important;
+    margin-bottom: 1rem !important;
+
+    strong {
+      font-size: unset !important;
+      font-weight: 400 !important;
+    }
+
+    span {
+      margin-left: -16.3rem !important;
+    }
+  }
+
+  dt {
+    // @include carbon--type-style('body-short-02');
+    // color: $text-secondary !important;
+    font-weight: 300 !important;
+    line-height: 1.5;
+  }
+
+  dd {
+    // @include carbon--type-style('body-short-02');
+    // color: $text-secondary !important;
+    font-weight: 300 !important;
+    line-height: 1.5;
+  }
+
+  .modal-footer {
+    // color: $text-secondary !important;
+    margin-top: 0 !important;
+    padding: 0 !important;
+
+    .text-left {
+      display: flex;
+
+      .copyright {
+        display: flex;
+        margin-left: 2.3rem;
+        margin-top: 4.5rem;
+        width: 100%;
+      }
+
+      .licence {
+        line-height: 1.2rem;
+        margin-left: -49.5rem;
+        width: 62%;
+      }
+    }
+  }
+}
+
+cd-navigation {
+  a img {
+    display: none;
+  }
+
+  .navbar-brand::before {
+    content: 'IBM Storage Ceph';
+    font-size: larger;
+  }
+}

@@ -109,25 +109,25 @@
           <div class="cd-col-form-input">
             <div class="input-group mb-1">
               <select name="tenants"
-                     id="tenants"
-                     class="form-select"
-                     [disabled]="!modalForm.valid"
-                     [(ngModel)]="selectedTenant"
-                     (ngModelChange)="onSelectChange()"
-                     [ngModelOptions]="{standalone: true}">
+                      id="tenants"
+                      class="form-select"
+                      [disabled]="!modalForm.valid"
+                      [(ngModel)]="selectedTenant"
+                      (ngModelChange)="onSelectChange()"
+                      [ngModelOptions]="{standalone: true}">
                 <option disabled
                         value=""
                         *ngIf="tenantsList?.length === 0"
                         i18n>--Please Fetch the Tenants to populate this--</option>
                 <option *ngFor="let tenant of tenantsList"
                         [ngValue]="tenant">{{tenant['company-name']}}</option>
-            </select>
-          <button class="btn btn-light me-2"
-                  [disabled]="!modalForm.valid"
-                  (click)="fetchTenants(modalForm.value)"
-                  i18n>Fetch Tenants</button>
-              </div>
+              </select>
+              <button class="btn btn-light me-2"
+                      [disabled]="!modalForm.valid"
+                      (click)="fetchTenants(modalForm.value)"
+                      i18n>Fetch Tenants</button>
             </div>
+          </div>
         </div>
 
         <ng-container *ngIf="selectedTenant !== undefined">

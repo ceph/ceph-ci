@@ -31,7 +31,8 @@
   
     <cds-header-global>
       <cds-header-navigation>
-        <cd-language-selector class="d-flex"></cd-language-selector>
+        <cd-language-selector class="d-flex"
+                              *ngIf="environment.build === 'ibm'"></cd-language-selector>
       </cds-header-navigation>
       <div class="cds--btn cds--btn--icon-only cds--header__action">
         <cd-notifications (click)="toggleRightSidebar()"></cd-notifications>

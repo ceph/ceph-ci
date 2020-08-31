@@ -338,7 +338,7 @@ export class MultiClusterComponent implements OnInit, OnDestroy {
     }
 
     const clusters: ClusterInfo[] = [];
-    this.queriesResults.TOTAL_CAPACITY?.forEach((totalCapacityMetric: any, index:number) => {
+    this.queriesResults.TOTAL_CAPACITY?.forEach((totalCapacityMetric: any, index: number) => {
       const clusterName = totalCapacityMetric.metric.cluster;
       const totalCapacity = parseInt(totalCapacityMetric.value[1]);
       const getMgrMetadata = this.findCluster(this.queriesResults?.MGR_METADATA, clusterName);

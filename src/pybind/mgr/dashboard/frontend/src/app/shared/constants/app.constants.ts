@@ -3,11 +3,19 @@ import { Injectable } from '@angular/core';
 import { environment } from '~/environments/environment';
 
 export class AppConstants {
-  public static readonly organization = 'ceph';
-  public static readonly projectName = 'Ceph Dashboard';
-  public static readonly license = 'Free software (LGPL 2.1).';
-  public static readonly copyright = 'Copyright(c) ' + environment.year + ' Ceph contributors.';
-  public static readonly cephLogo = 'assets/Ceph_Logo.svg';
+  public static readonly version = '8';
+  public static readonly organization = environment.build === 'ibm' ? 'IBM' : 'Redhat';
+  public static readonly projectName =
+    environment.build === 'ibm' ? 'IBM Storage Ceph' : 'Red Hat Ceph Storage';
+  public static readonly license =
+    environment.build === 'ibm'
+      ? 'Licenced materials - Property of IBM Corporation and IBM Storage Ceph are trademarks or registered trademarks of International Business Machine Corporation.'
+      : 'Licensed under Creative Commons Attribution Share Alike 3.0 (CC-BY-SA-3.0)';
+  public static readonly copyright =
+    environment.build === 'ibm'
+      ? `Copyright(c) ${environment.year} IBM Corporation`
+      : 'Copyright(c) ' + environment.year + ' Red Hat Inc. and contributors.';
+  public static readonly cephLogo = 'assets/Logo-RedHat-Hat-Color-RGB.png';
 }
 
 export enum URLVerbs {

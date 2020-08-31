@@ -99,8 +99,8 @@
               "node_modules/ngx-toastr/toastr.css",
               "src/styles.scss",
               {
-                "input": "src/ibm/ibm_overrides.scss",
-                "bundleName": "ibm-overrides",
+                "input": "src/redhat/rh_overrides.scss",
+                "bundleName": "rh-overrides",
                 "inject": false
               }
             ],
@@ -137,6 +137,11 @@
                   "with": "src/environments/environment.prod.ts"
                 }
               ],
+              "stylePreprocessorOptions": {
+                "includePaths": [
+                  "src/redhat"
+                ]
+              },
               "outputPath": "dist-redhat"
             },
             "production-ibm": {
@@ -159,11 +164,6 @@
                   "with": "src/environments/environment.ibm.ts"
                 }
               ],
-              "stylePreprocessorOptions": {
-                "includePaths": [
-                  "src/ibm"
-                ]
-              },
               "outputPath": "dist-ibm"
             },
             "cs": {

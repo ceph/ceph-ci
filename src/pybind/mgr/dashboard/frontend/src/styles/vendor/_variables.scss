@@ -3,6 +3,7 @@
 Example:
 $my-accent-color: #a18fff
 */
+@use '@carbon/colors';
 
 /* Bootstrap variables that are already defined can be overridden using configuration:
 https://sass-lang.com/documentation/at-rules/forward#configuring-modules
@@ -14,4 +15,6 @@ Example:
   )
 );
 */
-@forward '../defaults/bootstrap-defaults';
+@forward '../defaults/bootstrap-defaults' with (
+  $primary: colors.$blue-60
+);

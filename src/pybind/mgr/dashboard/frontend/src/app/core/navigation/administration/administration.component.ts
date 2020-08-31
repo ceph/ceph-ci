@@ -24,10 +24,10 @@ export class AdministrationComponent {
   }
 
   openCallHomeModal() {
-    this.modalService.show(CallHomeModalComponent, null, { size: 'lg'});
+    this.modalService.show(CallHomeModalComponent, null, { size: 'lg' });
   }
 
   openSIModal() {
-    this.modalService.show(StorageInsightsModalComponent, null, { size: 'lg'});
+    this.modalService.show(StorageInsightsModalComponent, null, { size: 'lg' });
   }
 }

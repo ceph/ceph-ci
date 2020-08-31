@@ -12,15 +12,15 @@
             class="cds--overflow-menu-options__btn"
             i18n>Telemetry configuration</button>
   </li>
-  <li class="cds--overflow-menu-options__option mb-2">
-    <button *ngIf="userPermission.read && environment.build === 'ibm'"
-            class="cds--overflow-menu-options__btn"
+  <li class="cds--overflow-menu-options__option mb-2"
+      *ngIf="userPermission.read && environment.build === 'ibm'">
+    <button class="cds--overflow-menu-options__btn"
             (click)="openCallHomeModal()"
             i18n>IBM Call Home</button>
   </li>
-  <li>
-    <button *ngIf="userPermission.read && environment.build === 'ibm'"
-            class="cds--overflow-menu-options__btn"
+  <li class="cds--overflow-menu-options__option mb-2"
+      *ngIf="userPermission.read && environment.build === 'ibm'">
+    <button class="cds--overflow-menu-options__btn"
             (click)="openSIModal()"
             i18n>IBM Storage Insights</button>
   </li>

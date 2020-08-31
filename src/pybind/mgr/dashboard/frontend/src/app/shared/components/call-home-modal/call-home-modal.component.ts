@@ -29,14 +29,13 @@ export class CallHomeModalComponent extends CdForm implements OnInit {
 
   report: any;
 
-
   constructor(
     public activeModal: NgbActiveModal,
     private mgrModuleService: MgrModuleService,
     private notificationService: NotificationService,
     private callHomeNotificationService: CallHomeNotificationService,
     private callHomeSerive: CallHomeService,
-    private textToDownloadService: TextToDownloadService,
+    private textToDownloadService: TextToDownloadService
   ) {
     super();
   }
@@ -49,7 +48,7 @@ export class CallHomeModalComponent extends CdForm implements OnInit {
         this.title = $localize`Download Reports`;
       }
       this.loadingReady();
-    })
+    });
   }
 
   createForm() {
@@ -67,14 +66,11 @@ export class CallHomeModalComponent extends CdForm implements OnInit {
   }
 
   download(type: string) {
-    const fileName = `${type}_${new Date().toLocaleDateString()}`
+    const fileName = `${type}_${new Date().toLocaleDateString()}`;
     this.callHomeSerive.downloadReport(type).subscribe((data: any) => {
       this.report = data;
-      this.textToDownloadService.download(
-        JSON.stringify(this.report,null,2),
-        `${fileName}.json`
-      );
-    })
+      this.textToDownloadService.download(JSON.stringify(this.report, null, 2), `${fileName}.json`);
+    });
   }
 
   stop() {
@@ -91,19 +87,21 @@ export class CallHomeModalComponent extends CdForm implements OnInit {
     const companyName = this.callHomeForm.getValue('companyName');
     const countryCode = this.callHomeForm.getValue('countryCode');
 
-    this.mgrModuleService.updateConfig('call_home_agent', {
-      icn: customerNumber,
-      customer_first_name: firstName,
-      customer_last_name: lastName,
-      customer_email: email,
-      customer_phone: phone,
-      customer_address: address,
-      customer_company_name: companyName,
-      customer_country_code: countryCode
-    }).subscribe({
-      error: () => this.callHomeForm.setErrors({ cdSubmitButton: true }),
-      complete: () => this.callHome()
-    });
+    this.mgrModuleService
+      .updateConfig('call_home_agent', {
+        icn: customerNumber,
+        customer_first_name: firstName,
+        customer_last_name: lastName,
+        customer_email: email,
+        customer_phone: phone,
+        customer_address: address,
+        customer_company_name: companyName,
+        customer_country_code: countryCode
+      })
+      .subscribe({
+        error: () => this.callHomeForm.setErrors({ cdSubmitButton: true }),
+        complete: () => this.callHome()
+      });
   }
 
   callHome(enable = true) {
@@ -119,11 +117,17 @@ export class CallHomeModalComponent extends CdForm implements OnInit {
             this.blockUI.stop();
             // Reload the data table content.
             if (enable) {
-              this.notificationService.show(NotificationType.success, $localize`Activated IBM Call Home Agent`);
+              this.notificationService.show(
+                NotificationType.success,
+                $localize`Activated IBM Call Home Agent`
+              );
               this.callHomeNotificationService.setVisibility(false);
               this.activeModal.close();
             } else {
-              this.notificationService.show(NotificationType.success, $localize`Deactivated IBM Call Home Agent`);
+              this.notificationService.show(
+                NotificationType.success,
+                $localize`Deactivated IBM Call Home Agent`
+              );
               this.activeModal.close();
             }
           },
@@ -134,7 +138,7 @@ export class CallHomeModalComponent extends CdForm implements OnInit {
       });
     };
 
-    if(enable) {
+    if (enable) {
       this.mgrModuleService.enable('call_home_agent').subscribe(
         () => undefined,
         () => {
@@ -147,7 +151,6 @@ export class CallHomeModalComponent extends CdForm implements OnInit {
         }
       );
     } else {
-
       this.mgrModuleService.disable('call_home_agent').subscribe(
         () => undefined,
         () => {

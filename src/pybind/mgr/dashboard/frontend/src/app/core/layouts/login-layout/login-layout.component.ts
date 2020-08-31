@@ -8,7 +8,7 @@ import { Component } from '@angular/core';
 export class LoginLayoutComponent {
   docItems: any[] = [
     { section: 'help', text: $localize`Help` },
-    { section: 'security', text: $localize`Security` },
-    { section: 'trademarks', text: $localize`Trademarks` }
+    { section: 'terms', text: $localize`Terms of Use` },
+    { section: 'privacy', text: $localize`Privacy Policy` }
   ];
 }

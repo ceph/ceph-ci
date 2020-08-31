@@ -7,22 +7,22 @@
     </button>
   </div>
   <div class="modal-body">
-    <img src="assets/Ceph_Ceph_Logo_with_text_red_white.svg"
+    <img src="assets/StorageCeph_dark_theme.svg"
          class="ceph-logo"
          alt="{{ projectConstants.organization }}">
     <h3>
       <strong>{{ projectConstants.projectName }}</strong>
     </h3>
     <div class="product-versions">
-      <strong>Version</strong>
+      <strong>Release</strong>
       <br>
-      {{ versionNumber }}
-      {{ versionHash }}
+      {{ projectConstants.version }}
       <br>
-      {{ versionName }}
     </div>
     <br>
     <dl>
+      <dt>Version</dt>
+      <dd>{{ versionNumber }}</dd>
       <dt>Ceph Manager</dt>
       <dd>{{ hostAddr }}</dd>
       <dt>User</dt>
@@ -39,8 +39,8 @@
   </div>
   <div class="modal-footer">
     <div class="text-left">
-      {{ projectConstants.copyright }}
-      {{ projectConstants.license }}
+      <span class="copyright">{{ projectConstants.copyright }}</span>
+      <span class="licence ml-1">{{ projectConstants.license }}</span>
     </div>
   </div>
 </div>
