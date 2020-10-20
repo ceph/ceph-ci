@@ -6875,6 +6875,10 @@ std::vector<Option> get_rgw_options() {
     .set_default(false)
     .set_description("Should RGW verify the vault server SSL certificate."),
 
+    Option("rgw_crypt_vault_ssl_cert", Option::TYPE_STR, Option::LEVEL_ADVANCED)
+    .set_default("")
+    .set_description("Path for customed ca certificate for accessing vault server"),
+
     Option("rgw_crypt_suppress_logs", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
     .set_default(true)
     .set_description("Suppress logs that might print client key"),
