@@ -173,9 +173,12 @@ protected:
       secret_req.append_header("X-Vault-Namespace", vault_namespace);
     }
 
+    if(cct->_conf->rgw_crypt_vault_verify_ssl)
+      ldout(cct, 0) << "ssl enabled " << dendl;
     secret_req.set_verify_ssl(cct->_conf->rgw_crypt_vault_verify_ssl);
 
     if (!cct->_conf->rgw_crypt_vault_ssl_cert.empty()) {
+      ldout(cct, 0) << "setting ca path " << dendl;
       secret_req.set_ca_path(cct->_conf->rgw_crypt_vault_ssl_cert);
     }
 
