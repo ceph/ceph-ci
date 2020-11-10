@@ -98,6 +98,7 @@ protected:
     concat_url(vault_url, "/v1/auth/kubernetes/login");
     RGWHTTPTransceiver vault_token_req(cct, "POST", vault_url, &vault_bl);
     vault_token_req.append_header("Content-Type", "application/json");
+    ldout(cct, 0) << "vault url " << vault_url << dendl;
     JSONFormatter jf;
     jf.open_object_section("");
     jf.dump_string("jwt", "/var/run/secrets/kubernetes.io/serviceaccount/token");
@@ -106,26 +107,28 @@ protected:
 
     std::stringstream ss;
     jf.flush(ss);
+    ldout(cct, 0) << "vault request " << ss.str() << dendl;
     vault_token_req.set_post_data(ss.str());
     vault_token_req.set_send_length(ss.str().length());
 
     /* send request */
     ret = vault_token_req.process(null_yield);
     if (ret < 0) {
-      ldout(cct, 2) << "vault req process error:" << vault_bl.c_str() << dendl;
+      ldout(cct, 0) << "vault req process error:" << vault_bl.c_str() << dendl;
       return ret;
     }
-
+    ldout(cct, 0) << "vault process " << vault_bl.c_str() << dendl;
     JSONParser parser;
     if (!parser.parse(vault_bl.c_str(), vault_bl.length())) {
-      ldout(cct, 2) << "vault parse error: malformed json" << dendl;
+      ldout(cct, 0) << "vault parse error: malformed json" << dendl;
       return -EINVAL;
     }
- 
+
     JSONObj* auth_field = parser.find_obj("auth");
     JSONObj* client_token = auth_field->find_obj("client_token");
     *vault_token = client_token->get_data();
 
+    ldout(cct, 0) << "vault token " << vault_token << dendl;
     return ret;
   }
 
