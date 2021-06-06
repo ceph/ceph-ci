@@ -286,12 +286,12 @@ int RGWStreamSpliceCR::operate(const DoutPrefixProvider *dpp) {
         }
 
         if (retcode < 0) {
-          ldout(cct, 20) << __func__ << ": in_crf->read() retcode=" << retcode << dendl;
+          ldpp_dout(dpp, 20) << __func__ << ": in_crf->read() retcode=" << retcode << dendl;
           return set_cr_error(ret);
         }
       } while (need_retry);
 
-      ldout(cct, 20) << "read " << bl.length() << " bytes" << dendl;
+      ldpp_dout(dpp, 20) << "read " << bl.length() << " bytes" << dendl;
 
       if (!in_crf->has_attrs()) {
         assert (bl.length() == 0);
@@ -319,7 +319,7 @@ int RGWStreamSpliceCR::operate(const DoutPrefixProvider *dpp) {
 
       do {
         yield {
-          ldout(cct, 20) << "writing " << bl.length() << " bytes" << dendl;
+          ldpp_dout(dpp, 20) << "writing " << bl.length() << " bytes" << dendl;
           ret = out_crf->write(bl, &need_retry);
           if (ret < 0)  {
             return set_cr_error(ret);
@@ -327,7 +327,7 @@ int RGWStreamSpliceCR::operate(const DoutPrefixProvider *dpp) {
         }
 
         if (retcode < 0) {
-          ldout(cct, 20) << __func__ << ": out_crf->write() retcode=" << retcode << dendl;
+          ldpp_dout(dpp, 20) << __func__ << ": out_crf->write() retcode=" << retcode << dendl;
           return set_cr_error(ret);
         }
       } while (need_retry);
