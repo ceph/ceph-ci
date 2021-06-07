@@ -136,7 +136,7 @@ int RGWStreamReadHTTPResourceCRF::decode_rest_obj(map<string, string>& headers, 
   return 0;
 }
 
-int RGWStreamReadHTTPResourceCRF::read(bufferlist *out, uint64_t max_size, bool *io_pending)
+int RGWStreamReadHTTPResourceCRF::read(const DoutPrefixProvider *dpp, bufferlist *out, uint64_t max_size, bool *io_pending)
 {
     reenter(&read_state) {
     io_read_mask = req->get_io_id(RGWHTTPClient::HTTPCLIENT_IO_READ | RGWHTTPClient::HTTPCLIENT_IO_CONTROL);
@@ -156,7 +156,7 @@ int RGWStreamReadHTTPResourceCRF::read(bufferlist *out, uint64_t max_size, bool 
         req->get_out_headers(&attrs);
         int ret = decode_rest_obj(attrs, extra_data);
         if (ret < 0) {
-          ldout(cct, 0) << "ERROR: " << __func__ << " decode_rest_obj() returned ret=" << ret << dendl;
+          ldpp_dout(dpp, 0) << "ERROR: " << __func__ << " decode_rest_obj() returned ret=" << ret << dendl;
           return ret;
         }
         got_extra_data = true;
@@ -279,7 +279,7 @@ int RGWStreamSpliceCR::operate(const DoutPrefixProvider *dpp) {
 
       do {
         yield {
-          ret = in_crf->read(&bl, 4 * 1024 * 1024, &need_retry);
+          ret = in_crf->read(dpp, &bl, 4 * 1024 * 1024, &need_retry);
           if (ret < 0)  {
             return set_cr_error(ret);
           }
