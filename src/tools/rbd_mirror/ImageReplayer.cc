@@ -22,6 +22,7 @@
 #include "ImageReplayer.h"
 #include "MirrorStatusUpdater.h"
 #include "Threads.h"
+#include "tools/rbd_mirror/image_deleter/ImageRemoveRequest.h"
 #include "tools/rbd_mirror/image_replayer/BootstrapRequest.h"
 #include "tools/rbd_mirror/image_replayer/ReplayerListener.h"
 #include "tools/rbd_mirror/image_replayer/StateBuilder.h"
@@ -312,6 +313,7 @@ void ImageReplayer<I>::start(Context *on_finish, bool manual, bool restart)
       m_manual_stop = false;
       m_delete_requested = false;
       m_restart_requested = false;
+      m_deleted = false;
       m_status_removed = false;
 
       if (on_finish != nullptr) {
@@ -396,6 +398,9 @@ void ImageReplayer<I>::handle_bootstrap(int r) {
   } else if (r == -ENOLINK) {
     m_delete_requested = true;
     on_start_fail(0, "remote image no longer exists");
+    return;
+  } else if (r == -ENOENT) {
+    on_start_fail(r, "both images no longer exist");
     return;
   } else if (r < 0) {
     on_start_fail(r, "error bootstrapping replay");
@@ -975,6 +980,22 @@ void ImageReplayer<I>::handle_shut_down(int r) {
     remove_image_status(m_finished || m_delete_in_progress, ctx);
     return;
   }
+
+ if (!m_deleted && m_last_r == -ENOENT && m_state_builder != nullptr &&
+      !m_state_builder->local_image_id.empty()) {
+    dout(5) << "remove orphan mirror image" << dendl;
+
+    auto ctx = new LambdaContext([this, r](int) {
+      m_deleted = true;
+      handle_shut_down(r);
+    });
+
+    auto req = image_deleter::ImageRemoveRequest<I>::create(
+      m_local_io_ctx, m_global_image_id, m_state_builder->local_image_id,
+      m_threads->work_queue, ctx);
+    req->send();
+    return;
+   }
 
   if (m_state_builder != nullptr) {
     m_state_builder->destroy();

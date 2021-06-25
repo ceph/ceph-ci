@@ -204,6 +204,7 @@ private:
   BootstrapProgressContext m_progress_cxt;
 
   bool m_finished = false;
+  bool m_deleted = false;
   bool m_delete_in_progress = false;
   bool m_delete_requested = false;
   bool m_resync_requested = false;
