@@ -428,19 +428,22 @@ if(WITH_JAEGER)
   include(BuildJaeger)
   build_jaeger()
   find_package(yaml-cpp 0.6.0 REQUIRED)
-  list(APPEND jaeger_base ${jaeger_base}
+  list(APPEND jaeger_base
   opentracing::libopentracing
   jaegertracing::libjaegertracing)
+  message( STATUS "depends ${jaeger_base}")
+  #add_dependencies(common-objs ${jaeger_base})
+
   include_directories(SYSTEM ${CMAKE_BINARY_DIR}/external/include)
   # for testing jaeger
   add_custom_target(jaeger_base DEPENDS ${jaeger_base})
 
-  add_library(jaeger-base INTERFACE)
-  target_link_libraries(jaeger-base INTERFACE ${jaeger_base})
+   add_library(jaeger-base INTERFACE)
+  # target_link_libraries(jaeger-base INTERFACE opentracing::libopentracing
+  # jaegertracing::libjaegertracing)
   include_directories(SYSTEM ${CMAKE_BINARY_DIR}/external/include)
-  add_dependencies(common-objs
-  opentracing::libopentracing
-  jaegertracing::libjaegertracing)
+  add_dependencies(common-objs ${jaeger_base})
+  target_link_libraries(jaeger-base INTERFACE ${jaeger_base})
 
   list(APPEND jaeger_libs
     ${CMAKE_BINARY_DIR}/external/lib/libjaegertracing.so.0

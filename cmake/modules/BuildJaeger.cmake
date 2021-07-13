@@ -17,7 +17,7 @@ function (set_library_properties_for_external_project _target _lib)
   set(_includepath "${CMAKE_BINARY_DIR}/external/include")
   message(STATUS "Configuring ${_target} with ${_libpath}")
   add_library(${_target} SHARED IMPORTED)
-  add_dependencies(${_target} opentracing)
+  add_dependencies(${_target} ${_lib})
 
   file(MAKE_DIRECTORY "${_includepath}")
   set_target_properties(${_target} PROPERTIES
@@ -74,6 +74,7 @@ function(build_jaeger)
     set(make_cmd ${CMAKE_COMMAND} --build <BINARY_DIR> --target jaegertracing)
   endif()
   set(install_cmd ${CMAKE_MAKE_PROGRAM} install)
+  message(STATUS "install cmd ${install_cmd}")
 
   include(ExternalProject)
   ExternalProject_Add(jaegertracing

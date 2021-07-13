@@ -48,7 +48,7 @@ function(build_thrift)
     BINARY_DIR ${thrift_BINARY_DIR}
     BUILD_COMMAND ${make_cmd}
     INSTALL_COMMAND ${install_cmd}
-    DEPENDS ${dependencies}
+    DEPENDS "${dependencies}"
     BUILD_BYPRODUCTS ${CMAKE_BINARY_DIR}/external/lib/libthrift.so
     )
 endfunction()
