@@ -30,7 +30,7 @@ endfunction ()
 function(build_jaeger)
   set(Jaeger_SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/jaegertracing/jaeger-client-cpp")
   set(Jaeger_INSTALL_DIR "${CMAKE_BINARY_DIR}/external")
-  set(Jaeger_BINARY_DIR "${Jaeger_INSTALL_DIR}/Jaeger")
+  set(Jaeger_BINARY_DIR "${CMAKE_BINARY_DIR}/external/jaegertracing")
 
   file(MAKE_DIRECTORY "${Jaeger_INSTALL_DIR}")
   set(Jaeger_CMAKE_ARGS -DCMAKE_POSITION_INDEPENDENT_CODE=ON
@@ -43,7 +43,7 @@ function(build_jaeger)
 			-DCMAKE_INSTALL_RPATH_USE_LINK_PATH=TRUE
 			-DOpenTracing_DIR=${CMAKE_SOURCE_DIR}/src/jaegertracing/opentracing-cpp
 			-Dnlohmann_json_DIR=/usr/lib
-			-DCMAKE_FIND_ROOT_PATH=${CMAKE_BINARY_DIR}/external
+			-DCMAKE_FIND_ROOT_PATH=$ENV{DESTDIR}${CMAKE_BINARY_DIR}/external
 			-DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/external
 			-DCMAKE_INSTALL_LIBDIR=${CMAKE_BINARY_DIR}/external/lib
 			-DBoost_INCLUDE_DIRS=${CMAKE_BINARY_DIR}/boost/include

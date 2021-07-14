@@ -87,6 +87,14 @@ if (thrift_COMPILER)
     endfunction()
 endif ()
 
+if (thrift_FOUND AND NOT (TARGET thrift::libthrift))
+  add_library (thrift::libthrift UNKNOWN IMPORTED)
+
+  set_target_properties (thrift::libthrift
+    PROPERTIES
+      IMPORTED_LOCATION ${thrift_LIBRARIES}
+      INTERFACE_INCLUDE_DIRECTORIES ${thrift_INCLUDE_DIR})
+endif ()
 
 include(FindPackageHandleStandardArgs)
 FIND_PACKAGE_HANDLE_STANDARD_ARGS(thrift DEFAULT_MSG thrift_LIBRARIES thrift_INCLUDE_DIR thrift_COMPILER)

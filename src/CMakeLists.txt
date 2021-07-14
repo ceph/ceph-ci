@@ -443,7 +443,11 @@ if(WITH_JAEGER)
   # jaegertracing::libjaegertracing)
   include_directories(SYSTEM ${CMAKE_BINARY_DIR}/external/include)
   add_dependencies(common-objs ${jaeger_base})
-  target_link_libraries(jaeger-base INTERFACE ${jaeger_base})
+  target_link_libraries(jaeger-base INTERFACE
+    yaml-cpp::yaml-cpp
+    opentracing::libopentracing
+    thrift::libthrift
+    jaegertracing::libjaegertracing)
 
   list(APPEND jaeger_libs
     ${CMAKE_BINARY_DIR}/external/lib/libjaegertracing.so.0
