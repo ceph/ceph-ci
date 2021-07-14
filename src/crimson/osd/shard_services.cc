@@ -97,6 +97,10 @@ seastar::future<> ShardServices::do_send_to_osd(
 		    osdmap->get_info(peer).up_from, from_epoch);
     return seastar::now();
   } else {
+    logger().debug("send_to_osd: peer {}, osdmap(addr {}, epoch {})",
+                   peer,
+                   osdmap->get_cluster_addrs(peer).front(),
+                   osdmap->get_epoch());
     auto conn = cluster_msgr.connect(
         osdmap->get_cluster_addrs(peer).front(), CEPH_ENTITY_TYPE_OSD);
     return conn->send(std::move(m));

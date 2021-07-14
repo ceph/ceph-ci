@@ -6538,6 +6538,8 @@ boost::statechart::result PeeringState::Stray::react(const ActMap&)
   if (ps->should_send_notify() && ps->get_primary().osd >= 0) {
     ps->info.history.refresh_prior_readable_until_ub(
       pl->get_mnow(), ps->prior_readable_until_ub);
+    psdout(10) << "Stray::react(const ActMap&) sends notify to "
+               <<  ps->get_primary().osd << dendl;
     context< PeeringMachine >().send_notify(
       ps->get_primary().osd,
       pg_notify_t(
