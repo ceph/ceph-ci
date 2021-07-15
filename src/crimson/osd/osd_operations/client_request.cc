@@ -119,7 +119,6 @@ seastar::future<> ClientRequest::start()
         logger().debug("{} entered get_pg", *this);
 	return with_blocking_future(osd.wait_for_pg(m->get_spg()));
       }).then([this](Ref<PG> pgref) mutable {
-        ceph_assert(osd.state.is_active());
 	return interruptor::with_interruption([this, pgref]() mutable {
           epoch_t same_interval_since = pgref->get_interval_start_epoch();
           logger().debug("{} same_interval_since: {}", *this, same_interval_since);
@@ -147,6 +146,7 @@ seastar::future<> ClientRequest::start()
                 return with_blocking_future_interruptible<IOInterruptCondition>(
                     pg.wait_for_active_blocker.wait());
               }).then_interruptible([this, pgref=std::move(pgref)]() mutable {
+               ceph_assert(osd.state.is_active());
                 if (m->finish_decode()) {
                   m->clear_payload();
                 }
