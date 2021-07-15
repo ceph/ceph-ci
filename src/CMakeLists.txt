@@ -426,6 +426,7 @@ add_dependencies(common-objs legacy-option-headers)
 
 if(WITH_JAEGER)
   include(BuildJaeger)
+  find_package(thrift 0.13.0)
   build_jaeger()
   find_package(yaml-cpp 0.6.0 REQUIRED)
   list(APPEND jaeger_base
@@ -441,7 +442,7 @@ if(WITH_JAEGER)
    add_library(jaeger-base INTERFACE)
   # target_link_libraries(jaeger-base INTERFACE opentracing::libopentracing
   # jaegertracing::libjaegertracing)
-  include_directories(SYSTEM ${CMAKE_BINARY_DIR}/external/include)
+  include_directories(SYSTEM $ENV{DESTDIR}${CMAKE_BINARY_DIR}/external/include)
   add_dependencies(common-objs ${jaeger_base})
   target_link_libraries(jaeger-base INTERFACE
     yaml-cpp::yaml-cpp

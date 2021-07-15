@@ -13,8 +13,8 @@ function (set_library_properties_for_external_project _target _lib)
   # but this runs in the configuration phase, and CMake generates an error if
   # we add an include directory that does not exist yet.
   set(_libfullname "${CMAKE_SHARED_LIBRARY_PREFIX}${_lib}${CMAKE_SHARED_LIBRARY_SUFFIX}")
-  set(_libpath "${CMAKE_BINARY_DIR}/external/lib/${_libfullname}")
-  set(_includepath "${CMAKE_BINARY_DIR}/external/include")
+  set(_libpath "$ENV{DESTDIR}${CMAKE_BINARY_DIR}/external/lib/${_libfullname}")
+  set(_includepath "$ENV{DESTDIR}${CMAKE_BINARY_DIR}/external/include")
   message(STATUS "Configuring ${_target} with ${_libpath}")
   add_library(${_target} SHARED IMPORTED)
   add_dependencies(${_target} ${_lib})
@@ -43,7 +43,7 @@ function(build_jaeger)
 			-DCMAKE_INSTALL_RPATH_USE_LINK_PATH=TRUE
 			-DOpenTracing_DIR=${CMAKE_SOURCE_DIR}/src/jaegertracing/opentracing-cpp
 			-Dnlohmann_json_DIR=/usr/lib
-			-DCMAKE_FIND_ROOT_PATH=$ENV{DESTDIR}${CMAKE_BINARY_DIR}/external
+			-DCMAKE_FIND_ROOT_PATH=$ENV{DESTDIR}${CMAKE_BINARY_DIR}/external;${CMAKE_BINARY_DIR}/external
 			-DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/external
 			-DCMAKE_INSTALL_LIBDIR=${CMAKE_BINARY_DIR}/external/lib
 			-DBoost_INCLUDE_DIRS=${CMAKE_BINARY_DIR}/boost/include
@@ -86,7 +86,7 @@ function(build_jaeger)
     BINARY_DIR ${Jaeger_BINARY_DIR}
     BUILD_COMMAND ${make_cmd}
     INSTALL_COMMAND ${install_cmd}
-    DEPENDS "${dependencies}"
+    DEPENDS ${dependencies}
     BUILD_BYPRODUCTS ${CMAKE_BINARY_DIR}/external/lib/libjaegertracing.so
     )
 
@@ -96,6 +96,5 @@ function(build_jaeger)
   jaegertracing)
   if(NOT thrift_FOUND)
   set_library_properties_for_external_project(thrift::libthrift thrift)
-  set(jaeger_base ${jaeger_base} thrift::libthrift PARENT_SCOPE)
   endif()
 endfunction()
