@@ -106,7 +106,7 @@
 %endif
 %endif
 
-%{!?_udevrulesdir: %global _udevrulesdir /lib/udev/rules.d}
+{!?_udevrulesdir: %global _udevrulesdir /lib/udev/rules.d}
 %{!?tmpfiles_create: %global tmpfiles_create systemd-tmpfiles --create}
 %{!?python3_pkgversion: %global python3_pkgversion 3}
 %{!?python3_version_nodots: %global python3_version_nodots 3}
