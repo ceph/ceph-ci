@@ -273,9 +273,35 @@ def run_admin_cmds(ctx,config):
 
         ans6=out6.rstrip()
 
+        out7= toxvenv_sh(ctx, remote,
+                 [
+                  'curl', '-k', '-v',
+                  '-X', 'POST',
+                  '-u', ans0,
+                  '-d', acc_token,
+                  'http://localhost:8080/auth/realms/'+realm_name+'/protocol/openid-connect/token/introspect', run.Raw('|'),
+                  'jq', '-r', '.sub'
+                 ])
+
+        ans7=out7.rstrip()
+
+        out8= toxvenv_sh(ctx, remote,
+                 [
+                  'curl', '-k', '-v',
+                  '-X', 'POST',
+                  '-u', ans0,
+                  '-d', acc_token,
+                  'http://localhost:8080/auth/realms/'+realm_name+'/protocol/openid-connect/token/introspect', run.Raw('|'),
+                  'jq', '-r', '.azp'
+                 ])
+
+        ans8=out8.rstrip()
+
         os.environ['TOKEN']=ans4
         os.environ['THUMBPRINT']=ans5
         os.environ['AUD']=ans6
+        os.environ['SUB']=ans7
+        os.environ['AZP']=ans8
         os.environ['KC_REALM']=realm_name
 
     try:
