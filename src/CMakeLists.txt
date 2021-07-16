@@ -435,14 +435,17 @@ if(WITH_JAEGER)
   message( STATUS "depends ${jaeger_base}")
   #add_dependencies(common-objs ${jaeger_base})
 
-  include_directories(SYSTEM ${CMAKE_BINARY_DIR}/external/include)
+  install(DIRECTORY $ENV{DESTDIR}${CMAKE_BINARY_DIR}/external/include/jaegertracing
+                $ENV{DESTDIR}${CMAKE_BINARY_DIR}/external/include/opentracing
+          DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+  include_directories(SYSTEM ${CMAKE_INSTALL_INCLUDEDIR}/jaegertracing)
+  include_directories(SYSTEM ${CMAKE_INSTALL_INCLUDEDIR}/opentracing)
   # for testing jaeger
   add_custom_target(jaeger_base DEPENDS ${jaeger_base})
 
    add_library(jaeger-base INTERFACE)
   # target_link_libraries(jaeger-base INTERFACE opentracing::libopentracing
   # jaegertracing::libjaegertracing)
-  include_directories(SYSTEM $ENV{DESTDIR}${CMAKE_BINARY_DIR}/external/include)
   add_dependencies(common-objs ${jaeger_base})
   target_link_libraries(jaeger-base INTERFACE
     yaml-cpp::yaml-cpp
