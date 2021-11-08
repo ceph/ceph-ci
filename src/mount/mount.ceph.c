@@ -20,10 +20,21 @@
 bool verboseflag = false;
 bool skip_mtab_flag = false;
 bool v2_addrs = false;
+bool no_fallback = false;
 static const char * const EMPTY_STRING = "";
 
 /* TODO duplicates logic from kernel */
 #define CEPH_AUTH_NAME_DEFAULT "guest"
+
+/* path to sysfs for ceph */
+#define CEPH_SYS_FS_PATH "/sys/module/ceph/"
+#define CEPH_SYS_FS_PARAM_PATH CEPH_SYS_FS_PATH"/parameters"
+
+/*
+ * mount support hint from kernel -- we only need to check
+ * v2 support for catching bugs.
+ */
+#define CEPH_V2_MOUNT_SUPPORT_PATH CEPH_SYS_FS_PARAM_PATH"/mount_syntax_v2"
 
 #include "mtab.c"
 
@@ -624,8 +635,9 @@ static int parse_arguments(int argc, char *const *const argv,
 				return -EINVAL;
 			}
 			*opts = argv[i];
-		}
-		else {
+		} else if (!strcmp("-f", argv[i])) {
+			no_fallback = true;
+                } else {
 			fprintf(stderr, "Can't understand option: '%s'\n\n", argv[i]);
 			return -EINVAL;
 		}
@@ -646,12 +658,13 @@ static void modprobe(void)
 
 static void usage(const char *prog_name)
 {
-	printf("usage: %s [src] [mount-point] [-n] [-v] [-o ceph-options]\n",
+	printf("usage: %s [src] [mount-point] [-n] [-v] [-f] [-o ceph-options]\n",
 		prog_name);
 	printf("options:\n");
 	printf("\t-h: Print this help\n");
 	printf("\t-n: Do not update /etc/mtab\n");
 	printf("\t-v: Verbose\n");
+	printf("\t-f: Do not fall-back to old-style syntax\n");
 	printf("\tceph-options: refer to mount.ceph(8)\n");
 	printf("\n");
 }
@@ -744,6 +757,35 @@ static int mount_old_device_format(const char *node, struct ceph_mount_info *cmi
 	return r;
 }
 
+/*
+ * check whether to fall-back to using old-style mount syntax (called
+ * when new-style mount syntax fails). this is mostly to catch any
+ * new-style (v2) implementation bugs in the kernel and is primarly
+ * used in teuthology tests.
+ */
+static bool should_fallback()
+{
+	int ret;
+	struct stat stbuf;
+
+	if (!no_fallback)
+		return true;
+
+	ret = stat(CEPH_V2_MOUNT_SUPPORT_PATH, &stbuf);
+	if (ret) {
+		mount_ceph_debug("mount.ceph: v2 mount support check returned %d\n",
+				 errno);
+		if (errno == ENOENT)
+			mount_ceph_debug("mount.ceph: kernel does not support v2"
+					 " syntax\n");
+		/* fallback on *all* errors */
+		return true;
+	}
+
+	fprintf(stderr, "mount.ceph: kernel BUG!\n");
+	return false;
+}
+
 static int do_mount(const char *dev, const char *node,
 		    struct ceph_mount_info *cmi) {
 	int retval= -EINVAL;
@@ -752,7 +794,7 @@ static int do_mount(const char *dev, const char *node,
 	if (cmi->format == MOUNT_DEV_FORMAT_NEW) {
 		retval = mount_new_device_format(node, cmi);
 		if (retval)
-			fallback = (retval == -EINVAL && cmi->cmi_fsid);
+			fallback = (should_fallback() && retval == -EINVAL && cmi->cmi_fsid);
 	}
 	/* pass-through or fallback to old-style mount device */
 	if (retval && fallback)
