@@ -21,6 +21,8 @@ bool verboseflag = false;
 bool skip_mtab_flag = false;
 bool v2_addrs = false;
 bool no_fallback = false;
+bool ms_mode_specified = false;
+bool mon_addr_specified = false;
 static const char * const EMPTY_STRING = "";
 
 /* TODO duplicates logic from kernel */
@@ -35,6 +37,8 @@ static const char * const EMPTY_STRING = "";
  * v2 support for catching bugs.
  */
 #define CEPH_V2_MOUNT_SUPPORT_PATH CEPH_SYS_FS_PARAM_PATH"/mount_syntax_v2"
+
+#define CEPH_DEFAULT_V2_MS_MODE "prefer-crc"
 
 #include "mtab.c"
 
@@ -288,6 +292,13 @@ static int parse_new_dev(const char *dev_str, struct ceph_mount_info *cmi,
 		cmi->cmi_path = strdup(fs_name);
 		if (!cmi->cmi_path)
 			return -ENOMEM;
+	}
+
+	/* new-style dev - force using v2 addrs first */
+	if (!ms_mode_specified && !mon_addr_specified) {
+		v2_addrs = true;
+		append_opt("ms_mode", CEPH_DEFAULT_V2_MS_MODE, cmi,
+			   opt_pos);
 	}
 
 	cmi->format = MOUNT_DEV_FORMAT_NEW;
@@ -559,6 +570,7 @@ static int parse_options(const char *data, struct ceph_mount_info *cmi,
 			/* Only legacy ms_mode needs v1 addrs */
 			v2_addrs = strcmp(value, "legacy");
 			skip = false;
+			ms_mode_specified = true;
 		} else if (strcmp(data, "mon_addr") == 0) {
 			/* monitor address to use for mounting */
 			if (!value || !*value) {
@@ -568,6 +580,7 @@ static int parse_options(const char *data, struct ceph_mount_info *cmi,
 			cmi->cmi_mons = strdup(value);
 			if (!cmi->cmi_mons)
 				return -ENOMEM;
+			mon_addr_specified = true;
 		} else {
 			/* unrecognized mount options, passing to kernel */
 			skip = false;
@@ -788,8 +801,39 @@ static bool should_fallback()
 
 static int do_mount(const char *dev, const char *node,
 		    struct ceph_mount_info *cmi) {
+	int pos = 0;
 	int retval= -EINVAL;
 	bool fallback = true;
+
+	/*
+	 * We don't care if this errors out, since this is best-effort.
+	 * note that this fetches v1 or v2 addr depending on @v2_addr
+	 * flag.
+	 */
+	fetch_config_info(cmi);
+
+        /* no v2 addresses available via config - try v1 addresses */
+	if (!cmi->cmi_mons &&
+	    !ms_mode_specified &&
+	    !mon_addr_specified &&
+	    cmi->format == MOUNT_DEV_FORMAT_NEW) {
+		mount_ceph_debug("mount.ceph: switching to using v1 address\n");
+		v2_addrs = false;
+		fetch_config_info(cmi);
+		remove_opt(cmi, "ms_mode", NULL);
+	}
+
+	if (!cmi->cmi_mons) {
+		fprintf(stderr, "unable to determine mon addresses\n");
+		return -EINVAL;
+	}
+
+	pos = strlen(cmi->cmi_opts);
+	retval = finalize_src(cmi, &pos);
+	if (retval) {
+		fprintf(stderr, "failed to resolve source\n");
+		return -EINVAL;
+	}
 
 	if (cmi->format == MOUNT_DEV_FORMAT_NEW) {
 		retval = mount_new_device_format(node, cmi);
@@ -880,22 +924,6 @@ int main(int argc, char *argv[])
 	retval = parse_dev(dev, &cmi, &opt_pos);
 	if (retval) {
 		fprintf(stderr, "unable to parse mount device string: %d\n", retval);
-		retval = EX_USAGE;
-		goto out;
-	}
-
-	/* We don't care if this errors out, since this is best-effort */
-	fetch_config_info(&cmi);
-
-	if (!cmi.cmi_mons) {
-		fprintf(stderr, "unable to determine mon addresses\n");
-		retval = EX_USAGE;
-		goto out;
-	}
-
-	retval = finalize_src(&cmi, &opt_pos);
-	if (retval) {
-		fprintf(stderr, "failed to resolve source\n");
 		retval = EX_USAGE;
 		goto out;
 	}
