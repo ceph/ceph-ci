@@ -22,7 +22,7 @@ DEBUGFS_META_DIR = 'meta'
 class KernelMount(CephFSMount):
     def __init__(self, ctx, test_dir, client_id, client_remote,
                  client_keyring_path=None, hostfs_mntpt=None,
-                 cephfs_name=None, cephfs_mntpt=None, brxnet=None, config={}):
+                 cephfs_name='cephfs', cephfs_mntpt=None, brxnet=None, config={}):
         super(KernelMount, self).__init__(ctx=ctx, test_dir=test_dir,
             client_id=client_id, client_remote=client_remote,
             client_keyring_path=client_keyring_path, hostfs_mntpt=hostfs_mntpt,
@@ -79,14 +79,10 @@ class KernelMount(CephFSMount):
 
     def _get_mount_cmd(self, mntopts):
         opts = 'norequire_active_mds'
-        if self.client_id:
-            opts += ',name=' + self.client_id
         if self.client_keyring_path and self.client_id:
             opts += ',secret=' + self.get_key_from_keyfile()
         if self.config_path:
             opts += ',conf=' + self.config_path
-        if self.cephfs_name:
-            opts += ",mds_namespace=" + self.cephfs_name
         if self.rbytes:
             opts += ",rbytes"
         else:
@@ -96,8 +92,12 @@ class KernelMount(CephFSMount):
 
         mount_cmd = ['sudo'] + self._nsenter_args
         mount_dev = ':' + self.cephfs_mntpt
+        mount_dev = self.client_id + "@" + self.cephfs_name + "=" + self.cephfs_mntpt
         mount_cmd += self._mount_bin + [mount_dev, self.hostfs_mntpt, '-v',
                                         '-o', opts]
+        # do not fall-back to old-style mount (catch new-style
+        # mount syntax bugs in the kernel).
+        mount_cmd += "-f"
 
         return mount_cmd
 
