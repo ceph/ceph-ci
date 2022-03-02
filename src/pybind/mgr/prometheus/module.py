@@ -554,7 +554,8 @@ class Module(MgrModule):
             'server_port',
             type='int',
             default=DEFAULT_PORT,
-            desc='the port on which the module listens for HTTP requests'
+            desc='the port on which the module listens for HTTP requests',
+            runtime=True
         ),
         Option(
             'scrape_interval',
@@ -818,6 +819,21 @@ class Module(MgrModule):
             )
 
         return metrics
+
+    def config_notify(self) -> None:
+        """
+        This method is called whenever one of our config options is changed.
+        """
+        # https://stackoverflow.com/questions/7254845/change-cherrypy-port-and-restart-web-server
+        # if we omit the line: cherrypy.server.httpserver = None
+        # then the cherrypy server is not restarted correctly
+        self.log.info('Restarting engine...')
+        cherrypy.engine.stop()
+        cherrypy.server.httpserver = None
+        server_port = self.get_module_option_ex('prometheus', 'server_port', DEFAULT_PORT)
+        cherrypy.config.update({'server.socket_port': server_port})
+        cherrypy.engine.start()
+        self.log.info('Engine started.')
 
     @profile_method()
     def get_health(self) -> None:
@@ -1746,6 +1762,7 @@ class Module(MgrModule):
         # tell metrics collection thread to stop collecting new metrics
         self.metrics_thread.stop()
         cherrypy.engine.stop()
+        cherrypy.server.httpserver = None
         self.log.info('Engine stopped.')
         self.shutdown_rbd_stats()
         # wait for the metrics collection thread to stop
@@ -1842,6 +1859,7 @@ class StandbyModule(MgrStandbyModule):
         self.shutdown_event.wait()
         self.shutdown_event.clear()
         cherrypy.engine.stop()
+        cherrypy.server.httpserver = None
         self.log.info('Engine stopped.')
 
     def shutdown(self) -> None:
