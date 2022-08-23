@@ -38,7 +38,7 @@ class Features(Enum):
         return warn_msg.get(self.value, None)
 
 
-PREDISABLED_FEATURES = set()  # type: Set[str]
+PREDISABLED_FEATURES = {Features.ISCSI}  # type: Set[str]
 
 Feature2Controller = {
     Features.RBD: [Rbd, RbdSnapshot, RbdTrash],
