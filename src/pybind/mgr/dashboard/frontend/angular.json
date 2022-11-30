@@ -97,11 +97,16 @@
             "styles": [
               "node_modules/swagger-ui/dist/swagger-ui.css",
               "node_modules/ngx-toastr/toastr.css",
-              "src/styles.scss"
+              "src/styles.scss",
+              {
+                "input": "src/ibm/ibm_overrides.scss",
+                "bundleName": "ibm-overrides",
+                "inject": false
+              }
             ],
             "stylePreprocessorOptions": {
               "includePaths": [
-                "src"
+                "src/styles"
               ]
             },
             "vendorChunk": true,
@@ -112,7 +117,7 @@
             "namedChunks": true
           },
           "configurations": {
-            "production": {
+            "production-redhat": {
               "budgets": [
                 {
                   "type": "anyComponentStyle",
@@ -131,7 +136,35 @@
                   "replace": "src/environments/environment.ts",
                   "with": "src/environments/environment.prod.ts"
                 }
-              ]
+              ],
+              "outputPath": "dist-redhat"
+            },
+            "production-ibm": {
+              "budgets": [
+                {
+                  "type": "anyComponentStyle",
+                  "maximumWarning": "6kb"
+                }
+              ],
+              "optimization": true,
+              "outputHashing": "all",
+              "sourceMap": false,
+              "namedChunks": false,
+              "extractLicenses": true,
+              "vendorChunk": false,
+              "buildOptimizer": true,
+              "fileReplacements": [
+                {
+                  "replace": "src/environments/environment.ts",
+                  "with": "src/environments/environment.ibm.ts"
+                }
+              ],
+              "stylePreprocessorOptions": {
+                "includePaths": [
+                  "src/ibm"
+                ]
+              },
+              "outputPath": "dist-ibm"
             },
             "cs": {
               "localize": [
@@ -208,8 +241,11 @@
             "proxyConfig": "proxy.conf.json"
           },
           "configurations": {
-            "production": {
-              "browserTarget": "ceph-dashboard:build:production"
+            "production-redhat": {
+              "browserTarget": "ceph-dashboard:build:production-redhat"
+            },
+            "production-ibm": {
+              "browserTarget": "ceph-dashboard:build:production-ibm"
             },
             "cs": {
               "browserTarget": "ceph-dashboard:build:cs"

@@ -6,5 +6,6 @@
 export const environment = {
   default_lang: '{DEFAULT_LANG}',
   production: '{PRODUCTION}',
-  year: '{COPYRIGHT_YEAR}'
+  year: '{COPYRIGHT_YEAR}',
+  build: '{BUILD}'
 };

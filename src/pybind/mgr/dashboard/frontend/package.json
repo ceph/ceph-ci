@@ -9,6 +9,7 @@
     "ng": "ng",
     "start": "npm run env_build && ng serve --host 0.0.0.0 --ssl",
     "build": "npm run env_build && ng build --configuration=$npm_package_config_locale",
+    "build:all": "npm run env_build && ng build --configuration=$npm_package_config_locale,production-redhat && npm run env_build && ng build --configuration=$npm_package_config_locale,production-ibm",
     "build:localize": "node cd --env --pre && ng build --localize",
     "postbuild:localize": "node cd --res",
     "env_build": "node cd --env",

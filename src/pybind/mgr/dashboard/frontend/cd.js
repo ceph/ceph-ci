@@ -114,13 +114,15 @@ function envBuild() {
   origFile = 'src/environments/environment.tpl.ts';
   devFile = 'src/environments/environment.ts';
   prodFile = 'src/environments/environment.prod.ts';
+  ibmFile = 'src/environments/environment.ibm.ts';
 
   const replacements = [
     { from: '{DEFAULT_LANG}', to: process.env.npm_package_config_locale },
     { from: '{COPYRIGHT_YEAR}', to: new Date().getFullYear() }
   ];
   let dev = replacements.concat([{ from: `'{PRODUCTION}'`, to: false }]);
-  let prod = replacements.concat([{ from: `'{PRODUCTION}'`, to: true }]);
+  let prod = replacements.concat([{ from: `'{PRODUCTION}'`, to: true }, { from: '{BUILD}', to: 'redhat' }]);
+  let ibm = replacements.concat([{ from: `'{PRODUCTION}'`, to: true }, { from: '{BUILD}', to: 'ibm' }]);
 
   fs.copyFile(origFile, devFile, (err) => {
     if (err) throw err;
@@ -134,6 +136,12 @@ function envBuild() {
     logger(`'${origFile}' was copied to '${prodFile}'`);
 
     replace(prodFile, prod);
+  });
+  fs.copyFile(origFile, ibmFile, (err) => {
+    if (err) throw err;
+    logger(`'${origFile}' was copied to '${ibmFile}'`);
+
+    replace(ibmFile, ibm);
   });
 }
 
