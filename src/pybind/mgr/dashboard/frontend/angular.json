@@ -106,7 +106,7 @@
             ],
             "stylePreprocessorOptions": {
               "includePaths": [
-                "src"
+                "src/styles"
               ]
             },
             "vendorChunk": true,
@@ -117,7 +117,7 @@
             "namedChunks": true
           },
           "configurations": {
-            "production": {
+            "production-redhat": {
               "budgets": [
                 {
                   "type": "anyComponentStyle",
@@ -164,6 +164,11 @@
                   "with": "src/environments/environment.ibm.ts"
                 }
               ],
+              "stylePreprocessorOptions": {
+                "includePaths": [
+                  "src/ibm"
+                ]
+              },
               "outputPath": "dist-ibm"
             },
             "cs": {
@@ -241,8 +246,11 @@
             "buildTarget": "ceph-dashboard:build"
           },
           "configurations": {
-            "production": {
-              "buildTarget": "ceph-dashboard:build:production"
+            "production-redhat": {
+              "buildTarget": "ceph-dashboard:build:production-redhat"
+            },
+            "production-ibm": {
+              "buildTarget": "ceph-dashboard:build:production-ibm"
             },
             "cs": {
               "buildTarget": "ceph-dashboard:build:cs"
