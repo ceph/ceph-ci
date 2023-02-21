@@ -327,7 +327,7 @@ class CephString(CephArgtype):
     """
     String; pretty generic.  goodchars is a RE char class of valid chars
     """
-    def __init__(self, goodchars=''):
+    def __init__(self, goodchars='', **kwargs):
         from string import printable
         try:
             re.compile(goodchars)
@@ -338,18 +338,24 @@ class CephString(CephArgtype):
         self.goodset = frozenset(
             [c for c in printable if re.match(goodchars, c)]
         )
+        # Extract allowempty from kwargs
+        self.allowempty = kwargs.pop('allowempty', True) in (True, 'True', 'true')
 
     def valid(self, s: str, partial: bool = False) -> None:
+        if not self.allowempty and s == "":
+            raise ArgumentFormat("argument can't be an empty string")
+
         sset = set(s)
         if self.goodset and not sset <= self.goodset:
-            raise ArgumentFormat("invalid chars {0} in {1}".
-                                 format(''.join(sset - self.goodset), s))
+            raise ArgumentFormat("invalid chars '{0}' in input string '{1}'".
+                                 format(''.join(sorted(list(sset - self.goodset))), s))
         self.val = s
 
     def __str__(self) -> str:
         b = ''
         if self.goodchars:
             b += '(goodchars {0})'.format(self.goodchars)
+        b += f'(allowempty {self.allowempty})'
         return '<string{0}>'.format(b)
 
     def complete(self, s) -> List[str]:
@@ -361,6 +367,7 @@ class CephString(CephArgtype):
     def argdesc(self, attrs):
         if self.goodchars:
             attrs['goodchars'] = self.goodchars
+        attrs['allowempty'] = repr(self.allowempty)
         return super().argdesc(attrs)
 
 
