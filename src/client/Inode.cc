@@ -829,7 +829,6 @@ void Inode::mark_caps_clean()
 
 FSCryptContextRef Inode::init_fscrypt_ctx()
 {
-lsubdout(client->cct, client, 0) << __func__ << " auth.size()=" << fscrypt_auth.size() << dendl;
   if (fscrypt_auth.size() == 0) {
     return nullptr;
   }
