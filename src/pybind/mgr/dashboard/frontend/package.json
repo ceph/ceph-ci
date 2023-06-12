@@ -74,7 +74,7 @@
     "ngx-pipe-function": "1.0.0",
     "ngx-toastr": "14.3.0",
     "rxjs": "6.6.3",
-    "simplebar-angular": "2.3.6",
+    "simplebar-angular": "3.2.4",
     "swagger-ui": "4.12.0",
     "tslib": "2.3.1",
     "zone.js": "0.11.8"
