@@ -174,6 +174,7 @@ struct Inode : RefCountedObject {
   FSCryptKeyValidatorRef fscrypt_key_validator;
 
   uint64_t effective_size() const;
+  void set_effective_size(uint64_t size);
 
   bool is_fscrypt_enabled() {
     return !!fscrypt_auth.size();
