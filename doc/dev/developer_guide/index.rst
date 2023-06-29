@@ -23,3 +23,4 @@ Contributing to Ceph: A Guide for Developers
    Tracing Developer Documentation <jaegertracing>
    Cephadm Developer Documentation  <../cephadm/index>
    Debugging with GDB <debugging-gdb>
+   IBM Ceph Call Home Documentation <../callhome>
