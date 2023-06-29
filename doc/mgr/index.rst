@@ -49,3 +49,5 @@ sensible.
     SMB module <smb>
     Progress Module <progress>
     CLI API Commands module <cli_api>
+    IBM Ceph Call Home module <callhome>
+

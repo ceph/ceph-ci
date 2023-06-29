@@ -1,0 +1,90 @@
+{
+  "service": "ibm_callhome_connect",
+  "version": "1.0.0.4",
+  "transaction": {
+    "event_id": "IBM-RedHatMarine-ceph-368ffc04-5319-11ee-9c69-123456789aaa-368ffc04-5319-11ee-9c69-123456789aaa_asset_event_819a108f-bde2-40bd-9516-2c6e9a623140_PJD",
+    "asset": "ceph",
+    "asset_id": "368ffc04-5319-11ee-9c69-123456789aaa",
+    "asset_type": "RedHatMarine",
+    "asset_virtual_id": "368ffc04-5319-11ee-9c69-123456789aaa",
+    "agent": "chc_ras_agent",
+    "software_level": {
+      "name": "ceph_software",
+      "vrmf": "ceph version 17.2.6 (d7ff0d10654d2280e08f1ab989c7cdf3064446a5) quincy (stable)"
+    },
+    "api_key": "mocked_api_key",
+    "event_time": "2024-06-23 19:36:48",
+    "event_time_ms": 1719171408779,
+    "message_key": "Storage_RedHat_ceph_368ffc04-5319-11ee-9c69-123456789aaa_368ffc04-5319-11ee-9c69-123456789aaa",
+    "message_key_json": {
+      "group": "Storage",
+      "category": "RedHat",
+      "type": "ceph",
+      "instance": "368ffc04-5319-11ee-9c69-123456789aaa",
+      "virtual_id": "368ffc04-5319-11ee-9c69-123456789aaa"
+    },
+    "rc": 200,
+    "events": 1,
+    "analytics_activation_id": "activation_1719171408778_rzhq8f4pxau_us-east.codeengine.appdomain.cloud_post_us-east_dev",
+    "target_space": "dev",
+    "env": {
+      "activation_id": "activation_1719171408778_rzhq8f4pxau_us-east.codeengine.appdomain.cloud_post_us-east_dev",
+      "action_name": "call_home_connect_post",
+      "namespace": "call-home-connect-service-dev",
+      "http_method": "post",
+      "geo": "us-east",
+      "url": "/api/v1",
+      "stage": "dev",
+      "message": "Successful Request"
+    },
+    "ien": 200,
+    "idb": 596
+  },
+  "events": [
+    {
+      "header": {
+        "_id": "last_contact_asset_event_IBM-RedHatMarine-ceph-368ffc04-5319-11ee-9c69-123456789aaa-0000020420805080_f376db1b-1c92-46c1-8bf1-138a061a94f5",
+        "rc": 200,
+        "component": "RedHatMarine_call_home_agent",
+        "payload": false,
+        "context": {
+          "messagetype": 1,
+          "origin": 2,
+          "timestamp": 1645737993,
+          "transid": 1645737993210
+        }
+      }
+    }
+  ],
+  "response_available": true,
+  "response_state": {
+    "transactions": {},
+    "persistence_result": {
+      "response_cos_data_success": false,
+      "response_cos_data_exception": "The specified key does not exist.",
+      "query_parameters": {
+        "Key": "dev/response/RedHatMarine/ceph/368ffc04-5319-11ee-9c69-123456789aaa/Unsolicited_Storage_Insights_RedHatMarine_ceph_Request_transaction.json",
+        "Bucket": "call-home-connect-response-data"
+      },
+      "found_detail": "Found Records [] available the time of query",
+      "missing_detail": "Missing Records [Unsolicited_Storage_Insights_RedHatMarine_ceph_Request] not available the time of query",
+      "found": 0,
+      "missing": 1
+    },
+    "filter_redaction": false,
+    "filter_records_reviewed": 0,
+    "filter_records_removed": 0,
+    "results": true,
+    "found_detail": "Found Records [] available the time of query",
+    "found": 0,
+    "missing": 1
+  },
+  "query_results_error": true,
+  "query_results_available": false,
+  "query_state": {
+    "success": false,
+    "error": true,
+    "error_text": "",
+    "results": {}
+  }
+}

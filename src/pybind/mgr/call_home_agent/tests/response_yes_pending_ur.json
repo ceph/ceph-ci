@@ -1,0 +1,165 @@
+{
+  "service": "ibm_callhome_connect",
+  "version": "1.0.0.4",
+  "transaction": {
+    "event_id": "IBM-RedHatMarine-ceph-368ffc04-5319-11ee-9c69-123456789aaa-368ffc04-5319-11ee-9c69-123456789aaa_asset_event_819a108f-bde2-40bd-9516-2c6e9a623140_PJD",
+    "asset": "ceph",
+    "asset_id": "368ffc04-5319-11ee-9c69-123456789aaa",
+    "asset_type": "RedHatMarine",
+    "asset_virtual_id": "368ffc04-5319-11ee-9c69-123456789aaa",
+    "agent": "chc_ras_agent",
+    "software_level": {
+      "name": "ceph_software",
+      "vrmf": "ceph version 17.2.6 (d7ff0d10654d2280e08f1ab989c7cdf3064446a5) quincy (stable)"
+    },
+    "api_key": "mocked_api_key",
+    "event_time": "2024-06-23 19:39:07",
+    "event_time_ms": 1719171547044,
+    "message_key": "Storage_RedHat_ceph_368ffc04-5319-11ee-9c69-123456789aaa_368ffc04-5319-11ee-9c69-123456789aaa",
+    "message_key_json": {
+      "group": "Storage",
+      "category": "RedHat",
+      "type": "ceph",
+      "instance": "368ffc04-5319-11ee-9c69-123456789aaa",
+      "virtual_id": "368ffc04-5319-11ee-9c69-123456789aaa"
+    },
+    "rc": 200,
+    "events": 1,
+    "analytics_activation_id": "activation_1719171546991_s16zmwohf30_us-south.codeengine.appdomain.cloud_post_us-south_dev",
+    "target_space": "dev",
+    "env": {
+      "activation_id": "activation_1719171546991_s16zmwohf30_us-south.codeengine.appdomain.cloud_post_us-south_dev",
+      "action_name": "call_home_connect_post",
+      "namespace": "call-home-connect-service-dev",
+      "http_method": "post",
+      "geo": "us-south",
+      "url": "/api/v1",
+      "stage": "dev",
+      "message": "Successful Request"
+    },
+    "ien": 200,
+    "idb": 596
+  },
+  "events": [
+    {
+      "header": {
+        "_id": "last_contact_asset_event_IBM-RedHatMarine-ceph-368ffc04-5319-11ee-9c69-123456789aaa-0000020420805080_f376db1b-1c92-46c1-8bf1-138a061a94f5",
+        "rc": 200,
+        "component": "RedHatMarine_call_home_agent",
+        "payload": false,
+        "context": {
+          "messagetype": 1,
+          "origin": 2,
+          "timestamp": 1645737993,
+          "transid": 1645737993210
+        }
+      }
+    }
+  ],
+  "response_available": true,
+  "response_state": {
+    "transactions": {
+      "Unsolicited_Storage_Insights_RedHatMarine_ceph_Request": {
+        "confirmed": false,
+        "complete": false,
+        "event_transaction_id": "Unsolicited_Storage_Insights_RedHatMarine_ceph_Request",
+        "time": "2024-06-23T19:38:38.080Z",
+        "time_ms": 1719171518081,
+        "expiry": 1719430718081,
+        "expiration_mark": false,
+        "event_type": "product_request",
+        "unsolicted_request_type": "product_request",
+        "response_object": {
+          "confirmed": true,
+          "complete": false,
+          "event_transaction_id": "Unsolicited_Storage_Insights_RedHatMarine_ceph_Request",
+          "time": "2022-07-10 08:37:23",
+          "time_ms": 1657503443000,
+          "expiry": 1657504223000,
+          "event_type": "product_request",
+          "unsolicited_request_type": "product_request",
+          "asset": "ceph",
+          "type": "ceph",
+          "asset_id": "368ffc04-5319-11ee-9c69-123456789aaa",
+          "instance": "368ffc04-5319-11ee-9c69-123456789aaa",
+          "asset_type": "RedHatMarine",
+          "asset_vendor": "IBM",
+          "group": "Storage",
+          "category": "RedHatMarine",
+          "asset_virtual_id": "368ffc04-5319-11ee-9c69-123456789aaa",
+          "product_request": {
+            "event_time": "2022-07-10 08:37:23",
+            "event_time_ms": 1657503443000,
+            "connect_transaction_id": "Unsolicited_Storage_Insights_RedHatMarine_ceph_Request_PJD_TestTranGroup001_001_1657503443000",
+            "event_type": "product_request",
+            "event_source_definition": "product_request.eventnotifier.esupport.ibm.com",
+            "asset_event_detail": {
+              "body": {
+                "event_type": "product_request",
+                "inbound_requests": [
+                  {
+                    "operation": "upload_snap",
+                    "options": {
+                      "pmr": "TS1234567",
+                      "level": "3",
+                      "enable_status": "true",
+                      "version": 1
+                    }
+                  },
+                  {
+                    "operation": "upload_file",
+                    "options": {
+                      "pmr": "TS1234567",
+                      "file": "/opt/important/file",
+                      "node": "2",
+                      "enable_status": "false",
+                      "version": 1
+                    }
+                  },
+                  {
+                    "operation": "disable_si_messages",
+                    "options": {
+                      "disable": "true",
+                      "version": 1
+                    }
+                  }
+                ]
+              },
+              "header": {
+                "event_id": "Unsolicited_Storage_Insights_RedHatMarine_ceph_Request",
+                "event_time": "2022-07-11T01:01:31Z",
+                "event_time_ms": 1657501291674,
+                "event_type": "product_request",
+                "local_event_time": "2022-07-11T01:01:31Z"
+              }
+            }
+          }
+        },
+        "response_cos_data_success": true,
+        "response_cos_data_entry_count": 1,
+        "response_cos_bucket": "call-home-connect-response-data",
+        "response_cos_key": "dev/response/RedHatMarine/ceph/368afc04-5319-11ee-9c69-123456789aaa/Unsolicited_Storage_Insights_RedHatMarine_ceph_Request_transaction.json"
+      }
+    },
+    "version": "0.0.0.1",
+    "create_time": "2024-06-23T19:38:38.080Z",
+    "create_time_ms": 1719171518081,
+    "update_time": "2024-06-23T19:38:38.080Z",
+    "update_time_ms": 1719171518081,
+    "filter_redaction": false,
+    "filter_records_reviewed": 1,
+    "filter_records_removed": 0,
+    "results": true,
+    "found_detail": "Found Records [Unsolicited_Storage_Insights_RedHatMarine_ceph_Request] available the time of query",
+    "found": 1,
+    "missing": 0
+  },
+  "query_results_error": true,
+  "query_results_available": false,
+  "query_state": {
+    "success": false,
+    "error": true,
+    "error_text": "",
+    "results": {}
+  }
+}
