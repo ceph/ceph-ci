@@ -37,6 +37,7 @@
           <!-- addr|str|uuid -->
           <div class="cd-col-form-input"
                *ngIf="['addr', 'str', 'uuid'].includes(moduleOption.value.type)">
+            <ng-container *ngIf="moduleOption.value.name !== 'CALL_HOME_REMIND_LATER_ON' && moduleOption.value.name !== 'STORAGE_INSIGHTS_REMIND_LATER_ON'; else disabledInput">
             <input id="{{ moduleOption.value.name }}"
                    class="form-control"
                    type="text"
@@ -57,6 +58,16 @@
             <span class="invalid-feedback"
                   *ngIf="mgrModuleForm.showError(moduleOption.value.name, frm, 'pattern')"
                   i18n>The entered value needs to be a valid IP address.</span>
+            </ng-container>
+
+            <ng-template #disabledInput>
+              <input id="{{ moduleOption.value.name }}"
+                     class="form-control"
+                     type="text"
+                     formControlName="{{ moduleOption.value.name }}"
+                     disabled
+                     *ngIf="moduleOption.value.enum_allowed.length === 0">
+            </ng-template>
           </div>
 
           <!-- uint|int|size|secs -->

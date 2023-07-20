@@ -52,7 +52,6 @@ export class StorageInsightsModalComponent extends CdForm implements OnInit {
     });
     this.storageInsightsService.getStorageInsightsStatus().subscribe((status: boolean) => {
       this.isConfigured = status;
-
       status ? this.populateForm() : this.loadingReady();
     });
   }

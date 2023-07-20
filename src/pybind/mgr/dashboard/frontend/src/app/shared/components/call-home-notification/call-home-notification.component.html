@@ -1,0 +1,13 @@
+<ng-container *ngIf="environment.build === 'ibm' && displayNotification">
+  <cd-alert-panel class="no-margin-bottom"
+                  [showTitle]="false"
+                  size="slim"
+                  [type]="notificationSeverity"
+                  [dismissible]="true"
+                  (dismissed)="onDismissed()">
+  <div i18n>The IBM Call Home helps to improve support experience of Ceph Clusters. Please
+  <button (click)="openModal()"
+          class="btn activate-button alert-link activate-text">Activate</button>
+  the IBM Call Home.</div>
+  </cd-alert-panel>
+</ng-container>

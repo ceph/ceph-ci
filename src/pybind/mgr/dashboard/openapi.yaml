@@ -21067,6 +21067,8 @@ servers:
 tags:
 - description: Initiate a session with Ceph
   name: Auth
+- description: Call Home Management API
+  name: CallHome
 - description: Cephfs Snapshot Scheduling API
   name: CephFSSnapshotSchedule
 - description: CephFS Subvolume Management API
