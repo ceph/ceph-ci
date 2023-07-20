@@ -36,6 +36,8 @@ export class FormButtonPanelComponent implements OnInit {
   cancelText?: string;
   @Input()
   disabled = false;
+  @Input()
+  title = '';
 
   constructor(
     private location: Location,

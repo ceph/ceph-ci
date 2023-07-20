@@ -1,0 +1,13 @@
+<ng-container *ngIf="environment.build === 'ibm' && displayNotification && callHomeEnabled">
+  <cd-alert-panel class="no-margin-bottom"
+                  [showTitle]="false"
+                  size="slim"
+                  [type]="notificationSeverity"
+                  [dismissible]="true"
+                  (dismissed)="onDismissed()">
+  <div i18n>Please
+  <button (click)="openModal()"
+          class="btn activate-button alert-link activate-text">Opt-in</button>
+  to Storage Insights.</div>
+  </cd-alert-panel>
+  </ng-container>

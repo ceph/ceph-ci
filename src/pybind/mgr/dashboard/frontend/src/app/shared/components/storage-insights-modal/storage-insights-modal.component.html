@@ -1,0 +1,166 @@
+<cd-modal [modalRef]="activeModal">
+  <ng-container i18n
+                class="modal-title">{{ title }}</ng-container>
+
+  <ng-container class="modal-content"
+                *cdFormLoading="loading">
+    <form name="modalForm"
+          class="form"
+          #formDir="ngForm"
+          [formGroup]="modalForm"
+          novalidate>
+      <div class="modal-body">
+        <cd-alert-panel type="error"
+                        spacingClass="mb-3"
+                        *ngIf="!callHomeEnabled"
+                        i18n>You need to configure the IBM Call Home first in order to Opt in to IBM Storage Insights</cd-alert-panel>
+
+        <div class="form-group row">
+          <label class="cd-col-form-label required"
+                 for="ibmId">IBM ID
+            <cd-helper i18n>Owner's IBM ID</cd-helper>
+          </label>
+          <div class="cd-col-form-input">
+            <input type="text"
+                   class="form-control"
+                   id="ibmId"
+                   name="ibmId"
+                   formControlName="ibmId"
+                   autofocus>
+            <span class="invalid-feedback"
+                  *ngIf="modalForm.showError('ibmId', formDir, 'required')"
+                  i18n>This field is required.</span>
+          </div>
+        </div>
+
+        <div class="form-group row">
+          <label class="cd-col-form-label required"
+                 for="companyName">
+            <span i18n>Company Name</span>
+          </label>
+          <div class="cd-col-form-input">
+            <input type="text"
+                   class="form-control"
+                   id="companyName"
+                   name="companyName"
+                   formControlName="companyName">
+            <span class="invalid-feedback"
+                  *ngIf="modalForm.showError('companyName', formDir, 'required')"
+                  i18n>This field is required.</span>
+          </div>
+        </div>
+
+        <div class="form-group row">
+          <label class="cd-col-form-label required"
+                 for="firstName">
+            <span i18n>First Name</span>
+          </label>
+          <div class="cd-col-form-input">
+            <input type="text"
+                   class="form-control"
+                   id="firstName"
+                   name="firstName"
+                   formControlName="firstName">
+            <span class="invalid-feedback"
+                  *ngIf="modalForm.showError('firstName', formDir, 'required')"
+                  i18n>This field is required.</span>
+          </div>
+        </div>
+
+        <div class="form-group row">
+          <label class="cd-col-form-label required"
+                 for="lastName">
+            <span i18n>Last Name</span>
+          </label>
+          <div class="cd-col-form-input">
+            <input type="text"
+                   class="form-control"
+                   id="lastName"
+                   name="lastName"
+                   formControlName="lastName">
+            <span class="invalid-feedback"
+                  *ngIf="modalForm.showError('lastName', formDir, 'required')"
+                  i18n>This field is required.</span>
+          </div>
+        </div>
+
+        <div class="form-group row">
+          <label class="cd-col-form-label required"
+                 for="email">
+            <span i18n>Email</span>
+          </label>
+          <div class="cd-col-form-input">
+            <input type="text"
+                   class="form-control"
+                   id="email"
+                   name="email"
+                   formControlName="email">
+            <span class="invalid-feedback"
+                  *ngIf="modalForm.showError('email', formDir, 'required')"
+                  i18n>This field is required.</span>
+          </div>
+        </div>
+
+        <div class="form-group row">
+          <label class="cd-col-form-label required"
+                 for="tenants">
+            <span i18n>Tenants</span>
+          </label>
+          <div class="cd-col-form-input">
+            <div class="input-group mb-1">
+              <select name="tenants"
+                     id="tenants"
+                     class="form-select"
+                     [disabled]="!modalForm.valid"
+                     [(ngModel)]="selectedTenant"
+                     (ngModelChange)="onSelectChange()"
+                     [ngModelOptions]="{standalone: true}">
+                <option disabled
+                        value=""
+                        *ngIf="tenantsList?.length === 0"
+                        i18n>--Please Fetch the Tenants to populate this--</option>
+                <option *ngFor="let tenant of tenantsList"
+                        [ngValue]="tenant">{{tenant['company-name']}}</option>
+            </select>
+          <button class="btn btn-light me-2"
+                  [disabled]="!modalForm.valid"
+                  (click)="fetchTenants(modalForm.value)"
+                  i18n>Fetch Tenants</button>
+              </div>
+            </div>
+        </div>
+
+        <ng-container *ngIf="selectedTenant !== undefined">
+          <div class="form-group row">
+            <label class="cd-col-form-label"
+                   for="tenantCompanyName">
+              <span i18n>Tenant Company Name</span>
+            </label>
+            <div class="cd-col-form-input mt-2">
+              <span><a href="{{tenantUrl}}">{{tenantCompanyName}}</a></span>
+            </div>
+          </div>
+
+          <div class="form-group row">
+            <label class="cd-col-form-label"
+                   for="tenantId">
+              <span i18n>Tenant ID</span>
+            </label>
+            <div class="cd-col-form-input mt-2">
+              <span>{{tenantId}}</span>
+            </div>
+          </div>
+        </ng-container>
+
+      </div>
+
+      <div class="modal-footer">
+        <cd-form-button-panel (submitActionEvent)="optIn(modalForm.value)"
+                              [form]="modalForm"
+                              [submitText]="action"
+                              [disabled]="selectedTenant?.length === 0 || !callHomeEnabled"
+                              [title]="selectedTenant?.length === 0 ? 'A valid tenant should be selected' : ''"></cd-form-button-panel>
+      </div>
+    </form>
+  </ng-container>
+</cd-modal>

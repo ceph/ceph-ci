@@ -12,6 +12,9 @@ import { MotdNotificationService } from '~/app/shared/services/motd-notification
 import _ from 'lodash';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
 import { Permissions } from '~/app/shared/models/permissions';
+import { environment } from '../../../../environments/environment.ibm';
+import { CallHomeNotificationService } from '~/app/shared/services/call-home-notification.service';
+import { StorageInsightsNotificationService } from '~/app/shared/services/storage-insights-notification.service';
 
 @Component({
   selector: 'cd-workbench-layout',
@@ -26,6 +29,7 @@ export class WorkbenchLayoutComponent implements OnInit, OnDestroy {
   @HostBinding('class') get class(): string {
     return 'top-notification-' + this.notifications.length;
   }
+  environment = environment;
 
   constructor(
     public router: Router,
@@ -36,6 +40,8 @@ export class WorkbenchLayoutComponent implements OnInit, OnDestroy {
     private telemetryNotificationService: TelemetryNotificationService,
     private motdNotificationService: MotdNotificationService,
     private multiClusterService: MultiClusterService,
+    private callHomeNotificationService: CallHomeNotificationService,
+    private storageInsightsNotificationService: StorageInsightsNotificationService
   ) {
     this.permissions = this.authStorageService.getPermissions();
   }
@@ -61,6 +67,18 @@ export class WorkbenchLayoutComponent implements OnInit, OnDestroy {
         this.showTopNotification('motdNotificationEnabled', _.isPlainObject(motd));
       })
     );
+    if (this.environment.build === 'ibm') {
+      this.subs.add(
+        this.callHomeNotificationService.remindLaterOn$.subscribe((visible: boolean) => {
+          this.showTopNotification('callHomeNotificationEnabled', visible);
+        })
+      );
+      this.subs.add(
+        this.storageInsightsNotificationService.remindLaterOn$.subscribe((visible: boolean) => {
+          this.showTopNotification('storagteInsightsEnabled', visible);
+        })
+      );
+    }
     this.faviconService.init();
   }
   showTopNotification(name: string, isDisplayed: boolean) {

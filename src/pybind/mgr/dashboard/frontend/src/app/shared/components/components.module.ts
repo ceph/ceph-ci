@@ -63,6 +63,10 @@ import { HelpTextComponent } from './help-text/help-text.component';
 import { FormAdvancedFieldsetComponent } from './form-advanced-fieldset/form-advanced-fieldset.component';
 import { UpgradableComponent } from './upgradable/upgradable.component';
 import { CardGroupComponent } from './card-group/card-group.component';
+import { CallHomeModalComponent } from '~/app/shared/components/call-home-modal/call-home-modal.component';
+import { CallHomeNotificationComponent } from './call-home-notification/call-home-notification.component';
+import { StorageInsightsModalComponent } from './storage-insights-modal/storage-insights-modal.component';
+import { StorageInsightsNotificationComponent } from './storage-insights-notification/storage-insights-notification.component';
 
 @NgModule({
   imports: [
@@ -127,7 +131,11 @@ import { CardGroupComponent } from './card-group/card-group.component';
     HelpTextComponent,
     FormAdvancedFieldsetComponent,
     UpgradableComponent,
-    CardGroupComponent
+    CardGroupComponent,
+    CallHomeModalComponent,
+    CallHomeNotificationComponent,
+    StorageInsightsModalComponent,
+    StorageInsightsNotificationComponent
   ],
   providers: [],
   exports: [
@@ -165,7 +173,10 @@ import { CardGroupComponent } from './card-group/card-group.component';
     HelpTextComponent,
     FormAdvancedFieldsetComponent,
     UpgradableComponent,
-    CardGroupComponent
+    CardGroupComponent,
+    CallHomeModalComponent,
+    CallHomeNotificationComponent,
+    StorageInsightsNotificationComponent
   ]
 })
 export class ComponentsModule {}

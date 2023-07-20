@@ -1,0 +1,244 @@
+<cd-modal [modalRef]="activeModal">
+  <ng-container class="modal-title">
+    <div i18n>{{ title }}</div>
+  </ng-container>
+
+  <ng-container class="modal-content"
+                *cdFormLoading="loading">
+
+    <form name="callHomeForm"
+          #formDir="ngForm"
+          [formGroup]="callHomeForm"
+          novalidate>
+    <div class="modal-body">
+    <ng-container *ngIf="!isConfigured; else downloadReport"><p i18n>
+        IBM Call Home enables users to share basic configuration data of their cluster with IBM. This
+        allows IBM Storage Ceph to be configured to meet its maximum potential.
+        IBM Support and development teams can also use this Call Home
+        information in order to quickly analyze and solve IBM Storage Ceph
+        user problems.
+      </p>
+      <p class="mt-4">
+        Enabling call home has the following benefits:
+      </p>
+      <ul>
+        <li class="p-1">Improves service response time</li>
+        <li class="p-1">Proactively detects issues</li>
+        <li class="p-1">Gives a better customer support experience in areas of usability and ease of use</li>
+        <li class="p-1">Provide customer insights reports for support and development</li>
+      </ul>
+      <!-- Customer Number -->
+      <div class="form-group row mt-4">
+        <label class="cd-col-form-label required"
+               for="customerNumber"
+               i18n>IBM customer number
+          <cd-helper>An IBM Customer Number (ICN) is the unique number that IBM issues
+              its customers during the post contract signing entitlement process. It is a 7 character long string</cd-helper>
+        </label>
+        <div class="cd-col-form-input">
+          <input class="form-control"
+                 type="text"
+                 id="customerNumber"
+                 name="customerNumber"
+                 formControlName="customerNumber"
+                 maxlength="7"
+                 autofocus>
+          <span class="invalid-feedback"
+                *ngIf="callHomeForm.showError('customerNumber', formDir, 'required')"
+                i18n>This field is required.</span>
+        </div>
+      </div>
+
+      <div class="form-group row">
+        <label class="cd-col-form-label required"
+               for="firstName"
+               i18n>First name</label>
+        <div class="cd-col-form-input">
+          <input class="form-control"
+                 type="text"
+                 id="firstName"
+                 name="firstName"
+                 formControlName="firstName">
+          <span class="invalid-feedback"
+                *ngIf="callHomeForm.showError('firstName', formDir, 'required')"
+                i18n>This field is required.</span>
+        </div>
+      </div>
+
+      <!-- Last name -->
+      <div class="form-group row">
+        <label class="cd-col-form-label required"
+               for="lastName"
+               i18n>Last name</label>
+        <div class="cd-col-form-input">
+          <input class="form-control"
+                 type="text"
+                 id="lastName"
+                 name="lastName"
+                 formControlName="lastName">
+          <span class="invalid-feedback"
+                *ngIf="callHomeForm.showError('lastName', formDir, 'required')"
+                i18n>This field is required.</span>
+        </div>
+      </div>
+
+        <!-- Email -->
+        <div class="form-group row">
+          <label class="cd-col-form-label required"
+                 for="email"
+                 i18n>Email</label>
+          <div class="cd-col-form-input">
+            <input class="form-control"
+                   type="text"
+                   id="email"
+                   name="email"
+                   formControlName="email">
+            <span class="invalid-feedback"
+                  *ngIf="callHomeForm.showError('email', formDir, 'required')"
+                  i18n>This field is required.</span>
+            <span class="invalid-feedback"
+                  *ngIf="callHomeForm.showError('email', formDir, 'email')"
+                  i18n>The value is not a valid email address.</span>
+          </div>
+        </div>
+
+        <!-- Phone -->
+        <div class="form-group row">
+          <label class="cd-col-form-label required"
+                 for="phone"
+                 i18n>Phone number</label>
+          <div class="cd-col-form-input">
+            <input class="form-control"
+                   type="text"
+                   id="phone"
+                   name="phone"
+                   formControlName="phone">
+            <span class="invalid-feedback"
+                  *ngIf="callHomeForm.showError('phone', formDir, 'required')"
+                  i18n>This field is required.</span>
+          </div>
+        </div>
+
+        <!-- Country code -->
+        <div class="form-group row">
+          <label class="cd-col-form-label required"
+                for="countryCode"
+                i18n>Country code</label>
+          <div class="cd-col-form-input">
+            <input class="form-control"
+                  type="text"
+                  id="countryCode"
+                  name="countryCode"
+                  formControlName="countryCode">
+            <span class="invalid-feedback"
+                  *ngIf="callHomeForm.showError('countryCode', formDir, 'required')"
+                  i18n>This field is required.</span>
+          </div>
+        </div>
+
+      <!-- Address -->
+      <div class="form-group row">
+        <label class="cd-col-form-label"
+               for="address"
+               i18n>Address</label>
+        <div class="cd-col-form-input">
+          <textarea class="form-control"
+                    type="text"
+                    id="address"
+                    name="address"
+                    formControlName="address"></textarea>
+        </div>
+      </div>
+
+      <!-- Customer company name-->
+      <div class="form-group row">
+        <label class="cd-col-form-label"
+               for="companyName"
+               i18n>Company name</label>
+        <div class="cd-col-form-input">
+          <input class="form-control"
+                 type="text"
+                 id="companyName"
+                 name="companyName"
+                 formControlName="companyName">
+        </div>
+      </div>
+      </ng-container>
+    </div>
+
+    <!-- License agreement -->
+    <div class="form-group row">
+      <div class="cd-col-form-offset">
+        <div class="custom-control custom-checkbox">
+          <label class="custom-control-label"
+                 i18n>By enabling Call Home, you agree to allow IBM and its subsidiaries to store and use your contact information
+                 and certain call-home system information anywhere they do business worldwide as described in the Program license
+                 agreement and documentation. For more information, please refer to the Program license agreement and documentation.</label>
+          <div>
+            <input type="checkbox"
+                  class="custom-control-input"
+                  id="licenseAgrmt"
+                  name="licenseAgrmt"
+                  formControlName="licenseAgrmt">
+            <label class="custom-control-label mt-1"
+                  for="licenseAgrmt"
+                  i18n>I agree.</label>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <cd-form-button-panel submitText="Configure Call Home"
+                            i18n-submitText
+                            [showSubmit]="!isConfigured"
+                            [form]="callHomeForm"
+                            (submitActionEvent)="submit()"></cd-form-button-panel>
+    </div>
+    </form>
+  </ng-container>
+</cd-modal>
+
+<ng-template #downloadReport>
+  <p i18n>IBM Call Home is enabled in your cluster. You can click Deactivate to disable it.
+    <button class="btn btn-light"
+            (click)="stop()">Deactivate</button>
+  </p>
+  <div class="form-group row mt-4">
+    <label class="cd-col-form-label"
+           i18n>Inventory</label>
+    <div class="cd-col-form-input">
+      <button class="btn btn-light"
+              id="inventoryBtn"
+              aria-label="Download Inventory Report"
+              (click)="download('inventory')">
+        <i class="fa fa-download"></i>
+      </button>
+    </div>
+  </div>
+
+  <div class="form-group row">
+    <label class="cd-col-form-label"
+           i18n>Status</label>
+    <div class="cd-col-form-input">
+      <button class="btn btn-light"
+              id="statusBtn"
+              aria-label="Download Status Report"
+              (click)="download('status')">
+        <i class="fa fa-download"></i>
+      </button>
+    </div>
+  </div>
+
+  <div class="form-group row">
+    <label class="cd-col-form-label"
+           i18n>Last Contact</label>
+    <div class="cd-col-form-input">
+      <button class="btn btn-light"
+              id="lastContactBtn"
+              aria-label="Download Last Contact Report"
+              (click)="download('last_contact')">
+        <i class="fa fa-download"></i>
+      </button>
+    </div>
+  </div>
+</ng-template>

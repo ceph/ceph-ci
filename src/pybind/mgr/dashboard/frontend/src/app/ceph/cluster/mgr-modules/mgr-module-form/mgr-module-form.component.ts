@@ -13,6 +13,7 @@ import { CdFormBuilder } from '~/app/shared/forms/cd-form-builder';
 import { CdFormGroup } from '~/app/shared/forms/cd-form-group';
 import { CdValidators } from '~/app/shared/forms/cd-validators';
 import { NotificationService } from '~/app/shared/services/notification.service';
+import { environment } from '~/environments/environment';
 
 @Component({
   selector: 'cd-mgr-module-form',
@@ -23,6 +24,8 @@ export class MgrModuleFormComponent extends CdForm implements OnInit {
   mgrModuleForm: CdFormGroup;
   moduleName = '';
   moduleOptions: any[] = [];
+
+  environment = environment;
 
   constructor(
     public actionLabels: ActionLabelsI18n,
