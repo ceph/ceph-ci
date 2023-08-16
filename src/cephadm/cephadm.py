@@ -177,7 +177,6 @@ from cephadmlib.daemons import (
     SMB,
     SNMPGateway,
     MgmtGateway,
-    Tracing,
     NodeProxy,
 )
 from cephadmlib.agent import http_query
@@ -229,7 +228,6 @@ def get_supported_daemons():
     supported_daemons.append(CephadmAgent.daemon_type)
     supported_daemons.append(SNMPGateway.daemon_type)
     supported_daemons.append(MgmtGateway.daemon_type)
-    supported_daemons.extend(Tracing.components)
     supported_daemons.append(NodeProxy.daemon_type)
     supported_daemons.append(SMB.daemon_type)
     assert len(supported_daemons) == len(set(supported_daemons))
@@ -469,8 +467,6 @@ def update_default_image(ctx: CephadmContext) -> None:
             ctx.image = MgmtGateway.default_image
         if type_ == CephNvmeof.daemon_type:
             ctx.image = CephNvmeof.default_image
-        if type_ in Tracing.components:
-            ctx.image = Tracing.components[type_]['image']
     if not ctx.image:
         ctx.image = os.environ.get('CEPHADM_IMAGE')
     if not ctx.image:

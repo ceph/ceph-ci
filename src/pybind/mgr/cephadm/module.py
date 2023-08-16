@@ -73,7 +73,6 @@ from .services.nfs import NFSService
 from .services.osd import OSDRemovalQueue, OSDService, OSD, NotFoundError
 from .services.monitoring import GrafanaService, AlertmanagerService, PrometheusService, \
     NodeExporterService, SNMPGatewayService, LokiService, PromtailService
-from .services.jaeger import ElasticSearchService, JaegerAgentService, JaegerCollectorService, JaegerQueryService
 from .services.node_proxy import NodeProxy
 from .services.smb import SMBService
 from .schedule import HostAssignment
@@ -138,11 +137,7 @@ DEFAULT_GRAFANA_IMAGE = 'quay.io/ceph/grafana:9.4.12'
 DEFAULT_HAPROXY_IMAGE = 'quay.io/ceph/haproxy:2.3'
 DEFAULT_KEEPALIVED_IMAGE = 'quay.io/ceph/keepalived:2.2.4'
 DEFAULT_SNMP_GATEWAY_IMAGE = 'docker.io/maxwo/snmp-notifier:v1.2.1'
-DEFAULT_ELASTICSEARCH_IMAGE = 'quay.io/omrizeneva/elasticsearch:6.8.23'
-DEFAULT_JAEGER_COLLECTOR_IMAGE = 'quay.io/jaegertracing/jaeger-collector:1.29'
-DEFAULT_JAEGER_AGENT_IMAGE = 'quay.io/jaegertracing/jaeger-agent:1.29'
 DEFAULT_NGINX_IMAGE = 'quay.io/ceph/nginx:1.26.1'
-DEFAULT_JAEGER_QUERY_IMAGE = 'quay.io/jaegertracing/jaeger-query:1.29'
 DEFAULT_SAMBA_IMAGE = 'quay.io/samba.org/samba-server:devbuilds-centos-amd64'
 # ------------------------------------------------------------------------------
 
@@ -284,26 +279,6 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             'container_image_nginx',
             default=DEFAULT_NGINX_IMAGE,
             desc='Nginx container image',
-        ),
-        Option(
-            'container_image_elasticsearch',
-            default=DEFAULT_ELASTICSEARCH_IMAGE,
-            desc='elasticsearch container image',
-        ),
-        Option(
-            'container_image_jaeger_agent',
-            default=DEFAULT_JAEGER_AGENT_IMAGE,
-            desc='Jaeger agent container image',
-        ),
-        Option(
-            'container_image_jaeger_collector',
-            default=DEFAULT_JAEGER_COLLECTOR_IMAGE,
-            desc='Jaeger collector container image',
-        ),
-        Option(
-            'container_image_jaeger_query',
-            default=DEFAULT_JAEGER_QUERY_IMAGE,
-            desc='Jaeger query container image',
         ),
         Option(
             'container_image_samba',
@@ -571,10 +546,6 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             self.container_image_keepalived = ''
             self.container_image_snmp_gateway = ''
             self.container_image_nginx = ''
-            self.container_image_elasticsearch = ''
-            self.container_image_jaeger_agent = ''
-            self.container_image_jaeger_collector = ''
-            self.container_image_jaeger_query = ''
             self.container_image_samba = ''
             self.warn_on_stray_hosts = True
             self.warn_on_stray_daemons = True
@@ -695,13 +666,9 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             CephfsMirrorService,
             CrashService,
             CustomContainerService,
-            ElasticSearchService,
             GrafanaService,
             IngressService,
             IscsiService,
-            JaegerAgentService,
-            JaegerCollectorService,
-            JaegerQueryService,
             LokiService,
             MdsService,
             MgrService,
@@ -928,7 +895,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             'mon', 'crash', 'ceph-exporter', 'node-proxy',
             'prometheus', 'node-exporter', 'grafana', 'alertmanager',
             'container', 'agent', 'snmp-gateway', 'loki', 'promtail',
-            'elasticsearch', 'jaeger-collector', 'jaeger-agent', 'jaeger-query', 'mgmt-gateway'
+            'mgmt-gateway'
         ]
         if forcename:
             if len([d for d in existing if d.daemon_id == forcename]):
@@ -1647,12 +1614,8 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         else:
             images = {
                 'alertmanager': self.container_image_alertmanager,
-                'elasticsearch': self.container_image_elasticsearch,
                 'grafana': self.container_image_grafana,
                 'haproxy': self.container_image_haproxy,
-                'jaeger-agent': self.container_image_jaeger_agent,
-                'jaeger-collector': self.container_image_jaeger_collector,
-                'jaeger-query': self.container_image_jaeger_query,
                 'keepalived': self.container_image_keepalived,
                 'loki': self.container_image_loki,
                 'node-exporter': self.container_image_node_exporter,
@@ -2953,12 +2916,6 @@ Then run the following:
                 deps.append(f'{hash(alertmanager_user + alertmanager_password)}')
         elif daemon_type == 'promtail':
             deps += get_daemon_names(['loki'])
-        elif daemon_type == JaegerAgentService.TYPE:
-            for dd in self.cache.get_daemons_by_type(JaegerCollectorService.TYPE):
-                assert dd.hostname is not None
-                port = dd.ports[0] if dd.ports else JaegerCollectorService.DEFAULT_SERVICE_PORT
-                deps.append(build_url(host=dd.hostname, port=port).lstrip('/'))
-            deps = sorted(deps)
         elif daemon_type == 'mgmt-gateway':
             # url_prefix for monitoring daemons depends on the presence of mgmt-gateway
             # while dashboard urls depend on the mgr daemons
@@ -3381,10 +3338,6 @@ Then run the following:
                 'container': PlacementSpec(count=1),
                 'snmp-gateway': PlacementSpec(count=1),
                 'mgmt-gateway': PlacementSpec(count=1),
-                'elasticsearch': PlacementSpec(count=1),
-                'jaeger-agent': PlacementSpec(host_pattern='*'),
-                'jaeger-collector': PlacementSpec(count=1),
-                'jaeger-query': PlacementSpec(count=1),
                 SMBService.TYPE: PlacementSpec(count=1),
             }
             spec.placement = defaults[spec.service_type]

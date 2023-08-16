@@ -2,7 +2,6 @@ from textwrap import dedent
 import json
 import urllib.parse
 import yaml
-from mgr_util import build_url
 
 import pytest
 
@@ -34,7 +33,6 @@ from ceph.deployment.service_spec import (
     RGWSpec,
     SNMPGatewaySpec,
     ServiceSpec,
-    TracingSpec,
     MgmtGatewaySpec,
 )
 from cephadm.tests.fixtures import with_host, with_service, _run_cephadm, async_side_effect
@@ -2847,183 +2845,6 @@ class TestCephFsMirror:
                     'prefix': 'mgr module enable',
                     'module': 'mirroring'
                 })
-
-
-class TestJaeger:
-    @patch("cephadm.serve.CephadmServe._run_cephadm")
-    def test_jaeger_query(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
-        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
-
-        spec = TracingSpec(es_nodes="192.168.0.1:9200",
-                           service_type="jaeger-query")
-
-        config = {"elasticsearch_nodes": "http://192.168.0.1:9200"}
-
-        with with_host(cephadm_module, 'test'):
-            with with_service(cephadm_module, spec):
-                _run_cephadm.assert_called_with(
-                    'test',
-                    "jaeger-query.test",
-                    ['_orch', 'deploy'],
-                    [],
-                    stdin=json.dumps({
-                        "fsid": "fsid",
-                        "name": 'jaeger-query.test',
-                        "image": '',
-                        "deploy_arguments": [],
-                        "params": {
-                            'tcp_ports': [16686],
-                        },
-                        "meta": {
-                            'service_name': 'jaeger-query',
-                            'ports': [16686],
-                            'ip': None,
-                            'deployed_by': [],
-                            'rank': None,
-                            'rank_generation': None,
-                            'extra_container_args': None,
-                            'extra_entrypoint_args': None,
-                        },
-                        "config_blobs": config,
-                    }),
-                    use_current_daemon_image=False,
-                )
-
-    @patch("cephadm.serve.CephadmServe._run_cephadm")
-    def test_jaeger_collector_es_deploy(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
-        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
-
-        collector_spec = TracingSpec(service_type="jaeger-collector")
-        es_spec = TracingSpec(service_type="elasticsearch")
-        es_config = {}
-
-        with with_host(cephadm_module, 'test'):
-            collector_config = {
-                "elasticsearch_nodes": f'http://{build_url(host=cephadm_module.inventory.get_addr("test"), port=9200).lstrip("/")}'}
-            with with_service(cephadm_module, es_spec):
-                _run_cephadm.assert_called_with(
-                    "test",
-                    "elasticsearch.test",
-                    ['_orch', 'deploy'],
-                    [],
-                    stdin=json.dumps({
-                        "fsid": "fsid",
-                        "name": 'elasticsearch.test',
-                        "image": '',
-                        "deploy_arguments": [],
-                        "params": {
-                            'tcp_ports': [9200],
-                        },
-                        "meta": {
-                            'service_name': 'elasticsearch',
-                            'ports': [9200],
-                            'ip': None,
-                            'deployed_by': [],
-                            'rank': None,
-                            'rank_generation': None,
-                            'extra_container_args': None,
-                            'extra_entrypoint_args': None,
-                        },
-                        "config_blobs": es_config,
-                    }),
-                    use_current_daemon_image=False,
-                )
-                with with_service(cephadm_module, collector_spec):
-                    _run_cephadm.assert_called_with(
-                        "test",
-                        "jaeger-collector.test",
-                        ['_orch', 'deploy'],
-                        [],
-                        stdin=json.dumps({
-                            "fsid": "fsid",
-                            "name": 'jaeger-collector.test',
-                            "image": '',
-                            "deploy_arguments": [],
-                            "params": {
-                                'tcp_ports': [14250],
-                            },
-                            "meta": {
-                                'service_name': 'jaeger-collector',
-                                'ports': [14250],
-                                'ip': None,
-                                'deployed_by': [],
-                                'rank': None,
-                                'rank_generation': None,
-                                'extra_container_args': None,
-                                'extra_entrypoint_args': None,
-                            },
-                            "config_blobs": collector_config,
-                        }),
-                        use_current_daemon_image=False,
-                    )
-
-    @patch("cephadm.serve.CephadmServe._run_cephadm")
-    def test_jaeger_agent(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
-        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
-
-        collector_spec = TracingSpec(service_type="jaeger-collector", es_nodes="192.168.0.1:9200")
-        collector_config = {"elasticsearch_nodes": "http://192.168.0.1:9200"}
-
-        agent_spec = TracingSpec(service_type="jaeger-agent")
-        agent_config = {"collector_nodes": "test:14250"}
-
-        with with_host(cephadm_module, 'test'):
-            with with_service(cephadm_module, collector_spec):
-                _run_cephadm.assert_called_with(
-                    "test",
-                    "jaeger-collector.test",
-                    ['_orch', 'deploy'],
-                    [],
-                    stdin=json.dumps({
-                        "fsid": "fsid",
-                        "name": 'jaeger-collector.test',
-                        "image": '',
-                        "deploy_arguments": [],
-                        "params": {
-                            'tcp_ports': [14250],
-                        },
-                        "meta": {
-                            'service_name': 'jaeger-collector',
-                            'ports': [14250],
-                            'ip': None,
-                            'deployed_by': [],
-                            'rank': None,
-                            'rank_generation': None,
-                            'extra_container_args': None,
-                            'extra_entrypoint_args': None,
-                        },
-                        "config_blobs": collector_config,
-                    }),
-                    use_current_daemon_image=False,
-                )
-                with with_service(cephadm_module, agent_spec):
-                    _run_cephadm.assert_called_with(
-                        "test",
-                        "jaeger-agent.test",
-                        ['_orch', 'deploy'],
-                        [],
-                        stdin=json.dumps({
-                            "fsid": "fsid",
-                            "name": 'jaeger-agent.test',
-                            "image": '',
-                            "deploy_arguments": [],
-                            "params": {
-                                'tcp_ports': [6799],
-                            },
-                            "meta": {
-                                'service_name': 'jaeger-agent',
-                                'ports': [6799],
-                                'ip': None,
-                                'deployed_by': [],
-                                'rank': None,
-                                'rank_generation': None,
-                                'extra_container_args': None,
-                                'extra_entrypoint_args': None,
-                            },
-                            "config_blobs": agent_config,
-                        }),
-                        use_current_daemon_image=False,
-                    )
 
 
 class TestCustomContainer:
