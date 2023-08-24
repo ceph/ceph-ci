@@ -597,6 +597,7 @@ public:
     const uint32_t acct_type;
     const std::string access_key_id;
     const std::string subuser;
+    const std::string keystone_user;
 
   public:
     enum class acct_privilege_t {
@@ -606,6 +607,7 @@ public:
 
     static const std::string NO_SUBUSER;
     static const std::string NO_ACCESS_KEY;
+    static const std::string NO_KEYSTONE_USER;
 
     AuthInfo(const rgw_user& acct_user,
              const std::string& acct_name,
@@ -613,6 +615,7 @@ public:
              const acct_privilege_t level,
              const std::string access_key_id,
              const std::string subuser,
+             const std::string keystone_user,
              const uint32_t acct_type=TYPE_NONE)
     : acct_user(acct_user),
       acct_name(acct_name),
@@ -620,7 +623,8 @@ public:
       is_admin(acct_privilege_t::IS_ADMIN_ACCT == level),
       acct_type(acct_type),
       access_key_id(access_key_id),
-      subuser(subuser) {
+      subuser(subuser),
+      keystone_user(keystone_user) {
     }
   };
 
