@@ -120,7 +120,7 @@
     "jest-preset-angular": "12.0.0",
     "jest-silent-reporter": "0.5.0",
     "mocha-junit-reporter": "2.1.0",
-    "ng-mocks": "14.3.0",
+    "ng-mocks": "14.11.0",
     "npm-run-all": "4.1.5",
     "prettier": "2.1.2",
     "pretty-quick": "3.0.2",
