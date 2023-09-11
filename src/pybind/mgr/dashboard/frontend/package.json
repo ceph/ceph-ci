@@ -102,7 +102,7 @@
     "@types/swagger-ui": "3.52.0",
     "@typescript-eslint/eslint-plugin": "5.27.1",
     "@typescript-eslint/parser": "5.27.1",
-    "axe-core": "4.4.3",
+    "axe-core": "4.8.1",
     "cypress": "9.7.0",
     "cypress-axe": "0.14.0",
     "cypress-cucumber-preprocessor": "4.3.1",
