@@ -1843,6 +1843,88 @@ TEST_F(OSDMapTest, BUG_40104) {
   }
 }
 
+TEST_F(OSDMapTest, TryDropRemapOverfullBothOverfull) {
+  // https://tracker.ceph.com/issues/63137
+  //
+  // try_drop_remap_overfull must not drop a [um_from -> osd] pair when
+  // um_from is itself overfull: the drop returns the PG to an OSD that
+  // already carries too many PGs, providing no net improvement.
+  //
+  // Setup (size=1, 12 PGs, 3 OSDs, target=4 each):
+  //   pg_upmap:       pg0..pg6 -> osd.0 (7 PGs), pg7..pg11 -> osd.1 (5 PGs)
+  //   pg_upmap_items: pg6: [osd.0 -> osd.1]
+  //   pgs_by_osd:     osd.0=6 (+2), osd.1=6 (+2), osd.2=0 (-4)
+  //
+  // Dropping pg6's entry would return it to osd.0, raising osd.0's deviation
+  // from +2 to +3 while lowering osd.1's from +2 to +1 -- a net wash that
+  // leaves one OSD worse off.
+  set_up_map(3, true);
+
+  OSDMap::Incremental pool_inc(osdmap.get_epoch() + 1);
+  pool_inc.new_pool_max = osdmap.get_pool_max();
+  pg_pool_t empty;
+  int64_t pool_id = ++pool_inc.new_pool_max;
+  pg_pool_t *p = pool_inc.get_new_pool(pool_id, &empty);
+  p->size = 1;
+  p->min_size = 1;
+  p->set_pg_num(12);
+  p->set_pgp_num(12);
+  p->type = pg_pool_t::TYPE_REPLICATED;
+  p->crush_rule = 0;
+  p->set_flag(pg_pool_t::FLAG_HASHPSPOOL);
+  pool_inc.new_pool_names[pool_id] = "testpool";
+  osdmap.apply_incremental(pool_inc);
+
+  // Force placement via pg_upmap: pg0..pg6 -> osd.0, pg7..pg11 -> osd.1
+  {
+    OSDMap::Incremental inc(osdmap.get_epoch() + 1);
+    for (int i = 0; i <= 6; ++i) {
+      pg_t pg = osdmap.raw_pg_to_pg(pg_t(i, pool_id));
+      inc.new_pg_upmap[pg] = mempool::osdmap::vector<int32_t>{0};
+    }
+    for (int i = 7; i <= 11; ++i) {
+      pg_t pg = osdmap.raw_pg_to_pg(pg_t(i, pool_id));
+      inc.new_pg_upmap[pg] = mempool::osdmap::vector<int32_t>{1};
+    }
+    osdmap.apply_incremental(inc);
+  }
+
+  // Add pg_upmap_items pg6: [osd.0 -> osd.1]
+  // pgs_by_osd after all upmaps: osd.0=6 (+2), osd.1=6 (+2), osd.2=0 (-4)
+  pg_t pg6 = osdmap.raw_pg_to_pg(pg_t(6, pool_id));
+  {
+    OSDMap::Incremental inc(osdmap.get_epoch() + 1);
+    inc.new_pg_upmap_items[pg6] =
+      mempool::osdmap::vector<pair<int32_t,int32_t>>{{0, 1}};
+    osdmap.apply_incremental(inc);
+  }
+
+  // Verify pg6 acts from osd.1 before the balancer runs
+  {
+    vector<int> up;
+    int up_primary;
+    osdmap.pg_to_up_acting_osds(pg6, &up, &up_primary, nullptr, nullptr);
+    ASSERT_EQ(up[0], 1);
+  }
+
+  set<int64_t> only_pools = {pool_id};
+  OSDMap::Incremental pending_inc(osdmap.get_epoch() + 1);
+  osdmap.calc_pg_upmaps(g_ceph_context, 1, 100, only_pools, &pending_inc);
+
+  OSDMap newmap;
+  newmap.deepish_copy_from(osdmap);
+  newmap.apply_incremental(pending_inc);
+
+  // pg6 must still act from osd.1: returning it to osd.0 would not improve
+  // the distribution (osd.0 deviation would rise from +2 to +3).
+  {
+    vector<int> up;
+    int up_primary;
+    newmap.pg_to_up_acting_osds(pg6, &up, &up_primary, nullptr, nullptr);
+    ASSERT_EQ(up[0], 1);
+  }
+}
+
 TEST_F(OSDMapTest, BUG_42052) {
   // https://tracker.ceph.com/issues/42052
   set_up_map(6, true);

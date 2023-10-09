@@ -5901,7 +5901,7 @@ int OSDMap::calc_pg_upmaps(
       }
       // look for remaps we can un-remap
       if (try_drop_remap_overfull(cct, pgs, tmp_osd_map, osd,
-				  temp_pgs_by_osd, to_unmap, to_upmap))
+				  temp_pgs_by_osd, to_unmap, to_upmap, osd_deviation))
 	goto test_change;
 
       // try upmap
@@ -6352,23 +6352,27 @@ bool OSDMap::try_drop_remap_overfull(
   int osd,
   map<int,std::set<pg_t>>& temp_pgs_by_osd,
   set<pg_t>& to_unmap,
-  map<pg_t, mempool::osdmap::vector<pair<int32_t,int32_t>>>& to_upmap)
+  map<pg_t, mempool::osdmap::vector<pair<int32_t,int32_t>>>& to_upmap,
+  const map<int,float>& osd_deviation)
 {
   //
   // This function tries to drop existimg upmap items which map data to overfull 
   // OSDs. It updates temp_pgs_by_osd, to_unmap and to_upmap and rerturns true 
   // if it found an item that can be dropped, false if not. 
   //
+  const float osd_dev = osd_deviation.at(osd);
   for (auto pg : pgs) {
     auto p = tmp_osd_map.pg_upmap_items.find(pg);
     if (p == tmp_osd_map.pg_upmap_items.end())
       continue;
     mempool::osdmap::vector<pair<int32_t,int32_t>> new_upmap_items;
     auto& pg_upmap_items = p->second;
-    for (auto um_pair : pg_upmap_items) {
+    for (auto& um_pair : pg_upmap_items) {
       auto& um_from = um_pair.first;
       auto& um_to = um_pair.second;
-      if (um_to == osd) {
+      // +1: dropping this pair moves one PG from um_to back to um_from. Skip
+      // the drop if it would leave um_from at least as overfull as osd is today.
+      if (um_to == osd && osd_deviation.at(um_from) + 1 < osd_dev) {
         ldout(cct, 10) << " will try dropping existing"
                        << " remapping pair "
                        << um_from << " -> " << um_to
