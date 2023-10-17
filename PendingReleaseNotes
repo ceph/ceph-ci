@@ -597,3 +597,11 @@ errorcode32_t is converting, internally, the error code from host to ceph, when 
 when decoding, resulting having LINUX codes on the wire, and HOST code on the receiver.
 All CEPHFS_E* defines have been removed across Ceph (including the python binding).
 Relevant tracker: https://tracker.ceph.com/issues/64611
+* mon: add NVMe-oF gateway monitor and HA
+  This PR adds high availability support for the nvmeof Ceph service. High availability
+means that even in the case that a certain GW is down, there will be another available
+path for the initiator to be able to continue the IO through another GW.
+It is also adding 2 new mon commands, to notify monitor about the gateway creation/deletion:
+  - nvme-gw create
+  - nvme-gw delete
+Relevant tracker: https://tracker.ceph.com/issues/64777
