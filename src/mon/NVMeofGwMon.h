@@ -18,7 +18,7 @@
 
 class NVMeofGwMon: public PaxosService
 {
-	NVMeofGwMap map;  //NVMeGWMap
+	NVMeofGwMap Gmap;  //NVMeGWMap
   //MgrMap pending_map;
   //utime_t first_seen_inactive;
 
@@ -34,8 +34,7 @@ class NVMeofGwMon: public PaxosService
 
 public:
   NVMeofGwMon(Monitor &mn, Paxos &p, const std::string& service_name)
-    : PaxosService(mn, p, service_name)
-  {}
+   : PaxosService(mn, p, service_name) { }
   ~NVMeofGwMon() override {}
 
 
@@ -51,7 +50,7 @@ public:
   // 3 pure virtual methods of the paxosService
   void create_initial()override{};
   void create_pending()override{};
-  void encode_pending(MonitorDBStore::TransactionRef t)override{};
+  void encode_pending(MonitorDBStore::TransactionRef t)override ;
 
 
   void init() override;

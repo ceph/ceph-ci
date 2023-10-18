@@ -6,14 +6,15 @@
  */
 
 
-
-#include "common/TextTable.h"
-#include "include/stringify.h"
+#include <boost/tokenizer.hpp>
+ #include "include/stringify.h"
 #include "NVMeofGwMon.h"
+
 using std::map;
 using std::make_pair;
 using std::ostream;
 using std::ostringstream;
+
 
 #define dout_subsys ceph_subsys_mon
 #undef dout_prefix
@@ -34,20 +35,36 @@ static ostream& _prefix(std::ostream *_dout, const Monitor &mon,
   void NVMeofGwMon::on_shutdown() {
 
   }
-
+static int cnt ;
   void NVMeofGwMon::tick(){
 
-	if (!is_active() || !mon.is_leader())
+	if (!is_active() || !mon.is_leader()){
+		dout(4) << __func__  <<  " NVMeofGwMon leader : " << mon.is_leader() << "active : " << is_active()  << dendl;
+		 if(mon.is_leader() && ++cnt  == 4){
+			 Gmap.cfg_add_gw(1, "nqn2008.node1", 1);
+			 Gmap.cfg_add_gw(2, "nqn2008.node1", 2);
+			 Gmap.cfg_add_gw(3, "nqn2008.node1", 3);
+			 Gmap.cfg_add_gw(1, "nqn2008.node2", 2);
+			// map._dump_gws(map.Gmap);
+		 }
+
 		return;
+	}
 
 	const auto now = ceph::coarse_mono_clock::now();
-	dout(4) << __func__  <<  "NVMeofGwMon leader got a tick " << dendl;
+	dout(4) << __func__  <<  "NVMeofGwMon leader got a real tick " << dendl;
 	last_tick = now;
   }
 
   void NVMeofGwMon::update_from_paxos(bool *need_bootstrap){
 	  dout(4) << __func__  << dendl;
   }
+
+
+  void NVMeofGwMon::encode_pending(MonitorDBStore::TransactionRef t){
+	  dout(4) << __func__  << dendl;
+  }
+
 
 
   bool NVMeofGwMon::preprocess_query(MonOpRequestRef op){

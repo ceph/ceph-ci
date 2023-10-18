@@ -22,6 +22,7 @@ set(lib_mon_srcs
   HealthMonitor.cc
   KVMonitor.cc
   NVMeofGwMon.cc
+  NVMeofGwMap.cc
   ../mds/MDSAuthCaps.cc
   ../mgr/mgr_commands.cc
   ../osd/OSDCap.cc
