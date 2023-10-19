@@ -227,7 +227,7 @@
 #define MSG_MGR_MAP               0x704
 
 // *** ceph-mon(MgrMonitor) -> ceph-mgr
-#define MSG_MGR_DIGEST               0x705
+#define MSG_MGR_DIGEST            0x705
 // *** cephmgr -> ceph-mon
 #define MSG_MON_MGR_REPORT        0x706
 #define MSG_SERVICE_MAP           0x707
@@ -237,7 +237,13 @@
 #define MSG_MGR_COMMAND_REPLY     0x70a
 
 // *** ceph-mgr <-> MON daemons ***
-#define MSG_MGR_UPDATE     0x70b
+#define MSG_MGR_UPDATE            0x70b
+
+// *** nvmeof mon -> gw daemons ***
+#define MSG_MNVMEOF_GW_MAP        0x70c
+
+// *** gw daemons -> nvmeof mon  ***
+#define MSG_MNVMEOF_GW_BEACON     0x70d
 
 // ======================================================
 
