@@ -1,0 +1,7 @@
+teuthology:
+  postmerge:
+    - if yaml.overrides.ceph.cephfs.max_mds <= 1 then reject() end
+overrides:
+  ceph:
+    config:
+      mds thrash exports: 1
