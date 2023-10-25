@@ -19,6 +19,8 @@ static ostream& _prefix(std::ostream *_dout, const NVMeofGwMap *h,//const Monito
     return *_dout << "gw-mon." << map->mon->name << "@" << map->mon->rank;
 }
 
+
+
 int  NVMeofGwMap::cfg_add_gw (const GW_ID_T &gw_id, const std::string & nqn, uint16_t ana_grpid) {
     GW_STATE_T state{ {GW_IDLE_STATE,} , ana_grpid, GW_AVAILABILITY_E::GW_CREATED,   0 };
 
@@ -98,8 +100,13 @@ int NVMeofGwMap::_dump_metadata_map( )const  {
 }
 
 
+void NVMeofGwMap::dump_timestamp(ceph::coarse_mono_clock::time_point &tp){
 
-
+    auto now_s = std::chrono::time_point_cast<std::chrono::seconds>( tp);
+    auto value = now_s.time_since_epoch();
+    long duration = value.count();
+    dout(4) << "NVM ts : " << duration << dendl;
+}
 
 
 int NVMeofGwMap::process_gw_map_ka(const GW_ID_T &gw_id, const std::string& nqn , bool &propose_pending)
@@ -157,16 +164,15 @@ int NVMeofGwMap::process_gw_map_ka(const GW_ID_T &gw_id, const std::string& nqn 
 
 
         else if (gw_state->availability == GW_AVAILABILITY_E::GW_AVAILABLE) {
-            const auto now = ceph::coarse_mono_clock::now(); // const auto mgr_beacon_grace =   g_conf().get_val<std::chrono::seconds>("mon_mgr_beacon_grace");// todo change to something related to NVMeGW KATO
+            auto now = ceph::coarse_mono_clock::now(); // const auto mgr_beacon_grace =   g_conf().get_val<std::chrono::seconds>("mon_mgr_beacon_grace");// todo change to something related to NVMeGW KATO
             std::chrono::seconds sc(FAILBACK_PERSISTENCY_INT_SEC);
 
             for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++)
                 if (gw_state->sm_state[i] == GW_WAIT_FAILBACK_PREPARED) {
                     GW_METADATA_T* metadata = find_gw_metadata(gw_id, nqn);
-
                     ceph_assert(metadata !=0);
-
-                    //  inspect (now - metadata->anagrp_sm_tstamps[i])
+                    dump_timestamp(now);
+                    dump_timestamp(metadata->anagrp_sm_tstamps[i]);
                     if(now - metadata->anagrp_sm_tstamps[i] > sc){ //mgr_beacon_grace){
                         //     interval = 2*KATO pased T  so find  the state of the candidate to failback - whether it is still available
                         for (auto& itr : *subsyst_it) {
@@ -177,6 +183,13 @@ int NVMeofGwMap::process_gw_map_ka(const GW_ID_T &gw_id, const std::string& nqn 
                                 propose_pending = true;
                                 break;
                             }
+                            else if (itr.second.optimized_ana_group_id == i && itr.second.availability == GW_AVAILABILITY_E::GW_UNAVAILABLE){
+                                //This GW is failed again - persistency interval is broken so this gw standby for the group
+                                gw_state->sm_state[i] = GW_STANDBY_STATE;
+                                dout(4)  << "Failback unsuccessfull " << gw_id << "becomes standby for the ana group " << i  << dendl;
+                                propose_pending = true;
+                                break;
+                            }
                         }
                     }
                     // maybe there are other ANA groups that this GW is in state GW_WAIT_FAILBACK_PREPARED  so continue pass over all ANA groups
@@ -184,7 +197,7 @@ int NVMeofGwMap::process_gw_map_ka(const GW_ID_T &gw_id, const std::string& nqn 
         }
     }
     else{
-        dout(4)  << __FUNCTION__ << "ERROR GW-id was not found in the map " << gw_id << dendl;
+        dout(4)  <<  __func__ << "ERROR GW-id was not found in the map " << gw_id << dendl;
         rc = 1;
     }
     return rc;

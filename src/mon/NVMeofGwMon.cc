@@ -79,7 +79,7 @@ void NVMeofGwMon::inject1(){
     else if( cnt  == start_cnt+3 ){  // simulate - gw1 down
         pending_map.process_gw_map_gw_down( "gw1", "nqn2008.node1", propose);
         if(propose)
-             propose_pending();
+            propose_pending();
         pending_map._dump_metadata_map();
     }
 
@@ -89,11 +89,14 @@ void NVMeofGwMon::inject1(){
         pending_map.process_gw_map_ka( "gw1", "nqn2008.node1", propose);
         if(propose)
             propose_pending();
-
     }
 
-
     else if( cnt  == start_cnt+6 ){  // simulate - gw2 still OK
+        pending_map.process_gw_map_ka( "gw2", "nqn2008.node1", propose);
+        if(propose)
+            propose_pending();
+    }
+    else if( cnt  == start_cnt+8 ){  // simulate - gw2 still OK - checks the persistency timer in the state
         pending_map.process_gw_map_ka( "gw2", "nqn2008.node1", propose);
         if(propose)
             propose_pending();

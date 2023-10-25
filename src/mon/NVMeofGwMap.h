@@ -22,6 +22,7 @@
 #include "common/Clock.h"
 #include "PaxosService.h"
 #include "msg/Message.h"
+#include "common/ceph_time.h"
 /*#include "NVMeofGwMon.h"
 
 using std::ostream;
@@ -38,6 +39,9 @@ inline ostream& _prefix(std::ostream *_dout, const Monitor &mon,
   return *_dout << "mon." << mon.name << "@" << mon.rank;
 }
  */
+
+using ceph::coarse_mono_clock;
+
 
 using GW_ID_T   = std::string;
 
@@ -73,7 +77,7 @@ typedef struct GW_METADATA_T {
 using GWMAP               = std::map <std::string, std::map<GW_ID_T, GW_STATE_T> >;
 using GWMETADATA          = std::map <std::string, std::map<GW_ID_T, GW_METADATA_T> >;
 using SUBSYST_GWMAP       = std::map<GW_ID_T, GW_STATE_T>;
-
+using SUBSYST_GWMETA      = std::map<GW_ID_T, GW_METADATA_T>;
 
 inline void encode(const GW_STATE_T& state, ceph::bufferlist &bl) {
     for(int i = 0; i <MAX_SUPPORTED_ANA_GROUPS; i ++){
@@ -85,7 +89,7 @@ inline void encode(const GW_STATE_T& state, ceph::bufferlist &bl) {
     encode(state.version, bl);
 }
 
-inline void decode(GW_STATE_T& state,  ceph::bufferlist::const_iterator& bl) {
+inline  void decode(GW_STATE_T& state,  ceph::bufferlist::const_iterator& bl) {
     int sm_state;
     for(int i = 0; i <MAX_SUPPORTED_ANA_GROUPS; i ++){
         decode(sm_state, bl);
@@ -98,6 +102,30 @@ inline void decode(GW_STATE_T& state,  ceph::bufferlist::const_iterator& bl) {
     //decode(state.gw_id, bl);
     decode(state.version, bl);
 }
+
+
+inline  void encode(const GW_METADATA_T& state, ceph::bufferlist &bl) {
+    for(int i = 0; i <MAX_SUPPORTED_ANA_GROUPS; i ++){
+
+        //uint64_t tim = (state.anagrp_sm_tstamps[i].time_since_epoch()).count();
+        auto now_ms = std::chrono::time_point_cast<std::chrono::seconds>( state.anagrp_sm_tstamps[i]);
+        auto value = now_ms.time_since_epoch();
+        long duration = value.count();
+        encode( duration, bl);
+     }
+}
+
+inline  void decode(GW_METADATA_T& state,  ceph::bufferlist::const_iterator& bl) {
+    for(int i = 0; i <MAX_SUPPORTED_ANA_GROUPS; i ++){
+        long duration;
+        decode(duration, bl);
+        std::chrono::seconds dur(duration);
+
+        ceph::coarse_mono_clock::time_point t(dur);
+        state.anagrp_sm_tstamps[i] = t;
+    }
+}
+
 
 class NVMeofGwMap
 {
@@ -120,6 +148,13 @@ public:
             encode((const std::string &)itr.first, bl);// nqn
             encode( itr.second, bl);// encode the full map of this nqn : map<uint16_t, GW_STATE_T>
         }
+        // Encode Gmetadata
+        encode ((int)Gmetadata.size(),bl);
+        for (auto& itr : Gmetadata) {
+            encode((const std::string &)itr.first, bl);// nqn
+            encode( itr.second, bl);// encode the full map of this nqn : map<uint16_t, GW_STATE_T>
+        }
+
         ENCODE_FINISH(bl);
     }
 
@@ -144,6 +179,22 @@ public:
                 Gmap[nqn].insert({itr.first, itr.second});
             }
         }
+        // decode Gmetadata
+        decode(num_subsystems, bl);
+        SUBSYST_GWMETA    gw_meta;
+        Gmetadata.clear();
+        //_dump_gwmap(Gmap);
+        for(int i = 0; i < num_subsystems; i++){
+            decode(nqn, bl);
+            Gmetadata.insert(make_pair(nqn, std::map<std::string, GW_METADATA_T>()));
+            //decode the map
+            gw_meta.clear();
+            decode(gw_meta, bl);
+            //insert the qw_map to Gmap
+            for(auto &itr: gw_meta ){
+                Gmetadata[nqn].insert({itr.first, itr.second});
+            }
+        }
         DECODE_FINISH(bl);
     }
 
@@ -166,6 +217,7 @@ public:
     int   cfg_add_gw                    (const GW_ID_T &gw_id, const std::string & nqn, uint16_t ana_grpid);
     int   process_gw_map_ka             (const GW_ID_T &gw_id, const std::string& nqn ,  bool &propose_pending);
     int   process_gw_map_gw_down        (const GW_ID_T &gw_id, const std::string& nqn, bool &propose_pending);
+    void  dump_timestamp(ceph::coarse_mono_clock::time_point &tp);
 
     void debug_encode_decode(){
         ceph::buffer::list bl;
