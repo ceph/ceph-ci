@@ -29,7 +29,7 @@
 #define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_mgr
 #undef dout_prefix
-#define dout_prefix *_dout << "nvmeofgw " << __func__ << " "
+#define dout_prefix *_dout << "nvmeofgw " << __PRETTY_FUNCTION__ << " "
 
 using std::map;
 using std::string;
@@ -60,6 +60,7 @@ const char** NVMeofGw::get_tracked_conf_keys() const
 
 int NVMeofGw::init()
 {
+  dout(0) << dendl;
   init_async_signal_handler();
   register_async_signal_handler(SIGHUP, sighup_handler);
 
@@ -110,6 +111,7 @@ int NVMeofGw::init()
     client_messenger->wait();
     return r;
   }
+  dout(0) << "nvmeof Registered monc callback" << dendl;
 
   r = monc.authenticate();
   if (r < 0) {
@@ -119,6 +121,7 @@ int NVMeofGw::init()
     client_messenger->wait();
     return r;
   }
+  dout(0) << "monc.authentication done" << dendl;
   // only forward monmap updates after authentication finishes, otherwise
   // monc.authenticate() will be waiting for MgrStandy::ms_dispatch()
   // to acquire the lock forever, as it is already locked in the beginning of
@@ -135,14 +138,14 @@ int NVMeofGw::init()
 
   tick();
 
-  dout(4) << "nvmeof Complete." << dendl;
+  dout(0) << "Complete." << dendl;
   return 0;
 }
 
 void NVMeofGw::send_beacon()
 {
   ceph_assert(ceph_mutex_is_locked_by_me(lock));
-  dout(10) << "sending beacon as gid " << monc.get_global_id() << dendl;
+  dout(0) << "sending beacon as gid " << monc.get_global_id() << dendl;
 
   auto m = ceph::make_message<MNVMeofGwBeacon>();
 
@@ -151,7 +154,7 @@ void NVMeofGw::send_beacon()
 
 void NVMeofGw::tick()
 {
-  dout(10) << __func__ << dendl;
+  dout(0) << dendl;
   send_beacon();
 
   timer.add_event_after(
@@ -195,13 +198,13 @@ void NVMeofGw::shutdown()
 
 void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> m)
 {
-  dout(10) << "handle nvmeof gw map" << dendl;
+  dout(0) << "handle nvmeof gw map" << dendl;
 }
 
 bool NVMeofGw::ms_dispatch2(const ref_t<Message>& m)
 {
   std::lock_guard l(lock);
-  dout(10) << "got map type" << m->get_type() << dendl;
+  dout(0) << "got map type " << m->get_type() << dendl;
 
 
   if (m->get_type() == MSG_MNVMEOF_GW_MAP) {

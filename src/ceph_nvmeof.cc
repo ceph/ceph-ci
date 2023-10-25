@@ -51,11 +51,9 @@ int main(int argc, const char **argv)
     exit(0);
   }
 
-  std::map<std::string,std::string> defaults = {};
-  auto cct = global_init(&defaults, args, 
-        CEPH_ENTITY_TYPE_CLIENT,
-			  CODE_ENVIRONMENT_DAEMON,
-			  CINIT_FLAG_UNPRIVILEGED_DAEMON_DEFAULTS);
+  auto cct = global_init(nullptr, args, CEPH_ENTITY_TYPE_CLIENT,
+                         CODE_ENVIRONMENT_UTILITY, // maybe later use CODE_ENVIRONMENT_DAEMON,
+			 CINIT_FLAG_NO_DEFAULT_CONFIG_FILE);
 
   pick_addresses(g_ceph_context, CEPH_PICK_ADDRESS_PUBLIC);
 
