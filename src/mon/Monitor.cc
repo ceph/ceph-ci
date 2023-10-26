@@ -4527,6 +4527,9 @@ void Monitor::_ms_dispatch(Message *m)
 void Monitor::dispatch_op(MonOpRequestRef op)
 {
   op->mark_event("mon:dispatch_op");
+
+  dout(10) << "Received message: " << op->get_req()->get_type() << dendl;
+
   MonSession *s = op->get_session();
   ceph_assert(s);
   if (s->closed) {
@@ -4639,6 +4642,11 @@ void Monitor::dispatch_op(MonOpRequestRef op)
     case MSG_MGR_BEACON:
       paxos_service[PAXOS_MGR]->dispatch(op);
       return;
+
+    case MSG_MNVMEOF_GW_BEACON:
+       paxos_service[PAXOS_NVMEGW]->dispatch(op);
+       return;
+
 
     // MgrStat
     case MSG_MON_MGR_REPORT:
