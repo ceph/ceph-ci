@@ -217,6 +217,8 @@
 #include "messages/MOSDPGUpdateLogMissing.h"
 #include "messages/MOSDPGUpdateLogMissingReply.h"
 
+#include "messages/MNVMeofGwBeacon.h"
+
 #ifdef WITH_BLKIN
 #include "Messenger.h"
 #endif
@@ -874,6 +876,10 @@ Message *decode_message(CephContext *cct,
   case MSG_MGR_BEACON:
     m = make_message<MMgrBeacon>();
     break;
+
+  case MSG_MNVMEOF_GW_BEACON:
+    m = make_message<MNVMeofGwBeacon>();
+  break;
 
   case MSG_MON_MGR_REPORT:
     m = make_message<MMonMgrReport>();
