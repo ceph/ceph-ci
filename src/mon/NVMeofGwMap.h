@@ -60,6 +60,7 @@ enum class GW_AVAILABILITY_E {
 };
 
 #define MAX_SUPPORTED_ANA_GROUPS 5
+#define INVALID_GW_TIMER     0xffff
 #define REDUNDANT_GW_ANA_GROUP_ID 0xFF
 typedef struct GW_STATE_T {
     //bool                    ana_state[MAX_SUPPORTED_ANA_GROUPS]; // real ana states per ANA group for this GW :1- optimized, 0- inaccessible
@@ -70,7 +71,7 @@ typedef struct GW_STATE_T {
 }GW_STATE_T;
 
 typedef struct GW_METADATA_T {
-    ceph::coarse_mono_clock::time_point  anagrp_sm_tstamps[MAX_SUPPORTED_ANA_GROUPS]; // statemachine timer(timestamp) set in some state
+   int  anagrp_sm_tstamps[MAX_SUPPORTED_ANA_GROUPS]; // statemachine timer(timestamp) set in some state
 }GW_METADATA_T;
 
 
@@ -108,21 +109,20 @@ inline  void encode(const GW_METADATA_T& state, ceph::bufferlist &bl) {
     for(int i = 0; i <MAX_SUPPORTED_ANA_GROUPS; i ++){
 
         //uint64_t tim = (state.anagrp_sm_tstamps[i].time_since_epoch()).count();
-        auto now_ms = std::chrono::time_point_cast<std::chrono::seconds>( state.anagrp_sm_tstamps[i]);
-        auto value = now_ms.time_since_epoch();
-        long duration = value.count();
-        encode( duration, bl);
+        //auto now_ms = std::chrono::time_point_cast<std::chrono::seconds>( state.anagrp_sm_tstamps[i]);
+        //auto value = now_ms.time_since_epoch();
+        //long duration = value.count();
+        int tick = state.anagrp_sm_tstamps[i];
+        encode( tick, bl);
      }
 }
 
 inline  void decode(GW_METADATA_T& state,  ceph::bufferlist::const_iterator& bl) {
     for(int i = 0; i <MAX_SUPPORTED_ANA_GROUPS; i ++){
-        long duration;
-        decode(duration, bl);
-        std::chrono::seconds dur(duration);
-
-        ceph::coarse_mono_clock::time_point t(dur);
-        state.anagrp_sm_tstamps[i] = t;
+        //long duration; decode(duration, bl);std::chrono::seconds dur(duration);ceph::coarse_mono_clock::time_point t(dur);
+        int tick;
+        decode(tick, bl);
+        state.anagrp_sm_tstamps[i] = tick;
     }
 }
 
@@ -211,6 +211,7 @@ public:
         }
         return NULL;
     }
+    int   update_gw_timers();
 
     int   _dump_gwmap(GWMAP & Gmap)const;
     int   _dump_metadata_map( )const ;
@@ -241,10 +242,10 @@ private:
 
     int create_metadata(const GW_ID_T& gw_id, const std::string & nqn)
     {
-        GW_METADATA_T  new_metadata = {ceph::coarse_mono_clock::now(),};
+
         if(Gmetadata[nqn].size() == 0)
               Gmetadata.insert(make_pair(nqn, std::map<GW_ID_T, GW_METADATA_T>()));
-        Gmetadata[nqn].insert({ gw_id, new_metadata });
+        //Gmetadata[nqn].insert({ gw_id, new_metadata });
         return 0;
     }
 
@@ -252,15 +253,39 @@ private:
     int  add_timestamp_to_metadata(const GW_ID_T &gw_id, const std::string& nqn, uint16_t anagrpid)
     {
         GW_METADATA_T* metadata;
-        const auto now = ceph::coarse_mono_clock::now();
+        //const auto now = ceph::coarse_mono_clock::now();
         if ((metadata = find_gw_metadata(gw_id, nqn)) != NULL) {
-            metadata->anagrp_sm_tstamps[anagrpid] = now;
+            metadata->anagrp_sm_tstamps[anagrpid] = 0;// set timer
         }
         else {
-          ceph_assert(false);
+            GW_METADATA_T  new_metadata = {INVALID_GW_TIMER,};
+            for (int i=0; i<MAX_SUPPORTED_ANA_GROUPS; i++){
+                new_metadata. anagrp_sm_tstamps[i] = INVALID_GW_TIMER;
+            }
+            new_metadata.anagrp_sm_tstamps[anagrpid] = 0;
+            Gmetadata[nqn].insert({ gw_id, new_metadata });
         }
         return 0;
     }
+
+    int  remove_timestamp_from_metadata(const GW_ID_T &gw_id, const std::string& nqn, uint16_t anagrpid)
+        {
+            GW_METADATA_T* metadata;
+            int i;
+            if ((metadata = find_gw_metadata(gw_id, nqn)) != NULL) {
+                metadata->anagrp_sm_tstamps[anagrpid] = INVALID_GW_TIMER;
+                for(i=0; i<MAX_SUPPORTED_ANA_GROUPS; i++)
+                    if(metadata->anagrp_sm_tstamps[i] != INVALID_GW_TIMER)
+                        break;
+                if(i==MAX_SUPPORTED_ANA_GROUPS){
+                    Gmetadata[nqn].clear(); // remove all  gw_id timers from the map
+                }
+            }
+            else {
+              ceph_assert(false);
+            }
+            return 0;
+        }
 
     GW_METADATA_T* find_gw_metadata(const GW_ID_T &gw_id, const std::string& nqn);
 };

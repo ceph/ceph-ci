@@ -85,6 +85,26 @@ int NVMeofGwMap::_dump_gwmap(GWMAP & Gmap)const  {
 }
 
 
+int NVMeofGwMap::update_gw_timers( )   {
+
+    dout(4) << __func__  <<  " called  " << mon << dendl;
+
+    for (auto& itr : Gmetadata) {
+        for (auto& ptr : itr.second) {
+
+            for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
+                if (ptr.second.anagrp_sm_tstamps[i]  != INVALID_GW_TIMER){
+                    ptr.second.anagrp_sm_tstamps[i] ++;
+                    dout(4) << "timer for GW " << itr.first << " ANA GRP " << i << ptr.second.anagrp_sm_tstamps[i] <<dendl;
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+
+
 int NVMeofGwMap::_dump_metadata_map( )const  {
 
     dout(4) << __func__  <<  " called  " << mon << dendl;
@@ -93,9 +113,15 @@ int NVMeofGwMap::_dump_metadata_map( )const  {
     for (auto& itr : Gmetadata) {
         for (auto& ptr : itr.second) {
             ss  << " NQN " << itr.first << " GW_ID " << ptr.first << std::endl;
+            for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
+               if (ptr.second.anagrp_sm_tstamps[i]  != INVALID_GW_TIMER){
+                 ss << "timer for GW " << ptr.first << " ANA GRP " << i <<" :"<< ptr.second.anagrp_sm_tstamps[i];
+               }
+                ss << std::endl;
+            }
         }
     }
-    dout(10) << ss.str() <<dendl;
+    dout(4) << ss.str() <<dendl;
     return 0;
 }
 
@@ -164,17 +190,16 @@ int NVMeofGwMap::process_gw_map_ka(const GW_ID_T &gw_id, const std::string& nqn 
 
 
         else if (gw_state->availability == GW_AVAILABILITY_E::GW_AVAILABLE) {
-            auto now = ceph::coarse_mono_clock::now(); // const auto mgr_beacon_grace =   g_conf().get_val<std::chrono::seconds>("mon_mgr_beacon_grace");// todo change to something related to NVMeGW KATO
-            std::chrono::seconds sc(FAILBACK_PERSISTENCY_INT_SEC);
-
-            for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++)
+           for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++)
                 if (gw_state->sm_state[i] == GW_WAIT_FAILBACK_PREPARED) {
                     GW_METADATA_T* metadata = find_gw_metadata(gw_id, nqn);
                     ceph_assert(metadata !=0);
-                    dump_timestamp(now);
-                    dump_timestamp(metadata->anagrp_sm_tstamps[i]);
-                    if(now - metadata->anagrp_sm_tstamps[i] > sc){ //mgr_beacon_grace){
+                    ceph_assert(metadata->anagrp_sm_tstamps[i] != INVALID_GW_TIMER);
+                    //dump_timestamp(now);
+                    dout(4)  << "Check timer for Failback from GW " << gw_id << " ticks : " << metadata->anagrp_sm_tstamps[i] << dendl;
+                    if(metadata->anagrp_sm_tstamps[i] >= 2){//TODO //mgr_beacon_grace){
                         //     interval = 2*KATO pased T  so find  the state of the candidate to failback - whether it is still available
+                        remove_timestamp_from_metadata(gw_id,nqn, i);
                         for (auto& itr : *subsyst_it) {
                             if (itr.second.sm_state[i] == GW_BLOCKED_AGROUP_OWNER && itr.second.availability == GW_AVAILABILITY_E::GW_AVAILABLE) {
                                 gw_state->sm_state[i]  = GW_STANDBY_STATE;

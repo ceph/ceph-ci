@@ -117,7 +117,7 @@ void NVMeofGwMon::tick(){
     dout(4) << MY_MON_PREFFIX << __func__  <<  "NVMeofGwMon leader got a real tick, pending epoch "<< pending_map.epoch  << dendl;
     last_tick = now;
 
-
+    pending_map.update_gw_timers( );
 
     //TODO pass over the last_beacon map to detect the overdue beacons indicating the GW died
     //if found the one - convert the last_beacon key to  gw_id and nqn and call the function pending_map_process_gw_map_gw_down
