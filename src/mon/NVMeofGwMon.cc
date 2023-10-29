@@ -9,6 +9,8 @@
 #include <boost/tokenizer.hpp>
 #include "include/stringify.h"
 #include "NVMeofGwMon.h"
+#include "messages/MNVMeofGwBeacon.h"
+#include "messages/MNVMeofGwMap.h"
 
 using std::map;
 using std::make_pair;
@@ -183,31 +185,34 @@ void NVMeofGwMon::update_from_paxos(bool *need_bootstrap){
 
 void NVMeofGwMon::check_sub(Subscription *sub)
 {
-   /* MgrMonitor::check_sub
-    if (sub->type == "mgrmap") {
-    if (sub->next <= map.get_epoch()) {
-      dout(20) << "Sending map to subscriber " << sub->session->con
-           << " " << sub->session->con->get_peer_addr() << dendl;
-      sub->session->con->send_message2(make_message<MMgrMap>(map));
+   /* MgrMonitor::check_sub*/
+    //if (sub->type == "NVMeofGw") {
+    dout(4) << "sub->next , map-epoch " << sub->next << map.get_epoch() << dendl;
+    if (sub->next <= map.get_epoch())
+    {
+      dout(4) << "Sending map to subscriber " << sub->session->con << " " << sub->session->con->get_peer_addr() << dendl;
+      sub->session->con->send_message2(make_message<MNVMeofGwMap>(map));
+
+
       if (sub->onetime) {
         mon.session_map.remove_sub(sub);
       } else {
         sub->next = map.get_epoch() + 1;
       }
     }
-  }
-    */
+  //}
+
 }
 
 
 void NVMeofGwMon::check_subs()
 {
-  const std::string type = "nvmegwmap";//"mgrmap";
+  const std::string type = "NVMeofGw";
   dout(4) <<  MY_MON_PREFFIX << __func__ << " count " << mon.session_map.subs.count(type) << dendl;
-
-  if (mon.session_map.subs.count(type) == 0)
-    return;
+  //for (auto &sub : *mon.session_map.subs) { dout(20) << sub.first << ", " << dendl;}
+  if (mon.session_map.subs.count(type) == 0) return;
   for (auto sub : *(mon.session_map.subs[type])) {
+    dout(4) << "sub-type "<< sub->type << dendl;
     check_sub(sub);
   }
 }
@@ -216,16 +221,57 @@ void NVMeofGwMon::check_subs()
 
 bool NVMeofGwMon::preprocess_query(MonOpRequestRef op){
     dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
+
+    auto m = op->get_req<PaxosServiceMessage>();
+      switch (m->get_type()) {
+        case MSG_MNVMEOF_GW_BEACON:
+          return preprocess_beacon(op);
+     /*   case MSG_MON_COMMAND:
+          try {
+        return preprocess_command(op);
+          } catch (const bad_cmd_get& e) {
+          bufferlist bl;
+          mon.reply_command(op, -EINVAL, e.what(), bl, get_last_committed());
+          return true;
+        }
+*/
+        default:
+          mon.no_reply(op);
+          derr << "Unhandled message type " << m->get_type() << dendl;
+          return true;
+      }
     return false;
 }
 
 bool NVMeofGwMon::prepare_update(MonOpRequestRef op){
     dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
+    auto m = op->get_req<PaxosServiceMessage>();
+      switch (m->get_type()) {
+        case MSG_MNVMEOF_GW_BEACON:
+          return prepare_beacon(op);
+
+        case MSG_MON_COMMAND:
+          try {
+        return prepare_command(op);
+          } catch (const bad_cmd_get& e) {
+        bufferlist bl;
+        mon.reply_command(op, -EINVAL, e.what(), bl, get_last_committed());
+        return false; /* nothing to propose! */
+          }
+
+        default:
+          mon.no_reply(op);
+          derr << "Unhandled message type " << m->get_type() << dendl;
+          return false; /* nothing to propose! */
+      }
     return true;
 }
 
 bool NVMeofGwMon::preprocess_command(MonOpRequestRef op){
     dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
+     auto m = op->get_req<MNVMeofGwBeacon>();
+     mon.no_reply(op); // we never reply to beacons
+     dout(4) << "beacon from " << m->get_type() << dendl;
     return false;
 }
 
@@ -237,12 +283,19 @@ bool NVMeofGwMon::prepare_command(MonOpRequestRef op){
 
 bool NVMeofGwMon::preprocess_beacon(MonOpRequestRef op){
     dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
+    auto m = op->get_req<MNVMeofGwBeacon>();
+     mon.no_reply(op); // we never reply to beacons
+     dout(4) << "beacon from " << m->get_type() << dendl;
     return false; // allways  return false to call leader's prepare beacon
 }
 
 bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
     //auto m = op->get_req<MMgrBeacon>();
+    auto m = op->get_req<MNVMeofGwBeacon>();
+
+    dout(4) << "availability " <<  m->get_availability() << " GW : " <<m->get_gw_id() <<   " optimized ANA grp. " << m->get_opt_ana_gid() <<   dendl;
+
     //last_beacon[m->get_gid()] = ceph::coarse_mono_clock::now();
     return true;
 }

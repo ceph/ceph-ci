@@ -204,7 +204,7 @@ public:
         return NULL;
     }
     int   update_active_timers();
-
+    epoch_t get_epoch() const { return epoch; }
     int   _dump_gwmap(GWMAP & Gmap)const;
     int   _dump_active_timers( )const ;
     int   cfg_add_gw                    (const GW_ID_T &gw_id, const std::string & nqn, uint16_t ana_grpid);
