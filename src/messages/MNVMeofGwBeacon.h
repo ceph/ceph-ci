@@ -122,9 +122,9 @@ public:
     auto p = payload.cbegin();
     
     paxos_decode(p);
-    decode(gw_id, payload);
+    decode(gw_id, p);
     for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
-      int e; decode(e, payload);
+      int e; decode(e, p);
       sm_state[i] = static_cast<GW_STATES_PER_AGROUP_E>(e);
     }
     decode(opt_ana_gid, p);
