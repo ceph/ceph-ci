@@ -159,7 +159,7 @@ public:
         decode(num_subsystems, bl);
         SUBSYST_GWMAP    gw_map;
         Gmap.clear();
-        _dump_gwmap(Gmap);
+        //_dump_gwmap(Gmap);
         for(int i = 0; i < num_subsystems; i++){
             decode(nqn, bl);
             Gmap.insert(make_pair(nqn, std::map<std::string, GW_STATE_T>()));

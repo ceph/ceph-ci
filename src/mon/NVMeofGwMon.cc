@@ -91,29 +91,28 @@ void NVMeofGwMon::inject1(){
             propose_pending();
     }
 
-    else if( cnt  == start_cnt+6 ){  // simulate - gw1 is down
+    else if( cnt  == start_cnt+6 ){  // simulate - gw1 is down   Simulate gw election by polling function handle_homeless_ana_groups
             pending_map._dump_active_timers();
             pending_map.process_gw_map_gw_down( "gw1", "nqn2008.node1", propose);
             if(propose)
                 propose_pending();
     }
 
-  /*  else if( cnt  == start_cnt+7 ){  // simulate - gw2 still OK
-        pending_map.process_gw_map_ka( "gw2", "nqn2008.node1", propose);
+    else if( cnt  == start_cnt+7 ){  // simulate - gw1 is UP
+        pending_map.process_gw_map_ka( "gw1", "nqn2008.node1", propose);
         if(propose)
             propose_pending();
-    }*/
-    else if( cnt  == start_cnt+8 ){  // simulate - gw2 still OK - checks the persistency timer in the state
+    }
+    else if( cnt  == start_cnt+9 ){  // simulate - gw2 still OK - checks the persistency timer in the state
         pending_map.process_gw_map_ka( "gw2", "nqn2008.node1", propose);
         if(propose)
             propose_pending();
     }
-
-
 }
 
+
 void NVMeofGwMon::tick(){
-    static int cnt=0;
+   // static int cnt=0;
     if (!is_active() || !mon.is_leader()){
         dout(4) << __func__  <<  " NVMeofGwMon leader : " << mon.is_leader() << "active : " << is_active()  << dendl;
         return;
@@ -126,7 +125,8 @@ void NVMeofGwMon::tick(){
 
     pending_map.update_active_timers( );
     bool propose = false;
-    if((cnt++ %2) == 0) {
+    //if((cnt++ %2) == 0)
+    {
         pending_map.handle_homeless_ana_groups(propose);
         if(propose){
            propose_pending();
@@ -175,7 +175,7 @@ void NVMeofGwMon::update_from_paxos(bool *need_bootstrap){
 
         auto p = bl.cbegin();
         map.decode(p);
-        map._dump_gwmap(map.Gmap);
+        if(!mon.is_leader())  map._dump_gwmap(map.Gmap);
         check_subs();
     }
 }
