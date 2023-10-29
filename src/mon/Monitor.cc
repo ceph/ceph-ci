@@ -4422,6 +4422,7 @@ void Monitor::_ms_dispatch(Message *m)
   }
 
   MonOpRequestRef op = op_tracker.create_request<MonOpRequest>(m);
+  dout(10) << "Received message: " << op->get_req()->get_type() << dendl;
   bool src_is_mon = op->is_src_mon();
   op->mark_event("mon:_ms_dispatch");
   MonSession *s = op->get_session();

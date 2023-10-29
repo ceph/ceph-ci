@@ -53,7 +53,7 @@ void NVMeofGwMon::inject1(){
         pending_map.cfg_add_gw("gw3", "nqn2008.node1", 3);
         pending_map.cfg_add_gw("gw1", "nqn2008.node2", 2);
         pending_map._dump_gwmap(pending_map.Gmap);
-        pending_map._dump_metadata_map();
+        pending_map._dump_active_timers();
         pending_map.debug_encode_decode();
         dout(4) << "Dump map after decode encode:" <<dendl;
         pending_map._dump_gwmap(pending_map.Gmap);
@@ -80,22 +80,29 @@ void NVMeofGwMon::inject1(){
         pending_map.process_gw_map_gw_down( "gw1", "nqn2008.node1", propose);
         if(propose)
             propose_pending();
-        pending_map._dump_metadata_map();
+        pending_map._dump_active_timers();
     }
 
 
     else if( cnt  == start_cnt+5 ){  // simulate - gw1 is back
-        pending_map._dump_metadata_map();
+        pending_map._dump_active_timers();
         pending_map.process_gw_map_ka( "gw1", "nqn2008.node1", propose);
         if(propose)
             propose_pending();
     }
 
-    else if( cnt  == start_cnt+6 ){  // simulate - gw2 still OK
+    else if( cnt  == start_cnt+6 ){  // simulate - gw1 is down
+            pending_map._dump_active_timers();
+            pending_map.process_gw_map_gw_down( "gw1", "nqn2008.node1", propose);
+            if(propose)
+                propose_pending();
+    }
+
+  /*  else if( cnt  == start_cnt+7 ){  // simulate - gw2 still OK
         pending_map.process_gw_map_ka( "gw2", "nqn2008.node1", propose);
         if(propose)
             propose_pending();
-    }
+    }*/
     else if( cnt  == start_cnt+8 ){  // simulate - gw2 still OK - checks the persistency timer in the state
         pending_map.process_gw_map_ka( "gw2", "nqn2008.node1", propose);
         if(propose)
@@ -106,7 +113,7 @@ void NVMeofGwMon::inject1(){
 }
 
 void NVMeofGwMon::tick(){
-
+    static int cnt=0;
     if (!is_active() || !mon.is_leader()){
         dout(4) << __func__  <<  " NVMeofGwMon leader : " << mon.is_leader() << "active : " << is_active()  << dendl;
         return;
@@ -117,8 +124,14 @@ void NVMeofGwMon::tick(){
     dout(4) << MY_MON_PREFFIX << __func__  <<  "NVMeofGwMon leader got a real tick, pending epoch "<< pending_map.epoch  << dendl;
     last_tick = now;
 
-    pending_map.update_gw_timers( );
-
+    pending_map.update_active_timers( );
+    bool propose = false;
+    if((cnt++ %2) == 0) {
+        pending_map.handle_homeless_ana_groups(propose);
+        if(propose){
+           propose_pending();
+        }
+    }
     //TODO pass over the last_beacon map to detect the overdue beacons indicating the GW died
     //if found the one - convert the last_beacon key to  gw_id and nqn and call the function pending_map_process_gw_map_gw_down
     // if propose_pending returned true , call propose_pending method of the paxosService
@@ -203,7 +216,7 @@ void NVMeofGwMon::check_subs()
 
 bool NVMeofGwMon::preprocess_query(MonOpRequestRef op){
     dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
-    return true;
+    return false;
 }
 
 bool NVMeofGwMon::prepare_update(MonOpRequestRef op){
@@ -213,7 +226,7 @@ bool NVMeofGwMon::prepare_update(MonOpRequestRef op){
 
 bool NVMeofGwMon::preprocess_command(MonOpRequestRef op){
     dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
-    return true;
+    return false;
 }
 
 bool NVMeofGwMon::prepare_command(MonOpRequestRef op){

@@ -63,7 +63,6 @@ enum class GW_AVAILABILITY_E {
 #define INVALID_GW_TIMER     0xffff
 #define REDUNDANT_GW_ANA_GROUP_ID 0xFF
 typedef struct GW_STATE_T {
-    //bool                    ana_state[MAX_SUPPORTED_ANA_GROUPS]; // real ana states per ANA group for this GW :1- optimized, 0- inaccessible
     GW_STATES_PER_AGROUP_E   sm_state [MAX_SUPPORTED_ANA_GROUPS];  // state machine states per ANA group
     uint16_t  optimized_ana_group_id;                     // optimized ANA group index as configured by Conf upon network entry, note for redundant GW it is FF
     GW_AVAILABILITY_E     availability;                  // in absence of  beacon  heartbeat messages it becomes inavailable
@@ -107,11 +106,6 @@ inline  void decode(GW_STATE_T& state,  ceph::bufferlist::const_iterator& bl) {
 
 inline  void encode(const GW_METADATA_T& state, ceph::bufferlist &bl) {
     for(int i = 0; i <MAX_SUPPORTED_ANA_GROUPS; i ++){
-
-        //uint64_t tim = (state.anagrp_sm_tstamps[i].time_since_epoch()).count();
-        //auto now_ms = std::chrono::time_point_cast<std::chrono::seconds>( state.anagrp_sm_tstamps[i]);
-        //auto value = now_ms.time_since_epoch();
-        //long duration = value.count();
         int tick = state.anagrp_sm_tstamps[i];
         encode( tick, bl);
      }
@@ -119,7 +113,6 @@ inline  void encode(const GW_METADATA_T& state, ceph::bufferlist &bl) {
 
 inline  void decode(GW_METADATA_T& state,  ceph::bufferlist::const_iterator& bl) {
     for(int i = 0; i <MAX_SUPPORTED_ANA_GROUPS; i ++){
-        //long duration; decode(duration, bl);std::chrono::seconds dur(duration);ceph::coarse_mono_clock::time_point t(dur);
         int tick;
         decode(tick, bl);
         state.anagrp_sm_tstamps[i] = tick;
@@ -134,7 +127,7 @@ public:
     GWMAP      Gmap;
     GWMETADATA Gmetadata;//TODO !!! this map is used in the processing of Gmap - so it should be add to the encode/decode
     epoch_t epoch = 0;  // epoch is for Paxos synchronization  mechanizm
-    //std::map <std::string, uint64_t> subsyst_epoch;// dont think we need this since epoch per subsystem stored in each GW in GW_STATE_T
+
     bool     listen_mode{ false };     // "listen" mode. started when detected invalid maps from some GW in the beacon messages. "Listen" mode Designed as Synchronisation mode
     uint32_t listen_mode_start_tick{0};
 
@@ -152,7 +145,7 @@ public:
         encode ((int)Gmetadata.size(),bl);
         for (auto& itr : Gmetadata) {
             encode((const std::string &)itr.first, bl);// nqn
-            encode( itr.second, bl);// encode the full map of this nqn : map<uint16_t, GW_STATE_T>
+            encode( itr.second, bl);// encode the full map of this nqn :
         }
 
         ENCODE_FINISH(bl);
@@ -160,7 +153,6 @@ public:
 
     void decode(ceph::buffer::list::const_iterator &bl) {
         DECODE_START(1, bl);
-        //    decode(name, bl);//  decode(can_run, bl);//  decode(error_string, bl);//  decode(module_options, bl);
         int num_subsystems;
         std::string nqn;
         decode(epoch, bl);
@@ -190,7 +182,7 @@ public:
             //decode the map
             gw_meta.clear();
             decode(gw_meta, bl);
-            //insert the qw_map to Gmap
+            //insert the gw_meta to Gmap
             for(auto &itr: gw_meta ){
                 Gmetadata[nqn].insert({itr.first, itr.second});
             }
@@ -211,14 +203,14 @@ public:
         }
         return NULL;
     }
-    int   update_gw_timers();
+    int   update_active_timers();
 
     int   _dump_gwmap(GWMAP & Gmap)const;
-    int   _dump_metadata_map( )const ;
+    int   _dump_active_timers( )const ;
     int   cfg_add_gw                    (const GW_ID_T &gw_id, const std::string & nqn, uint16_t ana_grpid);
     int   process_gw_map_ka             (const GW_ID_T &gw_id, const std::string& nqn ,  bool &propose_pending);
     int   process_gw_map_gw_down        (const GW_ID_T &gw_id, const std::string& nqn, bool &propose_pending);
-    void  dump_timestamp(ceph::coarse_mono_clock::time_point &tp);
+    int   handle_homeless_ana_groups(bool &propose_pending);
 
     void debug_encode_decode(){
         ceph::buffer::list bl;
@@ -227,6 +219,7 @@ public:
         decode(p);
     }
 private:
+    int  find_failover_candidate(const GW_ID_T &gw_id, const std::string& nqn,  GW_STATE_T* gw_state,  bool &propose_pending);
     int  set_failover_gw_for_ANA_group (const GW_ID_T &gw_id, const std::string& nqn, uint8_t ANA_groupid);
     void publish_map_to_gws(const std::string& nqn){
     }
@@ -250,7 +243,7 @@ private:
     }
 
 
-    int  add_timestamp_to_metadata(const GW_ID_T &gw_id, const std::string& nqn, uint16_t anagrpid)
+    int  start_timer(const GW_ID_T &gw_id, const std::string& nqn, uint16_t anagrpid)
     {
         GW_METADATA_T* metadata;
         //const auto now = ceph::coarse_mono_clock::now();
@@ -268,7 +261,19 @@ private:
         return 0;
     }
 
-    int  remove_timestamp_from_metadata(const GW_ID_T &gw_id, const std::string& nqn, uint16_t anagrpid)
+    int  get_timer(const GW_ID_T &gw_id, const std::string& nqn, uint16_t anagrpid)
+    {
+        GW_METADATA_T* metadata;
+        if ((metadata = find_gw_metadata(gw_id, nqn)) != NULL) {
+            ceph_assert(metadata->anagrp_sm_tstamps[anagrpid] != INVALID_GW_TIMER);
+            return metadata->anagrp_sm_tstamps[anagrpid];
+        }
+        else{
+            ceph_assert(false);
+        }
+    }
+
+    int  cancel_timer(const GW_ID_T &gw_id, const std::string& nqn, uint16_t anagrpid)
         {
             GW_METADATA_T* metadata;
             int i;
