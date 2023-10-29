@@ -218,6 +218,7 @@
 #include "messages/MOSDPGUpdateLogMissingReply.h"
 
 #include "messages/MNVMeofGwBeacon.h"
+#include "messages/MNVMeofGwMap.h"
 
 #ifdef WITH_BLKIN
 #include "Messenger.h"
@@ -940,6 +941,9 @@ Message *decode_message(CephContext *cct,
     m = make_message<MMonHealthChecks>();
     break;
 
+  case MSG_MNVMEOF_GW_MAP:
+    m = make_message<MNVMeofGwMap>();
+    break;
     // -- simple messages without payload --
 
   case CEPH_MSG_SHUTDOWN:
