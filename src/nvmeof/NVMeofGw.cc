@@ -196,9 +196,15 @@ void NVMeofGw::shutdown()
   finisher.stop();
 }
 
-void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> m)
+void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> mmap)
 {
   dout(0) << "handle nvmeof gw map" << dendl;
+ // NVMeofGwMap
+    auto &map = mmap->get_map();
+    dout(0) << "received map epoch " << map.get_epoch() << dendl;
+   // map._dump_gwmap(map.Gmap);
+
+
 }
 
 bool NVMeofGw::ms_dispatch2(const ref_t<Message>& m)
