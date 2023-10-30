@@ -67,7 +67,7 @@ GW_METADATA_T* NVMeofGwMap::find_gw_metadata(const GW_ID_T &gw_id, const std::st
 
 int NVMeofGwMap::_dump_gwmap(GWMAP & Gmap)const  {
 
-    dout(4) << __func__  <<  " called  " << mon << dendl;
+    dout(0) << __func__  <<  " called  " << mon << dendl;
     std::ostringstream ss;
     ss  << std::endl;
     for (auto& itr : Gmap) {
@@ -80,7 +80,23 @@ int NVMeofGwMap::_dump_gwmap(GWMAP & Gmap)const  {
             ss  << std::endl;
         }
     }
-    dout(10) << ss.str() <<dendl;
+    dout(0) << ss.str() <<dendl;
+    return 0;
+}
+
+int NVMeofGwMap::_dump_gwmap(std::stringstream &ss)const  {
+    ss << __func__  <<  " called  " << mon << std::endl;   
+    for (auto& itr : Gmap) {
+        for (auto& ptr : itr.second) {
+            ss	<< " NQN " << itr.first << " GW_ID " << ptr.first << " ANA gr " << std::setw(5) 
+            << (int)ptr.second.optimized_ana_group_id << " available " << (int)ptr.second.availability << " States: ";
+            for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
+                ss << (int)ptr.second.sm_state[i] << " " ;
+            }
+            ss  << std::endl;
+        }
+    }
+    //dout(0) << ss.str() <<dendl;
     return 0;
 }
 
@@ -123,7 +139,6 @@ int NVMeofGwMap::_dump_active_timers( )const  {
     dout(4) << ss.str() <<dendl;
     return 0;
 }
-
 
 
 int NVMeofGwMap::process_gw_map_ka(const GW_ID_T &gw_id, const std::string& nqn , bool &propose_pending)
@@ -368,5 +383,3 @@ int NVMeofGwMap::process_gw_map_gw_down(const GW_ID_T &gw_id, const std::string&
     }
     return rc;
 }
-
-

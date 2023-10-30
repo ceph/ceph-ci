@@ -33,6 +33,7 @@
 
 using std::map;
 using std::string;
+using std::stringstream;
 using std::vector;
 
 NVMeofGw::NVMeofGw(int argc, const char **argv) :
@@ -198,12 +199,13 @@ void NVMeofGw::shutdown()
 
 void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> mmap)
 {
-  dout(0) << "handle nvmeof gw map" << dendl;
+    dout(0) << "handle nvmeof gw map" << dendl;
  // NVMeofGwMap
     auto &map = mmap->get_map();
     dout(0) << "received map epoch " << map.get_epoch() << dendl;
-   // map._dump_gwmap(map.Gmap);
-
+    std::stringstream  ss;
+    map._dump_gwmap(ss);
+    dout(0) << ss.str() <<  dendl;
 
 }
 

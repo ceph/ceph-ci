@@ -187,7 +187,7 @@ void NVMeofGwMon::check_sub(Subscription *sub)
 {
    /* MgrMonitor::check_sub*/
     //if (sub->type == "NVMeofGw") {
-    dout(4) << "sub->next , map-epoch " << sub->next << map.get_epoch() << dendl;
+    dout(4) << "sub->next , map-epoch " << sub->next << " " << map.get_epoch() << dendl;
     if (sub->next <= map.get_epoch())
     {
       dout(4) << "Sending map to subscriber " << sub->session->con << " " << sub->session->con->get_peer_addr() << dendl;
