@@ -294,7 +294,8 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     //auto m = op->get_req<MMgrBeacon>();
     auto m = op->get_req<MNVMeofGwBeacon>();
 
-    dout(4) << "availability " <<  m->get_availability() << " GW : " <<m->get_gw_id() <<   " optimized ANA grp. " << m->get_opt_ana_gid() <<   dendl;
+    dout(4) << "availability " <<  m->get_availability() << " GW : " <<m->get_gw_id() 
+      << " subsystems " << m->get_subsystems() <<  " epoch " << m->get_version() << dendl;
 
     //last_beacon[m->get_gid()] = ceph::coarse_mono_clock::now();
     return false; // if no changes are need in the map

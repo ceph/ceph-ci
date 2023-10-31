@@ -16,6 +16,7 @@
 #define CEPH_NVMEOFGWBEACON_H
 
 #include <cstddef>
+#include <vector>
 #include "messages/PaxosServiceMessage.h"
 #include "mon/MonCommand.h"
 #include "mon/NVMeofGwMap.h"
@@ -23,6 +24,13 @@
 #include "include/types.h"
 
 typedef GW_STATES_PER_AGROUP_E SM_STATE[MAX_SUPPORTED_ANA_GROUPS];
+struct NqnState {
+  std::string nqn;          // subsystem NQN
+  SM_STATE    sm_state;     // susbsystem's state machine state
+  uint16_t    opt_ana_gid;  // optimized ANA group index
+};
+
+typedef std::vector<NqnState> GwSubsystems;
 
 std::ostream& operator<<(std::ostream& os, const SM_STATE value) {
     os << "SM_STATE [ ";
@@ -37,6 +45,11 @@ std::ostream& operator<<(std::ostream& os, const SM_STATE value) {
       }
     }
     os << "]";
+    return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const NqnState value) {
+    os << "Subsystem( nqn: " << value.nqn << ", " << value.opt_ana_gid << ", " << value.sm_state << " )";
     return os;
 }
 
@@ -58,12 +71,9 @@ private:
   static constexpr int COMPAT_VERSION = 1;
 
 protected:
-    //bool                    ana_state[MAX_SUPPORTED_ANA_GROUPS]; // real ana states per ANA group for this GW :1- optimized, 0- inaccessible
     std::string              gw_id;
-    SM_STATE                 sm_state;                             // state machine states per ANA group
-    uint16_t                 opt_ana_gid;                          // optimized ANA group index as configured by Conf upon network entry, note for redundant GW it is FF
+    GwSubsystems             subsystems;                           // gateway susbsystem and their state machine states
     GW_AVAILABILITY_E        availability;                         // in absence of  beacon  heartbeat messages it becomes inavailable
-
     uint64_t                 version;
 
 public:
@@ -72,24 +82,19 @@ public:
   {}
 
   MNVMeofGwBeacon(const std::string &gw_id_, 
-        const GW_STATES_PER_AGROUP_E (&sm_state_)[MAX_SUPPORTED_ANA_GROUPS],
-        const uint16_t& opt_ana_gid_,
-        const GW_AVAILABILITY_E  availability_,
+        const GwSubsystems& subsystems_,
+        const GW_AVAILABILITY_E&  availability_,
         const uint64_t& version_
   )
     : PaxosServiceMessage{MSG_MNVMEOF_GW_BEACON, 0, HEAD_VERSION, COMPAT_VERSION},
-      gw_id(gw_id_), opt_ana_gid(opt_ana_gid_),
+      gw_id(gw_id_), subsystems(subsystems_),
       availability(availability_), version(version_)
-  {
-      for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++)
-        sm_state[i] = sm_state_[i];
-  }
+  {}
 
   const std::string& get_gw_id() const { return gw_id; }
-  const uint16_t& get_opt_ana_gid() const { return opt_ana_gid; }
   const GW_AVAILABILITY_E& get_availability() const { return availability; }
   const uint64_t& get_version() const { return version; }
-  const SM_STATE& get_sm_state() const { return sm_state; };
+  const GwSubsystems& get_subsystems() const { return subsystems; };
 
 private:
   ~MNVMeofGwBeacon() final {}
@@ -99,9 +104,11 @@ public:
   std::string_view get_type_name() const override { return "nvmeofgwbeacon"; }
 
   void print(std::ostream& out) const override {
-    out << get_type_name() << " nvmeofgw" << "("
-	    << gw_id <<  ", " << sm_state << "," << opt_ana_gid << "," << availability << "," << version
-	    << ")";
+    out << get_type_name() << " nvmeofgw" << "(" << gw_id <<  ", susbsystems: [ ";
+    for (const NqnState& st: subsystems) {
+      out << st << " ";
+    }
+    out << "], " << "availability: " << availability << ", version:" << version;
   }
 
   void encode_payload(uint64_t features) override {
@@ -110,9 +117,13 @@ public:
     using ceph::encode;
     paxos_encode();
     encode(gw_id, payload);
-    for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++)
-      encode((int)sm_state[i], payload);
-    encode(opt_ana_gid, payload);
+    encode(subsystems.size(), payload);
+    for (const NqnState& st: subsystems) {
+      encode(st.nqn, payload);
+      for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++)
+        encode((int)st.sm_state[i], payload);
+      encode(st.opt_ana_gid, payload);
+    }
     encode((int)availability, payload);
     encode(version, payload);
   }
@@ -123,13 +134,22 @@ public:
     
     paxos_decode(p);
     decode(gw_id, p);
-    for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
-      int e; decode(e, p);
-      sm_state[i] = static_cast<GW_STATES_PER_AGROUP_E>(e);
+    int n;
+    decode(n, p);
+    // Reserve memory for the vector to avoid reallocations
+    subsystems.reserve(n); 
+    for (int i; i < n; i++) {
+      NqnState st;
+      decode(st.nqn, p);
+      for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
+        decode(n, p);
+        st.sm_state[i] = static_cast<GW_STATES_PER_AGROUP_E>(n);
+      }
+      decode(st.opt_ana_gid, p);
+      subsystems.push_back(st);
     }
-    decode(opt_ana_gid, p);
-    int a; decode(a, p);
-    availability = static_cast<GW_AVAILABILITY_E>(a);
+    decode(n, p);
+    availability = static_cast<GW_AVAILABILITY_E>(n);
     decode(version, p);  
   }
 
