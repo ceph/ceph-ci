@@ -865,14 +865,75 @@ if(WITH_FUSE)
   install(PROGRAMS mount.fuse.ceph DESTINATION ${CMAKE_INSTALL_SBINDIR})
 endif(WITH_FUSE)
 
+# NVMEOF GATEWAY MONITOR CLIENT
+
+# Find Protobuf installation
+# Looks for protobuf-config.cmake file installed by Protobuf's cmake installation.
+option(protobuf_MODULE_COMPATIBLE TRUE)
+find_package(Protobuf REQUIRED)
+
+set(_REFLECTION grpc++_reflection)
+if(CMAKE_CROSSCOMPILING)
+  find_program(_PROTOBUF_PROTOC protoc)
+else()
+  set(_PROTOBUF_PROTOC $<TARGET_FILE:protobuf::protoc>)
+endif()
+
+# Find gRPC installation
+# Looks for gRPCConfig.cmake file installed by gRPC's cmake installation.
+find_package(gRPC CONFIG REQUIRED)
+message(STATUS "Using gRPC ${gRPC_VERSION}")
+set(_GRPC_GRPCPP gRPC::grpc++)
+if(CMAKE_CROSSCOMPILING)
+  find_program(_GRPC_CPP_PLUGIN_EXECUTABLE grpc_cpp_plugin)
+else()
+  set(_GRPC_CPP_PLUGIN_EXECUTABLE $<TARGET_FILE:gRPC::grpc_cpp_plugin>)
+endif()
+
+# Proto file
+get_filename_component(nvmeof_gateway_proto "nvmeof/gateway/control/proto/gateway.proto" ABSOLUTE)
+get_filename_component(nvmeof_gateway_proto_path "${nvmeof_gateway_proto}" PATH)
+
+# Generated sources
+set(nvmeof_gateway_proto_srcs "${CMAKE_CURRENT_BINARY_DIR}/gateway.pb.cc")
+set(nvmeof_gateway_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/gateway.pb.h")
+set(nvmeof_gateway_grpc_srcs "${CMAKE_CURRENT_BINARY_DIR}/gateway.grpc.pb.cc")
+set(nvmeof_gateway_grpc_hdrs "${CMAKE_CURRENT_BINARY_DIR}/gateway.grpc.pb.h")
+
+add_custom_command(
+      OUTPUT "${nvmeof_gateway_proto_srcs}" "${nvmeof_gateway_proto_hdrs}" "${nvmeof_gateway_grpc_srcs}" "${nvmeof_gateway_grpc_hdrs}"
+      COMMAND ${_PROTOBUF_PROTOC}
+      ARGS --grpc_out "${CMAKE_CURRENT_BINARY_DIR}"
+        --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
+        -I "${nvmeof_gateway_proto_path}"
+	--experimental_allow_proto3_optional
+        --plugin=protoc-gen-grpc="${_GRPC_CPP_PLUGIN_EXECUTABLE}"
+        "${nvmeof_gateway_proto}"
+      DEPENDS "${nvmeof_gateway_proto}")
+
+# Include generated *.pb.h files
+include_directories("${CMAKE_CURRENT_BINARY_DIR}")
+
 set(ceph_nvmeof_srcs
+  ${nvmeof_gateway_proto_srcs}
+  ${nvmeof_gateway_proto_hdrs}
+  ${nvmeof_gateway_grpc_srcs}
+  ${nvmeof_gateway_grpc_hdrs}
   ceph_nvmeof.cc
   nvmeof/NVMeofGw.cc)
 add_executable(ceph-nvmeof ${ceph_nvmeof_srcs})
 add_dependencies(ceph-nvmeof ceph-common)
-target_link_libraries(ceph-nvmeof client mon os global-static ceph-common)
+target_link_libraries(ceph-nvmeof
+  client
+  mon
+  os
+  global-static
+  ceph-common
+  ${_REFLECTION}
+  ${_GRPC_GRPCPP}
+  )
 install(TARGETS ceph-nvmeof DESTINATION bin)
-
+# END OF NVMEOF GATEWAY MONITOR CLIENT
 
 if(WITH_DOKAN)
   add_subdirectory(dokan)
