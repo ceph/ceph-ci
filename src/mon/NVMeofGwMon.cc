@@ -119,21 +119,21 @@ void NVMeofGwMon::tick(){
         dout(4) << __func__  <<  " NVMeofGwMon leader : " << mon.is_leader() << "active : " << is_active()  << dendl;
         return;
     }
-
+    bool _propose_pending = false;
     inject1();
     const auto now = ceph::coarse_mono_clock::now();
     dout(4) << MY_MON_PREFFIX << __func__  <<  "NVMeofGwMon leader got a real tick, pending epoch "<< pending_map.epoch  << dendl;
     last_tick = now;
-
-    pending_map.update_active_timers( );
     bool propose = false;
-    //if((cnt++ %2) == 0)
-    {
-        pending_map.handle_homeless_ana_groups(propose);
-        if(propose){
-           propose_pending();
-        }
+    pending_map.update_active_timers(propose);
+    _propose_pending |= propose;
+
+    pending_map.handle_abandoned_ana_groups(propose);
+    _propose_pending |= propose;
+    if(_propose_pending){
+       propose_pending();
     }
+
     //TODO pass over the last_beacon map to detect the overdue beacons indicating the GW died
     //if found the one - convert the last_beacon key to  gw_id and nqn and call the function pending_map_process_gw_map_gw_down
     // if propose_pending returned true , call propose_pending method of the paxosService
@@ -289,14 +289,52 @@ bool NVMeofGwMon::preprocess_beacon(MonOpRequestRef op){
     return false; // allways  return false to call leader's prepare beacon
 }
 
+#define GW_DELIM ","
 bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
-    //auto m = op->get_req<MMgrBeacon>();
+
     auto m = op->get_req<MNVMeofGwBeacon>();
 
-    dout(4) << "availability " <<  m->get_availability() << " GW : " <<m->get_gw_id() 
-      << " subsystems " << m->get_subsystems() <<  " epoch " << m->get_version() << dendl;
+     //    dout(4) << "availability " <<  m->get_availability() << " GW : " <<m->get_gw_id() << " subsystems " << m->get_subsystems() <<  " epoch " << m->get_version() << dendl;
+    std::stringstream    out;
+    m->print(out);
+    dout(4) << out.str() <<dendl;
 
-    //last_beacon[m->get_gid()] = ceph::coarse_mono_clock::now();
-    return false; // if no changes are need in the map
+    GW_ID_T gw_id = m->get_gw_id();
+    GW_AVAILABILITY_E  avail = m->get_availability();
+    const GwSubsystems& subsystems =  m->get_subsystems();
+    bool propose = false;
+
+    if(avail == GW_AVAILABILITY_E::GW_CREATED){
+        // create gw call cfg_add_gw
+        for (const NqnState& st: subsystems) {
+            pending_map.cfg_add_gw( gw_id, st.nqn, st.opt_ana_gid );
+        }
+    }
+    else if(avail == GW_AVAILABILITY_E::GW_AVAILABLE){
+
+        auto now = ceph::coarse_mono_clock::now();
+        // check pending_map.epoch vs m->get_version() - if different - drop the beacon
+
+        for (const NqnState& st: subsystems) {
+            last_beacon[(gw_id + GW_DELIM + st.nqn)] = now;
+            pending_map.process_gw_map_ka( gw_id, st.nqn, propose );
+        }
+    }
+    else if(avail == GW_AVAILABILITY_E::GW_UNAVAILABLE){ // state set by GW client application
+        //  TODO: remove from last_beacon if found . if gw was found in last_beacon call process_gw_map_gw_down
+        for (const NqnState& st: subsystems) {
+
+            auto it = last_beacon.find(gw_id + GW_DELIM + st.nqn);
+            if (it != last_beacon.end()){
+                  last_beacon.erase(gw_id + GW_DELIM + st.nqn);
+                  pending_map.process_gw_map_gw_down( gw_id, st.nqn, propose );
+            }
+        }
+    }
+    if (propose)
+      return true;
+
+    else 
+     return false; // if no changes are need in the map
 }

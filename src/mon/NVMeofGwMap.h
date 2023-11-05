@@ -203,7 +203,7 @@ public:
         }
         return NULL;
     }
-    int   update_active_timers();
+    int   update_active_timers( bool &propose_pending);
     epoch_t get_epoch() const { return epoch; }
     int   _dump_gwmap(GWMAP & Gmap)const;
     int   _dump_gwmap(std::stringstream &ss)const ;
@@ -211,7 +211,7 @@ public:
     int   cfg_add_gw                    (const GW_ID_T &gw_id, const std::string & nqn, uint16_t ana_grpid);
     int   process_gw_map_ka             (const GW_ID_T &gw_id, const std::string& nqn ,  bool &propose_pending);
     int   process_gw_map_gw_down        (const GW_ID_T &gw_id, const std::string& nqn, bool &propose_pending);
-    int   handle_homeless_ana_groups(bool &propose_pending);
+    int   handle_abandoned_ana_groups(bool &propose_pending);
 
     void debug_encode_decode(){
         ceph::buffer::list bl;
@@ -220,7 +220,12 @@ public:
         decode(p);
     }
 private:
-    int  find_failover_candidate(const GW_ID_T &gw_id, const std::string& nqn,  GW_STATE_T* gw_state,  bool &propose_pending);
+    int fsm_handle_gw_down    (const GW_ID_T &gw_id, const std::string& nqn, GW_STATES_PER_AGROUP_E state, int grpid,  bool &map_modified);
+    int fsm_handle_gw_up      (const GW_ID_T &gw_id, const std::string& nqn, GW_STATES_PER_AGROUP_E state, int grpid,  bool &map_modified);
+    int fsm_handle_to_expired (const GW_ID_T &gw_id, const std::string& nqn,  int grpid,  bool &map_modified);
+
+    int  find_failover_candidate(const GW_ID_T &gw_id, const std::string& nqn,  GW_STATE_T* gw_state, int grpid, bool &propose_pending);
+    int  find_failback_gw       (const GW_ID_T &gw_id, const std::string& nqn,  GW_STATE_T* gw_state,  bool &found);
     int  set_failover_gw_for_ANA_group (const GW_ID_T &gw_id, const std::string& nqn, uint8_t ANA_groupid);
     void publish_map_to_gws(const std::string& nqn){
     }

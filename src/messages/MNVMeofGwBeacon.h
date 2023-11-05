@@ -138,7 +138,7 @@ public:
     decode(n, p);
     // Reserve memory for the vector to avoid reallocations
     subsystems.reserve(n); 
-    for (int i; i < n; i++) {
+    for (int i = 0; i < n; i++) {
       NqnState st;
       decode(st.nqn, p);
       for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
