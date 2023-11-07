@@ -7,7 +7,7 @@ using std::map;
 using std::make_pair;
 using std::ostream;
 using std::ostringstream;
-
+using std::string;
 
 #define dout_subsys ceph_subsys_mon
 #undef dout_prefix
@@ -149,7 +149,7 @@ int NVMeofGwMap::process_gw_map_gw_down(const GW_ID_T &gw_id, const std::string&
     int i;
     GW_STATE_T* gw_state = find_gw_map(gw_id, nqn);
     if (gw_state) {
-        dout(4) << "GW down " << gw_id << dendl;
+        dout(4) << "GW down " << gw_id << " nqn " <<nqn<< dendl;
         gw_state->availability = GW_AVAILABILITY_E::GW_UNAVAILABLE;
         for (i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
             bool map_modified;

@@ -120,22 +120,50 @@ void NVMeofGwMon::tick(){
         return;
     }
     bool _propose_pending = false;
-    inject1();
+  
+   // inject1();
     const auto now = ceph::coarse_mono_clock::now();
+    const auto nvmegw_beacon_grace = g_conf().get_val<std::chrono::seconds>("mon_mgr_beacon_grace");//TODO
+    if(pending_map.delay_propose){
+         check_subs();  // to send map to clients
+         pending_map.delay_propose = false;
+    }
+
     dout(4) << MY_MON_PREFFIX << __func__  <<  "NVMeofGwMon leader got a real tick, pending epoch "<< pending_map.epoch  << dendl;
     last_tick = now;
     bool propose = false;
-    pending_map.update_active_timers(propose);
+
+    pending_map.update_active_timers(propose);  // Periodic: check active FSM timers
     _propose_pending |= propose;
 
-    pending_map.handle_abandoned_ana_groups(propose);
+
+    //TODO handle exception of tick overdued in oreder to avoid false detection of overdued beacons , see MgrMonitor::tick
+
+    const auto cutoff = now - nvmegw_beacon_grace;
+    for(auto &itr : last_beacon){// Pass over all the stored beacons
+        auto last_beacon_time = itr.second;
+        GW_ID_T      gw_id;
+        std::string  nqn;
+        if(last_beacon_time < cutoff){
+            get_gw_and_nqn_from_key(itr.first, gw_id,  nqn);
+            dout(4) << "beacon timeout for GW " << gw_id << dendl;
+            pending_map.process_gw_map_gw_down( gw_id, nqn, propose);
+            _propose_pending |= propose;
+            last_beacon.erase(itr.first);
+        }
+        else{
+           dout(4) << "beacon live for GW " << gw_id << dendl;
+        }
+    }
+
+    pending_map.handle_abandoned_ana_groups(propose); // Periodic: take care of not handled ANA groups
     _propose_pending |= propose;
+
     if(_propose_pending){
+       pending_map.delay_propose = true; // not to send map to clients immediately in "update_from_paxos"
        propose_pending();
     }
 
-    //TODO pass over the last_beacon map to detect the overdue beacons indicating the GW died
-    //if found the one - convert the last_beacon key to  gw_id and nqn and call the function pending_map_process_gw_map_gw_down
     // if propose_pending returned true , call propose_pending method of the paxosService
     // todo understand the logic of paxos.plugged for sending several propose_pending see MgrMonitor::tick
 }
@@ -178,7 +206,7 @@ void NVMeofGwMon::update_from_paxos(bool *need_bootstrap){
         auto p = bl.cbegin();
         map.decode(p);
         if(!mon.is_leader())  map._dump_gwmap(map.Gmap);
-        check_subs();
+        //check_subs();
     }
 }
 
@@ -216,7 +244,6 @@ void NVMeofGwMon::check_subs()
     check_sub(sub);
   }
 }
-
 
 
 bool NVMeofGwMon::preprocess_query(MonOpRequestRef op){
@@ -289,7 +316,17 @@ bool NVMeofGwMon::preprocess_beacon(MonOpRequestRef op){
     return false; // allways  return false to call leader's prepare beacon
 }
 
-#define GW_DELIM ","
+
+#define GW_DELIM ','
+
+void NVMeofGwMon::get_gw_and_nqn_from_key(std::string  key, GW_ID_T &gw_id , std::string& nqn)
+{
+    std::stringstream s1(key);
+
+    std::getline(s1, gw_id, GW_DELIM);
+    std::getline(s1, nqn,   GW_DELIM);
+}
+
 bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
 

@@ -143,20 +143,59 @@ int NVMeofGw::init()
   return 0;
 }
 
+
+static auto GW_NAME = "GW1";
+static auto NQN     = "nqn.2004.subsystem1";
+
+void NVMeofGw::send_config_beacon()
+{
+  ceph_assert(ceph_mutex_is_locked_by_me(lock));
+  dout(0) << "sending config beacon as gid " << monc.get_global_id() << dendl;
+  
+  NqnState state = {NQN,{GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE},1};
+  GwSubsystems subs;// {state};
+  subs.push_back(state);
+
+  auto m = ceph::make_message<MNVMeofGwBeacon>(GW_NAME, subs, GW_AVAILABILITY_E::GW_CREATED, 0);
+  monc.send_mon_message(std::move(m));
+}
+
 void NVMeofGw::send_beacon()
 {
   ceph_assert(ceph_mutex_is_locked_by_me(lock));
   dout(0) << "sending beacon as gid " << monc.get_global_id() << dendl;
+  GwSubsystems subs;
+  NqnState state = {NQN,{GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE}, 1};
+  subs.push_back(state);
 
-  auto m = ceph::make_message<MNVMeofGwBeacon>();
+  /*Debugging encode/decode : dont remove this code for now!!
+  MNVMeofGwBeacon mbeacon("GW1", subs, GW_AVAILABILITY_E::GW_AVAILABLE, 0);
+  std::stringstream    out;
+  mbeacon.print(out);
+  dout(0) << out.str() <<dendl;
 
-  monc.send_mon_message(std::move(m));
+  
+  mbeacon.encode_payload(1);
+  mbeacon.decode_payload();
+  dout(0) << "print-beacon after enc/dec:" <<dendl;
+  std::stringstream    out1;
+  mbeacon.print(out1);
+  dout(0) << out1.str() <<dendl;
+  */
+
+
+   auto m = ceph::make_message<MNVMeofGwBeacon>(GW_NAME, subs, GW_AVAILABILITY_E::GW_AVAILABLE, map.epoch);
+   monc.send_mon_message(std::move(m));
 }
 
 void NVMeofGw::tick()
 {
+  int static cnt = 0;
   dout(0) << dendl;
-  send_beacon();
+  if(cnt++ < 3)
+     send_config_beacon();
+  else
+     send_beacon();
 
   timer.add_event_after(
       g_conf().get_val<std::chrono::seconds>("mgr_tick_period").count(),
@@ -201,10 +240,11 @@ void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> mmap)
 {
     dout(0) << "handle nvmeof gw map" << dendl;
  // NVMeofGwMap
-    auto &map = mmap->get_map();
-    dout(0) << "received map epoch " << map.get_epoch() << dendl;
+    auto &mp = mmap->get_map();
+    dout(0) << "received map epoch " << mp.get_epoch() << dendl;
     std::stringstream  ss;
-    map._dump_gwmap(ss);
+    mp._dump_gwmap(ss);
+    map = mp;
     dout(0) << ss.str() <<  dendl;
 
 }

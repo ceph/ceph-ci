@@ -42,8 +42,9 @@ protected:
   int orig_argc;
   const char **orig_argv;
 
+  void send_config_beacon(); 
   void send_beacon();
-
+ 
 public:
   NVMeofGw(int argc, const char **argv);
   ~NVMeofGw() override;

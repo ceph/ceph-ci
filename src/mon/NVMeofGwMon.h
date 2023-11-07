@@ -86,6 +86,7 @@ private:
     void check_subs();
     void check_sub(Subscription *sub);
     void inject1();
+    void get_gw_and_nqn_from_key(std::string  key, GW_ID_T &gw_id , std::string& nqn);
 
 };
 

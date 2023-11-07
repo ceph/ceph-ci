@@ -119,7 +119,7 @@ inline  void decode(GW_METADATA_T& state,  ceph::bufferlist::const_iterator& bl)
     }
 }
 
-
+/*-------------------*/
 class NVMeofGwMap
 {
 public:
@@ -127,7 +127,7 @@ public:
     GWMAP      Gmap;
     GWMETADATA Gmetadata;//TODO !!! this map is used in the processing of Gmap - so it should be add to the encode/decode
     epoch_t epoch = 0;  // epoch is for Paxos synchronization  mechanizm
-
+    bool   delay_propose = false;
     bool     listen_mode{ false };     // "listen" mode. started when detected invalid maps from some GW in the beacon messages. "Listen" mode Designed as Synchronisation mode
     uint32_t listen_mode_start_tick{0};
 
@@ -136,6 +136,7 @@ public:
     void encode(ceph::buffer::list &bl) const {
         ENCODE_START(2, 1, bl); 	//encode(name, bl);	encode(can_run, bl);encode(error_string, bl);encode(module_options, bl);
         encode((int) epoch, bl);// global map epoch
+        encode(delay_propose,bl);
         encode ((int)Gmap.size(),bl); // number nqn
         for (auto& itr : Gmap) {
             encode((const std::string &)itr.first, bl);// nqn
@@ -156,6 +157,7 @@ public:
         int num_subsystems;
         std::string nqn;
         decode(epoch, bl);
+        decode(delay_propose,bl);
         decode(num_subsystems, bl);
         SUBSYST_GWMAP    gw_map;
         Gmap.clear();
@@ -219,6 +221,7 @@ public:
         auto p = bl.cbegin();
         decode(p);
     }
+
 private:
     int fsm_handle_gw_down    (const GW_ID_T &gw_id, const std::string& nqn, GW_STATES_PER_AGROUP_E state, int grpid,  bool &map_modified);
     int fsm_handle_gw_up      (const GW_ID_T &gw_id, const std::string& nqn, GW_STATES_PER_AGROUP_E state, int grpid,  bool &map_modified);
