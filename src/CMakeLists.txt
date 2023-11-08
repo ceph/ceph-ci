@@ -920,13 +920,13 @@ set(ceph_nvmeof_srcs
   ${nvmeof_gateway_grpc_srcs}
   ${nvmeof_gateway_grpc_hdrs}
   ceph_nvmeof.cc
+  nvmeof/NVMeofGwClient.cc
   nvmeof/NVMeofGw.cc)
 add_executable(ceph-nvmeof ${ceph_nvmeof_srcs})
 add_dependencies(ceph-nvmeof ceph-common)
 target_link_libraries(ceph-nvmeof
   client
   mon
-  os
   global-static
   ceph-common
   ${_REFLECTION}
