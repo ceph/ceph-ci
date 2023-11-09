@@ -5336,6 +5336,10 @@ void Monitor::handle_subscribe(MonOpRequestRef op)
     } else if (p->first.find("kv:") == 0) {
       kvmon()->check_sub(s->sub_map[p->first]);
     }
+    else if (p->first == "NVMeofGw") {
+        dout(10) << "NVMeofGw->check_sub " << dendl;
+        nvmegwmon()->check_sub(s->sub_map[p->first]);
+    }
   }
 
   if (reply) {

@@ -82,9 +82,9 @@ public:
 
 
     //void get_versions(std::map<std::string, std::list<std::string>> &versions);
-private:
-    void check_subs();
+    void check_subs(bool type);
     void check_sub(Subscription *sub);
+private:
     void inject1();
     void get_gw_and_nqn_from_key(std::string  key, GW_ID_T &gw_id , std::string& nqn);
 

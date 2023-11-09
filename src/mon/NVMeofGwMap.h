@@ -136,7 +136,7 @@ public:
     void encode(ceph::buffer::list &bl) const {
         ENCODE_START(2, 1, bl); 	//encode(name, bl);	encode(can_run, bl);encode(error_string, bl);encode(module_options, bl);
         encode((int) epoch, bl);// global map epoch
-        encode(delay_propose,bl);
+       // encode(delay_propose,bl);
         encode ((int)Gmap.size(),bl); // number nqn
         for (auto& itr : Gmap) {
             encode((const std::string &)itr.first, bl);// nqn
@@ -157,7 +157,7 @@ public:
         int num_subsystems;
         std::string nqn;
         decode(epoch, bl);
-        decode(delay_propose,bl);
+     //   decode(delay_propose,bl);
         decode(num_subsystems, bl);
         SUBSYST_GWMAP    gw_map;
         Gmap.clear();
@@ -209,7 +209,6 @@ public:
     epoch_t get_epoch() const { return epoch; }
     int   _dump_gwmap(GWMAP & Gmap)const;
     int   _dump_gwmap(std::stringstream &ss)const ;
-    int   _dump_active_timers( )const ;
     int   cfg_add_gw                    (const GW_ID_T &gw_id, const std::string & nqn, uint16_t ana_grpid);
     int   process_gw_map_ka             (const GW_ID_T &gw_id, const std::string& nqn ,  bool &propose_pending);
     int   process_gw_map_gw_down        (const GW_ID_T &gw_id, const std::string& nqn, bool &propose_pending);

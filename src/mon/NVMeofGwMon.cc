@@ -55,7 +55,6 @@ void NVMeofGwMon::inject1(){
         pending_map.cfg_add_gw("gw3", "nqn2008.node1", 3);
         pending_map.cfg_add_gw("gw1", "nqn2008.node2", 2);
         pending_map._dump_gwmap(pending_map.Gmap);
-        pending_map._dump_active_timers();
         pending_map.debug_encode_decode();
         dout(4) << "Dump map after decode encode:" <<dendl;
         pending_map._dump_gwmap(pending_map.Gmap);
@@ -82,19 +81,19 @@ void NVMeofGwMon::inject1(){
         pending_map.process_gw_map_gw_down( "gw1", "nqn2008.node1", propose);
         if(propose)
             propose_pending();
-        pending_map._dump_active_timers();
+
     }
 
 
     else if( cnt  == start_cnt+5 ){  // simulate - gw1 is back
-        pending_map._dump_active_timers();
+
         pending_map.process_gw_map_ka( "gw1", "nqn2008.node1", propose);
         if(propose)
             propose_pending();
     }
 
     else if( cnt  == start_cnt+6 ){  // simulate - gw1 is down   Simulate gw election by polling function handle_homeless_ana_groups
-            pending_map._dump_active_timers();
+
             pending_map.process_gw_map_gw_down( "gw1", "nqn2008.node1", propose);
             if(propose)
                 propose_pending();
@@ -115,6 +114,11 @@ void NVMeofGwMon::inject1(){
 
 void NVMeofGwMon::tick(){
    // static int cnt=0;
+    if(map.delay_propose){
+       check_subs(false);  // to send map to clients
+       map.delay_propose = false;
+    }
+
     if (!is_active() || !mon.is_leader()){
         dout(4) << __func__  <<  " NVMeofGwMon leader : " << mon.is_leader() << "active : " << is_active()  << dendl;
         return;
@@ -124,12 +128,9 @@ void NVMeofGwMon::tick(){
    // inject1();
     const auto now = ceph::coarse_mono_clock::now();
     const auto nvmegw_beacon_grace = g_conf().get_val<std::chrono::seconds>("mon_mgr_beacon_grace");//TODO
-    if(pending_map.delay_propose){
-         check_subs();  // to send map to clients
-         pending_map.delay_propose = false;
-    }
+    dout(4) << MY_MON_PREFFIX << __func__  <<  "NVMeofGwMon leader got a real tick, pending epoch "<< pending_map.epoch     << dendl;
 
-    dout(4) << MY_MON_PREFFIX << __func__  <<  "NVMeofGwMon leader got a real tick, pending epoch "<< pending_map.epoch  << dendl;
+
     last_tick = now;
     bool propose = false;
 
@@ -160,7 +161,8 @@ void NVMeofGwMon::tick(){
     _propose_pending |= propose;
 
     if(_propose_pending){
-       pending_map.delay_propose = true; // not to send map to clients immediately in "update_from_paxos"
+       //pending_map.delay_propose = true; // not to send map to clients immediately in "update_from_paxos"
+       dout(4) << "decision to delayed_map" <<dendl;
        propose_pending();
     }
 
@@ -206,7 +208,8 @@ void NVMeofGwMon::update_from_paxos(bool *need_bootstrap){
         auto p = bl.cbegin();
         map.decode(p);
         if(!mon.is_leader())  map._dump_gwmap(map.Gmap);
-        //check_subs();
+        check_subs(true);
+
     }
 }
 
@@ -233,15 +236,18 @@ void NVMeofGwMon::check_sub(Subscription *sub)
 }
 
 
-void NVMeofGwMon::check_subs()
+void NVMeofGwMon::check_subs(bool t)
 {
   const std::string type = "NVMeofGw";
   dout(4) <<  MY_MON_PREFFIX << __func__ << " count " << mon.session_map.subs.count(type) << dendl;
-  //for (auto &sub : *mon.session_map.subs) { dout(20) << sub.first << ", " << dendl;}
-  if (mon.session_map.subs.count(type) == 0) return;
+
+  if (mon.session_map.subs.count(type) == 0){
+      return;
+  }
   for (auto sub : *(mon.session_map.subs[type])) {
-    dout(4) << "sub-type "<< sub->type << dendl;
-    check_sub(sub);
+    dout(4) << "sub-type "<< sub->type <<  " delay_propose until next tick" << t << dendl;
+    if (t) map.delay_propose = true;
+    else  check_sub(sub);
   }
 }
 
@@ -345,7 +351,10 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     if(avail == GW_AVAILABILITY_E::GW_CREATED){
         // create gw call cfg_add_gw
         for (const NqnState& st: subsystems) {
-            pending_map.cfg_add_gw( gw_id, st.nqn, st.opt_ana_gid );
+            int rc = pending_map.cfg_add_gw( gw_id, st.nqn, st.opt_ana_gid );
+            if(rc == -EEXIST){
+                propose = true;  // for synchronization with GW that starts 
+            }
         }
     }
     else if(avail == GW_AVAILABILITY_E::GW_AVAILABLE){
@@ -369,8 +378,11 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
             }
         }
     }
-    if (propose)
+    if (propose){
+     // pending_map.delay_propose = true;
+      dout(4) << "decision to delayed_map in prepare_beacon" <<dendl;
       return true;
+    }
 
     else 
      return false; // if no changes are need in the map

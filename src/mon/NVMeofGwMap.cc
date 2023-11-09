@@ -19,6 +19,18 @@ static ostream& _prefix(std::ostream *_dout, const NVMeofGwMap *h,//const Monito
     return *_dout << "gw-mon." << map->mon->name << "@" << map->mon->rank;
 }
 
+static std::string G_gw_avail[] = {
+                            "GW_CREATED", 
+                            "GW_AVAILAB", 
+                            "GW_UNAVAIL"};
+
+static std::string G_gw_ana_states[] = {
+                            "IDLE_STATE     ",
+                            "STANDBY_STATE  ",
+                            "ACTIVE_STATE   ",
+                            "BLOCKED_OWNER  ",
+                            "WAIT_FLBACK_RDY"
+};
 
 
 int  NVMeofGwMap::cfg_add_gw (const GW_ID_T &gw_id, const std::string & nqn, uint16_t ana_grpid) {
@@ -26,12 +38,12 @@ int  NVMeofGwMap::cfg_add_gw (const GW_ID_T &gw_id, const std::string & nqn, uin
 
     if (find_gw_map(gw_id, nqn)) {
         dout(4) << __func__ << " ERROR :GW already exists in map " << gw_id << dendl;
-        return 1;
+        return -EEXIST ;
     }
     if (ana_grpid >= MAX_SUPPORTED_ANA_GROUPS && ana_grpid != REDUNDANT_GW_ANA_GROUP_ID)
     {
         dout(4) << __func__ << " ERROR :GW " << gw_id << " bad ANA group " <<(int)ana_grpid << dendl;
-        return 1;
+        return -EINVAL ;
     }
 
     //TODO check that all MAX_SUPPORTED_ANA_GROUPS are occupied in the subsystem - assert
@@ -73,9 +85,10 @@ int NVMeofGwMap::_dump_gwmap(GWMAP & Gmap)const  {
     for (auto& itr : Gmap) {
         for (auto& ptr : itr.second) {
 
-            ss	<< " NQN " << itr.first << " GW_ID " << ptr.first << " ANA gr " << std::setw(5) << (int)ptr.second.optimized_ana_group_id << " available " << (int)ptr.second.availability << " States: ";
+            ss	<< " NQN " << itr.first << " GW_ID " << ptr.first << " ANA gr " << std::setw(5) << (int)ptr.second.optimized_ana_group_id << 
+                                       " available :" << G_gw_avail[(int)ptr.second.availability] << " States: ";
             for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
-                ss << (int)ptr.second.sm_state[i] << " " ;
+                ss << G_gw_ana_states[(int)ptr.second.sm_state[i]] << " " ;
             }
             ss  << std::endl;
         }
@@ -89,9 +102,9 @@ int NVMeofGwMap::_dump_gwmap(std::stringstream &ss)const  {
     for (auto& itr : Gmap) {
         for (auto& ptr : itr.second) {
             ss	<< " NQN " << itr.first << " GW_ID " << ptr.first << " ANA gr " << std::setw(5) 
-            << (int)ptr.second.optimized_ana_group_id << " available " << (int)ptr.second.availability << " States: ";
+            << (int)ptr.second.optimized_ana_group_id << " available :" << G_gw_avail[(int)ptr.second.availability] << " States: ";
             for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
-                ss << (int)ptr.second.sm_state[i] << " " ;
+                ss << G_gw_ana_states[(int)ptr.second.sm_state[i]] << " " ;
             }
             ss  << std::endl;
         }
@@ -103,7 +116,7 @@ int NVMeofGwMap::_dump_gwmap(std::stringstream &ss)const  {
 
 int NVMeofGwMap:: update_active_timers( bool &propose_pending ){
 
-    dout(4) << __func__  <<  " called  " << mon << dendl;
+    dout(4) << __func__  <<  " called,  p_monitor: " << mon << dendl;
     for (auto& itr : Gmetadata) {
         for (auto& ptr : itr.second) {
             GW_METADATA_T *metadata = &ptr.second;
@@ -118,27 +131,6 @@ int NVMeofGwMap:: update_active_timers( bool &propose_pending ){
             }
         }
     }
-    return 0;
-}
-
-
-int NVMeofGwMap::_dump_active_timers( )const  {
-
-    dout(4) << __func__  <<  " called  " << mon << dendl;
-    std::ostringstream ss;
-    ss  << std::endl;
-    for (auto& itr : Gmetadata) {
-        for (auto& ptr : itr.second) {
-            ss  << " NQN " << itr.first << " GW_ID " << ptr.first << std::endl;
-            for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
-               if (ptr.second.anagrp_sm_tstamps[i]  != INVALID_GW_TIMER){
-                   ss << "timer for GW " << ptr.first << " ANA GRP " << i <<" :"<< ptr.second.anagrp_sm_tstamps[i];
-               }
-               ss << std::endl;
-            }
-        }
-    }
-    dout(4) << ss.str() <<dendl;
     return 0;
 }
 

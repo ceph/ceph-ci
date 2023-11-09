@@ -166,6 +166,14 @@ void NVMeofGw::send_beacon()
   dout(0) << "sending beacon as gid " << monc.get_global_id() << dendl;
   GwSubsystems subs;
   NqnState state = {NQN,{GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE}, 1};
+
+  GW_STATE_T* gw_state = map.find_gw_map(GW_NAME, NQN);
+  if(gw_state){  // If some valid map is present
+      for(int i=0; i< MAX_SUPPORTED_ANA_GROUPS; i++){
+          state.sm_state[i] = gw_state->sm_state[i];
+      }
+  }
+
   subs.push_back(state);
 
   /*Debugging encode/decode : dont remove this code for now!!
@@ -183,7 +191,6 @@ void NVMeofGw::send_beacon()
   dout(0) << out1.str() <<dendl;
   */
 
-
    auto m = ceph::make_message<MNVMeofGwBeacon>(GW_NAME, subs, GW_AVAILABILITY_E::GW_AVAILABLE, map.epoch);
    monc.send_mon_message(std::move(m));
 }
@@ -192,7 +199,7 @@ void NVMeofGw::tick()
 {
   int static cnt = 0;
   dout(0) << dendl;
-  if(cnt++ < 3)
+  if(cnt++ < 1)
      send_config_beacon();
   else
      send_beacon();
