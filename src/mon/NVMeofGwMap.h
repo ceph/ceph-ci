@@ -56,7 +56,8 @@ typedef enum {
 enum class GW_AVAILABILITY_E {
     GW_CREATED = 0,
     GW_AVAILABLE,
-    GW_UNAVAILABLE
+    GW_UNAVAILABLE,
+    GW_DELETED
 };
 
 #define MAX_SUPPORTED_ANA_GROUPS 5
@@ -125,7 +126,7 @@ class NVMeofGwMap
 public:
     Monitor *mon= NULL;// just for logs in the mon module file
     GWMAP      Gmap;
-    GWMETADATA Gmetadata;//TODO !!! this map is used in the processing of Gmap - so it should be add to the encode/decode
+    GWMETADATA Gmetadata;
     epoch_t epoch = 0;  // epoch is for Paxos synchronization  mechanizm
     bool   delay_propose = false;
     bool     listen_mode{ false };     // "listen" mode. started when detected invalid maps from some GW in the beacon messages. "Listen" mode Designed as Synchronisation mode
@@ -210,6 +211,7 @@ public:
     int   _dump_gwmap(GWMAP & Gmap)const;
     int   _dump_gwmap(std::stringstream &ss)const ;
     int   cfg_add_gw                    (const GW_ID_T &gw_id, const std::string & nqn, uint16_t ana_grpid);
+    int   cfg_delete_gw                    (const GW_ID_T &gw_id, const std::string & nqn, uint16_t ana_grpid);
     int   process_gw_map_ka             (const GW_ID_T &gw_id, const std::string& nqn ,  bool &propose_pending);
     int   process_gw_map_gw_down        (const GW_ID_T &gw_id, const std::string& nqn, bool &propose_pending);
     int   handle_abandoned_ana_groups(bool &propose_pending);
@@ -223,6 +225,7 @@ public:
 
 private:
     int fsm_handle_gw_down    (const GW_ID_T &gw_id, const std::string& nqn, GW_STATES_PER_AGROUP_E state, int grpid,  bool &map_modified);
+    int fsm_handle_gw_delete  (const GW_ID_T &gw_id, const std::string& nqn, GW_STATES_PER_AGROUP_E state, int grpid,  bool &map_modified);
     int fsm_handle_gw_up      (const GW_ID_T &gw_id, const std::string& nqn, GW_STATES_PER_AGROUP_E state, int grpid,  bool &map_modified);
     int fsm_handle_to_expired (const GW_ID_T &gw_id, const std::string& nqn,  int grpid,  bool &map_modified);
 
@@ -250,6 +253,12 @@ private:
         return 0;
     }
 
+    int delete_metadata(const GW_ID_T& gw_id, const std::string & nqn)
+    {
+        if(Gmetadata[nqn].size() != 0)
+            Gmetadata[nqn].erase(gw_id);
+        return 0;
+    }
 
     int  start_timer(const GW_ID_T &gw_id, const std::string& nqn, uint16_t anagrpid)
     {
@@ -291,7 +300,7 @@ private:
                     if(metadata->anagrp_sm_tstamps[i] != INVALID_GW_TIMER)
                         break;
                 if(i==MAX_SUPPORTED_ANA_GROUPS){
-                    Gmetadata[nqn].clear(); // remove all  gw_id timers from the map
+                    Gmetadata[nqn].erase(gw_id); // remove all  gw_id timers from the map
                 }
             }
             else {

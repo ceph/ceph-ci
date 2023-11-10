@@ -63,6 +63,14 @@ options:
   default: 30
   services:
   - mon
+- name: mon_nvmeofgw_beacon_grace
+  type: secs
+  level: advanced
+  desc: Period in seconds from last beacon to monitor marking a manager daemon as
+    failed
+  default: 10
+  services:
+  - mon
 - name: mon_mgr_inactive_grace
   type: int
   level: advanced

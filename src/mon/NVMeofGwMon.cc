@@ -127,7 +127,7 @@ void NVMeofGwMon::tick(){
   
    // inject1();
     const auto now = ceph::coarse_mono_clock::now();
-    const auto nvmegw_beacon_grace = g_conf().get_val<std::chrono::seconds>("mon_mgr_beacon_grace");//TODO
+    const auto nvmegw_beacon_grace = g_conf().get_val<std::chrono::seconds>("mon_nvmeofgw_beacon_grace"); 
     dout(4) << MY_MON_PREFFIX << __func__  <<  "NVMeofGwMon leader got a real tick, pending epoch "<< pending_map.epoch     << dendl;
 
 
@@ -335,7 +335,7 @@ void NVMeofGwMon::get_gw_and_nqn_from_key(std::string  key, GW_ID_T &gw_id , std
 
 bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
-
+    GW_STATE_T* gw_state = NULL;
     auto m = op->get_req<MNVMeofGwBeacon>();
 
      //    dout(4) << "availability " <<  m->get_availability() << " GW : " <<m->get_gw_id() << " subsystems " << m->get_subsystems() <<  " epoch " << m->get_version() << dendl;
@@ -347,6 +347,17 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     GW_AVAILABILITY_E  avail = m->get_availability();
     const GwSubsystems& subsystems =  m->get_subsystems();
     bool propose = false;
+
+    // Validation gw is in the database 
+    if(avail != GW_AVAILABILITY_E::GW_CREATED){
+        for (const NqnState& st: subsystems) {
+            gw_state = pending_map.find_gw_map(gw_id, st.nqn);
+            if(gw_state == NULL) {
+                dout(4) << "ERROR: GW is not in database: " << gw_id <<" " << st.nqn << dendl;
+                ceph_assert(false);// TODO
+            }
+        }
+    }
 
     if(avail == GW_AVAILABILITY_E::GW_CREATED){
         // create gw call cfg_add_gw
@@ -369,6 +380,7 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     }
     else if(avail == GW_AVAILABILITY_E::GW_UNAVAILABLE){ // state set by GW client application
         //  TODO: remove from last_beacon if found . if gw was found in last_beacon call process_gw_map_gw_down
+
         for (const NqnState& st: subsystems) {
 
             auto it = last_beacon.find(gw_id + GW_DELIM + st.nqn);

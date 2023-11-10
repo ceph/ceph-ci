@@ -36,6 +36,11 @@ using std::string;
 using std::stringstream;
 using std::vector;
 
+
+static std::string GW_NAME = "NULL";
+static std::string NQN     = "nqn.2004.subsystem1";
+static uint16_t ana_grp = 0;
+
 NVMeofGw::NVMeofGw(int argc, const char **argv) :
   Dispatcher(g_ceph_context),
   monc{g_ceph_context, poolctx},
@@ -47,6 +52,26 @@ NVMeofGw::NVMeofGw(int argc, const char **argv) :
   orig_argc(argc),
   orig_argv(argv)
 {
+ /*     char *cvalue = NULL;
+      int index;
+      int c;
+
+      while ((c = getopt (argc, argv, "icnk:")) != -1)
+         switch (c)
+         {
+           case 'i':
+             cvalue = optarg; // set the name of the GW
+             if(*cvalue == 'a')
+                 GW_NAME = "GW1";
+             else if(*cvalue == 'b')
+                 GW_NAME = "GW2";
+
+           break;
+
+           default:
+           break;
+         }
+  */
 }
 
 NVMeofGw::~NVMeofGw() = default;
@@ -58,6 +83,7 @@ const char** NVMeofGw::get_tracked_conf_keys() const
   };
   return KEYS;
 }
+
 
 int NVMeofGw::init()
 {
@@ -144,15 +170,16 @@ int NVMeofGw::init()
 }
 
 
-static auto GW_NAME = "GW1";
-static auto NQN     = "nqn.2004.subsystem1";
+
 
 void NVMeofGw::send_config_beacon()
 {
   ceph_assert(ceph_mutex_is_locked_by_me(lock));
+
+
   dout(0) << "sending config beacon as gid " << monc.get_global_id() << dendl;
   
-  NqnState state = {NQN,{GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE},1};
+  NqnState state = {NQN,{GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE},ana_grp};
   GwSubsystems subs;// {state};
   subs.push_back(state);
 
@@ -165,7 +192,7 @@ void NVMeofGw::send_beacon()
   ceph_assert(ceph_mutex_is_locked_by_me(lock));
   dout(0) << "sending beacon as gid " << monc.get_global_id() << dendl;
   GwSubsystems subs;
-  NqnState state = {NQN,{GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE}, 1};
+  NqnState state = {NQN,{GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE, GW_IDLE_STATE},ana_grp};
 
   GW_STATE_T* gw_state = map.find_gw_map(GW_NAME, NQN);
   if(gw_state){  // If some valid map is present
@@ -199,11 +226,14 @@ void NVMeofGw::tick()
 {
   int static cnt = 0;
   dout(0) << dendl;
-  if(cnt++ < 1)
-     send_config_beacon();
-  else
-     send_beacon();
 
+  if(GW_NAME != "NULL")
+  {
+     if(cnt++ < 1)
+        send_config_beacon();
+      else
+        send_beacon();
+  }
   timer.add_event_after(
       g_conf().get_val<std::chrono::seconds>("mgr_tick_period").count(),
       new LambdaContext([this](int r){
@@ -271,7 +301,20 @@ bool NVMeofGw::ms_dispatch2(const ref_t<Message>& m)
 
 int NVMeofGw::main(vector<const char *> args)
 {
-  client_messenger->wait();
+   for (auto &it: args){
+
+       if(!strcmp(it,"a")){
+           GW_NAME = "GW1";
+           ana_grp = 1;
+       }
+       else if(!strcmp(it,"b")){
+           GW_NAME = "GW2";
+           ana_grp = 2;
+       }
+       dout(0) << "Dump arg value:  " << it << " "<< GW_NAME <<"Ana grpid: " << ana_grp << dendl;
+   }
+
+   client_messenger->wait();
 
   // Disable signal handlers
   unregister_async_signal_handler(SIGHUP, sighup_handler);
