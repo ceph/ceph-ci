@@ -28,6 +28,13 @@
 
 class NVMeofGw : public Dispatcher,
 		   public md_config_obs_t {
+private:
+  std::string name;
+  std::string gateway_address;
+  std::string server_key;
+  std::string server_cert;
+  std::string client_cert;
+
 protected:
   ceph::async::io_context_pool poolctx;
   MonClient monc;

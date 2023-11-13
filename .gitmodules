@@ -77,4 +77,4 @@
 	url = https://github.com/open-telemetry/opentelemetry-cpp.git
 [submodule "src/nvmeof/gateway"]
 	path = src/nvmeof/gateway
-	url = https://github.com/baum/ceph-nvmeof.git
+	url = https://github.com/ceph/ceph-nvmeof.git
