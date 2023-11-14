@@ -195,13 +195,13 @@ public:
 
     //NVMeofGwMap( )  {}
 
-    GW_STATE_T * find_gw_map(const GW_ID_T &gw_id, const std::string& nqn )
+    GW_STATE_T * find_gw_map(const GW_ID_T &gw_id, const std::string& nqn ) const
     {
         auto it = Gmap.find(nqn);
         if (it != Gmap.end() /* && it->first == nqn*/) {
             auto it2 = it->second.find(gw_id);
             if (it2 != it->second.end() /* && it2->first == gw_id*/ ){ // cout << "AAAA " << gw_id << " " << it2->first << endl;
-                return  &it2->second;
+                return  (GW_STATE_T *) &it2->second;
             }
         }
         return NULL;

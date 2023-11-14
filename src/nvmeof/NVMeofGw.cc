@@ -242,9 +242,28 @@ void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> mmap)
     dout(0) << "received map epoch " << mp.get_epoch() << dendl;
     std::stringstream  ss;
     mp._dump_gwmap(ss);
-    map = mp;
     dout(0) << ss.str() <<  dendl;
 
+    GW_STATE_T dummy_state { {GW_IDLE_STATE,} , ana_grp, GW_AVAILABILITY_E::GW_CREATED, 0 };
+    GW_STATE_T* gw_state     = map.find_gw_map(GW_NAME, NQN);
+    GW_STATE_T* new_gw_state = mp.find_gw_map(GW_NAME, NQN);
+
+    //ceph_assert(new_gw_state);
+    if(!gw_state)
+        gw_state = &dummy_state;
+    if(new_gw_state)
+      for(int i=0; i<MAX_SUPPORTED_ANA_GROUPS; i++){
+        if(new_gw_state->sm_state[i] != gw_state->sm_state[i])
+        {
+           dout(0) << "inside:"  << new_gw_state->sm_state[i]  << " , "<<  gw_state->sm_state[i] << dendl;
+          // build array of tuples :  {ana-grpid , new-state, died_gw-id(in case the state = Active and ana-grpid != my_optimised_grpid) 
+        }
+    }
+
+
+
+    map = mp;
+  
 }
 
 bool NVMeofGw::ms_dispatch2(const ref_t<Message>& m)

@@ -130,6 +130,19 @@ void NVMeofGwMon::tick(){
     const auto nvmegw_beacon_grace = g_conf().get_val<std::chrono::seconds>("mon_nvmeofgw_beacon_grace"); 
     dout(4) << MY_MON_PREFFIX << __func__  <<  "NVMeofGwMon leader got a real tick, pending epoch "<< pending_map.epoch     << dendl;
 
+    const auto mgr_tick_period = g_conf().get_val<std::chrono::seconds>("mgr_tick_period");
+
+    if (last_tick != ceph::coarse_mono_clock::zero()
+          && (now - last_tick > (nvmegw_beacon_grace - mgr_tick_period))) {
+        // This case handles either local slowness (calls being delayed
+        // for whatever reason) or cluster election slowness (a long gap
+        // between calls while an election happened)
+        dout(4) << __func__ << ": resetting beacon timeouts due to mon delay "
+                "(slow election?) of " << now - last_tick << " seconds" << dendl;
+        for (auto &i : last_beacon) {
+          i.second = now;
+        }
+    }
 
     last_tick = now;
     bool propose = false;
@@ -138,7 +151,7 @@ void NVMeofGwMon::tick(){
     _propose_pending |= propose;
 
 
-    //TODO handle exception of tick overdued in oreder to avoid false detection of overdued beacons , see MgrMonitor::tick
+    //TODO handle exception of tick overdued in order to avoid false detection of overdued beacons , see MgrMonitor::tick
 
     const auto cutoff = now - nvmegw_beacon_grace;
     for(auto &itr : last_beacon){// Pass over all the stored beacons
@@ -147,13 +160,13 @@ void NVMeofGwMon::tick(){
         std::string  nqn;
         if(last_beacon_time < cutoff){
             get_gw_and_nqn_from_key(itr.first, gw_id,  nqn);
-            dout(4) << "beacon timeout for GW " << gw_id << dendl;
+            dout(4) << "beacon timeout for GW " << gw_id << " nqn " << nqn << dendl;
             pending_map.process_gw_map_gw_down( gw_id, nqn, propose);
             _propose_pending |= propose;
             last_beacon.erase(itr.first);
         }
         else{
-           dout(4) << "beacon live for GW " << gw_id << dendl;
+           dout(4) << "beacon live for GW key: " << itr.first << dendl;
         }
     }
 
@@ -231,8 +244,6 @@ void NVMeofGwMon::check_sub(Subscription *sub)
         sub->next = map.get_epoch() + 1;
       }
     }
-  //}
-
 }
 
 
@@ -319,6 +330,12 @@ bool NVMeofGwMon::preprocess_beacon(MonOpRequestRef op){
     auto m = op->get_req<MNVMeofGwBeacon>();
      mon.no_reply(op); // we never reply to beacons
      dout(4) << "beacon from " << m->get_type() << dendl;
+     MonSession *session = op->get_session();
+     if (!session){
+         dout(4) << "beacon no session "  << dendl;
+         return true;
+     }
+
     return false; // allways  return false to call leader's prepare beacon
 }
 
