@@ -64,7 +64,8 @@ enum class GW_AVAILABILITY_E {
 #define INVALID_GW_TIMER     0xffff
 #define REDUNDANT_GW_ANA_GROUP_ID 0xFF
 typedef struct GW_STATE_T {
-    GW_STATES_PER_AGROUP_E   sm_state [MAX_SUPPORTED_ANA_GROUPS];  // state machine states per ANA group
+    GW_STATES_PER_AGROUP_E   sm_state     [MAX_SUPPORTED_ANA_GROUPS];  // state machine states per ANA group
+    GW_ID_T                  failover_peer[MAX_SUPPORTED_ANA_GROUPS];
     uint16_t  optimized_ana_group_id;                     // optimized ANA group index as configured by Conf upon network entry, note for redundant GW it is FF
     GW_AVAILABILITY_E     availability;                  // in absence of  beacon  heartbeat messages it becomes inavailable
     uint64_t version;                                      // version per all GWs of the same subsystem. subsystem version
@@ -84,6 +85,9 @@ inline void encode(const GW_STATE_T& state, ceph::bufferlist &bl) {
     for(int i = 0; i <MAX_SUPPORTED_ANA_GROUPS; i ++){
         encode((int)(state.sm_state[i]), bl);
     }
+    for(int i = 0; i <MAX_SUPPORTED_ANA_GROUPS; i ++){
+        encode((state.failover_peer[i]), bl);
+    }
     encode(state.optimized_ana_group_id, bl);
     encode((int)state.availability, bl);
    // encode(state.gw_id, bl);
@@ -92,9 +96,14 @@ inline void encode(const GW_STATE_T& state, ceph::bufferlist &bl) {
 
 inline  void decode(GW_STATE_T& state,  ceph::bufferlist::const_iterator& bl) {
     int sm_state;
+    GW_ID_T peer_name;
     for(int i = 0; i <MAX_SUPPORTED_ANA_GROUPS; i ++){
         decode(sm_state, bl);
         state.sm_state[i] = (GW_STATES_PER_AGROUP_E)  sm_state;
+    }
+    for(int i = 0; i <MAX_SUPPORTED_ANA_GROUPS; i ++){
+        decode(peer_name, bl);
+        state.failover_peer[i] = peer_name;
     }
     decode(state.optimized_ana_group_id, bl);
     int avail;
@@ -231,9 +240,8 @@ private:
 
     int  find_failover_candidate(const GW_ID_T &gw_id, const std::string& nqn,  GW_STATE_T* gw_state, int grpid, bool &propose_pending);
     int  find_failback_gw       (const GW_ID_T &gw_id, const std::string& nqn,  GW_STATE_T* gw_state,  bool &found);
-    int  set_failover_gw_for_ANA_group (const GW_ID_T &gw_id, const std::string& nqn, uint8_t ANA_groupid);
-    void publish_map_to_gws(const std::string& nqn){
-    }
+    int  set_failover_gw_for_ANA_group (const GW_ID_T &failed_gw_id, const GW_ID_T &gw_id, const std::string& nqn, uint8_t ANA_groupid);
+    int  set_gw_standby_state(GW_STATE_T* gw_state, uint8_t ANA_groupid);
 
     SUBSYST_GWMAP *  find_subsystem_map(const std::string& nqn)
     {

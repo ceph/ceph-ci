@@ -234,6 +234,9 @@ void NVMeofGw::shutdown()
   finisher.stop();
 }
 
+//TODO temp,just for compilation
+#define NQN  "2004.nqn.12345"
+
 void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> mmap)
 {
     dout(0) << "handle nvmeof gw map" << dendl;
@@ -244,9 +247,9 @@ void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> mmap)
     mp._dump_gwmap(ss);
     dout(0) << ss.str() <<  dendl;
 
-    GW_STATE_T dummy_state { {GW_IDLE_STATE,} , ana_grp, GW_AVAILABILITY_E::GW_CREATED, 0 };
-    GW_STATE_T* gw_state     = map.find_gw_map(GW_NAME, NQN);
-    GW_STATE_T* new_gw_state = mp.find_gw_map(GW_NAME, NQN);
+    GW_STATE_T dummy_state { {GW_IDLE_STATE,} , {"NULL","NULL","NULL","NULL","NULL",}  , 1/*ana_grp*/, GW_AVAILABILITY_E::GW_CREATED, 0 };
+    GW_STATE_T* gw_state     = map.find_gw_map(name, NQN);
+    GW_STATE_T* new_gw_state = mp.find_gw_map(name, NQN);
 
     //ceph_assert(new_gw_state);
     if(!gw_state)
@@ -255,7 +258,7 @@ void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> mmap)
       for(int i=0; i<MAX_SUPPORTED_ANA_GROUPS; i++){
         if(new_gw_state->sm_state[i] != gw_state->sm_state[i])
         {
-           dout(0) << "inside:"  << new_gw_state->sm_state[i]  << " , "<<  gw_state->sm_state[i] << dendl;
+           dout(0) << " " << new_gw_state->sm_state[i]  << " , "<<  gw_state->sm_state[i] << dendl;
           // build array of tuples :  {ana-grpid , new-state, died_gw-id(in case the state = Active and ana-grpid != my_optimised_grpid) 
         }
     }
