@@ -179,13 +179,25 @@ void NVMeofGw::send_beacon()
      grpc::CreateChannel(gateway_address, grpc::InsecureChannelCredentials()));
   subsystems_info gw_subsystems;
   bool ok = gw_client.get_subsystems(gw_subsystems);
-  dout(0) << "got gw response ok: " << ok << "susbsystems: " <<  gw_subsystems.subsystems() << dendl;
-  // TODO: create structured response for get_subsystems
+  if (ok) {
+    for (int i = 0; i < gw_subsystems.subsystems_size(); i++) {
+      const subsystem& sub = gw_subsystems.subsystems(i);
+      struct NqnState nqn_state(sub.nqn());
+      if (false) { // handled map already, update sm_state, opt_ana_gid
+      }
+      subs.push_back(nqn_state);
+    }
+  }
+
+  GW_AVAILABILITY_E gw_availability = GW_AVAILABILITY_E::GW_CREATED;
+  if (false) { // handled map already
+    gw_availability = ok ? GW_AVAILABILITY_E::GW_AVAILABLE : GW_AVAILABILITY_E::GW_CREATED;
+  }
 
   auto m = ceph::make_message<MNVMeofGwBeacon>(
       name,
       subs,
-      ok? GW_AVAILABILITY_E::GW_AVAILABLE : GW_AVAILABILITY_E::GW_CREATED,
+      gw_availability,
       map.epoch);
   monc.send_mon_message(std::move(m));
 }

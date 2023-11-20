@@ -28,6 +28,12 @@ struct NqnState {
   std::string nqn;          // subsystem NQN
   SM_STATE    sm_state;     // susbsystem's state machine state
   uint16_t    opt_ana_gid;  // optimized ANA group index
+
+  // Default constructor
+  NqnState(const std::string& _nqn) : nqn(_nqn), opt_ana_gid(0) {
+    for (int i=0; i < MAX_SUPPORTED_ANA_GROUPS; i++)
+      sm_state[i] = GW_STATES_PER_AGROUP_E::GW_IDLE_STATE;
+  }
 };
 
 typedef std::vector<NqnState> GwSubsystems;
@@ -139,10 +145,11 @@ public:
     decode(n, p);
     // Reserve memory for the vector to avoid reallocations
     subsystems.clear();
-    //subsystems.reserve(n);
+    subsystems.reserve(n);
     for (int i = 0; i < n; i++) {
-      NqnState st;
-      decode(st.nqn, p);
+      std::string nqn;
+      decode(nqn, p);
+      NqnState st(nqn);
       for (int j = 0; j < MAX_SUPPORTED_ANA_GROUPS; j++) {
         decode(tmp, p);
         st.sm_state[j] = static_cast<GW_STATES_PER_AGROUP_E>(tmp);
