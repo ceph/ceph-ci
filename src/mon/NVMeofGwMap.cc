@@ -33,37 +33,41 @@ static std::string G_gw_ana_states[] = {
 };
 
 
-int  NVMeofGwMap::cfg_add_gw (const GW_ID_T &gw_id, const std::string & nqn, uint16_t ana_grpid) {
-    GW_STATE_T state{ {GW_IDLE_STATE,}, {"NULL","NULL","NULL","NULL","NULL",} , ana_grpid, GW_AVAILABILITY_E::GW_CREATED,   0 };
+int  NVMeofGwMap::cfg_add_gw (const GW_ID_T &gw_id, const std::string & nqn) {
+
+    GW_STATE_T state{ {GW_IDLE_STATE,}, {""}, 0, GW_AVAILABILITY_E::GW_CREATED,  0 };
+    for(int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) state.failover_peer[i] = "NULL";
 
     if (find_gw_map(gw_id, nqn)) {
         dout(4) << __func__ << " ERROR create GW: already exists in map " << gw_id << dendl;
         return -EEXIST ;
     }
-    if (ana_grpid >= MAX_SUPPORTED_ANA_GROUPS && ana_grpid != REDUNDANT_GW_ANA_GROUP_ID)
-    {
-        dout(4) << __func__ << " ERROR create GW: " << gw_id << " bad ANA group " <<(int)ana_grpid << dendl;
-        return -EINVAL;
-    }
 
     //TODO check that all MAX_SUPPORTED_ANA_GROUPS are occupied in the subsystem - assert
-    //  check that there is no GW in the DB  configured on the same ANA-GRPID
-
+   //Allocate AnaGrpId  for the new GW
+    bool allocated[MAX_SUPPORTED_ANA_GROUPS+1] = {false};
     auto subsyst_it = find_subsystem_map(nqn);
     if(subsyst_it) {
        for (auto& itr : *subsyst_it)
-          if (itr.second.optimized_ana_group_id  == ana_grpid) {
-           dout(4) << __func__ << " ERROR create GW: " << gw_id << " ANA group in use " <<(int)ana_grpid << " by GW " << itr.first << dendl;
-           return -EINVAL;
-          }
+          allocated[itr.second.optimized_ana_group_id] = true;
+           //dout(4) << __func__ << " ERROR create GW: " << gw_id << " ANA group in use " <<(int)ana_grpid << " by GW " << itr.first << dendl;
     }
-
-    if(Gmap[nqn].size() ==0 )
+    for(int i=1; i<=MAX_SUPPORTED_ANA_GROUPS; i++){
+        if (allocated[i] == false){
+            state.optimized_ana_group_id  = i;
+            break;
+        }
+    }
+    if(state.optimized_ana_group_id  == 0){
+       dout(4) << __func__ << " ERROR create GW: " << gw_id << "   ANA groupId was not allocated "   << dendl;
+        return -EINVAL;
+    }
+    if(Gmap[nqn].size() == 0)
         Gmap.insert(make_pair(nqn, SUBSYST_GWMAP()));
     Gmap[nqn].insert({gw_id, state});
 
     create_metadata(gw_id, nqn);
-    dout(4) << " Add GW :"<< gw_id << "nqn " << nqn << " ANA grpid: " << ana_grpid << dendl;
+    dout(4) << " Add GW :"<< gw_id << "nqn " << nqn << " ANA grpid: " << state.optimized_ana_group_id << dendl;
     return 0;
 }
 

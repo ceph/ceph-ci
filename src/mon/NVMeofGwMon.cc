@@ -50,17 +50,17 @@ static int cnt ;
 void NVMeofGwMon::inject1(){
     bool propose = false;
     if( ++cnt  == 4  ){// simulation that new configuration was added
-        pending_map.cfg_add_gw("gw1", "nqn2008.node1", 1);
-        pending_map.cfg_add_gw("gw2", "nqn2008.node1", 2);
-        pending_map.cfg_add_gw("gw3", "nqn2008.node1", 3);
-        pending_map.cfg_add_gw("gw1", "nqn2008.node2", 2);
+        pending_map.cfg_add_gw("gw1", "nqn2008.node1" );
+        pending_map.cfg_add_gw("gw2", "nqn2008.node1" );
+        pending_map.cfg_add_gw("gw3", "nqn2008.node1" );
+        pending_map.cfg_add_gw("gw1", "nqn2008.node2" );
         pending_map._dump_gwmap(pending_map.Gmap);
         pending_map.debug_encode_decode();
         dout(4) << "Dump map after decode encode:" <<dendl;
         pending_map._dump_gwmap(pending_map.Gmap);
     }
     else if( cnt  == start_cnt  ){  // simulate - add another GW - to check that new map would be synchronized with peons
-        pending_map.cfg_add_gw("gw2", "nqn2008.node2", 3);
+        pending_map.cfg_add_gw("gw2", "nqn2008.node2" );
         pending_map._dump_gwmap(pending_map.Gmap);
 
         //Simulate KA beacon from the gws
@@ -379,7 +379,7 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     if(avail == GW_AVAILABILITY_E::GW_CREATED){
         // create gw call cfg_add_gw
         for (const NqnState& st: subsystems) {
-            int rc = pending_map.cfg_add_gw( gw_id, st.nqn, st.opt_ana_gid );
+            int rc = pending_map.cfg_add_gw( gw_id, st.nqn );
             if(rc == -EEXIST){
                 propose = true;  // for synchronization with GW that starts 
             }
