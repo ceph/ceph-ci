@@ -66,10 +66,11 @@ int NVMeofGw::init()
   dout(0) << dendl;
   std::string val;
   auto args = argv_to_vec(orig_argc, orig_argv);
+
   for (std::vector<const char*>::iterator i = args.begin(); i != args.end(); ) {
     if (ceph_argparse_double_dash(args, i)) {
       break;
-    } else if (ceph_argparse_witharg(args, i, &val, "--name", (char*)NULL)) {
+    } else if (ceph_argparse_witharg(args, i, &val, "--gateway-name", (char*)NULL)) {
       name = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--gateway-address", (char*)NULL)) {
       gateway_address = val;
@@ -84,6 +85,7 @@ int NVMeofGw::init()
     }
   }
 
+  dout(0) << "gateway name: " << name <<  " address: " << gateway_address << dendl;
   ceph_assert(name != "" && gateway_address != "");
 
   // todo
