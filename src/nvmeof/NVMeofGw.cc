@@ -187,9 +187,11 @@ void NVMeofGw::send_beacon()
       struct NqnState nqn_state(sub.nqn());
       if (map.epoch > 0) { // handled map already, update sm_state, opt_ana_gid
         GW_STATE_T* gw_state = map.find_gw_map(name, nqn_state.nqn);
-        nqn_state.opt_ana_gid = gw_state->optimized_ana_group_id;
-        for (int i=0; i < MAX_SUPPORTED_ANA_GROUPS; i++)
-          nqn_state.sm_state[i] = gw_state->sm_state[i];
+        if (gw_state) {
+          nqn_state.opt_ana_gid = gw_state->optimized_ana_group_id;
+          for (int i=0; i < MAX_SUPPORTED_ANA_GROUPS; i++)
+            nqn_state.sm_state[i] = gw_state->sm_state[i];
+        }
       }
       subs.push_back(nqn_state);
     }
