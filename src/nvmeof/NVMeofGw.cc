@@ -185,15 +185,19 @@ void NVMeofGw::send_beacon()
     for (int i = 0; i < gw_subsystems.subsystems_size(); i++) {
       const subsystem& sub = gw_subsystems.subsystems(i);
       struct NqnState nqn_state(sub.nqn());
-      if (false) { // handled map already, update sm_state, opt_ana_gid
+      if (map.epoch > 0) { // handled map already, update sm_state, opt_ana_gid
+        GW_STATE_T* gw_state = map.find_gw_map(name, nqn_state.nqn);
+        nqn_state.opt_ana_gid = gw_state->optimized_ana_group_id;
+        for (int i=0; i < MAX_SUPPORTED_ANA_GROUPS; i++)
+          nqn_state.sm_state[i] = gw_state->sm_state[i];
       }
       subs.push_back(nqn_state);
     }
   }
 
   GW_AVAILABILITY_E gw_availability = GW_AVAILABILITY_E::GW_CREATED;
-  if (false) { // handled map already
-    gw_availability = ok ? GW_AVAILABILITY_E::GW_AVAILABLE : GW_AVAILABILITY_E::GW_CREATED;
+  if (map.epoch > 0) { // handled map already
+    gw_availability = ok ? GW_AVAILABILITY_E::GW_AVAILABLE : GW_AVAILABILITY_E::GW_UNAVAILABLE;
   }
 
   auto m = ceph::make_message<MNVMeofGwBeacon>(
