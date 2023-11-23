@@ -16,7 +16,8 @@ using std::map;
 using std::make_pair;
 using std::ostream;
 using std::ostringstream;
-
+using std::string;
+using std::vector;
 
 #define dout_subsys ceph_subsys_mon
 #undef dout_prefix
@@ -268,9 +269,11 @@ bool NVMeofGwMon::preprocess_query(MonOpRequestRef op){
 
     auto m = op->get_req<PaxosServiceMessage>();
       switch (m->get_type()) {
+
         case MSG_MNVMEOF_GW_BEACON:
           return preprocess_beacon(op);
-     /*   case MSG_MON_COMMAND:
+
+        case MSG_MON_COMMAND:
           try {
         return preprocess_command(op);
           } catch (const bad_cmd_get& e) {
@@ -278,7 +281,7 @@ bool NVMeofGwMon::preprocess_query(MonOpRequestRef op){
           mon.reply_command(op, -EINVAL, e.what(), bl, get_last_committed());
           return true;
         }
-*/
+
         default:
           mon.no_reply(op);
           derr << "Unhandled message type " << m->get_type() << dendl;
@@ -311,16 +314,91 @@ bool NVMeofGwMon::prepare_update(MonOpRequestRef op){
     return true;
 }
 
-bool NVMeofGwMon::preprocess_command(MonOpRequestRef op){
-    dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
-     auto m = op->get_req<MNVMeofGwBeacon>();
-     mon.no_reply(op); // we never reply to beacons
-     dout(4) << "beacon from " << m->get_type() << dendl;
+bool NVMeofGwMon::preprocess_command(MonOpRequestRef op)
+{
+    dout(4) << MY_MON_PREFFIX << __func__ << dendl;
+    auto m = op->get_req<MMonCommand>();
+    std::stringstream ss;
+    bufferlist rdata;
+
+    cmdmap_t cmdmap;
+    if (!cmdmap_from_json(m->cmd, &cmdmap, ss))
+    {
+        string rs = ss.str();
+        mon.reply_command(op, -EINVAL, rs, rdata, get_last_committed());
+        return true;
+    }
+    MonSession *session = op->get_session();
+    if (!session)
+    {
+        mon.reply_command(op, -EACCES, "access denied", rdata,
+                          get_last_committed());
+        return true;
+    }
+    string format = cmd_getval_or<string>(cmdmap, "format", "plain");
+    boost::scoped_ptr<Formatter> f(Formatter::create(format));
+
+    string prefix;
+    cmd_getval(cmdmap, "prefix", prefix);
+    dout(4) << "MonCommand : "<< prefix <<  dendl;
+    // TODO   need to check formatter per preffix  - if f is NULL
+
     return false;
 }
 
-bool NVMeofGwMon::prepare_command(MonOpRequestRef op){
-    dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
+bool NVMeofGwMon::prepare_command(MonOpRequestRef op)
+{
+    dout(4) << MY_MON_PREFFIX << __func__ << dendl;
+    auto m = op->get_req<MMonCommand>();
+    int rc;
+    std::stringstream ss;
+    bufferlist rdata;
+
+    cmdmap_t cmdmap;
+    if (!cmdmap_from_json(m->cmd, &cmdmap, ss))
+    {
+        string rs = ss.str();
+        mon.reply_command(op, -EINVAL, rs, rdata, get_last_committed());
+        return true;
+    }
+
+    MonSession *session = op->get_session();
+    if (!session)
+    {
+        mon.reply_command(op, -EACCES, "access denied", rdata, get_last_committed());
+        return true;
+    }
+
+    string format = cmd_getval_or<string>(cmdmap, "format", "plain");
+    boost::scoped_ptr<Formatter> f(Formatter::create(format));
+
+    const auto prefix = cmd_getval_or<string>(cmdmap, "prefix", string{});
+
+    dout(4) << "MonCommand : "<< prefix <<  dendl;
+    bool map_modified = false;
+    if( prefix == "nvme-gw create" || prefix == "nvme-gw delete" ) {
+        vector<string> idvec;
+        string subs_nqn;
+        cmd_getval(cmdmap, "subsystem-nqn", idvec);
+        cmd_getval(cmdmap, "ids", idvec);
+        if(prefix == "nvme-gw create"){
+            for (unsigned i = 0; i < idvec.size(); i ++){
+                rc = pending_map.cfg_add_gw( idvec[i], subs_nqn );
+                ceph_assert(rc!= -EINVAL);
+            }
+        }
+        else{
+            bool modified;
+            for (unsigned i = 0; i < idvec.size(); i ++){
+                rc = pending_map.cfg_delete_gw( idvec[i], subs_nqn, modified);
+                map_modified |= modified;
+                //ceph_assert(rc!= -EINVAL);
+            }
+        }
+        if(map_modified){
+             propose_pending();
+        }
+    }
     return true;
 }
 

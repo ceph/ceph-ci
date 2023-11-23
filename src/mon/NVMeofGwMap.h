@@ -219,10 +219,10 @@ public:
     epoch_t get_epoch() const { return epoch; }
     int   _dump_gwmap(GWMAP & Gmap)const;
     int   _dump_gwmap(std::stringstream &ss)const ;
-    int   cfg_add_gw                    (const GW_ID_T &gw_id, const std::string & nqn);
-    int   cfg_delete_gw                 (const GW_ID_T &gw_id, const std::string & nqn, uint16_t ana_grpid);
-    int   process_gw_map_ka             (const GW_ID_T &gw_id, const std::string& nqn ,  bool &propose_pending);
-    int   process_gw_map_gw_down        (const GW_ID_T &gw_id, const std::string& nqn, bool &propose_pending);
+    int   cfg_add_gw                    (const GW_ID_T &gw_id, const std::string& nqn);
+    int   cfg_delete_gw                 (const GW_ID_T &gw_id, const std::string& nqn,     bool &propose_pending);
+    int   process_gw_map_ka             (const GW_ID_T &gw_id, const std::string& nqn ,    bool &propose_pending);
+    int   process_gw_map_gw_down        (const GW_ID_T &gw_id, const std::string& nqn,     bool &propose_pending);
     int   handle_abandoned_ana_groups(bool &propose_pending);
 
     void debug_encode_decode(){

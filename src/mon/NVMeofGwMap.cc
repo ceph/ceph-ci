@@ -72,20 +72,24 @@ int  NVMeofGwMap::cfg_add_gw (const GW_ID_T &gw_id, const std::string & nqn) {
 }
 
 
-int   NVMeofGwMap::cfg_delete_gw (const GW_ID_T &gw_id, const std::string & nqn, uint16_t ana_grpid){
+int   NVMeofGwMap::cfg_delete_gw (const GW_ID_T &gw_id, const std::string & nqn, bool & map_modified){
 
-    if (!find_gw_map(gw_id, nqn)) {
+    GW_STATE_T * state;
+    if (!(state = find_gw_map(gw_id, nqn) ) ) {
         dout(4) << __func__ << " ERROR :GW not found in map " << gw_id << dendl;
         return -ENODEV ;
     }
-    if (ana_grpid >= MAX_SUPPORTED_ANA_GROUPS && ana_grpid != REDUNDANT_GW_ANA_GROUP_ID)
-    {
-        dout(4) << __func__ << " ERROR :GW " << gw_id << " bad ANA group " <<(int)ana_grpid << dendl;
-        return -EINVAL ;
+    //TODO for all ana groups call fsm_handle_gw_delete
+    bool modified = false;
+    map_modified  = false;
+    for(int i=0; i<MAX_SUPPORTED_ANA_GROUPS; i++){
+      fsm_handle_gw_delete (gw_id, nqn,  state->sm_state[i], i, modified);
+      map_modified |= modified;
     }
+    dout(4) << " Delete GW :"<< gw_id << "nqn " << nqn << " ANA grpid: " << state->optimized_ana_group_id  << dendl;
     Gmap[nqn].erase(gw_id);
     delete_metadata(gw_id, nqn);
-    dout(4) << " Delete GW :"<< gw_id << "nqn " << nqn << " ANA grpid: " << ana_grpid << dendl;
+
     return 0;
 }
 
