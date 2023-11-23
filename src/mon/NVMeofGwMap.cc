@@ -436,7 +436,22 @@ int  NVMeofGwMap::find_failover_candidate(const GW_ID_T &gw_id, const std::strin
      {
          case GW_STANDBY_STATE:
          case GW_IDLE_STATE:
-          // nothing to do
+         case GW_BLOCKED_AGROUP_OWNER:
+         {
+           GW_STATE_T* gw_state = find_gw_map(gw_id, nqn);
+            if(grpid == gw_state->optimized_ana_group_id) {// Try to find GW that temporary owns my group - if found, this GW should pass to standby for  this group
+               auto subsyst_it = find_subsystem_map(nqn);
+               for (auto& itr : *subsyst_it){
+                  if (itr.second.sm_state[grpid] == GW_ACTIVE_STATE  || itr.second.sm_state[grpid] == GW_WAIT_FAILBACK_PREPARED){
+                      set_gw_standby_state(&itr.second, grpid);
+                      map_modified = true;
+                      if (itr.second.sm_state[grpid] == GW_WAIT_FAILBACK_PREPARED)
+                           cancel_timer(itr.first, nqn, grpid);
+                      break;
+                  }
+               }
+            }
+         }
          break;
 
          case GW_WAIT_FAILBACK_PREPARED:
@@ -456,10 +471,8 @@ int  NVMeofGwMap::find_failover_candidate(const GW_ID_T &gw_id, const std::strin
          }
          break;
 
-         case GW_BLOCKED_AGROUP_OWNER:
          case GW_ACTIVE_STATE:
          {
-             //TODO if in ACTIVE state Start Block-List on this GW context
              GW_STATE_T* gw_state = find_gw_map(gw_id, nqn);
              map_modified = true;
              set_gw_standby_state(gw_state, grpid);
@@ -469,7 +482,6 @@ int  NVMeofGwMap::find_failover_candidate(const GW_ID_T &gw_id, const std::strin
          default:{
              ceph_assert(false);
          }
-
      }
      return 0;
   }
