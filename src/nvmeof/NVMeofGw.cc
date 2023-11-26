@@ -254,39 +254,59 @@ void NVMeofGw::shutdown()
   finisher.stop();
 }
 
-//TODO temp,just for compilation
-#define NQN  "2004.nqn.12345"
-
 void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> mmap)
 {
-    dout(0) << "handle nvmeof gw map" << dendl;
- // NVMeofGwMap
-    auto &mp = mmap->get_map();
-    dout(0) << "received map epoch " << mp.get_epoch() << dendl;
-    std::stringstream  ss;
-    mp._dump_gwmap(ss);
-    dout(0) << ss.str() <<  dendl;
+  dout(0) << "handle nvmeof gw map" << dendl;
+  auto &mp = mmap->get_map();
+  dout(0) << "received map epoch " << mp.get_epoch() << dendl;
+  std::stringstream  ss;
+  mp._dump_gwmap(ss);
+  dout(0) << ss.str() <<  dendl;
 
-    GW_STATE_T dummy_state { {GW_IDLE_STATE,} , {"NULL","NULL","NULL","NULL","NULL",}  , 1/*ana_grp*/, GW_AVAILABILITY_E::GW_CREATED, 0 };
-    GW_STATE_T* gw_state     = map.find_gw_map(name, NQN);
-    GW_STATE_T* new_gw_state = mp.find_gw_map(name, NQN);
+  ana_info ai;
+  // Interate over NQNs
+  for (const auto& subsystemPair : mp.Gmap) {
+    const std::string& nqn = subsystemPair.first;
+    const auto& idStateMap = subsystemPair.second;
+    nqn_ana_states nas;
+    nas.set_nqn(nqn);
 
-    //ceph_assert(new_gw_state);
-    if(!gw_state)
-        gw_state = &dummy_state;
-    if(new_gw_state)
-      for(int i=0; i<MAX_SUPPORTED_ANA_GROUPS; i++){
-        if(new_gw_state->sm_state[i] != gw_state->sm_state[i])
-        {
-           dout(0) << " " << new_gw_state->sm_state[i]  << " , "<<  gw_state->sm_state[i] << dendl;
-          // build array of tuples :  {ana-grpid , new-state, died_gw-id(in case the state = Active and ana-grpid != my_optimised_grpid) 
-        }
+    // This gateway state for the current subsystem / nqn
+    const auto& new_gateway_state = idStateMap.find(name);
+
+    // There is no subsystem update for this gateway
+    if (new_gateway_state == idStateMap.end()) continue;
+
+    // Previously monitor distributed state
+    GW_STATE_T* old_gw_state = map.find_gw_map(name, nqn);
+
+    // Iterate over possible ANA Groups
+    for (uint32_t  ana_grp_index = 0; ana_grp_index < MAX_SUPPORTED_ANA_GROUPS; ana_grp_index++) {
+      ana_group_state gs;
+      gs.set_grp_id(ana_grp_index + 1); // offset by 1, index 0 is ANAGRP1
+
+      // There is no state change for this ANA Group
+      auto old_state = old_gw_state ? old_gw_state->sm_state[ana_grp_index] : GW_STATES_PER_AGROUP_E::GW_IDLE_STATE;
+      if (old_state == new_gateway_state->second.sm_state[ana_grp_index]) continue;
+
+      // detect was active, but not any more transition
+      if ((old_state == GW_STATES_PER_AGROUP_E::GW_ACTIVE_STATE || old_state == GW_STATES_PER_AGROUP_E::GW_IDLE_STATE ) &&
+          new_gateway_state->second.sm_state[ana_grp_index] != GW_STATES_PER_AGROUP_E::GW_ACTIVE_STATE) {
+        gs.set_state(INACCESSIBLE); // Set the ANA state
+        nas.mutable_states()->Add(std::move(gs));
+      // detect was not active, but becaome one transition
+      } else if (old_state != GW_STATES_PER_AGROUP_E::GW_ACTIVE_STATE &&
+          new_gateway_state->second.sm_state[ana_grp_index] == GW_STATES_PER_AGROUP_E::GW_ACTIVE_STATE) {
+        gs.set_state(OPTIMIZED); // Set the ANA state
+        nas.mutable_states()->Add(std::move(gs));
+      } else continue; // Avoid dealing with intermediate states.
     }
-
-
-
-    map = mp;
-  
+    if (nas.states_size()) ai.mutable_states()->Add(std::move(nas));
+  }
+  if (ai.states_size()) {
+    // TODO: grpc gateway set_ana_state()
+  }
+  map = mp;
 }
 
 bool NVMeofGw::ms_dispatch2(const ref_t<Message>& m)
