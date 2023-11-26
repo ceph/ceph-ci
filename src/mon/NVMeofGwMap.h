@@ -75,6 +75,10 @@ typedef struct GW_METADATA_T {
    int  anagrp_sm_tstamps[MAX_SUPPORTED_ANA_GROUPS]; // statemachine timer(timestamp) set in some state
 }GW_METADATA_T;
 
+typedef struct {
+    int ana_grp_id;
+    std::string gw_name;
+} GW_CREATED_T;
 
 using GWMAP               = std::map <std::string, std::map<GW_ID_T, GW_STATE_T> >;
 using GWMETADATA          = std::map <std::string, std::map<GW_ID_T, GW_METADATA_T> >;
@@ -136,10 +140,11 @@ public:
     Monitor *mon= NULL;// just for logs in the mon module file
     GWMAP      Gmap;
     GWMETADATA Gmetadata;
+    std::vector<GW_CREATED_T> Created_gws;
     epoch_t epoch = 0;  // epoch is for Paxos synchronization  mechanizm
     bool   delay_propose = false;
-    bool     listen_mode{ false };     // "listen" mode. started when detected invalid maps from some GW in the beacon messages. "Listen" mode Designed as Synchronisation mode
-    uint32_t listen_mode_start_tick{0};
+    //bool     listen_mode{ false };     // "listen" mode. started when detected invalid maps from some GW in the beacon messages. "Listen" mode Designed as Synchronisation mode
+    //uint32_t listen_mode_start_tick{0};
 
 
     //std::map<std::string,ModuleOption> module_options;
@@ -158,7 +163,12 @@ public:
             encode((const std::string &)itr.first, bl);// nqn
             encode( itr.second, bl);// encode the full map of this nqn :
         }
-
+        //Encode created GWs
+        encode ((int)Created_gws.size(), bl);
+        for(auto &itr : Created_gws){
+            encode(itr.gw_name, bl);
+            encode(itr.ana_grp_id, bl);
+        }
         ENCODE_FINISH(bl);
     }
 
@@ -199,11 +209,29 @@ public:
                 Gmetadata[nqn].insert({itr.first, itr.second});
             }
         }
+        //Decode created GWs
+        int num_created_gws;
+        decode(num_created_gws, bl);
+        Created_gws.clear();
+        for(int i = 0; i<num_created_gws; i++){
+            GW_CREATED_T  created;
+            decode(created.gw_name, bl);
+            decode(created.ana_grp_id, bl);
+            Created_gws.push_back(created);
+        }
+
         DECODE_FINISH(bl);
     }
 
     //NVMeofGwMap( )  {}
-
+    int  find_created_gw(const GW_ID_T &gw_id , int &ana_grp_id){
+         for (unsigned i = 0; i < Created_gws.size(); i ++)
+             if(Created_gws[i].gw_name == gw_id){
+                 ana_grp_id = Created_gws[i].ana_grp_id;
+                 return 0;
+          }
+         return -1;
+    }
     GW_STATE_T * find_gw_map(const GW_ID_T &gw_id, const std::string& nqn ) const
     {
         auto it = Gmap.find(nqn);
@@ -215,11 +243,24 @@ public:
         }
         return NULL;
     }
+    int insert_gw_to_map(const GW_ID_T &gw_id, const std::string& nqn, int ana_grp_id ){
+        if(Gmap[nqn].size() == 0)
+            Gmap.insert(make_pair(nqn, SUBSYST_GWMAP()));
+
+        GW_STATE_T state{ {GW_IDLE_STATE,}, {""}, (uint16_t)ana_grp_id, GW_AVAILABILITY_E::GW_CREATED,  0 };
+        for(int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) state.failover_peer[i] = "NULL";
+
+        Gmap[nqn].insert({gw_id, state});
+        create_metadata(gw_id, nqn);
+        return 0;
+    }
+
     int   update_active_timers( bool &propose_pending);
     epoch_t get_epoch() const { return epoch; }
     int   _dump_gwmap(GWMAP & Gmap)const;
     int   _dump_gwmap(std::stringstream &ss)const ;
-    int   cfg_add_gw                    (const GW_ID_T &gw_id, const std::string& nqn);
+    int   _dump_created_gws(std::stringstream &ss)const ;
+    int   cfg_add_gw                    (const GW_ID_T &gw_id);
     int   cfg_delete_gw                 (const GW_ID_T &gw_id, const std::string& nqn,     bool &propose_pending);
     int   process_gw_map_ka             (const GW_ID_T &gw_id, const std::string& nqn ,    bool &propose_pending);
     int   process_gw_map_gw_down        (const GW_ID_T &gw_id, const std::string& nqn,     bool &propose_pending);

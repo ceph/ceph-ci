@@ -32,64 +32,67 @@ static std::string G_gw_ana_states[] = {
                             "WAIT_FLBACK_RDY"
 };
 
+int  NVMeofGwMap::cfg_add_gw (const GW_ID_T &gw_id) {
+   GW_CREATED_T  gw_created = {0, gw_id};
+   bool allocated[MAX_SUPPORTED_ANA_GROUPS+1] = {false};
 
-int  NVMeofGwMap::cfg_add_gw (const GW_ID_T &gw_id, const std::string & nqn) {
-
-    GW_STATE_T state{ {GW_IDLE_STATE,}, {""}, 0, GW_AVAILABILITY_E::GW_CREATED,  0 };
-    for(int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) state.failover_peer[i] = "NULL";
-
-    if (find_gw_map(gw_id, nqn)) {
-        dout(4) << __func__ << " ERROR create GW: already exists in map " << gw_id << dendl;
-        return -EEXIST ;
-    }
-
-    //TODO check that all MAX_SUPPORTED_ANA_GROUPS are occupied in the subsystem - assert
-   //Allocate AnaGrpId  for the new GW
-    bool allocated[MAX_SUPPORTED_ANA_GROUPS+1] = {false};
-    auto subsyst_it = find_subsystem_map(nqn);
-    if(subsyst_it) {
-       for (auto& itr : *subsyst_it)
-          allocated[itr.second.optimized_ana_group_id] = true;
-           //dout(4) << __func__ << " ERROR create GW: " << gw_id << " ANA group in use " <<(int)ana_grpid << " by GW " << itr.first << dendl;
-    }
-    for(int i=1; i<=MAX_SUPPORTED_ANA_GROUPS; i++){
-        if (allocated[i] == false){
-            state.optimized_ana_group_id  = i;
-            break;
-        }
-    }
-    if(state.optimized_ana_group_id  == 0){
-       dout(4) << __func__ << " ERROR create GW: " << gw_id << "   ANA groupId was not allocated "   << dendl;
+   for (unsigned i = 0; i < Created_gws.size(); i ++){
+     allocated[Created_gws[i].ana_grp_id]  = true;
+     if(Created_gws[i].gw_name == gw_id){
+           dout(4) << __func__ << " ERROR create GW: already exists in map " << gw_id << dendl;
+           return -EEXIST ;
+     }
+   }
+   for(int i=1; i<=MAX_SUPPORTED_ANA_GROUPS; i++){
+      if (allocated[i] == false){
+          gw_created.ana_grp_id = i;
+          break;
+      }
+   }
+   if(gw_created.ana_grp_id == 0){
+        dout(4) << __func__ << " ERROR create GW: " << gw_id << "   ANA groupId was not allocated "   << dendl;
         return -EINVAL;
-    }
-    if(Gmap[nqn].size() == 0)
-        Gmap.insert(make_pair(nqn, SUBSYST_GWMAP()));
-    Gmap[nqn].insert({gw_id, state});
+   }
 
-    create_metadata(gw_id, nqn);
-    dout(4) << " Add GW :"<< gw_id << "nqn " << nqn << " ANA grpid: " << state.optimized_ana_group_id << dendl;
-    return 0;
+   Created_gws.push_back(gw_created);
+   dout(4) << __func__ << "Created GW:  " << gw_id << dendl;
+   std::stringstream  ss;
+   _dump_created_gws(ss);
+   dout(4) << ss.str() <<  dendl;
+   return 0;
 }
 
 
 int   NVMeofGwMap::cfg_delete_gw (const GW_ID_T &gw_id, const std::string & nqn, bool & map_modified){
 
     GW_STATE_T * state;
-    if (!(state = find_gw_map(gw_id, nqn) ) ) {
-        dout(4) << __func__ << " ERROR :GW not found in map " << gw_id << dendl;
+    bool found = false;
+    unsigned index;
+
+    for (index = 0; index < Created_gws.size(); index ++){
+      if(Created_gws[index].gw_name == gw_id){
+         found = true;
+         break;
+      }
+    }
+    if(!found) {
+       dout(4) << __func__ << " ERROR :GW was not created " << gw_id << dendl;
         return -ENODEV ;
     }
-    //TODO for all ana groups call fsm_handle_gw_delete
-    bool modified = false;
-    map_modified  = false;
-    for(int i=0; i<MAX_SUPPORTED_ANA_GROUPS; i++){
-      fsm_handle_gw_delete (gw_id, nqn,  state->sm_state[i], i, modified);
-      map_modified |= modified;
-    }
-    dout(4) << " Delete GW :"<< gw_id << "nqn " << nqn << " ANA grpid: " << state->optimized_ana_group_id  << dendl;
-    Gmap[nqn].erase(gw_id);
-    delete_metadata(gw_id, nqn);
+    // TODO  tracerse the GMap , find  gw in the map for all  nqns - nqn is not a parameter of a function
+    if ((state = find_gw_map(gw_id, nqn) ) ) { // GW was created and started
 
+       bool modified = false;
+       map_modified  = false;
+       for(int i=0; i<MAX_SUPPORTED_ANA_GROUPS; i++){
+          fsm_handle_gw_delete (gw_id, nqn,  state->sm_state[i], i, modified);
+          map_modified |= modified;
+       }
+       dout(4) << " Delete GW :"<< gw_id << "nqn " << nqn << " ANA grpid: " << state->optimized_ana_group_id  << dendl;
+       Gmap[nqn].erase(gw_id);
+       delete_metadata(gw_id, nqn);
+    }
+    Created_gws.erase(Created_gws.begin() + index);
     return 0;
 }
 
@@ -156,6 +159,16 @@ int NVMeofGwMap::_dump_gwmap(std::stringstream &ss)const  {
     //dout(0) << ss.str() <<dendl;
     return 0;
 }
+
+int   NVMeofGwMap::_dump_created_gws(std::stringstream &ss)const  {
+    ss << __func__  <<  " called  " << std::endl;
+    for (auto& itr : Created_gws) {
+       ss << " gw :" << itr.gw_name << ", ana: " << itr.ana_grp_id ;
+    }
+    ss  << std::endl;
+    return 0;
+}
+
 
 
 int NVMeofGwMap:: update_active_timers( bool &propose_pending ){

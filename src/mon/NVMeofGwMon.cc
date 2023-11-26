@@ -49,19 +49,19 @@ void NVMeofGwMon::on_shutdown() {
 static int cnt ;
 #define start_cnt 6
 void NVMeofGwMon::inject1(){
-    bool propose = false;
+    //bool propose = false;
     if( ++cnt  == 4  ){// simulation that new configuration was added
-        pending_map.cfg_add_gw("gw1", "nqn2008.node1" );
-        pending_map.cfg_add_gw("gw2", "nqn2008.node1" );
-        pending_map.cfg_add_gw("gw3", "nqn2008.node1" );
-        pending_map.cfg_add_gw("gw1", "nqn2008.node2" );
+        pending_map.cfg_add_gw("GW1" );
+        pending_map.cfg_add_gw("GW2" );
+        pending_map.cfg_add_gw("GW3" );
+
         pending_map._dump_gwmap(pending_map.Gmap);
         pending_map.debug_encode_decode();
         dout(4) << "Dump map after decode encode:" <<dendl;
         pending_map._dump_gwmap(pending_map.Gmap);
     }
-    else if( cnt  == start_cnt  ){  // simulate - add another GW - to check that new map would be synchronized with peons
-        pending_map.cfg_add_gw("gw2", "nqn2008.node2" );
+   /* else if( cnt  == start_cnt  ){  // simulate - add another GW - to check that new map would be synchronized with peons
+        pending_map.cfg_add_gw("gw2"  );
         pending_map._dump_gwmap(pending_map.Gmap);
 
         //Simulate KA beacon from the gws
@@ -110,6 +110,7 @@ void NVMeofGwMon::inject1(){
         if(propose)
             propose_pending();
     }
+    */
 }
 
 
@@ -126,7 +127,7 @@ void NVMeofGwMon::tick(){
     }
     bool _propose_pending = false;
   
-   // inject1();
+    //inject1();
     const auto now = ceph::coarse_mono_clock::now();
     const auto nvmegw_beacon_grace = g_conf().get_val<std::chrono::seconds>("mon_nvmeofgw_beacon_grace"); 
     dout(4) << MY_MON_PREFFIX << __func__  <<  "NVMeofGwMon leader got a real tick, pending epoch "<< pending_map.epoch     << dendl;
@@ -221,7 +222,12 @@ void NVMeofGwMon::update_from_paxos(bool *need_bootstrap){
 
         auto p = bl.cbegin();
         map.decode(p);
-        if(!mon.is_leader())  map._dump_gwmap(map.Gmap);
+        if(!mon.is_leader()) {
+            std::stringstream  ss;
+            map._dump_created_gws(ss);
+            dout(4) << ss.str() <<  dendl;
+            map._dump_gwmap(map.Gmap);
+        }
         check_subs(true);
 
     }
@@ -380,19 +386,18 @@ bool NVMeofGwMon::prepare_command(MonOpRequestRef op)
     bool map_modified = false;
     if( prefix == "nvme-gw create" || prefix == "nvme-gw delete" ) {
         vector<string> idvec;
-        string subs_nqn;
-        cmd_getval(cmdmap, "subsystem-nqn", idvec);
+
         cmd_getval(cmdmap, "ids", idvec);
         if(prefix == "nvme-gw create"){
             for (unsigned i = 0; i < idvec.size(); i ++){
-                rc = pending_map.cfg_add_gw( idvec[i], subs_nqn );
+                rc = pending_map.cfg_add_gw( idvec[i] );
                 ceph_assert(rc!= -EINVAL);
             }
         }
         else{
             bool modified;
             for (unsigned i = 0; i < idvec.size(); i ++){
-                rc = pending_map.cfg_delete_gw( idvec[i], subs_nqn, modified);
+                rc = pending_map.cfg_delete_gw( idvec[i], "Null", modified);
                 map_modified |= modified;
                 //ceph_assert(rc!= -EINVAL);
             }
@@ -461,28 +466,28 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     const GwSubsystems& subsystems =  m->get_subsystems();
     bool propose = false;
 
-    // Validation gw is in the database 
-    if(avail != GW_AVAILABILITY_E::GW_CREATED){
-        for (const NqnState& st: subsystems) {
-            gw_state = pending_map.find_gw_map(gw_id, st.nqn);
-            if(gw_state == NULL) {
-                dout(4) << "ERROR: GW is not in database: " << gw_id <<" " << st.nqn << dendl;
-                ceph_assert(false);// TODO
+    // Validation gw is in the database
+    for (const NqnState &st : subsystems)
+    {
+        gw_state = pending_map.find_gw_map(gw_id, st.nqn);
+        if (gw_state == NULL)
+        {
+            dout(4) <<  "GW + NQN pair is not in the  database: " << gw_id << " " << st.nqn << dendl;
+            // if GW is created   
+            int ana_grp_id = 0;
+            if(pending_map.find_created_gw(gw_id, ana_grp_id) == 0) {// GW is created administratively
+              pending_map.insert_gw_to_map(gw_id, st.nqn, ana_grp_id);
+              dout(4) << "GW + NQN pair  " << gw_id << " " << st.nqn << " inserted to map, ANA grp-id " << ana_grp_id << dendl;
+            }
+            else {
+                //drop beacon on the floor silently discard
+                return 0;
             }
         }
     }
 
-    if(avail == GW_AVAILABILITY_E::GW_CREATED){
-        // create gw call cfg_add_gw
-        for (const NqnState& st: subsystems) {
-            int rc = pending_map.cfg_add_gw( gw_id, st.nqn );
-            if(rc == -EEXIST){
-                propose = true;  // for synchronization with GW that starts 
-            }
-        }
-    }
-    else if(avail == GW_AVAILABILITY_E::GW_AVAILABLE){
-
+    if(avail == GW_AVAILABILITY_E::GW_AVAILABLE)
+    {
         auto now = ceph::coarse_mono_clock::now();
         // check pending_map.epoch vs m->get_version() - if different - drop the beacon
 
@@ -508,7 +513,6 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
       dout(4) << "decision to delayed_map in prepare_beacon" <<dendl;
       return true;
     }
-
     else 
      return false; // if no changes are need in the map
 }
