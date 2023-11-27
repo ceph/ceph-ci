@@ -3593,7 +3593,11 @@ void Monitor::handle_command(MonOpRequestRef op)
     mgrmon()->dispatch(op);
     return;
   }
-
+  if (module == "nvme-gw"){
+      nvmegwmon()->dispatch(op);
+      dout(10) << " Dispatching module " << module << " to NVMeofGwMon"  << dendl;
+      return;
+  }
   if (prefix == "fsid") {
     if (f) {
       f->open_object_section("fsid");
