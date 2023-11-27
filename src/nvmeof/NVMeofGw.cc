@@ -294,17 +294,21 @@ void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> mmap)
           new_gateway_state->second.sm_state[ana_grp_index] != GW_STATES_PER_AGROUP_E::GW_ACTIVE_STATE) {
         gs.set_state(INACCESSIBLE); // Set the ANA state
         nas.mutable_states()->Add(std::move(gs));
+        dout(0) << "nqn: " <<  nqn << " grpid " << (ana_grp_index + 1) << " INACCESSIBLE" <<dendl;
       // detect was not active, but becaome one transition
       } else if (old_state != GW_STATES_PER_AGROUP_E::GW_ACTIVE_STATE &&
           new_gateway_state->second.sm_state[ana_grp_index] == GW_STATES_PER_AGROUP_E::GW_ACTIVE_STATE) {
         gs.set_state(OPTIMIZED); // Set the ANA state
         nas.mutable_states()->Add(std::move(gs));
+        dout(0) << "nqn: " <<  nqn << " grpid " << (ana_grp_index + 1) << " OPTIMIZED" <<dendl;
       } else continue; // Avoid dealing with intermediate states.
     }
     if (nas.states_size()) ai.mutable_states()->Add(std::move(nas));
   }
   if (ai.states_size()) {
-    // TODO: grpc gateway set_ana_state()
+    NVMeofGwClient gw_client(
+	grpc::CreateChannel(gateway_address, grpc::InsecureChannelCredentials()));
+    if (!gw_client.set_ana_state(ai)) dout(0) << "GRPC set_ana_state failed" << dendl;
   }
   map = mp;
 }

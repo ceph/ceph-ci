@@ -32,6 +32,7 @@ class NVMeofGwClient {
       : stub_(Gateway::NewStub(channel)) {}
 
   bool get_subsystems(subsystems_info& reply);
+  bool set_ana_state(const ana_info& info);
 
  private:
   std::unique_ptr<Gateway::Stub> stub_;

@@ -21,3 +21,12 @@ bool NVMeofGwClient::get_subsystems(subsystems_info& reply) {
 
   return status.ok();
 }
+
+bool NVMeofGwClient::set_ana_state(const ana_info& info) {
+  req_status reply;
+  ClientContext context;
+
+  Status status = stub_->set_ana_state(&context, info, &reply);
+
+  return status.ok() && reply.status();
+}
