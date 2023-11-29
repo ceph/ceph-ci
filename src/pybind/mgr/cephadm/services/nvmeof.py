@@ -29,7 +29,7 @@ class NvmeofService(CephService):
         host_ip = self.mgr.inventory.get_addr(daemon_spec.host)
 
         keyring = self.get_keyring_with_caps(self.get_auth_entity(nvmeof_gw_id),
-                                             ['mon', 'profile rbd',
+                                             ['mon', 'allow *',
                                               'osd', 'allow all tag rbd *=*'])
 
         # TODO: check if we can force jinja2 to generate dicts with double quotes instead of using json.dumps
