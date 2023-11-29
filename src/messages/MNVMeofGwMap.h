@@ -43,13 +43,13 @@ public:
   void decode_payload() override {
     // ../src/messages/MNVMeofGwMap.h:46:11: error: no matching function for call to ‘decode(NVMeofGwMap&, ceph::buffer::v15_2_0::list::iterator_impl<true>&)’
     auto p = payload.cbegin();
-    map.decode( p);
+    map.decode( p, false);
   }
   void encode_payload(uint64_t features) override {
     //../src/messages/MNVMeofGwMap.h:51:11: error: no matching function for call to ‘encode(NVMeofGwMap&, ceph::buffer::v15_2_0::list&, uint64_t&)’
     //using ceph::encode;
     //encode(map, payload, features);
-    map.encode(payload);
+    map.encode(payload, false);
   }
 private:
   using RefCountedObject::put;

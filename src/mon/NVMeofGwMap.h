@@ -148,36 +148,39 @@ public:
 
 
     //std::map<std::string,ModuleOption> module_options;
-    void encode(ceph::buffer::list &bl) const {
+    void encode(ceph::buffer::list &bl, bool full_encode = true) const {
         ENCODE_START(2, 1, bl); 	//encode(name, bl);	encode(can_run, bl);encode(error_string, bl);encode(module_options, bl);
         encode((int) epoch, bl);// global map epoch
-       // encode(delay_propose,bl);
+        // encode(delay_propose,bl);
         encode ((int)Gmap.size(),bl); // number nqn
         for (auto& itr : Gmap) {
             encode((const std::string &)itr.first, bl);// nqn
-            encode( itr.second, bl);// encode the full map of this nqn : map<uint16_t, GW_STATE_T>
+            encode( itr.second, bl);// encode the full map of this nqn : std::map<GW_ID_T, GW_STATE_T>
         }
-        // Encode Gmetadata
-        encode ((int)Gmetadata.size(),bl);
-        for (auto& itr : Gmetadata) {
-            encode((const std::string &)itr.first, bl);// nqn
-            encode( itr.second, bl);// encode the full map of this nqn :
-        }
-        //Encode created GWs
-        encode ((int)Created_gws.size(), bl);
-        for(auto &itr : Created_gws){
-            encode(itr.gw_name, bl);
-            encode(itr.ana_grp_id, bl);
+
+        if(full_encode) {
+            // Encode Gmetadata
+            encode ((int)Gmetadata.size(),bl);
+            for (auto& itr : Gmetadata) {
+                encode((const std::string &)itr.first, bl);// nqn
+                encode( itr.second, bl);// encode the full map of this nqn :
+            }
+            //Encode created GWs
+            encode ((int)Created_gws.size(), bl);
+            for(auto &itr : Created_gws){
+                encode(itr.gw_name, bl);
+                encode(itr.ana_grp_id, bl);
+            }
         }
         ENCODE_FINISH(bl);
     }
 
-    void decode(ceph::buffer::list::const_iterator &bl) {
+    void decode(ceph::buffer::list::const_iterator &bl, bool full_decode = true) {
         DECODE_START(1, bl);
         int num_subsystems;
         std::string nqn;
         decode(epoch, bl);
-     //   decode(delay_propose,bl);
+        //   decode(delay_propose,bl);
         decode(num_subsystems, bl);
         SUBSYST_GWMAP    gw_map;
         Gmap.clear();
@@ -193,33 +196,35 @@ public:
                 Gmap[nqn].insert({itr.first, itr.second});
             }
         }
-        // decode Gmetadata
-        decode(num_subsystems, bl);
-        SUBSYST_GWMETA    gw_meta;
-        Gmetadata.clear();
-        //_dump_gwmap(Gmap);
-        for(int i = 0; i < num_subsystems; i++){
-            decode(nqn, bl);
-            Gmetadata.insert(make_pair(nqn, std::map<std::string, GW_METADATA_T>()));
-            //decode the map
-            gw_meta.clear();
-            decode(gw_meta, bl);
-            //insert the gw_meta to Gmap
-            for(auto &itr: gw_meta ){
-                Gmetadata[nqn].insert({itr.first, itr.second});
+
+        if(full_decode){
+            // decode Gmetadata
+            decode(num_subsystems, bl);
+            SUBSYST_GWMETA    gw_meta;
+            Gmetadata.clear();
+            //_dump_gwmap(Gmap);
+            for(int i = 0; i < num_subsystems; i++){
+                decode(nqn, bl);
+                Gmetadata.insert(make_pair(nqn, std::map<std::string, GW_METADATA_T>()));
+                //decode the map
+                gw_meta.clear();
+                decode(gw_meta, bl);
+                //insert the gw_meta to Gmap
+                for(auto &itr: gw_meta ){
+                    Gmetadata[nqn].insert({itr.first, itr.second});
+                }
+            }
+            //Decode created GWs
+            int num_created_gws;
+            decode(num_created_gws, bl);
+            Created_gws.clear();
+            for(int i = 0; i<num_created_gws; i++){
+                GW_CREATED_T  created;
+                decode(created.gw_name, bl);
+                decode(created.ana_grp_id, bl);
+                Created_gws.push_back(created);
             }
         }
-        //Decode created GWs
-        int num_created_gws;
-        decode(num_created_gws, bl);
-        Created_gws.clear();
-        for(int i = 0; i<num_created_gws; i++){
-            GW_CREATED_T  created;
-            decode(created.gw_name, bl);
-            decode(created.ana_grp_id, bl);
-            Created_gws.push_back(created);
-        }
-
         DECODE_FINISH(bl);
     }
 

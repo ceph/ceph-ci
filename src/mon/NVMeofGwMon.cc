@@ -414,7 +414,10 @@ bool NVMeofGwMon::prepare_command(MonOpRequestRef op)
   reply_no_propose:
     getline(ss, rs);
     if (err < 0 && rs.length() == 0)
+    {
         rs = cpp_strerror(err);
+        dout(4) << "Error command  err : "<< err  << " rs-len: " << rs.length() <<  dendl;
+    }
     mon.reply_command(op, err, rs, rdata, get_last_committed());
     return false; /* nothing to propose */
 
