@@ -33,29 +33,29 @@ static std::string G_gw_ana_states[] = {
 };
 
 int  NVMeofGwMap::cfg_add_gw (const GW_ID_T &gw_id) {
-   GW_CREATED_T  gw_created = {0, gw_id};
-   bool allocated[MAX_SUPPORTED_ANA_GROUPS+1] = {false};
+   GW_CREATED_T  gw_created = {-1, gw_id};
+   bool allocated[MAX_SUPPORTED_ANA_GROUPS] = {false};
 
    for (unsigned i = 0; i < Created_gws.size(); i ++){
-     allocated[Created_gws[i].ana_grp_id]  = true;
+     allocated[Created_gws[i].ana_grp_id ]  = true;
      if(Created_gws[i].gw_name == gw_id){
            dout(4) << __func__ << " ERROR create GW: already exists in map " << gw_id << dendl;
            return -EEXIST ;
      }
    }
-   for(int i=1; i<=MAX_SUPPORTED_ANA_GROUPS; i++){
+   for(int i=0; i<=MAX_SUPPORTED_ANA_GROUPS; i++){
       if (allocated[i] == false){
           gw_created.ana_grp_id = i;
           break;
       }
    }
-   if(gw_created.ana_grp_id == 0){
+   if(gw_created.ana_grp_id == -1){
         dout(4) << __func__ << " ERROR create GW: " << gw_id << "   ANA groupId was not allocated "   << dendl;
         return -EINVAL;
    }
 
    Created_gws.push_back(gw_created);
-   dout(4) << __func__ << "Created GW:  " << gw_id << dendl;
+   dout(4) << __func__ << "Created GW:  " << gw_id << " grpid " <<  gw_created.ana_grp_id  <<  dendl;
    std::stringstream  ss;
    _dump_created_gws(ss);
    dout(4) << ss.str() <<  dendl;
@@ -124,12 +124,12 @@ int NVMeofGwMap::_dump_gwmap(GWMAP & Gmap)const  {
     for (auto& itr : Gmap) {
         for (auto& ptr : itr.second) {
 
-            ss	<< " NQN " << itr.first << " GW_ID " << ptr.first << " ANA gr " << std::setw(5) << (int)ptr.second.optimized_ana_group_id << 
+            ss	<< "(gw-mon) NQN " << itr.first << " GW_ID " << ptr.first << " ANA gr " << std::setw(5) << (int)ptr.second.optimized_ana_group_id+1 <<
                                        " available :" << G_gw_avail[(int)ptr.second.availability] << " States: ";
             for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
                 ss << G_gw_ana_states[(int)ptr.second.sm_state[i]] << " " ;
             }
-            ss  << "Failover peers: " << std::endl << "  ";
+            ss  << " Failover peers: " << std::endl << "  ";
             for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
                 ss <<  ptr.second.failover_peer[i]  << " " ;
             }
@@ -144,12 +144,12 @@ int NVMeofGwMap::_dump_gwmap(std::stringstream &ss)const  {
     ss << __func__  <<  " called  " << mon << std::endl;   
     for (auto& itr : Gmap) {
         for (auto& ptr : itr.second) {
-            ss	<< " NQN " << itr.first << " GW_ID " << ptr.first << " ANA gr " << std::setw(5) 
-            << (int)ptr.second.optimized_ana_group_id << " available :" << G_gw_avail[(int)ptr.second.availability] << " States: ";
+            ss	<< "(gw-mon) NQN " << itr.first << " GW_ID " << ptr.first << " ANA gr " << std::setw(5)
+            << (int)ptr.second.optimized_ana_group_id+1 << " available :" << G_gw_avail[(int)ptr.second.availability] << " States: ";
             for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
                 ss << G_gw_ana_states[(int)ptr.second.sm_state[i]] << " " ;
             }
-            ss  << "Failover peers: " << std::endl << "  ";
+            ss  << "  Failover peers: " << std::endl << "  ";
             for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
                 ss <<  ptr.second.failover_peer[i]  << " " ;
             }
@@ -391,7 +391,11 @@ int  NVMeofGwMap::find_failover_candidate(const GW_ID_T &gw_id, const std::strin
                 propose_pending = true;
                 set_failover_gw_for_ANA_group(gw_id, min_loaded_gw_id, nqn, grpid);
             }
-            else  propose_pending = false;
+            else {
+                propose_pending = true;
+                dout(4) << "gw down no candidate found " << dendl;
+               _dump_gwmap(Gmap);
+            }
             gw_state->sm_state[grpid] = GW_STANDBY_STATE;
         }
     return 0;
