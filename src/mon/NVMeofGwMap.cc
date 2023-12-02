@@ -392,9 +392,11 @@ int  NVMeofGwMap::find_failover_candidate(const GW_ID_T &gw_id, const std::strin
                 set_failover_gw_for_ANA_group(gw_id, min_loaded_gw_id, nqn, grpid);
             }
             else {
-                propose_pending = true;
-                dout(4) << "gw down no candidate found " << dendl;
-               _dump_gwmap(Gmap);
+                if (gw_state->sm_state[grpid] == GW_ACTIVE_STATE){// not found candidate but map changed.
+                    propose_pending = true;
+                    dout(4) << "gw down no candidate found " << dendl;
+                   _dump_gwmap(Gmap);
+                }
             }
             gw_state->sm_state[grpid] = GW_STANDBY_STATE;
         }
