@@ -233,7 +233,6 @@ void NVMeofGwMon::update_from_paxos(bool *need_bootstrap){
     }
 }
 
-
 void NVMeofGwMon::check_sub(Subscription *sub)
 {
    /* MgrMonitor::check_sub*/
@@ -244,7 +243,6 @@ void NVMeofGwMon::check_sub(Subscription *sub)
       dout(4) << "Sending map to subscriber " << sub->session->con << " " << sub->session->con->get_peer_addr() << dendl;
       sub->session->con->send_message2(make_message<MNVMeofGwMap>(map));
 
-
       if (sub->onetime) {
         mon.session_map.remove_sub(sub);
       } else {
@@ -252,7 +250,6 @@ void NVMeofGwMon::check_sub(Subscription *sub)
       }
     }
 }
-
 
 void NVMeofGwMon::check_subs(bool t)
 {
@@ -269,13 +266,11 @@ void NVMeofGwMon::check_subs(bool t)
   }
 }
 
-
 bool NVMeofGwMon::preprocess_query(MonOpRequestRef op){
     dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
 
     auto m = op->get_req<PaxosServiceMessage>();
       switch (m->get_type()) {
-
         case MSG_MNVMEOF_GW_BEACON:
           return preprocess_beacon(op);
 
@@ -468,6 +463,19 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     GW_AVAILABILITY_E  avail = m->get_availability();
     const GwSubsystems& subsystems =  m->get_subsystems();
     bool propose = false;
+    int ana_grp_id = 0;
+
+    if (avail == GW_AVAILABILITY_E::GW_CREATED){
+        // in this special state GWs receive map with just "created_gws" vector
+        if(pending_map.find_created_gw(gw_id, ana_grp_id) == 0) {// GW is created administratively
+           dout(4) << "GW " << gw_id << " sent beacon being in state GW_WAIT_INITIAL_MAP" << dendl;
+           propose = true;
+        }
+        else{
+           dout(4) << "GW " << gw_id << " sent beacon being in state GW_WAIT_INITIAL_MAP but it is not created yet!!! "<< dendl; 
+        }
+        goto set_propose;
+    }
 
     // Validation gw is in the database
     for (const NqnState &st : subsystems)
@@ -477,7 +485,6 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
         {
             dout(4) <<  "GW + NQN pair is not in the  database: " << gw_id << " " << st.nqn << dendl;
             // if GW is created   
-            int ana_grp_id = 0;
             if(pending_map.find_created_gw(gw_id, ana_grp_id) == 0) {// GW is created administratively
               pending_map.insert_gw_to_map(gw_id, st.nqn, ana_grp_id);
               dout(4) << "GW + NQN pair  " << gw_id << " " << st.nqn << " inserted to map, ANA grp-id " << ana_grp_id << dendl;
@@ -506,13 +513,13 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
 
             auto it = last_beacon.find(gw_id + GW_DELIM + st.nqn);
             if (it != last_beacon.end()){
-                  last_beacon.erase(gw_id + GW_DELIM + st.nqn);
-                  pending_map.process_gw_map_gw_down( gw_id, st.nqn, propose );
+                last_beacon.erase(gw_id + GW_DELIM + st.nqn);
+                pending_map.process_gw_map_gw_down( gw_id, st.nqn, propose );
             }
         }
     }
+set_propose:
     if (propose){
-     // pending_map.delay_propose = true;
       dout(4) << "decision to delayed_map in prepare_beacon" <<dendl;
       return true;
     }
