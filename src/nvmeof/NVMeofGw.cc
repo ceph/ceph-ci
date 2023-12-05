@@ -27,6 +27,7 @@
 #include "messages/MNVMeofGwMap.h"
 #include "NVMeofGw.h"
 #include "NVMeofGwClient.h"
+#include "NVMeofGwMonitorGroupClient.h"
 
 #define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_mgr
@@ -74,6 +75,8 @@ int NVMeofGw::init()
       name = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--gateway-address", (char*)NULL)) {
       gateway_address = val;
+    } else if (ceph_argparse_witharg(args, i, &val, "--monitor-address", (char*)NULL)) {
+      monitor_address = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--server-key", (char*)NULL)) {
       server_key = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--server-cert", (char*)NULL)) {
@@ -86,7 +89,7 @@ int NVMeofGw::init()
   }
 
   dout(0) << "gateway name: " << name <<  " address: " << gateway_address << dendl;
-  ceph_assert(name != "" && gateway_address != "");
+  ceph_assert(name != "" && gateway_address != "" && monitor_address != "");
 
   // todo
   ceph_assert(server_key == "" && server_cert == "" && client_cert == "");
@@ -176,29 +179,26 @@ void NVMeofGw::send_beacon()
 {
   ceph_assert(ceph_mutex_is_locked_by_me(lock));
   dout(0) << "sending beacon as gid " << monc.get_global_id() << dendl;
+  GW_AVAILABILITY_E gw_availability = GW_AVAILABILITY_E::GW_CREATED;
   GwSubsystems subs;
-  NVMeofGwClient gw_client(
-     grpc::CreateChannel(gateway_address, grpc::InsecureChannelCredentials()));
-  subsystems_info gw_subsystems;
-  bool ok = gw_client.get_subsystems(gw_subsystems);
-  if (ok) {
-    for (int i = 0; i < gw_subsystems.subsystems_size(); i++) {
-      const subsystem& sub = gw_subsystems.subsystems(i);
-      struct NqnState nqn_state(sub.nqn());
-      if (map.epoch > 0) { // handled map already, update sm_state, opt_ana_gid
+  if (map.epoch > 0) { // handled map already
+    NVMeofGwClient gw_client(
+       grpc::CreateChannel(gateway_address, grpc::InsecureChannelCredentials()));
+    subsystems_info gw_subsystems;
+    bool ok = gw_client.get_subsystems(gw_subsystems);
+    if (ok) {
+      for (int i = 0; i < gw_subsystems.subsystems_size(); i++) {
+        const subsystem& sub = gw_subsystems.subsystems(i);
+        struct NqnState nqn_state(sub.nqn());
         GW_STATE_T* gw_state = map.find_gw_map(name, nqn_state.nqn);
         if (gw_state) {
           nqn_state.opt_ana_gid = gw_state->optimized_ana_group_id;
           for (int i=0; i < MAX_SUPPORTED_ANA_GROUPS; i++)
             nqn_state.sm_state[i] = gw_state->sm_state[i];
         }
+        subs.push_back(nqn_state);
       }
-      subs.push_back(nqn_state);
     }
-  }
-
-  GW_AVAILABILITY_E gw_availability = GW_AVAILABILITY_E::GW_CREATED;
-  if (map.epoch > 0) { // handled map already
     gw_availability = ok ? GW_AVAILABILITY_E::GW_AVAILABLE : GW_AVAILABILITY_E::GW_UNAVAILABLE;
   }
 
@@ -262,8 +262,24 @@ void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> mmap)
   std::stringstream  ss;
   mp._dump_gwmap(ss);
   dout(0) << ss.str() <<  dendl;
-
   ana_info ai;
+  if (map.epoch == 0) { // initial map
+    auto it = std::find_if(mp.Created_gws.begin(), mp.Created_gws.end(),
+      [&](const GW_CREATED_T& item) {
+        return item.gw_name == name;
+      });
+
+    // Check if the element was found
+    if (it == mp.Created_gws.end()) {
+      dout(0) << "Failed to find created gw for " << name << dendl;
+      return;
+    }
+
+    NVMeofGwMonitorGroupClient monitor_group_client(
+        grpc::CreateChannel(monitor_address, grpc::InsecureChannelCredentials()));
+    if (!monitor_group_client.set_group_id(it->ana_grp_id)) dout(0) << "GRPC set_group_id failed" << dendl;
+  }
+
   // Interate over NQNs
   for (const auto& subsystemPair : mp.Gmap) {
     const std::string& nqn = subsystemPair.first;
@@ -317,7 +333,6 @@ bool NVMeofGw::ms_dispatch2(const ref_t<Message>& m)
 {
   std::lock_guard l(lock);
   dout(0) << "got map type " << m->get_type() << dendl;
-
 
   if (m->get_type() == MSG_MNVMEOF_GW_MAP) {
     handle_nvmeof_gw_map(ref_cast<MNVMeofGwMap>(m));

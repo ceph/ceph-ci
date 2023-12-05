@@ -60,7 +60,7 @@ enum class GW_AVAILABILITY_E {
     GW_DELETED
 };
 
-#define MAX_SUPPORTED_ANA_GROUPS 5
+#define MAX_SUPPORTED_ANA_GROUPS 32
 #define INVALID_GW_TIMER     0xffff
 #define REDUNDANT_GW_ANA_GROUP_ID 0xFF
 typedef struct GW_STATE_T {

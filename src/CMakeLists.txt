@@ -893,7 +893,7 @@ if(WITH_NVMEOF_GATEWAY_MONITOR_CLIENT)
     set(_GRPC_CPP_PLUGIN_EXECUTABLE $<TARGET_FILE:gRPC::grpc_cpp_plugin>)
   endif()
 
-  # Proto file
+  # Gateway Proto file
   get_filename_component(nvmeof_gateway_proto "nvmeof/gateway/control/proto/gateway.proto" ABSOLUTE)
   get_filename_component(nvmeof_gateway_proto_path "${nvmeof_gateway_proto}" PATH)
 
@@ -914,6 +914,28 @@ if(WITH_NVMEOF_GATEWAY_MONITOR_CLIENT)
           "${nvmeof_gateway_proto}"
         DEPENDS "${nvmeof_gateway_proto}")
 
+
+  # Monitor Proto file
+  get_filename_component(nvmeof_monitor_proto "nvmeof/gateway/control/proto/monitor.proto" ABSOLUTE)
+  get_filename_component(nvmeof_monitor_proto_path "${nvmeof_monitor_proto}" PATH)
+
+  # Generated sources
+  set(nvmeof_monitor_proto_srcs "${CMAKE_CURRENT_BINARY_DIR}/monitor.pb.cc")
+  set(nvmeof_monitor_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/monitor.pb.h")
+  set(nvmeof_monitor_grpc_srcs "${CMAKE_CURRENT_BINARY_DIR}/monitor.grpc.pb.cc")
+  set(nvmeof_monitor_grpc_hdrs "${CMAKE_CURRENT_BINARY_DIR}/monitor.grpc.pb.h")
+
+  add_custom_command(
+        OUTPUT "${nvmeof_monitor_proto_srcs}" "${nvmeof_monitor_proto_hdrs}" "${nvmeof_monitor_grpc_srcs}" "${nvmeof_monitor_grpc_hdrs}"
+        COMMAND ${_PROTOBUF_PROTOC}
+        ARGS --grpc_out "${CMAKE_CURRENT_BINARY_DIR}"
+          --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
+          -I "${nvmeof_monitor_proto_path}"
+          --experimental_allow_proto3_optional
+          --plugin=protoc-gen-grpc="${_GRPC_CPP_PLUGIN_EXECUTABLE}"
+          "${nvmeof_monitor_proto}"
+        DEPENDS "${nvmeof_monitor_proto}")
+
   # Include generated *.pb.h files
   include_directories("${CMAKE_CURRENT_BINARY_DIR}")
 
@@ -922,8 +944,13 @@ if(WITH_NVMEOF_GATEWAY_MONITOR_CLIENT)
     ${nvmeof_gateway_proto_hdrs}
     ${nvmeof_gateway_grpc_srcs}
     ${nvmeof_gateway_grpc_hdrs}
+    ${nvmeof_monitor_proto_srcs}
+    ${nvmeof_monitor_proto_hdrs}
+    ${nvmeof_monitor_grpc_srcs}
+    ${nvmeof_monitor_grpc_hdrs}
     ceph_nvmeof.cc
     nvmeof/NVMeofGwClient.cc
+    nvmeof/NVMeofGwMonitorGroupClient.cc
     nvmeof/NVMeofGw.cc)
   add_executable(ceph-nvmeof ${ceph_nvmeof_srcs})
   add_dependencies(ceph-nvmeof ceph-common)

@@ -31,6 +31,7 @@ class NVMeofGw : public Dispatcher,
 private:
   std::string name;
   std::string gateway_address;
+  std::string monitor_address;
   std::string server_key;
   std::string server_cert;
   std::string client_cert;
