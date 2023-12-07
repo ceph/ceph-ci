@@ -60,7 +60,7 @@ enum class GW_AVAILABILITY_E {
     GW_DELETED
 };
 
-#define MAX_SUPPORTED_ANA_GROUPS 32
+#define MAX_SUPPORTED_ANA_GROUPS 16
 #define INVALID_GW_TIMER     0xffff
 #define REDUNDANT_GW_ANA_GROUP_ID 0xFF
 typedef struct GW_STATE_T {
@@ -265,7 +265,8 @@ public:
     int   cfg_delete_gw                 (const GW_ID_T &gw_id, const std::string& nqn,     bool &propose_pending);
     int   process_gw_map_ka             (const GW_ID_T &gw_id, const std::string& nqn ,    bool &propose_pending);
     int   process_gw_map_gw_down        (const GW_ID_T &gw_id, const std::string& nqn,     bool &propose_pending);
-    int   handle_abandoned_ana_groups(bool &propose_pending);
+    int   handle_abandoned_ana_groups   (bool &propose_pending);
+    int   handle_removed_subsystems     (const std::vector<std::string> &created_subsystems, bool &propose_pending);
 
     void debug_encode_decode(){
         ceph::buffer::list bl;

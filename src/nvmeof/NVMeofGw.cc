@@ -178,7 +178,7 @@ int NVMeofGw::init()
 void NVMeofGw::send_beacon()
 {
   ceph_assert(ceph_mutex_is_locked_by_me(lock));
-  dout(0) << "sending beacon as gid " << monc.get_global_id() << dendl;
+  //dout(0) << "sending beacon as gid " << monc.get_global_id() << dendl;
   GW_AVAILABILITY_E gw_availability = GW_AVAILABILITY_E::GW_CREATED;
   GwSubsystems subs;
   if (map.epoch > 0) { // handled map already
@@ -201,7 +201,7 @@ void NVMeofGw::send_beacon()
     }
     gw_availability = ok ? GW_AVAILABILITY_E::GW_AVAILABLE : GW_AVAILABILITY_E::GW_UNAVAILABLE;
   }
-
+  dout(0) << "sending beacon as gid " << monc.get_global_id() << " availability " << (int)gw_availability << dendl;
   auto m = ceph::make_message<MNVMeofGwBeacon>(
       name,
       subs,

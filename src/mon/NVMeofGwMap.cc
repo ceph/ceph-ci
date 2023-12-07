@@ -162,6 +162,7 @@ int NVMeofGwMap::_dump_gwmap(std::stringstream &ss)const  {
 
 int   NVMeofGwMap::_dump_created_gws(std::stringstream &ss)const  {
     ss << __func__  <<  " called  " << std::endl;
+    ss << "(gw-mon) ";
     for (auto& itr : Created_gws) {
        ss << " gw :" << itr.gw_name << ", ana: " << itr.ana_grp_id ;
     }
@@ -173,7 +174,7 @@ int   NVMeofGwMap::_dump_created_gws(std::stringstream &ss)const  {
 
 int NVMeofGwMap:: update_active_timers( bool &propose_pending ){
 
-    dout(4) << __func__  <<  " called,  p_monitor: " << mon << dendl;
+    //dout(4) << __func__  <<  " called,  p_monitor: " << mon << dendl;
     for (auto& itr : Gmetadata) {
         for (auto& ptr : itr.second) {
             GW_METADATA_T *metadata = &ptr.second;
@@ -222,7 +223,7 @@ int NVMeofGwMap::process_gw_map_ka(const GW_ID_T &gw_id, const std::string& nqn 
     GW_STATE_T* gw_state = find_gw_map(gw_id, nqn);
     if (gw_state) {
         dout(4)  << "KA beacon from the GW " << gw_id << " in state " << (int)gw_state->availability << dendl;
-        propose_pending = false;
+
         if (gw_state->availability == GW_AVAILABILITY_E::GW_CREATED) {
             // first time appears - allow IO traffic for this GW
             gw_state->availability = GW_AVAILABILITY_E::GW_AVAILABLE;
@@ -313,6 +314,30 @@ int  NVMeofGwMap::handle_abandoned_ana_groups(bool & propose)
     return 0;
 }
 
+
+int  NVMeofGwMap::handle_removed_subsystems (const std::vector<std::string> &created_subsystems, bool &propose_pending)
+{
+    bool found = false;;
+    for (auto& m_itr : Gmap) {
+        //if not found in the vector of configured subsystems, need to remove  the nqn from the map
+        found = false;
+        for(auto v_itr : created_subsystems){
+            if (m_itr.first == v_itr){
+               found = true;
+               break;
+            }
+        }
+        if(!found){
+           // remove   m_itr.first  from the map
+            dout(4) << "seems subsystem nqn was removed - to remove nqn from the map " << m_itr.first <<dendl;
+            Gmap.erase(m_itr.first);
+            propose_pending = true;
+            break;
+        }
+    }
+    return 0;
+}
+
 int  NVMeofGwMap::set_failover_gw_for_ANA_group(const GW_ID_T &failed_gw_id, const GW_ID_T &gw_id, const std::string& nqn, uint8_t ANA_groupid)
 {
     GW_STATE_T* gw_state = find_gw_map(gw_id, nqn);
@@ -353,7 +378,7 @@ int  NVMeofGwMap::find_failback_gw(const GW_ID_T &gw_id, const std::string& nqn,
 // TODO When decision to change ANA state of group is prepared, need to consider that last seen FSM state is "approved" - means it was returned in beacon alone with map version
 int  NVMeofGwMap::find_failover_candidate(const GW_ID_T &gw_id, const std::string& nqn,  GW_STATE_T* gw_state, int grpid,  bool &propose_pending)
 {
-   dout(4) <<__func__<< " process GW down " << gw_id << dendl;
+  // dout(4) <<__func__<< " process GW down " << gw_id << dendl;
 #define ILLEGAL_GW_ID " "
 #define MIN_NUM_ANA_GROUPS 0xFFF
    int min_num_ana_groups_in_gw = 0;

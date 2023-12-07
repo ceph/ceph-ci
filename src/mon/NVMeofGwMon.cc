@@ -211,7 +211,7 @@ void NVMeofGwMon::encode_pending(MonitorDBStore::TransactionRef t){
 void NVMeofGwMon::update_from_paxos(bool *need_bootstrap){
     version_t version = get_last_committed();
 
-    dout(4) <<  MY_MON_PREFFIX << __func__ << " version "  << version  << " map.epoch " << map.epoch << dendl;
+    //dout(4) <<  MY_MON_PREFFIX << __func__ << " version "  << version  << " map.epoch " << map.epoch << dendl;
 
     if (version != map.epoch) {
         dout(4) << " NVMeGW loading version " << version  << " " << map.epoch << dendl;
@@ -449,6 +449,8 @@ void NVMeofGwMon::get_gw_and_nqn_from_key(std::string  key, GW_ID_T &gw_id , std
     std::getline(s1, nqn,   GW_DELIM);
 }
 
+#define BYPASS_GW_CREATE_CLI
+
 bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
     GW_STATE_T* gw_state = NULL;
@@ -464,6 +466,7 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     const GwSubsystems& subsystems =  m->get_subsystems();
     bool propose = false;
     int ana_grp_id = 0;
+    std::vector <std::string> configured_subsystems;
 
     if (avail == GW_AVAILABILITY_E::GW_CREATED){
         // in this special state GWs receive map with just "created_gws" vector
@@ -473,6 +476,11 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
         }
         else{
            dout(4) << "GW " << gw_id << " sent beacon being in state GW_WAIT_INITIAL_MAP but it is not created yet!!! "<< dendl; 
+#ifdef BYPASS_GW_CREATE_CLI
+           pending_map.cfg_add_gw(gw_id);
+           dout(4) << "GW " << gw_id << " created since mode is bypass-create-cli "<< dendl;
+           propose= true;
+#endif
         }
         goto set_propose;
     }
@@ -480,7 +488,7 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     // Validation gw is in the database
     for (const NqnState &st : subsystems)
     {
-        gw_state = pending_map.find_gw_map(gw_id, st.nqn);
+        gw_state = pending_map.find_gw_map( gw_id, st.nqn );
         if (gw_state == NULL)
         {
             dout(4) <<  "GW + NQN pair is not in the  database: " << gw_id << " " << st.nqn << dendl;
@@ -494,7 +502,9 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
                 return 0;
             }
         }
+        configured_subsystems.push_back(st.nqn);
     }
+    pending_map.handle_removed_subsystems( configured_subsystems, propose );
 
     if(avail == GW_AVAILABILITY_E::GW_AVAILABLE)
     {
