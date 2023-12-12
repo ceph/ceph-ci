@@ -484,7 +484,6 @@ class PrometheusService(CephadmService):
             'alertmanager_sd_url': alertmanager_sd_url,
             'haproxy_sd_url': haproxy_sd_url,
             'ceph_exporter_sd_url': ceph_exporter_sd_url,
-            'nvmeof_sd_url': nvmeof_sd_url,
             'external_prometheus_targets': targets,
             'cluster_fsid': FSID
         }
