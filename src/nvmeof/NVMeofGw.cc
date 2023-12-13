@@ -269,15 +269,23 @@ void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> mmap)
         return item.gw_name == name;
       });
 
-    // Check if the element was found
+    // Check if we got this gateway name
     if (it == mp.Created_gws.end()) {
       dout(0) << "Failed to find created gw for " << name << dendl;
       return;
     }
 
-    NVMeofGwMonitorGroupClient monitor_group_client(
-        grpc::CreateChannel(monitor_address, grpc::InsecureChannelCredentials()));
-    if (!monitor_group_client.set_group_id(it->ana_grp_id)) dout(0) << "GRPC set_group_id failed" << dendl;
+    bool set_group_id = false;
+    while (!set_group_id) {
+      NVMeofGwMonitorGroupClient monitor_group_client(
+          grpc::CreateChannel(monitor_address, grpc::InsecureChannelCredentials()));
+      dout(0) << "GRPC set_group_id: " << it->ana_grp_id << dendl;
+      set_group_id = monitor_group_client.set_group_id(it->ana_grp_id);
+      if (!set_group_id) {
+	dout(0) << "GRPC set_group_id failed" << dendl;
+	usleep(1000); // TODO: conf options
+      }
+    }
   }
 
   // Interate over NQNs
@@ -322,9 +330,16 @@ void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> mmap)
     if (nas.states_size()) ai.mutable_states()->Add(std::move(nas));
   }
   if (ai.states_size()) {
-    NVMeofGwClient gw_client(
-	grpc::CreateChannel(gateway_address, grpc::InsecureChannelCredentials()));
-    if (!gw_client.set_ana_state(ai)) dout(0) << "GRPC set_ana_state failed" << dendl;
+    bool set_ana_state = false;
+    while (!set_ana_state) {
+      NVMeofGwClient gw_client(
+          grpc::CreateChannel(gateway_address, grpc::InsecureChannelCredentials()));
+      set_ana_state = gw_client.set_ana_state(ai);
+      if (!set_ana_state) {
+	dout(0) << "GRPC set_ana_state failed" << dendl;
+	usleep(1000); // TODO conf option
+      }
+    }
   }
   map = mp;
 }
