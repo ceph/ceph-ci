@@ -449,7 +449,7 @@ void NVMeofGwMon::get_gw_and_nqn_from_key(std::string  key, GW_ID_T &gw_id , std
     std::getline(s1, nqn,   GW_DELIM);
 }
 
-#define BYPASS_GW_CREATE_CLI
+//#define BYPASS_GW_CREATE_CLI
 
 bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
