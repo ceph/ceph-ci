@@ -392,7 +392,7 @@ bool NVMeofGwMon::prepare_command(MonOpRequestRef op)
         else{
             bool modified;
             for (unsigned i = 0; i < idvec.size(); i ++){
-                rc = pending_map.cfg_delete_gw( idvec[i], "Null", modified);
+                rc = pending_map.cfg_delete_gw( idvec[i], modified);
                 map_modified |= modified;
                 //ceph_assert(rc!= -EINVAL);
             }

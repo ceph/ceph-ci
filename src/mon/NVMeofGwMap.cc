@@ -63,7 +63,7 @@ int  NVMeofGwMap::cfg_add_gw (const GW_ID_T &gw_id) {
 }
 
 
-int   NVMeofGwMap::cfg_delete_gw (const GW_ID_T &gw_id, const std::string & nqn, bool & map_modified){
+int   NVMeofGwMap::cfg_delete_gw (const GW_ID_T &gw_id,  bool & map_modified){
 
     GW_STATE_T * state;
     bool found = false;
@@ -79,19 +79,25 @@ int   NVMeofGwMap::cfg_delete_gw (const GW_ID_T &gw_id, const std::string & nqn,
        dout(4) << __func__ << " ERROR :GW was not created " << gw_id << dendl;
         return -ENODEV ;
     }
-    // TODO  tracerse the GMap , find  gw in the map for all  nqns - nqn is not a parameter of a function
-    if ((state = find_gw_map(gw_id, nqn) ) ) { // GW was created and started
+    // traverse the GMap , find  gw in the map for all  nqns
 
-       bool modified = false;
-       map_modified  = false;
-       for(int i=0; i<MAX_SUPPORTED_ANA_GROUPS; i++){
-          fsm_handle_gw_delete (gw_id, nqn,  state->sm_state[i], i, modified);
-          map_modified |= modified;
-       }
-       dout(4) << " Delete GW :"<< gw_id << "nqn " << nqn << " ANA grpid: " << state->optimized_ana_group_id  << dendl;
-       Gmap[nqn].erase(gw_id);
-       delete_metadata(gw_id, nqn);
-    }
+    map_modified  = false;
+    for (auto& itr : Gmap)
+        for (auto& ptr : itr.second) {
+            GW_ID_T found_gw_id = ptr.first;
+            const std::string& nqn = itr.first;
+            state = &ptr.second;
+            if (gw_id == found_gw_id) { // GW was created
+                bool modified = false;
+                for(int i=0; i<MAX_SUPPORTED_ANA_GROUPS; i++){
+                    fsm_handle_gw_delete (gw_id, nqn,  state->sm_state[i], i, modified);
+                    map_modified |= modified;
+                }
+                dout(4) << " Delete GW :"<< gw_id << "nqn " << nqn << " ANA grpid: " << state->optimized_ana_group_id  << dendl;
+                Gmap[itr.first].erase(gw_id);
+                delete_metadata(gw_id, nqn);
+            }
+        }
     Created_gws.erase(Created_gws.begin() + index);
     return 0;
 }

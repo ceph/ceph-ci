@@ -262,7 +262,7 @@ public:
     int   _dump_gwmap(std::stringstream &ss)const ;
     int   _dump_created_gws(std::stringstream &ss)const ;
     int   cfg_add_gw                    (const GW_ID_T &gw_id);
-    int   cfg_delete_gw                 (const GW_ID_T &gw_id, const std::string& nqn,     bool &propose_pending);
+    int   cfg_delete_gw                 (const GW_ID_T &gw_id, bool &propose_pending);
     int   process_gw_map_ka             (const GW_ID_T &gw_id, const std::string& nqn ,    bool &propose_pending);
     int   process_gw_map_gw_down        (const GW_ID_T &gw_id, const std::string& nqn,     bool &propose_pending);
     int   handle_abandoned_ana_groups   (bool &propose_pending);
