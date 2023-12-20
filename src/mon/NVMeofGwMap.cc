@@ -33,16 +33,17 @@ static std::string G_gw_ana_states[] = {
 };
 
 int  NVMeofGwMap::cfg_add_gw (const GW_ID_T &gw_id) {
-   GW_CREATED_T  gw_created = {-1, gw_id};
+   GW_CREATED_T  gw_created = {-1};
    bool allocated[MAX_SUPPORTED_ANA_GROUPS] = {false};
 
-   for (unsigned i = 0; i < Created_gws.size(); i ++){
-     allocated[Created_gws[i].ana_grp_id ]  = true;
-     if(Created_gws[i].gw_name == gw_id){
+   for (auto& itr : Created_gws){
+     allocated[itr.second.ana_grp_id ]  = true;
+     if(itr.first == gw_id){
            dout(4) << __func__ << " ERROR create GW: already exists in map " << gw_id << dendl;
            return -EEXIST ;
      }
    }
+
    for(int i=0; i<=MAX_SUPPORTED_ANA_GROUPS; i++){
       if (allocated[i] == false){
           gw_created.ana_grp_id = i;
@@ -54,7 +55,7 @@ int  NVMeofGwMap::cfg_add_gw (const GW_ID_T &gw_id) {
         return -EINVAL;
    }
 
-   Created_gws.push_back(gw_created);
+   Created_gws.insert({gw_id, gw_created});
    dout(4) << __func__ << "Created GW:  " << gw_id << " grpid " <<  gw_created.ana_grp_id  <<  dendl;
    std::stringstream  ss;
    _dump_created_gws(ss);
@@ -66,16 +67,9 @@ int  NVMeofGwMap::cfg_add_gw (const GW_ID_T &gw_id) {
 int   NVMeofGwMap::cfg_delete_gw (const GW_ID_T &gw_id,  bool & map_modified){
 
     GW_STATE_T * state;
-    bool found = false;
-    unsigned index;
-
-    for (index = 0; index < Created_gws.size(); index ++){
-      if(Created_gws[index].gw_name == gw_id){
-         found = true;
-         break;
-      }
-    }
-    if(!found) {
+    int  ana_grp_id = 0;
+    if(find_created_gw(gw_id, ana_grp_id) != 0)
+    {
        dout(4) << __func__ << " ERROR :GW was not created " << gw_id << dendl;
         return -ENODEV ;
     }
@@ -98,7 +92,8 @@ int   NVMeofGwMap::cfg_delete_gw (const GW_ID_T &gw_id,  bool & map_modified){
                 delete_metadata(gw_id, nqn);
             }
         }
-    Created_gws.erase(Created_gws.begin() + index);
+    Created_gws.erase(gw_id);
+
     return 0;
 }
 
@@ -132,11 +127,13 @@ int NVMeofGwMap::_dump_gwmap(GWMAP & Gmap)const  {
 
             ss	<< "(gw-mon) NQN " << itr.first << " GW_ID " << ptr.first << " ANA gr " << std::setw(5) << (int)ptr.second.optimized_ana_group_id+1 <<
                                        " available :" << G_gw_avail[(int)ptr.second.availability] << " States: ";
-            for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
+            int num_groups = Created_gws.size();
+            for (int i = 0; i < num_groups; i++) {
                 ss << G_gw_ana_states[(int)ptr.second.sm_state[i]] << " " ;
             }
             ss  << " Failover peers: " << std::endl << "  ";
-            for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
+
+            for (int i = 0; i < num_groups; i++) {
                 ss <<  ptr.second.failover_peer[i]  << " " ;
             }
             ss  << std::endl;
@@ -152,11 +149,13 @@ int NVMeofGwMap::_dump_gwmap(std::stringstream &ss)const  {
         for (auto& ptr : itr.second) {
             ss	<< "(gw-mon) NQN " << itr.first << " GW_ID " << ptr.first << " ANA gr " << std::setw(5)
             << (int)ptr.second.optimized_ana_group_id+1 << " available :" << G_gw_avail[(int)ptr.second.availability] << " States: ";
-            for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
+            int num_groups = Created_gws.size();
+            for (int i = 0; i < num_groups; i++) {
                 ss << G_gw_ana_states[(int)ptr.second.sm_state[i]] << " " ;
             }
             ss  << "  Failover peers: " << std::endl << "  ";
-            for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
+
+            for (int i = 0; i < num_groups; i++) {
                 ss <<  ptr.second.failover_peer[i]  << " " ;
             }
             ss  << std::endl;
@@ -168,9 +167,9 @@ int NVMeofGwMap::_dump_gwmap(std::stringstream &ss)const  {
 
 int   NVMeofGwMap::_dump_created_gws(std::stringstream &ss)const  {
     ss << __func__  <<  " called  " << std::endl;
-    ss << "(gw-mon) ";
+    ss << "(gw-mon) Created GWs:";
     for (auto& itr : Created_gws) {
-       ss << " gw :" << itr.gw_name << ", ana: " << itr.ana_grp_id ;
+       ss << " gw :" << itr.first << ", Ana-grp: " << itr.second.ana_grp_id ;
     }
     ss  << std::endl;
     return 0;

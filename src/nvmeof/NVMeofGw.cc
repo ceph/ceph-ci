@@ -263,27 +263,25 @@ void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> mmap)
   mp._dump_gwmap(ss);
   dout(0) << ss.str() <<  dendl;
   ana_info ai;
-  if (map.epoch == 0) { // initial map
-    auto it = std::find_if(mp.Created_gws.begin(), mp.Created_gws.end(),
-      [&](const GW_CREATED_T& item) {
-        return item.gw_name == name;
-      });
-
-    // Check if we got this gateway name
-    if (it == mp.Created_gws.end()) {
+  if (map.epoch == 0){ // initial map
+    int ana_grp_id = -1;
+    if(mp.find_created_gw(name ,ana_grp_id) !=0 )
+    {
       dout(0) << "Failed to find created gw for " << name << dendl;
       return;
     }
-
+    std::stringstream  ss1;
+    mp._dump_created_gws(ss1);
+    dout(0) << ss1.str() <<  dendl;
     bool set_group_id = false;
     while (!set_group_id) {
       NVMeofGwMonitorGroupClient monitor_group_client(
           grpc::CreateChannel(monitor_address, grpc::InsecureChannelCredentials()));
-      dout(0) << "GRPC set_group_id: " << it->ana_grp_id << dendl;
-      set_group_id = monitor_group_client.set_group_id(it->ana_grp_id);
+      dout(0) << "GRPC set_group_id: " <<  ana_grp_id << dendl;
+      set_group_id = monitor_group_client.set_group_id( ana_grp_id);
       if (!set_group_id) {
-	dout(0) << "GRPC set_group_id failed" << dendl;
-	usleep(1000); // TODO: conf options
+	      dout(0) << "GRPC set_group_id failed" << dendl;
+	      usleep(1000); // TODO: conf options
       }
     }
   }

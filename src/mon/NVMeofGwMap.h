@@ -44,6 +44,7 @@ using ceph::coarse_mono_clock;
 
 
 using GW_ID_T   = std::string;
+using NONCE_VECTOR_T = std::vector<std::string>;
 
 typedef enum {
     GW_IDLE_STATE = 0, //invalid state
@@ -77,13 +78,14 @@ typedef struct GW_METADATA_T {
 
 typedef struct {
     int ana_grp_id;
-    std::string gw_name;
+    NONCE_VECTOR_T nonces;
 } GW_CREATED_T;
 
 using GWMAP               = std::map <std::string, std::map<GW_ID_T, GW_STATE_T> >;
 using GWMETADATA          = std::map <std::string, std::map<GW_ID_T, GW_METADATA_T> >;
 using SUBSYST_GWMAP       = std::map<GW_ID_T, GW_STATE_T>;
 using SUBSYST_GWMETA      = std::map<GW_ID_T, GW_METADATA_T>;
+using GW_CREATED          = std::map<GW_ID_T, GW_CREATED_T>;
 
 inline void encode(const GW_STATE_T& state, ceph::bufferlist &bl) {
     for(int i = 0; i <MAX_SUPPORTED_ANA_GROUPS; i ++){
@@ -136,9 +138,10 @@ class NVMeofGwMap
 {
 public:
     Monitor *mon= NULL;// just for logs in the mon module file
-    GWMAP      Gmap;
+    GWMAP      Gmap;        // GMAP and Created_gws are sent to the clients
+    GW_CREATED Created_gws;
+
     GWMETADATA Gmetadata;
-    std::vector<GW_CREATED_T> Created_gws;
     epoch_t epoch = 0;  // epoch is for Paxos synchronization  mechanizm
     bool   delay_propose = false;
 
@@ -149,8 +152,13 @@ public:
          //Encode created GWs
         encode ((int)Created_gws.size(), bl);
         for(auto &itr : Created_gws){
-            encode(itr.gw_name, bl);
-            encode(itr.ana_grp_id, bl);
+            encode(itr.first, bl);// GW_id
+            const GW_CREATED_T  * gw_created = &itr.second;
+            encode(gw_created->ana_grp_id, bl);
+            encode ((int)gw_created->nonces.size(), bl); // set number of elements in nonce list
+            for(auto &list_it : gw_created->nonces ){
+                encode(list_it, bl);
+            }
         }
         encode ((int)Gmap.size(),bl); // number nqn
         for (auto& itr : Gmap) {
@@ -180,11 +188,20 @@ public:
         decode(num_created_gws, bl);
         Created_gws.clear();
         for(int i = 0; i<num_created_gws; i++){
-            GW_CREATED_T  created;
-            decode(created.gw_name, bl);
-            decode(created.ana_grp_id, bl);
-            Created_gws.push_back(created);
+            GW_CREATED_T  gw_created;
+            std::string gw_name;
+            decode(gw_name, bl);
+            decode(gw_created.ana_grp_id, bl);
+            int num_created_nonces;
+            decode(num_created_nonces, bl);
+            for(int i = 0; i < num_created_nonces; i++){
+                std::string nonce;
+                decode(nonce, bl);
+                gw_created.nonces.push_back(nonce);
+            }
+            Created_gws.insert({gw_name,(gw_created)});
         }
+
         //   decode(delay_propose,bl);
         decode(num_subsystems, bl);
         SUBSYST_GWMAP    gw_map;
@@ -223,14 +240,38 @@ public:
         DECODE_FINISH(bl);
     }
 
-    int  find_created_gw(const GW_ID_T &gw_id , int &ana_grp_id){
-         for (unsigned i = 0; i < Created_gws.size(); i ++)
-             if(Created_gws[i].gw_name == gw_id){
-                 ana_grp_id = Created_gws[i].ana_grp_id;
-                 return 0;
-          }
-         return -1;
+    int          find_created_gw(const GW_ID_T &gw_id , int &ana_grp_id) const
+    {
+        auto it = Created_gws.find(gw_id);
+        if (it != Created_gws.end()) {
+            ana_grp_id = it->second.ana_grp_id;
+            return 0;
+        }
+        return -1;
     }
+
+    GW_CREATED_T* find_created_gw(const GW_ID_T &gw_id )
+    {
+        auto it = Created_gws.find(gw_id);
+        if (it != Created_gws.end()) {
+            return &it->second;
+        }
+        return NULL;
+    }
+
+    int update_gw_nonce(const GW_ID_T &gw_id , NONCE_VECTOR_T &new_nonces)
+    {
+        GW_CREATED_T* gw_created =  find_created_gw(gw_id);
+        if (new_nonces.size() >0){
+            gw_created->nonces.clear();
+            gw_created->nonces.reserve(new_nonces.size());
+            for( auto &it : new_nonces){
+                gw_created->nonces.push_back(it);
+            }
+        }
+        return 0;
+    }
+
 
     GW_STATE_T * find_gw_map(const GW_ID_T &gw_id, const std::string& nqn ) const
     {
