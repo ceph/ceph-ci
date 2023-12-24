@@ -380,22 +380,19 @@ bool NVMeofGwMon::prepare_command(MonOpRequestRef op)
     dout(4) << "MonCommand : "<< prefix <<  dendl;
     bool map_modified = false;
     if( prefix == "nvme-gw create" || prefix == "nvme-gw delete" ) {
-        vector<string> idvec;
+        std::string id, pool, group;
 
-        cmd_getval(cmdmap, "ids", idvec);
+        cmd_getval(cmdmap, "id", id);
+        cmd_getval(cmdmap, "pool", pool);
+        cmd_getval(cmdmap, "group", group);
+
         if(prefix == "nvme-gw create"){
-            for (unsigned i = 0; i < idvec.size(); i ++){
-                rc = pending_map.cfg_add_gw( idvec[i] );
-                ceph_assert(rc!= -EINVAL);
-            }
+            rc = pending_map.cfg_add_gw( id );
+            ceph_assert(rc!= -EINVAL);
         }
         else{
-            bool modified;
-            for (unsigned i = 0; i < idvec.size(); i ++){
-                rc = pending_map.cfg_delete_gw( idvec[i], modified);
-                map_modified |= modified;
-                //ceph_assert(rc!= -EINVAL);
-            }
+            rc = pending_map.cfg_delete_gw( id, map_modified);
+            ceph_assert(rc!= -EINVAL);
         }
         if(map_modified){
             propose_pending();

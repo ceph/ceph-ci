@@ -52,6 +52,16 @@ class NvmeofService(CephService):
         daemon_spec.extra_files = {'ceph-nvmeof.conf': gw_conf}
         daemon_spec.final_config, daemon_spec.deps = self.generate_config(daemon_spec)
         daemon_spec.deps = []
+        # Notify monitor about this gateway creation
+        cmd = {
+            'prefix': 'nvme-gw create',
+            'id': name,
+            'group': spec.group,
+            'pool': spec.pool
+        }
+        _, _, err = self.mgr.mon_command(cmd)
+        if err:
+            self.mgr.log.error(f"Unable to send monitor command {cmd}, error {err}")
         return daemon_spec
 
     def config_dashboard(self, daemon_descrs: List[DaemonDescription]) -> None:
@@ -83,6 +93,19 @@ class NvmeofService(CephService):
         Called after the daemon is removed.
         """
         logger.debug(f'Post remove daemon {self.TYPE}.{daemon.daemon_id}')
+        spec = cast(NvmeofServiceSpec, self.mgr.spec_store[daemon.service_name].spec)
+        name = '{}.{}'.format(utils.name_to_config_section('nvmeof'), daemon.daemon_id)
+        # Notify monitor about this gateway deletion
+        cmd = {
+            'prefix': 'nvme-gw delete',
+            'id': name,
+            'group': spec.group,
+            'pool': spec.pool
+        }
+        _, _, err = self.mgr.mon_command(cmd)
+        if err:
+            self.mgr.log.error(f"Unable to send monitor command {cmd}, error {err}")
+
         # TODO: remove config for dashboard nvmeof gateways if any
         # and any certificates being used for mTLS
 

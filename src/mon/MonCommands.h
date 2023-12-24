@@ -1340,19 +1340,18 @@ COMMAND("config generate-minimal-conf",
 	"config", "r")
 
 /* NVMeofGwMon*/
-COMMAND("nvme-gw create "
-    "name=ids,type=CephString,n=N",
-    "set gw(s) <id> [<id>...] create, "
-    "create gws inside subsystem",
-    "gw", "rw")
-COMMAND("nvme-gw delete "
-    "name=ids,type=CephString,n=N",
-    "set gw(s) <id> [<id>...] delete, "
-    "delete gws inside subsystem",
-    "gw", "rw")
-
-
-
+COMMAND("nvme-gw create"
+    " name=id,type=CephString"
+    " name=pool,type=CephString"
+    " name=group,type=CephString",
+    "create nvmeof gateway id for (pool, group)",
+    "nvme-gw", "rw")
+COMMAND("nvme-gw delete"
+    " name=id,type=CephString"
+    " name=pool,type=CephString"
+    " name=group,type=CephString",
+    "delete nvmeof gateway id for (pool, group)",
+    "nvme-gw", "rw")
 
 // these are tell commands that were implemented as CLI commands in
 // the broken pre-octopus way that we want to allow to work when a
