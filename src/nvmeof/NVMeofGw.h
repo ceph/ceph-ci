@@ -30,6 +30,8 @@ class NVMeofGw : public Dispatcher,
 		   public md_config_obs_t {
 private:
   std::string name;
+  std::string pool;
+  std::string group;
   std::string gateway_address;
   std::string monitor_address;
   std::string server_key;

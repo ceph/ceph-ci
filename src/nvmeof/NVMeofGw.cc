@@ -73,6 +73,10 @@ int NVMeofGw::init()
       break;
     } else if (ceph_argparse_witharg(args, i, &val, "--gateway-name", (char*)NULL)) {
       name = val;
+    } else if (ceph_argparse_witharg(args, i, &val, "--gateway-pool", (char*)NULL)) {
+      pool = val;
+    } else if (ceph_argparse_witharg(args, i, &val, "--gateway-group", (char*)NULL)) {
+      group = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--gateway-address", (char*)NULL)) {
       gateway_address = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--monitor-address", (char*)NULL)) {
@@ -88,8 +92,11 @@ int NVMeofGw::init()
     }
   }
 
-  dout(0) << "gateway name: " << name <<  " address: " << gateway_address << dendl;
-  ceph_assert(name != "" && gateway_address != "" && monitor_address != "");
+  dout(0) << "gateway name: " << name <<
+    " pool:" << pool <<
+    " group:" << group <<
+    " address: " << gateway_address << dendl;
+  ceph_assert(name != "" && pool != "" && gateway_address != "" && monitor_address != "");
 
   // todo
   ceph_assert(server_key == "" && server_cert == "" && client_cert == "");
@@ -204,6 +211,8 @@ void NVMeofGw::send_beacon()
   dout(0) << "sending beacon as gid " << monc.get_global_id() << " availability " << (int)gw_availability << dendl;
   auto m = ceph::make_message<MNVMeofGwBeacon>(
       name,
+      pool,
+      group,
       subs,
       gw_availability,
       map.epoch);

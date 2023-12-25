@@ -78,6 +78,8 @@ private:
 
 protected:
     std::string              gw_id;
+    std::string              gw_pool;
+    std::string              gw_group;
     GwSubsystems             subsystems;                           // gateway susbsystem and their state machine states
     GW_AVAILABILITY_E        availability;                         // in absence of  beacon  heartbeat messages it becomes inavailable
     uint32_t                 version;
@@ -87,13 +89,15 @@ public:
     : PaxosServiceMessage{MSG_MNVMEOF_GW_BEACON, 0, HEAD_VERSION, COMPAT_VERSION}
   {}
 
-  MNVMeofGwBeacon(const std::string &gw_id_, 
+  MNVMeofGwBeacon(const std::string &gw_id_,
+        const std::string& gw_pool_,
+        const std::string& gw_group_,
         const GwSubsystems& subsystems_,
         const GW_AVAILABILITY_E&  availability_,
         const uint32_t& version_
   )
     : PaxosServiceMessage{MSG_MNVMEOF_GW_BEACON, 0, HEAD_VERSION, COMPAT_VERSION},
-      gw_id(gw_id_), subsystems(subsystems_),
+      gw_id(gw_id_), gw_pool(gw_pool_), gw_group(gw_group_), subsystems(subsystems_),
       availability(availability_), version(version_)
   {}
 
@@ -110,11 +114,15 @@ public:
   std::string_view get_type_name() const override { return "nvmeofgwbeacon"; }
 
   void print(std::ostream& out) const override {
-    out << get_type_name() << " nvmeofgw " << "(" << gw_id <<  ", susbsystems: [ ";
+    out << get_type_name() <<
+      " nvmeofgw id: " << gw_id <<
+      ", pool:" << gw_pool <<
+      ", group:" << gw_group <<
+      ", susbsystems: [ ";
     for (const NqnState& st: subsystems) {
       out << st << " ";
     }
-    out << "], " << "availability: " << availability << ", version:" << version;
+    out << "], availability: " << availability << ", version:" << version;
   }
 
   void encode_payload(uint64_t features) override {
@@ -123,6 +131,8 @@ public:
     using ceph::encode;
     paxos_encode();
     encode(gw_id, payload);
+    encode(gw_pool, payload);
+    encode(gw_group, payload);
     encode((int)subsystems.size(), payload);
     for (const NqnState& st: subsystems) {
       encode(st.nqn, payload);
@@ -140,6 +150,8 @@ public:
     
     paxos_decode(p);
     decode(gw_id, p);
+    decode(gw_pool, p);
+    decode(gw_group, p);
     int n;
     int tmp;
     decode(n, p);
