@@ -16,7 +16,8 @@
 #include "MonCommand.h"
 #include "NVMeofGwMap.h"
 
-class NVMeofGwMon: public PaxosService
+class NVMeofGwMon: public PaxosService,
+                   public md_config_obs_t
 {
     NVMeofGwMap  map;  //NVMeGWMap
     NVMeofGwMap pending_map;
@@ -38,6 +39,10 @@ public:
     : PaxosService(mn, p, service_name)  {map.mon = &mn; }
     ~NVMeofGwMon() override {}
 
+
+    // config observer
+    const char** get_tracked_conf_keys() const override;
+    void handle_conf_change(const ConfigProxy& conf, const std::set<std::string> &changed) override;
 
     //const MgrMap &get_map() const { return map; }
 

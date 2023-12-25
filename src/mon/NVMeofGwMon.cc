@@ -200,6 +200,37 @@ void NVMeofGwMon::tick(){
 }
 
 
+const char **NVMeofGwMon::get_tracked_conf_keys() const
+{
+  static const char* KEYS[] = {
+    "nvmf_mon_mapdump",
+    "nvmf_mon_log_level",
+    //"rocksdb_cache_size",
+    NULL
+  };
+  return KEYS;
+}
+
+void NVMeofGwMon::handle_conf_change(const ConfigProxy& conf,
+                                    const std::set<std::string> &changed)
+{
+  dout(4) << __func__ << " " << changed << dendl;
+
+  if (changed.count("nvmef_gw_mapdump")) {
+    //_set_cache_autotuning();
+      std::stringstream  ss1;
+      pending_map._dump_gwmap(ss1);
+
+      std::stringstream  ss2;
+      pending_map._dump_created_gws(ss2);
+
+  }
+  if (changed.count("nvmf_mon_log_level")){
+      dout(4) << "TODO SET LOG LEVEL >= " << g_conf()->nvmf_mon_log_level << dendl;
+  }
+}
+
+
 void NVMeofGwMon::create_pending(){
 
     pending_map = map;// deep copy of the object

@@ -1346,3 +1346,22 @@ options:
   with_legacy: true
   see_also:
   - osd_heartbeat_use_min_delay_socket
+- name: nvmf_mon_log_level
+  type: int
+  level: advanced
+  desc: log level of the nvmeofMon 
+  fmt_desc: Monitor will set the log level.
+  default: 5
+  services:
+  - mon
+  with_legacy: true
+- name: nvmf_mon_mapdump
+  type: bool
+  level: advanced
+  desc: dump maps of nvmeofMon 
+  fmt_desc: Monitor will dump maps
+  default: false
+  services:
+  - mon
+  with_legacy: true
+  
