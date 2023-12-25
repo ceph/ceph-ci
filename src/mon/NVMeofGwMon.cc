@@ -54,10 +54,24 @@ void NVMeofGwMon::inject1(){
         pending_map.cfg_add_gw("GW1" );
         pending_map.cfg_add_gw("GW2" );
         pending_map.cfg_add_gw("GW3" );
+        NONCE_VECTOR_T new_nonces = {"abc", "def","hij"};
+        ANA_GRP_ID_T grp = 1;
+        pending_map.update_gw_nonce("GW1", grp, new_nonces);
+        grp = 2;
+        pending_map.update_gw_nonce("GW1", grp, new_nonces);
+        std::stringstream ss;
+        pending_map._dump_created_gws(ss);
+        dout(4) << ss.str() << dendl;
 
-        pending_map._dump_gwmap(pending_map.Gmap);
+        //pending_map._dump_gwmap(pending_map.Gmap);
         pending_map.debug_encode_decode();
         dout(4) << "Dump map after decode encode:" <<dendl;
+        std::stringstream ss1;
+        pending_map._dump_created_gws(ss1);
+        dout(4) << ss1.str() << dendl;
+
+
+
         pending_map._dump_gwmap(pending_map.Gmap);
     }
    /* else if( cnt  == start_cnt  ){  // simulate - add another GW - to check that new map would be synchronized with peons

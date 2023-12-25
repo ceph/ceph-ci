@@ -33,8 +33,9 @@ static std::string G_gw_ana_states[] = {
 };
 
 int  NVMeofGwMap::cfg_add_gw (const GW_ID_T &gw_id) {
-   GW_CREATED_T  gw_created = {-1};
+   GW_CREATED_T  gw_created;
    bool allocated[MAX_SUPPORTED_ANA_GROUPS] = {false};
+   gw_created.ana_grp_id = 0xff;
 
    for (auto& itr : Created_gws){
      allocated[itr.second.ana_grp_id ]  = true;
@@ -50,7 +51,7 @@ int  NVMeofGwMap::cfg_add_gw (const GW_ID_T &gw_id) {
           break;
       }
    }
-   if(gw_created.ana_grp_id == -1){
+   if(gw_created.ana_grp_id == 0xff){
         dout(4) << __func__ << " ERROR create GW: " << gw_id << "   ANA groupId was not allocated "   << dendl;
         return -EINVAL;
    }
@@ -92,7 +93,7 @@ int   NVMeofGwMap::cfg_delete_gw (const GW_ID_T &gw_id,  bool & map_modified){
                 delete_metadata(gw_id, nqn);
             }
         }
-    Created_gws.erase(gw_id);
+    Created_gws.erase(gw_id);//TODO check whether ana map with nonce vector is destroyed properly - probably not. to handle!
 
     return 0;
 }
@@ -153,7 +154,7 @@ int NVMeofGwMap::_dump_gwmap(std::stringstream &ss)const  {
             for (int i = 0; i < num_groups; i++) {
                 ss << G_gw_ana_states[(int)ptr.second.sm_state[i]] << " " ;
             }
-            ss  << "  Failover peers: " << std::endl << "  ";
+            ss  << "(gw-mon)  Failover peers: " << std::endl << "  ";
 
             for (int i = 0; i < num_groups; i++) {
                 ss <<  ptr.second.failover_peer[i]  << " " ;
@@ -161,20 +162,27 @@ int NVMeofGwMap::_dump_gwmap(std::stringstream &ss)const  {
             ss  << std::endl;
         }
     }
-    //dout(0) << ss.str() <<dendl;
     return 0;
 }
 
 int   NVMeofGwMap::_dump_created_gws(std::stringstream &ss)const  {
     ss << __func__  <<  " called  " << std::endl;
-    ss << "(gw-mon) Created GWs:";
+    ss << "(gw-mon) Created GWs:" << std::endl;
     for (auto& itr : Created_gws) {
-       ss << " gw :" << itr.first << ", Ana-grp: " << itr.second.ana_grp_id ;
+       ss << "(gw-mon) gw :" << itr.first << ", Ana-grp: " << itr.second.ana_grp_id << std::endl;
+       ss << "(gw-mon) nonces map :" << std::endl;
+       const GW_ANA_NONCE_MAP &nonce_map = itr.second.nonce_map;
+       for(auto &nonce_it : nonce_map ){
+           ss << "(gw-mon)   ana-grp: " << nonce_it.first << " :" ;
+           for(auto &nonce_vectr_it :nonce_it.second){
+               ss << " " << nonce_vectr_it ;
+           }
+           ss << std::endl;
+       }
     }
     ss  << std::endl;
     return 0;
 }
-
 
 
 int NVMeofGwMap:: update_active_timers( bool &propose_pending ){
@@ -479,6 +487,7 @@ int  NVMeofGwMap::find_failover_candidate(const GW_ID_T &gw_id, const std::strin
     return 0;
  }
 
+
  int NVMeofGwMap::fsm_handle_gw_delete (const GW_ID_T &gw_id, const std::string& nqn, GW_STATES_PER_AGROUP_E state , int grpid, bool &map_modified)
   {
      switch (state)
@@ -567,6 +576,7 @@ int NVMeofGwMap::fsm_handle_to_expired (const GW_ID_T &gw_id, const std::string&
     }
     return 0;
 }
+
 
 int  NVMeofGwMap::set_gw_standby_state(GW_STATE_T* gw_state, uint8_t ANA_groupid)
 {

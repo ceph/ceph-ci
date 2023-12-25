@@ -44,8 +44,7 @@ using ceph::coarse_mono_clock;
 
 
 using GW_ID_T   = std::string;
-using NONCE_VECTOR_T = std::vector<std::string>;
-
+using ANA_GRP_ID_T   = uint16_t;
 typedef enum {
     GW_IDLE_STATE = 0, //invalid state
     GW_STANDBY_STATE,
@@ -67,25 +66,33 @@ enum class GW_AVAILABILITY_E {
 typedef struct GW_STATE_T {
     GW_STATES_PER_AGROUP_E   sm_state     [MAX_SUPPORTED_ANA_GROUPS];  // state machine states per ANA group
     GW_ID_T                  failover_peer[MAX_SUPPORTED_ANA_GROUPS];
-    uint16_t  optimized_ana_group_id;                     // optimized ANA group index as configured by Conf upon network entry, note for redundant GW it is FF
+    ANA_GRP_ID_T          optimized_ana_group_id;        // optimized ANA group index as configured by Conf upon network entry, note for redundant GW it is FF
     GW_AVAILABILITY_E     availability;                  // in absence of  beacon  heartbeat messages it becomes inavailable
-    uint64_t version;                                      // version per all GWs of the same subsystem. subsystem version
+    uint64_t version;                                    // version per all GWs of the same subsystem. subsystem version
 }GW_STATE_T;
 
 typedef struct GW_METADATA_T {
    int  anagrp_sm_tstamps[MAX_SUPPORTED_ANA_GROUPS]; // statemachine timer(timestamp) set in some state
 }GW_METADATA_T;
 
-typedef struct {
-    int ana_grp_id;
-    NONCE_VECTOR_T nonces;
-} GW_CREATED_T;
 
 using GWMAP               = std::map <std::string, std::map<GW_ID_T, GW_STATE_T> >;
 using GWMETADATA          = std::map <std::string, std::map<GW_ID_T, GW_METADATA_T> >;
 using SUBSYST_GWMAP       = std::map<GW_ID_T, GW_STATE_T>;
 using SUBSYST_GWMETA      = std::map<GW_ID_T, GW_METADATA_T>;
-using GW_CREATED          = std::map<GW_ID_T, GW_CREATED_T>;
+
+using NONCE_VECTOR_T      = std::vector<std::string>;
+using GW_ANA_NONCE_MAP    = std::map <ANA_GRP_ID_T, NONCE_VECTOR_T>;
+
+
+typedef struct {
+    ANA_GRP_ID_T     ana_grp_id; // ana-group-id allocated for this GW, GW owns this group-id
+    GW_ANA_NONCE_MAP nonce_map;
+} GW_CREATED_T;
+
+using GW_CREATED_MAP      = std::map<GW_ID_T, GW_CREATED_T>;
+
+
 
 inline void encode(const GW_STATE_T& state, ceph::bufferlist &bl) {
     for(int i = 0; i <MAX_SUPPORTED_ANA_GROUPS; i ++){
@@ -138,12 +145,52 @@ class NVMeofGwMap
 {
 public:
     Monitor *mon= NULL;// just for logs in the mon module file
-    GWMAP      Gmap;        // GMAP and Created_gws are sent to the clients
-    GW_CREATED Created_gws;
+    GWMAP          Gmap;        // GMAP and Created_gws are sent to the clients
+    GW_CREATED_MAP Created_gws;
 
     GWMETADATA Gmetadata;
     epoch_t epoch = 0;  // epoch is for Paxos synchronization  mechanizm
     bool   delay_propose = false;
+
+
+    void encode_nonces(const GW_ANA_NONCE_MAP & nonce_map, ceph::buffer::list &bl, bool full_encode ) const
+    {
+        ENCODE_START(2, 1, bl);
+
+        encode((int)nonce_map.size(), bl);
+        for (auto& itr : nonce_map) {
+            encode((ANA_GRP_ID_T)itr.first, bl);
+            // now encode the nonces
+            const NONCE_VECTOR_T &nonce_vector = itr.second;
+            encode ((int)nonce_vector.size(), bl); // encode the vector size
+            for(auto &list_it : nonce_vector ){
+                encode(list_it, bl);
+            }
+        }
+        ENCODE_FINISH(bl);
+    }
+
+    void decode_nonces(GW_ANA_NONCE_MAP & nonce_map, ceph::buffer::list::const_iterator &bl, bool full_decode = true) {
+        DECODE_START(1, bl);
+        int map_size;
+        ANA_GRP_ID_T ana_grp_id;
+        int vector_size;
+        std::string nonce;
+
+        decode(map_size, bl);
+        for(int i = 0; i<map_size; i++){
+            decode(ana_grp_id, bl);
+            nonce_map.insert({ana_grp_id, NONCE_VECTOR_T()});
+            decode(vector_size,bl);
+            nonce_map[ana_grp_id].reserve(vector_size);
+            for(int j=0; j< vector_size; j++){
+                decode (nonce, bl);
+                nonce_map[ana_grp_id].push_back(nonce);
+            }
+        }
+        DECODE_FINISH(bl);
+    }
+
 
     void encode(ceph::buffer::list &bl, bool full_encode = true) const {
         ENCODE_START(2, 1, bl); 	//encode(name, bl);	encode(can_run, bl);encode(error_string, bl);encode(module_options, bl);
@@ -155,10 +202,7 @@ public:
             encode(itr.first, bl);// GW_id
             const GW_CREATED_T  * gw_created = &itr.second;
             encode(gw_created->ana_grp_id, bl);
-            encode ((int)gw_created->nonces.size(), bl); // set number of elements in nonce list
-            for(auto &list_it : gw_created->nonces ){
-                encode(list_it, bl);
-            }
+            encode_nonces(gw_created->nonce_map, bl, full_encode);//TODO "if not full_encode" to prevent sending full nonce map to the clients
         }
         encode ((int)Gmap.size(),bl); // number nqn
         for (auto& itr : Gmap) {
@@ -192,13 +236,8 @@ public:
             std::string gw_name;
             decode(gw_name, bl);
             decode(gw_created.ana_grp_id, bl);
-            int num_created_nonces;
-            decode(num_created_nonces, bl);
-            for(int i = 0; i < num_created_nonces; i++){
-                std::string nonce;
-                decode(nonce, bl);
-                gw_created.nonces.push_back(nonce);
-            }
+            decode_nonces(gw_created.nonce_map, bl,full_decode); //TODO if not full_decode
+
             Created_gws.insert({gw_name,(gw_created)});
         }
 
@@ -259,18 +298,36 @@ public:
         return NULL;
     }
 
-    int update_gw_nonce(const GW_ID_T &gw_id , NONCE_VECTOR_T &new_nonces)
+    int update_gw_nonce(const GW_ID_T &gw_id,  ANA_GRP_ID_T &ana_grp_id, NONCE_VECTOR_T &new_nonces)
     {
         GW_CREATED_T* gw_created =  find_created_gw(gw_id);
         if (new_nonces.size() >0){
-            gw_created->nonces.clear();
-            gw_created->nonces.reserve(new_nonces.size());
+            GW_ANA_NONCE_MAP & nonce_map = gw_created->nonce_map;
+            if(nonce_map[ana_grp_id].size() == 0){
+                nonce_map.insert({ana_grp_id, NONCE_VECTOR_T()}) ;
+            }
+            nonce_map[ana_grp_id].clear();
+            nonce_map[ana_grp_id].reserve(new_nonces.size()); //gw_created->nonces.clear();// gw_created->nonces.reserve(new_nonces.size());
             for( auto &it : new_nonces){
-                gw_created->nonces.push_back(it);
+                nonce_map[ana_grp_id].push_back(it);       //gw_created->nonces.push_back(it);
             }
         }
         return 0;
     }
+
+    int destroy_gw(const GW_ID_T &gw_id)
+    {
+        GW_CREATED_T* gw_created =  find_created_gw(gw_id);
+        if( gw_created )
+        {
+            GW_ANA_NONCE_MAP & nonce_map = gw_created->nonce_map;
+            for(auto &it : nonce_map){
+               it.second.clear();// clear the nonce contexts
+            }
+            nonce_map.clear();
+        }
+        return 0;
+   }
 
 
     GW_STATE_T * find_gw_map(const GW_ID_T &gw_id, const std::string& nqn ) const
