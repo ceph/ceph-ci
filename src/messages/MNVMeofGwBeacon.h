@@ -102,6 +102,8 @@ public:
   {}
 
   const std::string& get_gw_id() const { return gw_id; }
+  const std::string& get_gw_pool() const { return gw_pool; }
+  const std::string& get_gw_group() const { return gw_group; }
   const GW_AVAILABILITY_E& get_availability() const { return availability; }
   const uint32_t& get_version() const { return version; }
   const GwSubsystems& get_subsystems() const { return subsystems; };

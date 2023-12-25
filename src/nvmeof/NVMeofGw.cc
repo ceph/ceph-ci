@@ -272,11 +272,14 @@ void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> mmap)
   mp._dump_gwmap(ss);
   dout(0) << ss.str() <<  dendl;
   ana_info ai;
+  std::string  gw_name;
+  NVMeofGwMap::gw_name_from_id_pool_group(gw_name , name , pool, group);
   if (map.epoch == 0){ // initial map
     int ana_grp_id = -1;
-    if(mp.find_created_gw(name ,ana_grp_id) !=0 )
+
+    if(mp.find_created_gw(gw_name ,ana_grp_id) !=0)
     {
-      dout(0) << "Failed to find created gw for " << name << dendl;
+      dout(0) << "Failed to find created gw for " << gw_name << dendl;
       return;
     }
     std::stringstream  ss1;
@@ -303,13 +306,13 @@ void NVMeofGw::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> mmap)
     nas.set_nqn(nqn);
 
     // This gateway state for the current subsystem / nqn
-    const auto& new_gateway_state = idStateMap.find(name);
+    const auto& new_gateway_state = idStateMap.find(gw_name);
 
     // There is no subsystem update for this gateway
     if (new_gateway_state == idStateMap.end()) continue;
 
     // Previously monitor distributed state
-    GW_STATE_T* old_gw_state = map.find_gw_map(name, nqn);
+    GW_STATE_T* old_gw_state = map.find_gw_map(gw_name, nqn);
 
     // Iterate over possible ANA Groups
     for (uint32_t  ana_grp_index = 0; ana_grp_index < MAX_SUPPORTED_ANA_GROUPS; ana_grp_index++) {

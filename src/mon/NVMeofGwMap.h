@@ -301,6 +301,8 @@ public:
     int update_gw_nonce(const GW_ID_T &gw_id,  ANA_GRP_ID_T &ana_grp_id, NONCE_VECTOR_T &new_nonces)
     {
         GW_CREATED_T* gw_created =  find_created_gw(gw_id);
+        if(!gw_created)
+            return 1;
         if (new_nonces.size() >0){
             GW_ANA_NONCE_MAP & nonce_map = gw_created->nonce_map;
             if(nonce_map[ana_grp_id].size() == 0){
@@ -325,8 +327,11 @@ public:
                it.second.clear();// clear the nonce contexts
             }
             nonce_map.clear();
+            return 0;
         }
-        return 0;
+        else
+          return 1;
+
    }
 
 
@@ -359,12 +364,20 @@ public:
     int   _dump_gwmap(GWMAP & Gmap)const;
     int   _dump_gwmap(std::stringstream &ss)const ;
     int   _dump_created_gws(std::stringstream &ss)const ;
-    int   cfg_add_gw                    (const GW_ID_T &gw_id);
-    int   cfg_delete_gw                 (const GW_ID_T &gw_id, bool &propose_pending);
+    int   cfg_add_gw                    (const GW_ID_T &gw_id, const std::string& pool, const std::string& group);
+    int   cfg_delete_gw                 (const GW_ID_T &gw_id, const std::string& pool, const std::string& group, bool &propose_pending);
     int   process_gw_map_ka             (const GW_ID_T &gw_id, const std::string& nqn ,    bool &propose_pending);
     int   process_gw_map_gw_down        (const GW_ID_T &gw_id, const std::string& nqn,     bool &propose_pending);
     int   handle_abandoned_ana_groups   (bool &propose_pending);
     int   handle_removed_subsystems     (const std::vector<std::string> &created_subsystems, bool &propose_pending);
+
+    //make these functions static
+    static void  gw_name_from_id_pool_group    (std::string &gw_name , const std::string &gw_id ,const std::string &gw_pool, const std::string &gw_group ){
+        gw_name = gw_id + "." + gw_pool + "." + gw_group;
+    }
+    static void  gw_preffix_from_id_pool_group    (std::string &gw_preffix ,const std::string &gw_pool, const std::string &gw_group ){
+           gw_preffix = "." + gw_pool + "." + gw_group;
+    }
 
     void debug_encode_decode(){
         ceph::buffer::list bl;
