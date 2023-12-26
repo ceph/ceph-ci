@@ -22,55 +22,6 @@
 #include "mon/NVMeofGwMap.h"
 
 #include "include/types.h"
-
-typedef GW_STATES_PER_AGROUP_E SM_STATE[MAX_SUPPORTED_ANA_GROUPS];
-struct NqnState {
-  std::string nqn;          // subsystem NQN
-  SM_STATE    sm_state;     // susbsystem's state machine state
-  uint16_t    opt_ana_gid;  // optimized ANA group index
-
-  // Default constructor
-  NqnState(const std::string& _nqn) : nqn(_nqn), opt_ana_gid(0) {
-    for (int i=0; i < MAX_SUPPORTED_ANA_GROUPS; i++)
-      sm_state[i] = GW_STATES_PER_AGROUP_E::GW_IDLE_STATE;
-  }
-};
-
-typedef std::vector<NqnState> GwSubsystems;
-
-std::ostream& operator<<(std::ostream& os, const SM_STATE value) {
-    os << "SM_STATE [ ";
-    for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
-      switch (value[i]) {
-          case GW_STATES_PER_AGROUP_E::GW_IDLE_STATE: os << "IDLE "; break;
-          case GW_STATES_PER_AGROUP_E::GW_STANDBY_STATE: os << "STANDBY "; break;
-          case GW_STATES_PER_AGROUP_E::GW_ACTIVE_STATE: os << "ACTIVE "; break;
-          case GW_STATES_PER_AGROUP_E::GW_BLOCKED_AGROUP_OWNER: os << "BLOCKED_AGROUP_OWNER "; break;
-          case GW_STATES_PER_AGROUP_E::GW_WAIT_FAILBACK_PREPARED: os << "WAIT_FAILBACK_PREPARED "; break;
-          default: os << "Invalid " << (int)value[i] << " ";
-      }
-    }
-    os << "]";
-    return os;
-}
-
-std::ostream& operator<<(std::ostream& os, const NqnState value) {
-    os << "Subsystem( nqn: " << value.nqn << ", ANAGrpId: " << value.opt_ana_gid << ", " << value.sm_state << " )";
-    return os;
-}
-
-std::ostream& operator<<(std::ostream& os, const GW_AVAILABILITY_E value) {
-  switch (value) {
-
-        case GW_AVAILABILITY_E::GW_CREATED: os << "CREATED"; break;
-        case GW_AVAILABILITY_E::GW_AVAILABLE: os << "AVAILABLE"; break;
-        case GW_AVAILABILITY_E::GW_UNAVAILABLE: os << "UNAVAILABLE"; break;
-
-        default: os << "Invalid " << (int)value << " ";
-    }
-    return os;
-}
-
 class MNVMeofGwBeacon final : public PaxosServiceMessage {
 private:
   static constexpr int HEAD_VERSION = 1;
@@ -114,18 +65,6 @@ private:
 public:
 
   std::string_view get_type_name() const override { return "nvmeofgwbeacon"; }
-
-  void print(std::ostream& out) const override {
-    out << get_type_name() <<
-      " nvmeofgw id: " << gw_id <<
-      ", pool:" << gw_pool <<
-      ", group:" << gw_group <<
-      ", susbsystems: [ ";
-    for (const NqnState& st: subsystems) {
-      out << st << " ";
-    }
-    out << "], availability: " << availability << ", version:" << version;
-  }
 
   void encode_payload(uint64_t features) override {
     header.version = HEAD_VERSION;
