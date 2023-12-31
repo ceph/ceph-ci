@@ -59,6 +59,13 @@ private:
     void cancel_timer(const GW_ID_T &gw_id, const GROUP_KEY& group_key, const NQN_ID_T& nqn, ANA_GRP_ID_T anagrpid);
 
 public:
+    void debug_encode_decode(){
+           ceph::buffer::list bl;
+           encode(bl);
+           auto p = bl.cbegin();
+           decode(p);
+       }
+
     void encode(ceph::buffer::list &bl, bool full_encode = true) const {
         using ceph::encode;
         __u8 struct_v = 0;

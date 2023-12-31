@@ -36,6 +36,108 @@ void NVMeofGwMon::on_restart(){
 
 void NVMeofGwMon::on_shutdown() {}
 
+static int cnt ;
+#define start_cnt 6
+void NVMeofGwMon::inject1(){
+    //bool propose = false;
+    if( ++cnt  == 4  ){// simulation that new configuration was added
+        std::string pool = "pool1";
+        std::string group = "grp1";
+        auto group_key = std::make_pair(pool, group);
+        pending_map.cfg_add_gw("GW1" ,group_key);
+        pending_map.cfg_add_gw("GW2" ,group_key);
+        pending_map.cfg_add_gw("GW3" ,group_key);
+        NONCE_VECTOR_T new_nonces = {"abc", "def","hij"};
+        //ANA_GRP_ID_T grp = 1;
+        //pending_map.update_gw_nonce("GW1.g1.p1", grp, new_nonces);
+        pending_map.Created_gws[group_key]["GW1"].nonce_map[1] = new_nonces;
+
+       // pending_map.update_gw_nonce("GW1.g1.p1", grp, new_nonces);
+        pending_map.Created_gws[group_key]["GW2"].nonce_map[2] = new_nonces;
+        GW_STATE_T gst1(1);
+        std::string nqn1 = "nqn2008.node1";
+        pending_map.Gmap[group_key][nqn1]["GW2"] = gst1;
+
+        GW_STATE_T gst2(2);
+        pending_map.Gmap[group_key][nqn1]["GW3"] = gst2;
+        dout(4) << pending_map << dendl;
+
+
+        pending_map.debug_encode_decode();
+        dout(4) << "Dump map after decode encode:" <<dendl;
+        dout(4) << pending_map << dendl;
+
+
+        //std::stringstream ss;
+        //pending_map._dump_created_gws(ss);
+        //dout(4) << ss.str() << dendl;
+
+        //pending_map._dump_gwmap(pending_map.Gmap);
+        //pending_map.debug_encode_decode();
+        //dout(4) << "Dump map after decode encode:" <<dendl;
+        //std::stringstream ss1;
+        //pending_map._dump_created_gws(ss1);
+        //dout(4) << ss1.str() << dendl;
+
+
+
+       // pending_map._dump_gwmap(pending_map.Gmap);
+    }
+   /* else if( cnt  == start_cnt  ){  // simulate - add another GW - to check that new map would be synchronized with peons
+        pending_map.cfg_add_gw("gw2"  );
+        pending_map._dump_gwmap(pending_map.Gmap);
+
+        //Simulate KA beacon from the gws
+
+        pending_map.process_gw_map_ka( "gw1", "nqn2008.node1", propose);
+        if(propose)
+            propose_pending();
+
+        pending_map._dump_gwmap(pending_map.Gmap);
+
+    }
+    else if( cnt  == start_cnt+2  ){  // simulate - add another GW - to check that new map would be synchronized with peons
+        pending_map.process_gw_map_ka( "gw2", "nqn2008.node1", propose);
+        if(propose)
+             propose_pending();
+    }
+    else if( cnt  == start_cnt+3 ){  // simulate - gw1 down
+        pending_map.process_gw_map_gw_down( "gw1", "nqn2008.node1", propose);
+        if(propose)
+            propose_pending();
+
+    }
+
+
+    else if( cnt  == start_cnt+5 ){  // simulate - gw1 is back
+
+        pending_map.process_gw_map_ka( "gw1", "nqn2008.node1", propose);
+        if(propose)
+            propose_pending();
+    }
+
+    else if( cnt  == start_cnt+6 ){  // simulate - gw1 is down   Simulate gw election by polling function handle_homeless_ana_groups
+
+            pending_map.process_gw_map_gw_down( "gw1", "nqn2008.node1", propose);
+            if(propose)
+                propose_pending();
+    }
+
+    else if( cnt  == start_cnt+7 ){  // simulate - gw1 is UP
+        pending_map.process_gw_map_ka( "gw1", "nqn2008.node1", propose);
+        if(propose)
+            propose_pending();
+    }
+    else if( cnt  == start_cnt+9 ){  // simulate - gw2 still OK - checks the persistency timer in the state
+        pending_map.process_gw_map_ka( "gw2", "nqn2008.node1", propose);
+        if(propose)
+            propose_pending();
+    }
+    */
+}
+
+
+
 void NVMeofGwMon::tick(){
    // static int cnt=0;
     if(map.delay_propose){
@@ -49,7 +151,7 @@ void NVMeofGwMon::tick(){
     }
     bool _propose_pending = false;
   
-    //inject1();
+    inject1();
     const auto now = ceph::coarse_mono_clock::now();
     const auto nvmegw_beacon_grace = g_conf().get_val<std::chrono::seconds>("mon_nvmeofgw_beacon_grace"); 
     dout(4) << MY_MON_PREFFIX << __func__  <<  "NVMeofGwMon leader got a real tick, pending epoch "<< pending_map.epoch     << dendl;
@@ -371,7 +473,7 @@ bool NVMeofGwMon::preprocess_beacon(MonOpRequestRef op){
 }
 
 
-//#define BYPASS_GW_CREATE_CLI
+#define BYPASS_GW_CREATE_CLI
 
 bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
     dout(4) <<  MY_MON_PREFFIX <<__func__  << dendl;
@@ -397,7 +499,7 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
         else{
            dout(4) << "GW " << gw_id << " sent beacon being in state GW_WAIT_INITIAL_MAP but it is not created yet!!! "<< dendl; 
 #ifdef BYPASS_GW_CREATE_CLI
-           pending_map.cfg_add_gw(gw_id);
+           pending_map.cfg_add_gw(gw_id ,group_key);
            dout(4) << "GW " << gw_id << " created since mode is bypass-create-cli "<< dendl;
            propose= true;
 #endif

@@ -268,11 +268,11 @@ inline std::ostream& operator<<(std::ostream& os, const GROUP_KEY value) {
 };
 
 inline std::ostream& operator<<(std::ostream& os, const GW_STATE_T value) {
-    os << "GW_STATE_T [ sm_state ";
+    os << "GW_STATE_T [ \n (gw-mon) sm_state ";
     for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
         os << value.sm_state[i] << ",";
     }
-    os << "] failover peers ";
+    os <<  "] \n (gw-mon)  failover peers ";
     for (int i = 0; i < MAX_SUPPORTED_ANA_GROUPS; i++) {
         os << value.failover_peer[i] << ",";
     }
@@ -285,7 +285,7 @@ inline std::ostream& operator<<(std::ostream& os, const GWMAP value) {
     for (auto& nqn_state: value) {
         os << " { nqn: " << nqn_state.first << " -> ";
 	for (auto& gw_state: nqn_state.second) {
-            os << " { gw_id: " << gw_state.first << " -> " <<  gw_state.second << "}";
+            os << "\n (gw-mon)  { gw_id: " << gw_state.first << " -> " <<  gw_state.second << "}";
 	}
         os << "}";
     }
@@ -297,11 +297,21 @@ inline std::ostream& operator<<(std::ostream& os, const NVMeofGwMap value) {
     for (auto& group_state: value.Gmap) {
         os << " { " << group_state.first << " } -> { " <<  group_state.second << " }";
     }
-    os << " ] [ Created_gws: ";
+    os << " ] \n (gw-mon)[ Created_gws: ";
     for (auto& group_gws: value.Created_gws) {
         os << " { " << group_gws.first << " } -> { ";
         for (auto& gw: group_gws.second) {
-            os << " { gw_id " << gw.first << " } -> { " << gw.second.ana_grp_id << " }";
+            os << " \n (gw-mon) { gw_id " << gw.first << " } -> { ana-grp-id:"  << gw.second.ana_grp_id  << " nonces : " ; // << " }";
+            // dump nonces map
+            if(gw.second.nonce_map.size())
+               for( auto &nonce_map : gw.second.nonce_map){
+                os  << "ana_grp: " << nonce_map.first  << " [ " ;
+                for (auto & nonces : nonce_map.second){
+                    os << nonces << " ";
+                }
+                os << "]" ;
+            }
+
 	}
         os << " }";
     }

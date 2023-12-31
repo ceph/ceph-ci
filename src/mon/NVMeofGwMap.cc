@@ -49,7 +49,7 @@ int  NVMeofGwMap::cfg_add_gw(const GW_ID_T &gw_id, const GROUP_KEY& group_key) {
             GW_CREATED_T gw_created(i);
             Created_gws[group_key][gw_id] = gw_created;
 
-            dout(4) << __func__ << "Created GW:  " << gw_id << " pool " << group_key.first << "group" << group_key.second
+            dout(4) << __func__ <<  "Created GW:  " << gw_id << " pool " << group_key.first << " group " << group_key.second
                     << " grpid " <<  gw_created.ana_grp_id  <<  dendl;
             return 0;
         }
