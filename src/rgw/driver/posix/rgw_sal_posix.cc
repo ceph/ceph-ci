@@ -1543,6 +1543,14 @@ int POSIXObject::copy_object(const ACLOwner& owner,
   }
 }
 
+int POSIXObject::list_parts(const DoutPrefixProvider* dpp, CephContext* cct,
+			    int max_parts, int marker, int* next_marker,
+			    bool* truncated, list_parts_each_t each_func,
+			    optional_yield y)
+{
+  return -EOPNOTSUPP;
+}
+
 int POSIXObject::get_obj_state(const DoutPrefixProvider* dpp, RGWObjState **pstate, optional_yield y, bool follow_olh)
 {
   int ret = stat(dpp);

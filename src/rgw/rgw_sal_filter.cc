@@ -1044,6 +1044,17 @@ RGWAccessControlPolicy& FilterObject::get_acl()
   return next->get_acl();
 }
 
+int FilterObject::list_parts(const DoutPrefixProvider* dpp, CephContext* cct,
+			     int max_parts, int marker, int* next_marker,
+			     bool* truncated, list_parts_each_t each_func,
+			     optional_yield y)
+{
+  return next->list_parts(dpp, cct, max_parts, marker, next_marker,
+			  truncated,
+			  sal::Object::list_parts_each_t(each_func),
+			  y);
+}
+
 int FilterObject::get_obj_state(const DoutPrefixProvider* dpp, RGWObjState **pstate,
 				optional_yield y, bool follow_olh)
 {
