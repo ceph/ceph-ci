@@ -118,6 +118,7 @@ class Options(object):
                                                   'block', 'nfs', 'ceph', 'monitors',
                                                   'gateway', 'logs', 'crush', 'maps']),
                                         [str])
+    MULTICLUSTER_CONFIG = Setting({}, [dict, str])
 
     @staticmethod
     def has_default_value(name):

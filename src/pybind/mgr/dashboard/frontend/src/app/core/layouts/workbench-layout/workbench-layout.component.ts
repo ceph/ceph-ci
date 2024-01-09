@@ -2,6 +2,7 @@ import { Component, HostBinding, OnDestroy, OnInit } from '@angular/core';
 import { Router } from '@angular/router';
 
 import { Subscription } from 'rxjs';
+import { MultiClusterService } from '~/app/shared/api/multi-cluster.service';
 
 import { FaviconService } from '~/app/shared/services/favicon.service';
 import { SummaryService } from '~/app/shared/services/summary.service';
@@ -33,12 +34,14 @@ export class WorkbenchLayoutComponent implements OnInit, OnDestroy {
     private faviconService: FaviconService,
     private authStorageService: AuthStorageService,
     private telemetryNotificationService: TelemetryNotificationService,
-    private motdNotificationService: MotdNotificationService
+    private motdNotificationService: MotdNotificationService,
+    private multiClusterService: MultiClusterService,
   ) {
     this.permissions = this.authStorageService.getPermissions();
   }
 
   ngOnInit() {
+    this.subs.add(this.multiClusterService.startPolling());
     this.subs.add(this.summaryService.startPolling());
     this.subs.add(this.taskManagerService.init(this.summaryService));
 
