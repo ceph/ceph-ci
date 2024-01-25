@@ -147,6 +147,9 @@ export class ActionLabelsI18n {
   AUTHORIZE: string;
   EXPAND_CLUSTER: string;
   NFS_EXPORT: string;
+  CONNECT: string;
+  DISCONNECT: string;
+  RECONNECT: string;
 
   constructor() {
     /* Create a new item */
@@ -233,6 +236,9 @@ export class ActionLabelsI18n {
     this.EXPAND_CLUSTER = $localize`Expand Cluster`;
 
     this.NFS_EXPORT = $localize`Create NFS Export`;
+    this.CONNECT = $localize`Connect`;
+    this.DISCONNECT = $localize`Disconnect`;
+    this.RECONNECT = $localize`Reconnect`;
   }
 }
 
