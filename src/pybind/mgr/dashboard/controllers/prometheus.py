@@ -154,6 +154,11 @@ class Prometheus(PrometheusRESTController):
     def get_alertgroup(self, **params):
         return self.alert_proxy('GET', '/alerts/groups', params)
 
+    @RESTController.Collection(method='GET', path='/prometheus_query_data')
+    def get_prometeus_query_data(self, **params):
+        params['query'] = params.pop('params')
+        return self.prometheus_proxy('GET', '/query', params)
+
 
 @APIRouter('/prometheus/notifications', Scope.PROMETHEUS)
 @APIDoc("Prometheus Notifications Management API", "PrometheusNotifications")

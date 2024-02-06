@@ -196,10 +196,7 @@ const routes: Routes = [
         children: [
           {
             path: 'overview',
-            component: MultiClusterComponent,
-            data: {
-              breadcrumbs: 'Multi-Cluster/Overview'
-            }
+            component: MultiClusterComponent
           },
           {
             path: 'manage-clusters',
