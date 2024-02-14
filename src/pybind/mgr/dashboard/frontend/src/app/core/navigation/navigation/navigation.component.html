@@ -16,7 +16,7 @@
     <!-- CLUSTER SWITCHER TEMPLATE -->
     <!-- ************************* -->
     <cds-header-navigation class="cluster-switcher"
-                           *ngIf="clustersMap?.size > 1">
+                           *ngIf="clustersMap?.size > 1 && environment.build === 'ibm'">
       <cds-header-menu [title]="currentClusterName"
                        data-testid="selected-cluster">
         <ng-container *ngFor="let cluster of clustersMap | keyvalue; trackBy:trackByFn ">
@@ -95,8 +95,8 @@
             Overview</span>
         </cds-sidenav-item>
         <!-- Multi-cluster Dashboard -->
-        <cds-sidenav-menu title="Multi-cluster"
-                          *ngIf="permissions.configOpt.read"
+        <cds-sidenav-menu title="Multi-Cluster"
+                          *ngIf="permissions.configOpt.read && environment.build === 'ibm'"
                           i18n-title>
           <svg cdsIcon="edge-cluster"
                icon
@@ -353,4 +353,4 @@
       </cds-sidenav>
     </ng-container>
   </ng-template>
-  </div>
+</div>

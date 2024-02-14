@@ -17,6 +17,7 @@ import {
 import { NotificationService } from '~/app/shared/services/notification.service';
 import { PrometheusAlertService } from '~/app/shared/services/prometheus-alert.service';
 import { SummaryService } from '~/app/shared/services/summary.service';
+import { environment } from '~/environments/environment';
 
 @Component({
   selector: 'cd-navigation',
@@ -40,6 +41,7 @@ export class NavigationComponent implements OnInit, OnDestroy {
   displayedSubMenu = {};
   private subs = new Subscription();
 
+  environment = environment;
   clustersMap: Map<string, any> = new Map<string, any>();
   selectedCluster: {
     name: string;

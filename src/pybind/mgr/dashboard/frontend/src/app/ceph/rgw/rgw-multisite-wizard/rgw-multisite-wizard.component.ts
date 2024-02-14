@@ -57,6 +57,7 @@ enum ConfigType {
   NewRealm = 'newRealm',
   ExistingRealm = 'existingRealm'
 }
+import { environment } from '~/environments/environment';
 
 @Component({
   selector: 'cd-rgw-multisite-wizard',
@@ -87,6 +88,7 @@ export class RgwMultisiteWizardComponent extends BaseModal implements OnInit {
   showConfigType = false;
   realmList: string[] = [];
   rgwModuleStatus: boolean;
+  environment = environment;
 
   constructor(
     private wizardStepsService: WizardStepsService,

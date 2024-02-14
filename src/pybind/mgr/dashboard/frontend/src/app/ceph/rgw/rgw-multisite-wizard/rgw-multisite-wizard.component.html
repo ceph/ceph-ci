@@ -25,17 +25,31 @@
           <ng-container [ngSwitch]="currentStep?.stepIndex">
             <div *ngSwitchCase="0"
                  class="ms-5">
-              <cd-alert-panel type="info"
-                              spacingClass="mb-3">
+              <ng-container *ngIf="environment.build === 'ibm'; else defaultAlert">
+                <cd-alert-panel type="info"
+                                spacingClass="mb-3">
                   This wizard enables you to set up multi-site replication within your
-                  Ceph environment.If you have already added another cluster to your
+                  Ceph environment. If you have already added another cluster to your
                   multi-cluster setup, you can select that cluster in the wizard to
-                  automate the replication process.If no additional cluster is currently
+                  automate the replication process. If no additional cluster is currently
                   added, the wizard will guide you through creating the necessary realm,
-                  zonegroup, and zone, and provide a realm token.This token can be used
+                  zonegroup, and zone, and provide a realm token. This token can be used
                   later to manually import into a desired cluster to establish replication
                   between the clusters.
-              </cd-alert-panel>
+                </cd-alert-panel>
+              </ng-container>
+
+              <ng-template #defaultAlert>
+                <cd-alert-panel type="info"
+                                spacingClass="mb-3">
+                  This wizard enables you to set up multi-site replication within your
+                  Ceph environment.It will guide you through creating the necessary realm,
+                  zonegroup, and zone, and provide a realm token. This token can be used
+                  later to manually import into a desired cluster to establish replication
+                  between the clusters.
+                </cd-alert-panel>
+              </ng-template>
+
               <div class="form-group row"
                    *ngIf="showConfigType && isMultiClusterConfigured">
                 <label class="cd-col-form-label required"
