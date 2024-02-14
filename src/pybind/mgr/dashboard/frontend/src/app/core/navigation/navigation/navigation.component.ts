@@ -17,6 +17,7 @@ import { MotdNotificationService } from '~/app/shared/services/motd-notification
 import { PrometheusAlertService } from '~/app/shared/services/prometheus-alert.service';
 import { SummaryService } from '~/app/shared/services/summary.service';
 import { TelemetryNotificationService } from '~/app/shared/services/telemetry-notification.service';
+import { environment } from '~/environments/environment';
 
 @Component({
   selector: 'cd-navigation',
@@ -44,6 +45,8 @@ export class NavigationComponent implements OnInit, OnDestroy {
   };
   displayedSubMenu = {};
   private subs = new Subscription();
+
+  environment = environment;
   clustersMap: Map<string, any> = new Map<string, any>();
   selectedCluster: object;
 
