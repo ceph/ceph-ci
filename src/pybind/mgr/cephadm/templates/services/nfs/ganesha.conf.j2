@@ -2,7 +2,7 @@
 NFS_CORE_PARAM {
         Enable_NLM = {{ enable_nlm }};
         Enable_RQUOTA = false;
-        Protocols = 4;
+        Protocols = 3, 4;
         NFS_Port = {{ port }};
 {% if bind_addr %}
         Bind_addr = {{ bind_addr }};

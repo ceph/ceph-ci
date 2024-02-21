@@ -2716,7 +2716,7 @@ class TestIngressService:
             'NFS_CORE_PARAM {\n'
             '        Enable_NLM = true;\n'
             '        Enable_RQUOTA = false;\n'
-            '        Protocols = 4;\n'
+            '        Protocols = 3, 4;\n'
             '        NFS_Port = 2049;\n'
             '        HAProxy_Hosts = 192.168.122.111, 10.10.2.20, 192.168.122.222;\n'
             '}\n'
