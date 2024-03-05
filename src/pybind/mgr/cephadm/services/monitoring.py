@@ -1,5 +1,6 @@
 import errno
 import logging
+import json
 import os
 import socket
 from typing import List, Any, Tuple, Dict, Optional, cast
@@ -408,6 +409,7 @@ class PrometheusService(CephadmService):
     DEFAULT_MGR_PROMETHEUS_PORT = 9283
     USER_CFG_KEY = 'prometheus/web_user'
     PASS_CFG_KEY = 'prometheus/web_password'
+    PROMETHEUS_CERT_CFG_KEY = 'prometheus/cert'
 
     def config(self, spec: ServiceSpec) -> None:
         # make sure module is enabled
@@ -472,6 +474,18 @@ class PrometheusService(CephadmService):
         prometheus_user, prometheus_password = self.mgr._get_prometheus_credentials()
         FSID = self.mgr._cluster_fsid
 
+        clusters_credentials = {}
+        multi_cluster_config_raw = str(self.mgr.get_module_option_ex('dashboard', 'MULTICLUSTER_CONFIG'))
+        multi_cluster_config_str = multi_cluster_config_raw.replace("'", '"')
+        valid_multi_cluster_config_str = multi_cluster_config_str.replace('True', '"True"').replace('False', '"False"')
+        multi_cluster_config = json.loads(valid_multi_cluster_config_str)
+        if multi_cluster_config:
+            for url in targets:
+                credentials = self.find_prometheus_credentials(multi_cluster_config, url)
+                if credentials:
+                    clusters_credentials[url] = credentials
+                    clusters_credentials[url]['cert_file_name'] = ''
+
         # generate the prometheus configuration
         context = {
             'alertmanager_web_user': alertmanager_user,
@@ -485,7 +499,9 @@ class PrometheusService(CephadmService):
             'haproxy_sd_url': haproxy_sd_url,
             'ceph_exporter_sd_url': ceph_exporter_sd_url,
             'external_prometheus_targets': targets,
-            'cluster_fsid': FSID
+            'cluster_fsid': FSID,
+            'nvmeof_sd_url': nvmeof_sd_url,
+            'clusters_credentials': clusters_credentials,
         }
 
         ip_to_bind_to = ''
@@ -502,8 +518,12 @@ class PrometheusService(CephadmService):
 
         mgmt_gw_enabled = len(self.mgr.cache.get_daemons_by_service('mgmt-gateway')) > 0
         if self.mgr.secure_monitoring_stack:
-            # NOTE: this prometheus root cert is managed by the prometheus module
-            # we are using it in a read only fashion in the cephadm module
+            r2: Dict[str, Any] = {'files': {}}
+            for url, credentials in clusters_credentials.items():
+                r2['files'][f'prometheus_{url}_cert.crt'] = credentials['certificate']
+                credentials['cert_file_name'] = f'prometheus_{url}_cert.crt'
+                context['clusters_credentials'] = clusters_credentials
+
             cfg_key = 'mgr/prometheus/root/cert'
             cmd = {'prefix': 'config-key get', 'key': cfg_key}
             ret, mgr_prometheus_rootca, err = self.mgr.mon_command(cmd)
@@ -516,6 +536,7 @@ class PrometheusService(CephadmService):
                 key = self.mgr.cert_key_store.get_key('prometheus_key', host=daemon_spec.host)
                 if not (cert and key):
                     cert, key = self.mgr.http_server.service_discovery.ssl_certs.generate_cert(host_fqdn, node_ip)
+                    self.mgr.set_prometheus_cert(cert)
                     self.mgr.cert_key_store.save_cert('prometheus_cert', cert, host=daemon_spec.host)
                     self.mgr.cert_key_store.save_key('prometheus_key', key, host=daemon_spec.host)
                 r: Dict[str, Any] = {
@@ -533,6 +554,9 @@ class PrometheusService(CephadmService):
                     'web_config': '/etc/prometheus/web.yml',
                     'use_url_prefix': mgmt_gw_enabled
                 }
+
+                r['files'].update(r2['files'])
+
         else:
             r = {
                 'files': {
@@ -654,6 +678,16 @@ class PrometheusService(CephadmService):
         if warn and not force:
             return HandleCommandResult(-errno.EBUSY, '', warn_message)
         return HandleCommandResult(0, warn_message, '')
+
+    def find_prometheus_credentials(self, multicluster_config, url):
+        for cluster_id, clusters in multicluster_config['config'].items():
+            for cluster in clusters:
+                prometheus_url = cluster.get('prometheus_url')
+                if prometheus_url:
+                    valid_url = prometheus_url.replace("https://", "").replace("http://", "")
+                    if valid_url == url:
+                        return cluster.get('prometheus_access_info')
+        return None
 
 
 class NodeExporterService(CephadmService):
