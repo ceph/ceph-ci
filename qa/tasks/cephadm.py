@@ -2007,6 +2007,9 @@ def deploy_samba_ad_dc(ctx, config):
     samba_client_image = config.get(
         'samba_client_image', 'quay.io/samba.org/samba-client:latest'
     )
+    samba_toolbox_image = config.get(
+        'samba_toolbox_image', 'quay.io/samba.org/samba-toolbox:latest'
+    )
     test_user_pass = config.get('test_user_pass', 'DOMAIN1\\ckent%1115Rose.')
     if not role:
         raise ConfigError(
@@ -2023,6 +2026,7 @@ def deploy_samba_ad_dc(ctx, config):
         cengine = 'docker'
     remote.run(args=['sudo', cengine, 'pull', ad_dc_image])
     remote.run(args=['sudo', cengine, 'pull', samba_client_image])
+    remote.run(args=['sudo', cengine, 'pull', samba_toolbox_image])
     _disable_systemd_resolved(ctx, remote)
     remote.run(
         args=[
@@ -2080,8 +2084,20 @@ def deploy_samba_ad_dc(ctx, config):
     if not connected:
         raise RuntimeError('failed to connect to AD DC SMB share')
 
+    # export samba-toolbox container as cmd
+    samba_toolbox_container_cmd = [
+        'sudo',
+        cengine,
+        'run',
+        '--rm',
+        '--net=host',
+        f'--dns={ip}',
+        samba_toolbox_image,
+    ]
+
     setattr(ctx, 'samba_ad_dc_ip', ip)
     setattr(ctx, 'samba_client_container_cmd', samba_client_container_cmd)
+    setattr(ctx, 'samba_toolbox_container_cmd', samba_toolbox_container_cmd)
     try:
         yield
     finally:
@@ -2105,6 +2121,7 @@ def deploy_samba_ad_dc(ctx, config):
         _reset_systemd_resolved(ctx, remote)
         setattr(ctx, 'samba_ad_dc_ip', None)
         setattr(ctx, 'samba_client_container_cmd', None)
+        setattr(ctx, 'samba_toolbox_container_cmd', None)
 
 
 @contextlib.contextmanager
