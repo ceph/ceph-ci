@@ -23,6 +23,7 @@ import { PrometheusListHelper } from '~/app/shared/helpers/prometheus-list-helpe
 import { PrometheusAlertService } from '~/app/shared/services/prometheus-alert.service';
 import { OrchestratorService } from '~/app/shared/api/orchestrator.service';
 import { AlertClass } from '~/app/shared/enum/health-icon.enum';
+import { SettingsService } from '~/app/shared/api/settings.service';
 
 @Component({
   selector: 'cd-dashboard-v3',
@@ -69,6 +70,7 @@ export class DashboardV3Component extends PrometheusListHelper implements OnInit
   telemetryURL = 'https://telemetry-public.ceph.com/';
   origin = window.location.origin;
   private subs = new Subscription();
+  managedByConfig$: Observable<any>;
 
   constructor(
     private summaryService: SummaryService,
@@ -77,6 +79,7 @@ export class DashboardV3Component extends PrometheusListHelper implements OnInit
     private authStorageService: AuthStorageService,
     private featureToggles: FeatureTogglesService,
     private healthService: HealthService,
+    private settingsService: SettingsService,
     public prometheusService: PrometheusService,
     private refreshIntervalService: RefreshIntervalService,
     public prometheusAlertService: PrometheusAlertService
@@ -95,6 +98,7 @@ export class DashboardV3Component extends PrometheusListHelper implements OnInit
     this.getPrometheusData(this.prometheusService.lastHourDateObject);
     this.getDetailsCardData();
     this.getTelemetryReport();
+    this.managedByConfig$ = this.settingsService.getValues('MANAGED_BY_CLUSTERS');
   }
 
   getTelemetryText(): string {

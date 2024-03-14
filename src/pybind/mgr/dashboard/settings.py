@@ -119,6 +119,7 @@ class Options(object):
                                                   'gateway', 'logs', 'crush', 'maps']),
                                         [str])
     MULTICLUSTER_CONFIG = Setting({}, [dict, str])
+    MANAGED_BY_CLUSTERS = Setting([], [dict, list])
 
     @staticmethod
     def has_default_value(name):
