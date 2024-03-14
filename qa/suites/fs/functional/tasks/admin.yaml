@@ -7,6 +7,7 @@ overrides:
       - missing required features
       - \(MDS_CACHE_OVERSIZED\)
       - \(MDS_TRIM\)
+      - evicting unresponsive client
 tasks:
   - cephfs_test_runner:
       fail_on_skip: false
