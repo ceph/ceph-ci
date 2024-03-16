@@ -9,6 +9,7 @@ import { Icons } from '~/app/shared/enum/icons.enum';
 import { MultiCluster } from '~/app/shared/models/multi-cluster';
 import { Permissions } from '~/app/shared/models/permissions';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
+import { CookiesService } from '~/app/shared/services/cookie.service';
 import {
   FeatureTogglesMap$,
   FeatureTogglesService
@@ -58,7 +59,8 @@ export class NavigationComponent implements OnInit, OnDestroy {
     private featureToggles: FeatureTogglesService,
     private telemetryNotificationService: TelemetryNotificationService,
     public prometheusAlertService: PrometheusAlertService,
-    private motdNotificationService: MotdNotificationService
+    private motdNotificationService: MotdNotificationService,
+    private cookieService: CookiesService
   ) {
     this.permissions = this.authStorageService.getPermissions();
     this.enabledFeature$ = this.featureToggles.get();
@@ -180,7 +182,12 @@ export class NavigationComponent implements OnInit, OnDestroy {
   onClusterSelection(value: object) {
     this.multiClusterService.setCluster(value).subscribe(
       (resp: any) => {
-        localStorage.setItem('cluster_api_url', value['url']);
+        if (value['cluster_alias'] === 'local-cluster') {
+          localStorage.setItem('cluster_api_url', '');
+        } else {
+          localStorage.setItem('current_cluster_name', `${value['name']}-${value['user']}`);
+          localStorage.setItem('cluster_api_url', value['url']);
+        }
         this.selectedCluster = this.clustersMap.get(`${value['url']}-${value['user']}`) || {};
         const clustersConfig = resp['config'];
         if (clustersConfig && typeof clustersConfig === 'object') {
@@ -194,9 +201,10 @@ export class NavigationComponent implements OnInit, OnDestroy {
 
               if (
                 clusterName === this.selectedCluster['name'] &&
-                clusterUser === this.selectedCluster['user']
+                clusterUser === this.selectedCluster['user'] &&
+                clusterDetails['cluster_alias'] !== 'local-cluster'
               ) {
-                localStorage.setItem('token_of_selected_cluster', clusterToken);
+                this.cookieService.setToken(`${clusterName}-${clusterUser}`, clusterToken);
               }
             });
           });
