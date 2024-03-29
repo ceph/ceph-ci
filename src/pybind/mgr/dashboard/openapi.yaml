@@ -10291,7 +10291,12 @@ paths:
       - Pool
   /api/prometheus:
     get:
-      parameters: []
+      parameters:
+      - default: false
+        in: query
+        name: cluster_filter
+        schema:
+          type: boolean
       responses:
         '200':
           content:
