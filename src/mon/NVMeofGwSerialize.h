@@ -130,12 +130,11 @@ inline std::ostream& print_gw_created_t(std::ostream& os, const NvmeGwCreated va
         os << " " << anas[i] <<": " << value.blocklist_data[anas[i]].osd_epoch << ":" <<value.blocklist_data[anas[i]].is_failover ;
     }
     os << "\n" << MODULE_PREFFIX << "nonces: " << value.nonce_map << " }";
-    os << "\n" << MODULE_PREFFIX << "saved-nonces: " << value.copied_nonce_map << " }";
     for (size_t i = 0; i < num_ana_groups; i++) {
         os << " " << anas[i] <<": " << value.sm_state[anas[i]] << ",";
     }
 
-    os << "]\n"<< MODULE_PREFFIX << "availability " << value.availability << "]";
+    os << "]\n"<< MODULE_PREFFIX << "availability " << value.availability << " full-startup " << value.performed_full_startup  << " ]";
 
     return os;
 }
@@ -332,7 +331,8 @@ inline void encode(const NvmeGwCreatedMap& gws,  ceph::bufferlist &bl) {
             encode((uint32_t)(gw.second.sm_state[i]), bl);
         }
         encode((uint32_t)gw.second.availability, bl);
-        encode((uint32_t)gw.second.last_gw_map_epoch_valid, bl);
+        encode((uint16_t)gw.second.performed_full_startup, bl);
+        encode((uint16_t)gw.second.last_gw_map_epoch_valid, bl);
         encode(gw.second.subsystems, bl);
 
         for(int i=0; i< MAX_SUPPORTED_ANA_GROUPS; i++){
@@ -340,7 +340,6 @@ inline void encode(const NvmeGwCreatedMap& gws,  ceph::bufferlist &bl) {
             encode(gw.second.blocklist_data[i].is_failover, bl);
         }
         encode(gw.second.nonce_map, bl);
-        encode(gw.second.copied_nonce_map, bl);
     }
     ENCODE_FINISH(bl);
 }
@@ -367,9 +366,12 @@ inline void decode(NvmeGwCreatedMap& gws, ceph::buffer::list::const_iterator &bl
         uint32_t avail;
         decode(avail, bl);
         gw_created.availability = (GW_AVAILABILITY_E)avail;
-        uint32_t gwmap_epoch;
-        decode(gwmap_epoch, bl);
-        gw_created.last_gw_map_epoch_valid = (bool)gwmap_epoch;
+        uint16_t performed_startup;
+        decode(performed_startup, bl);
+        gw_created.performed_full_startup = (bool)performed_startup;
+        uint16_t last_epoch_valid;
+        decode(last_epoch_valid, bl);
+        gw_created.last_gw_map_epoch_valid = (bool)last_epoch_valid;
         BeaconSubsystems   subsystems;
         decode(subsystems, bl);
         gw_created.subsystems = subsystems;
@@ -379,8 +381,6 @@ inline void decode(NvmeGwCreatedMap& gws, ceph::buffer::list::const_iterator &bl
             decode(gw_created.blocklist_data[i].is_failover, bl);
         }
         decode(gw_created.nonce_map, bl);
-        decode(gw_created.copied_nonce_map, bl);
-
         gws[gw_name] = gw_created;
     }
     DECODE_FINISH(bl);
