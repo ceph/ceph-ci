@@ -32,15 +32,14 @@ void NVMeofGwMon::on_restart(){
     dout(4) <<  "called " << dendl;
     last_beacon.clear();
     last_tick = ceph::coarse_mono_clock::now();
+    synchronize_last_beacon();
 }
 
 
 void NVMeofGwMon::synchronize_last_beacon(){
-    dout(4) <<  "called " << dendl;
-    last_beacon.clear();
-    last_tick = ceph::coarse_mono_clock::now();
+    dout(10) <<  "called, is leader : " << mon.is_leader()  <<" active " << is_active()  << dendl;
     // Initialize last_beacon to identify transitions of available  GWs to unavailable state
-    for (const auto& created_map_pair: pending_map.Created_gws) {
+    for (const auto& created_map_pair: map.Created_gws) {
       const auto& group_key = created_map_pair.first;
       const NvmeGwCreatedMap& gw_created_map = created_map_pair.second;
       for (const auto& gw_created_pair: gw_created_map) {
@@ -61,7 +60,6 @@ void NVMeofGwMon::on_shutdown() {
 void NVMeofGwMon::tick(){
     if (!is_active() || !mon.is_leader()){
         dout(10) << "NVMeofGwMon leader : " << mon.is_leader() << "active : " << is_active()  << dendl;
-        last_leader = false;
         return;
     }
     bool _propose_pending = false;
@@ -137,13 +135,8 @@ void NVMeofGwMon::handle_conf_change(const ConfigProxy& conf,
 void NVMeofGwMon::create_pending(){
 
     pending_map = map;// deep copy of the object
-    // TODO  since "pending_map"  can be reset  each time during paxos re-election even in the middle of the changes ...
     pending_map.epoch++;
-    dout(4) << " pending " << pending_map  << dendl;
-    if(last_leader == false){ // peon becomes leader and gets updated map , need to synchronize the last_beacon
-        synchronize_last_beacon();
-        last_leader = true;
-    }
+    dout(10) << " pending " << pending_map  << dendl;
 }
 
 void NVMeofGwMon::encode_pending(MonitorDBStore::TransactionRef t){
@@ -506,13 +499,16 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
 
 set_propose:
     if(!propose) {
-      if(gw_created){
-          ack_map.Created_gws[group_key][gw_id] = map.Created_gws[group_key][gw_id];// respond with a map slice correspondent to the same GW
-      }
-      ack_map.epoch = map.epoch;
-      dout(20) << "ack_map " << ack_map <<dendl;
-      auto msg = make_message<MNVMeofGwMap>(ack_map);
-      mon.send_reply(op, msg.detach());
+       if(gw_created){
+           ack_map.Created_gws[group_key][gw_id] = map.Created_gws[group_key][gw_id];// respond with a map slice correspondent to the same GW
+       }
+       ack_map.epoch = map.epoch;
+       dout(20) << "ack_map " << ack_map <<dendl;
+       auto msg = make_message<MNVMeofGwMap>(ack_map);
+       mon.send_reply(op, msg.detach());
+    }
+    else {
+       mon.no_reply(op);
     }
 false_return:
     if (propose){
