@@ -1211,7 +1211,7 @@ class CephNvmeof(object):
                    fetch_configs(ctx), ctx.image)
 
     @staticmethod
-    def get_container_mounts(data_dir: str, log_dir: str) -> Dict[str, str]:
+    def get_container_mounts(data_dir: str, log_dir: str, mtls_dir: Optional[str] = None) -> Dict[str, str]:
         mounts = dict()
         mounts[os.path.join(data_dir, 'config')] = '/etc/ceph/ceph.conf:z'
         mounts[os.path.join(data_dir, 'keyring')] = '/etc/ceph/keyring:z'
@@ -1220,6 +1220,8 @@ class CephNvmeof(object):
         mounts['/dev/hugepages'] = '/dev/hugepages'
         mounts['/dev/vfio/vfio'] = '/dev/vfio/vfio'
         mounts[log_dir] = '/var/log/ceph:z'
+        if mtls_dir:
+            mounts[mtls_dir] = '/src/mtls:z'
         return mounts
 
     @staticmethod
@@ -3691,8 +3693,12 @@ def get_container_mounts(ctx, fsid, daemon_type, daemon_id,
     if daemon_type == CephNvmeof.daemon_type:
         assert daemon_id
         data_dir = get_data_dir(fsid, ctx.data_dir, daemon_type, daemon_id)
-        log_dir = get_log_dir(fsid, ctx.log_dir)
-        mounts.update(CephNvmeof.get_container_mounts(data_dir, log_dir))
+        log_dir = os.path.join(ctx.log_dir, self.identity.fsid)
+        mtls_dir = os.path.join(ctx.data_dir, self.identity.fsid, 'mtls')
+        if os.path.exists(mtls_dir):
+            mounts.update(CephNvmeof.get_container_mounts(data_dir, log_dir, mtls_dir=mtls_dir))
+        else:
+            mounts.update(CephNvmeof.get_container_mounts(data_dir, log_dir))
 
     if daemon_type == CephIscsi.daemon_type:
         assert daemon_id
