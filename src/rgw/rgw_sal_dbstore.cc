@@ -1211,9 +1211,11 @@ namespace rgw::sal {
     return 0;
   }
 
-  int DBMultipartWriter::complete(size_t accounted_size, const std::string& etag,
+  int DBMultipartWriter::complete(
+		       size_t accounted_size, const std::string& etag,
                        ceph::real_time *mtime, ceph::real_time set_mtime,
                        std::map<std::string, bufferlist>& attrs,
+		       const std::optional<rgw::cksum::Cksum>& cksum,
                        ceph::real_time delete_at,
                        const char *if_match, const char *if_nomatch,
                        const std::string *user_data,
@@ -1235,6 +1237,7 @@ namespace rgw::sal {
     RGWUploadPartInfo info;
     info.num = part_num;
     info.etag = etag;
+    info.cksum = cksum;
     info.size = total_data_size;
     info.accounted_size = accounted_size;
     info.modified = real_clock::now();
@@ -1369,6 +1372,7 @@ namespace rgw::sal {
   int DBAtomicWriter::complete(size_t accounted_size, const std::string& etag,
                          ceph::real_time *mtime, ceph::real_time set_mtime,
                          std::map<std::string, bufferlist>& attrs,
+			 const std::optional<rgw::cksum::Cksum>& cksum,
                          ceph::real_time delete_at,
                          const char *if_match, const char *if_nomatch,
                          const std::string *user_data,

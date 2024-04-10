@@ -2522,6 +2522,7 @@ int POSIXMultipartUpload::init(const DoutPrefixProvider *dpp, optional_yield y,
 
   meta_obj = get_meta_obj();
 
+  mp_obj.upload_info.cksum_type = cksum_type;
   mp_obj.upload_info.dest_placement = dest_placement;
 
   bufferlist bl;
@@ -2809,9 +2810,12 @@ int POSIXMultipartWriter::process(bufferlist&& data, uint64_t offset)
   return obj->write(offset, data, dpp, null_yield);
 }
 
-int POSIXMultipartWriter::complete(size_t accounted_size, const std::string& etag,
+int POSIXMultipartWriter::complete(
+		       size_t accounted_size,
+		       const std::string& etag,
                        ceph::real_time *mtime, ceph::real_time set_mtime,
                        std::map<std::string, bufferlist>& attrs,
+		       const std::optional<rgw::cksum::Cksum>& cksum,
                        ceph::real_time delete_at,
                        const char *if_match, const char *if_nomatch,
                        const std::string *user_data,
@@ -2841,6 +2845,7 @@ int POSIXMultipartWriter::complete(size_t accounted_size, const std::string& eta
 
   info.num = part_num;
   info.etag = etag;
+  info.cksum = cksum;
   info.mtime = set_mtime;
 
   bufferlist bl;
@@ -2880,6 +2885,7 @@ int POSIXAtomicWriter::process(bufferlist&& data, uint64_t offset)
 int POSIXAtomicWriter::complete(size_t accounted_size, const std::string& etag,
                        ceph::real_time *mtime, ceph::real_time set_mtime,
                        std::map<std::string, bufferlist>& attrs,
+		       const std::optional<rgw::cksum::Cksum>& cksum,
                        ceph::real_time delete_at,
                        const char *if_match, const char *if_nomatch,
                        const std::string *user_data,
