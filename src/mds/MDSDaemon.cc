@@ -364,11 +364,11 @@ void MDSDaemon::set_up_admin_socket()
                                      asok_hook,
                                      "show cache status");
   ceph_assert(r == 0);
-  r = admin_socket->register_command("quiesce path"
+  r = admin_socket->register_command("lock path"
                                      " name=path,type=CephString,req=true"
-                                     " name=wait,type=CephBool,req=false"
+                                     " name=locks,type=CephString,n=N,req=false"
 				     ,asok_hook
-				     ,"quiesce a subtree");
+				     ,"lock a path");
   ceph_assert(r == 0);
   r = admin_socket->register_command("dump tree "
 				     "name=root,type=CephString,req=true "
