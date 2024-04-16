@@ -717,8 +717,10 @@ void Locker::_drop_locks(MutationImpl *mut, set<CInode*> *pneed_issue,
 	if (ni)
 	  pneed_issue->insert(static_cast<CInode*>(obj));
       } else {
-	ceph_assert(lock->get_sm()->can_remote_xlock);
-	peers.insert(obj->authority().first);
+        if (!lock->is_locallock()) {
+	  ceph_assert(lock->get_sm()->can_remote_xlock);
+	  peers.insert(obj->authority().first);
+        }
 	lock->put_xlock();
 	mut->locks.erase(it++);
       }
