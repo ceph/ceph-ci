@@ -593,6 +593,7 @@ class Option(Dict):
     def __init__(
             self,
             name: str,
+            level: str = "advanced",
             default: OptionValue = None,
             type: 'OptionTypeLabel' = 'str',
             desc: Optional[str] = None,
