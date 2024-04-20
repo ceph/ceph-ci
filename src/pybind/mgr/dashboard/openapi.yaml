@@ -5022,6 +5022,9 @@ paths:
                                 epoch:
                                   description: ''
                                   type: integer
+                                btime:
+                                  description: ''
+                                  type: string
                                 ever_allowed_features:
                                   description: ''
                                   type: integer
