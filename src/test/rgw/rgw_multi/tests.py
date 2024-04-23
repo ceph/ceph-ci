@@ -1934,6 +1934,35 @@ def test_object_acl():
     primary = zonegroup_conns.rw_zones[0]
     secondary = zonegroup_conns.rw_zones[1]
 
+def test_replication_status():
+    zonegroup = realm.master_zonegroup()
+    zonegroup_conns = ZonegroupConns(zonegroup)
+    zone = zonegroup_conns.rw_zones[0]
+
+    bucket = zone.conn.create_bucket(gen_bucket_name())
+    obj_name = "a"
+    k = new_key(zone, bucket.name, obj_name)
+    k.set_contents_from_string('foo')
+    zonegroup_meta_checkpoint(zonegroup)
+    zonegroup_bucket_checkpoint(zonegroup_conns, bucket.name)
+
+    head_res = zone.head_object(bucket.name, obj_name)
+    log.info("checking if object has PENDING ReplicationStatus")
+    assert(head_res["ReplicationStatus"] == "PENDING")
+
+    bilog_autotrim(zone.zone)
+    zonegroup_data_checkpoint(zonegroup_conns)
+    zonegroup_bucket_checkpoint(zonegroup_conns, bucket.name)
+
+    head_res = zone.head_object(bucket.name, obj_name)
+    log.info("checking if object has COMPLETED ReplicationStatus")
+    assert(head_res["ReplicationStatus"] == "COMPLETED")
+
+    log.info("checking that ReplicationStatus update did not write a bilog")
+    bilog = bilog_list(zone.zone, bucket.name)
+    assert(len(bilog) == 0)
+>>>>>>> 8fd247c281e (rgw: implement x-amz-replication-status for PENDING & COMPLETED)
+
     bucket = primary.create_bucket(gen_bucket_name())
     log.debug('created bucket=%s', bucket.name)
 
