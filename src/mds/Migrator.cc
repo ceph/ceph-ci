@@ -804,6 +804,9 @@ void Migrator::export_dir(CDir *dir, mds_rank_t dest)
              && parent->get_parent_dir()->ino() != MDS_INO_MDSDIR(dest)) {
     dout(7) << "Cannot export to mds." << dest << " " << *dir << ": in stray directory" << dendl;
     return;
+  } else if (dir->is_quiesced()) {
+    dout(7) << "Cannot export to mds." << dest << " " << *dir << ": is quiesced" << dendl;
+    return;
   }
 
   if (unlikely(g_conf()->mds_thrash_exports)) {
@@ -1068,6 +1071,10 @@ void Migrator::dispatch_export_dir(const MDRequestRef& mdr, int count)
     lov.add_rdlock(&dir->get_inode()->dirfragtreelock);
 
     if (!mds->locker->acquire_locks(mdr, lov, nullptr, {}, true)) {
+      /* if quiescelock cannot be wrlocked, we cannot block with dir frozen */
+      if (!mdr->is_wrlocked(diri->quiescelock)) {
+        mdr->aborted = true;
+      }
       if (mdr->aborted)
 	export_try_cancel(dir);
       return;
