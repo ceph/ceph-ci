@@ -11685,6 +11685,10 @@ bool MDCache::can_fragment(CInode *diri, const std::vector<CDir*>& dirs)
     dout(7) << "can_fragment: i won't fragment mdsdir or .ceph" << dendl;
     return false;
   }
+  if (diri->is_quiesced()) {
+    dout(7) << "can_fragment: directory inode is quiesced" << dendl;
+    return false;
+  }
 
   for (const auto& dir : dirs) {
     if (dir->scrub_is_in_progress()) {
@@ -12093,6 +12097,10 @@ void MDCache::dispatch_fragment_dir(const MDRequestRef& mdr)
     lov.lock_scatter_gather(&diri->nestlock);
     lov.lock_scatter_gather(&diri->filelock);
     if (!mds->locker->acquire_locks(mdr, lov, NULL, {}, true)) {
+      /* if quiescelock cannot be wrlocked, we cannot block with tree frozen */
+      if (!mdr->is_wrlocked(diri->quiescelock)) {
+        mdr->aborted = true;
+      }
       if (!mdr->aborted)
 	return;
     }
