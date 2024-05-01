@@ -24,7 +24,8 @@ ReplicatedBackend::ReplicatedBackend(pg_t pgid,
   : PGBackend{whoami.shard, coll, shard_services, dpp},
     pgid{pgid},
     whoami{whoami},
-    pg(pg)
+    pg(pg),
+    pct_callback([this] { return send_pct_update(); })
 {}
 
 ReplicatedBackend::ll_read_ierrorator::future<ceph::bufferlist>
@@ -89,6 +90,8 @@ ReplicatedBackend::submit_transaction(
   auto txn = std::move(t);
   auto osd_op_p = std::move(opp);
   auto _new_clone = std::move(new_clone);
+
+  cancel_pct_update();
 
   const ceph_tid_t tid = shard_services.get_tid();
   auto pending_txn =
@@ -188,6 +191,7 @@ ReplicatedBackend::submit_transaction(
     if (!to_push_delete.empty()) {
       pg.enqueue_delete_for_backfill(hoid, {}, to_push_delete);
     }
+    maybe_kick_pct_update();
     return seastar::now();
   });
 
@@ -204,6 +208,7 @@ void ReplicatedBackend::on_actingset_changed(bool same_primary)
     pending_txn.all_committed.set_exception(e_actingset_changed);
   }
   pending_trans.clear();
+  cancel_pct_update();
 }
 
 void ReplicatedBackend::got_rep_op_reply(const MOSDRepOpReply& reply)
@@ -261,7 +266,7 @@ ReplicatedBackend::request_committed(const osd_reqid_t& reqid,
   //
   // The following line of code should be "assert(pending_txn.at_version == at_version)",
   // as there can be only one transaction at any time in pending_trans due to
-  // PG::request_pg_pipeline. But there's a high possibility that we will
+  // ReplicatedBackend::request_pg_pipeline. But there's a high possibility that we will
   // improve the parallelism here in the future, which means there may be multiple
   // client requests in flight, so we loosed the restriction to as follows. Correct
   // me if I'm wrong:-)
@@ -272,3 +277,55 @@ ReplicatedBackend::request_committed(const osd_reqid_t& reqid,
     return seastar::now();
   }
 }
+
+seastar::future<> ReplicatedBackend::send_pct_update()
+{
+  ceph_assert(
+    PG_HAVE_FEATURE(pg.peering_state.get_pg_acting_features(), PCT));
+  for (const auto &i: pg.peering_state.get_actingset()) {
+    if (i == pg.get_pg_whoami()) continue;
+
+    auto pct_update = crimson::make_message<MOSDPGPCT>(
+      spg_t(pg.get_pgid().pgid, i.shard),
+      pg.get_osdmap_epoch(), pg.get_same_interval_since(),
+      pg.peering_state.get_pg_committed_to()
+    );
+
+    co_await shard_services.send_to_osd(
+      i.osd,
+      std::move(pct_update),
+      pg.get_osdmap_epoch());
+  }
+}
+
+void ReplicatedBackend::do_pct(const MOSDPGPCT &m)
+{
+  pg.peering_state.update_pct(m.pg_committed_to);
+}
+ 
+void ReplicatedBackend::maybe_kick_pct_update()
+{
+  if (!pending_trans.empty()) {
+    return;
+  }
+
+  if (!PG_HAVE_FEATURE(
+	pg.peering_state.get_pg_acting_features(), PCT)) {
+    return;
+  }
+
+  int64_t pct_delay;
+  if (!pg.peering_state.get_pgpool().info.opts.get(
+        pool_opts_t::PCT_UPDATE_DELAY, &pct_delay)) {
+    return;
+  }
+
+  shard_services.schedule_pg_callback_after(
+    pct_callback, std::chrono::seconds(pct_delay));
+}
+
+void ReplicatedBackend::cancel_pct_update()
+{
+  shard_services.cancel_pg_callback(pct_callback);
+}
+
