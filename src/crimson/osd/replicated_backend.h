@@ -6,6 +6,7 @@
 #include <boost/intrusive_ptr.hpp>
 #include <seastar/core/future.hh>
 #include <seastar/core/weak_ptr.hh>
+#include "crimson/common/intrusive_timer.h"
 #include "include/buffer_fwd.h"
 #include "osd/osd_types.h"
 
@@ -80,4 +81,16 @@ private:
 
   seastar::future<> request_committed(
     const osd_reqid_t& reqid, const eversion_t& at_version) final;
+
+  crimson::common::intrusive_timer_t::callback_t pct_callback;
+
+  /// Invoked by pct_callback to update PCT after a pause in IO
+  seastar::future<> send_pct_update();
+
+  /// Kick pct timer if repop_queue is empty
+  void maybe_kick_pct_update();
+
+  /// Cancel pct timer if scheduled
+  void cancel_pct_update();
+
 };
