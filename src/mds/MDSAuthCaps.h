@@ -299,10 +299,12 @@ public:
     }
   }
 
-  bool root_squash_in_caps() const {
-    for (const MDSCapGrant &g : grants) {
-      if (g.match.root_squash) {
-        return true;
+  bool root_squash_in_caps(std::string_view fs_name) const {
+    for (const MDSCapGrant& g : grants) {
+      if (fs_name_match(g.match.fs_name, fs_name)) {
+        if (g.match.root_squash) {
+          return true;
+        }
       }
     }
     return false;
