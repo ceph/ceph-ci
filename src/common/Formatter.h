@@ -264,6 +264,9 @@ public:
     int get_len() const override {
       return file.tellp();
     }
+    std::ofstream const& get_ofstream() const {
+      return file;
+    }
 
 protected:
     std::ostream& get_ss() override {
