@@ -1645,7 +1645,7 @@
                         "uid": "${DS_PROMETHEUS}"
                      },
                      "exemplar": false,
-                     "expr": "ALERTS{alertstate=\"firing\", cluster=~\"$Cluster\"}",
+                     "expr": "ALERTS{alertstate=\"firing\", cluster=~\"$cluster\", }",
                      "format": "table",
                      "hide": false,
                      "instant": true,
@@ -2015,8 +2015,8 @@
                "pluginVersion": "9.1.3",
                "targets": [
                   {
-                     "datasource": "${DS_PROMETHEUS}",
-                     "expr": "topk(10, ceph_pool_bytes_used{cluster=~\"$Cluster\"}/ceph_pool_max_avail{cluster=~\"$Cluster\"} * on(pool_id, cluster) group_left(instance, name) ceph_pool_metadata{cluster=~\"$Cluster\"})",
+                     "datasource": "$datasource",
+                     "expr": "topk(10, ceph_pool_bytes_used{cluster=~\"$cluster\", }/ceph_pool_max_avail{cluster=~\"$cluster\", } * on(pool_id, cluster) group_left(instance, name) ceph_pool_metadata{cluster=~\"$cluster\", })",
                      "format": "time_series",
                      "instant": false,
                      "intervalFactor": 1,
