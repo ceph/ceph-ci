@@ -276,8 +276,7 @@ public:
     }
 
     for (const MDSCapGrant &g : grants) {
-      if (g.match.fs_name == fs_name || g.match.fs_name.empty() ||
-	  g.match.fs_name == "*") {
+      if (fs_name_match(g.match.fs_name, fs_name)) {
 	if (mask & MAY_READ && g.spec.allow_read()) {
 	  return true;
 	}
@@ -311,6 +310,10 @@ public:
 
   friend std::ostream &operator<<(std::ostream &out, const MDSAuthCaps &cap);
   std::string to_string();
+protected:
+  static bool fs_name_match(std::string_view capfs, std::string_view other) {
+    return capfs == other || capfs.empty() || capfs == "*";
+  }
 private:
   std::vector<MDSCapGrant> grants;
 };
