@@ -1610,6 +1610,8 @@ private:
   feature_bitset_t myfeatures;
 
   std::vector<MDSCapAuth> cap_auths;
+
+  feature_bitset_t myfeatures;
 };
 
 /**
