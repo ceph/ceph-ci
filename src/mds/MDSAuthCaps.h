@@ -276,8 +276,7 @@ public:
     }
 
     for (const MDSCapGrant &g : grants) {
-      if (g.match.fs_name == fs_name || g.match.fs_name.empty() ||
-	  g.match.fs_name == "*") {
+      if (fs_name_match(g.match.fs_name, fs_name)) {
 	if (mask & MAY_READ && g.spec.allow_read()) {
 	  return true;
 	}
@@ -300,10 +299,12 @@ public:
     }
   }
 
-  bool root_squash_in_caps() const {
-    for (const MDSCapGrant &g : grants) {
-      if (g.match.root_squash) {
-        return true;
+  bool root_squash_in_caps(std::string_view fs_name) const {
+    for (const MDSCapGrant& g : grants) {
+      if (fs_name_match(g.match.fs_name, fs_name)) {
+        if (g.match.root_squash) {
+          return true;
+        }
       }
     }
     return false;
@@ -311,6 +312,10 @@ public:
 
   friend std::ostream &operator<<(std::ostream &out, const MDSAuthCaps &cap);
   std::string to_string();
+protected:
+  static bool fs_name_match(std::string_view capfs, std::string_view other) {
+    return capfs == other || capfs.empty() || capfs == "*";
+  }
 private:
   std::vector<MDSCapGrant> grants;
 };
