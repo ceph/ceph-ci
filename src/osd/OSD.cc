@@ -3899,11 +3899,6 @@ int OSD::init()
 
   dout(2) << "superblock: I am osd." << superblock.whoami << dendl;
 
-  if (cct->_conf.get_val<bool>("osd_compact_on_start")) {
-    dout(2) << "compacting object store's omap" << dendl;
-    store->compact();
-  }
-
   // prime osd stats
   {
     struct store_statfs_t stbuf;
@@ -4048,6 +4043,11 @@ int OSD::init()
   osd_lock.lock();
   if (is_stopping())
     return 0;
+
+  if (cct->_conf.get_val<bool>("osd_compact_on_start")) {
+    dout(2) << "compacting object store's omap" << dendl;
+    store->compact();
+  }
 
   // start objecter *after* we have authenticated, so that we don't ignore
   // the OSDMaps it requests.
