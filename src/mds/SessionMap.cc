@@ -705,6 +705,7 @@ void SessionMap::remove_session(Session *s)
 
   s->trim_completed_requests(0);
   s->item_session_list.remove_myself();
+  s->item_broken_root_squash_clients.remove_myself();
   session_map.erase(s->info.inst.name);
   dirty_sessions.erase(s->info.inst.name);
   null_sessions.insert(s->info.inst.name);

@@ -87,6 +87,7 @@ public:
   Session() = delete;
   Session(ConnectionRef con) :
     item_session_list(this),
+    item_broken_root_squash_clients(this),
     requests(member_offset(MDRequestImpl, item_session_request)),
     recall_caps(g_conf().get_val<double>("mds_recall_warning_decay_rate")),
     release_caps(g_conf().get_val<double>("mds_recall_warning_decay_rate")),
@@ -100,6 +101,7 @@ public:
   }
   ~Session() override {
     ceph_assert(!item_session_list.is_on_list());
+    ceph_assert(!item_broken_root_squash_clients.is_on_list());
     preopen_out_queue.clear();
   }
 
@@ -418,6 +420,7 @@ public:
   MDSAuthCaps auth_caps;
 
   xlist<Session*>::item item_session_list;
+  xlist<Session*>::item item_broken_root_squash_clients;
 
   std::list<ceph::ref_t<Message>> preopen_out_queue;  ///< messages for client, queued before they connect
 
@@ -682,6 +685,16 @@ public:
   void remove_session(Session *s);
   void touch_session(Session *session);
 
+  void add_to_broken_root_squash_clients(Session* s) {
+    broken_root_squash_clients.push_back(&s->item_broken_root_squash_clients);
+  }
+  uint64_t num_broken_root_squash_clients() const {
+    return broken_root_squash_clients.size();
+  }
+  auto const& get_broken_root_squash_clients() const {
+    return broken_root_squash_clients;
+  }
+
   Session *get_oldest_session(int state) {
     auto by_state_entry = by_state.find(state);
     if (by_state_entry == by_state.end() || by_state_entry->second->empty())
@@ -849,6 +862,8 @@ private:
 
   bool validate_and_encode_session(MDSRank *mds, Session *session, bufferlist& bl);
   void apply_blocklist(const std::set<entity_name_t>& victims);
+
+  xlist<Session*> broken_root_squash_clients;
 };
 
 std::ostream& operator<<(std::ostream &out, const Session &s);
