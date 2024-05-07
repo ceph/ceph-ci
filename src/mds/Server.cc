@@ -3098,8 +3098,7 @@ void Server::dispatch_peer_request(const MDRequestRef& mdr)
 	  break;
 	}
 
-        // don't add quiescelock, let the peer acquire that lock themselves
-	if (!mds->locker->acquire_locks(mdr, lov, nullptr, {}, false, true))
+	if (!mds->locker->acquire_locks(mdr, lov))
 	  return;
 	
 	// ack

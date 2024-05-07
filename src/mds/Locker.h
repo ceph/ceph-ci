@@ -54,9 +54,7 @@ public:
   bool acquire_locks(const MDRequestRef& mdr,
 		     MutationImpl::LockOpVec& lov,
 		     CInode *auth_pin_freeze=NULL,
-                     std::set<MDSCacheObject*> mustpin = {},
-		     bool auth_pin_nonblocking=false,
-                     bool skip_quiesce=false);
+		     bool auth_pin_nonblocking=false);
 
   bool try_rdlock_snap_layout(CInode *in, const MDRequestRef& mdr,
 			      int n=0, bool want_layout=false);

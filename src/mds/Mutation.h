@@ -98,6 +98,9 @@ public:
       reserve(32);
     }
 
+    void add_nolock(SimpleLock *lock, int idx=-1) {
+      add_lock(LockOp(lock), idx);
+    }
     void add_rdlock(SimpleLock *lock, int idx=-1) {
       add_lock(LockOp(lock, LockOp::RDLOCK), idx);
     }
