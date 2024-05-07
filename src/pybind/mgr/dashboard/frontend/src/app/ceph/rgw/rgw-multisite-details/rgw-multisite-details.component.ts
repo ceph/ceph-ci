@@ -6,7 +6,7 @@ import {
   TreeNode,
   TREE_ACTIONS
 } from '@circlon/angular-tree-component';
-import { NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
+import { NgbActiveModal, NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
 import _ from 'lodash';
 
 import { forkJoin, Subscription, timer as observableTimer } from 'rxjs';
@@ -38,6 +38,9 @@ import { MgrModuleService } from '~/app/shared/api/mgr-module.service';
 import { BlockUI, NgBlockUI } from 'ng-block-ui';
 import { Router } from '@angular/router';
 import { RgwMultisiteSyncPolicyComponent } from '../rgw-multisite-sync-policy/rgw-multisite-sync-policy.component';
+import { RgwMultisiteWizardComponent } from '../rgw-multisite-wizard/rgw-multisite-wizard.component';
+
+const BASE_URL = 'rgw/multisite';
 
 @Component({
   selector: 'cd-rgw-multisite-details',
@@ -67,6 +70,7 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
   migrateTableAction: CdTableAction[];
   importAction: CdTableAction[];
   exportAction: CdTableAction[];
+  multisiteReplicationActions: CdTableAction[];
   loadingIndicator = true;
   nodes: object[] = [];
   treeOptions: ITreeOptions = {
@@ -94,7 +98,7 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
   defaultZoneId = '';
   multisiteInfo: object[] = [];
   defaultsInfo: string[] = [];
-  showMigrateAction: boolean = false;
+  showMigrateAndReplicationActions = false;
   editTitle: string = 'Edit';
   deleteTitle: string = 'Delete';
   disableExport = true;
@@ -104,6 +108,7 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
   activeId: string;
 
   constructor(
+    public activeModal: NgbActiveModal,
     private modalService: ModalService,
     private timerService: TimerService,
     private authStorageService: AuthStorageService,
@@ -143,6 +148,12 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
         size: 'lg'
       });
     }
+  }
+
+  openMultisiteSetupWizard() {
+    this.bsModalRef = this.modalService.show(RgwMultisiteWizardComponent, {
+      size: 'lg'
+    });
   }
 
   openMigrateModal() {
@@ -204,49 +215,62 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
   }
 
   ngOnInit() {
-    const createRealmAction: CdTableAction = {
-      permission: 'create',
-      icon: Icons.add,
-      name: this.actionLabels.CREATE + ' Realm',
-      click: () => this.openModal('realm')
-    };
-    const createZonegroupAction: CdTableAction = {
-      permission: 'create',
-      icon: Icons.add,
-      name: this.actionLabels.CREATE + ' Zone Group',
-      click: () => this.openModal('zonegroup'),
-      disable: () => this.getDisable()
-    };
-    const createZoneAction: CdTableAction = {
-      permission: 'create',
-      icon: Icons.add,
-      name: this.actionLabels.CREATE + ' Zone',
-      click: () => this.openModal('zone')
-    };
-    const migrateMultsiteAction: CdTableAction = {
-      permission: 'read',
-      icon: Icons.exchange,
-      name: this.actionLabels.MIGRATE,
-      click: () => this.openMigrateModal()
-    };
-    const importMultsiteAction: CdTableAction = {
-      permission: 'read',
-      icon: Icons.download,
-      name: this.actionLabels.IMPORT,
-      click: () => this.openImportModal(),
-      disable: () => this.getDisableImport()
-    };
-    const exportMultsiteAction: CdTableAction = {
-      permission: 'read',
-      icon: Icons.upload,
-      name: this.actionLabels.EXPORT,
-      click: () => this.openExportModal(),
-      disable: () => this.getDisableExport()
-    };
-    this.createTableActions = [createRealmAction, createZonegroupAction, createZoneAction];
-    this.migrateTableAction = [migrateMultsiteAction];
-    this.importAction = [importMultsiteAction];
-    this.exportAction = [exportMultsiteAction];
+    this.createTableActions = [
+      {
+        permission: 'create',
+        icon: Icons.add,
+        name: this.actionLabels.CREATE + ' Realm',
+        click: () => this.openModal('realm')
+      },
+      {
+        permission: 'create',
+        icon: Icons.add,
+        name: this.actionLabels.CREATE + ' Zone Group',
+        click: () => this.openModal('zonegroup'),
+        disable: () => this.getDisable()
+      },
+      {
+        permission: 'create',
+        icon: Icons.add,
+        name: this.actionLabels.CREATE + ' Zone',
+        click: () => this.openModal('zone')
+      }
+    ];
+    this.migrateTableAction = [
+      {
+        permission: 'create',
+        icon: Icons.wrench,
+        name: this.actionLabels.MIGRATE,
+        click: () => this.openMigrateModal()
+      }
+    ];
+    this.importAction = [
+      {
+        permission: 'create',
+        icon: Icons.download,
+        name: this.actionLabels.IMPORT,
+        click: () => this.openImportModal(),
+        disable: () => this.getDisableImport()
+      }
+    ];
+    this.exportAction = [
+      {
+        permission: 'create',
+        icon: Icons.upload,
+        name: this.actionLabels.EXPORT,
+        click: () => this.openExportModal(),
+        disable: () => this.getDisableExport()
+      }
+    ];
+    this.multisiteReplicationActions = [
+      {
+        permission: 'create',
+        icon: Icons.wrench,
+        name: this.actionLabels.SETUP_MULTISITE_REPLICATION,
+        click: () =>
+          this.router.navigate([BASE_URL, { outlets: { modal: 'setup-multisite-replication' } }])
+      }
+    ];
 
     const observables = [
       this.rgwRealmService.getAllRealmsInfo(),
@@ -388,7 +412,7 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
     }
     this.realmIds = [];
     this.zoneIds = [];
-    this.getDisableMigrate();
+    this.evaluateMigrateAndReplicationActions();
     this.rgwDaemonService.list().subscribe((data: any) => {
       const realmName = data.map((item: { [x: string]: any }) => item['realm_name']);
       if (
@@ -455,7 +479,7 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
     }
   }
 
-  getDisableMigrate() {
+  evaluateMigrateAndReplicationActions() {
     if (
       this.realms.length === 0 &&
       this.zonegroups.length === 1 &&
@@ -463,11 +487,11 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
       this.zones.length === 1 &&
       this.zones[0].name === 'default'
     ) {
-      this.showMigrateAction = true;
+      this.showMigrateAndReplicationActions = true;
     } else {
-      this.showMigrateAction = false;
+      this.showMigrateAndReplicationActions = false;
     }
-    return this.showMigrateAction;
+    return this.showMigrateAndReplicationActions;
   }
 
   isDeleteDisabled(node: TreeNode): boolean {
