@@ -186,14 +186,15 @@ class Quiescer(ThrasherGreenlet):
 
             self.logger.debug(f"Dumping ops on rank {rank} ({name}) to a remote file {remote_path}")
             try:
-                _ = self.fs.rank_tell(['ops', '--flags=locks', f'--path={daemon_path}'], rank=rank)
-                remote_dumps.append((info, remote_path))
+                p = self.fs.rank_tell(['ops', '--flags=locks', f'--path={daemon_path}'], rank=rank, wait=False)
+                remote_dumps.append((info, remote_path, p))
             except Exception as e:
                 self.logger.error(f"Couldn't execute ops dump on rank {rank}, error: {e}")
 
         # now get the ops from the files
-        for info, remote_path in remote_dumps:
+        for info, remote_path, p in remote_dumps:
             try:
+                p.wait()
                 name = info['name']
                 rank = info['rank']
                 mds_remote = self.fs.mon_manager.find_remote('mds', name)
