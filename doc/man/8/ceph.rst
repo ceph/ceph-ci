@@ -1722,9 +1722,22 @@ Options
 
 	Make less verbose.
 
-.. option:: -f {json,json-pretty,xml,xml-pretty,plain,yaml}, --format
+.. option:: -f {json,json-pretty,json-file,xml,xml-pretty,plain,yaml}, --format
 
-	Format of output. Note: yaml is only valid for orch commands. 
+	Format of output.
+
+    Note: yaml is only valid for orch commands.
+
+    Note: json-file requires the --output-file argument.
+
+.. option:: --output-file OUTPUT_FILE
+
+    When using --format=json-file, the file name on the host running the daemon
+    to stream output to. Be mindful this is probably not the same machine
+    running the ceph command. So to analyze the output, it will be necessary to
+    fetch the file once the command completes.
+
+    Note: this option is only used for `ceph tell` commands.
 
 .. option:: --connect-timeout CLUSTER_TIMEOUT
 
