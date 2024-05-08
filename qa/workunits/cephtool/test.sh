@@ -896,6 +896,13 @@ function test_mds_tell()
   done
   echo New GIDs: $new_mds_gids
 
+  # Test --output-file
+  # N.B.: note this only works if mon.0 is on the same node as this script!
+  ceph tell --format=json-file --output-file=/tmp/foo mds."$F_NAME":0 status
+  expect_true test -e /tmp/foo
+  expect_true jq -e '.whoami == 0' < /tmp/foo
+  rm -f /tmp/foo
+
   remove_all_fs
   ceph osd pool delete fs_data fs_data --yes-i-really-really-mean-it
   ceph osd pool delete fs_metadata fs_metadata --yes-i-really-really-mean-it
@@ -2628,6 +2635,14 @@ function test_mon_tell()
     ceph_watch_wait "${m} \[DBG\] from.*cmd='sessions' args=\[\]: dispatch"
   done
   expect_false ceph tell mon.foo version
+
+  # Test --output-file
+  # N.B.: note this only works if mon.0 is on the same node as this script!
+  f=/tmp/mon_status
+  ceph --format=json-file --output-file="$f" tell mon.0 mon_status
+  expect_true test -e "$f"
+  expect_true jq -e '.rank == 0' < "$f"
+  rm -f "$f"
 }
 
 function test_mon_ping()
