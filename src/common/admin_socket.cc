@@ -506,7 +506,28 @@ void AdminSocket::execute_command(
 		     empty);
   }
 
-  auto f = Formatter::create(format, "json-pretty", "json-pretty");
+  string output;
+  try {
+    cmd_getval(cmdmap, "output-file", output);
+  } catch (const bad_cmd_get& e) {
+    output = "";
+  }
+
+  Formatter* f;
+  if (format == "json-file") {
+    if (output.size()) {
+      auto* jff = new JSONFormatterFile(output, false);
+      auto&& of = jff->get_ofstream();
+      if (!of.is_open()) {
+        return on_finish(-EIO, "output file could not be opened", empty);
+      }
+      f = jff;
+    } else {
+      return on_finish(-EINVAL, "output file required for json-file", empty);
+    }
+  } else {
+    f = Formatter::create(format, "json-pretty", "json-pretty");
+  }
 
   auto [retval, hook] = find_matched_hook(prefix, cmdmap);
   switch (retval) {
