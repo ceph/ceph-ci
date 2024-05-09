@@ -1334,12 +1334,10 @@ class TestFsAuthorize(CephFSTestCase):
 
         self.mount_a.umount_wait()
 
-        # Authorize client to fs1
-        FS_AUTH_CAPS = (('/', 'rw'),)
-        self.fs1.authorize(self.client_id, FS_AUTH_CAPS)
-
-        FS_AUTH_CAPS = (('/', 'rw', 'root_squash'),)
-        keyring = self.fs2.authorize(self.client_id, FS_AUTH_CAPS)
+        self.run_ceph_cmd(f'auth caps {self.client_name} '
+                          f'mon "allow r" '
+                          f'osd "allow rw tag cephfs data={self.fs1.name}, allow rw tag cephfs data={self.fs2.name}" '
+                          f'mds "allow rwp fsname={self.fs1.name}, allow rw root_squash fsname={self.fs2.name}"')
 
         CEPHFS_FEATURE_MDS_AUTH_CAPS_CHECK = 21
         # all but CEPHFS_FEATURE_MDS_AUTH_CAPS_CHECK
