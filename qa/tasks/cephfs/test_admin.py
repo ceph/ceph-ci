@@ -1334,7 +1334,7 @@ class TestFsAuthorize(CephFSTestCase):
 
         self.mount_a.umount_wait()
 
-        self.run_ceph_cmd(f'auth caps {self.client_name} '
+        self.run_ceph_cmd(f'auth caps client.{self.mount_a.client_id} '
                           f'mon "allow r" '
                           f'osd "allow rw tag cephfs data={self.fs1.name}, allow rw tag cephfs data={self.fs2.name}" '
                           f'mds "allow rwp fsname={self.fs1.name}, allow rw root_squash fsname={self.fs2.name}"')
@@ -1346,8 +1346,7 @@ class TestFsAuthorize(CephFSTestCase):
 
         # should succeed
         with self.assert_cluster_log("report clients with broken root_squash", present=False):
-            keyring_path = self.mount_a.client_remote.mktemp(data=keyring)
-            self.mount_a.remount(client_id=self.client_id, client_keyring_path=keyring_path, mntargs=mntargs, cephfs_name=self.fs1.name)
+            self.mount_a.remount(mntargs=mntargs, cephfs_name=self.fs1.name)
 
         captester = CapTester(self.mount_a, '/')
         captester.conduct_pos_test_for_read_caps()
