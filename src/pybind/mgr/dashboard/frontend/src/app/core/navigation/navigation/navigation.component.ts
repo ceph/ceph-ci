@@ -3,7 +3,6 @@ import { Component, HostBinding, OnDestroy, OnInit } from '@angular/core';
 import * as _ from 'lodash';
 import { Subscription } from 'rxjs';
 
-import { Icons } from '~/app/shared/enum/icons.enum';
 import { Permissions } from '~/app/shared/models/permissions';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
 import {
@@ -29,7 +28,6 @@ export class NavigationComponent implements OnInit, OnDestroy {
   permissions: Permissions;
   enabledFeature$: FeatureTogglesMap$;
   summaryData: any;
-  icons = Icons;
 
   rightSidebarOpen = false; // rightSidebar only opens when width is less than 768px
   showMenuSidebar = true;
