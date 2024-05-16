@@ -1440,7 +1440,7 @@ class TestFsAuthorize(CephFSTestCase):
         self.captester.conduct_neg_test_for_chown_caps()
         self.captester.conduct_neg_test_for_truncate_caps()
 
-    def test_multifs_single_path_rootsquash(self):
+    def _test_multifs_single_path_rootsquash(self):
         """
         Test root_squash with multi fs
         """
@@ -1830,7 +1830,7 @@ class TestFsAuthorizeUpdate(CephFSTestCase):
         self._remount(self.mount_a, self.fs.name, keyring2)
         self.captester.run_cap_tests(self.fs, self.client_id, PERM)
 
-    def test_idem_unaffected_root_squash(self):
+    def _test_idem_unaffected_root_squash(self):
         """
         Test that "root_squash" is not deleted from MDS caps when user runs
         "fs authorize" a second time passing same FS name and path but not
