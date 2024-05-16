@@ -2665,16 +2665,16 @@ int RGWLC::remove_bucket_config(rgw::sal::Bucket* bucket,
                                 const rgw::sal::Attrs& bucket_attrs,
 				bool merge_attrs)
 {
-  rgw::sal::Attrs attrs = bucket_attrs;
   rgw_bucket& b = bucket->get_key();
   int ret{0};
 
   if (merge_attrs) {
+    rgw::sal::Attrs& attrs = bucket->get_attrs();
     attrs.erase(RGW_ATTR_LC);
-    ret = bucket->merge_and_store_attrs(this, attrs, null_yield);
-
+    ret = bucket->put_info(this, false, real_time());
     if (ret < 0) {
-      ldpp_dout(this, 0) << "RGWLC::RGWDeleteLC() failed to set attrs on bucket="
+      ldpp_dout(this, 0) <<
+	"RGWLC::RGWDeleteLC() failed to set attrs on bucket="
 			 << b.name << " returned err=" << ret << dendl;
       return ret;
     }
