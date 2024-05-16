@@ -2695,7 +2695,7 @@ void Server::dispatch_client_request(const MDRequestRef& mdr)
     respond_to_request(mdr, mdr->more()->peer_error);
     return;
   }
-  
+
   if (is_full) {
     CInode *cur = try_get_auth_inode(mdr, req->get_filepath().get_ino());
     if (!cur) {
