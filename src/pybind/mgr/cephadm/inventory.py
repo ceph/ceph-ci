@@ -1938,6 +1938,7 @@ class CertKeyStore():
             'nvmeof_client_cert': {},  # service-name -> cert
             'nvmeof_root_ca_cert': {},  # service-name -> cert
             'agent_endpoint_root_cert': Cert(),  # cert
+            'mgmt_gw_root_cert': Cert(),  # cert
             'service_discovery_root_cert': Cert(),  # cert
             'grafana_cert': {},  # host -> cert
             'alertmanager_cert': {},  # host -> cert
@@ -1950,6 +1951,7 @@ class CertKeyStore():
         self.known_keys = {
             'agent_endpoint_key': PrivKey(),  # key
             'service_discovery_key': PrivKey(),  # key
+            'mgmt_gw_root_key': PrivKey(),  # cert
             'grafana_key': {},  # host -> key
             'alertmanager_key': {},  # host -> key
             'prometheus_key': {},  # host -> key
