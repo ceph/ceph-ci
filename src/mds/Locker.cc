@@ -230,9 +230,7 @@ struct MarkEventOnDestruct {
 bool Locker::acquire_locks(const MDRequestRef& mdr,
 			   MutationImpl::LockOpVec& lov,
 			   CInode* auth_pin_freeze,
-                           std::set<MDSCacheObject*> mustpin,
-			   bool auth_pin_nonblocking,
-                           bool skip_quiesce)
+			   bool auth_pin_nonblocking)
 {
   dout(10) << "acquire_locks " << *mdr << dendl;
   dout(20) << " lov = " << lov << dendl;
@@ -245,17 +243,36 @@ bool Locker::acquire_locks(const MDRequestRef& mdr,
 
   client_t client = mdr->get_client();
 
+  std::set<MDSCacheObject*> mustpin;
+
   if (auth_pin_freeze)
     mustpin.insert(auth_pin_freeze);
 
+  using LockOp = MutationImpl::LockOp;
+
+  std::unordered_map<MDSCacheObject*, unsigned> quiesce_op_flags;
+
   // xlocks
-  bool need_quiescelock = !skip_quiesce;
   for (size_t i = 0; i < lov.size(); ++i) {
     auto& p = lov[i];
     SimpleLock *lock = p.lock;
     MDSCacheObject *object = lock->get_parent();
     auto t = lock->get_type();
-
+  
+    if (t == CEPH_LOCK_IQUIESCE) {
+      // Overwrite any deduced flags if the quiesce lock is explicitly listed.
+      // This can be used to prevent the automatic quiesce wrlock
+      // by including iquiescelock in the lov with LockOp::flags=0
+      if (quiesce_op_flags.contains(object)) {
+        dout(15) << "overwriting deduced quiesce lock flags (" << quiesce_op_flags[object] << ")  with an explicit instruction from the lov: " << p << dendl;
+      }
+      quiesce_op_flags[object] = p.flags;
+      // remove this lock from the vector,
+      // we'll add it back below
+      lov.erase(lov.begin() + i);
+      --i;
+      continue;
+    }
     if (p.is_xlock()) {
       if ((lock->get_type() == CEPH_LOCK_ISNAP ||
 	   lock->get_type() == CEPH_LOCK_IPOLICY) &&
@@ -317,15 +334,13 @@ bool Locker::acquire_locks(const MDRequestRef& mdr,
             break;
           default:
             CInode* in = static_cast<CInode*>(object);
-            if (need_quiescelock && (lock->get_cap_shift() > 0)) {
-              dout(20) << "need shared quiesce lock for " << p << " on " << SimpleLock::get_lock_type_name(t) << " of " << in << dendl;
-              need_quiescelock = false;
-              CInode *in = static_cast<CInode*>(object);
-              lov.add_wrlock(&in->quiescelock, i + 1);
-            }
 	    if (!in->is_auth())
 	      continue;
-	    // inode version lock?
+            if ((lock->get_cap_shift() > 0) && !quiesce_op_flags.contains(in)) {
+              dout(20) << "need shared quiesce lock for " << p << " on " << SimpleLock::get_lock_type_name(t) << " of " << in << dendl;
+              quiesce_op_flags[in] = LockOp::WRLOCK;
+            }
+            // inode version lock?
 	    if (mdr->is_leader()) {
 	      // leader.  wrlock versionlock so we can pipeline inode updates to journal.
 	      lov.add_wrlock(&in->versionlock, i + 1);
@@ -349,22 +364,15 @@ bool Locker::acquire_locks(const MDRequestRef& mdr,
 		 << " in case we need to request a scatter" << dendl;
 	mustpin.insert(object);
       }
-      if (need_quiescelock && (lock->get_cap_shift() > 0)) {
+      if (object->is_auth() && (lock->get_cap_shift() > 0) && !quiesce_op_flags.contains(object)) {
         dout(20) << "need shared quiesce lock for " << p << " on " << SimpleLock::get_lock_type_name(t) << " of " << object << dendl;
-        need_quiescelock = false;
-        CInode *in = static_cast<CInode*>(object);
-        lov.add_wrlock(&in->quiescelock, i + 1);
+        quiesce_op_flags[object] = LockOp::WRLOCK;
       }
     } else if (p.is_remote_wrlock()) {
       dout(20) << " must remote_wrlock on mds." << p.wrlock_target << " "
 	       << *lock << " " << *object << dendl;
       mustpin.insert(object);
-      if (need_quiescelock && (lock->get_cap_shift() > 0)) {
-        dout(20) << "need shared quiesce lock for " << p << " on " << SimpleLock::get_lock_type_name(t) << " of " << object << dendl;
-        need_quiescelock = false;
-        CInode *in = static_cast<CInode*>(object);
-        lov.add_wrlock(&in->quiescelock, i + 1);
-      }
+      // the remote will decide if it needs to lock the quiesce lock
     } else if (p.is_rdlock()) {
       dout(20) << " must rdlock " << *lock << " " << *object << dendl;
       if (object->is_auth()) {
@@ -378,6 +386,28 @@ bool Locker::acquire_locks(const MDRequestRef& mdr,
     } else {
       ceph_assert(0 == "locker unknown lock operation");
     }
+  }
+  bool injected_quiesce_lock = false;
+  for (auto& [co, flags]: quiesce_op_flags) {
+    CInode* in = static_cast<CInode*>(co);
+    if (flags) {
+      bool exclusive = (flags & LockOp::XLOCK);
+      dout(20) << "will take " << (exclusive ? "an exclusive" : "a shared") 
+               << " quiesce lock for inode " << *in << " mdr: " << *mdr << dendl;
+      if (exclusive) {
+        lov.add_xlock(&in->quiescelock, 0);
+      } else {
+        lov.add_wrlock(&in->quiescelock, 0);
+      }
+      injected_quiesce_lock = true;
+      if (in->is_auth()) {
+        mustpin.insert(in);
+      }
+    }
+  }
+
+  if (!injected_quiesce_lock) {
+    dout(15) << "no quiesce lock taken for mdr: " << *mdr << dendl;
   }
 
   lov.sort_and_merge();
@@ -424,7 +454,7 @@ bool Locker::acquire_locks(const MDRequestRef& mdr,
       continue;
     }
     int err = 0;
-    if (!object->can_auth_pin(&err, skip_quiesce)) {
+    if (!object->can_auth_pin(&err)) {
       if (mdr->lock_cache) {
 	CDir *dir;
 	if (CInode *in = dynamic_cast<CInode*>(object)) {
@@ -464,6 +494,9 @@ bool Locker::acquire_locks(const MDRequestRef& mdr,
 	marker.message = "failed to authpin, inode is being exported";
       }
       dout(10) << " can't auth_pin (freezing?), waiting to authpin " << *object << dendl;
+      if (CDentry* dn = dynamic_cast<CDentry*>(object)) {
+        dout(10) << " can't auth_pin dir: " << *dn->get_dir() << dendl;
+      }
       object->add_waiter(MDSCacheObject::WAIT_UNFREEZE, new C_MDS_RetryRequest(mdcache, mdr));
 
       if (mdr->is_any_remote_auth_pin())
@@ -521,8 +554,6 @@ bool Locker::acquire_locks(const MDRequestRef& mdr,
       }
       if (auth_pin_nonblocking)
 	req->mark_nonblocking();
-      if (skip_quiesce)
-	req->mark_bypassfreezing();
       else if (!mdr->locks.empty())
 	req->mark_notify_blocking();
 
@@ -658,8 +689,75 @@ void Locker::handle_quiesce_failure(const MDRequestRef& mdr, std::string_view& m
 {
   dout(10) << " failed to acquire quiesce lock; dropping all locks" << dendl;
   marker = "failed to acquire quiesce lock"sv;
-  drop_locks(mdr.get(), NULL);
+  request_drop_locks(mdr);
   mdr->drop_local_auth_pins();
+}
+
+void Locker::request_drop_remote_locks(const MDRequestRef& mdr)
+{
+  if (!mdr->has_more())
+    return;
+
+  // clean up peers
+  //  (will implicitly drop remote dn pins)
+  for (set<mds_rank_t>::iterator p = mdr->more()->peers.begin();
+       p != mdr->more()->peers.end();
+       ++p) {
+    auto r = make_message<MMDSPeerRequest>(mdr->reqid, mdr->attempt,
+					    MMDSPeerRequest::OP_FINISH);
+
+    if (mdr->killed && !mdr->committing) {
+      r->mark_abort();
+    } else if (mdr->more()->srcdn_auth_mds == *p &&
+	       mdr->more()->inode_import.length() > 0) {
+      // information about rename imported caps
+      r->inode_export = std::move(mdr->more()->inode_import);
+    }
+
+    mds->send_message_mds(r, *p);
+  }
+
+  /* strip foreign xlocks out of lock lists, since the OP_FINISH drops them
+   * implicitly. Note that we don't call the finishers -- there shouldn't
+   * be any on a remote lock and the request finish wakes up all
+   * the waiters anyway! */
+
+  for (auto it = mdr->locks.begin(); it != mdr->locks.end(); ) {
+    SimpleLock *lock = it->lock;
+    if (!lock->is_locallock() && it->is_xlock() && !lock->get_parent()->is_auth()) {
+      dout(10) << "request_drop_remote_locks forgetting lock " << *lock
+	       << " on " << lock->get_parent() << dendl;
+      lock->put_xlock();
+      mdr->locks.erase(it++);
+    } else if (it->is_remote_wrlock()) {
+      dout(10) << "request_drop_remote_locks forgetting remote_wrlock " << *lock
+	       << " on mds." << it->wrlock_target << " on " << *lock->get_parent() << dendl;
+      if (it->is_wrlock()) {
+	it->clear_remote_wrlock();
+	++it;
+      } else {
+	mdr->locks.erase(it++);
+      }
+    } else {
+      ++it;
+    }
+  }
+
+  mdr->more()->peers.clear(); /* we no longer have requests out to them, and
+                                * leaving them in can cause double-notifies as
+                                * this function can get called more than once */
+}
+
+void Locker::request_drop_non_rdlocks(const MDRequestRef& mdr)
+{
+  request_drop_remote_locks(mdr);
+  drop_non_rdlocks(mdr.get());
+}
+
+void Locker::request_drop_locks(const MDRequestRef& mdr)
+{
+  request_drop_remote_locks(mdr);
+  drop_locks(mdr.get());
 }
 
 
