@@ -19,10 +19,18 @@ class NvmeofService(CephService):
 
     def config(self, spec: NvmeofServiceSpec) -> None:  # type: ignore
         assert self.TYPE == spec.service_type
-        assert spec.pool
+        if not spec.pool:
+            self.mgr.log.error(f"nvmeof config pool should be defined: {spec.pool}")
+            return False
         self.pool = spec.pool
-        assert spec.group is not None
+        if spec.group is None:
+            self.mgr.log.error(f"nvmeof config group should not be None: {spec.group}")
+            return False
         self.group = spec.group
+        # unlike some other config funcs, if this fails we can't
+        # go forward deploying the daemon and then retry later. For
+        # that reason we make no attempt to catch the OrchestratorError
+        # this may raise
         self.mgr._check_pool_exists(spec.pool, spec.service_name())
 
     def prepare_create(self, daemon_spec: CephadmDaemonDeploySpec) -> CephadmDaemonDeploySpec:
@@ -66,6 +74,8 @@ class NvmeofService(CephService):
         """
         self.mgr.log.info(f"nvmeof daemon_check_post {daemon_descrs}")
         # Assert configured
+        if not self.pool or self.group is None:
+            self.mgr.log.error(f"nvmeof daemon_check_post: invalid pool {self.pool} or group {self.group}")
         assert self.pool
         assert self.group is not None
         for dd in daemon_descrs:
