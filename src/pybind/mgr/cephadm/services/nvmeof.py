@@ -76,11 +76,20 @@ class NvmeofService(CephService):
         # Assert configured
         if not self.pool or self.group is None:
             self.mgr.log.error(f"nvmeof daemon_check_post: invalid pool {self.pool} or group {self.group}")
-        assert self.pool
-        assert self.group is not None
+        if not hasattr(self, 'pool'):
+            err_msg = ('Trying to daemon_check_post nvmeof but no pool is defined')
+            logger.error(err_msg)
+            raise OrchestratorError(err_msg)
+        if not hasattr(self, 'group') or self.group is None:
+            err_msg = ('Trying to daemon_check_post nvmeof but no group is defined')
+            logger.error(err_msg)
+            raise OrchestratorError(err_msg)
         for dd in daemon_descrs:
             self.mgr.log.info(f"nvmeof daemon_descr {dd}")
-            assert dd.daemon_id in self.gws
+            if dd.daemon_id not in self.gws:
+                err_msg = ('Trying to daemon_check_post nvmeof but daemon_id is unknown')
+                logger.error(err_msg)
+                raise OrchestratorError(err_msg)
             name = self.gws[dd.daemon_id]
             self.mgr.log.info(f"nvmeof daemon name={name}")
             # Notify monitor about this gateway creation
@@ -93,12 +102,48 @@ class NvmeofService(CephService):
             self.mgr.log.info(f"create gateway: monitor command {cmd}")
             _, _, err = self.mgr.mon_command(cmd)
             if err:
-                self.mgr.log.error(f"Unable to send monitor command {cmd}, error {err}")
+                err_msg = (f"Unable to send monitor command {cmd}, error {err}")
+                logger.error(err_msg)
+                raise OrchestratorError(err_msg)
         super().daemon_check_post(daemon_descrs)
 
     def config_dashboard(self, daemon_descrs: List[DaemonDescription]) -> None:
-        # TODO: what integration do we need with the dashboard?
-        pass
+        def get_set_cmd_dicts(out: str) -> List[dict]:
+            gateways = json.loads(out)['gateways']
+            cmd_dicts = []
+
+            spec = cast(NvmeofServiceSpec,
+                        self.mgr.spec_store.all_specs.get(daemon_descrs[0].service_name(), None))
+
+            for dd in daemon_descrs:
+                if dd.hostname is None:
+                    err_msg = ('Trying to config_dashboard nvmeof but no hostname is defined')
+                    logger.error(err_msg)
+                    raise OrchestratorError(err_msg)
+
+                if not spec:
+                    logger.warning(f'No ServiceSpec found for {dd.service_name()}')
+                    continue
+
+                ip = utils.resolve_ip(self.mgr.inventory.get_addr(dd.hostname))
+                if type(ip_address(ip)) is IPv6Address:
+                    ip = f'[{ip}]'
+                service_url = '{}:{}'.format(ip, spec.port or '5500')
+                gw = gateways.get(dd.hostname)
+                if not gw or gw['service_url'] != service_url:
+                    logger.info(f'Adding NVMeoF gateway {service_url} to Dashboard')
+                    cmd_dicts.append({
+                        'prefix': 'dashboard nvmeof-gateway-add',
+                        'inbuf': service_url,
+                        'name': dd.hostname
+                    })
+            return cmd_dicts
+
+        self._check_and_set_dashboard(
+            service_name='nvmeof',
+            get_cmd='dashboard nvmeof-gateway-list',
+            get_set_cmd_dicts=get_set_cmd_dicts
+        )
 
     def ok_to_stop(self,
                    daemon_ids: List[str],
@@ -158,8 +203,14 @@ class NvmeofService(CephService):
         """Make sure no zombie gateway is left behind
         """
         # Assert configured
-        assert self.pool
-        assert self.group is not None
+        if not hasattr(self, 'pool'):
+            err_msg = ('Trying to purge nvmeof but no pool is defined')
+            logger.error(err_msg)
+            raise OrchestratorError(err_msg)
+        if not hasattr(self, 'group') or self.group is None:
+            err_msg = ('Trying to purge nvmeof but no group is defined')
+            logger.error(err_msg)
+            raise OrchestratorError(err_msg)
         for daemon_id in self.gws:
             name = self.gws[daemon_id]
             self.gws.pop(daemon_id)
@@ -173,4 +224,6 @@ class NvmeofService(CephService):
             self.mgr.log.info(f"purge delete gateway: monitor command {cmd}")
             _, _, err = self.mgr.mon_command(cmd)
             if err:
-                self.mgr.log.error(f"Unable to send monitor command {cmd}, error {err}")
+                err_msg = (f"Unable to send monitor command {cmd}, error {err}")
+                logger.error(err_msg)
+                raise OrchestratorError(err_msg)
