@@ -242,6 +242,20 @@ void Migrator::find_stale_export_freeze()
   }
 }
 
+void Migrator::quiesce_overdrive_export(CDir *dir) {
+  map<CDir*, export_state_t>::iterator it = export_state.find(dir);
+  if (it == export_state.end()) {
+    return;
+  }
+  auto state = it->second.state;
+  if (state <= EXPORT_FREEZING) {
+    dout(10) << __func__ << "will try to cancel in state: (" << state << ") " << get_export_statename(state) << dendl;
+    export_try_cancel(dir, true);
+  } else {
+    dout(10) << __func__ << "won't cancel in state: (" << state << ") " << get_export_statename(state) << dendl;
+  }
+}
+
 void Migrator::export_try_cancel(CDir *dir, bool notify_peer)
 {
   dout(10) << *dir << dendl;
