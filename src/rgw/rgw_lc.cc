@@ -652,19 +652,8 @@ static int remove_expired_obj(const DoutPrefixProvider* dpp,
       fmt::format("ERROR: {} failed, with error: {}", __func__, ret) << dendl;
   } else {
     if (have_notify) {
-      send_notification(dpp, driver, obj.get(), oc.bucket, etag, size, version_id,
-			event_types);
-
-      // send request to notification manager
-      int publish_ret = notify->publish_commit(dpp, obj_state->size,
-					       ceph::real_clock::now(),
-					       etag,
-					       version_id);
-      if (publish_ret < 0) {
-	ldpp_dout(dpp, 5) <<
-	  fmt::format("WARNING: {} notify publish_commit failed, with error: {} ",
-		      __func__, publish_ret) << dendl;
-      }
+      send_notification(dpp, driver, obj.get(), oc.bucket, etag, size,
+			version_id, event_types);
     }
   }
 
@@ -1403,7 +1392,8 @@ public:
                               << " versioned_epoch:  " << oc.o.versioned_epoch
                               << "flags: " << oc.o.flags << dendl;
       } else {
-        ret = remove_expired_obj(oc.dpp, oc, true, {/* no delete notify expected */});
+        ret = remove_expired_obj(oc.dpp, oc, true,
+				 {/* no delete notify expected */});
         ldpp_dout(oc.dpp, 20)
             << "delete_tier_obj Object(key:" << oc.o.key << ") not current "
             << "versioned_epoch:  " << oc.o.versioned_epoch
