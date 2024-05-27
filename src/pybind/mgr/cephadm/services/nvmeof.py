@@ -132,13 +132,11 @@ class NvmeofService(CephService):
                         self.mgr.spec_store.all_specs.get(daemon_descrs[0].service_name(), None))
 
             for dd in daemon_descrs:
-                if dd.hostname is None:
-                    err_msg = ('Trying to config_dashboard nvmeof but no hostname is defined')
-                    logger.error(err_msg)
-                    raise OrchestratorError(err_msg)
+                assert dd.hostname is not None
+                service_name = dd.service_name()
 
                 if not spec:
-                    logger.warning(f'No ServiceSpec found for {dd.service_name()}')
+                    logger.warning(f'No ServiceSpec found for {service_name}')
                     continue
 
                 ip = utils.resolve_ip(self.mgr.inventory.get_addr(dd.hostname))
@@ -151,7 +149,7 @@ class NvmeofService(CephService):
                     cmd_dicts.append({
                         'prefix': 'dashboard nvmeof-gateway-add',
                         'inbuf': service_url,
-                        'name': dd.hostname
+                        'name': service_name
                     })
             return cmd_dicts
 
@@ -188,11 +186,12 @@ class NvmeofService(CephService):
         logger.debug(f'Post remove daemon {self.TYPE}.{daemon.daemon_id}')
         # to clean the keyring up
         super().post_remove(daemon, is_failed_deploy=is_failed_deploy)
+        service_name = daemon.service_name()
 
         # remove config for dashboard nvmeof gateways if any
         ret, out, err = self.mgr.mon_command({
             'prefix': 'dashboard nvmeof-gateway-rm',
-            'name': daemon.hostname,
+            'name': service_name,
         })
         if not ret:
             logger.info(f'{daemon.hostname} removed from nvmeof gateways dashboard config')
