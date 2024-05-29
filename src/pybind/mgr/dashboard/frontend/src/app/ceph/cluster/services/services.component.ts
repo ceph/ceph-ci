@@ -27,6 +27,7 @@ import { TaskWrapperService } from '~/app/shared/services/task-wrapper.service';
 import { URLBuilderService } from '~/app/shared/services/url-builder.service';
 import { PlacementPipe } from './placement.pipe';
 import { ServiceFormComponent } from './service-form/service-form.component';
+import { SettingsService } from '~/app/shared/api/settings.service';
 import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
 
 const BASE_URL = 'services';
@@ -42,6 +43,8 @@ export class ServicesComponent extends ListWithDetails implements OnChanges, OnI
   table: TableComponent;
   @ViewChild('runningTpl', { static: true })
   public runningTpl: TemplateRef<any>;
+  @ViewChild('urlTpl', { static: true })
+  public urlTpl: TemplateRef<any>;
 
   @Input() hostname: string;
 
@@ -72,6 +75,8 @@ export class ServicesComponent extends ListWithDetails implements OnChanges, OnI
   isLoadingServices = false;
   selection: CdTableSelection = new CdTableSelection();
   icons = Icons;
+  serviceUrls = { grafana: '', prometheus: '', alertmanager: '' };
+  isMgmtGateway: boolean = false;
 
   constructor(
     private actionLabels: ActionLabelsI18n,
@@ -82,6 +87,7 @@ export class ServicesComponent extends ListWithDetails implements OnChanges, OnI
     private relativeDatePipe: RelativeDatePipe,
     private taskWrapperService: TaskWrapperService,
     private router: Router,
+    private settingsService: SettingsService,
     private cdsModalService: ModalCdsService
   ) {
     super();
@@ -150,7 +156,8 @@ export class ServicesComponent extends ListWithDetails implements OnChanges, OnI
       {
         name: $localize`Service`,
         prop: 'service_name',
-        flexGrow: 1
+        flexGrow: 1,
+        cellTemplate: this.urlTpl
       },
       {
         name: $localize`Placement`,
@@ -180,6 +187,12 @@ export class ServicesComponent extends ListWithDetails implements OnChanges, OnI
       this.orchStatus = status;
       this.showDocPanel = !status.available;
     });
+
+    if (!this.isMgmtGateway) {
+      this.configureServiceUrl('api/grafana/url', 'grafana');
+      this.configureServiceUrl('ui-api/prometheus/prometheus-api-host', 'prometheus');
+      this.configureServiceUrl('ui-api/prometheus/alertmanager-api-host', 'alertmanager');
+    }
   }
 
   ngOnChanges() {
@@ -221,6 +234,9 @@ export class ServicesComponent extends ListWithDetails implements OnChanges, OnI
         this.services = services;
         this.count = pagination_obs.count;
         this.services = this.services.filter((col: any) => {
+          if (col.service_type === 'mgmt-gateway' && col.status.running) {
+            this.isMgmtGateway = true;
+          }
           return !this.hiddenServices.includes(col.service_name);
         });
         this.isLoadingServices = false;
@@ -231,6 +247,15 @@ export class ServicesComponent extends ListWithDetails implements OnChanges, OnI
         context.error();
       }
     );
+    if (
+      this.isMgmtGateway &&
+      !this.services.find(
+        (service: CephServiceSpec) =>
+          service.service_type !== 'mgmt-gateway' && service.status.running > 0
+      )
+    ) {
+      this.isMgmtGateway = false;
+    }
   }
 
   updateSelection(selection: CdTableSelection) {
@@ -258,6 +283,12 @@ export class ServicesComponent extends ListWithDetails implements OnChanges, OnI
             // the user experience.
             delay(5000)
           )
+    });
+  }
+
+  private configureServiceUrl(url: string, serviceType: string) {
+    this.settingsService.ifSettingConfigured(url, (url) => {
+      this.serviceUrls[serviceType] = url;
     });
   }
 }
