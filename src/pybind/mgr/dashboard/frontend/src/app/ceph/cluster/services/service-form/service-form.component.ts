@@ -481,6 +481,9 @@ export class ServiceFormComponent extends CdForm implements OnInit {
     this.poolService.getList().subscribe((resp: Pool[]) => {
       this.pools = resp;
       this.rbdPools = this.pools.filter(this.rbdService.isRBDPool);
+      if (!this.editing && this.serviceType) {
+        this.onServiceTypeChange(this.serviceType);
+      }
     });
 
     if (this.editing) {
@@ -680,6 +683,8 @@ export class ServiceFormComponent extends CdForm implements OnInit {
       case 'smb':
         this.serviceForm.get('count').setValue(1);
         break;
+      default:
+        this.serviceForm.get('count').setValue(null);
     }
   }
 
@@ -769,7 +774,7 @@ export class ServiceFormComponent extends CdForm implements OnInit {
   }
 
   setNvmeofServiceId(): void {
-    const defaultRbdPool: string = this.rbdPools.find((p: Pool) => p.pool_name === 'rbd')
+    const defaultRbdPool: string = this.rbdPools?.find((p: Pool) => p.pool_name === 'rbd')
       ?.pool_name;
     if (defaultRbdPool) {
       this.serviceForm.get('pool').setValue(defaultRbdPool);

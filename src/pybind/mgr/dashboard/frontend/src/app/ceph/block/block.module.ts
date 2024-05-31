@@ -39,16 +39,6 @@ import { RbdTrashMoveModalComponent } from './rbd-trash-move-modal/rbd-trash-mov
 import { RbdTrashPurgeModalComponent } from './rbd-trash-purge-modal/rbd-trash-purge-modal.component';
 import { RbdTrashRestoreModalComponent } from './rbd-trash-restore-modal/rbd-trash-restore-modal.component';
 import { NvmeofGatewayComponent } from './nvmeof-gateway/nvmeof-gateway.component';
-import { NvmeofSubsystemsComponent } from './nvmeof-subsystems/nvmeof-subsystems.component';
-import { NvmeofSubsystemsDetailsComponent } from './nvmeof-subsystems-details/nvmeof-subsystems-details.component';
-import { NvmeofTabsComponent } from './nvmeof-tabs/nvmeof-tabs.component';
-import { NvmeofSubsystemsFormComponent } from './nvmeof-subsystems-form/nvmeof-subsystems-form.component';
-import { NvmeofListenersFormComponent } from './nvmeof-listeners-form/nvmeof-listeners-form.component';
-import { NvmeofListenersListComponent } from './nvmeof-listeners-list/nvmeof-listeners-list.component';
-import { NvmeofNamespacesListComponent } from './nvmeof-namespaces-list/nvmeof-namespaces-list.component';
-import { NvmeofNamespacesFormComponent } from './nvmeof-namespaces-form/nvmeof-namespaces-form.component';
-import { NvmeofInitiatorsListComponent } from './nvmeof-initiators-list/nvmeof-initiators-list.component';
-import { NvmeofInitiatorsFormComponent } from './nvmeof-initiators-form/nvmeof-initiators-form.component';
 
 @NgModule({
   imports: [
@@ -89,17 +79,7 @@ import { NvmeofInitiatorsFormComponent } from './nvmeof-initiators-form/nvmeof-i
     RbdConfigurationFormComponent,
     RbdTabsComponent,
     RbdPerformanceComponent,
-    NvmeofGatewayComponent,
-    NvmeofSubsystemsComponent,
-    NvmeofSubsystemsDetailsComponent,
-    NvmeofTabsComponent,
-    NvmeofSubsystemsFormComponent,
-    NvmeofListenersFormComponent,
-    NvmeofListenersListComponent,
-    NvmeofNamespacesListComponent,
-    NvmeofNamespacesFormComponent,
-    NvmeofInitiatorsListComponent,
-    NvmeofInitiatorsFormComponent
+    NvmeofGatewayComponent
   ],
   exports: [RbdConfigurationListComponent, RbdConfigurationFormComponent]
 })
@@ -240,44 +220,7 @@ const routes: Routes = [
       }
     },
     children: [
-      { path: '', redirectTo: 'subsystems', pathMatch: 'full' },
-      {
-        path: 'subsystems',
-        component: NvmeofSubsystemsComponent,
-        data: { breadcrumbs: 'Subsystems' },
-        children: [
-          // subsystems
-          { path: '', component: NvmeofSubsystemsComponent },
-          {
-            path: URLVerbs.CREATE,
-            component: NvmeofSubsystemsFormComponent,
-            outlet: 'modal'
-          },
-          // listeners
-          {
-            path: `${URLVerbs.CREATE}/:subsystem_nqn/listener`,
-            component: NvmeofListenersFormComponent,
-            outlet: 'modal'
-          },
-          // namespaces
-          {
-            path: `${URLVerbs.CREATE}/:subsystem_nqn/namespace`,
-            component: NvmeofNamespacesFormComponent,
-            outlet: 'modal'
-          },
-          {
-            path: `${URLVerbs.EDIT}/:subsystem_nqn/namespace/:nsid`,
-            component: NvmeofNamespacesFormComponent,
-            outlet: 'modal'
-          },
-          // initiators
-          {
-            path: `${URLVerbs.ADD}/:subsystem_nqn/initiator`,
-            component: NvmeofInitiatorsFormComponent,
-            outlet: 'modal'
-          }
-        ]
-      },
+      { path: '', redirectTo: 'gateways', pathMatch: 'full' },
       { path: 'gateways', component: NvmeofGatewayComponent, data: { breadcrumbs: 'Gateways' } }
     ]
   }
