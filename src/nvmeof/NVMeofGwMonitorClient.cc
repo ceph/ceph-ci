@@ -59,6 +59,33 @@ const char** NVMeofGwMonitorClient::get_tracked_conf_keys() const
   return KEYS;
 }
 
+std::string read_file(const std::string& filename) {
+    std::ifstream file(filename);
+    std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    return content;
+}
+
+void NVMeofGwMonitorClient::init_gw_ssl_opts()
+{
+  if (server_cert.empty() && client_key.empty() && client_cert.empty())
+    return;
+
+  // load the certificates content
+  // create SSL/TLS credentials
+  gw_ssl_opts.pem_root_certs = read_file(server_cert);
+  gw_ssl_opts.pem_private_key = read_file(client_key);
+  gw_ssl_opts.pem_cert_chain = read_file(client_cert);
+}
+
+std::shared_ptr<grpc::ChannelCredentials> NVMeofGwMonitorClient::gw_creds()
+{
+  // use insecure channel if no keys/certs defined
+  if (server_cert.empty() && client_key.empty() && client_cert.empty())
+    return grpc::InsecureChannelCredentials();
+  else
+    return grpc::SslCredentials(gw_ssl_opts);
+}
+
 int NVMeofGwMonitorClient::init()
 {
   dout(0) << dendl;
@@ -78,10 +105,10 @@ int NVMeofGwMonitorClient::init()
       gateway_address = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--monitor-group-address", (char*)NULL)) {
       monitor_address = val;
-    } else if (ceph_argparse_witharg(args, i, &val, "--server-key", (char*)NULL)) {
-      server_key = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--server-cert", (char*)NULL)) {
       server_cert = val;
+    } else if (ceph_argparse_witharg(args, i, &val, "--client-key", (char*)NULL)) {
+      client_key = val;
     } else if (ceph_argparse_witharg(args, i, &val, "--client-cert", (char*)NULL)) {
       client_cert = val;
     } else {
@@ -95,8 +122,9 @@ int NVMeofGwMonitorClient::init()
     " address: " << gateway_address << dendl;
   ceph_assert(name != "" && pool != "" && gateway_address != "" && monitor_address != "");
 
-  // todo
-  ceph_assert(server_key == "" && server_cert == "" && client_cert == "");
+  // ensures that either all are empty or all are non-empty.
+  ceph_assert((server_cert.empty() == client_key.empty()) && (client_key.empty() == client_cert.empty()));
+  init_gw_ssl_opts();
 
   init_async_signal_handler();
   register_async_signal_handler(SIGHUP, sighup_handler);
@@ -193,7 +221,7 @@ void NVMeofGwMonitorClient::send_beacon()
   GW_AVAILABILITY_E gw_availability = GW_AVAILABILITY_E::GW_CREATED;
   BeaconSubsystems subs;
   NVMeofGwClient gw_client(
-     grpc::CreateChannel(gateway_address, grpc::InsecureChannelCredentials()));
+     grpc::CreateChannel(gateway_address, gw_creds()));
   subsystems_info gw_subsystems;
   bool ok = gw_client.get_subsystems(gw_subsystems);
   if (ok) {
@@ -307,8 +335,8 @@ void NVMeofGwMonitorClient::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> nmap)
     bool set_group_id = false;
     while (!set_group_id) {
       NVMeofGwMonitorGroupClient monitor_group_client(
-          grpc::CreateChannel(monitor_address, grpc::InsecureChannelCredentials()));
-      dout(0) << "GRPC set_group_id: " <<  new_gw_state.group_id << dendl;
+          grpc::CreateChannel(monitor_address, gw_creds()));
+      dout(10) << "GRPC set_group_id: " <<  new_gw_state.group_id << dendl;
       set_group_id = monitor_group_client.set_group_id( new_gw_state.group_id);
       if (!set_group_id) {
 	      dout(0) << "GRPC set_group_id failed" << dendl;
@@ -371,7 +399,7 @@ void NVMeofGwMonitorClient::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> nmap)
     bool set_ana_state = false;
     while (!set_ana_state) {
       NVMeofGwClient gw_client(
-          grpc::CreateChannel(gateway_address, grpc::InsecureChannelCredentials()));
+          grpc::CreateChannel(gateway_address, gw_creds()));
       set_ana_state = gw_client.set_ana_state(ai);
       if (!set_ana_state) {
 	dout(0) << "GRPC set_ana_state failed" << dendl;
