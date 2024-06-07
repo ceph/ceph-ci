@@ -31,7 +31,6 @@ import { NotificationService } from '~/app/shared/services/notification.service'
 import { TaskWrapperService } from '~/app/shared/services/task-wrapper.service';
 import { WizardStepsService } from '~/app/shared/services/wizard-steps.service';
 import { DriveGroup } from '../osd/osd-form/drive-group.model';
-import { Location } from '@angular/common';
 
 @Component({
   selector: 'cd-create-cluster',
@@ -70,8 +69,7 @@ export class CreateClusterComponent implements OnInit, OnDestroy {
     private modalService: ModalService,
     private taskWrapper: TaskWrapperService,
     private osdService: OsdService,
-    private route: ActivatedRoute,
-    private location: Location
+    private route: ActivatedRoute
   ) {
     this.permissions = this.authStorageService.getPermissions();
     this.currentStepSub = this.wizardStepsService
@@ -231,7 +229,7 @@ export class CreateClusterComponent implements OnInit, OnDestroy {
     if (!this.wizardStepsService.isFirstStep()) {
       this.wizardStepsService.moveToPreviousStep();
     } else {
-      this.location.back();
+      this.router.navigate(['/dashboard']);
     }
   }
 
