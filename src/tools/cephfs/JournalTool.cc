@@ -888,14 +888,14 @@ int JournalTool::recover_dentries(
       }
 
       if ((other_pool || write_dentry) && !dry_run) {
-        dout(4) << "writing I dentry " << key << " into frag "
+        dout(4) << "writing i dentry " << key << " into frag "
           << frag_oid.name << dendl;
         dout(20) << " dnfirst = " << fb.dnfirst << dendl;
         if (!fb.alternate_name.empty()) {
           dout(20) << " alternate_name = " << fb.alternate_name << dendl;
         }
 
-        // Compose: Dentry format is dnfirst, [I|L], InodeStore(bare=true)
+        // Compose: Dentry format is dnfirst, [i|l], InodeStore(bare=true)
         bufferlist dentry_bl;
         encode(fb.dnfirst, dentry_bl);
         encode('I', dentry_bl);
