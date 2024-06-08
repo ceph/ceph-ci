@@ -888,14 +888,21 @@ int JournalTool::recover_dentries(
       }
 
       if ((other_pool || write_dentry) && !dry_run) {
-        dout(4) << "writing I dentry " << key << " into frag "
+        dout(4) << "writing i dentry " << key << " into frag "
           << frag_oid.name << dendl;
+        dout(20) << " dnfirst = " << fb.dnfirst << dendl;
+        if (!fb.alternate_name.empty()) {
+          dout(20) << " alternate_name = " << fb.alternate_name << dendl;
+        }
 
-        // Compose: Dentry format is dnfirst, [I|L], InodeStore(bare=true)
+        // Compose: Dentry format is dnfirst, [i|l], InodeStore(bare=true)
         bufferlist dentry_bl;
         encode(fb.dnfirst, dentry_bl);
-        encode('I', dentry_bl);
-        encode_fullbit_as_inode(fb, true, &dentry_bl);
+        encode('i', dentry_bl);
+        ENCODE_START(2, 1, dentry_bl);
+        encode(fb.alternate_name, dentry_bl);
+        encode_fullbit_as_inode(fb, false, &dentry_bl);
+        ENCODE_FINISH(dentry_bl);
 
         // Record for writing to RADOS
         write_vals[key] = dentry_bl;
@@ -953,9 +960,12 @@ int JournalTool::recover_dentries(
         // Compose: Dentry format is dnfirst, [I|L], InodeStore(bare=true)
         bufferlist dentry_bl;
         encode(rb.dnfirst, dentry_bl);
-        encode('L', dentry_bl);
+        encode('l', dentry_bl);
+        ENCODE_START(2, 1, dentry_bl);
         encode(rb.ino, dentry_bl);
         encode(rb.d_type, dentry_bl);
+        encode(rb.alternate_name, dentry_bl);
+        ENCODE_FINISH(dentry_bl);
 
         // Record for writing to RADOS
         write_vals[key] = dentry_bl;
@@ -1034,7 +1044,7 @@ int JournalTool::recover_dentries(
    */
   for (const auto& fb : metablob.roots) {
     inodeno_t ino = fb.inode->ino;
-    dout(4) << "updating root 0x" << std::hex << ino << std::dec << dendl;
+    dout(4) << "updating root " << ino << dendl;
 
     object_t root_oid = InodeStore::get_object_name(ino, frag_t(), ".inode");
     dout(4) << "object id " << root_oid.name << dendl;
@@ -1265,7 +1275,7 @@ int JournalTool::consume_inos(const std::set<inodeno_t> &inos)
     {
       const inodeno_t ino = *i;
       if (ino_table.force_consume(ino)) {
-        dout(4) << "Used ino 0x" << std::hex << ino << std::dec
+        dout(4) << "Used ino " << ino
           << " requires inotable update" << dendl;
         inotable_modified = true;
       }
