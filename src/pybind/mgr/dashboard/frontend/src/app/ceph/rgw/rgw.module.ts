@@ -60,6 +60,8 @@ import { RgwMultisiteSyncPolicyDetailsComponent } from './rgw-multisite-sync-pol
 import { RgwMultisiteSyncFlowModalComponent } from './rgw-multisite-sync-flow-modal/rgw-multisite-sync-flow-modal.component';
 import { RgwMultisiteSyncPipeModalComponent } from './rgw-multisite-sync-pipe-modal/rgw-multisite-sync-pipe-modal.component';
 import { RgwMultisiteTabsComponent } from './rgw-multisite-tabs/rgw-multisite-tabs.component';
+import { RgwConfigurationPageComponent } from './rgw-configuration-page/rgw-configuration-page.component';
+import { RgwConfigDetailsComponent } from './rgw-config-details/rgw-config-details.component';
 
 @NgModule({
   imports: [
@@ -127,6 +129,9 @@ import { RgwMultisiteTabsComponent } from './rgw-multisite-tabs/rgw-multisite-ta
     RgwMultisiteTabsComponent
   ],
   providers: [TitleCasePipe]
+    RgwConfigDetailsComponent,
+    RgwConfigurationPageComponent
+  ]
 })
 export class RgwModule {}
 
@@ -271,6 +276,12 @@ const routes: Routes = [
         data: { breadcrumbs: ActionLabels.EDIT }
       }
     ]
+    children: [{ path: '', component: RgwMultisiteDetailsComponent }]
+  },
+  {
+    path: 'configuration',
+    data: { breadcrumbs: 'Configuration' },
+    children: [{ path: '', component: RgwConfigurationPageComponent }]
   }
 ];
 
