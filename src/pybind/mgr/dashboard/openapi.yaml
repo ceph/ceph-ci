@@ -7366,6 +7366,8 @@ paths:
               properties:
                 cluster_alias:
                   type: string
+                name:
+                  type: string
                 ssl_certificate:
                   type: string
                 url:
@@ -7376,6 +7378,7 @@ paths:
                   default: false
                   type: boolean
               required:
+              - name
               - url
               - cluster_alias
               - username
