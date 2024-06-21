@@ -2246,19 +2246,19 @@ int update_bucket_topic_mappings(const DoutPrefixProvider* dpp,
   // fetch the list of subscribed topics stored inside old_bucket attrs.
   std::unordered_map<std::string, rgw_pubsub_topic> old_topics;
   for (const auto& [_, topic_filter] : old_bucket_topics.topics) {
-    old_topics[topic_filter.topic.name] = topic_filter.topic;
+    old_topics[topic_filter.topic.arn] = topic_filter.topic;
   }
   // fetch the list of subscribed topics stored inside current_bucket attrs.
   std::unordered_map<std::string, rgw_pubsub_topic> current_topics;
   for (const auto& [_, topic_filter] : current_bucket_topics.topics) {
-    current_topics[topic_filter.topic.name] = topic_filter.topic;
+    current_topics[topic_filter.topic.arn] = topic_filter.topic;
   }
   // traverse thru old topics and check if they are not in current, then delete
   // the mapping, if present in both current and old then delete from current
   // set as we do not need to update those mapping.
   int ret = 0;
-  for (const auto& [topic_name, topic] : old_topics) {
-    auto it = current_topics.find(topic_name);
+  for (const auto& [topic_arn, topic] : old_topics) {
+    auto it = current_topics.find(topic_arn);
     if (it == current_topics.end()) {
       const auto op_ret = driver->update_bucket_topic_mapping(
           topic, rgw_make_bucket_entry_name(bucket_tenant, bucket_name),
@@ -2273,7 +2273,7 @@ int update_bucket_topic_mappings(const DoutPrefixProvider* dpp,
   }
   // traverse thru current topics and check if they are any present, then add
   // the mapping.
-  for (const auto& [topic_name, topic] : current_topics) {
+  for (const auto& [topic_arn, topic] : current_topics) {
     const auto op_ret = driver->update_bucket_topic_mapping(
         topic, rgw_make_bucket_entry_name(bucket_tenant, bucket_name),
         /*add_mapping=*/true, null_yield, dpp);
