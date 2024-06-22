@@ -19,7 +19,12 @@ import {
   UIShellModule,
   ButtonModule,
   NotificationModule,
-  IconModule
+  IconModule,
+  IconService,
+  TooltipModule,
+  GridModule,
+  AccordionModule,
+  LoadingModule
 } from 'carbon-components-angular';
 
 import { MotdComponent } from '~/app/shared/components/motd/motd.component';
@@ -68,6 +73,9 @@ import { CallHomeNotificationComponent } from './call-home-notification/call-hom
 import { StorageInsightsModalComponent } from './storage-insights-modal/storage-insights-modal.component';
 import { StorageInsightsNotificationComponent } from './storage-insights-notification/storage-insights-notification.component';
 
+// Icons
+import InfoIcon from '@carbon/icons/es/information/16';
+
 @NgModule({
   imports: [
     CommonModule,
@@ -90,7 +98,12 @@ import { StorageInsightsNotificationComponent } from './storage-insights-notific
     UIShellModule,
     ButtonModule,
     NotificationModule,
-    IconModule
+    IconModule,
+    TooltipModule,
+    IconModule,
+    GridModule,
+    AccordionModule,
+    LoadingModule
   ],
   declarations: [
     SparklineComponent,
@@ -179,4 +192,8 @@ import { StorageInsightsNotificationComponent } from './storage-insights-notific
     StorageInsightsNotificationComponent
   ]
 })
-export class ComponentsModule {}
+export class ComponentsModule {
+  constructor(private iconService: IconService) {
+    this.iconService.registerAll([InfoIcon]);
+  }
+}
