@@ -3783,8 +3783,6 @@ void RGWCreateBucket::execute(optional_yield y)
      * changed in the meantime, we have to refresh. */
     short tries = 0;
     do {
-      map<string, bufferlist> battrs;
-
       op_ret = s->bucket->load_bucket(this, y);
       if (op_ret < 0) {
         return;
@@ -3822,7 +3820,8 @@ void RGWCreateBucket::execute(optional_yield y)
       s->bucket->get_info().has_website = !s->bucket->get_info().website_conf.is_empty();
 
       /* This will also set the quota on the bucket. */
-      op_ret = s->bucket->merge_and_store_attrs(this, createparams.attrs, y);
+      createparams.attrs.swap(s->bucket->get_attrs());
+      op_ret = s->bucket->put_info(this, false, real_time(), y);
     } while (op_ret == -ECANCELED && tries++ < 20);
 
     /* Restore the proper return code. */
@@ -5183,7 +5182,7 @@ void RGWPutMetadataBucket::execute(optional_yield y)
     return;
   }
 
-  op_ret = retry_raced_bucket_write(this, s->bucket.get(), [this] {
+  op_ret = retry_raced_bucket_write(this, s->bucket.get(), [this, y] {
       /* Encode special metadata first as we're using std::map::emplace under
        * the hood. This method will add the new items only if the map doesn't
        * contain such keys yet. */
@@ -5230,7 +5229,8 @@ void RGWPutMetadataBucket::execute(optional_yield y)
       /* Setting attributes also stores the provided bucket info. Due
        * to this fact, the new quota settings can be serialized with
        * the same call. */
-      op_ret = s->bucket->merge_and_store_attrs(this, attrs, s->yield);
+      s->bucket->get_attrs() = attrs;
+      op_ret = s->bucket->put_info(this, false, real_time(), y);
       return op_ret;
     }, y);
 }
