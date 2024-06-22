@@ -3886,8 +3886,6 @@ void RGWCreateBucket::execute(optional_yield y)
      * changed in the meantime, we have to refresh. */
     short tries = 0;
     do {
-      map<string, bufferlist> battrs;
-
       op_ret = s->bucket->load_bucket(this, y);
       if (op_ret < 0) {
         return;
