@@ -53,7 +53,7 @@ export class NvmeofSubsystemsComponent extends ListWithDetails implements OnInit
         prop: 'namespace_count'
       },
       {
-        name: $localize`# Maximum Allowed Namespaces`,
+        name: $localize`# Maximum Namespaces`,
         prop: 'max_namespaces'
       }
     ];
@@ -64,24 +64,6 @@ export class NvmeofSubsystemsComponent extends ListWithDetails implements OnInit
         icon: Icons.add,
         click: () => this.router.navigate([BASE_URL, { outlets: { modal: [URLVerbs.CREATE] } }]),
         canBePrimary: (selection: CdTableSelection) => !selection.hasSelection
-      },
-      {
-        name: this.actionLabels.EDIT,
-        permission: 'update',
-        icon: Icons.edit,
-        click: () =>
-          this.router.navigate([
-            BASE_URL,
-            {
-              outlets: {
-                modal: [
-                  URLVerbs.EDIT,
-                  this.selection.first().nqn,
-                  this.selection.first().max_namespaces
-                ]
-              }
-            }
-          ])
       },
       {
         name: this.actionLabels.DELETE,
