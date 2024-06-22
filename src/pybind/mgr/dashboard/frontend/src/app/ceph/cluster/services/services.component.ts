@@ -27,6 +27,7 @@ import { TaskWrapperService } from '~/app/shared/services/task-wrapper.service';
 import { URLBuilderService } from '~/app/shared/services/url-builder.service';
 import { PlacementPipe } from './placement.pipe';
 import { ServiceFormComponent } from './service-form/service-form.component';
+import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
 
 const BASE_URL = 'services';
 
@@ -80,7 +81,8 @@ export class ServicesComponent extends ListWithDetails implements OnChanges, OnI
     private cephServiceService: CephServiceService,
     private relativeDatePipe: RelativeDatePipe,
     private taskWrapperService: TaskWrapperService,
-    private router: Router
+    private router: Router,
+    private cdsModalService: ModalCdsService
   ) {
     super();
     this.permissions = this.authStorageService.getPermissions();
@@ -237,7 +239,7 @@ export class ServicesComponent extends ListWithDetails implements OnChanges, OnI
 
   deleteAction() {
     const service = this.selection.first();
-    this.modalService.show(CriticalConfirmationModalComponent, {
+    this.cdsModalService.show(CriticalConfirmationModalComponent, {
       itemDescription: $localize`Service`,
       itemNames: [service.service_name],
       actionDescription: 'delete',

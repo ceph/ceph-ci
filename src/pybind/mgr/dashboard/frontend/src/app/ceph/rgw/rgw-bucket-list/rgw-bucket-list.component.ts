@@ -17,7 +17,7 @@ import { Permission } from '~/app/shared/models/permissions';
 import { DimlessBinaryPipe } from '~/app/shared/pipes/dimless-binary.pipe';
 import { DimlessPipe } from '~/app/shared/pipes/dimless.pipe';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
-import { ModalService } from '~/app/shared/services/modal.service';
+import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
 import { URLBuilderService } from '~/app/shared/services/url-builder.service';
 
 const BASE_URL = 'rgw/bucket';
@@ -48,7 +48,7 @@ export class RgwBucketListComponent extends ListWithDetails implements OnInit {
     private dimlessBinaryPipe: DimlessBinaryPipe,
     private dimlessPipe: DimlessPipe,
     private rgwBucketService: RgwBucketService,
-    private modalService: ModalService,
+    private modalService: ModalCdsService,
     private urlBuilder: URLBuilderService,
     public actionLabels: ActionLabelsI18n,
     protected ngZone: NgZone
