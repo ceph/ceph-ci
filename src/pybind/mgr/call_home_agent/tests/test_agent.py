@@ -4,7 +4,7 @@ import json
 
 from unittest.mock import MagicMock, Mock, patch
 
-from call_home_agent.module import Report
+from call_home_agent.module import Report, exec_prometheus_query
 
 TEST_JWT_TOKEN = r"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJ0ZXN0IiwiaWF0IjoxNjkxNzUzNDM5LCJqdGkiOiIwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAwMTIzNDU2Nzg5MCJ9.0F66k81_PmKoSd9erQoxnq73760SXs8WQTd3s8pqEFY\\"
 EXPECTED_JTI = '01234567890123456789001234567890'
@@ -196,6 +196,25 @@ class TestReport(unittest.TestCase):
         self.report.last_upload = str(int(time.time()))
         self.report.send(force=True)
         mock_post.assert_called()
+
+    @patch('requests.get')
+    def test_exec_prometheus_query(self, mock_get):
+        request_get_response = MagicMock(status_code=200, reason='pepe', text='{"status":"success","data":{"resultType":"vector","result":[{"metric":{"ceph_health":"HEALTH_OK"},"value":[1616414100,"1"]}]}}')
+        mock_get.return_value = request_get_response
+        result = exec_prometheus_query("http://prom/query/v1", "ceph_health")
+        assert result['status'] ==  "success"
+
+        # Test metric error (server is ok, but something wrong executing the query):
+        request_get_response.raise_for_status = MagicMock(side_effect=Exception("Error in metrics"))
+        with self.assertRaises(Exception) as exception_context:
+            result = exec_prometheus_query("http://prom/query/v1", "ceph_health")
+        self.assertRegex(str(exception_context.exception), "Error in metrics")
+
+        # Result metrics not returned because a Prometheus server problem
+        mock_get.side_effect=Exception("Server error")
+        with self.assertRaises(Exception) as exception_context:
+            result = exec_prometheus_query("http://prom/query/v1", "ceph_health")
+        self.assertRegex(str(exception_context.exception), "Server error")
 
     def tearDown(self):
         self.patcher.stop()
