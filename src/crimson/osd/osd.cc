@@ -1178,6 +1178,10 @@ seastar::future<> OSD::committed_osd_maps(
       }
       if (should_restart()) {
         return restart();
+      } else if (!pg_shard_manager.is_stopping()) {
+        //FIXME: please see https://tracker.ceph.com/issues/66832 for info
+        // about the commented out code below
+	return get_shard_services().osdmap_subscribe(osdmap->get_epoch() + 1, false);
       } else {
         return seastar::now();
       }
