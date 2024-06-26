@@ -313,6 +313,11 @@ if(WITH_RADOSGW_D4N)
   target_include_directories(rgw_common SYSTEM PUBLIC "${CMAKE_SOURCE_DIR}/src/cpp_redis/tacopie/includes")
 endif()
 
+# work around https://github.com/Cyan4973/xxHash/issues/943 for debug builds
+target_compile_definitions(rgw_common PUBLIC
+  $<$<CONFIG:Debug>:XXH_NO_INLINE_HINTS=1>
+  $<$<CONFIG:RelWithDebInfo>:XXH_NO_INLINE_HINTS=1>)
+
 if(WITH_RADOSGW_KAFKA_ENDPOINT)
   # used by rgw_kafka.cc
   target_link_libraries(rgw_common
