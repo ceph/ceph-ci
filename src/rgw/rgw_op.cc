@@ -4068,11 +4068,8 @@ int RGWPutObj::verify_permission(optional_yield y)
 
   rgw_add_to_iam_environment(s->env, "s3:x-amz-acl", s->canned_acl);
 
-  if (obj_tags != nullptr && obj_tags->count() > 0){
-    auto tags = obj_tags->get_tags();
-    for (const auto& kv: tags){
-      rgw_add_to_iam_environment(s->env, "s3:RequestObjectTag/"+kv.first, kv.second);
-    }
+  for (const auto& kv: obj_tags.get_tags()) {
+    rgw_add_to_iam_environment(s->env, "s3:RequestObjectTag/"+kv.first, kv.second);
   }
 
   // add server-side encryption headers
@@ -4332,7 +4329,7 @@ void RGWPutObj::execute(optional_yield y)
 		       s->object.get(), s->src_object.get(), s,
 		       rgw::notify::ObjectCreatedPut, y);
   if(!multipart) {
-    op_ret = res->publish_reserve(this, obj_tags.get());
+    op_ret = res->publish_reserve(this, &obj_tags);
     if (op_ret < 0) {
       return;
     }
@@ -4623,7 +4620,7 @@ void RGWPutObj::execute(optional_yield y)
     ldpp_dout(this, 0) << "failed to read sync policy for bucket: " << s->bucket << dendl;
     return;
   }
-  if (policy_handler && policy_handler->bucket_exports_object(s->object->get_name(), *obj_tags)) {
+  if (policy_handler && policy_handler->bucket_exports_object(s->object->get_name(), obj_tags)) {
     bufferlist repl_bl;
     repl_bl.append("PENDING");
     emplace_attr(RGW_ATTR_OBJ_REPLICATION_STATUS, std::move(repl_bl));
@@ -4682,7 +4679,7 @@ void RGWPutObj::execute(optional_yield y)
     return;
   }
   encode_delete_at_attr(delete_at, attrs);
-  encode_obj_tags_attr(obj_tags.get(), attrs);
+  encode_obj_tags_attr(obj_tags, attrs);
   rgw_cond_decode_objtags(s, attrs);
 
   /* Add a custom metadata to expose the information whether an object
