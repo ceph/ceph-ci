@@ -6,7 +6,6 @@ import ipaddress
 import logging
 import re
 import shlex
-import socket
 from collections import defaultdict
 from configparser import ConfigParser
 from contextlib import contextmanager
@@ -36,7 +35,8 @@ from ceph.deployment.drive_group import DriveGroupSpec
 from ceph.deployment.service_spec import \
     ServiceSpec, PlacementSpec, \
     HostPlacementSpec, IngressSpec, \
-    TunedProfileSpec, IscsiServiceSpec
+    TunedProfileSpec, IscsiServiceSpec, \
+    MgmtGatewaySpec
 from ceph.utils import str_to_datetime, datetime_to_str, datetime_now
 from cephadm.serve import CephadmServe
 from cephadm.services.cephadmservice import CephadmDaemonDeploySpec
@@ -72,6 +72,7 @@ from .services.container import CustomContainerService
 from .services.iscsi import IscsiService
 from .services.nvmeof import NvmeofService
 from .services.mgmt_gateway import MgmtGatewayService
+from .services.oauth2_proxy import OAuth2ProxyService
 from .services.nfs import NFSService
 from .services.osd import OSDRemovalQueue, OSDService, OSD, NotFoundError
 from .services.monitoring import GrafanaService, AlertmanagerService, PrometheusService, \
@@ -141,6 +142,7 @@ DEFAULT_HAPROXY_IMAGE = 'registry.redhat.io/rhceph/rhceph-haproxy-rhel9:latest'
 DEFAULT_KEEPALIVED_IMAGE = 'registry.redhat.io/rhceph/keepalived-rhel9:latest'
 DEFAULT_SNMP_GATEWAY_IMAGE = 'registry.redhat.io/rhceph/snmp-notifier-rhel9:latest'
 DEFAULT_NGINX_IMAGE = 'registry.redhat.io/rhel9/nginx-124:latest'
+DEFAULT_OAUTH2_PROXY = 'cp.stg.icr.io/cp/ibm-ceph/oauth2-proxy:v7.6.0'
 DEFAULT_SAMBA_IMAGE = 'cp.icr.io/cp/ibm-ceph/samba-server-rhel9:latest'
 # ------------------------------------------------------------------------------
 
@@ -282,6 +284,11 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             'container_image_nginx',
             default=DEFAULT_NGINX_IMAGE,
             desc='Nginx container image',
+        ),
+        Option(
+            'container_image_oauth2_proxy',
+            default=DEFAULT_OAUTH2_PROXY,
+            desc='oauth2-proxy container image',
         ),
         Option(
             'container_image_samba',
@@ -548,6 +555,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             self.container_image_keepalived = ''
             self.container_image_snmp_gateway = ''
             self.container_image_nginx = ''
+            self.container_image_oauth2_proxy = ''
             self.container_image_samba = ''
             self.warn_on_stray_hosts = True
             self.warn_on_stray_daemons = True
@@ -689,6 +697,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             SMBService,
             SNMPGatewayService,
             MgmtGatewayService,
+            OAuth2ProxyService,
         ]
 
         # https://github.com/python/mypy/issues/8993
@@ -746,16 +755,38 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
            If the FQDN can't be resolved, the address from the inventory will
            be returned instead.
         """
-        # TODO(redo): get fqdn from the inventory
-        addr = self.inventory.get_addr(hostname)
-        return socket.getfqdn(addr)
+        return self.inventory.get_fqdn(hostname) or self.inventory.get_addr(hostname)
 
-    def _get_security_config(self) -> Tuple[bool, bool]:
-        # TODO(redo): enable when oauth2-proxy code is active
-        # oauth2_proxy_enabled = len(self.mgr.cache.get_daemons_by_service('oauth2-proxy')) > 0
+    def _get_security_config(self) -> Tuple[bool, bool, bool]:
+        oauth2_proxy_enabled = len(self.cache.get_daemons_by_service('oauth2-proxy')) > 0
         mgmt_gw_enabled = len(self.cache.get_daemons_by_service('mgmt-gateway')) > 0
         security_enabled = self.secure_monitoring_stack or mgmt_gw_enabled
-        return security_enabled, mgmt_gw_enabled
+        return security_enabled, mgmt_gw_enabled, oauth2_proxy_enabled
+
+    def get_mgmt_gw_internal_endpoint(self) -> Optional[str]:
+        mgmt_gw_daemons = self.cache.get_daemons_by_service('mgmt-gateway')
+        if not mgmt_gw_daemons:
+            return None
+
+        dd = mgmt_gw_daemons[0]
+        assert dd.hostname is not None
+        mgmt_gw_addr = self.get_fqdn(dd.hostname)
+        mgmt_gw_internal_endpoint = build_url(scheme='https', host=mgmt_gw_addr, port=MgmtGatewayService.INTERNAL_SERVICE_PORT)
+        return f'{mgmt_gw_internal_endpoint}/internal'
+
+    def get_mgmt_gw_external_endpoint(self) -> Optional[str]:
+        mgmt_gw_daemons = self.cache.get_daemons_by_service('mgmt-gateway')
+        if not mgmt_gw_daemons:
+            return None
+
+        dd = mgmt_gw_daemons[0]
+        assert dd.hostname is not None
+        mgmt_gw_port = dd.ports[0] if dd.ports else None
+        mgmt_gw_addr = self.get_fqdn(dd.hostname)
+        mgmt_gw_spec = cast(MgmtGatewaySpec, self.spec_store['mgmt-gateway'].spec)
+        protocol = 'http' if mgmt_gw_spec.disable_https else 'https'
+        mgmt_gw_external_endpoint = build_url(scheme=protocol, host=mgmt_gw_addr, port=mgmt_gw_port)
+        return mgmt_gw_external_endpoint
 
     def _get_cephadm_binary_path(self) -> str:
         import hashlib
@@ -916,7 +947,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             'mon', 'crash', 'ceph-exporter', 'node-proxy',
             'prometheus', 'node-exporter', 'grafana', 'alertmanager',
             'container', 'agent', 'snmp-gateway', 'loki', 'promtail',
-            'mgmt-gateway'
+            'mgmt-gateway', 'oauth2-proxy'
         ]
         if forcename:
             if len([d for d in existing if d.daemon_id == forcename]):
@@ -1645,6 +1676,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
                 'promtail': self.container_image_promtail,
                 'snmp-gateway': self.container_image_snmp_gateway,
                 'mgmt-gateway': self.container_image_nginx,
+                'oauth2-proxy': self.container_image_oauth2_proxy,
                 # The image can't be resolved here, the necessary information
                 # is only available when a container is deployed (given
                 # via spec).
@@ -2922,20 +2954,21 @@ Then run the following:
             # add dependency on ceph-exporter daemons
             deps += [d.name() for d in self.cache.get_daemons_by_service('ceph-exporter')]
             deps += [d.name() for d in self.cache.get_daemons_by_service('mgmt-gateway')]
-            security_enabled, _ = self._get_security_config()
+            deps += [d.name() for d in self.cache.get_daemons_by_service('oauth2-proxy')]
+            security_enabled, _, _ = self._get_security_config()
             if security_enabled:
                 if prometheus_user and prometheus_password:
                     deps.append(f'{hash(prometheus_user + prometheus_password)}')
                 if alertmanager_user and alertmanager_password:
                     deps.append(f'{hash(alertmanager_user + alertmanager_password)}')
         elif daemon_type == 'grafana':
-            deps += get_daemon_names(['prometheus', 'loki', 'mgmt-gateway'])
-            security_enabled, _ = self._get_security_config()
+            deps += get_daemon_names(['prometheus', 'loki', 'mgmt-gateway', 'oauth2-proxy'])
+            security_enabled, _, _ = self._get_security_config()
             if security_enabled and prometheus_user and prometheus_password:
                 deps.append(f'{hash(prometheus_user + prometheus_password)}')
         elif daemon_type == 'alertmanager':
-            deps += get_daemon_names(['mgr', 'alertmanager', 'snmp-gateway', 'mgmt-gateway'])
-            security_enabled, _ = self._get_security_config()
+            deps += get_daemon_names(['mgr', 'alertmanager', 'snmp-gateway', 'mgmt-gateway', 'oauth2-proxy'])
+            security_enabled, _, _ = self._get_security_config()
             if security_enabled and alertmanager_user and alertmanager_password:
                 deps.append(f'{hash(alertmanager_user + alertmanager_password)}')
         elif daemon_type == 'promtail':
@@ -2945,7 +2978,7 @@ Then run the following:
         elif daemon_type == 'mgmt-gateway':
             # url_prefix for monitoring daemons depends on the presence of mgmt-gateway
             # while dashboard urls depend on the mgr daemons
-            deps += get_daemon_names(['mgr', 'grafana', 'prometheus', 'alertmanager'])
+            deps += get_daemon_names(['mgr', 'grafana', 'prometheus', 'alertmanager', 'oauth2-proxy'])
         else:
             # this daemon type doesn't need deps mgmt
             pass
@@ -3067,17 +3100,19 @@ Then run the following:
 
     @handle_orch_error
     def generate_certificates(self, module_name: str) -> Optional[Dict[str, str]]:
-        import socket
         supported_moduels = ['dashboard', 'prometheus']
         if module_name not in supported_moduels:
             raise OrchestratorError(f'Unsupported modlue {module_name}. Supported moduels are: {supported_moduels}')
 
-        host_fqdns = [socket.getfqdn(self.get_hostname())]
-        node_ip = self.get_mgr_ip()
+        host_fqdns = []
+        fdqn = self.inventory.get_fqdn(self.get_hostname())
+        if fdqn:
+            host_fqdns.append(fdqn)
+
         if module_name == 'dashboard':
             host_fqdns.append('dashboard_servers')
 
-        cert, key = self.cert_mgr.generate_cert(host_fqdns, node_ip)
+        cert, key = self.cert_mgr.generate_cert(host_fqdns, self.get_mgr_ip())
         return {'cert': cert, 'key': key}
 
     @handle_orch_error
@@ -3161,7 +3196,7 @@ Then run the following:
 
     @handle_orch_error
     def get_prometheus_access_info(self) -> Dict[str, str]:
-        security_enabled, _ = self._get_security_config()
+        security_enabled, _, _ = self._get_security_config()
         if not security_enabled:
             return {}
         user, password = self._get_prometheus_credentials()
@@ -3171,7 +3206,7 @@ Then run the following:
 
     @handle_orch_error
     def get_alertmanager_access_info(self) -> Dict[str, str]:
-        security_enabled, _ = self._get_security_config()
+        security_enabled, _, _ = self._get_security_config()
         if not security_enabled:
             return {}
         user, password = self._get_alertmanager_credentials()
@@ -3406,6 +3441,7 @@ Then run the following:
                 'container': PlacementSpec(count=1),
                 'snmp-gateway': PlacementSpec(count=1),
                 'mgmt-gateway': PlacementSpec(count=1),
+                'oauth2-proxy': PlacementSpec(count=1),
                 SMBService.TYPE: PlacementSpec(count=1),
             }
             spec.placement = defaults[spec.service_type]
@@ -3417,6 +3453,11 @@ Then run the following:
 
         host_count = len(self.inventory.keys())
         max_count = self.max_count_per_host
+
+        if spec.service_type == 'oauth2-proxy':
+            mgmt_gw_daemons = self.cache.get_daemons_by_service('mgmt-gateway')
+            if not mgmt_gw_daemons:
+                raise OrchestratorError("The 'oauth2-proxy' service depends on the 'mgmt-gateway' service, but it is not configured.")
 
         if spec.placement.count is not None:
             if spec.service_type in ['mon', 'mgr']:
@@ -3542,6 +3583,10 @@ Then run the following:
 
     @handle_orch_error
     def apply_mgmt_gateway(self, spec: ServiceSpec) -> str:
+        return self._apply(spec)
+
+    @handle_orch_error
+    def apply_oauth2_proxy(self, spec: ServiceSpec) -> str:
         return self._apply(spec)
 
     @handle_orch_error
