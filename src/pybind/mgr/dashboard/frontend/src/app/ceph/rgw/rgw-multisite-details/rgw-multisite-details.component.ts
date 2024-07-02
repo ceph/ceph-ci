@@ -123,6 +123,10 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
     private notificationService: NotificationService
   ) {
     this.permission = this.authStorageService.getPermissions().rgw;
+    const activeId = this.router.getCurrentNavigation()?.extras?.state?.activeId;
+    if (activeId) {
+      this.activeId = activeId;
+    }
   }
 
   openModal(entity: any, edit = false) {

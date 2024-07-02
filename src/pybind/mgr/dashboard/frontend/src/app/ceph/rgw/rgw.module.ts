@@ -3,7 +3,12 @@ import { NgModule } from '@angular/core';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { RouterModule, Routes } from '@angular/router';
 
-import { NgbNavModule, NgbPopoverModule, NgbTooltipModule } from '@ng-bootstrap/ng-bootstrap';
+import {
+  NgbNavModule,
+  NgbPopoverModule,
+  NgbTooltipModule,
+  NgbTypeaheadModule
+} from '@ng-bootstrap/ng-bootstrap';
 import { NgxPipeFunctionModule } from 'ngx-pipe-function';
 
 import { ActionLabels, URLVerbs } from '~/app/shared/constants/app.constants';
@@ -52,6 +57,7 @@ import { RgwConfigDetailsComponent } from './rgw-config-details/rgw-config-detai
 import { NfsListComponent } from '../nfs/nfs-list/nfs-list.component';
 import { NfsFormComponent } from '../nfs/nfs-form/nfs-form.component';
 import { RgwMultisiteSyncPolicyComponent } from './rgw-multisite-sync-policy/rgw-multisite-sync-policy.component';
+import { RgwMultisiteSyncPolicyFormComponent } from './rgw-multisite-sync-policy-form/rgw-multisite-sync-policy-form.component';
 
 @NgModule({
   imports: [
@@ -67,7 +73,8 @@ import { RgwMultisiteSyncPolicyComponent } from './rgw-multisite-sync-policy/rgw
     NgxPipeFunctionModule,
     TreeModule,
     DataTableModule,
-    DashboardV3Module
+    DashboardV3Module,
+    NgbTypeaheadModule
   ],
   exports: [
     RgwDaemonListComponent,
@@ -112,7 +119,8 @@ import { RgwMultisiteSyncPolicyComponent } from './rgw-multisite-sync-policy/rgw
     BucketTagModalComponent,
     RgwConfigDetailsComponent,
     RgwConfigurationPageComponent,
-    RgwMultisiteSyncPolicyComponent
+    RgwMultisiteSyncPolicyComponent,
+    RgwMultisiteSyncPolicyFormComponent
   ],
   providers: [TitleCasePipe]
 })
@@ -204,7 +212,46 @@ const routes: Routes = [
   {
     path: 'multisite',
     data: { breadcrumbs: 'Multi-site' },
-    children: [{ path: '', component: RgwMultisiteDetailsComponent }]
+    children: [
+      { path: '', component: RgwMultisiteDetailsComponent },
+      {
+        path: `sync-policy/${URLVerbs.CREATE}`,
+        component: RgwMultisiteSyncPolicyFormComponent,
+        data: { breadcrumbs: `${ActionLabels.CREATE} Sync Policy` }
+      },
+      {
+        path: `sync-policy/${URLVerbs.EDIT}/:groupName`,
+        component: RgwMultisiteSyncPolicyFormComponent,
+        data: { breadcrumbs: `${ActionLabels.EDIT} Sync Policy` }
+      },
+      {
+        path: `sync-policy/${URLVerbs.EDIT}/:groupName/:bucketName`,
+        component: RgwMultisiteSyncPolicyFormComponent,
+        data: { breadcrumbs: `${ActionLabels.EDIT} Sync Policy` }
+      }
+    ]
+  },
+  {
+    path: 'nfs',
+    canActivateChild: [FeatureTogglesGuardService, ModuleStatusGuardService],
+    data: {
+      moduleStatusGuardConfig: {
+        uiApiPath: 'nfs-ganesha',
+        redirectTo: 'error',
+        section: 'nfs-ganesha',
+        section_info: 'NFS GANESHA',
+        header: 'NFS-Ganesha is not configured'
+      },
+      breadcrumbs: 'NFS'
+    },
+    children: [
+      { path: '', component: RgwMultisiteDetailsComponent },
+      {
+        path: 'setup-multisite-replication',
+        component: RgwMultisiteWizardComponent,
+        outlet: 'modal'
+      }
+    ]
   },
   {
     path: 'configuration',
