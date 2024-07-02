@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 from threading import Event
 
 from ceph.deployment.service_spec import PrometheusSpec
+from cephadm.cert_mgr import CertMgr
 
 import string
 from typing import List, Dict, Optional, Callable, Tuple, TypeVar, \
@@ -514,11 +515,11 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         super(CephadmOrchestrator, self).__init__(*args, **kwargs)
         self._cluster_fsid: str = self.get('mon_map')['fsid']
         self.last_monmap: Optional[datetime.datetime] = None
+        self.cert_mgr = CertMgr(self, self.get_mgr_ip())
 
         # for serve()
         self.run = True
         self.event = Event()
-
         self.ssh = ssh.SSHManager(self)
 
         if self.get_store('pause'):
@@ -2573,6 +2574,9 @@ Then run the following:
                 raise OrchestratorError(
                     f'If {service_name} is removed then the following OSDs will remain, --force to proceed anyway\n{msg}')
 
+        if service_name == 'mgmt-gateway':
+            self.set_module_option('secure_monitoring_stack', False)
+
         found = self.spec_store.rm(service_name)
         if found and service_name.startswith('osd.'):
             self.spec_store.finally_rm(service_name)
@@ -2863,7 +2867,7 @@ Then run the following:
             server_port = ''
             try:
                 server_port = str(self.http_server.agent.server_port)
-                root_cert = self.http_server.agent.ssl_certs.get_root_cert()
+                root_cert = self.cert_mgr.get_root_ca()
             except Exception:
                 pass
             deps = sorted([self.get_mgr_ip(), server_port, root_cert,
@@ -2873,7 +2877,7 @@ Then run the following:
             server_port = ''
             try:
                 server_port = str(self.http_server.agent.server_port)
-                root_cert = self.http_server.agent.ssl_certs.get_root_cert()
+                root_cert = self.cert_mgr.get_root_ca()
             except Exception:
                 pass
             deps = sorted([self.get_mgr_ip(), server_port, root_cert])
@@ -3123,14 +3127,14 @@ Then run the following:
         user, password = self._get_prometheus_credentials()
         return {'user': user,
                 'password': password,
-                'certificate': self.http_server.service_discovery.ssl_certs.get_root_cert()}
+                'certificate': self.cert_mgr.get_root_ca()}
 
     @handle_orch_error
     def get_alertmanager_access_info(self) -> Dict[str, str]:
         user, password = self._get_alertmanager_credentials()
         return {'user': user,
                 'password': password,
-                'certificate': self.http_server.service_discovery.ssl_certs.get_root_cert()}
+                'certificate': self.cert_mgr.get_root_ca()}
 
     @handle_orch_error
     def cert_store_cert_ls(self) -> Dict[str, Any]:
@@ -3377,6 +3381,9 @@ Then run the following:
 
         host_count = len(self.inventory.keys())
         max_count = self.max_count_per_host
+
+        if spec.service_type == 'mgmt-gateway':
+            self.set_module_option('secure_monitoring_stack', True)
 
         if spec.placement.count is not None:
             if spec.service_type in ['mon', 'mgr']:
