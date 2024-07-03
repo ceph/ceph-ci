@@ -797,6 +797,11 @@ class Orchestrator(object):
         """set prometheus access information"""
         raise NotImplementedError()
 
+    def generate_certificates(self, module_name: str) -> OrchResult[Optional[Dict[str, str]]]:
+        """set prometheus access information"""
+        raise NotImplementedError()
+        raise NotImplementedError()
+
     def set_prometheus_target(self, url: str) -> OrchResult[str]:
         """set prometheus target for multi-cluster"""
         raise NotImplementedError()
