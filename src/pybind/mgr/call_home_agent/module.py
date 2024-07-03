@@ -15,6 +15,8 @@ from datetime import datetime
 import uuid
 import glob
 import re
+import base64
+import zstandard as zstd
 
 from mgr_module import (Option, CLIReadCommand, CLIWriteCommand, MgrModule,
                         HandleCommandResult)
@@ -110,7 +112,8 @@ def get_support_metrics(mgr) -> dict:
     status_interval_minutes = os.environ.get('CHA_INTERVAL_STATUS_REPORT_SECONDS',
                               mgr.get_module_option('interval_status_report_seconds'))
     try:
-        query_url = f"{get_prometheus_url(mgr)}/query"
+        prom_url = get_prometheus_url(mgr)
+        query_url = f"{prom_url}/query"
         queries = {
             'total_capacity_bytes': 'sum(ceph_osd_stat_bytes)',
             'total_raw_usage_bytes': 'sum(ceph_osd_stat_bytes_used)',
@@ -171,6 +174,19 @@ def exec_prometheus_query(query_url: str, prom_query: str) -> dict:
         raise Exception(f"Error executing Prometheus query: {ex}-{result}")
     return result
 
+def get_prometheus_status(prometheus_url:str) -> dict:
+    """Get information about prometheus server status"""
+
+    result = {}
+    r = None
+    try:
+        r = requests.get(f"{prometheus_url}/targets")
+        r.raise_for_status()
+        result = json.loads(r.text)
+    except Exception as ex:
+        raise Exception(f"Error trying to get Prometheus status: {ex}")
+    return result
+
 def inventory_get_hardware_status(mgr: Any) -> dict:
     try:
         hw_status = mgr.remote('orchestrator', 'node_proxy_summary')
@@ -211,7 +227,226 @@ def performance(mgr: Any) -> dict:
 
     Returns a dict with a json structure with the ceph cluster performance information
     """
-    return {'performance': {'content': 'wathever'}}
+
+    performance_metrics = {}
+    perf_interval_minutes = int(os.environ.get('CHA_INTERVAL_PERFORMANCE_REPORT_SECONDS',
+                              mgr.get_module_option('interval_performance_report_seconds'))/60)
+
+    try:
+        queries = {
+            "ceph_osd_op_r_avg"        : {"query": f"sum(avg_over_time(ceph_osd_op_r[{perf_interval_minutes}m]))/count(ceph_osd_metadata)",
+                                          "help" : f"Average of read operations per second and per OSD in the cluster in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_op_r_min"        : {"query": f"min(min_over_time(ceph_osd_op_r[{perf_interval_minutes}m]))",
+                                          "help" : f"Minimum read operations per second in the cluster in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_op_r_max"        : {"query": f"max(max_over_time(ceph_osd_op_r[{perf_interval_minutes}m]))",
+                                           "help": f"Maximum of write operations per second in the cluster in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_r_out_bytes_avg" : {"query": f"sum(avg_over_time(ceph_osd_op_r_out_bytes[{perf_interval_minutes}m]))/count(ceph_osd_metadata)",
+                                          "help" : f"Average of cluster output bytes(reads) and per OSD in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_r_out_bytes_min" : {"query": f"min(min_over_time(ceph_osd_op_r_out_bytes[{perf_interval_minutes}m]))",
+                                          "help" : f"Minimum of cluster output bytes(reads) in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_r_out_bytes_max" : {"query": f"max(max_over_time(ceph_osd_op_r_out_bytes[{perf_interval_minutes}m]))",
+                                          "help" : f"Maximum of cluster output bytes(reads) in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_op_w_avg"        : {"query": f"sum(avg_over_time(ceph_osd_op_w[{perf_interval_minutes}m]))/count(ceph_osd_metadata)",
+                                          "help" : f"Average of cluster input operations per second(writes) in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_op_w_min"        : {"query": f"min(min_over_time(ceph_osd_op_w[{perf_interval_minutes}m]))",
+                                          "help" : f"Mimimum of cluster input operations per second(writes) in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_op_w_max"        : {"query": f"max(max_over_time(ceph_osd_op_w[{perf_interval_minutes}m]))",
+                                          "help" : f"Maximum of cluster input operations per second(writes) in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_op_w_in_bytes_avg"       : {"query": f"sum(avg_over_time(ceph_osd_op_w_in_bytes[{perf_interval_minutes}m]))/count(ceph_osd_metadata)",
+                                                  "help" : f"Average of cluster input bytes(writes) in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_op_w_in_bytes_min"       : {"query": f"min(min_over_time(ceph_osd_op_w_in_bytes[{perf_interval_minutes}m]))",
+                                                  "help" : f"Minimum of cluster input bytes(writes) in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_op_w_in_bytes_max"       : {"query": f"max(max_over_time(ceph_osd_op_w_in_bytes[{perf_interval_minutes}m]))",
+                                                  "help" : f"Maximum of cluster input bytes(writes) in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_op_read_latency_avg_ms"  : {"query": f"avg(rate(ceph_osd_op_r_latency_sum[{perf_interval_minutes}m]) or vector(0) / on (ceph_daemon) rate(ceph_osd_op_r_latency_count[{perf_interval_minutes}m]) * 1000)",
+                                                  "help" : f"Average of cluster output latency(reads) in milliseconds in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_op_read_latency_max_ms"  : {"query": f"max(rate(ceph_osd_op_r_latency_sum[{perf_interval_minutes}m]) or vector(0) / on (ceph_daemon) rate(ceph_osd_op_r_latency_count[{perf_interval_minutes}m]) * 1000)",
+                                                  "help" : f"Maximum of cluster output latency(reads) in milliseconds in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_op_read_latency_min_ms"  : {"query": f"min(rate(ceph_osd_op_r_latency_sum[{perf_interval_minutes}m]) or vector(0) / on (ceph_daemon) rate(ceph_osd_op_r_latency_count[{perf_interval_minutes}m]) * 1000)",
+                                                  "help" : f"Minimum of cluster output latency(reads) in milliseconds  in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_op_write_latency_avg_ms" : {"query": f"avg(rate(ceph_osd_op_w_latency_sum[{perf_interval_minutes}m]) or vector(0) / on (ceph_daemon) rate(ceph_osd_op_w_latency_count[{perf_interval_minutes}m]) * 1000)",
+                                                  "help" : f"Average of cluster input latency(writes) in milliseconds in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_op_write_latency_max_ms" : {"query": f"max(rate(ceph_osd_op_w_latency_sum[{perf_interval_minutes}m]) or vector(0) / on (ceph_daemon) rate(ceph_osd_op_w_latency_count[{perf_interval_minutes}m]) * 1000)",
+                                                  "help" : f"Maximum of cluster input latency(writes) in milliseconds  in the last {perf_interval_minutes} minutes"},
+            "ceph_osd_op_write_latency_min_ms" : {"query": f"min(rate(ceph_osd_op_w_latency_sum[{perf_interval_minutes}m]) or vector(0) / on (ceph_daemon) rate(ceph_osd_op_w_latency_count[{perf_interval_minutes}m]) * 1000)",
+                                                  "help" : f"Maximum of cluster input latency(writes) in milliseconds in the last {perf_interval_minutes} minutes"},
+            "ceph_physical_device_latency_reads_ms"    : {"query": 'node_disk_read_time_seconds_total / node_disk_reads_completed_total * on (instance, device) group_left(ceph_daemon) label_replace(ceph_disk_occupation_human, "device", "$1", "device", "/dev/(.*)") * 1000',
+                                                        "help" : "Read latency in milliseconds per physical device used by ceph OSD daemons"},
+            "ceph_physical_device_latency_writes_ms"   : {"query": 'node_disk_write_time_seconds_total / node_disk_writes_completed_total * on (instance, device) group_left(ceph_daemon) label_replace(ceph_disk_occupation_human, "device", "$1", "device", "/dev/(.*)") * 1000',
+                                                        "help" : "Write latency in milliseconds per physical device used by ceph OSD daemons"},
+            "ceph_physical_device_read_iops"           : {"query": 'node_disk_reads_completed_total * on (instance, device) group_left(ceph_daemon)  label_replace(ceph_disk_occupation_human, "device", "$1", "device", "/dev/(.*)")',
+                                                        "help" : "Read operations per second per physical device used by ceph OSD daemons"},
+            "ceph_physical_device_write_iops"          : {"query": 'node_disk_writes_completed_total * on (instance, device) group_left(ceph_daemon)  label_replace(ceph_disk_occupation_human, "device", "$1", "device", "/dev/(.*)")',
+                                                        "help" : "Write operations per second per physical device used by ceph OSD daemons"},
+            "ceph_physical_device_read_bytes"          : {"query": 'node_disk_read_bytes_total * on (instance, device) group_left(ceph_daemon)  label_replace(ceph_disk_occupation_human, "device", "$1", "device", "/dev/(.*)")',
+                                                        "help" : "Read bytes per physical device used by ceph OSD daemons in the last"},
+            "ceph_physical_device_written_bytes"       : {"query": 'node_disk_written_bytes_total * on (instance, device) group_left(ceph_daemon)  label_replace(ceph_disk_occupation_human, "device", "$1", "device", "/dev/(.*)")',
+                                                        "help" : "Write bytes per physical device used by ceph OSD daemons in the last"},
+            "ceph_physical_device_utilization_seconds" : {"query": '(node_disk_io_time_seconds_total * on (instance, device) group_left(ceph_daemon)  label_replace(ceph_disk_occupation_human, "device", "$1", "device", "/dev/(.*)")) * on (ceph_daemon) group_left(device_class) ceph_osd_metadata',
+                                                          "help":"Seconds total of Input/Output operations per physical device used by ceph OSD daemons"},
+            "ceph_pool_objects"     : {"query": "ceph_pool_objects * on(pool_id) group_left(instance, name) ceph_pool_metadata",
+                                       "help": "Number of Ceph pool objects per Ceph pool"},
+            "ceph_pool_write_iops"  : {"query": f"rate(ceph_pool_wr[{perf_interval_minutes}m]) * on(pool_id) group_left(instance, name) ceph_pool_metadata",
+                                       "help" : "Per-second average rate of increase of write operations per Ceph pool during the last {perf_interval_minutes} minutes"},
+            "ceph_pool_read_iops"   : {"query": f"rate(ceph_pool_rd[{perf_interval_minutes}m]) * on(pool_id) group_left(instance, name) ceph_pool_metadata",
+                                       "help" : f"Per-second average rate of increase of read operations per Ceph pool during the last {perf_interval_minutes} minutes"},
+            "ceph_pool_write_bytes" : {"query": f"rate(ceph_pool_wr_bytes[{perf_interval_minutes}m]) * on(pool_id) group_left(instance, name) ceph_pool_metadata",
+                                       "help" : f"Per-second average rate of increase of written bytes per Ceph pool during the last {perf_interval_minutes} minutes"},
+            "ceph_pool_read_bytes"  : {"query": f"rate(ceph_pool_rd_bytes[{perf_interval_minutes}m]) * on(pool_id) group_left(instance, name) ceph_pool_metadata",
+                                       "help" : f"Per-second average rate of increase of read bytes per Ceph pool during the last {perf_interval_minutes} minutes"},
+            "ceph_pg_activating"    : {"query": f"rate(ceph_pg_activating[{perf_interval_minutes}m]) * on(pool_id) group_left(instance, name) ceph_pool_metadata",
+                                       "help" : f"Per-second average rate of Placement Groups activated per Ceph pool during the last {perf_interval_minutes} minutes"},
+            "ceph_pg_backfilling"   : {"query": f"rate(ceph_pg_backfilling[{perf_interval_minutes}m]) * on(pool_id) group_left(instance, name) ceph_pool_metadata",
+                                       "help" : f"Per-second average rate of Placement Groups backfilled per Ceph pool during the last {perf_interval_minutes} minutes"},
+            "ceph_pg_creating"      : {"query": f"rate(ceph_pg_creating[{perf_interval_minutes}m]) * on(pool_id) group_left(instance, name) ceph_pool_metadata",
+                                       "help" : f"Per-second average rate of Placement Groups created per Ceph pool during the last {perf_interval_minutes} minutes"},
+            "ceph_pg_recovering"    : {"query": f"rate(ceph_pg_recovering[{perf_interval_minutes}m]) * on(pool_id) group_left(instance, name) ceph_pool_metadata",
+                                       "help" : f"Per-second average rate of Placement Groups recovered per Ceph pool during the last {perf_interval_minutes} minutes"},
+            "ceph_pg_deep"          : {"query": f"rate(ceph_pg_deep[{perf_interval_minutes}m]) * on(pool_id) group_left(instance, name) ceph_pool_metadata",
+                                       "help":  f"Per-second average rate of Placement Groups deep scrubbed per Ceph pool during the last {perf_interval_minutes} minutes"},
+            "ceph_rgw_avg_get_latency_ms" : {"query": f'(rate(ceph_rgw_get_initial_lat_sum[{perf_interval_minutes}m]) or vector(0)) * 1000 / rate(ceph_rgw_get_initial_lat_count[{perf_interval_minutes}m]) * on (instance_id) group_left (ceph_daemon) ceph_rgw_metadata',
+                                             "help" : f"Average latency in milliseconds for GET operations per Ceph RGW daemon during the last {perf_interval_minutes} minutes"},
+            "ceph_rgw_avg_put_latency_ms" : {"query": f"(rate(ceph_rgw_put_initial_lat_sum[{perf_interval_minutes}m]) or vector(0)) * 1000 / rate(ceph_rgw_put_initial_lat_count[{perf_interval_minutes}m]) * on (instance_id) group_left (ceph_daemon) ceph_rgw_metadata",
+                                             "help" : f"Average latency in milliseconds for PUT operations per Ceph RGW daemon during the last {perf_interval_minutes} minutes"},
+            "ceph_rgw_requests_per_second": {"query": f'sum by (rgw_host) (label_replace(rate(ceph_rgw_req[{perf_interval_minutes}m]) * on (instance_id) group_left (ceph_daemon) ceph_rgw_metadata, "rgw_host", "$1", "ceph_daemon", "rgw.(.*)"))',
+                                             "help" : f"Request operations per second per Ceph RGW daemon during the last {perf_interval_minutes} minutes"},
+            "ceph_rgw_get_size_bytes" :     {"query": f'label_replace(sum by (instance_id) (rate(ceph_rgw_get_b[{perf_interval_minutes}m])) * on (instance_id) group_left (ceph_daemon) ceph_rgw_metadata, "rgw_host", "$1", "ceph_daemon", "rgw.(.*)")',
+                                             "help" : f"Per-second average rate of GET operations size per Ceph RGW daemon during the last {perf_interval_minutes} minutes"},
+            "ceph_rgw_put_size_bytes" :     {"query": f'label_replace(sum by (instance_id) (rate(ceph_rgw_put_b[{perf_interval_minutes}m])) * on (instance_id) group_left (ceph_daemon) ceph_rgw_metadata, "rgw_host", "$1", "ceph_daemon", "rgw.(.*)")',
+                                             "help" : f"Per-second average rate of PUT operations size per Ceph RGW daemon during the last {perf_interval_minutes} minutes"},
+            "ceph_mds_read_requests_per_second"   : {"query": f'rate(ceph_objecter_op_r{{ceph_daemon=~"mds.*"}}[{perf_interval_minutes}m])',
+                                                     "help" : f"Per-second average rate of read requests per Ceph MDS daemon during the last {perf_interval_minutes} minutes"},
+            "ceph_mds_write_requests_per_second"  : {"query": f'rate(ceph_objecter_op_w{{ceph_daemon=~"mds.*"}}[{perf_interval_minutes}m])',
+                                                     "help" : f"Per-second average rate of write requests per Ceph MDS daemon during the last {perf_interval_minutes} minutes"},
+            "ceph_mds_client_requests_per_second" : {"query": f'rate(ceph_mds_server_handle_client_request[{perf_interval_minutes}m])',
+                                                     "help" : f"Per-second average rate of client requests per Ceph MDS daemon during the last {perf_interval_minutes} minutes"},
+            "ceph_mds_reply_latency_avg_ms" : {"query": f'avg(rate(ceph_mds_reply_latency_sum[{perf_interval_minutes}m]) or vector(0) / on (ceph_daemon) rate(ceph_mds_reply_latency_count[{perf_interval_minutes}m]) * 1000)',
+                                               "help" : f"Average of the per-second average rate of reply latency(seconds) per Ceph MDS daemon during the last {perf_interval_minutes} minutes"},
+            "ceph_mds_reply_latency_max_ms" : {"query": f'max(rate(ceph_mds_reply_latency_sum[{perf_interval_minutes}m]) or vector(0) / on (ceph_daemon) rate(ceph_mds_reply_latency_count[{perf_interval_minutes}m]) * 1000)',
+                                               "help" : f"Maximum of the per-second average rate of reply latency(seconds) per Ceph MDS daemon during the last {perf_interval_minutes} minutes"},
+            "ceph_mds_reply_latency_min_ms" : {"query": f'min(rate(ceph_mds_reply_latency_sum[{perf_interval_minutes}m]) or vector(0) / on (ceph_daemon) rate(ceph_mds_reply_latency_count[{perf_interval_minutes}m]) * 1000)',
+                                               "help" : f"Minimum of the per-second average rate of reply latency(seconds) per Ceph MDS daemon during the last {perf_interval_minutes} minutes"},
+            "hw_cpu_busy"                          : {"query": f"1- rate(node_cpu_seconds_total{{mode='idle'}}[{perf_interval_minutes}m])",
+                                                      "help" : f"Percentaje of CPU utilization per core during the last {perf_interval_minutes} minutes"},
+            "hw_ram_utilization"                   : {"query": f'(node_memory_MemTotal_bytes -(node_memory_MemFree_bytes + node_memory_Cached_bytes + node_memory_Buffers_bytes + node_memory_Slab_bytes))/node_memory_MemTotal_bytes',
+                                                      "help" : "RAM utilization"},
+            "hw_node_physical_disk_read_ops_rate"  : {"query": f"rate(node_disk_reads_completed_total[{perf_interval_minutes}m])",
+                                                      "help" : f"Per-second average rate of read operations per physical storage device in the host during the last {perf_interval_minutes} minutes"},
+            "hw_node_physical_disk_write_ops_rate" : {"query": f"rate(node_disk_writes_completed_total[{perf_interval_minutes}m])",
+                                                      "help" : f"Per-second average rate of write operations per physical storage device in the host during the last {perf_interval_minutes} minutes"},
+            "hw_disk_utilization_rate"             : {"query": f"rate(node_disk_io_time_seconds_total[{perf_interval_minutes}m])",
+                                                      "help" : f"Per-second average rate of input/output operations time(seconds) per physical storage device in the host during the last {perf_interval_minutes} minutes"},
+            "hw_network_bandwidth_receive_load_bytes" : {"query": f"rate(node_network_receive_bytes_total[{perf_interval_minutes}m])",
+                                                         "help" : f"Per-second average rate of received bytes per network card in the host during the last {perf_interval_minutes} minutes"},
+            "hw_network_bandwidth_transmit_load_bytes": {"query": f"rate(node_network_transmit_bytes_total[{perf_interval_minutes}m])",
+                                                         "help" : f"Per-second average rate of transmitted bytes per network card in the host during the last {perf_interval_minutes} minutes"},
+            "ceph_nvmeof_gateway_total"                        : {"query": "count by(group) (ceph_nvmeof_gateway_info) or vector(0)",
+                                                                  "help" : "Number of Ceph NVMe-oF daemons or gatways running"},
+            "ceph_nvmeof_subsystem_total"                      : {"query": "count by(group) (count by(nqn,group) (ceph_nvmeof_subsystem_metadata))",
+                                                                  "help" : "Number of Ceph NVMe-oF subsystems running"},
+            "ceph_nvmeof_reactor_total"                        : {"query": 'max by(group) (max by(instance) (count by(instance) (ceph_nvmeof_reactor_seconds_total{mode="busy"})) * on(instance) group_right ceph_nvmeof_gateway_info)',
+                                                                  "help" : "Number of reactors per gateway"},
+            "ceph_nvmeof_gateway_reactor_cpu_seconds_total"    : {"query": f'max by(group) (avg by(instance) (rate(ceph_nvmeof_reactor_seconds_total{{mode="busy"}}[{perf_interval_minutes}m])) * on(instance) group_right ceph_nvmeof_gateway_info)',
+                                                                   "help" : "Highest gateway CPU load"},
+            "ceph_nvmeof_namespaces_total"                     : {"query": "max by(group) (count by(instance) (count by(bdev_name,instance) (ceph_nvmeof_bdev_metadata )) * on(instance) group_right ceph_nvmeof_gateway_info)",
+                                                                  "help" : "Total number of namespaces"},
+            "ceph_nvmeof_capacity_exported_bytes_total"        : {"query": "topk(1,sum by(instance) (ceph_nvmeof_bdev_capacity_bytes)) * on(instance) group_left(group) ceph_nvmeof_gateway_info",
+                                                                  "help" : "Ceph NVMe-oF total capacity exposed"},
+            "ceph_nvmeof_clients_connected_total "             : {"query": "count by(instance) (sum by(instance,host_nqn) (ceph_nvmeof_host_connection_state == 1)) * on(instance) group_left(group) ceph_nvmeof_gateway_info",
+                                                                  "help" : "Number of clients connected to Ceph NVMe-oF"},
+            "ceph_nvmeof_gateway_iops_total "                  : {"query": f"sum by(instance) (rate(ceph_nvmeof_bdev_reads_completed_total[{perf_interval_minutes}m]) + rate(ceph_nvmeof_bdev_writes_completed_total[{perf_interval_minutes}m])) * on(instance) group_left(group) ceph_nvmeof_gateway_info",
+                                                                  "help" : "IOPS per Ceph NVMe-oF gateway"},
+            "ceph_nvmeof_subsystem_iops_total"                 : {"query": f"sum by(group,nqn) (((rate(ceph_nvmeof_bdev_reads_completed_total[{perf_interval_minutes}m]) + rate(ceph_nvmeof_bdev_writes_completed_total[{perf_interval_minutes}m])) * on(instance,bdev_name) group_right ceph_nvmeof_subsystem_namespace_metadata) * on(instance) group_left(group) ceph_nvmeof_gateway_info)",
+                                                                  "help" : "IOPS per Ceph NVMe-oF subsystem"},
+            "ceph_nvmeof_gateway_throughput_bytes_total"       : {"query": f"sum by(instance) (rate(ceph_nvmeof_bdev_read_bytes_total[{perf_interval_minutes}m]) + rate(ceph_nvmeof_bdev_written_bytes_total[{perf_interval_minutes}m])) * on(instance) group_left(group) ceph_nvmeof_gateway_info",
+                                                                  "help" : "Throughput per Ceph NVMe-oF gateway"},
+            "ceph_nvmeof_subsystem_throughput_bytes_total"     : {"query": f"sum by(group,nqn) (((rate(ceph_nvmeof_bdev_read_bytes_total[{perf_interval_minutes}m]) + rate(ceph_nvmeof_bdev_written_bytes_total[{perf_interval_minutes}m])) * on(instance,bdev_name) group_right ceph_nvmeof_subsystem_namespace_metadata) * on(instance) group_left(group) ceph_nvmeof_gateway_info)",
+                                                                  "help" : "Throughput per Ceph NVMe-oF subsystem"},
+            "ceph_nvmeof_gateway_read_avg_latency_seconds"     : {"query": f"avg by(group,instance) (((rate(ceph_nvmeof_bdev_read_seconds_total[{perf_interval_minutes}m]) / rate(ceph_nvmeof_bdev_reads_completed_total[{perf_interval_minutes}m])) > 0) * on(instance) group_left(group) ceph_nvmeof_gateway_info)",
+                                                                  "help" : "Read latency average in seconds per Ceph NVMe-oF gateway"},
+            "ceph_nvmeof_gateway_write_avg_latency_seconds "   : {"query": f"avg by(group,instance) (((rate(ceph_nvmeof_bdev_write_seconds_total[{perf_interval_minutes}m]) / rate(ceph_nvmeof_bdev_writes_completed_total[{perf_interval_minutes}m])) > 0) * on(instance) group_left(group) ceph_nvmeof_gateway_info)",
+                                                                  "help":  "Write average in seconds per Ceph NVMe-oF gateway"},
+            "ceph_nvmeof_gateway_read_p95_latency_seconds"     : {"query": f"quantile by(group,instance) (.95,((rate(ceph_nvmeof_bdev_read_seconds_total[{perf_interval_minutes}m]) / (rate(ceph_nvmeof_bdev_reads_completed_total[{perf_interval_minutes}m]) >0)) * on(instance) group_left(group) ceph_nvmeof_gateway_info))",
+                                                                  "help":  "Read latency for 95{%} of the Ceph NVMe-oF gateways"},
+            "ceph_nvmeof_gateway_write_p95_latency_seconds"    : {"query": f"quantile by(group,instance) (.95,((rate(ceph_nvmeof_bdev_write_seconds_total[{perf_interval_minutes}m]) / (rate(ceph_nvmeof_bdev_writes_completed_total[{perf_interval_minutes}m]) >0)) * on(instance) group_left(group) ceph_nvmeof_gateway_info))",
+                                                                  "help":  "Write latency for 95{%} of the Ceph NVMe-oF gateways"}
+        }
+
+        t1 = time.time()
+
+        status = ""
+        prometheus_url = get_prometheus_url(mgr)
+        query_url = f"{prometheus_url}/query"
+
+        # Metrics retrieval
+        metrics_errors = False
+        for k,q in queries.items():
+            try:
+                data = exec_prometheus_query(query_url, q["query"])
+                # remove single metric timestamps
+                try:
+                    for metric in data['data']['result']:
+                        metric["value"] = metric["value"][1:]
+                except Exception:
+                    pass
+                performance_metrics[k] = {"help": q["help"],
+                                          "result": data['data']['result']}
+            except Exception as ex:
+                msg = f"Error reading performance metric <{k}>: {ex}"
+                mgr.log.error(msg)
+                metrics_errors = True
+                continue
+
+        if metrics_errors:
+            status = "Error getting metrics from Prometheus. Active Ceph Manager log contains details\n"
+
+        # Prometheus server health
+        prometheus_status = get_prometheus_status(prometheus_url)
+        targets_down = list(filter(lambda x: x['health'] != 'up', prometheus_status['data']['activeTargets']))
+        if targets_down:
+            status += f"Error(scrape targets not up): Not able to retrieve metrics from {targets_down} target/s. Review Prometheus server status\n"
+
+        # Ceph status
+        performance_metrics["ceph_version"] = mgr.version
+        performance_metrics["ceph_health_detail"] = json.loads(mgr.get('health')['json'])
+
+        total_time = round((time.time() - t1) * 1000, 2)
+        performance_metrics['time_to_get_performance_metrics_ms'] = total_time
+        mgr.log.info(f"Time to get performance metrics: {total_time} ms")
+        performance_metrics['timestamp'] = t1
+        performance_metrics['human_timestamp'] = datetime.fromtimestamp(t1).strftime('%Y-%m-%d %H:%M:%S')
+    except Exception as ex:
+        msg = f"Error collecting performance metrics: {ex}"
+        mgr.log.error(msg)
+        status += msg + '\n'
+
+    # Performance report status
+    if status == "":
+        performance_metrics["status"] = "OK"
+    else:
+        performance_metrics["status"] = status
+
+    # performance data compressed and serialized to a JSON string
+    performance_json = json.dumps(performance_metrics)
+    cctx = zstd.ZstdCompressor()
+    compressed_perfo = cctx.compress(performance_json.encode('utf-8'))
+
+    compressed_base64_perfo = base64.b64encode(compressed_perfo).decode('utf-8')
+
+
+    return {"perfstats": {
+                        "file_stamp": performance_metrics['human_timestamp'],
+                        "file_stamp_ms": int(t1 * 1000),
+                        "local_file_stamp": performance_metrics['human_timestamp'],
+                        "nd_stats": compressed_base64_perfo,
+                        "ng_stats": "",
+                        "nm_stats": "",
+                        "nn_stats": "",
+                        "nv_stats": "",
+                        "node_number": 1,     # because IBM Call Home reqs.
+                        "nodes_in_cluster": 1 # because IBM Call Home reqs.
+                        }
+            }
 
 def status(mgr: Any) -> dict:
     """
@@ -578,6 +813,12 @@ class Report:
             if (int(time.time()) - int(self.last_upload)) < self.interval:
                 self.mgr.log.info('%s report not sent because interval not reached', self.report_type)
                 return ""
+
+        # Do not sent report if interval is set to 0
+        if self.interval == 0 and not force:
+            self.mgr.log.info('%s report not sent because interval set to 0', self.report_type)
+            return ""
+
         resp = None
         try:
             report = self.generate_report()
@@ -1073,7 +1314,17 @@ class CallHomeAgent(MgrModule):
                                          self.cha_target_url,
                                          self.proxy,
                                          self.interval_alerts_seconds,
-                                         self)
+                                         self),
+                        'performance': Report('performance',
+                                              'ceph_performance',
+                                              'Cluster performance metrics',
+                                              self.icn,
+                                              self.owner_tenant_id,
+                                              performance,
+                                              self.cha_target_url,
+                                              self.proxy,
+                                              self.interval_performance_seconds,
+                                              self)
         }
 
     def config_notify(self) -> None:
@@ -1313,7 +1564,7 @@ class CallHomeAgent(MgrModule):
     def print_report_cmd(self, report_type: str) -> Tuple[int, str, str]:
         """
             Prints the report requested.
-            Available reports: inventory, status, last_contact, alerts
+            Available reports: inventory, status, last_contact, alerts, performance
             Example:
                 ceph callhome show inventory
         """
@@ -1337,7 +1588,7 @@ class CallHomeAgent(MgrModule):
     def send_report_cmd(self, report_type: str) -> Tuple[int, str, str]:
         """
             Command for sending the report requested.
-            Available reports: inventory, status, last_contact, alerts
+            Available reports: inventory, status, last_contact, alerts, performance
             Example:
                 ceph callhome send inventory
         """

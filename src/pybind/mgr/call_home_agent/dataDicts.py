@@ -205,11 +205,19 @@ class ReportEvent():
                         "transid": event_time_ms
                     },
                     "description": "".format(description),
-                    "payload": {
-                        "request_time": event_time_ms,
-                        "content": content,
-                        "ibm_customer_number": icn,
-                        "product_id_list" : [
+                    "payload": {}
+                }
+            }
+
+        # The perfo report is special because elastic and kafka reqs (IBM)
+        # and the payload needs to have only the perfstats content
+        if event_type == 'performance':
+            event_data["body"]["payload"]["perfstats"] = content["perfstats"]
+        else:
+            event_data["body"]["payload"]["request_time"] = event_time_ms
+            event_data["body"]["payload"]["ibm_customer_number"] = icn
+            event_data["body"]["payload"]["content"] = content
+            event_data["body"]["payload"]["product_id_list"] = [
                             ['5900-AVA', 'D0CYVZX'],
                             ['5900-AVA', 'D0CYWZX'],
                             ['5900-AVA', 'D0CYXZX'],
@@ -220,11 +228,8 @@ class ReportEvent():
                             ['5900-AXK', 'D0DSMZX'],
                             ['5900-AXK', 'D0DSLZX'],
                             ['5900-AXK', 'E0DSIZX'],
-                        ],
-                        "jti": jwt_jti
-                    }
-                }
-            }
+                        ]
+            event_data["body"]["payload"]["jti"] = jwt_jti
 
         if event_type == 'inventory':
             if tenant_id:
