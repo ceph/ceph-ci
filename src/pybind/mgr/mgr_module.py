@@ -180,8 +180,19 @@ class HandleCommandResult(NamedTuple):
     stderr: str = ""            # Typically used for error messages.
 
 
-class MonCommandFailed(RuntimeError): pass
-class MgrDBNotReady(RuntimeError): pass
+class MonCommandFailed(RuntimeError):
+    pass
+
+
+class MgrDBNotReady(RuntimeError):
+    pass
+
+
+class MgrDBNotAllowed(MgrDBNotReady):
+    """A more specific subclass of MgrDBNotReady raised when mgr_pool option
+    disabled.
+    """
+    pass
 
 
 class OSDMap(ceph_module.BasePyOSDMap):
@@ -1311,10 +1322,10 @@ class MgrModule(ceph_module.BaseMgrModule, MgrModuleLoggingMixin):
             return self._db
         db_allowed = self.get_ceph_option("mgr_pool")
         if not db_allowed:
-            raise MgrDBNotReady();
+            raise MgrDBNotAllowed()
         self._db = self.open_db()
         if self._db is None:
-            raise MgrDBNotReady();
+            raise MgrDBNotReady()
         return self._db
 
     @contextmanager
