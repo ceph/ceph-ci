@@ -83,7 +83,6 @@ export class RgwMultisiteSyncPipeModalComponent implements OnInit {
           });
           this.sourceZones.data.available = [...zones];
           if (this.editing) {
-            this.pipeForm.get('pipe_id').disable();
             this.sourceZones.data.selected = this.pipeSelectedRow.source.zones;
             this.destZones.data.selected = this.pipeSelectedRow.dest.zones;
             this.pipeForm.patchValue({
