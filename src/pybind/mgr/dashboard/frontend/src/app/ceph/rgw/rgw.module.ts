@@ -58,6 +58,8 @@ import { NfsListComponent } from '../nfs/nfs-list/nfs-list.component';
 import { NfsFormComponent } from '../nfs/nfs-form/nfs-form.component';
 import { RgwMultisiteSyncPolicyComponent } from './rgw-multisite-sync-policy/rgw-multisite-sync-policy.component';
 import { RgwMultisiteSyncPolicyFormComponent } from './rgw-multisite-sync-policy-form/rgw-multisite-sync-policy-form.component';
+import { RgwMultisiteSyncPolicyDetailsComponent } from './rgw-multisite-sync-policy-details/rgw-multisite-sync-policy-details.component';
+import { RgwMultisiteSyncFlowModalComponent } from './rgw-multisite-sync-flow-modal/rgw-multisite-sync-flow-modal.component';
 
 @NgModule({
   imports: [
@@ -120,7 +122,9 @@ import { RgwMultisiteSyncPolicyFormComponent } from './rgw-multisite-sync-policy
     RgwConfigDetailsComponent,
     RgwConfigurationPageComponent,
     RgwMultisiteSyncPolicyComponent,
-    RgwMultisiteSyncPolicyFormComponent
+    RgwMultisiteSyncPolicyFormComponent,
+    RgwMultisiteSyncPolicyDetailsComponent,
+    RgwMultisiteSyncFlowModalComponent
   ],
   providers: [TitleCasePipe]
 })
