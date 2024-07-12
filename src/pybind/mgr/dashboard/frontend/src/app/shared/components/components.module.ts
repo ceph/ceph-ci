@@ -83,6 +83,7 @@ import { CallHomeModalComponent } from '~/app/shared/components/call-home-modal/
 import { CallHomeNotificationComponent } from './call-home-notification/call-home-notification.component';
 import { StorageInsightsModalComponent } from './storage-insights-modal/storage-insights-modal.component';
 import { StorageInsightsNotificationComponent } from './storage-insights-notification/storage-insights-notification.component';
+import { ProgressComponent } from './progress/progress.component';
 
 // Icons
 import InfoIcon from '@carbon/icons/es/information/16';
@@ -169,7 +170,8 @@ import InfoIcon from '@carbon/icons/es/information/16';
     CallHomeModalComponent,
     CallHomeNotificationComponent,
     StorageInsightsModalComponent,
-    StorageInsightsNotificationComponent
+    StorageInsightsNotificationComponent,
+    ProgressComponent
   ],
   providers: [],
   exports: [
@@ -210,7 +212,8 @@ import InfoIcon from '@carbon/icons/es/information/16';
     CardGroupComponent,
     CallHomeModalComponent,
     CallHomeNotificationComponent,
-    StorageInsightsNotificationComponent
+    StorageInsightsNotificationComponent,
+    ProgressComponent
   ]
 })
 export class ComponentsModule {
