@@ -3,6 +3,8 @@ import { NgModule } from '@angular/core';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { RouterModule } from '@angular/router';
 
+import { ComboBoxModule, DropdownModule, CheckboxModule } from 'carbon-components-angular';
+
 import { TreeModule } from '@circlon/angular-tree-component';
 import {
   NgbActiveModal,
@@ -86,7 +88,10 @@ import { DashboardV3Module } from '../dashboard-v3/dashboard-v3.module';
     NgbDropdownModule,
     NgxPipeFunctionModule,
     NgbProgressbarModule,
-    DashboardV3Module
+    DashboardV3Module,
+    ComboBoxModule,
+    DropdownModule,
+    CheckboxModule
   ],
   declarations: [
     HostsComponent,
