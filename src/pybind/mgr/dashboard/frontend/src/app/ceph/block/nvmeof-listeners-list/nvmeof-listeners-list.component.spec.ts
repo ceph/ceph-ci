@@ -62,7 +62,7 @@ describe('NvmeofListenersListComponent', () => {
     expect(component).toBeTruthy();
   });
 
-  it('should retrieve listeners', fakeAsync(() => {
+  it('should retrieve subsystems', fakeAsync(() => {
     component.listListeners();
     tick();
     expect(component.listeners).toEqual(mockListeners);
