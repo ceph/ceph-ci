@@ -40,7 +40,7 @@ import { Router } from '@angular/router';
 import { RgwMultisiteSyncPolicyComponent } from '../rgw-multisite-sync-policy/rgw-multisite-sync-policy.component';
 import { RgwMultisiteWizardComponent } from '../rgw-multisite-wizard/rgw-multisite-wizard.component';
 
-const BASE_URL = 'rgw/multisite';
+const BASE_URL = 'rgw/multisite/configuration';
 
 @Component({
   selector: 'cd-rgw-multisite-details',
@@ -123,10 +123,6 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
     private notificationService: NotificationService
   ) {
     this.permission = this.authStorageService.getPermissions().rgw;
-    const activeId = this.router.getCurrentNavigation()?.extras?.state?.activeId;
-    if (activeId) {
-      this.activeId = activeId;
-    }
   }
 
   openModal(entity: any, edit = false) {
@@ -618,20 +614,5 @@ export class RgwMultisiteDetailsComponent implements OnDestroy, OnInit {
         fnWaitUntilReconnected();
       }
     );
-  }
-
-  onNavChange(event: any) {
-    if (event.nextId == 'configuration') {
-      this.metadata = null;
-      /*
-        It is a known issue with angular2-tree package when tree is hidden (for example inside tab or modal),
-        it is not rendered when it becomes visible. Solution is to call this.tree.sizeChanged() which recalculates
-        the rendered nodes according to the actual viewport size. (https://angular2-tree.readme.io/docs/common-issues)
-      */
-      setTimeout(() => {
-        this.tree.sizeChanged();
-        this.onUpdateData();
-      }, 200);
-    }
   }
 }
