@@ -1021,6 +1021,13 @@ bool MgrMonitor::preprocess_command(MonOpRequestRef op)
           f->dump_string("module", p);
         }
         f->close_section();
+
+        f->open_array_section("force_disabled_modules");
+        for (auto& p : map.force_disabled_modules) {
+          f->dump_string("module", p);
+        }
+        f->close_section();
+
         f->open_array_section("enabled_modules");
         for (auto& p : map.modules) {
           if (map.get_always_on_modules().count(p) > 0)
@@ -1050,7 +1057,11 @@ bool MgrMonitor::preprocess_command(MonOpRequestRef op)
 
       for (auto& p : map.get_always_on_modules()) {
         tbl << p;
-        tbl << "on (always on)";
+	if (map.force_disabled_modules.find(p) == map.force_disabled_modules.end()) {
+	  tbl << "on (always on)";
+	} else  {
+	  tbl << "off (always on but force-disabled)";
+	}
         tbl << TextTable::endrow;
       }
       for (auto& p : map.modules) {
@@ -1271,6 +1282,13 @@ bool MgrMonitor::prepare_command(MonOpRequestRef op)
       r = -EINVAL;
       goto out;
     }
+
+    if (pending_map.force_disabled_modules.count(module) > 0) {
+      pending_map.force_disabled_modules.erase(module);
+      r = 0;
+      goto out;
+    }
+
     if (pending_map.get_always_on_modules().count(module) > 0) {
       ss << "module '" << module << "' is already enabled (always-on)";
       goto out;
@@ -1303,23 +1321,48 @@ bool MgrMonitor::prepare_command(MonOpRequestRef op)
   } else if (prefix == "mgr module disable") {
     string module;
     cmd_getval(cmdmap, "module", module);
+
+    bool confirmation_flag = false;
+    cmd_getval(cmdmap, "yes_i_really_mean_it", confirmation_flag);
+
     if (module.empty()) {
       r = -EINVAL;
       goto out;
     }
-    if (pending_map.get_always_on_modules().count(module) > 0) {
-      ss << "module '" << module << "' cannot be disabled (always-on)";
-      r = -EINVAL;
-      goto out;
+    if (module != "volumes") {
+      if (pending_map.get_always_on_modules().count(module) > 0) {
+	  ss << "module '" << module << "' cannot be disabled (always-on)";
+	  r = -EINVAL;
+	  goto out;
+	}
+
+      if (!pending_map.module_enabled(module)) {
+	ss << "module '" << module << "' is already disabled";
+	r = 0;
+	goto out;
+      }
+
+      if (!pending_map.modules.count(module)) {
+	ss << "module '" << module << "' is not enabled";
+      }
     }
-    if (!pending_map.module_enabled(module)) {
-      ss << "module '" << module << "' is already disabled";
-      r = 0;
-      goto out;
+
+    if (module == "volumes") {
+      if (!confirmation_flag) {
+	ss << "This is a potentially disruptive operation. If you are sure "
+	   << "that you wish to continue, run again with "
+	   << "--yes-i-really-mean-it";
+	r = -EPERM;
+	goto out;
+      }
+
+      dout(8) << __func__ << " disabling module '" << module << "'" << dendl;
+      pending_map.force_disabled_modules.insert(module);
+    } else if (module != "volumes" && confirmation_flag) {
+      ss << "Confirmation flag is required only for disabling 'volumes' module";
     }
-    if (!pending_map.modules.count(module)) {
-      ss << "module '" << module << "' is not enabled";
-    }
+
+    dout(8) << __func__ << " disabling module " << module << " from new " << dendl;
     pending_map.modules.erase(module);
   } else {
     ss << "Command '" << prefix << "' not implemented!";

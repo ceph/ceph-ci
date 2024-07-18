@@ -1327,7 +1327,8 @@ COMMAND("mgr module enable "
 	"name=force,type=CephBool,req=false",
 	"enable mgr module", "mgr", "rw")
 COMMAND("mgr module disable "
-	"name=module,type=CephString",
+	"name=module,type=CephString "
+	"name=yes_i_really_mean_it,type=CephBool,req=false",
 	"disable mgr module", "mgr", "rw")
 COMMAND("mgr metadata name=who,type=CephString,req=false",
 	"dump metadata for all daemons or a specific daemon",

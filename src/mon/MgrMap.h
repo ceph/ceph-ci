@@ -297,6 +297,9 @@ public:
   // active version.
   std::map<uint32_t, std::set<std::string>> always_on_modules;
 
+  // Modules which are always-on but has been force-disabled by user.
+  std::set<std::string> force_disabled_modules;
+
   // Modules which are reported to exist
   std::vector<ModuleInfo> available_modules;
 
@@ -460,6 +463,7 @@ public:
     encode(available_modules, bl);
     encode(active_change, bl);
     encode(always_on_modules, bl);
+    encode(force_disabled_modules, bl);
     encode(active_mgr_features, bl);
     encode(last_failure_osd_epoch, bl);
     std::vector<std::string> clients_names;
@@ -517,6 +521,7 @@ public:
     }
     if (struct_v >= 8) {
       decode(always_on_modules, p);
+      decode(force_disabled_modules, p);
     }
     if (struct_v >= 9) {
       decode(active_mgr_features, p);
@@ -603,6 +608,13 @@ public:
       f->close_section();
     }
     f->close_section(); // always_on_modules
+
+    f->open_object_section("force_disabled_modules");
+    for (auto& m : force_disabled_modules) {
+        f->dump_string("module", m);
+      }
+    f->close_section();
+
     f->dump_int("last_failure_osd_epoch", last_failure_osd_epoch);
     f->open_array_section("active_clients");
     for (const auto& i : clients) {
