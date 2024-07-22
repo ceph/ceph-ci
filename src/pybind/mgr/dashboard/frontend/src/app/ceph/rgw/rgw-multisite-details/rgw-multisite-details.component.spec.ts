@@ -7,7 +7,8 @@ import { SharedModule } from '~/app/shared/shared.module';
 import { RgwMultisiteDetailsComponent } from './rgw-multisite-details.component';
 import { RouterTestingModule } from '@angular/router/testing';
 import { configureTestBed } from '~/testing/unit-test-helper';
-import { NgbNavModule, NgbActiveModal } from '@ng-bootstrap/ng-bootstrap';
+import { NgbNavModule } from '@ng-bootstrap/ng-bootstrap';
+import { NgbActiveModal } from '@ng-bootstrap/ng-bootstrap';
 
 describe('RgwMultisiteDetailsComponent', () => {
   let component: RgwMultisiteDetailsComponent;

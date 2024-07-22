@@ -38,6 +38,7 @@ import { CephServiceSpec, QatOptions, QatSepcs } from '~/app/shared/models/servi
 import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
 import { TaskWrapperService } from '~/app/shared/services/task-wrapper.service';
 import { TimerService } from '~/app/shared/services/timer.service';
+import { environment } from '~/environments/environment';
 
 @Component({
   selector: 'cd-service-form',
@@ -643,7 +644,9 @@ export class ServiceFormComponent extends CdForm implements OnInit {
       // Remove service types:
       // osd       - This is deployed a different way.
       // container - This should only be used in the CLI.
+      // nvmeof    - This is only supported for IBM builds.
       this.hiddenServices.push('osd', 'container');
+      if (environment.build !== 'ibm') this.hiddenServices.push('nvmeof');
 
       this.serviceTypes = _.difference(resp, this.hiddenServices).sort();
     });
