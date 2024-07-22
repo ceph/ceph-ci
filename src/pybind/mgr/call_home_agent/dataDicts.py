@@ -72,13 +72,13 @@ def upload_snap_operation_event(ceph_cluster_id: str, report_timestamp: float,
                 "component": "ceph_log_upload",
                 "description":  operation['description'],
                 "state" : f"{operation['status']} ({operation['progress']}%)",
-                "complete" : (operation['status'] == OPERATION_STATUS_COMPLETE),
+                "complete" : (operation['status'] != OPERATION_STATUS_IN_PROGRESS),
                 "payload": {
                     "action": "Unsolicited_Storage_Insights_RedHatMarine_ceph_Request",
                     "description": operation['description'],
                     "state" : operation['status'],
                     "progress": operation['progress'],
-                    "complete" : (operation['status'] == OPERATION_STATUS_COMPLETE),
+                    "complete" : (operation['status'] != OPERATION_STATUS_IN_PROGRESS),
                     "si_requestid": operation['si_requestid'],
                 }
             }
