@@ -8,15 +8,8 @@ import { SharedModule } from '~/app/shared/shared.module';
 import { RgwMultisiteDetailsComponent } from './rgw-multisite-details.component';
 import { RouterTestingModule } from '@angular/router/testing';
 import { configureTestBed } from '~/testing/unit-test-helper';
-<<<<<<< HEAD
 import { NgbNavModule } from '@ng-bootstrap/ng-bootstrap';
-=======
-<<<<<<< HEAD
->>>>>>> 32e02625c02 (mgr/dashborad: RGW sync policy)
 import { NgbActiveModal } from '@ng-bootstrap/ng-bootstrap';
-=======
-import { NgbNavModule } from '@ng-bootstrap/ng-bootstrap';
->>>>>>> 41014fce446 (mgr/dashborad: RGW sync policy)
 
 describe('RgwMultisiteDetailsComponent', () => {
   let component: RgwMultisiteDetailsComponent;
