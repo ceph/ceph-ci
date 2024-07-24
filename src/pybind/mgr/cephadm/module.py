@@ -144,6 +144,7 @@ DEFAULT_SNMP_GATEWAY_IMAGE = 'registry.redhat.io/rhceph/snmp-notifier-rhel9:late
 DEFAULT_NGINX_IMAGE = 'registry.redhat.io/rhel9/nginx-124:latest'
 DEFAULT_OAUTH2_PROXY = 'cp.stg.icr.io/cp/ibm-ceph/oauth2-proxy:v7.6.0'
 DEFAULT_SAMBA_IMAGE = 'cp.icr.io/cp/ibm-ceph/samba-server-rhel9:latest'
+DEFAULT_SAMBA_METRICS_IMAGE = 'quay.io/samba.org/samba-metrics:latest'
 # ------------------------------------------------------------------------------
 
 
@@ -294,6 +295,11 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             'container_image_samba',
             default=DEFAULT_SAMBA_IMAGE,
             desc='Samba/SMB container image',
+        ),
+        Option(
+            'container_image_samba_metrics',
+            default=DEFAULT_SAMBA_METRICS_IMAGE,
+            desc='Samba/SMB metrics exporter container image',
         ),
         Option(
             'warn_on_stray_hosts',
@@ -570,6 +576,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             self.container_image_nginx = ''
             self.container_image_oauth2_proxy = ''
             self.container_image_samba = ''
+            self.container_image_samba_metrics = ''
             self.warn_on_stray_hosts = True
             self.warn_on_stray_daemons = True
             self.warn_on_failed_host_check = True

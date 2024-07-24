@@ -15,6 +15,7 @@ DEFAULT_KEEPALIVED_IMAGE = 'registry.redhat.io/rhceph/keepalived-rhel9:latest'
 DEFAULT_NVMEOF_IMAGE = 'registry.redhat.io/rhceph/ceph-nvmeof-rhel9:1.2.17'
 DEFAULT_SNMP_GATEWAY_IMAGE = 'registry.redhat.io/rhceph/snmp-notifier-rhel9:latest'
 DEFAULT_SMB_IMAGE = 'cp.icr.io/cp/ibm-ceph/samba-server-rhel9:latest'
+DEFAULT_SMBMETRICS_IMAGE = 'quay.io/samba.org/samba-metrics:latest'
 DEFAULT_NGINX_IMAGE = 'registry.redhat.io/rhel9/nginx-124:latest'
 DEFAULT_OAUTH2_PROXY_IMAGE = 'cp.stg.icr.io/cp/ibm-ceph/oauth2-proxy:v7.6.0'
 DEFAULT_REGISTRY = 'registry.redhat.io'  # normalize unqualified digests to this
