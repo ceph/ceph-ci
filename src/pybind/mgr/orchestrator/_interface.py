@@ -735,6 +735,12 @@ class Orchestrator(object):
         """
         raise NotImplementedError()
 
+    def sos(self, hostname: str, sos_params: str) -> OrchResult:
+        """
+        use cephadm to issue a sos command in the host
+        """
+        raise NotImplementedError()
+
     def zap_device(self, host: str, path: str) -> OrchResult[str]:
         """Zap/Erase a device (DESTROYS DATA)"""
         raise NotImplementedError()

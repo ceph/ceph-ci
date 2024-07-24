@@ -2686,6 +2686,98 @@ def rollback(func: FuncT) -> FuncT:
     return cast(FuncT, _rollback)
 
 
+def verify_call_home_settings(ctx: CephadmContext) -> None:
+    if ctx.enable_ibm_call_home:
+        # grab any settings from call home config if provided
+        if ctx.call_home_config:
+            logger.info('Pulling call home info from %s.' % ctx.call_home_config)
+            d = get_parm(ctx.call_home_config)
+            if d.get('icn', None):
+                ctx.call_home_icn = d.get('icn')
+            if d.get('email', None):
+                ctx.ceph_call_home_contact_email = d.get('email')
+            if d.get('phone', None):
+                ctx.ceph_call_home_contact_phone = d.get('phone')
+            if d.get('first_name', None):
+                ctx.ceph_call_home_contact_first_name = d.get('first_name')
+            if d.get('last_name', None):
+                ctx.ceph_call_home_contact_last_name = d.get('last_name')
+            if d.get('country_code', None):
+                ctx.ceph_call_home_country_code = d.get('country_code')
+
+        # Check if all necessary call home settings have been provided
+        if not (
+            ctx.call_home_icn
+            and ctx.ceph_call_home_contact_email
+            and ctx.ceph_call_home_contact_phone
+            and ctx.ceph_call_home_contact_first_name
+            and ctx.ceph_call_home_contact_last_name
+            and ctx.ceph_call_home_country_code
+        ):
+            err_msg = ('In order to enable IBM call home, all necessary settings '
+                       'must be provided. This includes the ibm customer number '
+                       '(--call-home-icn), contact email (--ceph-call-home-contact-email), '
+                       'contact phone number (--ceph-call-home-contact-phone), first name of contact '
+                       '(--ceph-call-home-contact-first-name), last name of contact (--ceph-call-home-contact-last-name) '
+                       'and country code (--ceph-call-home-country-code).\n'
+                       'These options may be provided directly through their flags or through a json config '
+                       'whose filepath may be passed to --call-home-config and should be structured as\n'
+                       '{\n'
+                       ' "icn": "<IBM_CUSTOMER_NUMBER>",\n'
+                       ' "email": "<CALL_HOME_CONTACT_EMAIL_ADDRESS>",\n'
+                       ' "phone": "<CALL_HOME_CONTACT_PHONE_NUMBER>"\n'
+                       ' "first_name": "<CALL_HOME_CONTACT_FIRST_NAME>",\n'
+                       ' "last_name": "<CALL_HOME_CONTACT_LAST_NAME>"\n'
+                       ' "country_code": "<CUSTOMER_COUNTRY_CODE>",\n'
+                       '}\n')
+            raise Error(err_msg)
+
+    if ctx.enable_storage_insights:
+        # grab any settings from storage insights config if provided
+        if ctx.storage_insights_config:
+            logger.info('Pulling Storage Insights info from %s.' % ctx.storage_insights_config)
+            d = get_parm(ctx.storage_insights_config)
+            if d.get('tenant_id', None):
+                ctx.storage_insights_tenant_id = d.get('tenant_id')
+
+        # verify all necessary settings have been provided
+        if not (
+            ctx.storage_insights_tenant_id
+        ):
+            err_msg = ('In order to enable Storage Insights, all necessary settings '
+                       'must be provided. This includes the tenant id '
+                       '(--storage-insights-tenant-id)\n'
+                       'These options may be provided directly through their flags or through a json config '
+                       'whose filepath may be passed to --storage-insights-config and should be structured as\n'
+                       '{\n'
+                       ' "tenant_id": "<STORAGE_INSIGHTS_TENANT_ID>",\n'
+                       '}\n')
+            raise Error(err_msg)
+
+
+def apply_call_home_settings(ctx: CephadmContext, cli: Callable, wait_for_mgr_restart: Callable) -> None:
+    if not ctx.enable_ibm_call_home:
+        logger.info('Skipping call home integration. --enable-ibm-call-home not provided')
+        return
+
+    # if we got here, attempt to setup call home integration
+    cli(['mgr', 'module', 'enable', 'call_home_agent'])
+    wait_for_mgr_restart()
+    # store user info for call home module to use
+    cli(['config', 'set', 'mgr', 'mgr/call_home_agent/icn', ctx.call_home_icn])
+    cli(['config', 'set', 'mgr', 'mgr/call_home_agent/customer_email', ctx.ceph_call_home_contact_email])
+    cli(['config', 'set', 'mgr', 'mgr/call_home_agent/customer_phone', ctx.ceph_call_home_contact_phone])
+    cli(['config', 'set', 'mgr', 'mgr/call_home_agent/customer_first_name', ctx.ceph_call_home_contact_first_name])
+    cli(['config', 'set', 'mgr', 'mgr/call_home_agent/customer_last_name', ctx.ceph_call_home_contact_last_name])
+    cli(['config', 'set', 'mgr', 'mgr/call_home_agent/customer_country_code', ctx.ceph_call_home_country_code])
+
+    if not ctx.enable_storage_insights:
+        logger.info('Skipping Storage Insights integration. --enable-storage-insights not provided')
+        return
+
+    cli(['config', 'set', 'mgr', 'mgr/call_home_agent/owner_tenant_id', ctx.storage_insights_tenant_id])
+
+
 @rollback
 @default_image
 def command_bootstrap(ctx):
@@ -2733,6 +2825,11 @@ def command_bootstrap(ctx):
     fsid = ctx.fsid
     if not is_fsid(fsid):
         raise Error('not an fsid: %s' % fsid)
+
+    if ctx.enable_storage_insights and not ctx.enable_ibm_call_home:
+        raise Error('Cannot enable Storage Insights without enabling call home (--enable-ibm-call-home)')
+    elif ctx.enable_ibm_call_home:
+        verify_call_home_settings(ctx)
 
     # verify output files
     for f in [ctx.output_config, ctx.output_keyring, ctx.output_pub_ssh_key]:
@@ -2949,6 +3046,8 @@ def command_bootstrap(ctx):
             logger.info('\nApplying %s to cluster failed!\n' % ctx.apply_spec)
 
     save_cluster_config(ctx, uid, gid, fsid)
+
+    apply_call_home_settings(ctx, cli, wait_for_mgr_restart)
 
     # Notify the Dashboard to show the 'Expand cluster' page on first log in.
     cli(['config-key', 'set', 'mgr/dashboard/cluster/status', 'INSTALLED'])
@@ -4678,6 +4777,99 @@ def command_gather_facts(ctx: CephadmContext) -> None:
 
 ##################################
 
+@infer_config
+def command_sos(ctx: CephadmContext):
+    """
+    Execute the sos command
+    returns the pattern of the sos report part files generated
+    in the LOG_DIR folder
+
+    To avoid fill the disk, each execution deletes all previous sos report files
+
+    The original compressed file can be rebuild using:
+    # cat /var/log/ceph/<cluster_fsid>/sosreport* > /tmp/sosreport_case_<xx>.tar.xz
+    """
+    def remove_files(folder: str, pattern: str) -> None:
+        file_path = ""
+        try:
+            for file_path in filter(os.path.isfile, glob(os.path.join(folder, pattern))):
+                os.remove(file_path)
+        except Exception as ex:
+            logger.error(f'Error removing file {file_path}: {ex}')
+
+    result = 1 # error by default, will be changed if everything ok
+    try:
+        # get silently the cluster fsid
+        cp = read_config(ctx.config)
+        if cp.has_option('global', 'fsid'):
+            fsid = cp.get('global', 'fsid')
+        else:
+            raise Exception('Cannot infer Ceph cluster fsid .SOS report command'
+                            ' aborted')
+
+        # sos report execution
+        cmd_sos = ['sos'] + ctx.parameters
+        out, err, code = call(ctx, cmd_sos, verbosity=CallVerbosity.DEBUG)
+        if (err or code):
+            if out:
+                # even with errors a sos file can be generated
+                # inform about the issue and continue trying to get the file
+                print(f'Issue executing <{cmd_sos}>: {code}:{err}')
+            else:
+                raise Exception(f'Error executing command <{cmd_sos}>:{code}-{err}')
+
+        file_path_pattern = r'Your sosreport has been generated and saved in:\s+(\S+)'
+        match = re.search(file_path_pattern, out)
+        if not match:
+            raise Exception(f'Cannot locate sos report file in sos command <{cmd_sos}> output: {out}')
+
+        sos_file = match.group(1)
+        sos_file_extension = os.path.splitext(sos_file)[1]
+        timestamp_sos_file = int(time.time() * 1000)
+        if '--case-id' in ctx.parameters:
+            case_id = ctx.parameters[ctx.parameters.index('--case-id') + 1]
+        else:
+            case_id = 'unknown_case_id'
+        prefix = f'sosreport_case_{case_id}_{timestamp_sos_file}_'
+        suffix = f'{sos_file_extension}_part'
+        sos_report_parts_folder = f'{LOG_DIR}/{fsid}'
+
+        # remove previous part files
+        remove_files(sos_report_parts_folder, 'sosreport*')
+
+        # split sos report file in <sos_files_number> parts (10 by default)
+        os.chdir(sos_report_parts_folder)
+        split_cmd = ['split', '-n', f'{ctx.sos_files_number}', sos_file, prefix, '--additional-suffix', suffix]
+        out, err, code = call(ctx, split_cmd, verbosity=CallVerbosity.DEBUG)
+        if err or code:
+            raise Exception(f'Error splitting sos report file: <{out}>')
+
+        # remove source sos report (because we already have the
+        # parts in the logs folder)
+        remove_files(os.path.dirname(sos_file), 'sosreport*')
+        # show the info needed to know what are the last sos files
+        print(f'New sos report files can be found in {LOG_DIR}/<fsid>/{prefix}*')
+
+        # If a target provided copy the sos report files to the
+        # destination host
+        if ctx.mgr_target:
+            scp_cmd = f'scp {sos_report_parts_folder}/{prefix}* {ctx.mgr_target}:{sos_report_parts_folder} > /dev/null 2>&1'
+            try:
+                os.system(scp_cmd)
+            except Exception as ex:
+                logger.error(f'Error copying sos files to target: {ex}')
+                return 1
+
+        # everything was ok
+        result = 0
+
+    except Exception as ex:
+        logger.error(f'Failed to execute sos command <{cmd_sos}>:\n {ex}')
+
+    return result
+
+##################################
+
 
 def systemd_target_state(ctx: CephadmContext, target_name: str, subsystem: str = 'ceph') -> bool:
     # TODO: UNITTEST
@@ -5393,6 +5585,45 @@ def _get_parser():
         '--custom-prometheus-alerts',
         help='provide a file with custom prometheus alerts')
 
+    parser_bootstrap.add_argument(
+        '--call-home-icn',
+        help='')
+    parser_bootstrap.add_argument(
+        '--ceph-call-home-contact-email',
+        help='')
+    parser_bootstrap.add_argument(
+        '--ceph-call-home-contact-phone',
+        help='')
+    parser_bootstrap.add_argument(
+        '--ceph-call-home-contact-first-name',
+        help='')
+    parser_bootstrap.add_argument(
+        '--ceph-call-home-contact-last-name',
+        help='')
+    parser_bootstrap.add_argument(
+        '--ceph-call-home-country-code',
+        help='')
+    parser_bootstrap.add_argument(
+        '--call-home-config',
+        help='')
+    parser_bootstrap.add_argument(
+        '--enable-ibm-call-home',
+        action='store_true',
+        default=False,
+        help='Enroll in IBM Call Home')
+
+    parser_bootstrap.add_argument(
+        '--storage-insights-tenant-id',
+        help='')
+    parser_bootstrap.add_argument(
+        '--storage-insights-config',
+        help='')
+    parser_bootstrap.add_argument(
+        '--enable-storage-insights',
+        action='store_true',
+        default=False,
+        help='Enroll in Storage Insights')
+
     parser_deploy = subparsers.add_parser(
         'deploy', help='deploy a daemon')
     parser_deploy.set_defaults(func=command_deploy)
@@ -5529,6 +5760,24 @@ def _get_parser():
     parser_disk_rescan = subparsers.add_parser(
         'disk-rescan', help='rescan all HBAs to detect new/removed devices')
     parser_disk_rescan.set_defaults(func=command_rescan_disks)
+
+    parser_sos = subparsers.add_parser(
+        'sos', help='Executes the command sos to retrieve node diagnostic information')
+    parser_sos.set_defaults(func=command_sos)
+    parser_sos.add_argument(
+        '--mgr-target',
+        required=False,
+        help='Target host running active ceph manager to copy the sos report generated files')
+    parser_sos.add_argument(
+        '--sos-files-number',
+        type=int,
+        default=10,
+        required=False,
+        help='Number of files to split the sos report command output')
+    parser_sos.add_argument(
+        'parameters',
+        nargs=argparse.REMAINDER,
+        help='parameters for the sos command')
 
     return parser
 

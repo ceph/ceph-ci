@@ -2797,6 +2797,29 @@ Then run the following:
 
         return blink(locs)
 
+    @handle_orch_error
+    def sos(self, hostname: str, sos_params: str) -> str:
+        """ Execute the sos report command in the requested host
+        """
+
+        result = ""
+        self.log.info(f'Sending <sos {sos_params}> command to host {hostname}')
+        cmd_args = shlex.split(sos_params)
+
+        with self.async_timeout_handler(hostname, f'cephadm sos {sos_params}'):
+            out, err, code = self.wait_async(CephadmServe(self)._run_cephadm(
+                hostname, cephadmNoImage, 'sos', cmd_args, no_fsid=True,
+                error_ok=True))
+        if code:
+            msg = f'Error {code}:{err} executing <sos {sos_params}> in host {hostname}: {out}'
+            self.log.error(msg)
+            raise OrchestratorError(msg)
+        else:
+            self.log.info(f'Host {hostname} executed command sos {sos_params}: {out}')
+            result = out
+
+        return result
+
     def get_osd_uuid_map(self, only_up=False):
         # type: (bool) -> Dict[str, str]
         osd_map = self.get('osd_map')
