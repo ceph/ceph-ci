@@ -505,6 +505,7 @@ class PrometheusService(CephadmService):
         nvmeof_sd_url = f'{srv_end_point}service=nvmeof'  # always included
         nfs_sd_url = f'{srv_end_point}service=nfs'  # always included
         mgmt_gw_enabled = len(self.mgr.cache.get_daemons_by_service('mgmt-gateway')) > 0
+        smb_sd_url = f'{srv_end_point}service=smb'  # always included
 
         alertmanager_user, alertmanager_password = self.mgr._get_alertmanager_credentials()
         prometheus_user, prometheus_password = self.mgr._get_prometheus_credentials()
@@ -543,6 +544,7 @@ class PrometheusService(CephadmService):
             'nvmeof_sd_url': nvmeof_sd_url,
             'clusters_credentials': clusters_credentials,
             'nfs_sd_url': nfs_sd_url
+            'smb_sd_url': smb_sd_url
         }
 
         ip_to_bind_to = ''
