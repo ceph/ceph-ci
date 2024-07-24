@@ -198,9 +198,10 @@ class IngressService(CephService):
         }
         if spec.ssl_cert:
             ssl_cert = spec.ssl_cert
-            if isinstance(ssl_cert, list):
-                ssl_cert = '\n'.join(ssl_cert)
             final_config['files']['haproxy.pem'] = ssl_cert
+        if spec.ssl_key:
+            ssl_key = spec.ssl_key
+            final_config['files']['haproxy.pem.key'] = ssl_key
 
         if spec.haproxy_qat_support:
             final_config['qat_support'] = True
