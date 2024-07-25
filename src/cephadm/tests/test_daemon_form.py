@@ -6,6 +6,7 @@ from .fixtures import import_cephadm
 
 from cephadmlib import daemon_form
 from cephadmlib import daemon_identity
+from cephadmlib import daemons
 
 _cephadm = import_cephadm()
 
@@ -22,7 +23,7 @@ _cephadm = import_cephadm()
         ('mon', _cephadm.Ceph),
         ('nfs', _cephadm.NFSGanesha),
         ('nvmeof', _cephadm.CephNvmeof),
-        ('osd', _cephadm.OSD),
+        ('osd', daemons.OSD),
         ('prometheus', _cephadm.Monitoring),
         ('snmp-gateway', _cephadm.SNMPGateway),
     ],
@@ -61,7 +62,7 @@ def test_is_sysctl_daemon_form(dt, is_sdf):
     assert isinstance(inst, daemon_form.SysctlDaemonForm) == is_sdf
 
 
-def test_can_create_all_daemon_forms():
+def test_can_create_all_daemon_forms(monkeypatch):
     uuid = 'daeb985e-58c7-11ee-a536-201e8814f771'
     ctx = mock.MagicMock()
     ctx.config_blobs = {
@@ -69,6 +70,8 @@ def test_can_create_all_daemon_forms():
         'pool': 'swimming',
         'destination': 'earth',
     }
+    _os_path_isdir = mock.MagicMock(return_value=True)
+    monkeypatch.setattr('os.path.isdir', _os_path_isdir)
     dtypes = _cephadm.get_supported_daemons()
     for daemon_type in dtypes:
         if daemon_type == 'agent':

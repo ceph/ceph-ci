@@ -127,7 +127,7 @@ public:
     const cmdmap_t& cmdmap,
     Formatter *f,
     const bufferlist& inbl,
-    std::function<void(int,const std::string&,bufferlist&)> on_finish) override {
+    asok_finisher on_finish) override {
     mds->asok_command(command, cmdmap, f, inbl, on_finish);
   }
 };
@@ -137,7 +137,7 @@ void MDSDaemon::asok_command(
   const cmdmap_t& cmdmap,
   Formatter *f,
   const bufferlist& inbl,
-  std::function<void(int,const std::string&,bufferlist&)> on_finish)
+  asok_finisher on_finish)
 {
   dout(1) << "asok_command: " << command << " " << cmdmap
 	  << " (starting...)" << dendl;
@@ -148,6 +148,13 @@ void MDSDaemon::asok_command(
   auto& ss = *css;
   if (command == "status") {
     dump_status(f);
+    r = 0;
+  } else if (command == "lockup") {
+    int64_t millisecs;
+    cmd_getval(cmdmap, "millisecs", millisecs);
+    derr << "(lockup) sleeping with mds_lock for " << millisecs << dendl;
+    std::lock_guard l(mds_lock);
+    std::this_thread::sleep_for(std::chrono::milliseconds(millisecs));
     r = 0;
   } else if (command == "exit") {
     outbl.append("Exiting...\n");
@@ -256,13 +263,30 @@ void MDSDaemon::set_up_admin_socket()
   r = admin_socket->register_command("status", asok_hook,
 				     "high-level status of MDS");
   ceph_assert(r == 0);
+  r = admin_socket->register_command("lockup "
+				     "name=millisecs,type=CephInt,req=true,range=0"
+                                     , asok_hook
+				     , "sleep with mds_lock held (dev)");
+  ceph_assert(r == 0);
   r = admin_socket->register_command("dump_ops_in_flight", asok_hook,
 				     "show the ops currently in flight");
   ceph_assert(r == 0);
   r = admin_socket->register_command("ops "
-				     "name=flags,type=CephChoices,strings=locks,n=N,req=false ",
-                                     asok_hook,
-				     "show the ops currently in flight");
+				     "name=flags,type=CephChoices,strings=locks,n=N,req=false "
+				     "name=path,type=CephString,req=false "
+                                     ,asok_hook
+				     ,"show the ops currently in flight");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command("op kill "
+                                     "name=id,type=CephString,req=true",
+				     asok_hook,
+				     "kill op");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command("op get "
+				     "name=flags,type=CephChoices,strings=locks,n=N,req=false "
+                                     "name=id,type=CephString,req=true",
+				     asok_hook,
+				     "get op");
   ceph_assert(r == 0);
   r = admin_socket->register_command("dump_blocked_ops",
       asok_hook,
@@ -336,13 +360,30 @@ void MDSDaemon::set_up_admin_socket()
 				     asok_hook,
 				     "trim cache and optionally request client to release all caps and flush the journal");
   ceph_assert(r == 0);
+  r = admin_socket->register_command("lock path"
+                                     " name=path,type=CephString,req=true"
+                                     " name=locks,type=CephString,n=N,req=false"
+                                     " name=ap_dont_block,type=CephBool,req=false"
+                                     " name=ap_freeze,type=CephBool,req=false"
+                                     " name=await,type=CephBool,req=false"
+                                     " name=lifetime,type=CephFloat,req=false"
+				     ,asok_hook
+				     ,"lock a path");
+  ceph_assert(r == 0);
   r = admin_socket->register_command("cache status",
                                      asok_hook,
                                      "show cache status");
   ceph_assert(r == 0);
+  r = admin_socket->register_command("quiesce path"
+                                     " name=path,type=CephString,req=true"
+                                     " name=await,type=CephBool,req=false"
+				     ,asok_hook
+				     ,"quiesce a subtree");
+  ceph_assert(r == 0);
   r = admin_socket->register_command("dump tree "
 				     "name=root,type=CephString,req=true "
-				     "name=depth,type=CephInt,req=false ",
+				     "name=depth,type=CephInt,req=false "
+				     "name=path,type=CephString,req=false ",
 				     asok_hook,
 				     "dump metadata cache for subtree");
   ceph_assert(r == 0);
@@ -458,6 +499,25 @@ void MDSDaemon::set_up_admin_socket()
 				     asok_hook,
 				     "Respawn this MDS");
   ceph_assert(r == 0);
+  r = admin_socket->register_command("quiesce db "
+                                     "name=roots,type=CephString,n=N,req=false "
+                                     "-- "
+                                     "name=set_id,type=CephString,req=false "
+                                     "name=timeout,type=CephFloat,range=0,req=false "
+                                     "name=expiration,type=CephFloat,range=0,req=false "
+                                     "name=await_for,type=CephFloat,range=0,req=false "
+                                     "name=await,type=CephBool,req=false "
+                                     "name=if_version,type=CephInt,range=0,req=false "
+                                     "name=include,type=CephBool,req=false "
+                                     "name=exclude,type=CephBool,req=false "
+                                     "name=reset,type=CephBool,req=false "
+                                     "name=release,type=CephBool,req=false "
+                                     "name=query,type=CephBool,req=false "
+                                     "name=all,type=CephBool,req=false "
+                                     "name=cancel,type=CephBool,req=false",
+      asok_hook,
+      "submit queries to the local QuiesceDbManager");
+  ceph_assert(r == 0);
   r = admin_socket->register_command(
     "heap " \
     "name=heapcmd,type=CephChoices,strings="				\
@@ -514,8 +574,10 @@ int MDSDaemon::init()
   dout(10) << sizeof(Capability) << "\tCapability" << dendl;
   dout(10) << sizeof(xlist<void*>::item) << "\txlist<>::item" << dendl;
 
-  messenger->add_dispatcher_tail(&beacon);
-  messenger->add_dispatcher_tail(this);
+  // Ensure beacons are processed ahead of most other dispatchers.
+  messenger->add_dispatcher_head(&beacon, Dispatcher::PRIORITY_HIGH);
+  // order last as MDSDaemon::ms_dispatch2 first acquires the mds_lock
+  messenger->add_dispatcher_head(this, Dispatcher::PRIORITY_LOW);
 
   // init monc
   monc->set_messenger(messenger);
@@ -920,6 +982,7 @@ void MDSDaemon::respawn()
 
 bool MDSDaemon::ms_dispatch2(const ref_t<Message> &m)
 {
+  dout(25) << __func__ << ": processing " << m << dendl;
   std::lock_guard l(mds_lock);
   if (stopping) {
     return false;

@@ -104,6 +104,8 @@ inline std::ostream& operator<<(std::ostream& out, const std::list<A,Alloc>& ili
 template<class A, class Comp, class Alloc>
 inline std::ostream& operator<<(std::ostream& out, const std::set<A, Comp, Alloc>& iset);
 template<class A, class Comp, class Alloc>
+inline std::ostream& operator<<(std::ostream& out, const std::unordered_set<A, Comp, Alloc>& iset);
+template<class A, class Comp, class Alloc>
 inline std::ostream& operator<<(std::ostream& out, const std::multiset<A,Comp,Alloc>& iset);
 template<class A, class B, class Comp, class Alloc>
 inline std::ostream& operator<<(std::ostream& out, const std::map<A,B,Comp,Alloc>& m);
@@ -200,6 +202,17 @@ inline std::ostream& operator<<(std::ostream& out, const std::list<A,Alloc>& ili
 
 template<class A, class Comp, class Alloc>
 inline std::ostream& operator<<(std::ostream& out, const std::set<A, Comp, Alloc>& iset) {
+  for (auto it = iset.begin();
+       it != iset.end();
+       ++it) {
+    if (it != iset.begin()) out << ",";
+    out << *it;
+  }
+  return out;
+}
+
+template<class A, class Comp, class Alloc>
+inline std::ostream& operator<<(std::ostream& out, const std::unordered_set<A, Comp, Alloc>& iset) {
   for (auto it = iset.begin();
        it != iset.end();
        ++it) {
@@ -371,6 +384,14 @@ struct client_t {
     using ceph::decode;
     decode(v, bl);
   }
+  void dump(ceph::Formatter *f) const {
+    f->dump_int("id", v);
+  }
+  static void generate_test_instances(std::list<client_t*>& ls) {
+    ls.push_back(new client_t);
+    ls.push_back(new client_t(1));
+    ls.push_back(new client_t(123));
+  }
 };
 WRITE_CLASS_ENCODER(client_t)
 
@@ -505,7 +526,7 @@ struct shard_id_t {
   shard_id_t() : id(0) {}
   constexpr explicit shard_id_t(int8_t _id) : id(_id) {}
 
-  operator int8_t() const { return id; }
+  constexpr operator int8_t() const { return id; }
 
   const static shard_id_t NO_SHARD;
 
@@ -517,7 +538,13 @@ struct shard_id_t {
     using ceph::decode;
     decode(id, bl);
   }
-
+  void dump(ceph::Formatter *f) const {
+    f->dump_int("id", id);
+  }
+  static void generate_test_instances(std::list<shard_id_t*>& ls) {
+    ls.push_back(new shard_id_t(1));
+    ls.push_back(new shard_id_t(2));
+  }
   bool operator==(const shard_id_t&) const = default;
   auto operator<=>(const shard_id_t&) const = default;
 };
@@ -561,6 +588,13 @@ struct errorcode32_t {
     decode(code, bl);
     code = ceph_to_hostos_errno(code);
   }
+  void dump(ceph::Formatter *f) const {
+    f->dump_int("code", code);
+  }
+  static void generate_test_instances(std::list<errorcode32_t*>& ls) {
+    ls.push_back(new errorcode32_t(1));
+    ls.push_back(new errorcode32_t(2));
+  }
 };
 WRITE_CLASS_ENCODER(errorcode32_t)
 
@@ -601,6 +635,16 @@ struct sha_digest_t {
     std::array<unsigned char, SIZE> tmparr;
     decode(tmparr, bl);
     memcpy(v, tmparr.data(), SIZE);
+  }
+  void dump(ceph::Formatter *f) const {
+    f->dump_string("sha1", to_str());
+  }
+  static void generate_test_instances(std::list<sha_digest_t*>& ls) {
+    ls.push_back(new sha_digest_t);
+    ls.push_back(new sha_digest_t);
+    ls.back()->v[0] = 1;
+    ls.push_back(new sha_digest_t);
+    ls.back()->v[0] = 2;
   }
 };
 

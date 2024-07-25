@@ -51,12 +51,13 @@ public:
 
   void nudge_log(SimpleLock *lock);
 
-  bool acquire_locks(MDRequestRef& mdr,
+  bool acquire_locks(const MDRequestRef& mdr,
 		     MutationImpl::LockOpVec& lov,
 		     CInode *auth_pin_freeze=NULL,
-		     bool auth_pin_nonblocking=false);
+		     bool auth_pin_nonblocking=false,
+                     bool skip_quiesce=false);
 
-  bool try_rdlock_snap_layout(CInode *in, MDRequestRef& mdr,
+  bool try_rdlock_snap_layout(CInode *in, const MDRequestRef& mdr,
 			      int n=0, bool want_layout=false);
 
   void notify_freeze_waiter(MDSCacheObject *o);
@@ -65,11 +66,16 @@ public:
   void set_xlocks_done(MutationImpl *mut, bool skip_dentry=false);
   void drop_non_rdlocks(MutationImpl *mut, std::set<CInode*> *pneed_issue=0);
   void drop_rdlocks_for_early_reply(MutationImpl *mut);
+  void drop_lock(MutationImpl* mut, SimpleLock* what);
   void drop_locks_for_fragment_unfreeze(MutationImpl *mut);
 
+  void request_drop_remote_locks(const MDRequestRef& mdr);
+  void request_drop_non_rdlocks(const MDRequestRef& r);
+  void request_drop_locks(const MDRequestRef& r);
+
   int get_cap_bit_for_lock_cache(int op);
-  void create_lock_cache(MDRequestRef& mdr, CInode *diri, file_layout_t *dir_layout=nullptr);
-  bool find_and_attach_lock_cache(MDRequestRef& mdr, CInode *diri);
+  void create_lock_cache(const MDRequestRef& mdr, CInode *diri, file_layout_t *dir_layout=nullptr);
+  bool find_and_attach_lock_cache(const MDRequestRef& mdr, CInode *diri);
   void invalidate_lock_caches(CDir *dir);
   void invalidate_lock_caches(SimpleLock *lock);
   void invalidate_lock_cache(MDLockCache *lock_cache);
@@ -95,20 +101,20 @@ public:
 
   bool _rdlock_kick(SimpleLock *lock, bool as_anon);
   bool rdlock_try(SimpleLock *lock, client_t client);
-  bool rdlock_start(SimpleLock *lock, MDRequestRef& mut, bool as_anon=false);
+  bool rdlock_start(SimpleLock *lock, const MDRequestRef& mut, bool as_anon=false);
   void rdlock_finish(const MutationImpl::lock_iterator& it, MutationImpl *mut, bool *pneed_issue);
-  bool rdlock_try_set(MutationImpl::LockOpVec& lov, MDRequestRef& mdr);
+  bool rdlock_try_set(MutationImpl::LockOpVec& lov, const MDRequestRef& mdr);
   bool rdlock_try_set(MutationImpl::LockOpVec& lov, MutationRef& mut);
 
   void wrlock_force(SimpleLock *lock, MutationRef& mut);
   bool wrlock_try(SimpleLock *lock, const MutationRef& mut, client_t client=-1);
-  bool wrlock_start(const MutationImpl::LockOp &op, MDRequestRef& mut);
+  bool wrlock_start(const MutationImpl::LockOp &op, const MDRequestRef& mut);
   void wrlock_finish(const MutationImpl::lock_iterator& it, MutationImpl *mut, bool *pneed_issue);
 
-  void remote_wrlock_start(SimpleLock *lock, mds_rank_t target, MDRequestRef& mut);
+  void remote_wrlock_start(SimpleLock *lock, mds_rank_t target, const MDRequestRef& mut);
   void remote_wrlock_finish(const MutationImpl::lock_iterator& it, MutationImpl *mut);
 
-  bool xlock_start(SimpleLock *lock, MDRequestRef& mut);
+  bool xlock_start(SimpleLock *lock, const MDRequestRef& mut);
   void _finish_xlock(SimpleLock *lock, client_t xlocker, bool *pneed_issue);
   void xlock_finish(const MutationImpl::lock_iterator& it, MutationImpl *mut, bool *pneed_issue);
 
@@ -137,10 +143,10 @@ public:
   // process_request_cap_release to preserve ordering.
   bool should_defer_client_cap_frozen(CInode *in);
 
-  void process_request_cap_release(MDRequestRef& mdr, client_t client, const ceph_mds_request_release& r,
+  void process_request_cap_release(const MDRequestRef& mdr, client_t client, const ceph_mds_request_release& r,
 				   std::string_view dname);
 
-  void kick_cap_releases(MDRequestRef& mdr);
+  void kick_cap_releases(const MDRequestRef& mdr);
   void kick_issue_caps(CInode *in, client_t client, ceph_seq_t seq);
 
   void remove_client_cap(CInode *in, Capability *cap, bool kill=false);
@@ -162,7 +168,7 @@ public:
 
   // -- file i/o --
   version_t issue_file_data_version(CInode *in);
-  Capability* issue_new_caps(CInode *in, int mode, MDRequestRef& mdr, SnapRealm *conrealm);
+  Capability* issue_new_caps(CInode *in, int mode, const MDRequestRef& mdr, SnapRealm *conrealm);
   int get_allowed_caps(CInode *in, Capability *cap, int &all_allowed,
                        int &loner_allowed, int &xlocker_allowed);
   int issue_caps(CInode *in, Capability *only_cap=0);
@@ -186,7 +192,7 @@ public:
   // -- client leases --
   void handle_client_lease(const cref_t<MClientLease> &m);
 
-  void issue_client_lease(CDentry *dn, CInode *in, MDRequestRef &mdr, utime_t now, bufferlist &bl);
+  void issue_client_lease(CDentry *dn, CInode *in, const MDRequestRef &mdr, utime_t now, bufferlist &bl);
   void revoke_client_leases(SimpleLock *lock);
   static void encode_lease(bufferlist& bl, const session_info_t& info, const LeaseStat& ls);
 
@@ -225,9 +231,9 @@ protected:
   void _do_cap_release(client_t client, inodeno_t ino, uint64_t cap_id, ceph_seq_t mseq, ceph_seq_t seq);
   void caps_tick();
 
-  bool local_wrlock_start(LocalLockC *lock, MDRequestRef& mut);
+  bool local_wrlock_start(LocalLockC *lock, const MDRequestRef& mut);
   void local_wrlock_finish(const MutationImpl::lock_iterator& it, MutationImpl *mut);
-  bool local_xlock_start(LocalLockC *lock, MDRequestRef& mut);
+  bool local_xlock_start(LocalLockC *lock, const MDRequestRef& mut);
   void local_xlock_finish(const MutationImpl::lock_iterator& it, MutationImpl *mut);
 
   void handle_file_lock(ScatterLock *lock, const cref_t<MLock> &m);
@@ -258,6 +264,8 @@ private:
   friend class C_Locker_ScatterWB;
   friend class LockerContext;
   friend class LockerLogContext;
+
+  void handle_quiesce_failure(const MDRequestRef& mdr, std::string_view& marker);
 
   bool any_late_revoking_caps(xlist<Capability*> const &revoking, double timeout) const;
   uint64_t calc_new_max_size(const CInode::inode_const_ptr& pi, uint64_t size);

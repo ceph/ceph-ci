@@ -404,6 +404,28 @@ class TestNFS(MgrTestCase):
         self._cmd('fs', 'volume', 'rm', fs_name, '--yes-i-really-mean-it')
         self._test_delete_cluster()
 
+    def _nfs_export_apply(self, cluster, exports, raise_on_error=False):
+        return self.ctx.cluster.run(args=['ceph', 'nfs', 'export', 'apply',
+                                          cluster, '-i', '-'],
+                                    check_status=raise_on_error,
+                                    stdin=json.dumps(exports),
+                                    stdout=StringIO(), stderr=StringIO())
+
+    def update_export(self, cluster_id, path, pseudo, fs_name):
+        self.ctx.cluster.run(args=['ceph', 'nfs', 'export', 'apply',
+                                   cluster_id, '-i', '-'],
+                             stdin=json.dumps({
+                                 "path": path,
+                                 "pseudo": pseudo,
+                                 "squash": "none",
+                                 "access_type": "rw",
+                                 "protocols": [4],
+                                 "fsal": {
+                                     "name": "CEPH",
+                                     "fs_name": fs_name
+                                 }
+                             }))
+
     def test_create_and_delete_cluster(self):
         '''
         Test successful creation and deletion of the nfs cluster.
@@ -876,3 +898,316 @@ class TestNFS(MgrTestCase):
                 raise
         self.ctx.cluster.run(args=['rm', '-rf', f'{mnt_pt}/*'])
         self._delete_cluster_with_fs(self.fs_name, mnt_pt, preserve_mode)
+
+    def test_nfs_export_apply_multiple_exports(self):
+        """
+        Test multiple export creation/update with multiple
+        export blocks provided in the json/conf file using:
+        ceph nfs export apply <nfs_cluster> -i <{conf/json}_file>, and check
+        1) if there are multiple failure:
+        -> Return the EIO and error status to CLI (along with JSON output
+           containing status of every export).
+        2) if there is single failure:
+        -> Return the respective errno and error status to CLI (along with
+           JSON output containing status of every export).
+        """
+
+        mnt_pt = self._sys_cmd(['mktemp', '-d']).decode().strip()
+        self._create_cluster_with_fs(self.fs_name, mnt_pt)
+        try:
+            self.ctx.cluster.run(args=['mkdir', f'{mnt_pt}/testdir1'])
+            self.ctx.cluster.run(args=['mkdir', f'{mnt_pt}/testdir2'])
+            self.ctx.cluster.run(args=['mkdir', f'{mnt_pt}/testdir3'])
+            self._create_export(export_id='1',
+                                extra_cmd=['--pseudo-path', self.pseudo_path,
+                                           '--path', '/testdir1'])
+            self._create_export(export_id='2',
+                                extra_cmd=['--pseudo-path',
+                                           self.pseudo_path+'2',
+                                           '--path', '/testdir2'])
+            exports = [
+                {
+                    "export_id": 11,  # export_id change not allowed
+                    "path": "/testdir1",
+                    "pseudo": self.pseudo_path,
+                    "squash": "none",
+                    "access_type": "rw",
+                    "protocols": [4],
+                    "fsal": {
+                        "name": "CEPH",
+                        "user_id": "nfs.test.1",
+                        "fs_name": self.fs_name
+                    }
+                },
+                {
+                    "export_id": 2,
+                    "path": "/testdir2",
+                    "pseudo": self.pseudo_path+'2',
+                    "squash": "none",
+                    "access_type": "rw",
+                    "protocols": [4],
+                    "fsal": {
+                        "name": "CEPH",
+                        "user_id": "nfs.test.2",
+                        "fs_name": "invalid_fs_name"  # invalid fs
+                    }
+                },
+                {   # no error, export creation should succeed
+                    "export_id": 3,
+                    "path": "/testdir3",
+                    "pseudo": self.pseudo_path+'3',
+                    "squash": "none",
+                    "access_type": "rw",
+                    "protocols": [4],
+                    "fsal": {
+                        "name": "CEPH",
+                        "user_id": "nfs.test.3",
+                        "fs_name": self.fs_name
+                    }
+                }
+            ]
+
+            # multiple failures
+            ret = self._nfs_export_apply(self.cluster_id, exports)
+            self.assertEqual(ret[0].returncode, errno.EIO)
+            self.assertIn("2 export blocks (at index 1, 2) failed to be "
+                          "created/updated", ret[0].stderr.getvalue())
+
+            # single failure
+            exports[1]["fsal"]["fs_name"] = self.fs_name  # correct the fs
+            ret = self._nfs_export_apply(self.cluster_id, exports)
+            self.assertEqual(ret[0].returncode, errno.EINVAL)
+            self.assertIn("Export ID changed, Cannot update export for "
+                          "export block at index 1", ret[0].stderr.getvalue())
+        finally:
+            self._delete_cluster_with_fs(self.fs_name, mnt_pt)
+            self.ctx.cluster.run(args=['rm', '-rf', f'{mnt_pt}'])
+
+    def test_nfs_export_apply_single_export(self):
+        """
+        Test that when single export creation/update fails with multiple
+        export blocks provided in the json/conf file using:
+        ceph nfs export apply <nfs_cluster> -i <{conf/json}_file>, it
+        returns the respective errno and error status to CLI (along with
+        JSON output containing status of every export).
+        """
+
+        mnt_pt = self._sys_cmd(['mktemp', '-d']).decode().strip()
+        self._create_cluster_with_fs(self.fs_name, mnt_pt)
+        try:
+            self.ctx.cluster.run(args=['mkdir', f'{mnt_pt}/testdir1'])
+            self._create_export(export_id='1',
+                                extra_cmd=['--pseudo-path', self.pseudo_path,
+                                           '--path', '/testdir1'])
+            export = {
+                "export_id": 1,
+                "path": "/testdir1",
+                "pseudo": self.pseudo_path,
+                "squash": "none",
+                "access_type": "rw",
+                "protocols": [4],
+                "fsal": {
+                    "name": "CEPH",
+                    "user_id": "nfs.test.1",
+                    "fs_name": "invalid_fs_name"  # invalid fs
+                }
+            }
+            ret = self._nfs_export_apply(self.cluster_id, export)
+            self.assertEqual(ret[0].returncode, errno.ENOENT)
+            self.assertIn("filesystem invalid_fs_name not found for "
+                          "export block at index 1", ret[0].stderr.getvalue())
+        finally:
+            self._delete_cluster_with_fs(self.fs_name, mnt_pt)
+            self.ctx.cluster.run(args=['rm', '-rf', f'{mnt_pt}'])
+
+    def test_nfs_export_apply_json_output_states(self):
+        """
+        If export creation/update is done using:
+        ceph nfs export apply <nfs_cluster> -i <{conf/json}_file> then the
+        "status" field in the json output maybe added, updated, error or
+        warning. Test different scenarios to make sure these states are
+        in the json output as expected.
+        """
+
+        mnt_pt = self._sys_cmd(['mktemp', '-d']).decode().strip()
+        self._create_cluster_with_fs(self.fs_name, mnt_pt)
+        try:
+            self.ctx.cluster.run(args=['mkdir', f'{mnt_pt}/testdir1'])
+            self.ctx.cluster.run(args=['mkdir', f'{mnt_pt}/testdir2'])
+            self.ctx.cluster.run(args=['mkdir', f'{mnt_pt}/testdir3'])
+            self._create_export(export_id='1',
+                                extra_cmd=['--pseudo-path', self.pseudo_path,
+                                           '--path', '/testdir1'])
+            exports = [
+                {   # change pseudo, state should be "updated"
+                    "export_id": 1,
+                    "path": "/testdir1",
+                    "pseudo": self.pseudo_path+'1',
+                    "squash": "none",
+                    "access_type": "rw",
+                    "protocols": [4],
+                    "fsal": {
+                        "name": "CEPH",
+                        "user_id": "nfs.test.1",
+                        "fs_name": self.fs_name
+                    }
+                },
+                {   # a new export, state should be "added"
+                    "export_id": 2,
+                    "path": "/testdir2",
+                    "pseudo": self.pseudo_path+'2',
+                    "squash": "none",
+                    "access_type": "rw",
+                    "protocols": [4],
+                    "fsal": {
+                        "name": "CEPH",
+                        "user_id": "nfs.test.2",
+                        "fs_name": self.fs_name
+                    }
+                },
+                {   # error in export block, state should be "error" since the
+                    # fs_name is invalid
+                    "export_id": 3,
+                    "path": "/testdir3",
+                    "pseudo": self.pseudo_path+'3',
+                    "squash": "none",
+                    "access_type": "RW",
+                    "protocols": [4],
+                    "fsal": {
+                        "name": "CEPH",
+                        "user_id": "nfs.test.3",
+                        "fs_name": "invalid_fs_name"
+                    }
+                }
+            ]
+            ret = self._nfs_export_apply(self.cluster_id, exports)
+            json_output = json.loads(ret[0].stdout.getvalue().strip())
+            self.assertEqual(len(json_output), 3)
+            self.assertEqual(json_output[0]["state"], "updated")
+            self.assertEqual(json_output[1]["state"], "added")
+            self.assertEqual(json_output[2]["state"], "error")
+        finally:
+            self._delete_cluster_with_fs(self.fs_name, mnt_pt)
+            self.ctx.cluster.run(args=['rm', '-rf', f'{mnt_pt}'])
+
+    def test_pseudo_path_in_json_response_when_updating_exports_failed(self):
+        """
+        Test that on export update/creation failure while using
+        ceph nfs export apply <nfs_cluster> -i <json/conf>, the failed
+        exports pseudo paths are visible in the JSON response to CLI and the
+        return code is set to EIO.
+        """
+        mnt_pt = self._sys_cmd(['mktemp', '-d']).decode().strip()
+        self._create_cluster_with_fs(self.fs_name, mnt_pt)
+        self.ctx.cluster.run(args=['mkdir', f'{mnt_pt}/testdir1'])
+        self.ctx.cluster.run(args=['mkdir', f'{mnt_pt}/testdir2'])
+        self._create_export(export_id='1',
+                            extra_cmd=['--pseudo-path', self.pseudo_path])
+
+        ret = self.ctx.cluster.run(args=['ceph', 'nfs', 'export', 'apply',
+                                         self.cluster_id, '-i', '-'],
+                                   check_status=False,
+                                   stdin=json.dumps([
+                                    {
+                                        "export_id": 11,  # change not allowed
+                                        "path": "/testdir1",
+                                        "pseudo": self.pseudo_path,
+                                        "squash": "none",
+                                        "access_type": "rw",
+                                        "protocols": [4],
+                                        "fsal": {
+                                            "name": "CEPH",
+                                            "fs_name": self.fs_name
+                                        }
+                                    },
+                                    {
+                                        "path": "/testdir2",
+                                        "pseudo": self.pseudo_path+'1',
+                                        "squash": "none",
+                                        "access_type": "rw",
+                                        "protocols": [4],
+                                        "fsal": {
+                                            "name": "CEPH",
+                                            "fs_name": "foo"  # invalid fs
+                                        }
+                                    }]),
+                                   stdout=StringIO(), stderr=StringIO())
+
+        try:
+            # EIO since multiple exports failure (first export failed to be
+            # modified while the second one failed to be created)
+            self.assertEqual(ret[0].returncode, errno.EIO)
+            err_info = ret[0].stdout
+            if err_info:
+                update_details = json.loads(err_info.getvalue())
+                self.assertEqual(update_details[0]["pseudo"], self.pseudo_path)
+                self.assertEqual(update_details[1]["pseudo"], self.pseudo_path+'1')
+            else:
+                self.fail("Could not retrieve any export update data")
+
+            # verify second export wasn't created
+            exports = json.loads(self._nfs_cmd('export', 'ls',
+                                               self.cluster_id, '--detailed'))
+            self.assertEqual(len(exports), 1)
+
+        finally:
+            self._delete_cluster_with_fs(self.fs_name, mnt_pt)
+            self.ctx.cluster.run(args=['rm', '-rf', f'{mnt_pt}'])
+
+    def test_cephfs_export_update_with_nonexistent_dir(self):
+        """
+        Test that invalid path is not allowed while updating a CephFS
+        export.
+        """
+        self._create_cluster_with_fs(self.fs_name)
+        self._create_export(export_id=1)
+
+        try:
+            self.update_export(self.cluster_id, "/not_existent_dir",
+                               self.pseudo_path, self.fs_name)
+        except CommandFailedError as e:
+            if e.exitstatus != errno.ENOENT:
+                raise
+
+        self._delete_export()
+        self._delete_cluster_with_fs(self.fs_name)
+
+    def test_cephfs_export_update_at_non_dir_path(self):
+        """
+        Test that non-directory path are not allowed while updating a CephFS
+        export.
+        """
+        mnt_pt = '/mnt'
+        preserve_mode = self._sys_cmd(['stat', '-c', '%a', mnt_pt])
+        self._create_cluster_with_fs(self.fs_name, mnt_pt)
+        try:
+            self.ctx.cluster.run(args=['touch', f'{mnt_pt}/testfile'])
+            self._create_export(export_id=1)
+
+            # test at a file path
+            try:
+                self.update_export(self.cluster_id, "/testfile",
+                                   self.pseudo_path, self.fs_name)
+            except CommandFailedError as e:
+                if e.exitstatus != errno.ENOTDIR:
+                    raise
+
+            # test at a symlink path
+            self.ctx.cluster.run(args=['mkdir', f'{mnt_pt}/testdir'])
+            self.ctx.cluster.run(args=['ln', '-s', f'{mnt_pt}/testdir',
+                                       f'{mnt_pt}/testdir_symlink'])
+            try:
+                self.update_export(self.cluster_id, "/testdir_symlink",
+                                   self.pseudo_path, self.fs_name)
+            except CommandFailedError as e:
+                if e.exitstatus != errno.ENOTDIR:
+                    raise
+
+            # verify the path wasn't changed
+            export = json.loads(self._nfs_cmd("export", "ls",
+                                              self.cluster_id, "--detailed"))
+            self.assertEqual(export[0]["pseudo"], "/cephfs")
+
+        finally:
+            self.ctx.cluster.run(args=['rm', '-rf', f'{mnt_pt}/*'])
+            self._delete_cluster_with_fs(self.fs_name, mnt_pt, preserve_mode)

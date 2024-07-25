@@ -69,6 +69,10 @@ function(build_arrow)
     list(APPEND arrow_DEPENDS Boost)
   endif()
 
+  # since Arrow 15.0.0 needs xsimd>=8.1.0 and since Ubuntu Jammy
+  # Jellyfish only provides 7.6.0, we'll have arrow build it as source
+  list(APPEND arrow_CMAKE_ARGS -Dxsimd_SOURCE=BUNDLED)
+
   # cmake doesn't properly handle arguments containing ";", such as
   # CMAKE_PREFIX_PATH, for which reason we'll have to use some other separator.
   string(REPLACE ";" "!" CMAKE_PREFIX_PATH_ALT_SEP "${CMAKE_PREFIX_PATH}")
@@ -86,6 +90,9 @@ function(build_arrow)
   else()
     list(APPEND arrow_CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release)
   endif()
+  # don't add -Werror or debug package builds fail with:
+  #warning _FORTIFY_SOURCE requires compiling with optimization (-O)
+  list(APPEND arrow_CMAKE_ARGS -DBUILD_WARNING_LEVEL=PRODUCTION)
 
   # we use an external project and copy the sources to bin directory to ensure
   # that object files are built outside of the source tree.

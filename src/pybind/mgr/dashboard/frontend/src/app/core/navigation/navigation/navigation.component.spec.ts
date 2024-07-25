@@ -24,6 +24,7 @@ import { AdministrationComponent } from '../administration/administration.compon
 import { IdentityComponent } from '../identity/identity.component';
 import { NgbModule } from '@ng-bootstrap/ng-bootstrap';
 import { DashboardHelpComponent } from '../dashboard-help/dashboard-help.component';
+import { DialogModule, GridModule, ThemeModule, UIShellModule } from 'carbon-components-angular';
 
 function everythingPermittedExcept(disabledPermissions: string[] = []): any {
   const permissions: Permissions = new Permissions({});
@@ -71,7 +72,11 @@ describe('NavigationComponent', () => {
       ToastrModule.forRoot(),
       RouterTestingModule,
       SimplebarAngularModule,
-      NgbModule
+      NgbModule,
+      UIShellModule,
+      ThemeModule,
+      DialogModule,
+      GridModule
     ],
     providers: [AuthStorageService, SummaryService, FeatureTogglesService, PrometheusAlertService]
   });
@@ -102,31 +107,31 @@ describe('NavigationComponent', () => {
       [
         ['hosts'],
         [
-          '.tc_submenuitem_hosts',
+          '.tc_submenuitem_cluster_hosts',
           '.tc_submenuitem_cluster_inventory',
-          '.tc_submenuitem_cluster_services'
+          '.tc_submenuitem_admin_services'
         ]
       ],
       [['monitor'], ['.tc_submenuitem_cluster_monitor']],
-      [['osd'], ['.tc_submenuitem_osds', '.tc_submenuitem_crush']],
+      [['osd'], ['.tc_submenuitem_cluster_osds', '.tc_submenuitem_cluster_crush']],
       [
         ['configOpt'],
         [
-          '.tc_submenuitem_configuration',
-          '.tc_submenuitem_modules',
-          '.tc_submenuitem_users',
-          '.tc_submenuitem_upgrade'
+          '.tc_submenuitem_admin_configuration',
+          '.tc_submenuitem_admin_modules',
+          '.tc_submenuitem_admin_users',
+          '.tc_submenuitem_admin_upgrade'
         ]
       ],
-      [['log'], ['.tc_submenuitem_log']],
-      [['prometheus'], ['.tc_submenuitem_monitoring']],
-      [['pool'], ['.tc_menuitem_pool']],
+      [['log'], ['.tc_submenuitem_observe_log']],
+      [['prometheus'], ['.tc_submenuitem_observe_monitoring']],
+      [['pool'], ['.tc_submenuitem_cluster_pool']],
       [['rbdImage'], ['.tc_submenuitem_block_images']],
       [['rbdMirroring'], ['.tc_submenuitem_block_mirroring']],
       [['iscsi'], ['.tc_submenuitem_block_iscsi']],
       [['rbdImage', 'rbdMirroring', 'iscsi'], ['.tc_menuitem_block']],
-      [['nfs'], ['.tc_menuitem_nfs']],
-      [['cephfs'], ['.tc_menuitem_cephfs']],
+      [['nfs'], ['.tc_submenuitem_file_nfs']],
+      [['cephfs'], ['.tc_submenuitem_file_cephfs']],
       [
         ['rgw'],
         [
@@ -173,8 +178,8 @@ describe('NavigationComponent', () => {
       [['mirroring'], ['.tc_submenuitem_block_mirroring']],
       [['iscsi'], ['.tc_submenuitem_block_iscsi']],
       [['rbd', 'mirroring', 'iscsi'], ['.tc_menuitem_block']],
-      [['nfs'], ['.tc_menuitem_nfs']],
-      [['cephfs'], ['.tc_menuitem_cephfs']],
+      [['nfs'], ['.tc_submenuitem_file_nfs']],
+      [['cephfs'], ['.tc_submenuitem_file_cephfs']],
       [
         ['rgw'],
         [
@@ -213,57 +218,5 @@ describe('NavigationComponent', () => {
         }
       });
     }
-  });
-
-  describe('showTopNotification', () => {
-    const notification1 = 'notificationName1';
-    const notification2 = 'notificationName2';
-
-    beforeEach(() => {
-      component.notifications = [];
-    });
-
-    it('should show notification', () => {
-      component.showTopNotification(notification1, true);
-      expect(component.notifications.includes(notification1)).toBeTruthy();
-      expect(component.notifications.length).toBe(1);
-    });
-
-    it('should not add a second notification if it is already shown', () => {
-      component.showTopNotification(notification1, true);
-      component.showTopNotification(notification1, true);
-      expect(component.notifications.includes(notification1)).toBeTruthy();
-      expect(component.notifications.length).toBe(1);
-    });
-
-    it('should add a second notification if the first one is different', () => {
-      component.showTopNotification(notification1, true);
-      component.showTopNotification(notification2, true);
-      expect(component.notifications.includes(notification1)).toBeTruthy();
-      expect(component.notifications.includes(notification2)).toBeTruthy();
-      expect(component.notifications.length).toBe(2);
-    });
-
-    it('should hide an active notification', () => {
-      component.showTopNotification(notification1, true);
-      expect(component.notifications.includes(notification1)).toBeTruthy();
-      expect(component.notifications.length).toBe(1);
-      component.showTopNotification(notification1, false);
-      expect(component.notifications.length).toBe(0);
-    });
-
-    it('should not fail if it tries to hide an inactive notification', () => {
-      expect(() => component.showTopNotification(notification1, false)).not.toThrow();
-      expect(component.notifications.length).toBe(0);
-    });
-
-    it('should keep other notifications if it hides one', () => {
-      component.showTopNotification(notification1, true);
-      component.showTopNotification(notification2, true);
-      expect(component.notifications.length).toBe(2);
-      component.showTopNotification(notification2, false);
-      expect(component.notifications.length).toBe(1);
-      expect(component.notifications.includes(notification1)).toBeTruthy();
-    });
   });
 });

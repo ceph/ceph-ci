@@ -46,9 +46,9 @@ class PrometheusRESTController(RESTController):
         # type (str, str, dict, dict)
         user, password, cert_file = self.get_access_info('alertmanager')
         verify = cert_file.name if cert_file else Settings.ALERTMANAGER_API_SSL_VERIFY
-        response = self._proxy(self._get_api_url(Settings.ALERTMANAGER_API_HOST),
+        response = self._proxy(self._get_api_url(Settings.ALERTMANAGER_API_HOST, version='v2'),
                                method, path, 'Alertmanager', params, payload,
-                               user=user, password=password, verify=verify)
+                               user=user, password=password, verify=verify, is_alertmanager=True)
         if cert_file:
             cert_file.close()
             os.unlink(cert_file.name)
@@ -61,31 +61,36 @@ class PrometheusRESTController(RESTController):
         user = None
         password = None
         cert_file = None
-        secure_monitoring_stack = bool(mgr.get_module_option_ex('cephadm',
-                                                                'secure_monitoring_stack',
-                                                                'false'))
-        if secure_monitoring_stack:
-            cmd = {'prefix': f'orch {module_name} get-credentials'}
-            ret, out, _ = mgr.mon_command(cmd)
-            if ret == 0 and out is not None:
-                access_info = json.loads(out)
-                user = access_info['user']
-                password = access_info['password']
-                certificate = access_info['certificate']
-                cert_file = tempfile.NamedTemporaryFile(delete=False)
-                cert_file.write(certificate.encode('utf-8'))
-                cert_file.flush()
+
+        orch_backend = mgr.get_module_option_ex('orchestrator', 'orchestrator')
+        if orch_backend == 'cephadm':
+            secure_monitoring_stack = mgr.get_module_option_ex('cephadm',
+                                                               'secure_monitoring_stack',
+                                                               False)
+            if secure_monitoring_stack:
+                cmd = {'prefix': f'orch {module_name} get-credentials'}
+                ret, out, _ = mgr.mon_command(cmd)
+                if ret == 0 and out is not None:
+                    access_info = json.loads(out)
+                    user = access_info['user']
+                    password = access_info['password']
+                    certificate = access_info['certificate']
+                    cert_file = tempfile.NamedTemporaryFile(delete=False)
+                    cert_file.write(certificate.encode('utf-8'))
+                    cert_file.flush()
+
         return user, password, cert_file
 
-    def _get_api_url(self, host):
-        return host.rstrip('/') + '/api/v1'
+    def _get_api_url(self, host, version='v1'):
+        return f'{host.rstrip("/")}/api/{version}'
 
     def balancer_status(self):
         return ceph_service.CephService.send_command('mon', 'balancer status')
 
     def _proxy(self, base_url, method, path, api_name, params=None, payload=None, verify=True,
-               user=None, password=None):
+               user=None, password=None, is_alertmanager=False):
         # type (str, str, str, str, dict, dict, bool)
+        content = None
         try:
             from requests.auth import HTTPBasicAuth
             auth = HTTPBasicAuth(user, password) if user and password else None
@@ -98,11 +103,14 @@ class PrometheusRESTController(RESTController):
                 http_status_code=404,
                 component='prometheus')
         try:
-            content = json.loads(response.content, strict=False)
+            if response.content:
+                content = json.loads(response.content, strict=False)
         except json.JSONDecodeError as e:
             raise DashboardException(
                 "Error parsing Prometheus Alertmanager response: {}".format(e.msg),
                 component='prometheus')
+        if is_alertmanager:
+            return content
         balancer_status = self.balancer_status()
         if content['status'] == 'success':  # pylint: disable=R1702
             alerts_info = []
@@ -118,7 +126,13 @@ class PrometheusRESTController(RESTController):
 @APIRouter('/prometheus', Scope.PROMETHEUS)
 @APIDoc("Prometheus Management API", "Prometheus")
 class Prometheus(PrometheusRESTController):
-    def list(self, **params):
+    def list(self, cluster_filter=False, **params):
+        if cluster_filter:
+            try:
+                fsid = mgr.get('config')['fsid']
+            except KeyError:
+                raise DashboardException("Cluster fsid not found", component='prometheus')
+            return self.alert_proxy('GET', f'/alerts?filter=cluster={fsid}', params)
         return self.alert_proxy('GET', '/alerts', params)
 
     @RESTController.Collection(method='GET')
@@ -141,6 +155,15 @@ class Prometheus(PrometheusRESTController):
     @RESTController.Collection(method='DELETE', path='/silence/{s_id}', status=204)
     def delete_silence(self, s_id):
         return self.alert_proxy('DELETE', '/silence/' + s_id) if s_id else None
+
+    @RESTController.Collection(method='GET', path='/alertgroup')
+    def get_alertgroup(self, **params):
+        return self.alert_proxy('GET', '/alerts/groups', params)
+
+    @RESTController.Collection(method='GET', path='/prometheus_query_data')
+    def get_prometeus_query_data(self, **params):
+        params['query'] = params.pop('params')
+        return self.prometheus_proxy('GET', '/query', params)
 
 
 @APIRouter('/prometheus/notifications', Scope.PROMETHEUS)

@@ -38,8 +38,8 @@ ostream& CDentry::print_db_line_prefix(ostream& out) const
   return out << ceph_clock_now() << " mds." << dir->mdcache->mds->get_nodeid() << ".cache.den(" << dir->ino() << " " << name << ") ";
 }
 
-LockType CDentry::lock_type(CEPH_LOCK_DN);
-LockType CDentry::versionlock_type(CEPH_LOCK_DVERSION);
+const LockType CDentry::lock_type(CEPH_LOCK_DN);
+const LockType CDentry::versionlock_type(CEPH_LOCK_DVERSION);
 
 
 // CDentry
@@ -568,6 +568,7 @@ void CDentry::encode_remote(inodeno_t& ino, unsigned char d_type,
 
   // marker, name, ino
   ENCODE_START(2, 1, bl);
+  // WARNING: always put new fields at the end of bl
   encode(ino, bl);
   encode(d_type, bl);
   encode(alternate_name, bl);
@@ -599,6 +600,15 @@ void CDentry::dump(Formatter *f) const
   make_path(path);
 
   f->dump_string("path", path.get_path());
+  if (auto s =  get_alternate_name(); !s.empty()) {
+    bufferlist bl, b64;
+    bl.append(s);
+    bl.encode_base64(b64);
+    auto encoded = std::string_view(b64.c_str(), b64.length());
+    f->dump_string("alternate_name", encoded);
+  } else {
+    f->dump_string("alternate_name", "");
+  }
   f->dump_unsigned("path_ino", path.get_ino().val);
   f->dump_unsigned("snap_first", first);
   f->dump_unsigned("snap_last", last);
@@ -702,7 +712,7 @@ bool CDentry::check_corruption(bool load)
 {
   auto&& snapclient = dir->mdcache->mds->snapclient;
   auto next_snap = snapclient->get_last_seq()+1;
-  if (first > last || (snapclient->is_server_ready() && first > next_snap)) {
+  if (first > last || (snapclient->is_synced() && first > next_snap)) {
     if (load) {
       dout(1) << "loaded already corrupt dentry: " << *this << dendl;
       corrupt_first_loaded = true;

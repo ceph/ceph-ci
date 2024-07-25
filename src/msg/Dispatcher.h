@@ -29,11 +29,17 @@ class KeyStore;
 
 class Dispatcher {
 public:
+  /* Ordering of dispatch for a list of Dispatchers. */
+  using priority_t = uint32_t;
+  static constexpr priority_t PRIORITY_HIGH = std::numeric_limits<priority_t>::max() / 4;
+  static constexpr priority_t PRIORITY_DEFAULT = std::numeric_limits<priority_t>::max() / 2;
+  static constexpr priority_t PRIORITY_LOW = (std::numeric_limits<priority_t>::max() / 4) * 3;
+
   explicit Dispatcher(CephContext *cct_)
     : cct(cct_)
   {
   }
-  virtual ~Dispatcher() { }
+  virtual ~Dispatcher() = default;
 
   /**
    * The Messenger calls this function to query if you are capable

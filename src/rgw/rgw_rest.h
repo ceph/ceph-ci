@@ -8,6 +8,7 @@
 #include <string_view>
 #include <boost/container/flat_set.hpp>
 #include "common/sstring.hh"
+#include "common/strtol.h"
 #include "common/ceph_json.h"
 #include "include/ceph_assert.h" /* needed because of common/ceph_json.h */
 #include "rgw_op.h"
@@ -704,8 +705,20 @@ extern void end_header(req_state *s,
 		       bool force_no_error = false);
 extern void dump_start(req_state *s);
 extern void list_all_buckets_start(req_state *s);
-extern void dump_owner(req_state *s, const rgw_user& id,
+extern void dump_owner(req_state *s, const std::string& id,
                        const std::string& name, const char *section = NULL);
+extern void dump_owner(req_state *s, const rgw_owner& id,
+                       const std::string& name, const char *section = NULL);
+inline void dump_urlsafe(req_state *s, bool encode_key, const char* key, const std::string& val, bool encode_slash = true) {
+  if (encode_key) {
+    std::string _val;
+    url_encode(val, _val, encode_slash);
+    s->formatter->dump_string(key, _val);
+  }
+  else {
+    s->formatter->dump_string(key, val);
+  }
+}
 extern void dump_header(req_state* s,
                         const std::string_view& name,
                         const std::string_view& val);
@@ -772,6 +785,23 @@ inline void dump_header_if_nonempty(req_state* s,
   }
 }
 
+static inline int64_t parse_content_length(const char *content_length)
+{
+  int64_t len = -1;
+
+  if (*content_length == '\0') {
+    len = 0;
+  } else {
+    std::string err;
+    len = strict_strtoll(content_length, 10, &err);
+    if (!err.empty()) {
+      len = -1;
+    }
+  }
+
+  return len;
+} /* parse_content_length */
+
 inline std::string compute_domain_uri(const req_state *s) {
   std::string uri = (!s->info.domain.empty()) ? s->info.domain :
     [&s]() -> std::string {
@@ -789,7 +819,6 @@ inline std::string compute_domain_uri(const req_state *s) {
 }
 
 extern void dump_content_length(req_state *s, uint64_t len);
-extern int64_t parse_content_length(const char *content_length);
 extern void dump_etag(req_state *s,
                       const std::string_view& etag,
                       bool quoted = false);

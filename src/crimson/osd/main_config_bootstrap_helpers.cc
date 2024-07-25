@@ -148,17 +148,39 @@ _get_early_config(int argc, const char *argv[])
 	if (auto found = std::find_if(
 	      std::begin(early_args),
 	      std::end(early_args),
-	      [](auto* arg) { return "--smp"sv == arg; });
+	      [](auto* arg) { return "--cpuset"sv == arg; });
 	    found == std::end(early_args)) {
+	  auto cpu_cores = crimson::common::get_conf<std::string>("crimson_seastar_cpu_cores");
+	  if (!cpu_cores.empty()) {
+	    // Set --cpuset based on crimson_seastar_cpu_cores config option
+	    // --smp default is one per CPU
+	    ret.early_args.emplace_back("--cpuset");
+	    ret.early_args.emplace_back(cpu_cores);
+	    ret.early_args.emplace_back("--thread-affinity");
+	    ret.early_args.emplace_back("1");
+	    logger().info("get_early_config: set --thread-affinity 1 --cpuset {}",
+	                  cpu_cores);
+	  } else {
+	    auto reactor_num = crimson::common::get_conf<uint64_t>("crimson_seastar_num_threads");
+	    if (!reactor_num) {
+	      logger().error("get_early_config: crimson_seastar_cpu_cores"
+                             " or crimson_seastar_num_threads"
+                             " must be set");
+	      ceph_abort();
+	    }
+	    std::string smp = fmt::format("{}", reactor_num);
+	    ret.early_args.emplace_back("--smp");
+	    ret.early_args.emplace_back(smp);
+	    ret.early_args.emplace_back("--thread-affinity");
+	    ret.early_args.emplace_back("0");
+	    logger().info("get_early_config: set --thread-affinity 0 --smp {}",
+	                  smp);
 
-	  // Set --smp based on crimson_seastar_smp config option
-	  ret.early_args.emplace_back("--smp");
-
-	  auto smp_config = local_conf().get_val<uint64_t>(
-	    "crimson_seastar_smp");
-
-	  ret.early_args.emplace_back(fmt::format("{}", smp_config));
-	  logger().info("get_early_config: set --smp {}", smp_config);
+	  }
+	} else {
+	  logger().error("get_early_config: --cpuset can be "
+	                 "set only using crimson_seastar_cpu_cores");
+	  ceph_abort();
 	}
 	return 0;
       });

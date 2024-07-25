@@ -20,7 +20,7 @@ class RunCephCmd:
     def run_ceph_cmd(self, *args, **kwargs):
         """
         *args and **kwargs must contain arguments that are accepted by
-        vstart_runner.LocalRemote._do_run() or teuhology.orchestra.run.run()
+        vstart_runner.LocalRemote._do_run() or teuthology.orchestra.run.run()
         methods.
         """
         if kwargs.get('args') is None and args:
@@ -32,7 +32,7 @@ class RunCephCmd:
     def get_ceph_cmd_result(self, *args, **kwargs):
         """
         *args and **kwargs must contain arguments that are accepted by
-        vstart_runner.LocalRemote._do_run() or teuhology.orchestra.run.run()
+        vstart_runner.LocalRemote._do_run() or teuthology.orchestra.run.run()
         methods.
         """
         if kwargs.get('args') is None and args:
@@ -44,7 +44,7 @@ class RunCephCmd:
     def get_ceph_cmd_stdout(self, *args, **kwargs):
         """
         *args and **kwargs must contain arguments that are accepted by
-        vstart_runner.LocalRemote._do_run() or teuhology.orchestra.run.run()
+        vstart_runner.LocalRemote._do_run() or teuthology.orchestra.run.run()
         methods.
         """
         if kwargs.get('args') is None and args:
@@ -76,8 +76,8 @@ class RunCephCmd:
 
         proc_stderr = proc.stderr.getvalue().lower()
         msg = ('didn\'t find any of the expected string in stderr.\n'
-               f'expected string: {exp_errmsgs}\n'
-               f'received error message: {proc_stderr}\n'
+               f'expected string -\n{exp_errmsgs}\n'
+               f'received error message -\n{proc_stderr}\n'
                'note: received error message is converted to lowercase')
         for e in exp_errmsgs:
             if e in proc_stderr:
@@ -94,7 +94,7 @@ class RunCephCmd:
         failure.
 
         *args and **kwargs must contain arguments that are accepted by
-        vstart_runner.LocalRemote._do_run() or teuhology.orchestra.run.run()
+        vstart_runner.LocalRemote._do_run() or teuthology.orchestra.run.run()
         methods.
 
         NOTE: errmsgs is expected to be a tuple, but in case there's only one
@@ -105,6 +105,8 @@ class RunCephCmd:
         # execution is needed to not halt on command failure because we are
         # conducting negative testing
         kwargs['check_status'] = False
+        # log stdout since it may contain something useful when command fails
+        kwargs['stdout'] = StringIO()
         # stderr is needed to check for expected error messages.
         kwargs['stderr'] = StringIO()
 
@@ -148,8 +150,6 @@ class CephTestCase(unittest.TestCase, RunCephCmd):
                 ctx=self.ctx, logger=log.getChild('ceph_manager'))
 
     def setUp(self):
-        self._mon_configs_set = set()
-
         self._init_mon_manager()
         self.admin_remote = self.ceph_cluster.admin_remote
 
@@ -164,16 +164,13 @@ class CephTestCase(unittest.TestCase, RunCephCmd):
                 raise self.skipTest("Require `memstore` OSD backend (test " \
                         "would take too long on full sized OSDs")
 
+        self.ceph_cluster.mon_manager.raw_cluster_cmd("config", "dump")
+
     def tearDown(self):
-        self.config_clear()
+        self.ceph_cluster.mon_manager.raw_cluster_cmd("config", "reset", str(self.ctx.conf_epoch))
 
         self.ceph_cluster.mon_manager.raw_cluster_cmd("log",
             "Ended test {0}".format(self.id()))
-
-    def config_clear(self):
-        for section, key in self._mon_configs_set:
-            self.config_rm(section, key)
-        self._mon_configs_set.clear()
 
     def _fix_key(self, key):
         return str(key).replace(' ', '_')
@@ -192,12 +189,9 @@ class CephTestCase(unittest.TestCase, RunCephCmd):
     def config_rm(self, section, key):
        key = self._fix_key(key)
        self.ceph_cluster.mon_manager.raw_cluster_cmd("config", "rm", section, key)
-       # simplification: skip removing from _mon_configs_set;
-       # let tearDown clear everything again
 
     def config_set(self, section, key, value):
        key = self._fix_key(key)
-       self._mon_configs_set.add((section, key))
        self.ceph_cluster.mon_manager.raw_cluster_cmd("config", "set", section, key, str(value))
 
     def cluster_cmd(self, command: str):
@@ -255,7 +249,7 @@ class CephTestCase(unittest.TestCase, RunCephCmd):
 
                 if present and not self.match():
                     log.error(f"Log output: \n{self.watcher_process.stdout.getvalue()}\n")
-                    raise AssertionError(f"Expected log message found: '{expected_pattern}'")
+                    raise AssertionError(f"Expected log message not found: '{expected_pattern}'")
                 elif fail or (not present and self.match()):
                     log.error(f"Log output: \n{self.watcher_process.stdout.getvalue()}\n")
                     raise AssertionError(f"Unexpected log message found: '{expected_pattern}'")

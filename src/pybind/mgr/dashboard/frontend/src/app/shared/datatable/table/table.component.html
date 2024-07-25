@@ -103,9 +103,10 @@
         </button>
         <div ngbDropdownMenu>
           <ng-container *ngFor="let column of columns">
-            <button ngbDropdownItem
-                    *ngIf="column.name !== ''"
-                    (click)="toggleColumn(column); false;">
+            <ng-container *ngIf="!column?.isInvisible">
+              <button ngbDropdownItem
+                      *ngIf="column.name !== ''"
+                      (click)="toggleColumn(column); false;">
               <div class="custom-control custom-checkbox py-0">
                 <input class="custom-control-input"
                        type="checkbox"
@@ -116,6 +117,7 @@
                        for="{{ column.prop }}{{ tableName }}">{{ column.name }}</label>
               </div>
             </button>
+            </ng-container>
           </ng-container>
         </div>
       </div>
@@ -313,6 +315,20 @@
              let-column="column"
              let-value="value">
   <span>{{ value | map:column?.customTemplateConfig }}</span>
+</ng-template>
+
+<ng-template #tooltipTpl
+             let-column="column"
+             let-value="value">
+  <span *ngFor="let item of (value | array);">
+    <span
+      i18n
+      i18n-ngbTooltip
+      class="{{(column?.customTemplateConfig?.map && column?.customTemplateConfig?.map[item]?.class) ? column.customTemplateConfig.map[item].class : ''}}"
+      ngbTooltip="{{(column?.customTemplateConfig?.map && column?.customTemplateConfig?.map[item]?.tooltip) ? column.customTemplateConfig.map[item].tooltip : ''}}">
+      {{value}}
+    </span>
+  </span>
 </ng-template>
 
 <ng-template #truncateTpl

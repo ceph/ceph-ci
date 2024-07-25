@@ -182,10 +182,11 @@ public:
   void handle_mds_failure_or_stop(mds_rank_t who);
 
   void audit();
+  void quiesce_overdrive_export(CDir *dir);
 
   // -- import/export --
   // exporter
-  void dispatch_export_dir(MDRequestRef& mdr, int count);
+  void dispatch_export_dir(const MDRequestRef& mdr, int count);
   void export_dir(CDir *dir, mds_rank_t dest);
   void export_empty_import(CDir *dir);
 

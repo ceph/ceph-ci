@@ -275,7 +275,7 @@ int ReplicatedBackend::objects_read_sync(
 
 int ReplicatedBackend::objects_readv_sync(
   const hobject_t &hoid,
-  map<uint64_t, uint64_t>&& m,
+  map<uint64_t, uint64_t>& m,
   uint32_t op_flags,
   bufferlist *bl)
 {
@@ -289,7 +289,7 @@ int ReplicatedBackend::objects_readv_sync(
 
 void ReplicatedBackend::objects_read_async(
   const hobject_t &hoid,
-  const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
+  const list<pair<ECCommon::ec_align_t,
 		  pair<bufferlist*, Context*> > > &to_read,
   Context *on_complete,
   bool fast_read)

@@ -20,7 +20,7 @@
 #include "common/dout.h"
 #include <openssl/ssl.h>
 
-#define dout_subsys ceph_subsys_rgw
+#define dout_subsys ceph_subsys_rgw_notification
 
 // TODO investigation, not necessarily issues:
 // (1) in case of single threaded writer context use spsc_queue
@@ -301,7 +301,7 @@ std::string to_string(amqp_status_enum s) {
   }
 }
 
-// TODO: add status_to_string on the connection object to prinf full status
+// TODO: add status_to_string on the connection object to print full status
 
 // convert int status to string - including RGW specific values
 std::string status_to_string(int s) {
@@ -513,10 +513,10 @@ bool new_state(connection_t* conn, const connection_id_t& conn_id) {
 
 /// struct used for holding messages in the message queue
 struct message_wrapper_t {
-  connection_id_t conn_id;
-  std::string topic;
-  std::string message;
-  reply_callback_t cb;
+  const connection_id_t conn_id;
+  const std::string topic;
+  const std::string message;
+  const reply_callback_t cb;
 
   message_wrapper_t(const connection_id_t& _conn_id,
       const std::string& _topic,
@@ -688,7 +688,7 @@ private:
               // TODO: add exponential backoff for retries
               conn->next_reconnect = now + reconnect_time;
             } else {
-              ldout(cct, 10) << "AMQP run: connection '" << to_string(conn_id) << "' retry successfull" << dendl;
+              ldout(cct, 10) << "AMQP run: connection '" << to_string(conn_id) << "' retry successful" << dendl;
             }
           }
           INCREMENT_AND_CONTINUE(conn_it);
@@ -836,8 +836,11 @@ public:
       // when a new connection is added.
       connections.max_load_factor(10.0);
       // give the runner thread a name for easier debugging
-      const auto rc = ceph_pthread_setname(runner.native_handle(), "amqp_manager");
-      ceph_assert(rc==0);
+      const char* thread_name = "amqp_manager";
+      if (const auto rc = ceph_pthread_setname(runner.native_handle(), thread_name); rc != 0) {
+        ldout(cct, 1) << "ERROR: failed to set amqp manager thread name to: " << thread_name
+          << ". error: " << rc << dendl;
+      }
   }
 
   // non copyable
@@ -966,8 +969,8 @@ public:
 
 // singleton manager
 // note that the manager itself is not a singleton, and multiple instances may co-exist
-// TODO make the pointer atomic in allocation and deallocation to avoid race conditions
 static Manager* s_manager = nullptr;
+static std::shared_mutex s_manager_mutex;
 
 static const size_t MAX_CONNECTIONS_DEFAULT = 256;
 static const size_t MAX_INFLIGHT_DEFAULT = 8192;
@@ -977,6 +980,7 @@ static const unsigned IDLE_TIME_MS = 100;
 static const unsigned RECONNECT_TIME_MS = 100;
 
 bool init(CephContext* cct) {
+  std::unique_lock lock(s_manager_mutex);
   if (s_manager) {
     return false;
   }
@@ -987,12 +991,14 @@ bool init(CephContext* cct) {
 }
 
 void shutdown() {
+  std::unique_lock lock(s_manager_mutex);
   delete s_manager;
   s_manager = nullptr;
 }
 
 bool connect(connection_id_t& conn_id, const std::string& url, const std::string& exchange, bool mandatory_delivery, bool verify_ssl,
         boost::optional<const std::string&> ca_location) {
+  std::shared_lock lock(s_manager_mutex);
   if (!s_manager) return false;
   return s_manager->connect(conn_id, url, exchange, mandatory_delivery, verify_ssl, ca_location);
 }
@@ -1000,6 +1006,7 @@ bool connect(connection_id_t& conn_id, const std::string& url, const std::string
 int publish(const connection_id_t& conn_id,
     const std::string& topic,
     const std::string& message) {
+  std::shared_lock lock(s_manager_mutex);
   if (!s_manager) return RGW_AMQP_STATUS_MANAGER_STOPPED;
   return s_manager->publish(conn_id, topic, message);
 }
@@ -1008,41 +1015,49 @@ int publish_with_confirm(const connection_id_t& conn_id,
     const std::string& topic,
     const std::string& message,
     reply_callback_t cb) {
+  std::shared_lock lock(s_manager_mutex);
   if (!s_manager) return RGW_AMQP_STATUS_MANAGER_STOPPED;
   return s_manager->publish_with_confirm(conn_id, topic, message, cb);
 }
 
 size_t get_connection_count() {
+  std::shared_lock lock(s_manager_mutex);
   if (!s_manager) return 0;
   return s_manager->get_connection_count();
 }
 
 size_t get_inflight() {
+  std::shared_lock lock(s_manager_mutex);
   if (!s_manager) return 0;
   return s_manager->get_inflight();
 }
 
 size_t get_queued() {
+  std::shared_lock lock(s_manager_mutex);
   if (!s_manager) return 0;
   return s_manager->get_queued();
 }
 
 size_t get_dequeued() {
+  std::shared_lock lock(s_manager_mutex);
   if (!s_manager) return 0;
   return s_manager->get_dequeued();
 }
 
 size_t get_max_connections() {
+  std::shared_lock lock(s_manager_mutex);
   if (!s_manager) return MAX_CONNECTIONS_DEFAULT;
   return s_manager->max_connections;
 }
 
 size_t get_max_inflight() {
+  std::shared_lock lock(s_manager_mutex);
   if (!s_manager) return MAX_INFLIGHT_DEFAULT;
   return s_manager->max_inflight;
 }
 
 size_t get_max_queue() {
+  std::shared_lock lock(s_manager_mutex);
   if (!s_manager) return MAX_QUEUE_DEFAULT;
   return s_manager->max_queue;
 }

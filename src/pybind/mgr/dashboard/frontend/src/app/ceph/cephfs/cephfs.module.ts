@@ -3,8 +3,14 @@ import { NgModule } from '@angular/core';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 
 import { TreeModule } from '@circlon/angular-tree-component';
-import { NgbNavModule, NgbTooltipModule, NgbTypeaheadModule } from '@ng-bootstrap/ng-bootstrap';
-import { ChartsModule } from 'ng2-charts';
+import {
+  NgbDatepickerModule,
+  NgbNavModule,
+  NgbTimepickerModule,
+  NgbTooltipModule,
+  NgbTypeaheadModule
+} from '@ng-bootstrap/ng-bootstrap';
+import { NgChartsModule } from 'ng2-charts';
 
 import { AppRoutingModule } from '~/app/app-routing.module';
 import { SharedModule } from '~/app/shared/shared.module';
@@ -19,19 +25,30 @@ import { CephfsSubvolumeListComponent } from './cephfs-subvolume-list/cephfs-sub
 import { CephfsSubvolumeFormComponent } from './cephfs-subvolume-form/cephfs-subvolume-form.component';
 import { CephfsSubvolumeGroupComponent } from './cephfs-subvolume-group/cephfs-subvolume-group.component';
 import { CephfsSubvolumegroupFormComponent } from './cephfs-subvolumegroup-form/cephfs-subvolumegroup-form.component';
+import { CephfsSubvolumeSnapshotsListComponent } from './cephfs-subvolume-snapshots-list/cephfs-subvolume-snapshots-list.component';
+import { CephfsSnapshotscheduleListComponent } from './cephfs-snapshotschedule-list/cephfs-snapshotschedule-list.component';
+import { DataTableModule } from '../../shared/datatable/datatable.module';
+import { CephfsSubvolumeSnapshotsFormComponent } from './cephfs-subvolume-snapshots-list/cephfs-subvolume-snapshots-form/cephfs-subvolume-snapshots-form.component';
+import { CephfsSnapshotscheduleFormComponent } from './cephfs-snapshotschedule-form/cephfs-snapshotschedule-form.component';
+import { CephfsMountDetailsComponent } from './cephfs-mount-details/cephfs-mount-details.component';
+import { CephfsAuthModalComponent } from './cephfs-auth-modal/cephfs-auth-modal.component';
 
 @NgModule({
   imports: [
     CommonModule,
     SharedModule,
     AppRoutingModule,
-    ChartsModule,
+    NgChartsModule,
     TreeModule,
     NgbNavModule,
     FormsModule,
     ReactiveFormsModule,
     NgbTypeaheadModule,
-    NgbTooltipModule
+    NgbTooltipModule,
+    DataTableModule,
+    NgbDatepickerModule,
+    NgbTimepickerModule,
+    NgbTypeaheadModule
   ],
   declarations: [
     CephfsDetailComponent,
@@ -45,7 +62,13 @@ import { CephfsSubvolumegroupFormComponent } from './cephfs-subvolumegroup-form/
     CephfsSubvolumeFormComponent,
     CephfsDirectoriesComponent,
     CephfsSubvolumeGroupComponent,
-    CephfsSubvolumegroupFormComponent
+    CephfsSubvolumegroupFormComponent,
+    CephfsSubvolumeSnapshotsListComponent,
+    CephfsSnapshotscheduleListComponent,
+    CephfsSnapshotscheduleFormComponent,
+    CephfsSubvolumeSnapshotsFormComponent,
+    CephfsMountDetailsComponent,
+    CephfsAuthModalComponent
   ]
 })
 export class CephfsModule {}

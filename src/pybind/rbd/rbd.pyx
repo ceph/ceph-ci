@@ -23,12 +23,13 @@ from libc cimport errno
 from libc.stdint cimport *
 from libc.stdlib cimport malloc, realloc, free
 from libc.string cimport strdup, memset
+cimport libcpp
 
 try:
     from collections.abc import Iterable
 except ImportError:
     from collections import Iterable
-from datetime import datetime
+from datetime import datetime, timezone
 import errno
 from itertools import chain
 import time
@@ -114,6 +115,8 @@ RBD_IMAGE_OPTION_ORDER = _RBD_IMAGE_OPTION_ORDER
 RBD_IMAGE_OPTION_STRIPE_UNIT = _RBD_IMAGE_OPTION_STRIPE_UNIT
 RBD_IMAGE_OPTION_STRIPE_COUNT = _RBD_IMAGE_OPTION_STRIPE_COUNT
 RBD_IMAGE_OPTION_DATA_POOL = _RBD_IMAGE_OPTION_DATA_POOL
+RBD_IMAGE_OPTION_FLATTEN = _RBD_IMAGE_OPTION_FLATTEN
+RBD_IMAGE_OPTION_CLONE_FORMAT = _RBD_IMAGE_OPTION_CLONE_FORMAT
 
 RBD_SNAP_NAMESPACE_TYPE_USER = _RBD_SNAP_NAMESPACE_TYPE_USER
 RBD_SNAP_NAMESPACE_TYPE_GROUP = _RBD_SNAP_NAMESPACE_TYPE_GROUP
@@ -629,9 +632,9 @@ class RBD(object):
         if ret < 0:
             raise make_ex(ret, 'error creating image')
 
-    def clone(self, p_ioctx, p_name, p_snapname, c_ioctx, c_name,
+    def clone(self, p_ioctx, p_name, p_snapshot, c_ioctx, c_name,
               features=None, order=None, stripe_unit=None, stripe_count=None,
-              data_pool=None):
+              data_pool=None, clone_format=None):
         """
         Clone a parent rbd snapshot into a COW sparse child.
 
@@ -639,7 +642,7 @@ class RBD(object):
         :type ioctx: :class:`rados.Ioctx`
         :param p_name: the parent image name
         :type name: str
-        :param p_snapname: the parent image snapshot name
+        :param p_snapshot: the parent image snapshot name or id
         :type name: str
         :param c_ioctx: the child context that represents the new clone
         :type ioctx: :class:`rados.Ioctx`
@@ -655,13 +658,14 @@ class RBD(object):
         :type stripe_count: int
         :param data_pool: optional separate pool for data blocks
         :type data_pool: str
+        :param clone_format: 1 (requires a protected snapshot), 2 (requires mimic+ clients)
+        :type clone_format: int
         :raises: :class:`TypeError`
         :raises: :class:`InvalidArgument`
         :raises: :class:`ImageExists`
         :raises: :class:`FunctionNotSupported`
         :raises: :class:`ArgumentOutOfRange`
         """
-        p_snapname = cstr(p_snapname, 'p_snapname')
         p_name = cstr(p_name, 'p_name')
         c_name = cstr(c_name, 'c_name')
         data_pool = cstr(data_pool, 'data_pool', opt=True)
@@ -669,9 +673,18 @@ class RBD(object):
             rados_ioctx_t _p_ioctx = convert_ioctx(p_ioctx)
             rados_ioctx_t _c_ioctx = convert_ioctx(c_ioctx)
             char *_p_name = p_name
-            char *_p_snapname = p_snapname
+            char *_p_snap_name
+            uint64_t _p_snap_id
             char *_c_name = c_name
             rbd_image_options_t opts
+        if isinstance(p_snapshot, str):
+            p_snap_name = cstr(p_snapshot, 'p_snapshot')
+            _p_snap_name = p_snap_name
+        elif isinstance(p_snapshot, int):
+            p_snap_name = None
+            _p_snap_id = p_snapshot
+        else:
+            raise TypeError("p_snapshot must be a string or an integer")
 
         rbd_image_options_create(&opts)
         try:
@@ -690,9 +703,17 @@ class RBD(object):
             if data_pool is not None:
                 rbd_image_options_set_string(opts, RBD_IMAGE_OPTION_DATA_POOL,
                                              data_pool)
-            with nogil:
-                ret = rbd_clone3(_p_ioctx, _p_name, _p_snapname,
-                                 _c_ioctx, _c_name, opts)
+            if clone_format is not None:
+                rbd_image_options_set_uint64(opts, RBD_IMAGE_OPTION_CLONE_FORMAT,
+                                             clone_format)
+            if p_snap_name is not None:
+                with nogil:
+                    ret = rbd_clone3(_p_ioctx, _p_name, _p_snap_name,
+                                     _c_ioctx, _c_name, opts)
+            else:
+                with nogil:
+                    ret = rbd_clone4(_p_ioctx, _p_name, _p_snap_id,
+                                     _c_ioctx, _c_name, opts)
         finally:
             rbd_image_options_destroy(opts)
         if ret < 0:
@@ -914,8 +935,10 @@ class RBD(object):
             'id'          : decode_cstr(c_info.id),
             'name'        : decode_cstr(c_info.name),
             'source'      : __source_string[c_info.source],
-            'deletion_time' : datetime.utcfromtimestamp(c_info.deletion_time),
-            'deferment_end_time' : datetime.utcfromtimestamp(c_info.deferment_end_time)
+            'deletion_time' : datetime.fromtimestamp(c_info.deletion_time,
+                                                     tz=timezone.utc),
+            'deferment_end_time' : datetime.fromtimestamp(c_info.deferment_end_time,
+                                                          tz=timezone.utc)
             }
         rbd_trash_get_cleanup(&c_info)
         return info
@@ -955,7 +978,7 @@ class RBD(object):
 
     def migration_prepare(self, ioctx, image_name, dest_ioctx, dest_image_name,
                           features=None, order=None, stripe_unit=None, stripe_count=None,
-                          data_pool=None):
+                          data_pool=None, clone_format=None, flatten=False):
         """
         Prepare an RBD image migration.
 
@@ -977,6 +1000,12 @@ class RBD(object):
         :type stripe_count: int
         :param data_pool: optional separate pool for data blocks
         :type data_pool: str
+        :param clone_format: if the source image is a clone, which clone format
+                             to use for the destination image
+        :type clone_format: int
+        :param flatten: if the source image is a clone, whether to flatten the
+                        destination image or make it a clone of the same parent
+        :type flatten: bool
         :raises: :class:`TypeError`
         :raises: :class:`InvalidArgument`
         :raises: :class:`ImageExists`
@@ -1009,6 +1038,10 @@ class RBD(object):
             if data_pool is not None:
                 rbd_image_options_set_string(opts, RBD_IMAGE_OPTION_DATA_POOL,
                                              data_pool)
+            if clone_format is not None:
+                rbd_image_options_set_uint64(opts, RBD_IMAGE_OPTION_CLONE_FORMAT,
+                                             clone_format)
+            rbd_image_options_set_uint64(opts, RBD_IMAGE_OPTION_FLATTEN, flatten)
             with nogil:
                 ret = rbd_migration_prepare(_ioctx, _image_name, _dest_ioctx,
                                             _dest_image_name, opts)
@@ -1935,12 +1968,12 @@ class RBD(object):
         cdef:
             rados_ioctx_t _ioctx = convert_ioctx(ioctx)
             const char *_name = name
-            bint _exists = False
+            libcpp.bool _exists = False
         with nogil:
             ret = rbd_namespace_exists(_ioctx, _name, &_exists)
         if ret != 0:
             raise make_ex(ret, 'error verifying namespace')
-        return bool(_exists != 0)
+        return _exists
 
     def namespace_list(self, ioctx):
         """
@@ -2265,7 +2298,8 @@ cdef class MirrorImageStatusIterator(object):
                     site_status = {
                         'state'       : s_status.state,
                         'description' : decode_cstr(s_status.description),
-                        'last_update' : datetime.utcfromtimestamp(s_status.last_update),
+                        'last_update' : datetime.fromtimestamp(s_status.last_update,
+                                                               tz=timezone.utc),
                         'up'          : s_status.up,
                         }
                     mirror_uuid = decode_cstr(s_status.mirror_uuid)
@@ -2624,6 +2658,29 @@ cdef class Group(object):
 
     def __exit__(self, type_, value, traceback):
         return False
+    
+    def id(self):
+        """
+        Get group's id.
+
+        :returns: str - group id
+        """
+        cdef:
+            size_t size = 32
+            char *id = NULL
+        try:
+            while True:
+                id = <char *>realloc_chk(id, size)
+                with nogil:
+                    ret = rbd_group_get_id(self._ioctx, self._name, id, &size)
+                if ret >= 0:
+                    break
+                elif ret != -errno.ERANGE:
+                    raise make_ex(ret, 'error getting id for group %s' % self._name,
+                                  group_errno_to_exception)
+            return decode_cstr(id)
+        finally:
+            free(id)
 
     def add_image(self, image_ioctx, image_name):
         """
@@ -3146,9 +3203,23 @@ cdef class Image(object):
         Get spec of the cloned image's parent
 
         :returns: dict - contains the following keys:
+
+            * ``pool_id`` (int) - parent pool id
+
             * ``pool_name`` (str) - parent pool name
+
             * ``pool_namespace`` (str) - parent pool namespace
+
+            * ``image_id`` (str) - parent image id
+
             * ``image_name`` (str) - parent image name
+
+            * ``trash`` (bool) - True if parent image is in trash bin
+
+            * ``snap_id`` (int) - parent snapshot id
+
+            * ``snap_namespace_type`` (int) - parent snapshot namespace type
+
             * ``snap_name`` (str) - parent snapshot name
 
         :raises: :class:`ImageNotFound` if the image doesn't have a parent
@@ -3161,9 +3232,14 @@ cdef class Image(object):
         if ret != 0:
             raise make_ex(ret, 'error getting parent info for image %s' % self.name)
 
-        result = {'pool_name': decode_cstr(parent_spec.pool_name),
+        result = {'pool_id': parent_spec.pool_id,
+                  'pool_name': decode_cstr(parent_spec.pool_name),
                   'pool_namespace': decode_cstr(parent_spec.pool_namespace),
+                  'image_id': decode_cstr(parent_spec.image_id),
                   'image_name': decode_cstr(parent_spec.image_name),
+                  'trash': parent_spec.trash,
+                  'snap_id': snap_spec.id,
+                  'snap_namespace_type': snap_spec.namespace_type,
                   'snap_name': decode_cstr(snap_spec.name)}
 
         rbd_linked_image_spec_cleanup(&parent_spec)
@@ -3437,7 +3513,8 @@ cdef class Image(object):
 
     @requires_not_closed
     def deep_copy(self, dest_ioctx, dest_name, features=None, order=None,
-                  stripe_unit=None, stripe_count=None, data_pool=None):
+                  stripe_unit=None, stripe_count=None, data_pool=None,
+                  clone_format=None, flatten=False):
         """
         Deep copy the image to another location.
 
@@ -3455,6 +3532,12 @@ cdef class Image(object):
         :type stripe_count: int
         :param data_pool: optional separate pool for data blocks
         :type data_pool: str
+        :param clone_format: if the source image is a clone, which clone format
+                             to use for the destination image
+        :type clone_format: int
+        :param flatten: if the source image is a clone, whether to flatten the
+                        destination image or make it a clone of the same parent
+        :type flatten: bool
         :raises: :class:`TypeError`
         :raises: :class:`InvalidArgument`
         :raises: :class:`ImageExists`
@@ -3485,12 +3568,16 @@ cdef class Image(object):
             if data_pool is not None:
                 rbd_image_options_set_string(opts, RBD_IMAGE_OPTION_DATA_POOL,
                                              data_pool)
+            if clone_format is not None:
+                rbd_image_options_set_uint64(opts, RBD_IMAGE_OPTION_CLONE_FORMAT,
+                                             clone_format)
+            rbd_image_options_set_uint64(opts, RBD_IMAGE_OPTION_FLATTEN, flatten)
             with nogil:
                 ret = rbd_deep_copy(self.image, _dest_ioctx, _dest_name, opts)
         finally:
             rbd_image_options_destroy(opts)
         if ret < 0:
-            raise make_ex(ret, 'error copying image %s to %s' % (self.name, dest_name))
+            raise make_ex(ret, 'error deep copying image %s to %s' % (self.name, dest_name))
 
     @requires_not_closed
     def list_snaps(self):
@@ -3679,12 +3766,12 @@ cdef class Image(object):
         name = cstr(name, 'name')
         cdef:
             char *_name = name
-            bint _exists = False
+            libcpp.bool _exists = False
         with nogil:
             ret = rbd_snap_exists(self.image, _name, &_exists)
         if ret != 0:
             raise make_ex(ret, 'error getting snapshot exists for %s' % self.name)
-        return bool(_exists != 0)
+        return _exists
 
     @requires_not_closed
     def get_snap_limit(self):
@@ -3730,7 +3817,7 @@ cdef class Image(object):
             ret = rbd_snap_get_timestamp(self.image, _snap_id, &timestamp)
         if ret != 0:
             raise make_ex(ret, 'error getting snapshot timestamp for image: %s, snap_id: %d' % (self.name, snap_id))
-        return datetime.utcfromtimestamp(timestamp.tv_sec)
+        return datetime.fromtimestamp(timestamp.tv_sec, tz=timezone.utc)
 
     @requires_not_closed
     def remove_snap_limit(self):
@@ -4052,7 +4139,7 @@ written." % (self.name, ret, length))
             ret = rbd_get_create_timestamp(self.image, &timestamp)
         if ret != 0:
             raise make_ex(ret, 'error getting create timestamp for image: %s' % (self.name))
-        return datetime.utcfromtimestamp(timestamp.tv_sec)
+        return datetime.fromtimestamp(timestamp.tv_sec, tz=timezone.utc)
 
     @requires_not_closed
     def access_timestamp(self):
@@ -4065,7 +4152,7 @@ written." % (self.name, ret, length))
             ret = rbd_get_access_timestamp(self.image, &timestamp)
         if ret != 0:
             raise make_ex(ret, 'error getting access timestamp for image: %s' % (self.name))
-        return datetime.fromtimestamp(timestamp.tv_sec)
+        return datetime.fromtimestamp(timestamp.tv_sec, tz=timezone.utc)
 
     @requires_not_closed
     def modify_timestamp(self):
@@ -4078,7 +4165,7 @@ written." % (self.name, ret, length))
             ret = rbd_get_modify_timestamp(self.image, &timestamp)
         if ret != 0:
             raise make_ex(ret, 'error getting modify timestamp for image: %s' % (self.name))
-        return datetime.fromtimestamp(timestamp.tv_sec)
+        return datetime.fromtimestamp(timestamp.tv_sec, tz=timezone.utc)
 
     @requires_not_closed
     def flatten(self, on_progress=None):
@@ -4511,13 +4598,18 @@ written." % (self.name, ret, length))
         def oncomplete_(completion_v):
             cdef:
                 Completion _completion_v = completion_v
-                rbd_mirror_image_info_t *c_info = <rbd_mirror_image_info_t *>_completion_v.buf
-            info = {
-                'global_id' : decode_cstr(c_info[0].global_id),
-                'state'     : int(c_info[0].state),
-                'primary'   : c_info[0].primary,
-            }
-            rbd_mirror_image_get_info_cleanup(c_info)
+                rbd_mirror_image_info_t *c_info
+            return_value = _completion_v.get_return_value()
+            if return_value == 0:
+                c_info = <rbd_mirror_image_info_t *>_completion_v.buf
+                info = {
+                    'global_id' : decode_cstr(c_info[0].global_id),
+                    'state'     : int(c_info[0].state),
+                    'primary'   : c_info[0].primary,
+                }
+                rbd_mirror_image_get_info_cleanup(c_info)
+            else:
+                info = None
             return oncomplete(_completion_v, info)
 
         completion = self.__get_completion(oncomplete_)
@@ -4644,7 +4736,8 @@ written." % (self.name, ret, length))
                 site_status = {
                     'state'       : s_status.state,
                     'description' : decode_cstr(s_status.description),
-                    'last_update' : datetime.utcfromtimestamp(s_status.last_update),
+                    'last_update' : datetime.fromtimestamp(s_status.last_update,
+                                                           tz=timezone.utc),
                     'up'          : s_status.up,
                     }
                 mirror_uuid = decode_cstr(s_status.mirror_uuid)
@@ -5101,28 +5194,26 @@ written." % (self.name, ret, length))
         :type key: int
         :returns: dict - contains the following keys:
 
+            * ``original_namespace_type`` (int) - original snap namespace type
+
             * ``original_name`` (str) - original snap name
         """
         cdef:
+            rbd_snap_trash_namespace_t trash_snap
             uint64_t _snap_id = snap_id
-            size_t _size = 512
-            char *_name = NULL
-        try:
-            while True:
-                _name = <char*>realloc_chk(_name, _size);
-                with nogil:
-                    ret = rbd_snap_get_trash_namespace(self.image, _snap_id,
-                                                       _name, _size)
-                if ret >= 0:
-                    break
-                elif ret != -errno.ERANGE:
-                    raise make_ex(ret, 'error getting snapshot trash '
-                                       'namespace image: %s, snap_id: %d' % (self.name, snap_id))
-            return {
-                    'original_name' : decode_cstr(_name)
-                }
-        finally:
-            free(_name)
+        with nogil:
+            ret = rbd_snap_get_trash_namespace2(self.image, _snap_id,
+                                                &trash_snap, sizeof(trash_snap))
+        if ret != 0:
+            raise make_ex(ret, 'error getting snapshot trash '
+                               'namespace for image: %s, snap_id: %d' %
+                               (self.name, snap_id))
+        result = {
+            'original_namespace_type' : trash_snap.original_namespace_type,
+            'original_name' : decode_cstr(trash_snap.original_name)
+            }
+        rbd_snap_trash_namespace_cleanup(&trash_snap, sizeof(trash_snap))
+        return result
 
     @requires_not_closed
     def snap_get_mirror_namespace(self, snap_id):
@@ -5616,8 +5707,10 @@ cdef class TrashIterator(object):
                 'id'          : decode_cstr(self.entries[i].id),
                 'name'        : decode_cstr(self.entries[i].name),
                 'source'      : TrashIterator.__source_string[self.entries[i].source],
-                'deletion_time' : datetime.utcfromtimestamp(self.entries[i].deletion_time),
-                'deferment_end_time' : datetime.utcfromtimestamp(self.entries[i].deferment_end_time)
+                'deletion_time' : datetime.fromtimestamp(self.entries[i].deletion_time,
+                                                         tz=timezone.utc),
+                'deferment_end_time' : datetime.fromtimestamp(self.entries[i].deferment_end_time,
+                                                              tz=timezone.utc)
                 }
 
     def __dealloc__(self):

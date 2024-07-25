@@ -36,8 +36,6 @@ ARCH=$(uname -m)
 function munge_ceph_spec_in {
     local with_seastar=$1
     shift
-    local with_zbd=$1
-    shift
     local for_make_check=$1
     shift
     local OUTFILE=$1
@@ -45,9 +43,6 @@ function munge_ceph_spec_in {
     # http://rpm.org/user_doc/conditional_builds.html
     if $with_seastar; then
         sed -i -e 's/%bcond_with seastar/%bcond_without seastar/g' $OUTFILE
-    fi
-    if $with_zbd; then
-        sed -i -e 's/%bcond_with zbd/%bcond_without zbd/g' $OUTFILE
     fi
     if $for_make_check; then
         sed -i -e 's/%bcond_with make_check/%bcond_without make_check/g' $OUTFILE
@@ -146,7 +141,7 @@ function install_pkg_on_ubuntu {
     fi
 }
 
-boost_ver=1.82
+boost_ver=1.85
 
 function clean_boost_on_ubuntu {
     ci_debug "Running clean_boost_on_ubuntu() in install-deps.sh"
@@ -177,6 +172,14 @@ function clean_boost_on_ubuntu {
     # so no need to spare it.
     if test -n "$installed_ver"; then
 	$SUDO env DEBIAN_FRONTEND=noninteractive apt-get -y --fix-missing remove "ceph-libboost*"
+	# When an error occurs during `apt-get remove ceph-libboost*`, ceph-libboost* packages
+	# may be not removed, so use `dpkg` to force remove ceph-libboost*.
+	local ceph_libboost_pkgs=$(dpkg -l | grep ceph-libboost* | awk '{print $2}' |
+		                        awk -F: '{print $1}')
+	if test -n "$ceph_libboost_pkgs"; then
+	    ci_debug "Force remove ceph-libboost* packages $ceph_libboost_pkgs"
+	    $SUDO dpkg --purge --force-all $ceph_libboost_pkgs
+	fi
     fi
 }
 
@@ -195,7 +198,7 @@ function install_boost_on_ubuntu {
     fi
     local codename=$1
     local project=libboost
-    local sha1=2804368f5b807ba8334b0ccfeb8af191edeb996f
+    local sha1=55f34507d322314fb0294629b7c0bb406de07aec
     install_pkg_on_ubuntu \
         $project \
         $sha1 \
@@ -216,53 +219,10 @@ function install_boost_on_ubuntu {
         ceph-libboost-system${boost_ver}-dev \
         ceph-libboost-test${boost_ver}-dev \
         ceph-libboost-thread${boost_ver}-dev \
-        ceph-libboost-timer${boost_ver}-dev
-}
+        ceph-libboost-timer${boost_ver}-dev \
+        ceph-libboost-url${boost_ver}-dev \
+	|| ci_debug "ceph-libboost package unavailable, you can build the submodule"
 
-function install_libzbd_on_ubuntu {
-    ci_debug "Running install_libzbd_on_ubuntu() in install-deps.sh"
-    local codename=$1
-    local project=libzbd
-    local sha1=1fadde94b08fab574b17637c2bebd2b1e7f9127b
-    install_pkg_on_ubuntu \
-        $project \
-        $sha1 \
-        $codename \
-        check \
-        libzbd-dev
-}
-
-motr_pkgs_url='https://github.com/Seagate/cortx-motr/releases/download/2.0.0-rgw'
-
-function install_cortx_motr_on_ubuntu {
-    if dpkg -l cortx-motr-dev &> /dev/null; then
-        return
-    fi
-    if [ "$(lsb_release -sc)" = "jammy" ]; then
-      install_pkg_on_ubuntu \
-        cortx-motr \
-        39f89fa1c6945040433a913f2687c4b4e6cbeb3f \
-        jammy \
-        check \
-        cortx-motr \
-        cortx-motr-dev
-    else
-        local deb_arch=$(dpkg --print-architecture)
-        local motr_pkg="cortx-motr_2.0.0.git3252d623_$deb_arch.deb"
-        local motr_dev_pkg="cortx-motr-dev_2.0.0.git3252d623_$deb_arch.deb"
-        $SUDO curl -sL -o/var/cache/apt/archives/$motr_pkg $motr_pkgs_url/$motr_pkg
-        $SUDO curl -sL -o/var/cache/apt/archives/$motr_dev_pkg $motr_pkgs_url/$motr_dev_pkg
-        # For some reason libfabric pkg is not available in arm64 version
-        # of Ubuntu 20.04 (Focal Fossa), so we borrow it from more recent
-        # versions for now.
-        if [[ "$deb_arch" == 'arm64' ]]; then
-            local lf_pkg='libfabric1_1.11.0-2_arm64.deb'
-            $SUDO curl -sL -o/var/cache/apt/archives/$lf_pkg http://ports.ubuntu.com/pool/universe/libf/libfabric/$lf_pkg
-            $SUDO apt-get install -y /var/cache/apt/archives/$lf_pkg
-        fi
-        $SUDO apt-get install -y /var/cache/apt/archives/{$motr_pkg,$motr_dev_pkg}
-        $SUDO apt-get install -y libisal-dev
-    fi
 }
 
 function version_lt {
@@ -421,9 +381,7 @@ if [ x$(uname)x = xFreeBSDx ]; then
     exit
 else
     [ $WITH_SEASTAR ] && with_seastar=true || with_seastar=false
-    [ $WITH_ZBD ] && with_zbd=true || with_zbd=false
     [ $WITH_PMEM ] && with_pmem=true || with_pmem=false
-    [ $WITH_RADOSGW_MOTR ] && with_rgw_motr=true || with_rgw_motr=false
     source /etc/os-release
     case "$ID" in
     debian|ubuntu|devuan|elementary|softiron)
@@ -450,12 +408,10 @@ else
             *Bionic*)
                 ensure_decent_gcc_on_ubuntu 9 bionic
                 [ ! $NO_BOOST_PKGS ] && install_boost_on_ubuntu bionic
-                $with_zbd && install_libzbd_on_ubuntu bionic
                 ;;
             *Focal*)
                 ensure_decent_gcc_on_ubuntu 11 focal
                 [ ! $NO_BOOST_PKGS ] && install_boost_on_ubuntu focal
-                $with_zbd && install_libzbd_on_ubuntu focal
                 ;;
             *Jammy*)
                 [ ! $NO_BOOST_PKGS ] && install_boost_on_ubuntu jammy
@@ -507,20 +463,15 @@ else
         ci_debug "Removing ceph-build-deps"
         $SUDO env DEBIAN_FRONTEND=noninteractive apt-get -y remove ceph-build-deps
         if [ "$control" != "debian/control" ] ; then rm $control; fi
-
-        # for rgw motr backend build checks
-        if $with_rgw_motr; then
-            install_cortx_motr_on_ubuntu
-        fi
         ;;
-    rocky|centos|fedora|rhel|ol|virtuozzo)
+    almalinux|rocky|centos|fedora|rhel|ol|virtuozzo)
         builddepcmd="dnf -y builddep --allowerasing"
         echo "Using dnf to install dependencies"
         case "$ID" in
             fedora)
                 $SUDO dnf install -y dnf-utils
                 ;;
-            rocky|centos|rhel|ol|virtuozzo)
+            almalinux|rocky|centos|rhel|ol|virtuozzo)
                 MAJOR_VERSION="$(echo $VERSION_ID | cut -d. -f1)"
                 $SUDO dnf install -y dnf-utils selinux-policy-targeted
                 rpm --quiet --query epel-release || \
@@ -528,6 +479,11 @@ else
                 $SUDO rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-EPEL-$MAJOR_VERSION
                 $SUDO rm -f /etc/yum.repos.d/dl.fedoraproject.org*
                 if test $ID = centos -a $MAJOR_VERSION = 8 ; then
+                    # for grpc-devel
+                    # See https://copr.fedorainfracloud.org/coprs/ceph/grpc/
+                    # epel is enabled for all major versions couple of lines above
+                    $SUDO dnf copr enable -y ceph/grpc
+
                     # Enable 'powertools' or 'PowerTools' repo
                     $SUDO dnf config-manager --set-enabled $(dnf repolist --all 2>/dev/null|gawk 'tolower($0) ~ /^powertools\s/{print $1}')
                     dts_ver=11
@@ -535,19 +491,24 @@ else
                     $SUDO dnf config-manager --add-repo http://apt-mirror.front.sepia.ceph.com/lab-extras/8/
                     $SUDO dnf config-manager --setopt=apt-mirror.front.sepia.ceph.com_lab-extras_8_.gpgcheck=0 --save
                     $SUDO dnf -y module enable javapackages-tools
+                elif test $ID = centos -a $MAJOR_VERSION = 9 ; then
+                    $SUDO dnf config-manager --set-enabled crb
                 elif test $ID = rhel -a $MAJOR_VERSION = 8 ; then
                     dts_ver=11
                     $SUDO dnf config-manager --set-enabled "codeready-builder-for-rhel-8-${ARCH}-rpms"
                     $SUDO dnf config-manager --add-repo http://apt-mirror.front.sepia.ceph.com/lab-extras/8/
                     $SUDO dnf config-manager --setopt=apt-mirror.front.sepia.ceph.com_lab-extras_8_.gpgcheck=0 --save
                     $SUDO dnf -y module enable javapackages-tools
+
+                    # Enable ceph/grpc from copr for el8, this is needed for nvmeof management.
+                    $SUDO dnf copr enable -y ceph/grpc
                 fi
                 ;;
         esac
         if [ "$INSTALL_EXTRA_PACKAGES" ]; then
             $SUDO dnf install -y $INSTALL_EXTRA_PACKAGES
         fi
-        munge_ceph_spec_in $with_seastar $with_zbd $for_make_check $DIR/ceph.spec
+        munge_ceph_spec_in $with_seastar $for_make_check $DIR/ceph.spec
         # for python3_pkgversion macro defined by python-srpm-macros, which is required by python3-devel
         $SUDO dnf install -y python3-devel
         $SUDO $builddepcmd $DIR/ceph.spec 2>&1 | tee $DIR/yum-builddep.out
@@ -557,14 +518,6 @@ else
         fi
         IGNORE_YUM_BUILDEP_ERRORS="ValueError: SELinux policy is not managed or store cannot be accessed."
         sed "/$IGNORE_YUM_BUILDEP_ERRORS/d" $DIR/yum-builddep.out | grep -i "error:" && exit 1
-        # for rgw motr backend build checks
-        if ! rpm --quiet -q cortx-motr-devel &&
-              { [[ $FOR_MAKE_CHECK ]] || $with_rgw_motr; }; then
-            $SUDO dnf install -y \
-                  "$motr_pkgs_url/isa-l-2.30.0-1.el7.${ARCH}.rpm" \
-                  "$motr_pkgs_url/cortx-motr-2.0.0-1_git3252d623_any.el8.${ARCH}.rpm" \
-                  "$motr_pkgs_url/cortx-motr-devel-2.0.0-1_git3252d623_any.el8.${ARCH}.rpm"
-        fi
         ;;
     opensuse*|suse|sles)
         echo "Using zypper to install dependencies"
@@ -573,7 +526,7 @@ else
         if [ "$INSTALL_EXTRA_PACKAGES" ]; then
             $SUDO $zypp_install $INSTALL_EXTRA_PACKAGES
         fi
-        munge_ceph_spec_in $with_seastar false $for_make_check $DIR/ceph.spec
+        munge_ceph_spec_in $with_seastar $for_make_check $DIR/ceph.spec
         $SUDO $zypp_install $(rpmspec -q --buildrequires $DIR/ceph.spec) || exit 1
         ;;
     *)
@@ -589,6 +542,9 @@ fi
 if $for_make_check; then
     mkdir -p install-deps-cache
     top_srcdir=$(pwd)
+    if [ -n "$XDG_CACHE_HOME" ]; then
+        ORIGINAL_XDG_CACHE_HOME=$XDG_CACHE_HOME
+    fi
     export XDG_CACHE_HOME=$top_srcdir/install-deps-cache
     wip_wheelhouse=wheelhouse-wip
     #
@@ -599,6 +555,11 @@ if $for_make_check; then
     done
     rm -rf $top_srcdir/install-deps-python3
     rm -rf $XDG_CACHE_HOME
+    if [ -n "$ORIGINAL_XDG_CACHE_HOME" ]; then
+        XDG_CACHE_HOME=$ORIGINAL_XDG_CACHE_HOME
+    else
+        unset XDG_CACHE_HOME
+    fi
     type git > /dev/null || (echo "Dashboard uses git to pull dependencies." ; false)
 fi
 

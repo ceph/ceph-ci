@@ -276,6 +276,11 @@ public:
       std::lock_guard<std::mutex> l(qlock);
       q.push_back(*txc);
     }
+    void undo_queue(TransContext* txc) {
+      std::lock_guard<std::mutex> l(qlock);
+      ceph_assert(&q.back() == txc);
+      q.pop_back();
+    }
 
     void flush() {
       std::unique_lock<std::mutex> l(qlock);
@@ -562,6 +567,8 @@ public:
   objectstore_perf_stat_t get_cur_stats() override {
     return objectstore_perf_stat_t();
   }
+  void refresh_perf_counters() override {
+  }
   const PerfCounters* get_perf_counters() const override {
     return logger;
   }
@@ -573,9 +580,10 @@ public:
     TrackedOpRef op = TrackedOpRef(),
     ThreadPool::TPHandle *handle = NULL) override;
 
-  void compact () override {
+  int compact () override {
     ceph_assert(db);
     db->compact();
+    return 0;
   }
   
 private:

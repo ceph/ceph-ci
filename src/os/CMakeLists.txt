@@ -27,12 +27,6 @@ if(WITH_BLUESTORE)
   )
 endif(WITH_BLUESTORE)
 
-if(WITH_ZBD)
-  list(APPEND libos_srcs
-    bluestore/ZonedFreelistManager.cc
-    bluestore/ZonedAllocator.cc)
-endif()
-
 if(WITH_FUSE)
   list(APPEND libos_srcs
     FuseStore.cc)
@@ -53,7 +47,9 @@ if(HAVE_LIBZFS)
 endif()
 
 add_library(os STATIC ${libos_srcs})
-target_link_libraries(os blk)
+target_link_libraries(os
+  legacy-option-headers
+  blk)
 
 target_link_libraries(os heap_profiler kv)
 

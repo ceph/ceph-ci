@@ -16,18 +16,86 @@
 
 namespace crimson::os::seastore {
 
+struct block_delta_t {
+  uint64_t offset = 0;
+  extent_len_t len = 0;
+  bufferlist bl;
+
+  DENC(block_delta_t, v, p) {
+    DENC_START(1, 1, p);
+    denc(v.offset, p);
+    denc(v.len, p);
+    denc(v.bl, p);
+    DENC_FINISH(p);
+  }
+};
+
+class overwrite_buf_t {
+public:
+  overwrite_buf_t() = default;
+  bool is_empty() const {
+    return changes.empty() && !has_cached_bptr();
+  }
+  bool has_cached_bptr() const {
+    return ptr.has_value();
+  }
+  void add(const block_delta_t &b) {
+    changes.push_back(b);
+  }
+  void apply_changes_to(bufferptr &b) const {
+    assert(!changes.empty());
+    for (auto p : changes) {
+      auto iter = p.bl.cbegin();
+      iter.copy(p.bl.length(), b.c_str() + p.offset);
+    }
+    changes.clear();
+  }
+  const bufferptr &get_cached_bptr(const bufferptr &_ptr) const {
+    apply_changes_to_cache(_ptr);
+    return *ptr;
+  }
+  bufferptr &get_cached_bptr(const bufferptr &_ptr) {
+    apply_changes_to_cache(_ptr);
+    return *ptr;
+  }
+  bufferptr &&move_cached_bptr() {
+    assert(has_cached_bptr());
+    apply_changes_to(*ptr);
+    return std::move(*ptr);
+  }
+private:
+  void apply_changes_to_cache(const bufferptr &_ptr) const {
+    assert(!is_empty());
+    if (!has_cached_bptr()) {
+      ptr = ceph::buffer::copy(_ptr.c_str(), _ptr.length());
+    }
+    if (!changes.empty()) {
+      apply_changes_to(*ptr);
+    }
+  }
+  mutable std::vector<block_delta_t> changes = {};
+  mutable std::optional<ceph::bufferptr> ptr = std::nullopt;
+};
+
 struct ObjectDataBlock : crimson::os::seastore::LogicalCachedExtent {
   using Ref = TCachedExtentRef<ObjectDataBlock>;
 
+  std::vector<block_delta_t> delta = {};
+
+  interval_set<extent_len_t> modified_region;
+
+  // to provide the local modified view during transaction
+  overwrite_buf_t cached_overwrites;
+
   explicit ObjectDataBlock(ceph::bufferptr &&ptr)
     : LogicalCachedExtent(std::move(ptr)) {}
-  explicit ObjectDataBlock(const ObjectDataBlock &other)
-    : LogicalCachedExtent(other) {}
+  explicit ObjectDataBlock(const ObjectDataBlock &other, share_buffer_t s)
+    : LogicalCachedExtent(other, s), modified_region(other.modified_region) {}
   explicit ObjectDataBlock(extent_len_t length)
     : LogicalCachedExtent(length) {}
 
   CachedExtentRef duplicate_for_write(Transaction&) final {
-    return CachedExtentRef(new ObjectDataBlock(*this));
+    return CachedExtentRef(new ObjectDataBlock(*this, share_buffer_t{}));
   };
 
   static constexpr extent_types_t TYPE = extent_types_t::OBJECT_DATA_BLOCK;
@@ -35,15 +103,61 @@ struct ObjectDataBlock : crimson::os::seastore::LogicalCachedExtent {
     return TYPE;
   }
 
-  ceph::bufferlist get_delta() final {
-    /* Currently, we always allocate fresh ObjectDataBlock's rather than
-     * mutating existing ones. */
-    ceph_assert(0 == "Should be impossible");
+  void overwrite(extent_len_t offset, bufferlist bl) {
+    block_delta_t b {offset, bl.length(), bl};
+    cached_overwrites.add(b);
+    delta.push_back(b);
+    modified_region.union_insert(offset, bl.length());
   }
 
-  void apply_delta(const ceph::bufferlist &bl) final {
-    // See get_delta()
-    ceph_assert(0 == "Should be impossible");
+  ceph::bufferlist get_delta() final;
+
+  void apply_delta(const ceph::bufferlist &bl) final;
+
+  std::optional<modified_region_t> get_modified_region() final {
+    if (modified_region.empty()) {
+      return std::nullopt;
+    }
+    return modified_region_t{modified_region.range_start(),
+      modified_region.range_end() - modified_region.range_start()};
+  }
+
+  void clear_modified_region() final {
+    modified_region.clear();
+  }
+
+  void prepare_commit() final {
+    if (is_mutation_pending() || is_exist_mutation_pending()) {
+      ceph_assert(!cached_overwrites.is_empty());
+      if (cached_overwrites.has_cached_bptr()) {
+        set_bptr(cached_overwrites.move_cached_bptr());
+      } else {
+        // The optimized path to minimize data copy
+        cached_overwrites.apply_changes_to(CachedExtent::get_bptr());
+      }
+    } else {
+      assert(cached_overwrites.is_empty());
+    }
+  }
+
+  void logical_on_delta_write() final {
+    delta.clear();
+  }
+
+  bufferptr &get_bptr() override {
+    if (cached_overwrites.is_empty()) {
+      return CachedExtent::get_bptr();
+    } else {
+      return cached_overwrites.get_cached_bptr(CachedExtent::get_bptr());
+    }
+  }
+
+  const bufferptr &get_bptr() const override {
+    if (cached_overwrites.is_empty()) {
+      return CachedExtent::get_bptr();
+    } else {
+      return cached_overwrites.get_cached_bptr(CachedExtent::get_bptr());
+    }
   }
 };
 using ObjectDataBlockRef = TCachedExtentRef<ObjectDataBlock>;
@@ -52,7 +166,9 @@ class ObjectDataHandler {
 public:
   using base_iertr = TransactionManager::base_iertr;
 
-  ObjectDataHandler(uint32_t mos) : max_object_size(mos) {}
+  ObjectDataHandler(uint32_t mos) : max_object_size(mos),
+    delta_based_overwrite_max_extent_size(
+      crimson::common::get_conf<Option::size_t>("seastore_data_delta_based_overwrite")) {}
 
   struct context_t {
     TransactionManager &tm;
@@ -147,9 +263,12 @@ private:
    * these regions and remove this assumption.
    */
   const uint32_t max_object_size = 0;
+  extent_len_t delta_based_overwrite_max_extent_size = 0; // enable only if rbm is used
 };
 
 }
+
+WRITE_CLASS_DENC_BOUNDED(crimson::os::seastore::block_delta_t)
 
 #if FMT_VERSION >= 90000
 template <> struct fmt::formatter<crimson::os::seastore::ObjectDataBlock> : fmt::ostream_formatter {};

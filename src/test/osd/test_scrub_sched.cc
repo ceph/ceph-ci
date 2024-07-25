@@ -10,6 +10,7 @@
 
 #include "common/async/context_pool.h"
 #include "common/ceph_argparse.h"
+#include "common/Finisher.h"
 #include "global/global_context.h"
 #include "global/global_init.h"
 #include "include/utime_fmt.h"
@@ -19,8 +20,9 @@
 #include "osd/PG.h"
 #include "osd/osd_types.h"
 #include "osd/osd_types_fmt.h"
-#include "osd/scrubber/osd_scrub_sched.h"
 #include "osd/scrubber_common.h"
+#include "osd/scrubber/pg_scrubber.h"
+#include "osd/scrubber/osd_scrub_sched.h"
 
 int main(int argc, char** argv)
 {
@@ -46,6 +48,9 @@ using ScrubJobRef = Scrub::ScrubJobRef;
 using qu_state_t = Scrub::qu_state_t;
 using scrub_schedule_t = Scrub::scrub_schedule_t;
 using ScrubQContainer = Scrub::ScrubQContainer;
+using sched_params_t = Scrub::sched_params_t;
+
+
 
 /// enabling access into ScrubQueue internals
 class ScrubSchedTestWrapper : public ScrubQueue {
@@ -57,7 +62,6 @@ class ScrubSchedTestWrapper : public ScrubQueue {
   void rm_unregistered_jobs()
   {
     ScrubQueue::rm_unregistered_jobs(to_scrub);
-    ScrubQueue::rm_unregistered_jobs(penalized);
   }
 
   ScrubQContainer collect_ripe_jobs()
@@ -85,6 +89,46 @@ class ScrubSchedTestWrapper : public ScrubQueue {
     return m_time_for_testing.value_or(ceph_clock_now());
   }
 
+  /**
+  * a temporary implementation of PgScrubber::determine_scrub_time(). That
+  * function is to be removed in the near future, and modifying the
+  * test to use the actual PgScrubber::determine_scrub_time() would create
+  * an unneeded coupling between objects that are due for separation.
+  */
+  sched_params_t determine_scrub_time(
+      const requested_scrub_t& request_flags,
+      const pg_info_t& pg_info,
+      const pool_opts_t& pool_conf)
+  {
+    sched_params_t res;
+
+    if (request_flags.must_scrub || request_flags.need_auto) {
+
+      // Set the smallest time that isn't utime_t()
+      res.proposed_time = PgScrubber::scrub_must_stamp();
+      res.is_must = Scrub::must_scrub_t::mandatory;
+      // we do not need the interval data in this case
+
+    } else if (pg_info.stats.stats_invalid && conf()->osd_scrub_invalid_stats) {
+      res.proposed_time = time_now();
+      res.is_must = Scrub::must_scrub_t::mandatory;
+
+    } else {
+      res.proposed_time = pg_info.history.last_scrub_stamp;
+      res.min_interval =
+	  pool_conf.value_or(pool_opts_t::SCRUB_MIN_INTERVAL, 0.0);
+      res.max_interval =
+	  pool_conf.value_or(pool_opts_t::SCRUB_MAX_INTERVAL, 0.0);
+    }
+
+    std::cout << fmt::format(
+	"suggested: {:s} hist: {:s} v:{}/{} must:{} pool-min:{} {}\n",
+	res.proposed_time, pg_info.history.last_scrub_stamp,
+	(bool)pg_info.stats.stats_invalid, conf()->osd_scrub_invalid_stats,
+	(res.is_must == Scrub::must_scrub_t::mandatory ? "y" : "n"),
+	res.min_interval, request_flags);
+    return res;
+  }
   ~ScrubSchedTestWrapper() override = default;
 };
 
@@ -110,9 +154,17 @@ class FakeOsd : public Scrub::ScrubSchedListener {
     return std::nullopt;
   }
 
+  AsyncReserver<spg_t, Finisher>& get_scrub_reserver() final
+  {
+    return m_scrub_reserver;
+  }
+
  private:
   int m_osd_num;
   std::map<spg_t, schedule_result_t> m_next_response;
+  Finisher reserver_finisher{g_ceph_context};
+  AsyncReserver<spg_t, Finisher> m_scrub_reserver{
+      g_ceph_context, &reserver_finisher, 1};
 };
 
 

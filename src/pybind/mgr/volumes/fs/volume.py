@@ -1,9 +1,11 @@
 import json
 import errno
 import logging
-import os
 import mgr_util
-from typing import TYPE_CHECKING
+import inspect
+import functools
+from typing import TYPE_CHECKING, Any, Callable, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import cephfs
 
@@ -14,13 +16,14 @@ from .fs_util import listdir, has_subdir
 from .operations.group import open_group, create_group, remove_group, \
     open_group_unique, set_group_attrs
 from .operations.volume import create_volume, delete_volume, rename_volume, \
-    list_volumes, open_volume, get_pool_names, get_pool_ids, get_pending_subvol_deletions_count
+    list_volumes, open_volume, get_pool_names, get_pool_ids, \
+    get_pending_subvol_deletions_count, get_all_pending_clones_count
 from .operations.subvolume import open_subvol, create_subvol, remove_subvol, \
     create_clone
-from .operations.trash import Trash
 
 from .vol_spec import VolSpec
-from .exception import VolumeException, ClusterError, ClusterTimeout, EvictionError
+from .exception import VolumeException, ClusterError, ClusterTimeout, \
+    EvictionError
 from .async_cloner import Cloner
 from .purge_queue import ThreadPoolPurgeQueueMixin
 from .operations.template import SubvolumeOpType
@@ -55,7 +58,8 @@ class VolumeClient(CephfsClient["Module"]):
         super().__init__(mgr)
         # volume specification
         self.volspec = VolSpec(mgr.rados.conf_get('client_snapdir'))
-        self.cloner = Cloner(self, self.mgr.max_concurrent_clones, self.mgr.snapshot_clone_delay)
+        self.cloner = Cloner(self, self.mgr.max_concurrent_clones, self.mgr.snapshot_clone_delay,
+                             self.mgr.snapshot_clone_no_wait)
         self.purge_queue = ThreadPoolPurgeQueueMixin(self, 4)
         # on startup, queue purge job for available volumes to kickstart
         # purge for leftover subvolume entries in trash. note that, if the
@@ -85,11 +89,28 @@ class VolumeClient(CephfsClient["Module"]):
             lvl = self.mgr.ClusterLogPrio.WARN
         self.mgr.cluster_log("cluster", lvl, msg)
 
-    def volume_exception_to_retval(self, ve):
+    def volume_exception_to_retval(self_or_method: Any, ve: Optional[VolumeException] = None):
         """
         return a tuple representation from a volume exception
+        OR wrap the decorated method into a try:catch:
+        that will convert VolumeException to the tuple
         """
-        return ve.to_tuple()
+        if ve is None and callable(self_or_method):
+            # used as a decorator
+            method: Callable = self_or_method
+            @functools.wraps(method)
+            def wrapper(self, *args, **kwargs):
+                try:
+                    return method(self, *args, **kwargs)
+                except VolumeException as ve:
+                    return self.volume_exception_to_retval(ve)
+            return wrapper
+        elif ve is not None:
+            # used as a method on self with a VolumeException argument
+            return ve.to_tuple()
+        else:
+            # shouldn't get here, bad call
+            assert(ve is not None)
 
     ### volume operations -- create, rm, ls
 
@@ -338,7 +359,7 @@ class VolumeClient(CephfsClient["Module"]):
             with open_volume(self, volname) as fs_handle:
                 with open_group(fs_handle, self.volspec, groupname) as group:
                     with open_subvol(self.mgr, fs_handle, self.volspec, group, subvolname, SubvolumeOpType.EVICT) as subvolume:
-                        key = subvolume.evict(volname, authid)
+                        subvolume.evict(volname, authid)
                         ret = 0, "", ""
         except (VolumeException, ClusterTimeout, ClusterError, EvictionError) as e:
             if isinstance(e, VolumeException):
@@ -424,10 +445,56 @@ class VolumeClient(CephfsClient["Module"]):
 
                         subvol_info_dict = subvolume.info()
                         subvol_info_dict["mon_addrs"] = mon_addr_lst
+                        subvol_info_dict["flavor"] = subvolume.VERSION
                         ret = 0, json.dumps(subvol_info_dict, indent=4, sort_keys=True), ""
         except VolumeException as ve:
             ret = self.volume_exception_to_retval(ve)
         return ret
+
+    @volume_exception_to_retval
+    def quiesce(self, cmd):
+        volname    = cmd['vol_name']
+        default_group_name  = cmd.get('group_name', None)
+        roots = []
+        leader_gid = cmd.get('with_leader', None)
+
+        with open_volume(self, volname) as fs_handle:
+            if leader_gid is None:
+                fscid = fs_handle.get_fscid()
+                leader_gid = self.mgr.get_quiesce_leader_gid(fscid)
+                if leader_gid is None:
+                    return -errno.ENOENT, "", "Couldn't resolve the quiesce leader for volume %s (%s)" % (volname, fscid)
+
+            if cmd.get('leader', False):
+                return (
+                    0,
+                    "mds.%d" % leader_gid,
+                    "Resolved the quiesce leader for volume '{volname}' as gid {gid}".format(volname=volname, gid=leader_gid)
+                )
+
+
+            for member in cmd.get('members', []):
+                try:
+                    member_parts = urlsplit(member)
+                except ValueError as ve:
+                    return -errno.EINVAL, "", str(ve)
+                group_name = default_group_name
+
+                *maybe_group_name, subvol_name = member_parts.path.strip('/').split('/')
+                if len(maybe_group_name) > 1:
+                    return -errno.EINVAL, "", "The `<group>/<subvol>` member syntax is accepted with no more than one group"
+                elif len(maybe_group_name) == 1:
+                    group_name = maybe_group_name[0]
+
+                with open_group(fs_handle, self.volspec, group_name) as group:
+                    with open_subvol(self.mgr, fs_handle, self.volspec, group, subvol_name, SubvolumeOpType.GETPATH) as subvol:
+                        member_parts = member_parts._replace(path=subvol.path.decode('utf-8'))
+                        roots.append(urlunsplit(member_parts))
+        
+        cmd['roots'] = roots
+        cmd['prefix'] = 'quiesce db'
+
+        return self.mgr.tell_quiesce_leader(leader_gid, cmd)
 
     def set_user_metadata(self, **kwargs):
         ret        = 0, "", ""
@@ -695,7 +762,7 @@ class VolumeClient(CephfsClient["Module"]):
         try:
             with open_volume(self, volname) as fs_handle:
                 with open_group(fs_handle, self.volspec, groupname) as group:
-                    with open_subvol(self.mgr, fs_handle, self.volspec, group, subvolname, SubvolumeOpType.SNAP_PROTECT) as subvolume:
+                    with open_subvol(self.mgr, fs_handle, self.volspec, group, subvolname, SubvolumeOpType.SNAP_PROTECT):
                         log.warning("snapshot protect call is deprecated and will be removed in a future release")
         except VolumeException as ve:
             ret = self.volume_exception_to_retval(ve)
@@ -710,7 +777,7 @@ class VolumeClient(CephfsClient["Module"]):
         try:
             with open_volume(self, volname) as fs_handle:
                 with open_group(fs_handle, self.volspec, groupname) as group:
-                    with open_subvol(self.mgr, fs_handle, self.volspec, group, subvolname, SubvolumeOpType.SNAP_UNPROTECT) as subvolume:
+                    with open_subvol(self.mgr, fs_handle, self.volspec, group, subvolname, SubvolumeOpType.SNAP_UNPROTECT):
                         log.warning("snapshot unprotect call is deprecated and will be removed in a future release")
         except VolumeException as ve:
             ret = self.volume_exception_to_retval(ve)
@@ -765,6 +832,10 @@ class VolumeClient(CephfsClient["Module"]):
         s_groupname  = kwargs['group_name']
 
         try:
+            if self.mgr.snapshot_clone_no_wait and \
+               get_all_pending_clones_count(self, self.mgr, self.volspec) >= self.mgr.max_concurrent_clones:
+                raise(VolumeException(-errno.EAGAIN, "all cloner threads are busy, please try again later"))
+            
             with open_volume(self, volname) as fs_handle:
                 with open_group(fs_handle, self.volspec, s_groupname) as s_group:
                     with open_subvol(self.mgr, fs_handle, self.volspec, s_group, s_subvolname, SubvolumeOpType.CLONE_SOURCE) as s_subvolume:
@@ -962,7 +1033,7 @@ class VolumeClient(CephfsClient["Module"]):
 
         try:
             with open_volume(self, volname) as fs_handle:
-                with open_group(fs_handle, self.volspec, groupname) as group:
+                with open_group(fs_handle, self.volspec, groupname):
                     # as subvolumes are marked with the vxattr ceph.dir.subvolume deny snapshots
                     # at the subvolume group (see: https://tracker.ceph.com/issues/46074)
                     # group.create_snapshot(snapname)

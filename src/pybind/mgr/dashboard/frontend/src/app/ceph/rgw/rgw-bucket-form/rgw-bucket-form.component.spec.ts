@@ -272,8 +272,18 @@ describe('RgwBucketFormComponent', () => {
       expect(control.disabled).toBeTruthy();
     });
 
-    it('should have the "lockDays" error', () => {
+    it('should not have the "lockDays" error for 10 days', () => {
       formHelper.setValue('lock_enabled', true);
+      const control = component.bucketForm.get('lock_retention_period_days');
+      control.updateValueAndValidity();
+      expect(control.value).toBe(10);
+      expect(control.invalid).toBeFalsy();
+      formHelper.expectValid(control);
+    });
+
+    it('should have the "lockDays" error for 0 days', () => {
+      formHelper.setValue('lock_enabled', true);
+      formHelper.setValue('lock_retention_period_days', 0);
       const control = component.bucketForm.get('lock_retention_period_days');
       control.updateValueAndValidity();
       expect(control.value).toBe(0);
@@ -295,6 +305,14 @@ describe('RgwBucketFormComponent', () => {
 
     it('should have valid values [2]', () => {
       expectValidLockInputs(false, 'Compliance', '2');
+    });
+  });
+
+  describe('bucket replication', () => {
+    it('should validate replication input', () => {
+      formHelper.setValue('replication', true);
+      fixture.detectChanges();
+      formHelper.expectValid('replication');
     });
   });
 });

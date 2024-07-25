@@ -2,6 +2,9 @@
 
 See https://ceph.com/ for current information about Ceph.
 
+## Status
+
+[![Issue Backporting](https://github.com/ceph/ceph/actions/workflows/create-backport-trackers.yml/badge.svg)](https://github.com/ceph/ceph/actions/workflows/create-backport-trackers.yml)
 
 ## Contributing Code
 
@@ -40,7 +43,7 @@ following commands to move into the cloned `ceph/ceph` repository and to check
 out the git submodules associated with it:
 
     cd ceph
-	git submodule update --init --recursive
+	git submodule update --init --recursive --progress
 
 
 ## Build Prerequisites

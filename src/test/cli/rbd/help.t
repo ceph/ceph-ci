@@ -48,6 +48,7 @@
       group image add                   Add an image to a group.
       group image list (... ls)         List images in a group.
       group image remove (... rm)       Remove an image from a group.
+      group info                        Show information about a group.
       group list (group ls)             List rbd groups.
       group remove (group rm)           Delete a group.
       group rename                      Rename a group within pool.
@@ -63,7 +64,8 @@
                                         associated.
       image-meta set                    Image metadata set key with value.
       import                            Import image from file.
-      import-diff                       Import an incremental diff.
+      import-diff                       Apply an incremental diff to image HEAD,
+                                        then create a snapshot.
       info                              Show information about image size,
                                         striping, etc.
       journal client disconnect         Flag image journal client as disconnected.
@@ -194,9 +196,9 @@
   
   rbd help children
   usage: rbd children [--pool <pool>] [--namespace <namespace>] 
-                      [--image <image>] [--snap <snap>] [--snap-id <snap-id>] 
-                      [--all] [--descendants] [--format <format>] 
-                      [--pretty-format] 
+                      [--image <image>] [--snap <snap>] [--image-id <image-id>] 
+                      [--snap-id <snap-id>] [--all] [--descendants] 
+                      [--format <format>] [--pretty-format] 
                       <image-or-snap-spec> 
   
   Display children of an image or its snapshot.
@@ -211,6 +213,7 @@
     --namespace arg       namespace name
     --image arg           image name
     --snap arg            snapshot name
+    --image-id arg        image id
     --snap-id arg         snapshot id
     -a [ --all ]          list all children (include trash)
     --descendants         include all descendants
@@ -219,9 +222,10 @@
   
   rbd help clone
   usage: rbd clone [--pool <pool>] [--namespace <namespace>] [--image <image>] 
-                   [--snap <snap>] [--dest-pool <dest-pool>] 
-                   [--dest-namespace <dest-namespace>] [--dest <dest>] 
-                   [--order <order>] [--object-size <object-size>] 
+                   [--snap <snap>] [--snap-id <snap-id>] 
+                   [--dest-pool <dest-pool>] [--dest-namespace <dest-namespace>] 
+                   [--dest <dest>] [--order <order>] 
+                   [--object-size <object-size>] 
                    [--image-feature <image-feature>] [--image-shared] 
                    [--stripe-unit <stripe-unit>] [--stripe-count <stripe-count>] 
                    [--data-pool <data-pool>] 
@@ -246,6 +250,7 @@
     --namespace arg           source namespace name
     --image arg               source image name
     --snap arg                source snapshot name
+    --snap-id arg             source snapshot id
     --dest-pool arg           destination pool name
     --dest-namespace arg      destination namespace name
     --dest arg                destination image name
@@ -970,6 +975,24 @@
     -p [ --pool ] arg     pool name unless overridden
     --image-id arg        image id
   
+  rbd help group info
+  usage: rbd group info [--pool <pool>] [--namespace <namespace>] 
+                        [--group <group>] [--format <format>] [--pretty-format] 
+                        <group-spec> 
+  
+  Show information about a group.
+  
+  Positional arguments
+    <group-spec>         group specification
+                         (example: [<pool-name>/[<namespace>/]]<group-name>)
+  
+  Optional arguments
+    -p [ --pool ] arg    pool name
+    --namespace arg      namespace name
+    --group arg          group name
+    --format arg         output format (plain, json, or xml) [default: plain]
+    --pretty-format      pretty formatting (json and xml)
+  
   rbd help group list
   usage: rbd group list [--pool <pool>] [--namespace <namespace>] 
                         [--format <format>] [--pretty-format] 
@@ -1254,7 +1277,7 @@
                          [--sparse-size <sparse-size>] [--no-progress] 
                          <path-name> <image-spec> 
   
-  Import an incremental diff.
+  Apply an incremental diff to image HEAD, then create a snapshot.
   
   Positional arguments
     <path-name>          import file (or '-' for stdin)

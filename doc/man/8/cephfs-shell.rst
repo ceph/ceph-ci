@@ -1,5 +1,7 @@
 :orphan:
 
+.. _cephfs-shell:
+
 ===================================================
 cephfs-shell -- Shell-like tool talking with CephFS
 ===================================================
@@ -56,7 +58,7 @@ Options
 
 .. code:: bash
 
-    [build]$ python3 -m venv venv && source venv/bin/activate && pip3 install cmd2 colorama packaging
+    [build]$ python3 -m venv venv && source venv/bin/activate && pip3 install cmd2 colorama
     [build]$ source vstart_environment.sh && source venv/bin/activate && python3 ../src/tools/cephfs/shell/cephfs-shell
 
 Commands

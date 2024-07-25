@@ -140,9 +140,10 @@ int Service::get_admin_token(const DoutPrefixProvider *dpp,
                              TokenCache& token_cache,
                              const Config& config,
                              optional_yield y,
-                             std::string& token)
+                             std::string& token,
+                             bool& token_cached)
 {
-  /* Let's check whether someone uses the deprecated "admin token" feauture
+  /* Let's check whether someone uses the deprecated "admin token" feature
    * based on a shared secret from keystone.conf file. */
   const auto& admin_token = config.get_admin_token();
   if (! admin_token.empty()) {
@@ -156,6 +157,7 @@ int Service::get_admin_token(const DoutPrefixProvider *dpp,
   if (token_cache.find_admin(t)) {
     ldpp_dout(dpp, 20) << "found cached admin token" << dendl;
     token = t.token.id;
+    token_cached = true;
     return 0;
   }
 
@@ -210,15 +212,17 @@ int Service::issue_admin_token_request(const DoutPrefixProvider *dpp,
 
   token_req.set_url(token_url);
 
-  const int ret = token_req.process(y);
-  if (ret < 0) {
-    return ret;
-  }
+  const int ret = token_req.process(dpp, y);
 
   /* Detect rejection earlier than during the token parsing step. */
   if (token_req.get_http_status() ==
           RGWGetKeystoneAdminToken::HTTP_STATUS_UNAUTHORIZED) {
     return -EACCES;
+  }
+
+  // throw any other http or connection errors
+  if (ret < 0) {
+    return ret;
   }
 
   if (t.parse(dpp, token_req.get_subject_token(), token_bl,
@@ -286,7 +290,7 @@ int Service::get_keystone_barbican_token(const DoutPrefixProvider *dpp,
   token_req.set_url(token_url);
 
   ldpp_dout(dpp, 20) << "Requesting secret from barbican url=" << token_url << dendl;
-  const int ret = token_req.process(y);
+  const int ret = token_req.process(dpp, y);
   if (ret < 0) {
     ldpp_dout(dpp, 20) << "Barbican process error:" << token_bl.c_str() << dendl;
     return ret;
@@ -345,7 +349,7 @@ int TokenEnvelope::parse(const DoutPrefixProvider *dpp,
          * speaks in v2 disregarding the promise to go with v3. */
         decode_v3(*token_iter);
 
-        /* Identity v3 conveys the token inforamtion not as a part of JSON but
+        /* Identity v3 conveys the token information not as a part of JSON but
          * in the X-Subject-Token HTTP header we're getting from caller. */
         token.id = token_str;
       } else {
@@ -354,7 +358,7 @@ int TokenEnvelope::parse(const DoutPrefixProvider *dpp,
     } else if (version == rgw::keystone::ApiVersion::VER_3) {
       if (! token_iter.end()) {
         decode_v3(*token_iter);
-        /* v3 suceeded. We have to fill token.id from external input as it
+        /* v3 succeeded. We have to fill token.id from external input as it
          * isn't a part of the JSON response anymore. It has been moved
          * to X-Subject-Token HTTP header instead. */
         token.id = token_str;
@@ -519,6 +523,11 @@ void TokenCache::invalidate(const DoutPrefixProvider *dpp, const std::string& to
   token_entry& e = iter->second;
   tokens_lru.erase(e.lru_iter);
   tokens.erase(iter);
+}
+
+void TokenCache::invalidate_admin(const DoutPrefixProvider *dpp)
+{
+  invalidate(dpp, admin_token_id);
 }
 
 bool TokenCache::going_down() const

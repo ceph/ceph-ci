@@ -9,6 +9,8 @@ import logging
 import os
 import random
 import string
+import datetime
+import uuid
 
 from teuthology import misc as teuthology
 from teuthology import contextutil
@@ -70,14 +72,14 @@ def download(ctx, config):
                 )
 
 
-def _config_user(s3tests_conf, section, user):
+def _config_user(s3tests_conf, section, user, email):
     """
     Configure users for this section by stashing away keys, ids, and
     email addresses.
     """
     s3tests_conf[section].setdefault('user_id', user)
-    s3tests_conf[section].setdefault('email', '{user}+test@test.test'.format(user=user))
-    s3tests_conf[section].setdefault('display_name', 'Mr. {user}'.format(user=user))
+    s3tests_conf[section].setdefault('email', email)
+    s3tests_conf[section].setdefault('display_name', 'Mr.{user}'.format(user=user))
     s3tests_conf[section].setdefault('access_key',
         ''.join(random.choice(string.ascii_uppercase) for i in range(20)))
     s3tests_conf[section].setdefault('secret_key',
@@ -90,42 +92,89 @@ def _config_user(s3tests_conf, section, user):
 
 
 @contextlib.contextmanager
-def create_users(ctx, config):
+def create_users(ctx, config, s3tests_conf):
     """
     Create a main and an alternate s3 user.
     """
-    assert isinstance(config, dict)
     log.info('Creating rgw users...')
     testdir = teuthology.get_testdir(ctx)
     
-    users = {'s3 main': 'foo', 's3 alt': 'bar', 's3 tenant': 'testx$tenanteduser', 'iam': 'foobar'}
-    for client in config['clients']:
-        s3tests_conf = config['s3tests_conf'][client]
-        s3tests_conf.setdefault('fixtures', {})
-        s3tests_conf['fixtures'].setdefault('bucket prefix', 'test-' + client + '-{random}-')
+    users = {'s3 main': 'foo', 's3 alt': 'bar', 's3 tenant': 'testx$tenanteduser', 'iam': 'foobar', 'iam root': 'root1', 'iam alt root': 'root2'}
+    for client, cconfig in config.items():
+        cluster_name, daemon_type, client_id = teuthology.split_role(client)
+        client_with_id = daemon_type + '.' + client_id
+        conf = s3tests_conf[client]
+        conf.setdefault('fixtures', {})
+        conf['fixtures'].setdefault('bucket prefix', 'test-{random}-')
+
+        accounts = cconfig.get('accounts', {})
+        keystone_users = cconfig.get('keystone users', {})
         for section, user in users.items():
-            _config_user(s3tests_conf, section, '{user}.{client}'.format(user=user, client=client))
-            log.debug('Creating user {user} on {host}'.format(user=s3tests_conf[section]['user_id'], host=client))
-            cluster_name, daemon_type, client_id = teuthology.split_role(client)
-            client_with_id = daemon_type + '.' + client_id
-            # create user
-            ctx.cluster.only(client).run(
+            user_id = '{user}.{client}'.format(user=user, client=client)
+            user_email = '{user}+test@test.test'.format(user=user)
+
+            account_id = accounts.get(section)
+            if account_id:
+                # create account
+                account_email = '{account_id}+test@test.test'.format(account_id=account_id)
                 args=[
+                        'adjust-ulimits',
+                        'ceph-coverage',
+                        '{tdir}/archive/coverage'.format(tdir=testdir),
+                        'radosgw-admin',
+                        '-n', client_with_id,
+                        '--cluster', cluster_name,
+                        'account', 'create',
+                        '--account-id', account_id,
+                        '--account-name', 'Mr.{user}'.format(user=account_id),
+                        '--email', account_email,
+                    ]
+                if section == 's3 tenant':
+                    args += ['--tenant', 'testx']
+                ctx.cluster.only(client).run(args=args)
+                _config_user(conf, section, account_id, account_email)
+            else:
+                _config_user(conf, section, user_id, user_email)
+
+            # for keystone users, read ec2 credentials into s3tests.conf instead
+            # of creating a local user
+            keystone_user = keystone_users.get(section)
+            if keystone_user:
+                project_name = keystone_user.pop('project')
+                creds = ctx.keystone.read_ec2_credentials(ctx, **keystone_user)
+                access = creds['Access']
+                secret = creds['Secret']
+                project_id = creds['Project ID']
+
+                conf[section]['access_key'] = access
+                conf[section]['secret_key'] = secret
+                conf[section]['user_id'] = project_id
+                conf[section]['display_name'] = project_name
+
+                log.debug('Using keystone user {kuser} credentials ({access} : {secret}) for {pname}:{pid} on {host}'.format(
+                    kuser=keystone_user['user'], access=access, secret=secret,
+                    pname=project_name, pid=project_id, host=client))
+                continue
+
+            log.debug('Creating user {user} on {host}'.format(user=conf[section]['user_id'], host=client))
+            # create user
+            user_args=[
                     'adjust-ulimits',
                     'ceph-coverage',
                     '{tdir}/archive/coverage'.format(tdir=testdir),
                     'radosgw-admin',
                     '-n', client_with_id,
                     'user', 'create',
-                    '--uid', s3tests_conf[section]['user_id'],
-                    '--display-name', s3tests_conf[section]['display_name'],
-                    '--email', s3tests_conf[section]['email'],
-                    '--caps', 'user-policy=*',
-                    '--access-key', s3tests_conf[section]['access_key'],
-                    '--secret', s3tests_conf[section]['secret_key'],
+                    '--uid', user_id,
+                    '--display-name', conf[section]['display_name'],
+                    '--email', user_email,
+                    '--access-key', conf[section]['access_key'],
+                    '--secret', conf[section]['secret_key'],
                     '--cluster', cluster_name,
-                ],
-            )
+                ]
+            if account_id:
+                user_args += ['--account-id', account_id, '--account-root']
+            ctx.cluster.only(client).run(args=user_args)
 
             if not ctx.dbstore_variable:
                 ctx.cluster.only(client).run(
@@ -136,10 +185,10 @@ def create_users(ctx, config):
                         'radosgw-admin',
                         '-n', client_with_id,
                         'mfa', 'create',
-                        '--uid', s3tests_conf[section]['user_id'],
-                        '--totp-serial', s3tests_conf[section]['totp_serial'],
-                        '--totp-seed', s3tests_conf[section]['totp_seed'],
-                        '--totp-seconds', s3tests_conf[section]['totp_seconds'],
+                        '--uid', user_id,
+                        '--totp-serial', conf[section]['totp_serial'],
+                        '--totp-seed', conf[section]['totp_seed'],
+                        '--totp-seconds', conf[section]['totp_seconds'],
                         '--totp-window', '8',
                         '--totp-seed-type', 'base32',
                         '--cluster', cluster_name,
@@ -156,40 +205,30 @@ def create_users(ctx, config):
                         'radosgw-admin',
                         '-n', client_with_id,
                         'caps', 'add',
-                        '--uid', s3tests_conf[section]['user_id'],
-                        '--caps', 'roles=*',
-                        '--cluster', cluster_name,
-                    ],
-                )
-                ctx.cluster.only(client).run(
-                    args=[
-                        'adjust-ulimits',
-                        'ceph-coverage',
-                        '{tdir}/archive/coverage'.format(tdir=testdir),
-                        'radosgw-admin',
-                        '-n', client_with_id,
-                        'caps', 'add',
-                        '--uid', s3tests_conf[section]['user_id'],
-                        '--caps', 'oidc-provider=*',
+                        '--uid', user_id,
+                        '--caps', 'oidc-provider=*;roles=*;user-policy=*',
                         '--cluster', cluster_name,
                     ],
                 )
 
     if "TOKEN" in os.environ:
-        s3tests_conf.setdefault('webidentity', {})
-        s3tests_conf['webidentity'].setdefault('token',os.environ['TOKEN'])
-        s3tests_conf['webidentity'].setdefault('aud',os.environ['AUD'])
-        s3tests_conf['webidentity'].setdefault('sub',os.environ['SUB'])
-        s3tests_conf['webidentity'].setdefault('azp',os.environ['AZP'])
-        s3tests_conf['webidentity'].setdefault('user_token',os.environ['USER_TOKEN'])
-        s3tests_conf['webidentity'].setdefault('thumbprint',os.environ['THUMBPRINT'])
-        s3tests_conf['webidentity'].setdefault('KC_REALM',os.environ['KC_REALM'])
+        conf.setdefault('webidentity', {})
+        conf['webidentity'].setdefault('token',os.environ['TOKEN'])
+        conf['webidentity'].setdefault('aud',os.environ['AUD'])
+        conf['webidentity'].setdefault('sub',os.environ['SUB'])
+        conf['webidentity'].setdefault('azp',os.environ['AZP'])
+        conf['webidentity'].setdefault('user_token',os.environ['USER_TOKEN'])
+        conf['webidentity'].setdefault('thumbprint',os.environ['THUMBPRINT'])
+        conf['webidentity'].setdefault('KC_REALM',os.environ['KC_REALM'])
 
     try:
         yield
     finally:
-        for client in config['clients']:
-            for user in users.values():
+        for client in config.keys():
+            for section, user in users.items():
+                # don't need to delete keystone users
+                if not user in keystone_users:
+                    continue
                 uid = '{user}.{client}'.format(user=user, client=client)
                 cluster_name, daemon_type, client_id = teuthology.split_role(client)
                 client_with_id = daemon_type + '.' + client_id
@@ -206,6 +245,19 @@ def create_users(ctx, config):
                         '--cluster', cluster_name,
                         ],
                     )
+                account_id = accounts.get(section)
+                if account_id:
+                    ctx.cluster.only(client).run(
+                        args=[
+                            'adjust-ulimits',
+                            'ceph-coverage',
+                            '{tdir}/archive/coverage'.format(tdir=testdir),
+                            'radosgw-admin',
+                            '-n', client_with_id,
+                            '--cluster', cluster_name,
+                            'account', 'rm',
+                            '--account-id', account_id,
+                            ])
 
 
 @contextlib.contextmanager
@@ -392,10 +444,22 @@ def run_tests(ctx, config):
             attrs += ['not sse_s3']
        
         attrs += client_config.get('extra_attrs', [])
-        args += ['tox', '--', '-v', '-m', ' and '.join(attrs)]
-        args += client_config.get('extra_args', [])
-
-        toxvenv_sh(ctx, remote, args, label="s3 tests against rgw")
+        if 'unit_test_scan' in client_config and client_config['unit_test_scan']:
+            xmlfile_id = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M:%S--") + str(uuid.uuid4())
+            xmlpath= f'{testdir}/archive/s3test-{xmlfile_id}.xml'
+            args += ['tox', '--', '-v', f'--junitxml={xmlpath}', '-m', ' and '.join(attrs)]
+            args += client_config.get('extra_args', [])
+            activate = get_toxvenv_dir(ctx) + '/bin/activate'
+            remote.run_unit_test(
+                args=['source', activate, run.Raw('&&')] + args,
+                label="s3 tests against rgw",
+                xml_path_regex=f'{testdir}/archive/s3test-*.xml',
+                output_yaml=os.path.join(ctx.archive, 'unit_test_summary.yaml'),
+            )
+        else:
+            args += ['tox', '--', '-v', '-m', ' and '.join(attrs)]
+            args += client_config.get('extra_args', [])
+            toxvenv_sh(ctx, remote, args, label="s3 tests against rgw")
     yield
 
 @contextlib.contextmanager
@@ -502,6 +566,31 @@ def task(ctx, config):
               cloudtier_tests: True
               rgw_server: client.0
 
+    To test against Keystone users with EC2 credentials::
+
+        tasks:
+        - ceph:
+        - rgw: [client.0 client.1]
+        - keystone:
+          client.0:
+            projects:
+              - name: myproject
+                description: my project
+            users:
+              - name: myuser
+                password: SECRET
+                project: myproject
+            ec2 credentials:
+              - project: myproject
+                user: myuser
+        - s3tests:
+            client.0:
+              keystone users:
+                s3 main:
+                  client: client.0
+                  project: myproject
+                  user: myuser
+
     """
     assert hasattr(ctx, 'rgw'), 's3tests must run after the rgw task'
     assert hasattr(ctx, 'tox'), 's3tests must run after the tox task'
@@ -563,6 +652,8 @@ def task(ctx, config):
                         's3 alt'     : {},
                         's3 tenant'  : {},
                         'iam'        : {},
+                        'iam root'   : {},
+                        'iam alt root' : {},
                         'webidentity': {},
                     }
                 )
@@ -586,6 +677,8 @@ def task(ctx, config):
                         's3 main'    : {},
                         's3 alt'     : {},
                         'iam'        : {},
+                        'iam root'   : {},
+                        'iam alt root' : {},
                         's3 tenant'  : {},
                         }
                     ) 
@@ -611,6 +704,8 @@ def task(ctx, config):
                         's3 tenant'  : {},
                         's3 cloud'   : {},
                         'iam'        : {},
+                        'iam root'   : {},
+                        'iam alt root' : {},
                         }
                     ) 
         else:
@@ -633,15 +728,14 @@ def task(ctx, config):
                         's3 alt'     : {},
                         's3 tenant'  : {},
                         'iam'        : {},
+                        'iam root'   : {},
+                        'iam alt root' : {},
                         }
                     )
 
     with contextutil.nested(
         lambda: download(ctx=ctx, config=config),
-        lambda: create_users(ctx=ctx, config=dict(
-                clients=clients,
-                s3tests_conf=s3tests_conf,
-                )),
+        lambda: create_users(ctx=ctx, config=config, s3tests_conf=s3tests_conf),
         lambda: configure(ctx=ctx, config=dict(
                 clients=config,
                 s3tests_conf=s3tests_conf,

@@ -4,6 +4,7 @@
 #include "./osd_scrub.h"
 
 #include "osd/OSD.h"
+#include "osd/osd_perf_counters.h"
 #include "osdc/Objecter.h"
 
 #include "pg_scrubber.h"
@@ -37,7 +38,14 @@ OsdScrub::OsdScrub(
     , m_queue{cct, m_osd_svc}
     , m_log_prefix{fmt::format("osd.{} osd-scrub:", m_osd_svc.get_nodeid())}
     , m_load_tracker{cct, conf, m_osd_svc.get_nodeid()}
-{}
+{
+  create_scrub_perf_counters();
+}
+
+OsdScrub::~OsdScrub()
+{
+  destroy_scrub_perf_counters();
+}
 
 std::ostream& OsdScrub::gen_prefix(std::ostream& out, std::string_view fn) const
 {
@@ -47,6 +55,14 @@ std::ostream& OsdScrub::gen_prefix(std::ostream& out, std::string_view fn) const
 void OsdScrub::dump_scrubs(ceph::Formatter* f) const
 {
   m_queue.dump_scrubs(f);
+}
+
+void OsdScrub::dump_scrub_reservations(ceph::Formatter* f) const
+{
+  m_resource_bookkeeper.dump_scrub_reservations(f);
+  f->open_array_section("remote_scrub_reservations");
+  m_osd_svc.get_scrub_reserver().dump(f);
+  f->close_section();
 }
 
 void OsdScrub::log_fwd(std::string_view text)
@@ -69,10 +85,11 @@ bool OsdScrub::scrub_random_backoff() const
 
 void OsdScrub::initiate_scrub(bool is_recovery_active)
 {
-  if (scrub_random_backoff()) {
-    // dice-roll says we should not scrub now
-    return;
-  }
+  const utime_t scrub_time = ceph_clock_now();
+  dout(10) << fmt::format(
+		  "time now:{:s}, recovery is active?:{}", scrub_time,
+		  is_recovery_active)
+	   << dendl;
 
   if (auto blocked_pgs = get_blocked_pgs_count(); blocked_pgs > 0) {
     // some PGs managed by this OSD were blocked by a locked object during
@@ -84,35 +101,14 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
 	<< dendl;
   }
 
-  // fail fast if no resources are available
-  if (!m_resource_bookkeeper.can_inc_scrubs()) {
-    dout(20) << "too many scrubs already running on this OSD" << dendl;
-    return;
-  }
-
-  // if there is a PG that is just now trying to reserve scrub replica resources -
-  // we should wait and not initiate a new scrub
-  if (m_queue.is_reserving_now()) {
-    dout(10) << "scrub resources reservation in progress" << dendl;
-    return;
-  }
-
-  utime_t scrub_time = ceph_clock_now();
-  dout(10) << fmt::format(
-		  "time now:{}, recover is active?:{}", scrub_time,
-		  is_recovery_active)
-	   << dendl;
-
   // check the OSD-wide environment conditions (scrub resources, time, etc.).
   // These may restrict the type of scrubs we are allowed to start, or just
-  // prevent us from starting any scrub at all.
+  // prevent us from starting any non-operator-initiated scrub at all.
   auto env_restrictions =
       restrictions_on_scrubbing(is_recovery_active, scrub_time);
-  if (!env_restrictions) {
-    return;
-  }
 
-  if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>()) {
+  if (g_conf()->subsys.should_gather<ceph_subsys_osd, 20>() &&
+      !env_restrictions.high_priority_only) {
     dout(20) << "scrub scheduling (@tick) starts" << dendl;
     auto all_jobs = m_queue.list_registered_jobs();
     for (const auto& sj : all_jobs) {
@@ -124,7 +120,7 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
   // queue interface used here: we ask for a list of
   // eligible targets (based on the known restrictions).
   // We try all elements of this list until a (possibly temporary) success.
-  auto candidates = m_queue.ready_to_scrub(*env_restrictions, scrub_time);
+  auto candidates = m_queue.ready_to_scrub(env_restrictions, scrub_time);
   if (candidates.empty()) {
     dout(20) << "no PGs are ready for scrubbing" << dendl;
     return;
@@ -136,8 +132,7 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
     // we have a candidate to scrub. But we may fail when trying to initiate that
     // scrub. For some failures - we can continue with the next candidate. For
     // others - we should stop trying to scrub at this tick.
-    auto res = initiate_a_scrub(
-	candidate, env_restrictions->allow_requested_repair_only);
+    auto res = initiate_a_scrub(candidate, env_restrictions);
 
     if (res == schedule_result_t::target_specific_failure) {
       // continue with the next job.
@@ -157,39 +152,45 @@ void OsdScrub::initiate_scrub(bool is_recovery_active)
 }
 
 
-std::optional<Scrub::OSDRestrictions> OsdScrub::restrictions_on_scrubbing(
+Scrub::OSDRestrictions OsdScrub::restrictions_on_scrubbing(
     bool is_recovery_active,
     utime_t scrub_clock_now) const
 {
-  // our local OSD may already be running too many scrubs
-  if (!m_resource_bookkeeper.can_inc_scrubs()) {
-    dout(10) << "OSD cannot inc scrubs" << dendl;
-    return std::nullopt;
-  }
-
-  // if there is a PG that is just now trying to reserve scrub replica resources
-  // - we should wait and not initiate a new scrub
-  if (m_queue.is_reserving_now()) {
-    dout(10) << "scrub resources reservation in progress" << dendl;
-    return std::nullopt;
-  }
-
   Scrub::OSDRestrictions env_conditions;
-  env_conditions.time_permit = scrub_time_permit(scrub_clock_now);
-  env_conditions.load_is_low = m_load_tracker.scrub_load_below_threshold();
-  env_conditions.only_deadlined =
-      !env_conditions.time_permit || !env_conditions.load_is_low;
 
-  if (is_recovery_active && !conf->osd_scrub_during_recovery) {
-    if (!conf->osd_repair_during_recovery) {
-      dout(15) << "not scheduling scrubs due to active recovery" << dendl;
-      return std::nullopt;
+  // some environmental conditions prevent all but high priority scrubs
+
+  if (!m_resource_bookkeeper.can_inc_scrubs()) {
+    // our local OSD is already running too many scrubs
+    dout(15) << "OSD cannot inc scrubs" << dendl;
+    env_conditions.high_priority_only = true;
+
+  } else if (scrub_random_backoff()) {
+    // dice-roll says we should not scrub now
+      dout(15) << "Lost in dice. Only high priority scrubs allowed."
+	       << dendl;
+      env_conditions.high_priority_only = true;
+
+  } else if (is_recovery_active && !conf->osd_scrub_during_recovery) {
+    if (conf->osd_repair_during_recovery) {
+      dout(15)
+	  << "will only schedule explicitly requested repair due to active "
+	     "recovery"
+	  << dendl;
+      env_conditions.allow_requested_repair_only = true;
+
+    } else {
+      dout(15) << "recovery in progress. Only high priority scrubs allowed."
+	       << dendl;
+      env_conditions.high_priority_only = true;
     }
+  } else {
 
-    dout(10) << "will only schedule explicitly requested repair due to active "
-		"recovery"
-	     << dendl;
-    env_conditions.allow_requested_repair_only = true;
+    // regular, i.e. non-high-priority scrubs are allowed
+    env_conditions.time_permit = scrub_time_permit(scrub_clock_now);
+    env_conditions.load_is_low = m_load_tracker.scrub_load_below_threshold();
+    env_conditions.only_deadlined =
+	!env_conditions.time_permit || !env_conditions.load_is_low;
   }
 
   return env_conditions;
@@ -198,7 +199,7 @@ std::optional<Scrub::OSDRestrictions> OsdScrub::restrictions_on_scrubbing(
 
 Scrub::schedule_result_t OsdScrub::initiate_a_scrub(
     spg_t pgid,
-    bool allow_requested_repair_only)
+    Scrub::OSDRestrictions restrictions)
 {
   dout(20) << fmt::format("trying pg[{}]", pgid) << dendl;
 
@@ -213,23 +214,8 @@ Scrub::schedule_result_t OsdScrub::initiate_a_scrub(
     return Scrub::schedule_result_t::target_specific_failure;
   }
 
-  // This one is already scrubbing, so go on to the next scrub job
-  if (locked_pg->pg()->is_scrub_queued_or_active()) {
-    dout(10) << fmt::format("pg[{}]: scrub already in progress", pgid) << dendl;
-    return Scrub::schedule_result_t::target_specific_failure;
-  }
-  // Skip other kinds of scrubbing if only explicitly requested repairing is allowed
-  if (allow_requested_repair_only &&
-      !locked_pg->pg()->get_planned_scrub().must_repair) {
-    dout(10) << fmt::format(
-		    "skipping pg[{}] as repairing was not explicitly "
-		    "requested for that pg",
-		    pgid)
-	     << dendl;
-    return Scrub::schedule_result_t::target_specific_failure;
-  }
-
-  return locked_pg->pg()->sched_scrub();
+  // later on, here is where the scrub target would be dequeued
+  return locked_pg->pg()->start_scrubbing(restrictions);
 }
 
 void OsdScrub::on_config_change()
@@ -274,10 +260,10 @@ OsdScrub::LoadTracker::LoadTracker(
 ///\todo replace with Knuth's algo (to reduce the numerical error)
 std::optional<double> OsdScrub::LoadTracker::update_load_average()
 {
-  int hb_interval = conf->osd_heartbeat_interval;
+  auto hb_interval = conf->osd_heartbeat_interval;
   int n_samples = std::chrono::duration_cast<seconds>(24h).count();
   if (hb_interval > 1) {
-    n_samples = std::max(n_samples / hb_interval, 1);
+    n_samples = std::max(n_samples / hb_interval, 1L);
   }
 
   double loadavg;
@@ -401,23 +387,57 @@ std::chrono::milliseconds OsdScrub::scrub_sleep_time(
   return std::max(extended_sleep, regular_sleep_period);
 }
 
+
+// ////////////////////////////////////////////////////////////////////////// //
+// scrub-related performance counters
+
+void OsdScrub::create_scrub_perf_counters()
+{
+  auto idx = perf_counters_indices.begin();
+  // create a separate set for each pool type & scrub level
+  for (const auto& label : perf_labels) {
+    PerfCounters* counters = build_scrub_labeled_perf(cct, label);
+    ceph_assert(counters);
+    cct->get_perfcounters_collection()->add(counters);
+    m_perf_counters[*(idx++)] = counters;
+  }
+}
+
+void OsdScrub::destroy_scrub_perf_counters()
+{
+  for (const auto& [label, counters] : m_perf_counters) {
+    std::ignore = label;
+    cct->get_perfcounters_collection()->remove(counters);
+    delete counters;
+  }
+  m_perf_counters.clear();
+}
+
+PerfCounters* OsdScrub::get_perf_counters(int pool_type, scrub_level_t level)
+{
+  return m_perf_counters[pc_index_t{level, pool_type}];
+}
+
 // ////////////////////////////////////////////////////////////////////////// //
 // forwarders to the queue
 
-Scrub::sched_params_t OsdScrub::determine_scrub_time(
-    const requested_scrub_t& request_flags,
-    const pg_info_t& pg_info,
-    const pool_opts_t& pool_conf) const
-{
-  return m_queue.determine_scrub_time(request_flags, pg_info, pool_conf);
-}
-
 void OsdScrub::update_job(
     Scrub::ScrubJobRef sjob,
-    const Scrub::sched_params_t& suggested)
+    const Scrub::sched_params_t& suggested,
+    bool reset_notbefore)
 {
-  m_queue.update_job(sjob, suggested);
+  m_queue.update_job(sjob, suggested, reset_notbefore);
 }
+
+void OsdScrub::delay_on_failure(
+      Scrub::ScrubJobRef sjob,
+      std::chrono::seconds delay,
+      Scrub::delay_cause_t delay_cause,
+      utime_t now_is)
+{
+  m_queue.delay_on_failure(sjob, delay, delay_cause, now_is);
+}
+
 
 void OsdScrub::register_with_osd(
     Scrub::ScrubJobRef sjob,
@@ -431,24 +451,15 @@ void OsdScrub::remove_from_osd_queue(Scrub::ScrubJobRef sjob)
   m_queue.remove_from_osd_queue(sjob);
 }
 
-bool OsdScrub::inc_scrubs_local()
+std::unique_ptr<Scrub::LocalResourceWrapper> OsdScrub::inc_scrubs_local(
+    bool is_high_priority)
 {
-  return m_resource_bookkeeper.inc_scrubs_local();
+  return m_resource_bookkeeper.inc_scrubs_local(is_high_priority);
 }
 
 void OsdScrub::dec_scrubs_local()
 {
   m_resource_bookkeeper.dec_scrubs_local();
-}
-
-bool OsdScrub::inc_scrubs_remote()
-{
-  return m_resource_bookkeeper.inc_scrubs_remote();
-}
-
-void OsdScrub::dec_scrubs_remote()
-{
-  m_resource_bookkeeper.dec_scrubs_remote();
 }
 
 void OsdScrub::mark_pg_scrub_blocked(spg_t blocked_pg)
@@ -464,14 +475,4 @@ void OsdScrub::clear_pg_scrub_blocked(spg_t blocked_pg)
 int OsdScrub::get_blocked_pgs_count() const
 {
   return m_queue.get_blocked_pgs_count();
-}
-
-bool OsdScrub::set_reserving_now()
-{
-  return m_queue.set_reserving_now();
-}
-
-void OsdScrub::clear_reserving_now()
-{
-  m_queue.clear_reserving_now();
 }

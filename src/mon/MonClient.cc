@@ -15,6 +15,8 @@
 #include <algorithm>
 #include <iterator>
 #include <random>
+
+#include <boost/asio/post.hpp>
 #include <boost/range/adaptor/map.hpp>
 #include <boost/range/adaptor/filtered.hpp>
 #include <boost/range/algorithm/copy.hpp>
@@ -129,7 +131,7 @@ int MonClient::get_monmap_and_config()
   messenger = Messenger::create_client_messenger(
     cct, "temp_mon_client");
   ceph_assert(messenger);
-  messenger->add_dispatcher_head(this);
+  messenger->add_dispatcher_head(this, Dispatcher::PRIORITY_HIGH);
   messenger->start();
   auto shutdown_msgr = make_scope_guard([this] {
     messenger->shutdown();
@@ -263,7 +265,7 @@ int MonClient::ping_monitor(const string &mon_id, string *result_reply)
 						result_reply);
 
   Messenger *smsgr = Messenger::create_client_messenger(cct, "temp_ping_client");
-  smsgr->add_dispatcher_head(pinger);
+  smsgr->add_dispatcher_head(pinger, Dispatcher::PRIORITY_HIGH);
   smsgr->set_auth_client(pinger);
   smsgr->start();
 
@@ -293,6 +295,7 @@ int MonClient::ping_monitor(const string &mon_id, string *result_reply)
 
 bool MonClient::ms_dispatch(Message *m)
 {
+  ldout(cct, 25) << __func__ << " processing " << m << dendl;
   // we only care about these message types
   switch (m->get_type()) {
   case CEPH_MSG_MON_MAP:
@@ -509,7 +512,7 @@ int MonClient::init()
   initialized = true;
 
   messenger->set_auth_client(this);
-  messenger->add_dispatcher_head(this);
+  messenger->add_dispatcher_head(this, Dispatcher::PRIORITY_HIGH);
 
   timer.init();
   schedule_tick();

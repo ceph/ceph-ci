@@ -19,12 +19,13 @@ import secrets
 from cephadm.services.ingress import IngressSpec
 from cephadm.ssl_cert_utils import SSLCerts
 from cephadm.services.cephadmservice import CephExporterService
+from cephadm.services.nvmeof import NvmeofService
 
 if TYPE_CHECKING:
     from cephadm.module import CephadmOrchestrator
 
 
-def cherrypy_filter(record: logging.LogRecord) -> int:
+def cherrypy_filter(record: logging.LogRecord) -> bool:
     blocked = [
         'TLSV1_ALERT_DECRYPT_ERROR'
     ]
@@ -43,9 +44,6 @@ class Route(NamedTuple):
 
 
 class ServiceDiscovery:
-
-    KV_STORE_SD_ROOT_CERT = 'service_discovery/root/cert'
-    KV_STORE_SD_ROOT_KEY = 'service_discovery/root/key'
 
     def __init__(self, mgr: "CephadmOrchestrator") -> None:
         self.mgr = mgr
@@ -88,14 +86,14 @@ class ServiceDiscovery:
             self.mgr.set_store('service_discovery/root/username', self.username)
 
     def configure_tls(self, server: Server) -> None:
-        old_cert = self.mgr.get_store(self.KV_STORE_SD_ROOT_CERT)
-        old_key = self.mgr.get_store(self.KV_STORE_SD_ROOT_KEY)
+        old_cert = self.mgr.cert_key_store.get_cert('service_discovery_root_cert')
+        old_key = self.mgr.cert_key_store.get_key('service_discovery_key')
         if old_key and old_cert:
             self.ssl_certs.load_root_credentials(old_cert, old_key)
         else:
             self.ssl_certs.generate_root_cert(self.mgr.get_mgr_ip())
-            self.mgr.set_store(self.KV_STORE_SD_ROOT_CERT, self.ssl_certs.get_root_cert())
-            self.mgr.set_store(self.KV_STORE_SD_ROOT_KEY, self.ssl_certs.get_root_key())
+            self.mgr.cert_key_store.save_cert('service_discovery_root_cert', self.ssl_certs.get_root_cert())
+            self.mgr.cert_key_store.save_key('service_discovery_key', self.ssl_certs.get_root_key())
         addr = self.mgr.get_mgr_ip()
         host_fqdn = socket.getfqdn(addr)
         server.ssl_certificate, server.ssl_private_key = self.ssl_certs.generate_cert_files(
@@ -145,6 +143,7 @@ class Root(Server):
 <p><a href='prometheus/sd-config?service=node-exporter'>Node exporter http sd-config</a></p>
 <p><a href='prometheus/sd-config?service=haproxy'>HAProxy http sd-config</a></p>
 <p><a href='prometheus/sd-config?service=ceph-exporter'>Ceph exporter http sd-config</a></p>
+<p><a href='prometheus/sd-config?service=nvmeof'>NVMeoF http sd-config</a></p>
 <p><a href='prometheus/rules'>Prometheus rules</a></p>
 </body>
 </html>'''
@@ -163,6 +162,8 @@ class Root(Server):
             return self.haproxy_sd_config()
         elif service == 'ceph-exporter':
             return self.ceph_exporter_sd_config()
+        elif service == 'nvmeof':
+            return self.nvmeof_sd_config()
         else:
             return []
 
@@ -225,6 +226,19 @@ class Root(Server):
             assert dd.hostname is not None
             addr = dd.ip if dd.ip else self.mgr.inventory.get_addr(dd.hostname)
             port = dd.ports[0] if dd.ports else CephExporterService.DEFAULT_SERVICE_PORT
+            srv_entries.append({
+                'targets': [build_url(host=addr, port=port).lstrip('/')],
+                'labels': {'instance': dd.hostname}
+            })
+        return srv_entries
+
+    def nvmeof_sd_config(self) -> List[Dict[str, Collection[str]]]:
+        """Return <http_sd_config> compatible prometheus config for nvmeof service."""
+        srv_entries = []
+        for dd in self.mgr.cache.get_daemons_by_type('nvmeof'):
+            assert dd.hostname is not None
+            addr = dd.ip if dd.ip else self.mgr.inventory.get_addr(dd.hostname)
+            port = NvmeofService.PROMETHEUS_PORT
             srv_entries.append({
                 'targets': [build_url(host=addr, port=port).lstrip('/')],
                 'labels': {'instance': dd.hostname}

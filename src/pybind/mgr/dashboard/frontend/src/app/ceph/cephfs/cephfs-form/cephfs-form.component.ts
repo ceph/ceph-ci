@@ -51,6 +51,11 @@ export class CephfsVolumeFormComponent extends CdForm implements OnInit {
   labels: string[];
   hasOrchestrator: boolean;
   currentVolumeName: string;
+  fsId: number;
+  disableRename: boolean = true;
+
+  fsFailCmd: string;
+  fsSetCmd: string;
 
   constructor(
     private router: Router,
@@ -63,7 +68,7 @@ export class CephfsVolumeFormComponent extends CdForm implements OnInit {
     private route: ActivatedRoute
   ) {
     super();
-    this.editing = this.router.url.startsWith(`/cephfs/${URLVerbs.EDIT}`);
+    this.editing = this.router.url.startsWith(`/cephfs/fs/${URLVerbs.EDIT}`);
     this.action = this.editing ? this.actionLabels.EDIT : this.actionLabels.CREATE;
     this.resource = $localize`File System`;
     this.hosts = {
@@ -82,7 +87,10 @@ export class CephfsVolumeFormComponent extends CdForm implements OnInit {
     });
     this.form = this.formBuilder.group({
       name: new FormControl('', {
-        validators: [Validators.pattern(/^[a-zA-Z][.A-Za-z0-9_-]+$/), Validators.required]
+        validators: [
+          Validators.pattern(/^(?:[.][A-Za-z0-9_-]+|[A-Za-z][.A-Za-z0-9_-]*)$/),
+          Validators.required
+        ]
       }),
       placement: ['hosts'],
       hosts: [[]],
@@ -101,9 +109,22 @@ export class CephfsVolumeFormComponent extends CdForm implements OnInit {
 
   ngOnInit() {
     if (this.editing) {
-      this.route.params.subscribe((params: { name: string }) => {
-        this.currentVolumeName = params.name;
+      this.route.params.subscribe((params: { id: string }) => {
+        this.fsId = Number(params.id);
+      });
+
+      this.cephfsService.getCephfs(this.fsId).subscribe((resp: object) => {
+        this.currentVolumeName = resp['cephfs']['name'];
         this.form.get('name').setValue(this.currentVolumeName);
+
+        this.disableRename = !(
+          !resp['cephfs']['flags']['joinable'] && resp['cephfs']['flags']['refuse_client_session']
+        );
+        if (this.disableRename) {
+          this.form.get('name').disable();
+          this.fsFailCmd = `ceph fs fail ${this.currentVolumeName}`;
+          this.fsSetCmd = `ceph fs set ${this.currentVolumeName} refuse_client_session true`;
+        }
       });
     } else {
       const hostContext = new CdTableFetchDataContext(() => undefined);
@@ -155,7 +176,7 @@ export class CephfsVolumeFormComponent extends CdForm implements OnInit {
             this.form.setErrors({ cdSubmitButton: true });
           },
           complete: () => {
-            this.router.navigate([BASE_URL]);
+            this.router.navigate([`${BASE_URL}/fs`]);
           }
         });
     } else {
@@ -189,7 +210,7 @@ export class CephfsVolumeFormComponent extends CdForm implements OnInit {
             self.form.setErrors({ cdSubmitButton: true });
           },
           complete: () => {
-            this.router.navigate([BASE_URL]);
+            this.router.navigate([`${BASE_URL}/fs`]);
           }
         });
     }

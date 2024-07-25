@@ -70,6 +70,7 @@ public:
   static std::unique_ptr<PGBackend> create(pg_t pgid,
 					   const pg_shard_t pg_shard,
 					   const pg_pool_t& pool,
+					   crimson::osd::PG &pg,
 					   crimson::os::CollectionRef coll,
 					   crimson::osd::ShardServices& shard_services,
 					   const ec_profile_t& ec_profile,
@@ -149,8 +150,10 @@ public:
   remove_iertr::future<> remove(
     ObjectState& os,
     ceph::os::Transaction& txn,
+    osd_op_params_t& osd_op_params,
     object_stat_sum_t& delta_stats,
-    bool whiteout);
+    bool whiteout,
+    int num_bytes);
   interruptible_future<> remove(
     ObjectState& os,
     ceph::os::Transaction& txn);
@@ -197,12 +200,14 @@ public:
       rollback_ertr>;
   rollback_iertr::future<> rollback(
     ObjectState& os,
+    const SnapSet &ss,
     const OSDOp& osd_op,
     ceph::os::Transaction& txn,
     osd_op_params_t& osd_op_params,
     object_stat_sum_t& delta_stats,
     crimson::osd::ObjectContextRef head,
-    crimson::osd::ObjectContextLoader& obc_loader);
+    crimson::osd::ObjectContextLoader& obc_loader,
+    const SnapContext &snapc);
   write_iertr::future<> truncate(
     ObjectState& os,
     const OSDOp& osd_op,
@@ -223,9 +228,42 @@ public:
     epoch_t min_epoch,
     epoch_t map_epoch,
     std::vector<pg_log_entry_t>&& log_entries);
+
+  /**
+   * list_objects
+   *
+   * List a prefix of length up to limit of the ordered set of logical
+   * librados objects in [start, end) stored by the PG.
+   *
+   * Output excludes objects maintained locally on each pg instance such as:
+   * - pg_meta object (see hobject_t::is_pgmeta, ghobject_t::make_pgmeta)
+   * - snap mapper
+   * as well as
+   * - temp objects (see hobject_t::is_temp(), hobject_t::make_temp_hobject())
+   * - ec rollback objects (see ghobject_t::is_no_gen)
+   *
+   * @param [in] start inclusive beginning of range
+   * @param [in] end exclusive end of range
+   * @param [in] limit upper bound on number of objects to return
+   * @return pair<object_list, next> where object_list is the output list
+   *         above and next is > the elements in object_list and <= the
+   *         least eligible object in the pg > the elements in object_list
+   */
   interruptible_future<std::tuple<std::vector<hobject_t>, hobject_t>> list_objects(
     const hobject_t& start,
+    const hobject_t& end,
     uint64_t limit) const;
+  interruptible_future<std::tuple<std::vector<hobject_t>, hobject_t>> list_objects(
+    const hobject_t& start,
+    uint64_t limit) const {
+    return list_objects(start, hobject_t::get_max(), limit);
+  }
+  interruptible_future<std::tuple<std::vector<hobject_t>, hobject_t>> list_objects(
+    const hobject_t& start,
+    const hobject_t& end) {
+    return list_objects(start, end, std::numeric_limits<uint64_t>::max());
+  }
+
   using setxattr_errorator = crimson::errorator<
     crimson::ct_error::file_too_large,
     crimson::ct_error::enametoolong>;
@@ -430,6 +468,7 @@ private:
     ceph::os::Transaction& txn,
     object_stat_sum_t& delta_stats);
   void update_size_and_usage(object_stat_sum_t& delta_stats,
+    interval_set<uint64_t>& modified,
     object_info_t& oi, uint64_t offset,
     uint64_t length, bool write_full = false);
   void truncate_update_size_and_usage(
@@ -445,4 +484,22 @@ private:
 		      std::vector<pg_log_entry_t>&& log_entries) = 0;
   friend class ReplicatedRecoveryBackend;
   friend class ::crimson::osd::PG;
+
+protected:
+  boost::container::flat_set<hobject_t> temp_contents;
+
+  template <class... Args>
+  void add_temp_obj(Args&&... args) {
+    temp_contents.insert(std::forward<Args>(args)...);
+  }
+  void clear_temp_obj(const hobject_t &oid) {
+    temp_contents.erase(oid);
+  }
+  template <class T>
+  void clear_temp_objs(const T &cont) {
+    for (const auto& oid : cont) {
+      clear_temp_obj(oid);
+    }
+  }
+  friend class RecoveryBackend;
 };

@@ -269,7 +269,7 @@ static int cloud_tier_get_object(RGWLCCloudTierCtx& tier_ctx, bool head,
   }
 
   /* fetch headers */
-  ret = tier_ctx.conn.complete_request(in_req, nullptr, nullptr, nullptr, nullptr, &headers, null_yield);
+  ret = tier_ctx.conn.complete_request(tier_ctx.dpp, in_req, nullptr, nullptr, nullptr, nullptr, &headers, null_yield);
   if (ret < 0 && ret != -ENOENT) {
     ldpp_dout(tier_ctx.dpp, 20) << "ERROR: " << __func__ << "(): conn.complete_request() returned ret=" << ret << dendl;
     return ret;
@@ -426,7 +426,7 @@ int RGWLCStreamRead::init() {
   }
 
   attrs = obj->get_attrs();
-  obj_size = obj->get_obj_size();
+  obj_size = obj->get_size();
 
   ret = init_rest_obj();
   if (ret < 0) {
@@ -454,7 +454,7 @@ int RGWLCStreamRead::init_rest_obj() {
     rest_obj.content_len = m_part_size;
   }
 
-  /* For mulitpart attrs are sent as part of InitMultipartCR itself */
+  /* For multipart attrs are sent as part of InitMultipartCR itself */
   if (multipart) {
     return 0;
   }
@@ -464,7 +464,6 @@ int RGWLCStreamRead::init_rest_obj() {
    */
   init_headers(attrs, rest_obj.attrs);
 
-  rest_obj.acls.set_ctx(cct);
   const auto aiter = attrs.find(RGW_ATTR_ACL);
   if (aiter != attrs.end()) {
     bufferlist& bl = aiter->second;
@@ -487,6 +486,7 @@ int RGWLCStreamRead::read(off_t ofs, off_t end, RGWGetDataCB *out_cb) {
 }
 
 int RGWLCCloudStreamPut::init() {
+  int ret = -1;
   /* init output connection */
   if (multipart.is_multipart) {
     char buf[32];
@@ -494,9 +494,14 @@ int RGWLCCloudStreamPut::init() {
     rgw_http_param_pair params[] = { { "uploadId", multipart.upload_id.c_str() },
                                      { "partNumber", buf },
                                      { nullptr, nullptr } };
-    conn.put_obj_send_init(dest_obj, params, &out_req);
+    ret = conn.put_obj_send_init(dest_obj, params, &out_req);
   } else {
-    conn.put_obj_send_init(dest_obj, nullptr, &out_req);
+    ret = conn.put_obj_send_init(dest_obj, nullptr, &out_req);
+  }
+
+  if (ret < 0 || !out_req) {
+    ldpp_dout(dpp, 0) << "ERROR: failed to create RGWRESTStreamS3PutObj request" << dendl;
+    return ret;
   }
 
   return 0;
@@ -652,6 +657,7 @@ void RGWLCCloudStreamPut::init_send_attrs(const DoutPrefixProvider *dpp,
 
 void RGWLCCloudStreamPut::send_ready(const DoutPrefixProvider *dpp, const rgw_rest_obj& rest_obj) {
   auto r = static_cast<RGWRESTStreamS3PutObj *>(out_req);
+  ceph_assert(r);
 
   std::map<std::string, std::string> new_attrs;
   if (!multipart.is_multipart) {
@@ -698,8 +704,7 @@ RGWGetDataCB *RGWLCCloudStreamPut::get_cb() {
 }
 
 int RGWLCCloudStreamPut::complete_request() {
-  int ret = conn.complete_request(out_req, etag, &obj_properties.mtime, null_yield);
-  return ret;
+  return conn.complete_request(dpp, out_req, etag, &obj_properties.mtime, null_yield);
 }
 
 /* Read local copy and write to Cloud endpoint */

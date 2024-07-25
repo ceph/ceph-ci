@@ -8,6 +8,7 @@
 #include "crimson/os/seastore/ordering_handle.h"
 #include "crimson/os/seastore/seastore_types.h"
 #include "crimson/os/seastore/segment_seq_allocator.h"
+#include "crimson/os/seastore/cached_extent.h"
 
 namespace crimson::os::seastore {
 
@@ -22,6 +23,9 @@ class JournalTrimmer;
 class Journal {
 public:
   virtual JournalTrimmer &get_trimmer() = 0;
+
+  virtual writer_stats_t get_writer_stats() const = 0;
+
   /**
    * initializes journal for mkfs writes -- must run prior to calls
    * to submit_record.
@@ -88,7 +92,7 @@ public:
     crimson::ct_error::erange>;
   using replay_ret = replay_ertr::future<>;
   using delta_handler_t = std::function<
-    replay_ertr::future<bool>(
+    replay_ertr::future<std::pair<bool, CachedExtentRef>>(
       const record_locator_t&,
       const delta_info_t&,
       const journal_seq_t&, // dirty_tail
@@ -102,7 +106,7 @@ public:
 
   virtual ~Journal() {}
 
-  virtual journal_type_t get_type() = 0;
+  virtual backend_type_t get_type() = 0;
 };
 using JournalRef = std::unique_ptr<Journal>;
 

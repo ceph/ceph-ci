@@ -18,6 +18,7 @@
 #include "include/types.h"
 #include "rgw_string.h"
 
+#include "rgw_account.h"
 #include "rgw_b64.h"
 #include "rgw_common.h"
 #include "rgw_tools.h"
@@ -54,7 +55,7 @@ int Credentials::generateCredentials(const DoutPrefixProvider *dpp,
                           rgw::auth::Identity* identity)
 {
   uuid_d accessKey, secretKey;
-  char accessKeyId_str[MAX_ACCESS_KEY_LEN], secretAccessKey_str[MAX_SECRET_KEY_LEN];
+  char accessKeyId_str[MAX_ACCESS_KEY_LEN + 1], secretAccessKey_str[MAX_SECRET_KEY_LEN + 1];
 
   //AccessKeyId
   gen_rand_alphanumeric_plain(cct, accessKeyId_str, sizeof(accessKeyId_str));
@@ -72,7 +73,7 @@ int Credentials::generateCredentials(const DoutPrefixProvider *dpp,
   //Session Token - Encrypt using AES
   auto* cryptohandler = cct->get_crypto_handler(CEPH_CRYPTO_AES);
   if (! cryptohandler) {
-    ldpp_dout(dpp, 0) << "ERROR: No AES cryto handler found !" << dendl;
+    ldpp_dout(dpp, 0) << "ERROR: No AES crypto handler found !" << dendl;
     return -EINVAL;
   }
   string secret_s = cct->_conf->rgw_sts_key;
@@ -290,7 +291,15 @@ std::tuple<int, rgw::sal::RGWRole*> STSService::getRoleInfo(const DoutPrefixProv
   if (auto r_arn = rgw::ARN::parse(arn); r_arn) {
     auto pos = r_arn->resource.find_last_of('/');
     string roleName = r_arn->resource.substr(pos + 1);
-    std::unique_ptr<rgw::sal::RGWRole> role = driver->get_role(roleName, r_arn->account);
+    string tenant = r_arn->account;
+
+    rgw_account_id account;
+    if (rgw::account::validate_id(tenant)) {
+      account = std::move(tenant);
+      tenant.clear();
+    }
+
+    std::unique_ptr<rgw::sal::RGWRole> role = driver->get_role(roleName, tenant, account);
     if (int ret = role->get(dpp, y); ret < 0) {
       if (ret == -ENOENT) {
         ldpp_dout(dpp, 0) << "Role doesn't exist: " << roleName << dendl;

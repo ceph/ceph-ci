@@ -1,5 +1,5 @@
 import { Component, OnInit } from '@angular/core';
-import { UntypedFormControl, ValidatorFn, Validators } from '@angular/forms';
+import { AsyncValidatorFn, UntypedFormControl, ValidatorFn, Validators } from '@angular/forms';
 
 import { NgbActiveModal } from '@ng-bootstrap/ng-bootstrap';
 import _ from 'lodash';
@@ -22,6 +22,8 @@ export class FormModalComponent implements OnInit {
   fields: CdFormModalFieldConfig[];
   submitButtonText: string;
   onSubmit: Function;
+
+  updateAsyncValidators?: Function;
 
   // Internal
   formGroup: CdFormGroup;
@@ -47,19 +49,32 @@ export class FormModalComponent implements OnInit {
 
   private createFormControl(field: CdFormModalFieldConfig): UntypedFormControl {
     let validators: ValidatorFn[] = [];
+    let asyncValidators: AsyncValidatorFn[] = [];
     if (_.isBoolean(field.required) && field.required) {
       validators.push(Validators.required);
     }
     if (field.validators) {
       validators = validators.concat(field.validators);
     }
-    return new UntypedFormControl(
+    if (field.asyncValidators) {
+      asyncValidators = asyncValidators.concat(field.asyncValidators);
+    }
+
+    const control = new UntypedFormControl(
       _.defaultTo(
         field.type === 'binary' ? this.dimlessBinaryPipe.transform(field.value) : field.value,
         null
       ),
-      { validators }
+      { validators, asyncValidators }
     );
+
+    if (field.valueChangeListener) {
+      control.valueChanges.subscribe((value) => {
+        const validatorToUpdate = this.updateAsyncValidators(value);
+        this.updateValidation(field.dependsOn, validatorToUpdate);
+      });
+    }
+    return control;
   }
 
   getError(field: CdFormModalFieldConfig): string {
@@ -109,5 +124,11 @@ export class FormModalComponent implements OnInit {
     if (_.isFunction(this.onSubmit)) {
       this.onSubmit(values);
     }
+  }
+
+  updateValidation(name?: string, validator?: AsyncValidatorFn[]) {
+    const field = this.formGroup.get(name);
+    field.setAsyncValidators(validator);
+    field.updateValueAndValidity();
   }
 }

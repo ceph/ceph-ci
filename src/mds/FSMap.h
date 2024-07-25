@@ -21,10 +21,12 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 #include <errno.h>
 
 #include "include/types.h"
+#include "common/ceph_time.h"
 #include "common/Clock.h"
 #include "mds/MDSMap.h"
 
@@ -253,6 +255,10 @@ public:
   }
 
 private:
+  void set_fscid(fs_cluster_id_t new_fscid) {
+    fscid = new_fscid;
+  }
+
   friend class FSMap;
 
   fs_cluster_id_t fscid = FS_CLUSTER_ID_NONE;
@@ -263,12 +269,13 @@ WRITE_CLASS_ENCODER_FEATURES(Filesystem)
 
 class FSMap {
 public:
+  using real_clock = ceph::real_clock;
   using mds_info_t = MDSMap::mds_info_t;
   using fsmap = typename std::map<fs_cluster_id_t, Filesystem>;
   using const_iterator = typename fsmap::const_iterator;
   using iterator = typename fsmap::iterator;
 
-  static const version_t STRUCT_VERSION = 7;
+  static const version_t STRUCT_VERSION = 8;
   static const version_t STRUCT_VERSION_TRIM_TO = 7;
 
   FSMap() : default_compat(MDSMap::get_compat_set_default()) {}
@@ -276,6 +283,7 @@ public:
   FSMap(const FSMap &rhs)
     :
       epoch(rhs.epoch),
+      btime(rhs.btime),
       next_filesystem_id(rhs.next_filesystem_id),
       legacy_client_fscid(rhs.legacy_client_fscid),
       default_compat(rhs.default_compat),
@@ -450,9 +458,15 @@ public:
    * Caller must already have validated all arguments vs. the existing
    * FSMap and OSDMap contents.
    */
-  const Filesystem& create_filesystem(
+  Filesystem create_filesystem(
       std::string_view name, int64_t metadata_pool, int64_t data_pool,
-      uint64_t features, fs_cluster_id_t fscid, bool recover);
+      uint64_t features, bool recover);
+
+  /**
+   * Commit the created filesystem to the FSMap.
+   *
+   */
+  const Filesystem& commit_filesystem(fs_cluster_id_t fscid, Filesystem fs);
 
   /**
    * Remove the filesystem (it must exist).  Caller should already
@@ -475,10 +489,24 @@ public:
   void modify_filesystem(fs_cluster_id_t fscid, T&& fn)
   {
     auto& fs = filesystems.at(fscid);
-    fn(fs);
-    fs.mds_map.epoch = epoch;
-    fs.mds_map.modified = ceph_clock_now();
+    bool did_update = true;
+
+    if constexpr (std::is_convertible_v<std::invoke_result_t<T, Filesystem&>, bool>) {
+      did_update = fn(fs);
+    } else {
+      fn(fs);
+    }
+    
+    if (did_update) {
+      fs.mds_map.epoch = epoch;
+      fs.mds_map.modified = ceph_clock_now();
+    }
   }
+
+  /* This is method is written for the option of "ceph fs swap" commmand
+   * that intiates swap of FSCIDs.
+   */
+  void swap_fscids(fs_cluster_id_t fscid1, fs_cluster_id_t fscid2);
 
   /**
    * Apply a mutation to the mds_info_t structure for a particular
@@ -558,6 +586,13 @@ public:
 
   epoch_t get_epoch() const { return epoch; }
   void inc_epoch() { epoch++; }
+
+  void set_btime() {
+    btime = real_clock::now();
+  }
+  auto get_btime() const {
+    return btime;
+  }
 
   version_t get_struct_version() const { return struct_version; }
   bool is_struct_old() const {
@@ -651,6 +686,8 @@ protected:
   }
 
   epoch_t epoch = 0;
+  ceph::real_time btime = real_clock::zero();
+
   uint64_t next_filesystem_id = FS_CLUSTER_ID_ANONYMOUS + 1;
   fs_cluster_id_t legacy_client_fscid = FS_CLUSTER_ID_NONE;
   CompatSet default_compat;

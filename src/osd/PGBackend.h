@@ -18,6 +18,7 @@
 #ifndef PGBACKEND_H
 #define PGBACKEND_H
 
+#include "ECCommon.h"
 #include "osd_types.h"
 #include "common/WorkQueue.h"
 #include "include/Context.h"
@@ -52,6 +53,7 @@ typedef std::shared_ptr<const OSDMap> OSDMapRef;
   */
  class PGBackend {
  public:
+  virtual int object_stat(const hobject_t &hoid, struct stat* st) { return -1;};
    CephContext* cct;
  protected:
    ObjectStore *store;
@@ -171,25 +173,7 @@ typedef std::shared_ptr<const OSDMap> OSDMapRef;
      virtual void add_local_next_event(const pg_log_entry_t& e) = 0;
      virtual const std::map<pg_shard_t, pg_missing_t> &get_shard_missing()
        const = 0;
-     virtual const pg_missing_const_i * maybe_get_shard_missing(
-       pg_shard_t peer) const {
-       if (peer == primary_shard()) {
-	 return &get_local_missing();
-       } else {
-	 std::map<pg_shard_t, pg_missing_t>::const_iterator i =
-	   get_shard_missing().find(peer);
-	 if (i == get_shard_missing().end()) {
-	   return nullptr;
-	 } else {
-	   return &(i->second);
-	 }
-       }
-     }
-     virtual const pg_missing_const_i &get_shard_missing(pg_shard_t peer) const {
-       auto m = maybe_get_shard_missing(peer);
-       ceph_assert(m);
-       return *m;
-     }
+     virtual const pg_missing_const_i &get_shard_missing(pg_shard_t peer) const = 0;
 
      virtual const std::map<pg_shard_t, pg_info_t> &get_shard_info() const = 0;
      virtual const pg_info_t &get_shard_info(pg_shard_t peer) const {
@@ -305,6 +289,7 @@ typedef std::shared_ptr<const OSDMap> OSDMapRef;
      virtual void pg_add_num_bytes(int64_t num_bytes) = 0;
      virtual void pg_sub_num_bytes(int64_t num_bytes) = 0;
      virtual bool maybe_preempt_replica_scrub(const hobject_t& oid) = 0;
+     virtual struct ECListener *get_eclistener() = 0;
      virtual ~Listener() {}
    };
    Listener *parent;
@@ -568,7 +553,7 @@ typedef std::shared_ptr<const OSDMap> OSDMapRef;
 
    virtual int objects_readv_sync(
      const hobject_t &hoid,
-     std::map<uint64_t, uint64_t>&& m,
+     std::map<uint64_t, uint64_t>& m,
      uint32_t op_flags,
      ceph::buffer::list *bl) {
      return -EOPNOTSUPP;
@@ -576,7 +561,7 @@ typedef std::shared_ptr<const OSDMap> OSDMapRef;
 
    virtual void objects_read_async(
      const hobject_t &hoid,
-     const std::list<std::pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
+     const std::list<std::pair<ECCommon::ec_align_t,
 		std::pair<ceph::buffer::list*, Context*> > > &to_read,
      Context *on_complete, bool fast_read = false) = 0;
 

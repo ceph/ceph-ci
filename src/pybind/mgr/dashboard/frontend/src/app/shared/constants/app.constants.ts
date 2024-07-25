@@ -141,6 +141,14 @@ export class ActionLabelsI18n {
   IMPORT: any;
   MIGRATE: string;
   START_UPGRADE: string;
+  ACTIVATE: string;
+  DEACTIVATE: string;
+  ATTACH: string;
+  CONNECT: string;
+  DISCONNECT: string;
+  RECONNECT: string;
+  AUTHORIZE: string;
+  EXPAND_CLUSTER: string;
 
   constructor() {
     /* Create a new item */
@@ -150,7 +158,7 @@ export class ActionLabelsI18n {
 
     this.IMPORT = $localize`Import`;
 
-    this.MIGRATE = $localize`Migrate to Multi-Site`;
+    this.MIGRATE = $localize`Migrate`;
 
     /* Destroy an existing item */
     this.DELETE = $localize`Delete`;
@@ -200,6 +208,7 @@ export class ActionLabelsI18n {
     this.FLAGS = $localize`Flags`;
     this.ENTER_MAINTENANCE = $localize`Enter Maintenance`;
     this.EXIT_MAINTENANCE = $localize`Exit Maintenance`;
+    this.AUTHORIZE = $localize`Authorize`;
 
     this.START_DRAIN = $localize`Start Drain`;
     this.STOP_DRAIN = $localize`Stop Drain`;
@@ -218,6 +227,15 @@ export class ActionLabelsI18n {
     this.DEMOTE = $localize`Demote`;
 
     this.START_UPGRADE = $localize`Start Upgrade`;
+
+    this.ACTIVATE = $localize`Activate`;
+    this.DEACTIVATE = $localize`Deactivate`;
+
+    this.ATTACH = $localize`Attach`;
+    this.CONNECT = $localize`Connect`;
+    this.DISCONNECT = $localize`Disconnect`;
+    this.RECONNECT = $localize`Reconnect`;
+    this.EXPAND_CLUSTER = $localize`Expand Cluster`;
   }
 }
 

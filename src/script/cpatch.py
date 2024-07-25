@@ -217,6 +217,14 @@ class CLIContext:
     def components_selected(self):
         return bool(self._cli.components)
 
+    @property
+    def cephadm_build_args(self):
+        return list(self._cli.cephadm_build_arg or [])
+
+    @property
+    def run_before_commands(self):
+        return list(self._cli.run_before or [])
+
     def build_components(self):
         if self._cli.components:
             return self._cli.components
@@ -304,6 +312,17 @@ class CLIContext:
             dest="log_level",
             const=logging.WARNING,
             help="Only print errors and warnings",
+        )
+        parser.add_argument(
+            "--cephadm-build-arg",
+            "-A",
+            action="append",
+            help="Pass additional arguments to cephadm build script.",
+        )
+        parser.add_argument(
+            "--run-before",
+            action="append",
+            help="Add a RUN command before other actions"
         )
         # selectors
         component_selections = [
@@ -431,6 +450,8 @@ class Builder:
     def build(self):
         """Build the container image."""
         dlines = [f"FROM {self._ctx.base_image}"]
+        for cmd in self._ctx.run_before_commands:
+            dlines.append(f'RUN {cmd}')
         jcount = len(self._jobs)
         for idx, (component, job) in enumerate(self._jobs):
             num = idx + 1
@@ -446,8 +467,10 @@ class Builder:
     def _container_build(self):
         log.info("Building container image")
         cmd = [self._ctx.engine, "build", "--tag", self._ctx.target, "."]
+        cmd.append('--net=host')
         if self._ctx.root_build:
             cmd.insert(0, "sudo")
+        log.debug("Container build command: %r", cmd)
         _run(cmd, cwd=self._workdir).check_returncode()
 
     def _build_tar(
@@ -526,9 +549,9 @@ class Builder:
         if self._cached_py_site_packages is not None:
             return self._cached_py_site_packages
         # use the container image to probe for the correct python site-packages dir
+        py_vers = ['3.12', '3.11', '3.10', '3.9', '3.8', '3.6']
         valid_site_packages = [
-            "/usr/lib/python3.8/site-packages",
-            "/usr/lib/python3.6/site-packages",
+            f'/usr/lib/python{v}/site-packages' for v in py_vers
         ]
         cmd = [
             self._ctx.engine,
@@ -596,7 +619,9 @@ class Builder:
             if not build_cephadm_path.is_file():
                 raise ValueError("no cephadm build script found")
             log.debug("found cephadm compilation script: compiling cephadm")
-            _run([build_cephadm_path, dst_path]).check_returncode()
+            build_cmd = [build_cephadm_path] + self._ctx.cephadm_build_args
+            build_cmd += [dst_path]
+            _run(build_cmd).check_returncode()
         return ["ADD cephadm /usr/sbin/cephadm"]
 
     def _pybind_job(self, component):

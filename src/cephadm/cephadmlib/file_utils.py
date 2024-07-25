@@ -81,14 +81,13 @@ def write_tmp(s, uid, gid):
     return tmp_f
 
 
-def makedirs(dir, uid, gid, mode):
-    # type: (str, int, int, int) -> None
-    if not os.path.exists(dir):
-        os.makedirs(dir, mode=mode)
+def makedirs(dest: Union[Path, str], uid: int, gid: int, mode: int) -> None:
+    if not os.path.exists(dest):
+        os.makedirs(dest, mode=mode)
     else:
-        os.chmod(dir, mode)
-    os.chown(dir, uid, gid)
-    os.chmod(dir, mode)  # the above is masked by umask...
+        os.chmod(dest, mode)
+    os.chown(dest, uid, gid)
+    os.chmod(dest, mode)  # the above is masked by umask...
 
 
 def recursive_chown(path: str, uid: int, gid: int) -> None:
@@ -139,3 +138,25 @@ def get_file_timestamp(fn):
         ).strftime(DATEFMT)
     except Exception:
         return None
+
+
+def make_run_dir(fsid: str, uid: int, gid: int) -> None:
+    makedirs(f'/var/run/ceph/{fsid}', uid, gid, 0o770)
+
+
+def unlink_file(
+    path: Union[str, Path],
+    missing_ok: bool = False,
+    ignore_errors: bool = False,
+) -> None:
+    """Wrapper around unlink that can either ignore missing files or all
+    errors.
+    """
+    try:
+        Path(path).unlink()
+    except FileNotFoundError:
+        if not missing_ok and not ignore_errors:
+            raise
+    except Exception:
+        if not ignore_errors:
+            raise

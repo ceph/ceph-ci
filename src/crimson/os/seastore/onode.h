@@ -8,6 +8,7 @@
 #include <boost/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 
+#include "common/hobject.h"
 #include "include/byteorder.h"
 #include "seastore_types.h"
 
@@ -56,16 +57,26 @@ protected:
   virtual laddr_t get_hint() const = 0;
   const uint32_t default_metadata_offset = 0;
   const uint32_t default_metadata_range = 0;
+  const hobject_t hobj;
 public:
-  Onode(uint32_t ddr, uint32_t dmr)
+  Onode(uint32_t ddr, uint32_t dmr, const hobject_t &hobj)
     : default_metadata_offset(ddr),
-      default_metadata_range(dmr)
+      default_metadata_range(dmr),
+      hobj(hobj)
   {}
 
   virtual bool is_alive() const = 0;
   virtual const onode_layout_t &get_layout() const = 0;
-  virtual onode_layout_t &get_mutable_layout(Transaction &t) = 0;
   virtual ~Onode() = default;
+
+  virtual void update_onode_size(Transaction&, uint32_t) = 0;
+  virtual void update_omap_root(Transaction&, omap_root_t&) = 0;
+  virtual void update_xattr_root(Transaction&, omap_root_t&) = 0;
+  virtual void update_object_data(Transaction&, object_data_t&) = 0;
+  virtual void update_object_info(Transaction&, ceph::bufferlist&) = 0;
+  virtual void update_snapset(Transaction&, ceph::bufferlist&) = 0;
+  virtual void clear_object_info(Transaction&) = 0;
+  virtual void clear_snapset(Transaction&) = 0;
 
   laddr_t get_metadata_hint(uint64_t block_size) const {
     assert(default_metadata_offset);
@@ -77,6 +88,7 @@ public:
   laddr_t get_data_hint() const {
     return get_hint();
   }
+  friend std::ostream& operator<<(std::ostream &out, const Onode &rhs);
 };
 
 

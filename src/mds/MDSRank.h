@@ -15,6 +15,7 @@
 #ifndef MDS_RANK_H_
 #define MDS_RANK_H_
 
+#include <atomic>
 #include <string_view>
 
 #include <boost/asio/io_context.hpp>
@@ -43,6 +44,7 @@
 #include "Server.h"
 #include "MetricsHandler.h"
 #include "osdc/Journaler.h"
+#include "MDSMetaRequest.h"
 
 // Full .h import instead of forward declaration for PerfCounter, for the
 // benefit of those including this header and using MDSRank::logger
@@ -150,6 +152,8 @@ class MgrClient;
 class Finisher;
 class ScrubStack;
 class C_ExecAndReply;
+class QuiesceDbManager;
+class QuiesceAgent;
 
 /**
  * The public part of this class's interface is what's exposed to all
@@ -223,6 +227,8 @@ class MDSRank {
     bool is_cluster_degraded() const { return cluster_degraded; }
     bool allows_multimds_snaps() const { return mdsmap->allows_multimds_snaps(); }
 
+    bool is_active_lockless() const { return m_is_active.load(); }
+
     bool is_cache_trimmable() const {
       return is_standby_replay() || is_clientreplay() || is_active() || is_stopping();
     }
@@ -251,6 +257,10 @@ class MDSRank {
       v.swap(ls);
       std::copy(v.rbegin(), v.rend(), std::front_inserter(finished_queue));
       progress_thread.signal();
+    }
+
+    uint64_t get_global_id() const {
+      return monc->get_global_id();
     }
 
     // Daemon lifetime functions: these guys break the abstraction
@@ -304,9 +314,9 @@ class MDSRank {
 
     double get_dispatch_queue_max_age(utime_t now) const;
 
-    void send_message_mds(const ref_t<Message>& m, mds_rank_t mds);
-    void send_message_mds(const ref_t<Message>& m, const entity_addrvec_t &addr);
-    void forward_message_mds(MDRequestRef& mdr, mds_rank_t mds);
+    int send_message_mds(const ref_t<Message>& m, mds_rank_t mds);
+    int send_message_mds(const ref_t<Message>& m, const entity_addrvec_t &addr);
+    void forward_message_mds(const MDRequestRef& mdr, mds_rank_t mds);
     void send_message_client_counted(const ref_t<Message>& m, client_t client);
     void send_message_client_counted(const ref_t<Message>& m, Session* session);
     void send_message_client_counted(const ref_t<Message>& m, const ConnectionRef& connection);
@@ -423,12 +433,17 @@ class MDSRank {
     PerfCounters *logger = nullptr, *mlogger = nullptr;
     OpTracker op_tracker;
 
+    std::map<ceph_tid_t, std::unique_ptr<MDSMetaRequest>> internal_client_requests;
+
     // The last different state I held before current
     MDSMap::DaemonState last_state = MDSMap::STATE_BOOT;
     // The state assigned to me by the MDSMap
     MDSMap::DaemonState state = MDSMap::STATE_STANDBY;
 
     bool cluster_degraded = false;
+
+    std::shared_ptr<QuiesceDbManager> quiesce_db_manager;
+    std::shared_ptr<QuiesceAgent> quiesce_agent;
 
     Finisher *finisher;
   protected:
@@ -492,13 +507,9 @@ class MDSRank {
     void command_tag_path(Formatter *f, std::string_view path,
                           std::string_view tag);
     // scrub control commands
-    void command_scrub_abort(Formatter *f, Context *on_finish);
-    void command_scrub_pause(Formatter *f, Context *on_finish);
     void command_scrub_resume(Formatter *f);
     void command_scrub_status(Formatter *f);
 
-    void command_flush_path(Formatter *f, std::string_view path);
-    void command_flush_journal(Formatter *f);
     void command_get_subtrees(Formatter *f);
     void command_export_dir(Formatter *f,
         std::string_view path, mds_rank_t dest);
@@ -518,9 +529,12 @@ class MDSRank {
         std::ostream &ss);
     void command_openfiles_ls(Formatter *f);
     void command_dump_tree(const cmdmap_t &cmdmap, std::ostream &ss, Formatter *f);
+    void command_quiesce_path(Formatter *f, const cmdmap_t &cmdmap, asok_finisher on_finish);
+    void command_lock_path(Formatter* f, const cmdmap_t& cmdmap, asok_finisher on_finish);
     void command_dump_inode(Formatter *f, const cmdmap_t &cmdmap, std::ostream &ss);
     void command_dump_dir(Formatter *f, const cmdmap_t &cmdmap, std::ostream &ss);
     void command_cache_drop(uint64_t timeout, Formatter *f, Context *on_finish);
+    void command_quiesce_db(const cmdmap_t& cmdmap, asok_finisher on_finish);
 
     // FIXME the state machine logic should be separable from the dispatch
     // logic that calls it.
@@ -558,6 +572,10 @@ class MDSRank {
 
     void handle_mds_recovery(mds_rank_t who);
     void handle_mds_failure(mds_rank_t who);
+
+    void quiesce_cluster_update();
+    void quiesce_agent_setup();
+    bool quiesce_dispatch(const cref_t<Message> &m);
 
     /* Update MDSMap export_targets for this rank. Called on ::tick(). */
     void update_targets();
@@ -654,6 +672,8 @@ private:
 
     mono_time starttime = mono_clock::zero();
     boost::asio::io_context& ioc;
+
+    std::atomic_bool m_is_active = false; /* accessed outside mds_lock */
 };
 
 class C_MDS_RetryMessage : public MDSInternalContext {
@@ -710,7 +730,7 @@ public:
     const cmdmap_t& cmdmap,
     Formatter *f,
     const bufferlist &inbl,
-    std::function<void(int,const std::string&,bufferlist&)> on_finish);
+    asok_finisher on_finish);
   void handle_mds_map(const cref_t<MMDSMap> &m, const MDSMap &oldmap);
   void handle_osd_map();
   void update_log_config();
@@ -720,7 +740,7 @@ public:
 
   void dump_sessions(const SessionFilter &filter, Formatter *f, bool cap_dump=false) const;
   void evict_clients(const SessionFilter &filter,
-		     std::function<void(int,const std::string&,bufferlist&)> on_finish);
+		     asok_finisher on_finish);
 
   // Call into me from MDS::ms_dispatch
   bool ms_dispatch(const cref_t<Message> &m);

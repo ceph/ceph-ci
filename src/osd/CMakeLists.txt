@@ -17,6 +17,7 @@ set(osd_srcs
   PGLog.cc
   PrimaryLogPG.cc
   ReplicatedBackend.cc
+  ECCommon.cc
   ECBackend.cc
   ECTransaction.cc
   PGBackend.cc
@@ -27,6 +28,7 @@ set(osd_srcs
   scrubber/PrimaryLogScrub.cc
   scrubber/scrub_job.cc
   scrubber/scrub_machine.cc
+  scrubber/scrub_reservations.cc
   scrubber/scrub_resources.cc
   scrubber/ScrubStore.cc
   scrubber/scrub_backend.cc
@@ -56,7 +58,9 @@ endif()
 add_library(osd STATIC ${osd_srcs})
 target_link_libraries(osd
   PUBLIC dmclock::dmclock Boost::MPL
-  PRIVATE os heap_profiler cpu_profiler fmt::fmt ${CMAKE_DL_LIBS})
+  PRIVATE
+    legacy-option-headers
+    os heap_profiler cpu_profiler ${FMT_LIB} ${CMAKE_DL_LIBS})
 if(WITH_LTTNG)
   add_dependencies(osd osd-tp pg-tp)
 endif()

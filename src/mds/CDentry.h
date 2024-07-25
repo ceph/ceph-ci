@@ -367,14 +367,16 @@ public:
   elist<CDentry*>::item item_stray;
 
   // lock
-  static LockType lock_type;
-  static LockType versionlock_type;
+  static const LockType lock_type;
+  static const LockType versionlock_type;
 
   SimpleLock lock; // FIXME referenced containers not in mempool
   LocalLockC versionlock; // FIXME referenced containers not in mempool
 
   mempool::mds_co::map<client_t,ClientLease*> client_lease_map;
   std::map<int, std::unique_ptr<BatchOp>> batch_ops;
+
+  ceph_tid_t reintegration_reqid = 0;
 
 
 protected:

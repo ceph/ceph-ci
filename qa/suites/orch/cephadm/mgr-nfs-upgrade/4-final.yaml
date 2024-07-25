@@ -1,3 +1,7 @@
+overrides:
+  ceph:
+    log-ignorelist:
+      - CEPHADM_REFRESH_FAILED
 tasks:
 - vip.exec:
     host.a:
@@ -7,4 +11,8 @@ tasks:
       - ceph nfs cluster ls | grep foo
       - ceph nfs export ls foo --detailed
       - rados -p .nfs --all ls -
-      - ceph config get mgr mgr/cephadm/migration_current | grep 6
+- cephadm.shell:
+    host.a:
+      - |
+        set -ex
+        [[ `ceph config get mgr mgr/cephadm/migration_current` -gt 2 ]]

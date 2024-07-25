@@ -81,6 +81,7 @@ static const actpair actpairs[] =
  { "s3:GetBucketLocation", s3GetBucketLocation },
  { "s3:GetBucketLogging", s3GetBucketLogging },
  { "s3:GetBucketNotification", s3GetBucketNotification },
+ { "s3:GetBucketOwnershipControls", s3GetBucketOwnershipControls },
  { "s3:GetBucketPolicy", s3GetBucketPolicy },
  { "s3:GetBucketPolicyStatus", s3GetBucketPolicyStatus },
  { "s3:GetBucketPublicAccessBlock", s3GetBucketPublicAccessBlock },
@@ -113,6 +114,7 @@ static const actpair actpairs[] =
  { "s3:PutBucketEncryption", s3PutBucketEncryption },
  { "s3:PutBucketLogging", s3PutBucketLogging },
  { "s3:PutBucketNotification", s3PutBucketNotification },
+ { "s3:PutBucketOwnershipControls", s3PutBucketOwnershipControls },
  { "s3:PutBucketPolicy", s3PutBucketPolicy },
  { "s3:PutBucketRequestPayment", s3PutBucketRequestPayment },
  { "s3:PutBucketTagging", s3PutBucketTagging },
@@ -132,10 +134,16 @@ static const actpair actpairs[] =
  { "s3:PutPublicAccessBlock", s3PutPublicAccessBlock },
  { "s3:PutReplicationConfiguration", s3PutReplicationConfiguration },
  { "s3:RestoreObject", s3RestoreObject },
+ { "s3:DescribeJob", s3DescribeJob },
+ { "s3-object-lambda:GetObject", s3objectlambdaGetObject },
+ { "s3-object-lambda:ListBucket", s3objectlambdaListBucket },
  { "iam:PutUserPolicy", iamPutUserPolicy },
  { "iam:GetUserPolicy", iamGetUserPolicy },
  { "iam:DeleteUserPolicy", iamDeleteUserPolicy },
  { "iam:ListUserPolicies", iamListUserPolicies },
+ { "iam:AttachUserPolicy", iamAttachUserPolicy },
+ { "iam:DetachUserPolicy", iamDetachUserPolicy },
+ { "iam:ListAttachedUserPolicies", iamListAttachedUserPolicies },
  { "iam:CreateRole", iamCreateRole},
  { "iam:DeleteRole", iamDeleteRole},
  { "iam:GetRole", iamGetRole},
@@ -145,6 +153,9 @@ static const actpair actpairs[] =
  { "iam:GetRolePolicy", iamGetRolePolicy},
  { "iam:ListRolePolicies", iamListRolePolicies},
  { "iam:DeleteRolePolicy", iamDeleteRolePolicy},
+ { "iam:AttachRolePolicy", iamAttachRolePolicy },
+ { "iam:DetachRolePolicy", iamDetachRolePolicy },
+ { "iam:ListAttachedRolePolicies", iamListAttachedRolePolicies },
  { "iam:CreateOIDCProvider", iamCreateOIDCProvider},
  { "iam:DeleteOIDCProvider", iamDeleteOIDCProvider},
  { "iam:GetOIDCProvider", iamGetOIDCProvider},
@@ -153,10 +164,54 @@ static const actpair actpairs[] =
  { "iam:ListRoleTags", iamListRoleTags},
  { "iam:UntagRole", iamUntagRole},
  { "iam:UpdateRole", iamUpdateRole},
+ { "iam:CreateUser", iamCreateUser},
+ { "iam:GetUser", iamGetUser},
+ { "iam:UpdateUser", iamUpdateUser},
+ { "iam:DeleteUser", iamDeleteUser},
+ { "iam:ListUsers", iamListUsers},
+ { "iam:CreateAccessKey", iamCreateAccessKey},
+ { "iam:UpdateAccessKey", iamUpdateAccessKey},
+ { "iam:DeleteAccessKey", iamDeleteAccessKey},
+ { "iam:ListAccessKeys", iamListAccessKeys},
+ { "iam:CreateGroup", iamCreateGroup},
+ { "iam:GetGroup", iamGetGroup},
+ { "iam:UpdateGroup", iamUpdateGroup},
+ { "iam:DeleteGroup", iamDeleteGroup},
+ { "iam:ListGroups", iamListGroups},
+ { "iam:AddUserToGroup", iamAddUserToGroup},
+ { "iam:RemoveUserFromGroup", iamRemoveUserFromGroup},
+ { "iam:ListGroupsForUser", iamListGroupsForUser},
+ { "iam:PutGroupPolicy", iamPutGroupPolicy },
+ { "iam:GetGroupPolicy", iamGetGroupPolicy },
+ { "iam:ListGroupPolicies", iamListGroupPolicies },
+ { "iam:DeleteGroupPolicy", iamDeleteGroupPolicy },
+ { "iam:AttachGroupPolicy", iamAttachGroupPolicy },
+ { "iam:DetachGroupPolicy", iamDetachGroupPolicy },
+ { "iam:ListAttachedGroupPolicies", iamListAttachedGroupPolicies },
+ { "iam:GenerateCredentialReport", iamGenerateCredentialReport},
+ { "iam:GenerateServiceLastAccessedDetails", iamGenerateServiceLastAccessedDetails},
+ { "iam:SimulateCustomPolicy", iamSimulateCustomPolicy},
+ { "iam:SimulatePrincipalPolicy", iamSimulatePrincipalPolicy},
  { "sts:AssumeRole", stsAssumeRole},
  { "sts:AssumeRoleWithWebIdentity", stsAssumeRoleWithWebIdentity},
  { "sts:GetSessionToken", stsGetSessionToken},
  { "sts:TagSession", stsTagSession},
+ { "sns:GetTopicAttributes", snsGetTopicAttributes},
+ { "sns:DeleteTopic", snsDeleteTopic},
+ { "sns:Publish", snsPublish},
+ { "sns:SetTopicAttributes", snsSetTopicAttributes},
+ { "sns:CreateTopic", snsCreateTopic},
+ { "sns:ListTopics", snsListTopics},
+ { "organizations:DescribeAccount", organizationsDescribeAccount},
+ { "organizations:DescribeOrganization", organizationsDescribeOrganization},
+ { "organizations:DescribeOrganizationalUnit", organizationsDescribeOrganizationalUnit},
+ { "organizations:DescribePolicy", organizationsDescribePolicy},
+ { "organizations:ListChildren", organizationsListChildren},
+ { "organizations:ListParents", organizationsListParents},
+ { "organizations:ListPoliciesForTarget", organizationsListPoliciesForTarget},
+ { "organizations:ListRoots", organizationsListRoots},
+ { "organizations:ListPolicies", organizationsListPolicies},
+ { "organizations:ListTargetsForPolicy", organizationsListTargetsForPolicy},
 };
 
 struct PolicyParser;
@@ -209,7 +264,7 @@ struct PolicyParser : public BaseReaderHandler<UTF8<>, PolicyParser> {
   keyword_hash tokens;
   std::vector<ParseState> s;
   CephContext* cct;
-  const string& tenant;
+  const string* tenant = nullptr;
   Policy& policy;
   uint32_t v = 0;
 
@@ -317,7 +372,7 @@ struct PolicyParser : public BaseReaderHandler<UTF8<>, PolicyParser> {
     v = 0;
   }
 
-  PolicyParser(CephContext* cct, const string& tenant, Policy& policy,
+  PolicyParser(CephContext* cct, const string* tenant, Policy& policy,
 	       bool reject_invalid_principals)
     : cct(cct), tenant(tenant), policy(policy),
       reject_invalid_principals(reject_invalid_principals) {}
@@ -477,7 +532,7 @@ boost::optional<Principal> ParseState::parse_principal(string&& s,
     // AWS and Federated ARNs
     if (auto a = ARN::parse(s)) {
       if (a->resource == "root") {
-	return Principal::tenant(std::move(a->account));
+	return Principal::account(std::move(a->account));
       }
 
       static const char rx_str[] = "([^/]*)/(.*)";
@@ -510,7 +565,7 @@ boost::optional<Principal> ParseState::parse_principal(string&& s,
       // Since tenants are simply prefixes, there's no really good
       // way to see if one exists or not. So we return the thing and
       // let them try to match against it.
-      return Principal::tenant(std::move(s));
+      return Principal::account(std::move(s));
     }
     if (errmsg)
       *errmsg =
@@ -537,7 +592,7 @@ bool ParseState::do_string(CephContext* cct, const char* s, size_t l) {
   auto k = pp->tokens.lookup(s, l);
   Policy& p = pp->policy;
   bool is_action = false;
-  bool is_validaction = false;
+  bool is_valid_action = false;
   Statement* t = p.statements.empty() ? nullptr : &(p.statements.back());
 
   // Top level!
@@ -575,13 +630,13 @@ bool ParseState::do_string(CephContext* cct, const char* s, size_t l) {
 	     (w->id == TokenID::NotAction)) {
     is_action = true;
     if (*s == '*') {
-      is_validaction = true;
+      is_valid_action = true;
       (w->id == TokenID::Action ?
         t->action = allValue : t->notaction = allValue);
     } else {
       for (auto& p : actpairs) {
-        if (match_policy({s, l}, p.name, MATCH_POLICY_ACTION)) {
-          is_validaction = true;
+        if (match_policy(string(s, l), p.name, MATCH_POLICY_ACTION)) {
+          is_valid_action = true;
           (w->id == TokenID::Action ? t->action[p.bit] = 1 : t->notaction[p.bit] = 1);
         }
         if ((t->action & s3AllValue) == s3AllValue) {
@@ -589,6 +644,12 @@ bool ParseState::do_string(CephContext* cct, const char* s, size_t l) {
         }
         if ((t->notaction & s3AllValue) == s3AllValue) {
           t->notaction[s3All] = 1;
+        }
+        if ((t->action & s3objectlambdaAllValue) == s3objectlambdaAllValue) {
+          t->action[s3objectlambdaAll] = 1;
+        }
+        if ((t->notaction & s3objectlambdaAllValue) == s3objectlambdaAllValue) {
+          t->notaction[s3objectlambdaAll] = 1;
         }
         if ((t->action & iamAllValue) == iamAllValue) {
           t->action[iamAll] = 1;
@@ -601,6 +662,18 @@ bool ParseState::do_string(CephContext* cct, const char* s, size_t l) {
         }
         if ((t->notaction & stsAllValue) == stsAllValue) {
           t->notaction[stsAll] = 1;
+        }
+        if ((t->action & snsAllValue) == snsAllValue) {
+          t->action[snsAll] = 1;
+        }
+        if ((t->notaction & snsAllValue) == snsAllValue) {
+          t->notaction[snsAll] = 1;
+        }
+        if ((t->action & organizationsAllValue) == organizationsAllValue) {
+          t->action[organizationsAll] = 1;
+        }
+        if ((t->notaction & organizationsAllValue) == organizationsAllValue) {
+          t->notaction[organizationsAll] = 1;
         }
       }
     }
@@ -615,16 +688,16 @@ bool ParseState::do_string(CephContext* cct, const char* s, size_t l) {
       return false;
     }
     // You can't specify resources for someone ELSE'S account.
-    if (a->account.empty() || a->account == pp->tenant ||
-	a->account == "*") {
-      if (a->account.empty() || a->account == "*")
-	a->account = pp->tenant;
+    if (a->account.empty() || pp->tenant == nullptr ||
+	a->account == *pp->tenant || a->account == "*") {
+      if (pp->tenant && (a->account.empty() || a->account == "*"))
+	a->account = *pp->tenant;
       (w->id == TokenID::Resource ? t->resource : t->notresource)
 	.emplace(std::move(*a));
     } else {
       annotate(fmt::format("Policy owned by tenant `{}` cannot grant access to "
 			   "resource owned by tenant `{}`.",
-			   pp->tenant, a->account));
+			   *pp->tenant, a->account));
       return false;
     }
   } else if (w->kind == TokenKind::cond_key) {
@@ -677,7 +750,7 @@ bool ParseState::do_string(CephContext* cct, const char* s, size_t l) {
     pp->s.pop_back();
   }
 
-  if (is_action && !is_validaction) {
+  if (is_action && !is_valid_action) {
     annotate(fmt::format("`{}` is not a valid action.",
 			 std::string_view{s, l}));
     return false;
@@ -1144,6 +1217,15 @@ Effect Statement::eval(const Environment& e,
   return Effect::Pass;
 }
 
+static bool is_identity(const auth::Identity& ida,
+                        const flat_set<auth::Principal>& princ)
+{
+  return std::any_of(princ.begin(), princ.end(),
+      [&ida] (const auth::Principal& p) {
+        return ida.is_identity(p);
+      });
+}
+
 Effect Statement::eval_principal(const Environment& e,
 		       boost::optional<const rgw::auth::Identity&> ida, boost::optional<PolicyPrincipal&> princ_type) const {
   if (princ_type) {
@@ -1153,15 +1235,13 @@ Effect Statement::eval_principal(const Environment& e,
     if (princ.empty() && noprinc.empty()) {
       return Effect::Deny;
     }
-    if (ida->get_identity_type() != TYPE_ROLE && !princ.empty() && !ida->is_identity(princ)) {
+    if (ida->get_identity_type() != TYPE_ROLE && !princ.empty() && !is_identity(*ida, princ)) {
       return Effect::Deny;
     }
     if (ida->get_identity_type() == TYPE_ROLE && !princ.empty()) {
       bool princ_matched = false;
       for (auto p : princ) { // Check each principal to determine the type of the one that has matched
-        boost::container::flat_set<Principal> id;
-        id.insert(p);
-        if (ida->is_identity(id)) {
+        if (ida->is_identity(p)) {
           if (p.is_assumed_role() || p.is_user()) {
             if (princ_type) *princ_type = PolicyPrincipal::Session;
           } else {
@@ -1173,7 +1253,7 @@ Effect Statement::eval_principal(const Environment& e,
       if (!princ_matched) {
         return Effect::Deny;
       }
-    } else if (!noprinc.empty() && ida->is_identity(noprinc)) {
+    } else if (!noprinc.empty() && is_identity(*ida, noprinc)) {
       return Effect::Deny;
     }
   }
@@ -1262,6 +1342,12 @@ const char* action_bit_string(uint64_t action) {
 
   case s3PutBucketAcl:
     return "s3:PutBucketAcl";
+
+  case s3GetBucketOwnershipControls:
+    return "s3:GetBucketOwnershipControls";
+
+  case s3PutBucketOwnershipControls:
+    return "s3:PutBucketOwnershipControls";
 
   case s3GetBucketCORS:
     return "s3:GetBucketCORS";
@@ -1380,6 +1466,15 @@ const char* action_bit_string(uint64_t action) {
   case s3BypassGovernanceRetention:
     return "s3:BypassGovernanceRetention";
 
+  case s3DescribeJob:
+    return "s3:DescribeJob";
+
+  case s3objectlambdaGetObject:
+    return "s3-object-lambda:GetObject";
+
+  case s3objectlambdaListBucket:
+    return "s3-object-lambda:ListBucket";
+
   case iamPutUserPolicy:
     return "iam:PutUserPolicy";
 
@@ -1391,6 +1486,15 @@ const char* action_bit_string(uint64_t action) {
 
   case iamDeleteUserPolicy:
     return "iam:DeleteUserPolicy";
+
+  case iamAttachUserPolicy:
+    return "iam:AttachUserPolicy";
+
+  case iamDetachUserPolicy:
+    return "iam:DetachUserPolicy";
+
+  case iamListAttachedUserPolicies:
+    return "iam:ListAttachedUserPolicies";
 
   case iamCreateRole:
     return "iam:CreateRole";
@@ -1419,6 +1523,15 @@ const char* action_bit_string(uint64_t action) {
   case iamDeleteRolePolicy:
     return "iam:DeleteRolePolicy";
 
+  case iamAttachRolePolicy:
+    return "iam:AttachRolePolicy";
+
+  case iamDetachRolePolicy:
+    return "iam:DetachRolePolicy";
+
+  case iamListAttachedRolePolicies:
+    return "iam:ListAttachedRolePolicies";
+
   case iamCreateOIDCProvider:
     return "iam:CreateOIDCProvider";
 
@@ -1443,6 +1556,90 @@ const char* action_bit_string(uint64_t action) {
   case iamUpdateRole:
     return "iam:UpdateRole";
 
+  case iamCreateUser:
+    return "iam:CreateUser";
+
+  case iamGetUser:
+    return "iam:GetUser";
+
+  case iamUpdateUser:
+    return "iam:UpdateUser";
+
+  case iamDeleteUser:
+    return "iam:DeleteUser";
+
+  case iamListUsers:
+    return "iam:ListUsers";
+
+  case iamCreateAccessKey:
+    return "iam:CreateAccessKey";
+
+  case iamUpdateAccessKey:
+    return "iam:UpdateAccessKey";
+
+  case iamDeleteAccessKey:
+    return "iam:DeleteAccessKey";
+
+  case iamListAccessKeys:
+    return "iam:ListAccessKeys";
+
+  case iamCreateGroup:
+    return "iam:CreateGroup";
+
+  case iamGetGroup:
+    return "iam:GetGroup";
+
+  case iamUpdateGroup:
+    return "iam:UpdateGroup";
+
+  case iamDeleteGroup:
+    return "iam:DeleteGroup";
+
+  case iamListGroups:
+    return "iam:ListGroups";
+
+  case iamAddUserToGroup:
+    return "iam:AddUserToGroup";
+
+  case iamRemoveUserFromGroup:
+    return "iam:RemoveUserFromGroup";
+
+  case iamListGroupsForUser:
+    return "iam:ListGroupsForUser";
+
+  case iamPutGroupPolicy:
+    return "iam:PutGroupPolicy";
+
+  case iamGetGroupPolicy:
+    return "iam:GetGroupPolicy";
+
+  case iamListGroupPolicies:
+    return "iam:ListGroupPolicies";
+
+  case iamDeleteGroupPolicy:
+    return "iam:DeleteGroupPolicy";
+
+  case iamAttachGroupPolicy:
+    return "iam:AttachGroupPolicy";
+
+  case iamDetachGroupPolicy:
+    return "iam:DetachGroupPolicy";
+
+  case iamListAttachedGroupPolicies:
+    return "iam:ListAttachedGroupPolicies";
+
+  case iamGenerateCredentialReport:
+    return "iam:GenerateCredentialReport";
+
+  case iamGenerateServiceLastAccessedDetails:
+    return "iam:GenerateServiceLastAccessedDetails";
+
+  case iamSimulateCustomPolicy:
+    return "iam:SimulateCustomPolicy";
+
+  case iamSimulatePrincipalPolicy:
+    return "iam:SimulatePrincipalPolicy";
+
   case stsAssumeRole:
     return "sts:AssumeRole";
 
@@ -1454,6 +1651,54 @@ const char* action_bit_string(uint64_t action) {
 
   case stsTagSession:
     return "sts:TagSession";
+
+  case snsSetTopicAttributes:
+    return "sns:SetTopicAttributes";
+
+  case snsGetTopicAttributes:
+    return "sns:GetTopicAttributes";
+
+  case snsDeleteTopic:
+    return "sns:DeleteTopic";
+
+  case snsPublish:
+    return "sns:Publish";
+
+  case snsCreateTopic:
+    return "sns:CreateTopic";
+
+  case snsListTopics:
+    return "sns:ListTopics";
+
+  case organizationsDescribeAccount:
+    return "organizations:DescribeAccount";
+
+  case organizationsDescribeOrganization:
+    return "organizations:DescribeOrganization";
+
+  case organizationsDescribeOrganizationalUnit:
+    return "organizations:DescribeOrganizationalUnit";
+
+  case organizationsDescribePolicy:
+    return "organizations:DescribePolicy";
+
+  case organizationsListChildren:
+    return "organizations:ListChildren";
+
+  case organizationsListParents:
+    return "organizations:ListParents";
+
+  case organizationsListPoliciesForTarget:
+    return "organizations:ListPoliciesForTarget";
+
+  case organizationsListRoots:
+    return "organizations:ListRoots";
+
+  case organizationsListPolicies:
+    return "organizations:ListPolicies";
+
+  case organizationsListTargetsForPolicy:
+    return "organizations:ListTargetsForPolicy";
   }
   return "s3Invalid";
 }
@@ -1552,10 +1797,10 @@ ostream& operator <<(ostream& m, const Statement& s) {
   return m << " }";
 }
 
-Policy::Policy(CephContext* cct, const string& tenant,
-	       const bufferlist& _text,
+Policy::Policy(CephContext* cct, const string* tenant,
+	       std::string _text,
 	       bool reject_invalid_principals)
-  : text(_text.to_str()) {
+  : text(std::move(_text)) {
   StringStream ss(text.data());
   PolicyParser pp(cct, tenant, *this, reject_invalid_principals);
   auto pr = Reader{}.Parse<kParseNumbersAsStringsFlag |

@@ -8,7 +8,9 @@ overrides:
       mon:
         osd pool default crimson: true
       osd:
-        crimson seastar smp: 3
+        crimson osd obc lru size: 10
+      mgr:
+        mgr stats period: 30
     flavor: crimson
   workunit:
     env:

@@ -11,15 +11,42 @@ get_child_ret_t<LogicalCachedExtent>
 BtreeNodeMapping<key_t, val_t>::get_logical_extent(
   Transaction &t)
 {
-  assert(parent);
-  assert(parent->is_valid());
+  ceph_assert(is_parent_valid());
   assert(pos != std::numeric_limits<uint16_t>::max());
+  ceph_assert(t.get_trans_id() == ctx.trans.get_trans_id());
   auto &p = (FixedKVNode<key_t>&)*parent;
-  auto v = p.get_logical_child(ctx, pos);
+  auto k = this->is_indirect()
+    ? this->get_intermediate_base()
+    : get_key();
+  auto v = p.template get_child<LogicalCachedExtent>(ctx, pos, k);
   if (!v.has_child()) {
     this->child_pos = v.get_child_pos();
   }
   return v;
+}
+
+template <typename key_t, typename val_t>
+bool BtreeNodeMapping<key_t, val_t>::is_stable() const
+{
+  assert(!this->parent_modified());
+  assert(pos != std::numeric_limits<uint16_t>::max());
+  auto &p = (FixedKVNode<key_t>&)*parent;
+  auto k = this->is_indirect()
+    ? this->get_intermediate_base()
+    : get_key();
+  return p.is_child_stable(ctx, pos, k);
+}
+
+template <typename key_t, typename val_t>
+bool BtreeNodeMapping<key_t, val_t>::is_data_stable() const
+{
+  assert(!this->parent_modified());
+  assert(pos != std::numeric_limits<uint16_t>::max());
+  auto &p = (FixedKVNode<key_t>&)*parent;
+  auto k = this->is_indirect()
+    ? this->get_intermediate_base()
+    : get_key();
+  return p.is_child_data_stable(ctx, pos, k);
 }
 
 template class BtreeNodeMapping<laddr_t, paddr_t>;

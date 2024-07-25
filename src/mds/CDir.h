@@ -182,10 +182,11 @@ public:
   static const uint64_t WAIT_COMPLETE     = (1<<1);  // wait for complete dir contents
   static const uint64_t WAIT_FROZEN       = (1<<2);  // auth pins removed
   static const uint64_t WAIT_CREATED	  = (1<<3);  // new dirfrag is logged
+  static const uint64_t WAIT_BITS         = 4;
 
   static const int WAIT_DNLOCK_OFFSET = 4;
 
-  static const uint64_t WAIT_ANY_MASK = (uint64_t)(-1);
+  static const uint64_t WAIT_ANY_MASK = ((1ul << WAIT_BITS) - 1);
   static const uint64_t WAIT_ATSUBTREEROOT = (WAIT_SINGLEAUTH);
 
   // -- dump flags --
@@ -402,10 +403,7 @@ public:
   void split(int bits, std::vector<CDir*>* subs, MDSContext::vec& waiters, bool replay);
   void merge(const std::vector<CDir*>& subs, MDSContext::vec& waiters, bool replay);
 
-  bool should_split() const {
-    return g_conf()->mds_bal_split_size > 0 &&
-      ((int)get_frag_size() + (int)get_num_snap_items()) > g_conf()->mds_bal_split_size;
-  }
+  bool should_split() const;
   bool should_split_fast() const;
   bool should_merge() const;
 

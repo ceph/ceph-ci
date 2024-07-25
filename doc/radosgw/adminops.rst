@@ -273,10 +273,14 @@ TBD.
 Get User Info
 =============
 
-Get user information.
+Get user information. Cap ``users`` or ``user-info-without-keys`` must be set to ``read`` to run this operation.
+If cap ``user-info-without-keys`` is set to ``read`` or ``*``, S3 keys and Swift keys will not be
+included in the response unless the user running this operation is the system user, an admin user, or the cap ``users`` is set to ``read``.
 
-:caps: users=read
+Either a ``uid`` or ``access-key`` must be supplied as a request parameter. We recommend supplying uid.
+If both are provided but correspond to different users, the info for the user specified with ``uid`` will be returned.
 
+:caps: users=read or user-info-without-keys=read
 
 Syntax
 ~~~~~~
@@ -296,6 +300,13 @@ Request Parameters
 :Type: String
 :Example: ``foo_user``
 :Required: Yes
+
+``access-key``
+
+:Description: The S3 access key of the user for which the information is requested.
+:Type: String
+:Example: ``ABCD0EF12GHIJ2K34LMN``
+:Required: No
 
 
 Response Entities
@@ -473,6 +484,19 @@ A tenant name may also specified as a part of ``uid``, by following the syntax
 :Description: the Tenant under which a user is a part of.
 :Type: string
 :Example: tenant1
+:Required: No
+
+``default-placement``
+
+:Description: default placement for the user.
+:Type: string
+:Example: default-placement
+:Required: No
+
+``default-storage-class``
+:Description: default storage class for the user, default-placement must be defined when setting this option.
+:Type: string
+:Example: STANDARD-1A
 :Required: No
 
 Response Entities
@@ -670,6 +694,19 @@ Request Parameters
 :Description: The op-mask of the user to be modified.
 :Type: String
 :Example: ``read, write, delete, *``
+:Required: No
+
+``default-placement``
+
+:Description: default placement for the user.
+:Type: string
+:Example: default-placement
+:Required: No
+
+``default-storage-class``
+:Description: default storage class for the user, default-placement must be defined when setting this option.
+:Type: string
+:Example: STANDARD-1A
 :Required: No
 
 Response Entities
@@ -1149,6 +1186,13 @@ Request Parameters
 ``generate-key``
 
 :Description: Generate a new key pair and add to the existing keyring.
+:Type: Boolean
+:Example: True [True]
+:Required: No
+
+``active``
+
+:Description: Activate or deactivate a key.
 :Type: Boolean
 :Example: True [True]
 :Required: No

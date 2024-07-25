@@ -59,7 +59,7 @@ struct FixedKVNode : ChildableCachedExtent {
    * 	b. prior_instance is empty
    * 	c. child pointers point at stable children. Child resolution is done
    * 	   directly via this array.
-   * 	c. copy_sources is empty
+   * 	d. copy_sources is empty
    * 2. if nodes are mutation_pending:
    * 	a. parent is empty and needs to be fixed upon commit
    * 	b. prior_instance points to its stable version
@@ -67,7 +67,7 @@ struct FixedKVNode : ChildableCachedExtent {
    * 	   this transaction. Child resolution is done by first checking this
    * 	   array, and then recursively resolving via the parent. We copy child
    * 	   pointers from parent on commit.
-   * 	c. copy_sources is empty
+   * 	d. copy_sources is empty
    * 3. if nodes are initial_pending
    * 	a. parent points at its pending parent on this transaction (must exist)
    * 	b. prior_instance is empty or, if it's the result of rewrite, points to
@@ -80,6 +80,8 @@ struct FixedKVNode : ChildableCachedExtent {
    * 	d. copy_sources contains the set of stable nodes at the same tree-level(only
    * 	   its "prior_instance" if the node is the result of a rewrite), with which
    * 	   the lba range of this node overlaps.
+   * 4. EXIST_CLEAN and EXIST_MUTATION_PENDING belong to 3 above (except that they
+   * 	cannot be rewritten) because their parents must be mutated upon remapping.
    */
   std::vector<ChildableCachedExtent*> children;
   std::set<FixedKVNodeRef, copy_source_cmp_t> copy_sources;
@@ -128,13 +130,13 @@ struct FixedKVNode : ChildableCachedExtent {
       children[offset] = child;
       set_child_ptracker(child);
     } else {
-      // this can only happen when reserving lba spaces
+      // this can happen when reserving lba spaces and cloning mappings
       ceph_assert(is_leaf_and_has_children());
       // this is to avoid mistakenly copying pointers from
       // copy sources when committing this lba node, because
       // we rely on pointers' "nullness" to avoid copying
       // pointers for updated values
-      children[offset] = RESERVATION_PTR;
+      children[offset] = get_reserved_ptr();
     }
   }
 
@@ -157,7 +159,44 @@ struct FixedKVNode : ChildableCachedExtent {
       (get_node_size() - offset - 1) * sizeof(ChildableCachedExtent*));
   }
 
-  FixedKVNode& get_stable_for_key(node_key_t key) {
+  virtual bool have_children() const = 0;
+
+  void on_rewrite(CachedExtent &extent, extent_len_t off) final {
+    assert(get_type() == extent.get_type());
+    assert(off == 0);
+    auto &foreign_extent = (FixedKVNode&)extent;
+    range = get_node_meta();
+
+    if (have_children()) {
+      if (!foreign_extent.is_pending()) {
+	copy_sources.emplace(&foreign_extent);
+      } else {
+	ceph_assert(foreign_extent.is_mutation_pending());
+	copy_sources.emplace(
+	  foreign_extent.get_prior_instance()->template cast<FixedKVNode>());
+	children = std::move(foreign_extent.children);
+	adjust_ptracker_for_children();
+      }
+    }
+    
+    /* This is a bit underhanded.  Any relative addrs here must necessarily
+     * be record relative as we are rewriting a dirty extent.  Thus, we
+     * are using resolve_relative_addrs with a (likely negative) block
+     * relative offset to correct them to block-relative offsets adjusted
+     * for our new transaction location.
+     *
+     * Upon commit, these now block relative addresses will be interpretted
+     * against the real final address.
+     */
+    if (!get_paddr().is_absolute()) {
+      // backend_type_t::SEGMENTED
+      assert(get_paddr().is_record_relative());
+      resolve_relative_addrs(
+	make_record_relative_paddr(0).block_relative_to(get_paddr()));
+    } // else: backend_type_t::RANDOM_BLOCK
+  }
+
+  FixedKVNode& get_stable_for_key(node_key_t key) const {
     ceph_assert(is_pending());
     if (is_mutation_pending()) {
       return (FixedKVNode&)*get_prior_instance();
@@ -226,24 +265,32 @@ struct FixedKVNode : ChildableCachedExtent {
     set_child_ptracker(child);
   }
 
-  virtual get_child_ret_t<LogicalCachedExtent>
-  get_logical_child(op_context_t<node_key_t> c, uint16_t pos) = 0;
+  virtual bool is_child_stable(
+    op_context_t<node_key_t>,
+    uint16_t pos,
+    node_key_t key) const = 0;
+  virtual bool is_child_data_stable(
+    op_context_t<node_key_t>,
+    uint16_t pos,
+    node_key_t key) const = 0;
 
-  template <typename T, typename iter_t>
-  get_child_ret_t<T> get_child(op_context_t<node_key_t> c, iter_t iter) {
-    auto pos = iter.get_offset();
+  template <typename T>
+  get_child_ret_t<T> get_child(
+    op_context_t<node_key_t> c,
+    uint16_t pos,
+    node_key_t key)
+  {
     assert(children.capacity());
+    assert(key == get_key_from_idx(pos));
     auto child = children[pos];
+    ceph_assert(!is_reserved_ptr(child));
     if (is_valid_child_ptr(child)) {
-      ceph_assert(child->get_type() == T::TYPE);
       return c.cache.template get_extent_viewable_by_trans<T>(c.trans, (T*)child);
     } else if (is_pending()) {
-      auto key = iter.get_key();
       auto &sparent = get_stable_for_key(key);
-      auto spos = sparent.child_pos_for_key(key);
+      auto spos = sparent.lower_bound_offset(key);
       auto child = sparent.children[spos];
       if (is_valid_child_ptr(child)) {
-	ceph_assert(child->get_type() == T::TYPE);
 	return c.cache.template get_extent_viewable_by_trans<T>(c.trans, (T*)child);
       } else {
 	return child_pos_t(&sparent, spos);
@@ -251,6 +298,11 @@ struct FixedKVNode : ChildableCachedExtent {
     } else {
       return child_pos_t(this, pos);
     }
+  }
+
+  template <typename T, typename iter_t>
+  get_child_ret_t<T> get_child(op_context_t<node_key_t> c, iter_t iter) {
+    return get_child<T>(c, iter.get_offset(), iter.get_key());
   }
 
   void split_child_ptrs(
@@ -409,7 +461,6 @@ struct FixedKVNode : ChildableCachedExtent {
 
   virtual uint16_t lower_bound_offset(node_key_t) const = 0;
   virtual uint16_t upper_bound_offset(node_key_t) const = 0;
-  virtual uint16_t child_pos_for_key(node_key_t) const = 0;
 
   virtual bool validate_stable_children() = 0;
 
@@ -428,6 +479,8 @@ struct FixedKVNode : ChildableCachedExtent {
 	// the foreign key is preserved
 	if (!child) {
 	  child = source.children[foreign_it.get_offset()];
+	  // child can be either valid if present, nullptr if absent,
+	  // or reserved ptr.
 	}
 	foreign_it++;
 	local_it++;
@@ -478,10 +531,6 @@ struct FixedKVNode : ChildableCachedExtent {
 
   void on_invalidated(Transaction &t) final {
     reset_parent_tracker();
-  }
-
-  bool is_rewrite() {
-    return is_initial_pending() && get_prior_instance();
   }
 
   void on_initial_write() final {
@@ -556,6 +605,10 @@ struct FixedKVInternalNode
     : FixedKVNode<NODE_KEY>(rhs),
       node_layout_t(this->get_bptr().c_str()) {}
 
+  bool have_children() const final {
+    return true;
+  }
+
   bool is_leaf_and_has_children() const final {
     return false;
   }
@@ -586,10 +639,19 @@ struct FixedKVInternalNode
     }
   }
 
-  get_child_ret_t<LogicalCachedExtent>
-  get_logical_child(op_context_t<NODE_KEY>, uint16_t pos) final {
+  bool is_child_stable(
+    op_context_t<NODE_KEY>,
+    uint16_t pos,
+    NODE_KEY key) const final {
     ceph_abort("impossible");
-    return get_child_ret_t<LogicalCachedExtent>(child_pos_t(nullptr, 0));
+    return false;
+  }
+  bool is_child_data_stable(
+    op_context_t<NODE_KEY>,
+    uint16_t pos,
+    NODE_KEY key) const final {
+    ceph_abort("impossible");
+    return false;
   }
 
   bool validate_stable_children() final {
@@ -637,13 +699,6 @@ struct FixedKVInternalNode
     return this->upper_bound(key).get_offset();
   }
 
-  uint16_t child_pos_for_key(NODE_KEY key) const final {
-    auto it = this->upper_bound(key);
-    assert(it != this->begin());
-    --it;
-    return it.get_offset();
-  }
-
   NODE_KEY get_key_from_idx(uint16_t idx) const final {
     return this->iter_idx(idx).get_key();
   }
@@ -654,6 +709,18 @@ struct FixedKVInternalNode
 
   uint16_t get_node_size() const final {
     return this->get_size();
+  }
+
+  uint32_t calc_crc32c() const final {
+    return this->calc_phy_checksum();
+  }
+
+  void update_in_extent_chksum_field(uint32_t crc) final {
+    this->set_phy_checksum(crc);
+  }
+
+  uint32_t get_in_extent_checksum() const {
+    return this->get_phy_checksum();
   }
 
   typename node_layout_t::delta_buffer_t delta_buffer;
@@ -667,7 +734,7 @@ struct FixedKVInternalNode
     return CachedExtentRef(new node_type_t(*this));
   };
 
-  void on_replace_prior(Transaction&) final {
+  void on_replace_prior() final {
     ceph_assert(!this->is_rewrite());
     this->set_children_from_prior_instance();
     auto &prior = (this_type_t&)(*this->get_prior_instance());
@@ -750,9 +817,9 @@ struct FixedKVInternalNode
 
   std::tuple<Ref, Ref, NODE_KEY>
   make_split_children(op_context_t<NODE_KEY> c) {
-    auto left = c.cache.template alloc_new_extent<node_type_t>(
+    auto left = c.cache.template alloc_new_non_data_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, INIT_GENERATION);
-    auto right = c.cache.template alloc_new_extent<node_type_t>(
+    auto right = c.cache.template alloc_new_non_data_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, INIT_GENERATION);
     this->split_child_ptrs(*left, *right);
     auto pivot = this->split_into(*left, *right);
@@ -767,7 +834,7 @@ struct FixedKVInternalNode
   Ref make_full_merge(
     op_context_t<NODE_KEY> c,
     Ref &right) {
-    auto replacement = c.cache.template alloc_new_extent<node_type_t>(
+    auto replacement = c.cache.template alloc_new_non_data_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, INIT_GENERATION);
     replacement->merge_child_ptrs(*this, *right);
     replacement->merge_from(*this, *right->template cast<node_type_t>());
@@ -782,9 +849,9 @@ struct FixedKVInternalNode
     bool prefer_left) {
     ceph_assert(_right->get_type() == this->get_type());
     auto &right = *_right->template cast<node_type_t>();
-    auto replacement_left = c.cache.template alloc_new_extent<node_type_t>(
+    auto replacement_left = c.cache.template alloc_new_non_data_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, INIT_GENERATION);
-    auto replacement_right = c.cache.template alloc_new_extent<node_type_t>(
+    auto replacement_right = c.cache.template alloc_new_non_data_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, INIT_GENERATION);
 
     auto pivot = this->balance_into_new_nodes(
@@ -881,7 +948,9 @@ struct FixedKVInternalNode
     typename node_layout_t::delta_buffer_t buffer;
     buffer.copy_in(bl.front().c_str(), bl.front().length());
     buffer.replay(*this);
-    this->set_last_committed_crc(this->get_crc32c());
+    auto crc = calc_crc32c();
+    this->set_last_committed_crc(crc);
+    this->update_in_extent_chksum_field(crc);
     resolve_relative_addrs(base);
   }
 
@@ -948,9 +1017,28 @@ struct FixedKVLeafNode
       node_layout_t(this->get_bptr().c_str()) {}
   FixedKVLeafNode(const FixedKVLeafNode &rhs)
     : FixedKVNode<NODE_KEY>(rhs),
-      node_layout_t(this->get_bptr().c_str()) {}
+      node_layout_t(this->get_bptr().c_str()),
+      modifications(rhs.modifications) {}
 
   static constexpr bool do_has_children = has_children;
+  // for the stable extent, modifications is always 0;
+  // it will increase for each transaction-local change, so that
+  // modifications can be detected (see BtreeLBAMapping.parent_modifications)
+  uint64_t modifications = 0;
+
+
+  bool have_children() const final {
+    return do_has_children;
+  }
+
+  void on_modify() {
+    modifications++;
+  }
+
+  bool modified_since(uint64_t v) const {
+    ceph_assert(v <= modifications);
+    return v != modifications;
+  }
 
   bool is_leaf_and_has_children() const final {
     return has_children;
@@ -960,27 +1048,60 @@ struct FixedKVLeafNode
     return this->get_split_pivot().get_offset();
   }
 
-  get_child_ret_t<LogicalCachedExtent>
-  get_logical_child(op_context_t<NODE_KEY> c, uint16_t pos) final {
+  // children are considered stable if any of the following case is true:
+  // 1. The child extent is absent in cache
+  // 2. The child extent is stable
+  //
+  // For reserved mappings, the return values are undefined.
+  bool is_child_stable(
+    op_context_t<NODE_KEY> c,
+    uint16_t pos,
+    NODE_KEY key) const final {
+    return _is_child_stable(c, pos, key);
+  }
+  bool is_child_data_stable(
+    op_context_t<NODE_KEY> c,
+    uint16_t pos,
+    NODE_KEY key) const final {
+    return _is_child_stable(c, pos, key, true);
+  }
+
+  bool _is_child_stable(
+    op_context_t<NODE_KEY> c,
+    uint16_t pos,
+    NODE_KEY key,
+    bool data_only = false) const {
+    assert(key == get_key_from_idx(pos));
     auto child = this->children[pos];
-    if (is_valid_child_ptr(child)) {
+    if (is_reserved_ptr(child)) {
+      return true;
+    } else if (is_valid_child_ptr(child)) {
       ceph_assert(child->is_logical());
-      return c.cache.template get_extent_viewable_by_trans<
-	LogicalCachedExtent>(c.trans, (LogicalCachedExtent*)child);
+      ceph_assert(
+	child->is_pending_in_trans(c.trans.get_trans_id())
+	|| this->is_stable_written());
+      if (data_only) {
+	return c.cache.is_viewable_extent_data_stable(c.trans, child);
+      } else {
+	return c.cache.is_viewable_extent_stable(c.trans, child);
+      }
     } else if (this->is_pending()) {
       auto key = this->iter_idx(pos).get_key();
       auto &sparent = this->get_stable_for_key(key);
-      auto spos = sparent.child_pos_for_key(key);
+      auto spos = sparent.lower_bound_offset(key);
       auto child = sparent.children[spos];
       if (is_valid_child_ptr(child)) {
 	ceph_assert(child->is_logical());
-	return c.cache.template get_extent_viewable_by_trans<
-	  LogicalCachedExtent>(c.trans, (LogicalCachedExtent*)child);
+	if (data_only) {
+	  return c.cache.is_viewable_extent_data_stable(c.trans, child);
+	} else {
+	  return c.cache.is_viewable_extent_stable(c.trans, child);
+	}
       } else {
-	return child_pos_t(&sparent, spos);
+	return true;
       }
     } else {
-      return child_pos_t(this, pos);
+      return true;
     }
   }
 
@@ -1026,12 +1147,13 @@ struct FixedKVLeafNode
 	this->copy_sources.clear();
       }
     }
+    modifications = 0;
     assert(this->is_initial_pending()
       ? this->copy_sources.empty():
       true);
   }
 
-  void on_replace_prior(Transaction&) final {
+  void on_replace_prior() final {
     ceph_assert(!this->is_rewrite());
     if constexpr (has_children) {
       this->set_children_from_prior_instance();
@@ -1047,6 +1169,7 @@ struct FixedKVLeafNode
     } else {
       this->set_parent_tracker_from_prior_instance();
     }
+    modifications = 0;
   }
 
   uint16_t lower_bound_offset(NODE_KEY key) const final {
@@ -1055,10 +1178,6 @@ struct FixedKVLeafNode
 
   uint16_t upper_bound_offset(NODE_KEY key) const final {
     return this->upper_bound(key).get_offset();
-  }
-
-  uint16_t child_pos_for_key(NODE_KEY key) const final {
-    return lower_bound_offset(key);
   }
 
   NODE_KEY get_key_from_idx(uint16_t idx) const final {
@@ -1071,6 +1190,18 @@ struct FixedKVLeafNode
 
   uint16_t get_node_size() const final {
     return this->get_size();
+  }
+
+  uint32_t calc_crc32c() const final {
+    return this->calc_phy_checksum();
+  }
+
+  void update_in_extent_chksum_field(uint32_t crc) final {
+    this->set_phy_checksum(crc);
+  }
+
+  uint32_t get_in_extent_checksum() const {
+    return this->get_phy_checksum();
   }
 
   typename node_layout_t::delta_buffer_t delta_buffer;
@@ -1096,9 +1227,9 @@ struct FixedKVLeafNode
 
   std::tuple<Ref, Ref, NODE_KEY>
   make_split_children(op_context_t<NODE_KEY> c) {
-    auto left = c.cache.template alloc_new_extent<node_type_t>(
+    auto left = c.cache.template alloc_new_non_data_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, INIT_GENERATION);
-    auto right = c.cache.template alloc_new_extent<node_type_t>(
+    auto right = c.cache.template alloc_new_non_data_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, INIT_GENERATION);
     if constexpr (has_children) {
       this->split_child_ptrs(*left, *right);
@@ -1115,7 +1246,7 @@ struct FixedKVLeafNode
   Ref make_full_merge(
     op_context_t<NODE_KEY> c,
     Ref &right) {
-    auto replacement = c.cache.template alloc_new_extent<node_type_t>(
+    auto replacement = c.cache.template alloc_new_non_data_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, INIT_GENERATION);
     if constexpr (has_children) {
       replacement->merge_child_ptrs(*this, *right);
@@ -1132,9 +1263,9 @@ struct FixedKVLeafNode
     bool prefer_left) {
     ceph_assert(_right->get_type() == this->get_type());
     auto &right = *_right->template cast<node_type_t>();
-    auto replacement_left = c.cache.template alloc_new_extent<node_type_t>(
+    auto replacement_left = c.cache.template alloc_new_non_data_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, INIT_GENERATION);
-    auto replacement_right = c.cache.template alloc_new_extent<node_type_t>(
+    auto replacement_right = c.cache.template alloc_new_non_data_extent<node_type_t>(
       c.trans, node_size, placement_hint_t::HOT, INIT_GENERATION);
 
     auto pivot = this->balance_into_new_nodes(
@@ -1176,7 +1307,9 @@ struct FixedKVLeafNode
     typename node_layout_t::delta_buffer_t buffer;
     buffer.copy_in(bl.front().c_str(), bl.front().length());
     buffer.replay(*this);
-    this->set_last_committed_crc(this->get_crc32c());
+    auto crc = calc_crc32c();
+    this->set_last_committed_crc(crc);
+    this->update_in_extent_chksum_field(crc);
     this->resolve_relative_addrs(base);
   }
 

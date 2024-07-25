@@ -39,6 +39,7 @@
 #include "crimson/osd/pg_recovery_listener.h"
 #include "crimson/osd/recovery_backend.h"
 #include "crimson/osd/object_context_loader.h"
+#include "crimson/osd/scrub/pg_scrubber.h"
 
 class MQuery;
 class OSDMap;
@@ -159,8 +160,6 @@ public:
     bool dirty_big_info,
     bool need_write_epoch,
     ceph::os::Transaction &t) final;
-
-  void scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type) final;
 
   uint64_t get_snap_trimq_size() const final {
     return std::size(snap_trimq);
@@ -310,27 +309,31 @@ public:
 
   unsigned get_target_pg_log_entries() const final;
 
-  void on_pool_change() final {
-    // Not needed yet
-  }
+  void init_collection_pool_opts();
+  void on_pool_change();
   void on_role_change() final {
     // Not needed yet
   }
   void on_change(ceph::os::Transaction &t) final;
   void on_activate(interval_set<snapid_t> to_trim) final;
+  void on_replica_activate() final;
   void on_activate_complete() final;
   void on_new_interval() final {
     // Not needed yet
   }
   Context *on_clean() final;
   void on_activate_committed() final {
-    // Not needed yet (will be needed for IO unblocking)
+    if (!is_primary()) {
+      wait_for_active_blocker.unblock();
+    }
   }
   void on_active_exit() final {
     // Not needed yet
   }
 
   void on_removal(ceph::os::Transaction &t) final;
+
+  void clear_log_entry_maps();
 
   std::pair<ghobject_t, bool>
   do_delete_work(ceph::os::Transaction &t, ghobject_t _next) final;
@@ -346,8 +349,7 @@ public:
   void on_active_advmap(const OSDMapRef &osdmap) final;
 
   epoch_t cluster_osdmap_trim_lower_bound() final {
-    // TODO
-    return 0;
+    return shard_services.get_osdmap_tlb();
   }
 
   void on_backfill_reserved() final {
@@ -437,6 +439,9 @@ public:
 
 
   // Utility
+  bool is_active_clean() const {
+    return peering_state.is_active() && peering_state.is_clean();
+  }
   bool is_primary() const final {
     return peering_state.is_primary();
   }
@@ -470,7 +475,7 @@ public:
   }
 
   /// initialize created PG
-  void init(
+  seastar::future<> init(
     int role,
     const std::vector<int>& up,
     int up_primary,
@@ -504,7 +509,7 @@ public:
 
 public:
   using with_obc_func_t =
-    std::function<load_obc_iertr::future<> (ObjectContextRef)>;
+    std::function<load_obc_iertr::future<> (ObjectContextRef, ObjectContextRef)>;
 
   load_obc_iertr::future<> with_locked_obc(
     const hobject_t &hobj,
@@ -525,35 +530,37 @@ public:
   void handle_rep_op_reply(const MOSDRepOpReply& m);
   interruptible_future<> do_update_log_missing(
     Ref<MOSDPGUpdateLogMissing> m,
-    crimson::net::ConnectionRef conn);
+    crimson::net::ConnectionXcoreRef conn);
   interruptible_future<> do_update_log_missing_reply(
                          Ref<MOSDPGUpdateLogMissingReply> m);
 
 
   void print(std::ostream& os) const;
   void dump_primary(Formatter*);
-  seastar::future<> submit_error_log(
+  seastar::future<> complete_error_log(const ceph_tid_t& rep_tid,
+                                       const eversion_t& version);
+  seastar::future<std::optional<eversion_t>> submit_error_log(
     Ref<MOSDOp> m,
     const OpInfo &op_info,
     ObjectContextRef obc,
     const std::error_code e,
-    ceph_tid_t rep_tid,
-    eversion_t &version);
+    ceph_tid_t rep_tid);
 
 private:
 
-  struct SnapTrimMutex {
-    struct WaitPG : OrderedConcurrentPhaseT<WaitPG> {
-      static constexpr auto type_name = "SnapTrimEvent::wait_pg";
-    } wait_pg;
+  struct BackgroundProcessLock {
+    struct Wait : OrderedConcurrentPhaseT<Wait> {
+      static constexpr auto type_name = "PG::BackgroundProcessLock::wait";
+    } wait;
     seastar::shared_mutex mutex;
 
-    interruptible_future<> lock(SnapTrimEvent &st_event) noexcept;
+    interruptible_future<> lock_with_op(SnapTrimEvent &st_event) noexcept;
+    interruptible_future<> lock() noexcept;
 
     void unlock() noexcept {
       mutex.unlock();
     }
-  } snaptrim_mutex;
+  } background_process_lock;
 
   using do_osd_ops_ertr = crimson::errorator<
    crimson::ct_error::eagain>;
@@ -567,25 +574,26 @@ private:
                do_osd_ops_iertr::future<Ret>>;
   do_osd_ops_iertr::future<pg_rep_op_fut_t<MURef<MOSDOpReply>>> do_osd_ops(
     Ref<MOSDOp> m,
-    crimson::net::ConnectionRef conn,
+    crimson::net::ConnectionXcoreRef conn,
     ObjectContextRef obc,
     const OpInfo &op_info,
     const SnapContext& snapc);
-  using do_osd_ops_success_func_t =
-    std::function<do_osd_ops_iertr::future<>()>;
-  using do_osd_ops_failure_func_t =
-    std::function<do_osd_ops_iertr::future<>(const std::error_code&)>;
+
   struct do_osd_ops_params_t;
+  do_osd_ops_iertr::future<MURef<MOSDOpReply>> log_reply(
+    Ref<MOSDOp> m,
+    const std::error_code& e);
   do_osd_ops_iertr::future<pg_rep_op_fut_t<>> do_osd_ops(
     ObjectContextRef obc,
     std::vector<OSDOp>& ops,
     const OpInfo &op_info,
-    const do_osd_ops_params_t &&params,
-    do_osd_ops_success_func_t success_func,
-    do_osd_ops_failure_func_t failure_func);
+    const do_osd_ops_params_t &&params);
   template <class Ret, class SuccessFunc, class FailureFunc>
   do_osd_ops_iertr::future<pg_rep_op_fut_t<Ret>> do_osd_ops_execute(
     seastar::lw_shared_ptr<OpsExecuter> ox,
+    ObjectContextRef obc,
+    const OpInfo &op_info,
+    Ref<MOSDOp> m,
     std::vector<OSDOp>& ops,
     SuccessFunc&& success_func,
     FailureFunc&& failure_func);
@@ -600,6 +608,9 @@ private:
     const hobject_t& oid,
     eversion_t& v);
   void check_blocklisted_obc_watchers(ObjectContextRef &obc);
+  interruptible_future<seastar::stop_iteration> trim_snap(
+    snapid_t to_trim,
+    bool needs_pause);
 
 private:
   PG_OSDMapGate osdmap_gate;
@@ -608,9 +619,9 @@ private:
 
 public:
   cached_map_t get_osdmap() { return peering_state.get_osdmap(); }
-  eversion_t next_version() {
+  eversion_t get_next_version() {
     return eversion_t(get_osdmap_epoch(),
-		      ++projected_last_update.version);
+		      projected_last_update.version + 1);
   }
   ShardServices& get_shard_services() final {
     return shard_services;
@@ -625,22 +636,43 @@ private:
   eversion_t projected_last_update;
 
 public:
+  // scrub state
+
+  friend class ScrubScan;
+  friend class ScrubFindRange;
+  friend class ScrubReserveRange;
+  friend class scrub::PGScrubber;
+  template <typename T> friend class RemoteScrubEventBaseT;
+
+  scrub::PGScrubber scrubber;
+
+  void scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type) final;
+
   ObjectContextRegistry obc_registry;
   ObjectContextLoader obc_loader;
 
 private:
   OSDriver osdriver;
   SnapMapper snap_mapper;
-
 public:
   // PeeringListener
   void publish_stats_to_osd() final;
   void clear_publish_stats() final;
   pg_stat_t get_stats() const;
+  void apply_stats(
+    const hobject_t &soid,
+    const object_stat_sum_t &delta_stats);
+
 private:
   std::optional<pg_stat_t> pg_stats;
 
 public:
+  OSDriver &get_osdriver() final {
+    return osdriver;
+  }
+  SnapMapper &get_snap_mapper() final {
+    return snap_mapper;
+  }
   RecoveryBackend* get_recovery_backend() final {
     return recovery_backend.get();
   }
@@ -710,12 +742,16 @@ public:
     // TODO: see PrimaryLogPG::mark_all_unfound_lost()
     return seastar::now();
   }
+  interruptible_future<> find_unfound(epoch_t epoch_started);
+  bool have_unfound() const {
+    return peering_state.have_unfound();
+  }
 
   bool old_peering_msg(epoch_t reply_epoch, epoch_t query_epoch) const;
 
   template <typename MsgType>
   bool can_discard_replica_op(const MsgType& m) const {
-    return can_discard_replica_op(m, m.map_epoch);
+    return can_discard_replica_op(m, m.get_map_epoch());
   }
 
 private:
@@ -742,9 +778,6 @@ private:
   friend class SnapTrimEvent;
   friend class SnapTrimObjSubEvent;
 private:
-  seastar::future<bool> find_unfound() {
-    return seastar::make_ready_future<bool>(true);
-  }
 
   bool can_discard_replica_op(const Message& m, epoch_t m_map_epoch) const;
   bool can_discard_op(const MOSDOp& m) const;
@@ -776,7 +809,7 @@ private:
 };
 
 struct PG::do_osd_ops_params_t {
-  crimson::net::ConnectionRef &get_connection() const {
+  crimson::net::ConnectionXcoreRef &get_connection() const {
     return conn;
   }
   osd_reqid_t get_reqid() const {
@@ -804,12 +837,17 @@ struct PG::do_osd_ops_params_t {
     return orig_source_inst.name;
   }
 
-  crimson::net::ConnectionRef &conn;
+  snapid_t get_snapid() const {
+    return snapid;
+  }
+
+  crimson::net::ConnectionXcoreRef &conn;
   osd_reqid_t reqid;
   utime_t mtime;
   epoch_t map_epoch;
   entity_inst_t orig_source_inst;
   uint64_t features;
+  snapid_t snapid;
 };
 
 std::ostream& operator<<(std::ostream&, const PG& pg);

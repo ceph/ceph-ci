@@ -9,7 +9,7 @@ These are exciting times in the Ceph community! Get involved!
 +----------------------+-------------------------------------------------+-----------------------------------------------+
 |Channel               | Description                                     | Contact Info                                  |
 +======================+=================================================+===============================================+
-| **Blog**             | Check the Ceph Blog_ periodically to keep track | http://ceph.com/community/blog/               |
+| **Blog**             | Check the Ceph Blog_ periodically to keep track | https://ceph.com/community/blog/              |
 |                      | of Ceph progress and important announcements.   |                                               |
 +----------------------+-------------------------------------------------+-----------------------------------------------+
 | **Planet Ceph**      | Check the blog aggregation on Planet Ceph for   | https://old.ceph.com/category/planet/         |
@@ -33,7 +33,7 @@ These are exciting times in the Ceph community! Get involved!
 |                      | ``#cephfs`` dedicated for Ceph developers.      |                                               |
 +----------------------+-------------------------------------------------+-----------------------------------------------+
 | **Slack**            | Since 2023, the Upstream Ceph community has     |                                               |
-|                      | maintained a community in Slack. Ask your Ceph- | https://ceph-storage.slack.com/               |
+|                      | maintained a community in Slack. Ask your Ceph- | - `Ceph Slack Invite`_                        |
 |                      | related questions in Ceph's Slack channels.     |                                               |
 +----------------------+-------------------------------------------------+-----------------------------------------------+
 | **User List**        | Ask and answer user-related questions by        |                                               |
@@ -66,13 +66,13 @@ These are exciting times in the Ceph community! Get involved!
 |                      | opt out of the email list at any time by        | - `Community Unsubscribe`_                    |
 |                      | unsubscribing. A simple email is all it takes!  | - `Mailing list archives`_                    |
 +----------------------+-------------------------------------------------+-----------------------------------------------+
-| **Bug Tracker**      | You can help keep Ceph production worthy by     | http://tracker.ceph.com/projects/ceph         |
+| **Bug Tracker**      | You can help keep Ceph production worthy by     | https://tracker.ceph.com/projects/ceph        |
 |                      | filing and tracking bugs, and providing feature |                                               |
 |                      | requests using the Bug Tracker_.                |                                               |
 +----------------------+-------------------------------------------------+-----------------------------------------------+
 | **Source Code**      | If you would like to participate in             |                                               |
-|                      | development, bug fixing, or if you just want    | - http://github.com/ceph/ceph                 |
-|                      | the very latest code for Ceph, you can get it   | - http://download.ceph.com/tarballs/          |
+|                      | development, bug fixing, or if you just want    | - https://github.com/ceph/ceph                |
+|                      | the very latest code for Ceph, you can get it   | - https://download.ceph.com/tarballs/         |
 |                      | at http://github.com. See `Ceph Source Code`_   |                                               |
 |                      | for details on cloning from github.             |                                               |
 +----------------------+-------------------------------------------------+-----------------------------------------------+
@@ -100,4 +100,4 @@ These are exciting times in the Ceph community! Get involved!
 .. _Blog: http://ceph.com/community/blog/
 .. _Tracker: http://tracker.ceph.com/
 .. _Ceph Source Code: http://github.com/ceph/ceph
-
+.. _Ceph Slack Invite: https://ceph-storage.slack.com/join/shared_invite/zt-2b91em8b6-NQOKhGYReEIrE28OVncnLQ#/shared-invite/email
