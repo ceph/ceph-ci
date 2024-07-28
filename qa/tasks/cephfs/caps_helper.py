@@ -208,6 +208,9 @@ class MdsCapTester:
         self.path = self._gen_test_file_path(path)
         # Data that out test file will contain.
         self.data = self._gen_test_file_data()
+        # Set new file creation path
+        self.new_file = os_path_join(self.mount.hostfs_mntpt, path.lstrip('/'), 'new_file')
+
 
         self.mount.write_file(self.path, self.data)
         log.info(f'Test file has been created on FS '
@@ -265,6 +268,7 @@ class MdsCapTester:
 
         if perm == 'rw':
             self.conduct_pos_test_for_write_caps()
+            self.conduct_pos_test_for_new_file_creation()
         elif perm == 'r':
             self.conduct_neg_test_for_write_caps()
         else:
@@ -301,6 +305,12 @@ class MdsCapTester:
         cmdargs.pop(-1)
         log.info('absence of write perm was tested successfully: '
                  f'failed to be write data to file {self.path}.')
+
+    def conduct_pos_test_for_new_file_creation(self, sudo_write=False):
+        log.info(f'test write perm: try creating a new "{self.new_file}"')
+        self.mount.create_file(self.new_file)
+        log.info(f'write perm was tested successfully: new file "{self.new_file}" '
+                  'created successfully')
 
 
 class CapTester(MonCapTester, MdsCapTester):

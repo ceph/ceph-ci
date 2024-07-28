@@ -1818,6 +1818,15 @@ class TestFsAuthorize(CephFSTestCase):
         self._remount(keyring)
         self.captester.run_mds_cap_tests(PERM)
 
+    def test_fs_read_and_single_path_rw(self):
+        FS_AUTH_CAPS = (('/', 'r'), ('/dir2', 'rw'))
+        self.mount_a.run_shell('mkdir -p ./dir2')
+        self.captesters = (CapTester(self.mount_a, '/'),
+                           CapTester(self.mount_a, '/dir2'))
+        keyring = self.fs.authorize(self.client_id, FS_AUTH_CAPS)
+
+        self._remount_and_run_tests(FS_AUTH_CAPS, keyring)
+
     def test_multiple_path_r(self):
         PERM = 'r'
         FS_AUTH_CAPS = (('/dir1/dir12', PERM), ('/dir2/dir22', PERM))
