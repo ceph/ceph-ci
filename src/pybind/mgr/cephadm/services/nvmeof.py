@@ -45,6 +45,7 @@ class NvmeofService(CephService):
 
         # TODO: check if we can force jinja2 to generate dicts with double quotes instead of using json.dumps
         transport_tcp_options = json.dumps(spec.transport_tcp_options) if spec.transport_tcp_options else None
+        iobuf_options = json.dumps(spec.iobuf_options) if spec.iobuf_options else None
         name = '{}.{}'.format(utils.name_to_config_section('nvmeof'), nvmeof_gw_id)
         rados_id = name[len('client.'):] if name.startswith('client.') else name
         addr = spec.addr or host_ip
@@ -55,10 +56,11 @@ class NvmeofService(CephService):
             'addr': addr,
             'discovery_addr': discovery_addr,
             'port': spec.port,
-            'spdk_log_level': 'WARNING',
+            'spdk_log_level': '',
             'rpc_socket_dir': '/var/tmp/',
             'rpc_socket_name': 'spdk.sock',
             'transport_tcp_options': transport_tcp_options,
+            'iobuf_options': iobuf_options,
             'rados_id': rados_id
         }
         gw_conf = self.mgr.template.render('services/nvmeof/ceph-nvmeof.conf.j2', context)
