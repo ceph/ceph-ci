@@ -4,7 +4,7 @@ import logging
 
 import orchestrator
 from ceph.deployment.service_spec import PlacementSpec, SMBSpec
-from mgr_module import MgrModule, Option, OptionLevel
+from mgr_module import MgrModule, Option
 from mgr_util import CephFSEarmarkResolver
 
 from . import (
@@ -47,7 +47,7 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
         ),
         Option(
             'internal_store_backend',
-            level=OptionLevel.DEV,
+            # developer option: should be level=OptionLevel.DEV eventually
             type='str',
             default='',
             desc='set internal store backend. for develoment and testing only',
