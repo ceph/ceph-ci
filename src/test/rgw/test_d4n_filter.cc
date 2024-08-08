@@ -13,6 +13,7 @@
 #include "rgw_auth_registry.h"
 #include "driver/rados/rgw_zone.h"
 #include "rgw_sal_config.h"
+#include "rgw_cksum.h"
 
 #include <boost/asio/io_context.hpp>
 
@@ -21,6 +22,7 @@
 #define METADATA_LENGTH 22
 
 using namespace std;
+using namespace rgw::cksum;
 
 string portStr;
 string hostStr;
@@ -30,6 +32,7 @@ vector<const char*> args;
 class Environment* env;
 const DoutPrefixProvider* dpp;
 const req_context rctx{dpp, null_yield, nullptr};
+rgw::cksum::Cksum cksum;
 
 class StoreObject : public rgw::sal::StoreObject {
   friend class D4NFilterFixture;
@@ -179,6 +182,7 @@ class D4NFilterFixture : public ::testing::Test {
       int ret = testWriter->complete(accounted_size, etag,
                        &mtime, set_mtime,
                        attrs,
+		       cksum,
                        delete_at,
                        &if_match, &if_nomatch,
                        &user_data,
@@ -440,6 +444,7 @@ TEST_F(D4NFilterFixture, CopyObjectReplace) {
   ASSERT_EQ(testWriterCopy->complete(accounted_size, etag,
 		   &mtime, set_mtime,
 		   attrs,
+		   cksum,
 		   delete_at,
 		   &if_match, &if_nomatch,
 		   &user_data,
@@ -565,6 +570,7 @@ TEST_F(D4NFilterFixture, CopyObjectMerge) {
   ASSERT_EQ(testWriterCopy->complete(accounted_size, etag,
 		   &mtime, set_mtime,
 		   attrs,
+		   cksum,
 		   delete_at,
 		   &if_match, &if_nomatch,
 		   &user_data,
@@ -1893,6 +1899,7 @@ TEST_F(D4NFilterFixture, DataCheck) {
   ASSERT_EQ(testWriter->complete(accounted_size, etag,
 		 &mtime, set_mtime,
 		 attrs,
+		 cksum,
 		 delete_at,
 		 &if_match, &if_nomatch,
 		 &user_data,
@@ -1918,6 +1925,7 @@ TEST_F(D4NFilterFixture, DataCheck) {
   ASSERT_EQ(testWriter->complete(accounted_size, etag,
 		 &mtime, set_mtime,
 		 attrs,
+		 cksum,
 		 delete_at,
 		 &if_match, &if_nomatch,
 		 &user_data,
