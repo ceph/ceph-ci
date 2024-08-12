@@ -482,7 +482,9 @@ class CephadmServe:
         if self.mgr.warn_on_stray_hosts or self.mgr.warn_on_stray_daemons:
             ls = self.mgr.list_servers()
             self.log.debug(ls)
-            managed = self.mgr.cache.get_daemon_names()
+            managed_daemons = self.mgr.cache.get_daemons()
+            stray_filter = self._build_stray_filter(managed_daemons)
+            managed = [d.name() for d in managed_daemons]
             host_detail = []     # type: List[str]
             host_num_daemons = 0
             daemon_detail = []  # type: List[str]
@@ -496,16 +498,7 @@ class CephadmServe:
                     daemon_id = s.get('id')
                     assert daemon_id
                     name = self._service_reference_name(s.get('type'), daemon_id)
-                    if s.get('type') == 'tcmu-runner':
-                        # because we don't track tcmu-runner daemons in the host cache
-                        # and don't have a way to check if the daemon is part of iscsi service
-                        # we assume that all tcmu-runner daemons are managed by cephadm
-                        managed.append(name)
-                    # Don't mark daemons we just created/removed in the last minute as stray.
-                    # It may take some time for the mgr to become aware the daemon
-                    # had been created/removed.
-                    if name in self.mgr.recently_altered_daemons:
-                        continue
+                    managed.extend(stray_filter(s.get('type'), daemon_id, name))
                     if host not in self.mgr.inventory:
                         missing_names.append(name)
                         host_num_daemons += 1
@@ -543,6 +536,31 @@ class CephadmServe:
                 )
             )
         return name
+
+    def _build_stray_filter(
+        self, managed: List[orchestrator.DaemonDescription]
+    ) -> Callable[[str, str, str], List[str]]:
+        svcs = {
+            daemon_type_to_service(cast(str, dd.daemon_type))
+            for dd in managed
+        }
+        _services = [self.mgr.cephadm_services[dt] for dt in svcs]
+
+        def _filter(
+            service_type: str, daemon_id: str, name: str
+        ) -> List[str]:
+            if service_type == 'tcmu-runner':
+                # because we don't track tcmu-runner daemons in the host cache
+                # and don't have a way to check if the daemon is part of iscsi service
+                # we assume that all tcmu-runner daemons are managed by cephadm
+                return [name]
+            out = []
+            for svc in _services:
+                if svc.ignore_possible_stray(service_type, daemon_id, name):
+                    out.append(name)
+            return out
+
+        return _filter
 
     def _check_for_moved_osds(self) -> None:
         self.log.debug('_check_for_moved_osds')
