@@ -73,7 +73,7 @@
     "ng2-charts": "2.4.2",
     "ngx-pipe-function": "1.0.0",
     "ngx-toastr": "17.0.2",
-    "rxjs": "6.6.3",
+    "rxjs": "7.8.1",
     "simplebar-angular": "2.3.6",
     "swagger-ui": "4.12.0",
     "tslib": "2.3.1",
