@@ -40,6 +40,7 @@ export class FormButtonPanelComponent implements OnInit {
   disabled = false;
   @Input()
   title = '';
+  @Input()
   modalForm = false;
   @Input()
   submitBtnType: 'primary' | 'danger';
