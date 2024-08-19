@@ -2671,7 +2671,7 @@ int RGWLC::remove_bucket_config(rgw::sal::Bucket* bucket,
   if (merge_attrs) {
     rgw::sal::Attrs& attrs = bucket->get_attrs();
     attrs.erase(RGW_ATTR_LC);
-    ret = bucket->put_info(this, false, real_time());
+    ret = bucket->put_info(this, false, real_time(), null_yield);
     if (ret < 0) {
       ldpp_dout(this, 0) <<
 	"RGWLC::RGWDeleteLC() failed to set attrs on bucket="
