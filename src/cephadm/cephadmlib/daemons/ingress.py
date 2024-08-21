@@ -1,7 +1,9 @@
+import logging
 import os
 
 from typing import Dict, List, Optional, Tuple, Union
 
+from ..call_wrappers import call_throws
 from ..constants import (
     DEFAULT_HAPROXY_IMAGE,
     DEFAULT_KEEPALIVED_IMAGE,
@@ -17,6 +19,10 @@ from ..data_utils import dict_get, is_fsid
 from ..deployment_utils import to_deployment_container
 from ..exceptions import Error
 from ..file_utils import makedirs, populate_files
+from ..packagers import create_packager
+
+
+logger = logging.getLogger()
 
 
 @register_daemon_form
@@ -46,6 +52,7 @@ class HAproxy(ContainerDaemonForm):
 
         # config-json options
         self.files = dict_get(config_json, 'files', {})
+        self.qat_support = dict_get(config_json, 'qat_support', False)
 
         self.validate()
 
@@ -143,6 +150,41 @@ class HAproxy(ContainerDaemonForm):
         args.extend(
             ['--user=root']
         )  # haproxy 2.4 defaults to a different user
+        if self.qat_support:
+            try:
+                call_throws(self.ctx, ['systemctl', 'enable', 'qat'])
+                call_throws(self.ctx, ['systemctl', 'start', 'qat'])
+            except Exception:
+                logger.info(
+                    'Failed to start qat systemd unit, attempting install...'
+                )
+                packager = create_packager(ctx)
+                packager.install(['qatlib'])
+                logger.info(
+                    'Install complete. Attempting to start qat systemd unit again...'
+                )
+                call_throws(self.ctx, ['systemctl', 'enable', 'qat'])
+                call_throws(self.ctx, ['systemctl', 'start', 'qat'])
+            out, _, _ = call_throws(
+                self.ctx, ['ls', '-1', '/dev/vfio/devices']
+            )
+            devices: List[str] = [d for d in out.split('\n') if d]
+            args.extend(
+                [
+                    '--privileged',
+                    '--security-opt', 'seccomp=unconfined',
+                    '--ulimit', 'memlock=209715200:209715200',
+                    '--device=/dev/qat_adf_ctl:/dev/qat_adf_ctl',
+                    '--device=/dev/vfio/vfio:/dev/vfio/vfio',
+                    '-v', '/dev:/dev'
+                ]
+            )
+            for dev in devices:
+                args.extend(
+                    [
+                        f'--device=/dev/vfio/devices/{dev}:/dev/vfio/devices/{dev}'
+                    ]
+                )
 
     def customize_process_args(
         self, ctx: CephadmContext, args: List[str]

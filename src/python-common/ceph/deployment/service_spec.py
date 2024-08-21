@@ -1697,6 +1697,7 @@ class IngressSpec(ServiceSpec):
                  custom_configs: Optional[List[CustomConfig]] = None,
                  health_check_interval: Optional[str] = None,
                  use_tcp_mode_over_rgw: bool = False,
+                 haproxy_qat_support: bool = False,
                  ):
         assert service_type == 'ingress'
 
@@ -1732,6 +1733,7 @@ class IngressSpec(ServiceSpec):
         self.health_check_interval = health_check_interval.strip(
         ) if health_check_interval else None
         self.use_tcp_mode_over_rgw = use_tcp_mode_over_rgw
+        self.haproxy_qat_support = haproxy_qat_support
 
     def get_port_start(self) -> List[int]:
         ports = []
