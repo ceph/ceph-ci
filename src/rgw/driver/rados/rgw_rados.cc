@@ -5258,7 +5258,6 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
     {
       bufferlist bl;
       bl.clear();
-      //bl.append(rgw::sal::RGWRestoreType::Temporary);
       using ceph::encode;
       encode(rgw::sal::RGWRestoreType::Temporary, bl);
       attrs[RGW_ATTR_RESTORE_TYPE] = std::move(bl);

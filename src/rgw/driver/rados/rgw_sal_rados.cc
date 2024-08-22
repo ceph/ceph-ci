@@ -2924,7 +2924,7 @@ int RadosObject::restore_obj_from_cloud(Bucket* bucket,
     return ret;
   }
 
-  /* Transition object to cloud end point.
+  /* Restore object from the cloud endpoint.
    * All restore related status and attrs are set as part of object download to
    * avoid any races */
   ret = store->getRados()->restore_obj_from_cloud(tier_ctx, *rados_ctx,
@@ -3058,15 +3058,15 @@ int RadosObject::handle_obj_expiry(const DoutPrefixProvider* dpp, optional_yield
   real_time read_mtime;
   std::unique_ptr<rgw::sal::Object::ReadOp> read_op(get_read_op());
   read_op->params.lastmod = &read_mtime;
-
-  ldpp_dout(dpp, 0) << "Expiring temporary restored Obj:" << get_key() << dendl;
+  ldpp_dout(dpp, 20) << "Entering handle_obj_expiry Obj:" << get_key() << dendl;
 
   ret = read_op->prepare(y, dpp);
   if (ret < 0) {
-    ldpp_dout(dpp, 0) << "read_op failed ret=" << ret << dendl;
+    ldpp_dout(dpp, -1) << "read_op failed ret=" << ret << dendl;
     return ret;
   }
 
+  set_atomic();
   map<string, bufferlist> attrs = get_attrs();
   RGWRados::Object op_target(store->getRados(), bucket->get_info(), *rados_ctx, get_obj());
   RGWRados::Object::Write obj_op(&op_target);
@@ -3079,13 +3079,14 @@ int RadosObject::handle_obj_expiry(const DoutPrefixProvider* dpp, optional_yield
     rgw::sal::RGWRestoreType restore_type;
     decode(restore_type, attr_iter->second);
     if (restore_type == rgw::sal::RGWRestoreType::Temporary) {
+      ldpp_dout(dpp, 10) << "Expiring temporary restored Obj:" << get_key() << dendl;
+
       attr_iter = attrs.find(RGW_ATTR_MANIFEST);
       if (attr_iter != attrs.end()) {
         RGWObjManifest m;
         try {
           using ceph::decode;
           decode(m, attr_iter->second);
-          set_atomic();
           obj_op.meta.modify_tail = true;
           obj_op.meta.flags = PUT_OBJ_CREATE;
           obj_op.meta.category = RGWObjCategory::CloudTiered;
@@ -3099,7 +3100,6 @@ int RadosObject::handle_obj_expiry(const DoutPrefixProvider* dpp, optional_yield
           obj_op.meta.set_mtime = read_mtime;
 
           RGWObjManifest *pmanifest;
-          RGWObjManifest manifest;
           pmanifest = &m;
 
 	        Object* head_obj = (Object*)this;
@@ -3135,8 +3135,12 @@ int RadosObject::handle_obj_expiry(const DoutPrefixProvider* dpp, optional_yield
     }
   }
   // object is not restored/temporary; go for regular deletion
-  obj->set_atomic();
-  ret = obj->delete_object(dpp, null_yield, rgw::sal::FLAG_LOG_OP);
+  // ensure object is not overwritten and is really expired
+  if (is_expired()) {
+    ldpp_dout(dpp, 10) << "Deleting expired obj:" << get_key() << dendl;
+
+    ret = obj->delete_object(dpp, null_yield, rgw::sal::FLAG_LOG_OP);
+  }
 
   return ret;
 }

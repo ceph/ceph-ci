@@ -219,9 +219,6 @@ int RGWObjectExpirer::garbage_single_object(const DoutPrefixProvider *dpp, objex
   }
 
   rgw_obj_key key = hint.obj_key;
-  if (key.instance.empty()) {
-    key.instance = "null";
-  }
 
   std::unique_ptr<rgw::sal::Object> obj = bucket->get_object(key);
   ret = static_cast<rgw::sal::RadosObject*>(obj.get())->handle_obj_expiry(dpp, null_yield);
