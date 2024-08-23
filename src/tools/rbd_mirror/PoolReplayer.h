@@ -107,7 +107,7 @@ private:
                  bool strip_cluster_overrides);
 
   void update_namespace_replayers();
-  int list_mirroring_namespaces(std::set<std::string> *namespaces);
+  int list_mirroring_namespaces(std::map<std::string,std::string> *namespaces);
 
   void namespace_replayer_acquire_leader(const std::string &name,
                                          Context *on_finish);
@@ -221,6 +221,7 @@ private:
 
   std::unique_ptr<NamespaceReplayer<ImageCtxT>> m_default_namespace_replayer;
   std::map<std::string, NamespaceReplayer<ImageCtxT> *> m_namespace_replayers;
+  std::map<std::string, std::string> m_namespace_map;
 
   std::string m_asok_hook_name;
   AdminSocketHook *m_asok_hook = nullptr;

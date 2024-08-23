@@ -129,7 +129,8 @@ struct NamespaceReplayer<librbd::MockTestImageCtx> {
   static std::map<std::string, NamespaceReplayer *> s_instances;
 
   static NamespaceReplayer *create(
-      const std::string &name,
+      const std::string &local_name,
+      const std::string &remote_name,
       librados::IoCtx &local_ioctx,
       librados::IoCtx &remote_ioctx,
       const std::string &local_mirror_uuid,
@@ -141,9 +142,9 @@ struct NamespaceReplayer<librbd::MockTestImageCtx> {
       ServiceDaemon<librbd::MockTestImageCtx> *service_daemon,
       journal::CacheManagerHandler *cache_manager_handler,
       PoolMetaCache* pool_meta_cache) {
-    ceph_assert(s_instances.count(name));
-    auto namespace_replayer = s_instances[name];
-    s_instances.erase(name);
+    ceph_assert(s_instances.count(local_name));
+    auto namespace_replayer = s_instances[local_name];
+    s_instances.erase(local_name);
     return namespace_replayer;
   }
 
@@ -361,6 +362,17 @@ public:
                 encode(cls::rbd::MIRROR_MODE_POOL, *bl);
               })),
           Return(0)));
+  }
+
+  void expect_mirror_namespace_get(librados::MockTestMemIoCtxImpl *io_ctx_impl,
+				  const std::string &remote_namespace, int r) {
+    EXPECT_CALL(*io_ctx_impl,
+                exec(RBD_MIRRORING, _, StrEq("rbd"), StrEq("mirror_namespace_get"),
+                     _, _, _, _))
+      .WillRepeatedly(DoAll(WithArg<5>(Invoke([remote_namespace](bufferlist *bl) {
+                encode(remote_namespace, *bl);
+              })),
+          Return(r)));
   }
 
   void expect_clone(librados::MockTestMemIoCtxImpl* mock_io_ctx) {
@@ -737,6 +749,7 @@ TEST_F(TestMockPoolReplayer, Namespaces) {
 
   expect_clone(mock_local_io_ctx);
   expect_mirror_mode_get(mock_local_io_ctx);
+  expect_mirror_namespace_get(mock_local_io_ctx, "", -ENOENT);
 
   InSequence seq;
 
@@ -856,6 +869,7 @@ TEST_F(TestMockPoolReplayer, NamespacesError) {
 
   expect_clone(mock_local_io_ctx);
   expect_mirror_mode_get(mock_local_io_ctx);
+  expect_mirror_namespace_get(mock_local_io_ctx, "", -ENOENT);
 
   InSequence seq;
 

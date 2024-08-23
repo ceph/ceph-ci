@@ -36,7 +36,8 @@ const std::string SERVICE_DAEMON_REMOTE_COUNT_KEY("image_remote_count");
 
 template <typename I>
 NamespaceReplayer<I>::NamespaceReplayer(
-    const std::string &name,
+    const std::string &local_name,
+    const std::string &remote_name,
     librados::IoCtx &local_io_ctx, librados::IoCtx &remote_io_ctx,
     const std::string &local_mirror_uuid,
     const std::string& local_mirror_peer_uuid,
@@ -47,7 +48,8 @@ NamespaceReplayer<I>::NamespaceReplayer(
     ServiceDaemon<I> *service_daemon,
     journal::CacheManagerHandler *cache_manager_handler,
     PoolMetaCache* pool_meta_cache) :
-  m_namespace_name(name),
+  m_local_namespace_name(local_name),
+  m_remote_namespace_name(remote_name),
   m_local_mirror_uuid(local_mirror_uuid),
   m_local_mirror_peer_uuid(local_mirror_peer_uuid),
   m_remote_pool_meta(remote_pool_meta),
@@ -57,16 +59,19 @@ NamespaceReplayer<I>::NamespaceReplayer(
   m_cache_manager_handler(cache_manager_handler),
   m_pool_meta_cache(pool_meta_cache),
   m_lock(ceph::make_mutex(librbd::util::unique_lock_name(
-      "rbd::mirror::NamespaceReplayer " + name, this))),
+      "rbd::mirror::NamespaceReplayer " + local_name, this))),
   m_local_pool_watcher_listener(this, true),
   m_remote_pool_watcher_listener(this, false),
   m_image_map_listener(this) {
-  dout(10) << name << dendl;
+  dout(10) << "local_name=" << local_name
+           << ", remote_name="  << remote_name
+           << ", local_mirror_uuid=" << m_local_mirror_uuid
+           << dendl;
 
   m_local_io_ctx.dup(local_io_ctx);
-  m_local_io_ctx.set_namespace(name);
+  m_local_io_ctx.set_namespace(local_name);
   m_remote_io_ctx.dup(remote_io_ctx);
-  m_remote_io_ctx.set_namespace(name);
+  m_remote_io_ctx.set_namespace(remote_name);
 }
 
 template <typename I>
@@ -88,7 +93,8 @@ void NamespaceReplayer<I>::init(Context *on_finish) {
   ceph_assert(m_on_finish == nullptr);
   m_on_finish = on_finish;
 
-  init_local_status_updater();
+  get_remote_mirror_namespace();
+//  init_local_status_updater();
 }
 
 
@@ -854,6 +860,57 @@ void NamespaceReplayer<I>::handle_remove_image(const std::string &mirror_uuid,
 
   m_instance_watcher->notify_peer_image_removed(instance_id, global_image_id,
                                                 mirror_uuid, on_finish);
+}
+
+template <typename I>
+void NamespaceReplayer<I>::get_remote_mirror_namespace() {
+  dout(15) << dendl;
+
+  librados::ObjectReadOperation op;
+  librbd::cls_client::mirror_remote_namespace_get_start(&op);
+
+  m_out_bl.clear();
+  auto aio_comp = librbd::util::create_rados_callback<
+    NamespaceReplayer<I>, &NamespaceReplayer<I>::handle_get_remote_mirror_namespace>(this);
+  int r = m_remote_io_ctx.aio_operate(RBD_MIRRORING, aio_comp, &op, &m_out_bl);
+  ceph_assert(r == 0);
+  aio_comp->release();
+}
+
+
+template <typename I>
+void NamespaceReplayer<I>::handle_get_remote_mirror_namespace(int r) {
+  dout(20) << "r=" << r << dendl;
+  std::string remote_namespace;
+
+  std::lock_guard locker{m_lock};
+
+  if (r >= 0) {
+    auto it = m_out_bl.cbegin();
+    r = librbd::cls_client::mirror_remote_namespace_get_finish(&it,
+                                                               &remote_namespace);
+  }
+  if (r < 0 ) {
+    if (r == -EOPNOTSUPP || r == -ENOENT) {
+      remote_namespace = m_remote_namespace_name;
+    } else {
+      derr << "failed to retrieve remote namespace: " << cpp_strerror(r)
+           << dendl;
+      ceph_assert(m_on_finish != nullptr);
+      m_threads->work_queue->queue(m_on_finish, r);
+      m_on_finish = nullptr;
+      return;
+    }
+  }
+  if (remote_namespace != m_local_namespace_name) {
+    derr << "remote namespace does not match: " << cpp_strerror(r)
+         << dendl;
+    ceph_assert(m_on_finish != nullptr);
+    m_threads->work_queue->queue(m_on_finish, -EINVAL);
+    m_on_finish = nullptr;
+    return;
+  }
+  init_local_status_updater();
 }
 
 } // namespace mirror

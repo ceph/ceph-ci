@@ -357,6 +357,10 @@ public:
   int mirror_mode_get(IoCtx& io_ctx, rbd_mirror_mode_t *mirror_mode);
   int mirror_mode_set(IoCtx& io_ctx, rbd_mirror_mode_t mirror_mode);
 
+  int mirror_remote_namespace_get(IoCtx& io_ctx,
+                                  std::string* remote_namespace);
+  int mirror_remote_namespace_set(IoCtx& io_ctx,
+                                  const std::string& remote_namespace);
   int mirror_uuid_get(IoCtx& io_ctx, std::string* mirror_uuid);
 
   int mirror_peer_bootstrap_create(IoCtx& io_ctx, std::string* token);

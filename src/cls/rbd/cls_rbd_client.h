@@ -389,6 +389,14 @@ int mirror_mode_get(librados::IoCtx *ioctx,
 int mirror_mode_set(librados::IoCtx *ioctx,
                     cls::rbd::MirrorMode mirror_mode);
 
+void mirror_remote_namespace_get_start(librados::ObjectReadOperation *op);
+int mirror_remote_namespace_get_finish(ceph::buffer::list::const_iterator *it,
+                                       std::string *mirror_namespace);
+int mirror_remote_namespace_get(librados::IoCtx *ioctx,
+				std::string *mirror_namespace);
+int mirror_remote_namespace_set(librados::IoCtx *ioctx,
+				const std::string &mirror_namespace);
+
 int mirror_peer_ping(librados::IoCtx *ioctx,
                      const std::string& site_name,
                      const std::string& fsid);

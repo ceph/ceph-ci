@@ -79,7 +79,7 @@ test_replay()
 	    wait_for_status_in_pool_dir ${CLUSTER2} ${POOL} ${image} \
 					'down+unknown'
 	fi
-	compare_images ${POOL} ${image}
+	compare_images ${CLUSTER1} ${CLUSTER2} ${POOL} ${POOL} ${image}
     done
 }
 
