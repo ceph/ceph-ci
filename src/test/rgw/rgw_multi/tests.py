@@ -50,6 +50,7 @@ def init_multi(_realm, _user, _alt_user, _config=None):
     user = _user
     global alt_user
     alt_user = _alt_user
+    log.debug('created alt_user=%s', alt_user.name)
     global config
     config = _config or Config()
     realm_meta_checkpoint(realm)
@@ -478,6 +479,7 @@ class ZonegroupConns:
         self.master_zone = None
 
         for z in zonegroup.zones:
+            log.debug('ZonegroupConns::__init__ alt_user=%s', alt_user.name)
             zone_conn = z.get_conn(user.credentials, alt_user.credentials)
             self.zones.append(zone_conn)
             if z.is_read_only():

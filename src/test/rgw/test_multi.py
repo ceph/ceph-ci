@@ -249,7 +249,9 @@ def init(parse_args):
     user = multisite.User('tester', tenant=args.tenant, account='RGW11111111111111111')
 
     alt_user_creds = gen_credentials()
+    log.debug('created alt_user_creds access key=%s secret=%s', alt_user_creds.access_key, alt_user_creds.secret)
     alt_user = multisite.User('alt_tester', tenant=args.tenant, account='RGW11111111111111111')
+    log.debug('created alt_user=%s', alt_user.name)
 
     realm = multisite.Realm('r')
     if bootstrap:
