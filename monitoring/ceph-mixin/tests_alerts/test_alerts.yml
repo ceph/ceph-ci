@@ -2256,6 +2256,54 @@ tests:
           summary: "wah subsystem has reached its maximum number of namespaces "
           description: "Subsystems have a max namespace limit defined at creation time. This alert means that no more namespaces can be added to wah"
 
+# NVMeoFMultipleNamespacesOfRBDImage
+ - interval: 1m
+   input_series:
+    - series: 'ceph_nvmeof_bdev_metadata{bdev_name="bdev1", instance="ceph-nvme-vm1", pool_name="mypool", rbd_name="myimage1"}'
+      values: '1x10'
+    - series: 'ceph_nvmeof_bdev_metadata{bdev_name="bdev1", instance="ceph-nvme-vm2", pool_name="mypool", rbd_name="myimage1"}'
+      values: '1x10'
+    - series: 'ceph_nvmeof_bdev_metadata{bdev_name="bdev2", instance="ceph-nvme-vm1", pool_name="mypool", rbd_name="myimage2"}'
+      values: '1x10'
+    - series: 'ceph_nvmeof_bdev_metadata{bdev_name="bdev2", instance="ceph-nvme-vm2", pool_name="mypool", rbd_name="myimage2"}'
+      values: '1x10'
+    - series: 'ceph_nvmeof_bdev_metadata{bdev_name="bdev3", instance="ceph-nvme-vm1", pool_name="mypool", rbd_name="myimage1"}'
+      values: '1x10'
+    - series: 'ceph_nvmeof_bdev_metadata{bdev_name="bdev3", instance="ceph-nvme-vm2", pool_name="mypool", rbd_name="myimage1"}'
+      values: '1x10'
+    - series: 'ceph_nvmeof_bdev_metadata{bdev_name="bdev4", instance="ceph-nvme-vm1", pool_name="mypool", rbd_name="myimage1"}' # bdev with no ns
+      values: '1x10'
+    - series: 'ceph_nvmeof_subsystem_namespace_metadata{nqn="nqn1", nsid="1", bdev_name="bdev1", instance="ceph-nvme-vm1", cluster="mycluster"}'
+      values: '1x10'
+    - series: 'ceph_nvmeof_subsystem_namespace_metadata{nqn="nqn1", nsid="1", bdev_name="bdev1", instance="ceph-nvme-vm2", cluster="mycluster"}'
+      values: '1x10'
+    - series: 'ceph_nvmeof_subsystem_namespace_metadata{nqn="nqn1", nsid="2", bdev_name="bdev2", instance="ceph-nvme-vm1", cluster="mycluster"}'
+      values: '1x10'
+    - series: 'ceph_nvmeof_subsystem_namespace_metadata{nqn="nqn1", nsid="2", bdev_name="bdev2", instance="ceph-nvme-vm2", cluster="mycluster"}'
+      values: '1x10'
+    - series: 'ceph_nvmeof_subsystem_namespace_metadata{nqn="nqn2", nsid="1", bdev_name="bdev3", instance="ceph-nvme-vm1", cluster="mycluster"}'
+      values: '1x10'
+    - series: 'ceph_nvmeof_subsystem_namespace_metadata{nqn="nqn2", nsid="1", bdev_name="bdev3", instance="ceph-nvme-vm2", cluster="mycluster"}'
+      values: '1x10'
+   promql_expr_test:
+     - expr: count by(pool_name, rbd_name) (count by(bdev_name, pool_name, rbd_name) (ceph_nvmeof_bdev_metadata and on (bdev_name) ceph_nvmeof_subsystem_namespace_metadata)) > 1
+       eval_time: 1m
+       exp_samples:
+         - labels: '{pool_name="mypool", rbd_name="myimage1"}'
+           value: 2
+   alert_rule_test:
+    - eval_time: 5m
+      alertname: NVMeoFMultipleNamespacesOfRBDImage
+      exp_alerts:
+      - exp_labels:
+          pool_name: mypool
+          rbd_name: myimage1 
+          severity: warning
+          type: ceph_default
+        exp_annotations:
+          summary: "RBD image mypool/myimage1 cannot be reused for multiple NVMeoF namespace "
+          description: "Each NVMeoF namespace must have a unique RBD pool and image, across all different gateway groups."
+
  # NVMeoFTooManyGateways
  - interval: 1m
    input_series:
@@ -2387,6 +2435,38 @@ tests:
         exp_annotations:
           summary: "Max gateways within a gateway group (group-1) exceeded on cluster mycluster"
           description: "You may create many gateways in a gateway group, but 8 is the tested limit"
+
+
+ # NVMeoFMaxGatewayGroups
+ - interval: 1m
+   input_series:
+    - series: 'ceph_nvmeof_gateway_info{group="group-1",addr="1.1.1.1",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{group="group-2",addr="1.1.1.2",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{group="group-3",addr="1.1.1.3",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{group="group-4",addr="1.1.1.9",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{group="group-5",addr="1.1.1.12",cluster="mycluster"}'
+      values: '1+0x20'
+   promql_expr_test:
+     - expr: count(count by (group, cluster) (ceph_nvmeof_gateway_info)) by (cluster) > 4.00
+       eval_time: 1m
+       exp_samples:
+         - labels: '{cluster="mycluster"}'
+           value: 5
+   alert_rule_test:
+    - eval_time: 5m
+      alertname: NVMeoFMaxGatewayGroups
+      exp_alerts:
+      - exp_labels:
+          severity: warning
+          cluster: mycluster
+          type: ceph_default
+        exp_annotations:
+          summary: "Max gateway groups exceeded on cluster mycluster"
+          description: "You may create many gateway groups, but 4 is the tested limit"
 
  # NVMeoFSingleGatewayGroup
  - interval: 1m
@@ -2832,9 +2912,78 @@ tests:
           severity: warning
           type: ceph_default
         exp_annotations:
-          summary: "The number of clients connected to nqn1 is too high "
-          description: "The supported limit for clients connecting to a subsystem is 32" 
+          summary: "The number of clients connected to nqn1 is too high on cluster mycluster"
+          description: "The supported limit for clients connecting to a subsystem is 32"
  
+ # NVMeoFMissingListener
+ - interval: 1m
+   input_series:
+    - series: 'ceph_nvmeof_subsystem_listener_count{nqn="nqn1", instance="node-1:9100"}'
+      values: '0 0 0 0 0 0 0 0 0 0 0'
+    - series: 'ceph_nvmeof_subsystem_listener_count{nqn="nqn1", instance="node-2:9100"}'
+      values: '1 1 1 1 1 1 1 1 1 1 1'
+    - series: 'ceph_nvmeof_subsystem_listener_count{nqn="nqn1", instance="node-3:9100"}'
+      values: '1 1 1 1 1 1 1 1 1 1 1'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.1", instance="node-1:9100"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.2", instance="node-2:9100"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.3", instance="node-3:9100"}'
+      values: '1+0x20'      
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.4", instance="node-4:9100"}'
+      values: '1+0x20'
+   promql_expr_test:
+     - expr: ceph_nvmeof_subsystem_listener_count == 0 and on(nqn) sum(ceph_nvmeof_subsystem_listener_count) by (nqn) > 0
+       eval_time: 1m
+       exp_samples:
+         - labels: '{__name__="ceph_nvmeof_subsystem_listener_count", instance="node-1:9100", nqn="nqn1"}'
+           value: 0
+   alert_rule_test:
+    - eval_time: 10m
+      alertname: NVMeoFMissingListener
+      exp_alerts:
+      - exp_labels:
+          instance: node-1:9100
+          nqn: nqn1
+          severity: warning
+          type: ceph_default
+        exp_annotations:
+          summary: "No listener added for node-1:9100 NVMe-oF Gateway to nqn1 subsystem"
+          description: "For every subsystem, each gateway should have a listener to balance traffic between gateways." 
+
+ # NVMeoFZeroListenerSubsystem
+ - interval: 1m
+   input_series:
+    - series: 'ceph_nvmeof_subsystem_listener_count{nqn="nqn1"}'
+      values: '0 0 0 0 0 0 0 0'
+    - series: 'ceph_nvmeof_subsystem_listener_count{nqn="nqn2"}'
+      values: '0 1 1 1 2 2 3 4'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.1"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.2"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.3"}'
+      values: '1+0x20'      
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.4"}'
+      values: '1+0x20'
+   promql_expr_test:
+     - expr: ceph_nvmeof_subsystem_listener_count == 0
+       eval_time: 1m
+       exp_samples:
+         - labels: '{__name__="ceph_nvmeof_subsystem_listener_count",nqn="nqn1"}'
+           value: 0
+   alert_rule_test:
+    - eval_time: 10m
+      alertname: NVMeoFZeroListenerSubsystem
+      exp_alerts:
+      - exp_labels:
+          nqn: nqn1
+          severity: warning
+          type: ceph_default
+        exp_annotations:
+          summary: "No listeners added to nqn1 subsystem"
+          description: "NVMeoF gateway configuration incomplete; one of the subsystems have zero listeners."
+
  # NVMeoFHighHostCPU
  - interval: 1m
    input_series:

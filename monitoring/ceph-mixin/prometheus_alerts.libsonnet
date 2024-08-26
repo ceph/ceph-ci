@@ -852,11 +852,21 @@
         {
           alert: 'NVMeoFSubsystemNamespaceLimit',
           'for': '1m',
-          expr: '(count by(nqn) (ceph_nvmeof_subsystem_namespace_metadata)) >= ceph_nvmeof_subsystem_namespace_limit',
+          expr: '(count by(nqn, cluster, instance) (ceph_nvmeof_subsystem_namespace_metadata)) >= on(nqn, instance) group_right(cluster) ceph_nvmeof_subsystem_namespace_limit',
           labels: { severity: 'warning', type: 'ceph_default' },
           annotations: {
             summary: '{{ $labels.nqn }} subsystem has reached its maximum number of namespaces %(cluster)s' % $.MultiClusterSummary(),
             description: 'Subsystems have a max namespace limit defined at creation time. This alert means that no more namespaces can be added to {{ $labels.nqn }}',
+          },
+        },
+        {
+          alert: 'NVMeoFMultipleNamespacesOfRBDImage',
+          'for': '1m',
+          expr: 'count by(pool_name, rbd_name) (count by(bdev_name, pool_name, rbd_name) (ceph_nvmeof_bdev_metadata and on (bdev_name) ceph_nvmeof_subsystem_namespace_metadata)) > 1',
+          labels: { severity: 'warning', type: 'ceph_default' },
+          annotations: {
+            summary: 'RBD image {{ $labels.pool_name }}/{{ $labels.rbd_name }} cannot be reused for multiple NVMeoF namespace ',
+            description: 'Each NVMeoF namespace must have a unique RBD pool and image, across all different gateway groups.',
           },
         },
         {
@@ -877,6 +887,16 @@
           annotations: {
             summary: 'Max gateways within a gateway group ({{ $labels.group }}) exceeded %(cluster)s' % $.MultiClusterSummary(),
             description: 'You may create many gateways in a gateway group, but %(NVMeoFMaxGatewaysPerGroup)d is the tested limit' % $._config,
+          },
+        },
+        {
+          alert: 'NVMeoFMaxGatewayGroups',
+          'for': '1m',
+          expr: 'count(count by (group, cluster) (ceph_nvmeof_gateway_info)) by (cluster) > %.2f' % [$._config.NVMeoFMaxGatewayGroups],
+          labels: { severity: 'warning', type: 'ceph_default' },
+          annotations: {
+            summary: 'Max gateway groups exceeded%(cluster)s' % $.MultiClusterSummary(),
+            description: 'You may create many gateway groups, but %(NVMeoFMaxGatewayGroups)d is the tested limit' % $._config,
           },
         },
         {
@@ -947,6 +967,26 @@
           annotations: {
             summary: 'The number of clients connected to {{ $labels.nqn }} is too high %(cluster)s' % $.MultiClusterSummary(),
             description: 'The supported limit for clients connecting to a subsystem is %(NVMeoFHighClientCount)d' % $._config,
+          },
+        },
+        {
+          alert: 'NVMeoFMissingListener',
+          'for': '10m',
+          expr: 'ceph_nvmeof_subsystem_listener_count == 0 and on(nqn) sum(ceph_nvmeof_subsystem_listener_count) by (nqn) > 0',
+          labels: { severity: 'warning', type: 'ceph_default' },
+          annotations: {
+            summary: 'No listener added for {{ $labels.instance }} NVMe-oF Gateway to {{ $labels.nqn }} subsystem',
+            description: 'For every subsystem, each gateway should have a listener to balance traffic between gateways.',
+          },
+        },
+        {
+          alert: 'NVMeoFZeroListenerSubsystem',
+          'for': '10m',
+          expr: 'sum(ceph_nvmeof_subsystem_listener_count) by (nqn) == 0',
+          labels: { severity: 'warning', type: 'ceph_default' },
+          annotations: {
+            summary: 'No listeners added to {{ $labels.nqn }} subsystem',
+            description: 'NVMeoF gateway configuration incomplete; one of the subsystems have zero listeners.',
           },
         },
         {
