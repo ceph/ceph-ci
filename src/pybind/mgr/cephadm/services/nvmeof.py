@@ -38,6 +38,8 @@ class NvmeofService(CephService):
         spec = cast(NvmeofServiceSpec, self.mgr.spec_store[daemon_spec.service_name].spec)
         nvmeof_gw_id = daemon_spec.daemon_id
         host_ip = self.mgr.inventory.get_addr(daemon_spec.host)
+        map_addr = spec.addr_map.get(daemon_spec.host) if spec.addr_map else None
+        map_discovery_addr = spec.discovery_addr_map.get(daemon_spec.host) if spec.discovery_addr_map else None
 
         keyring = self.get_keyring_with_caps(self.get_auth_entity(nvmeof_gw_id),
                                              ['mon', 'profile rbd',
@@ -45,26 +47,38 @@ class NvmeofService(CephService):
 
         # TODO: check if we can force jinja2 to generate dicts with double quotes instead of using json.dumps
         transport_tcp_options = json.dumps(spec.transport_tcp_options) if spec.transport_tcp_options else None
+        iobuf_options = json.dumps(spec.iobuf_options) if spec.iobuf_options else None
         name = '{}.{}'.format(utils.name_to_config_section('nvmeof'), nvmeof_gw_id)
         rados_id = name[len('client.'):] if name.startswith('client.') else name
-        addr = spec.addr or host_ip
-        discovery_addr = spec.discovery_addr or host_ip
+
+        # The address is first searched in the per node address map,
+        # then in the spec address configuration.
+        # If neither is defined, the host IP is used as a fallback.
+        addr = map_addr or spec.addr or host_ip
+        self.mgr.log.info(f"gateway address: {addr} from {map_addr=} {spec.addr=} {host_ip=}")
+        discovery_addr = map_discovery_addr or spec.discovery_addr or host_ip
+        self.mgr.log.info(f"discovery address: {discovery_addr} from {map_discovery_addr=} {spec.discovery_addr=} {host_ip=}")
         context = {
             'spec': spec,
             'name': name,
             'addr': addr,
             'discovery_addr': discovery_addr,
             'port': spec.port,
-            'spdk_log_level': 'WARNING',
+            'spdk_log_level': '',
             'rpc_socket_dir': '/var/tmp/',
             'rpc_socket_name': 'spdk.sock',
             'transport_tcp_options': transport_tcp_options,
+            'iobuf_options': iobuf_options,
             'rados_id': rados_id
         }
         gw_conf = self.mgr.template.render('services/nvmeof/ceph-nvmeof.conf.j2', context)
 
         daemon_spec.keyring = keyring
         daemon_spec.extra_files = {'ceph-nvmeof.conf': gw_conf}
+
+        # Indicate to the daemon whether to utilize huge pages
+        if spec.spdk_mem_size:
+            daemon_spec.extra_files['spdk_mem_size'] = str(spec.spdk_mem_size)
 
         if spec.enable_auth:
             if (

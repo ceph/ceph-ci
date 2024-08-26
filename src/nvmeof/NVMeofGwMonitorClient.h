@@ -21,7 +21,6 @@
 #include "common/Timer.h"
 #include "common/LogClient.h"
 
-#include "client/Client.h"
 #include "mon/MonClient.h"
 #include "osdc/Objecter.h"
 #include "messages/MNVMeofGwMap.h"
@@ -46,7 +45,7 @@ private:
   epoch_t     gwmap_epoch;  // last received gw map epoch
   std::chrono::time_point<std::chrono::steady_clock>
               last_map_time; // used to panic on disconnect
-
+  bool first_beacon = true;
   // init gw ssl opts
   void init_gw_ssl_opts();
 
@@ -58,7 +57,6 @@ protected:
   MonClient monc;
   std::unique_ptr<Messenger> client_messenger;
   Objecter objecter;
-  Client client;
   std::map<NvmeGroupKey, NvmeGwMonClientStates> map;
   ceph::mutex lock = ceph::make_mutex("NVMeofGw::lock");
   // allow beacons to be sent independently of handle_nvmeof_gw_map
