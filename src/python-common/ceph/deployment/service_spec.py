@@ -1227,7 +1227,8 @@ class RGWSpec(ServiceSpec):
                  rgw_user_counters_cache_size: Optional[int] = None,
                  rgw_bucket_counters_cache: Optional[bool] = False,
                  rgw_bucket_counters_cache_size: Optional[int] = None,
-                 disable_multisite_sync_traffic: bool = False,
+                 disable_multisite_sync_traffic: Optional[bool] = None,
+                 generate_cert: bool = False,
                  ):
         assert service_type == 'rgw', service_type
 
