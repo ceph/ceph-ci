@@ -58,11 +58,6 @@ export class WorkbenchLayoutComponent implements OnInit, OnDestroy {
       })
     );
     this.subs.add(
-      this.telemetryNotificationService.update.subscribe((visible: boolean) => {
-        this.showTopNotification('telemetryNotificationEnabled', visible);
-      })
-    );
-    this.subs.add(
       this.motdNotificationService.motd$.subscribe((motd: any) => {
         this.showTopNotification('motdNotificationEnabled', _.isPlainObject(motd));
       })
@@ -76,6 +71,13 @@ export class WorkbenchLayoutComponent implements OnInit, OnDestroy {
       this.subs.add(
         this.storageInsightsNotificationService.remindLaterOn$.subscribe((visible: boolean) => {
           this.showTopNotification('storagteInsightsEnabled', visible);
+        })
+      );
+    } else {
+      // disabling telemetry notification in ibm builds
+      this.subs.add(
+        this.telemetryNotificationService.update.subscribe((visible: boolean) => {
+          this.showTopNotification('telemetryNotificationEnabled', visible);
         })
       );
     }
