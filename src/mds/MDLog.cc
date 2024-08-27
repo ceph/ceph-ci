@@ -287,6 +287,8 @@ LogSegment* MDLog::_start_new_segment(SegmentBoundary* sb)
   logger->set(l_mdl_seg, segments.size());
   sb->set_seq(event_seq);
 
+  dout(20) << __func__ << ": starting new segment " << *ls << dendl;
+
   // Adjust to next stray dir
   if (!mds->is_stopping()) {
     mds->mdcache->advance_stray();
@@ -642,7 +644,7 @@ void MDLog::trim()
     max_ev = events_per_segment + 1;
   }
 
-  submit_mutex.lock();
+  std::unique_lock locker{submit_mutex};
 
   // trim!
   dout(10) << "trim " 
@@ -653,7 +655,6 @@ void MDLog::trim()
 	   << dendl;
 
   if (segments.empty()) {
-    submit_mutex.unlock();
     return;
   }
 
@@ -723,22 +724,23 @@ void MDLog::trim()
       new_expiring_segments++;
       expiring_segments.insert(ls);
       expiring_events += ls->num_events;
-      submit_mutex.unlock();
+      locker.unlock();
 
       uint64_t last_seq = ls->seq;
       try_expire(ls, op_prio);
       log_trim_counter.hit();
       trim_end = ceph::coarse_mono_clock::now();
 
-      submit_mutex.lock();
+      locker.lock();
       p = segments.lower_bound(last_seq + 1);
     }
   }
 
+  ceph_assert(locker.owns_lock());
+
   try_to_commit_open_file_table(get_last_segment_seq());
 
-  // discard expired segments and unlock submit_mutex
-  _trim_expired_segments();
+  _trim_expired_segments(locker);
 }
 
 class C_MaybeExpiredSegment : public MDSInternalContext {
@@ -759,17 +761,18 @@ class C_MaybeExpiredSegment : public MDSInternalContext {
  * Like MDLog::trim, but instead of trimming to max_segments, trim all but the latest
  * segment.
  */
-int MDLog::trim_all()
+int MDLog::trim_to(SegmentBoundary::seq_t seq)
 {
-  submit_mutex.lock();
+  std::unique_lock locker(submit_mutex);
 
   dout(10) << __func__ << ": "
-	   << segments.size()
+           << seq
+	   << " " << segments.size()
            << "/" << expiring_segments.size()
            << "/" << expired_segments.size() << dendl;
 
-  uint64_t last_seq = 0;
-  if (!segments.empty()) {
+  uint64_t last_seq = seq;
+  if (last_seq == 0 || !segments.empty()) {
     last_seq = get_last_segment_seq();
     try_to_commit_open_file_table(last_seq);
   }
@@ -784,7 +787,7 @@ int MDLog::trim_all()
     // Caller should have flushed journaler before calling this
     if (pending_events.count(ls->seq)) {
       dout(5) << __func__ << ": " << *ls << " has pending events" << dendl;
-      submit_mutex.unlock();
+      locker.unlock();
       return -CEPHFS_EAGAIN;
     }
 
@@ -796,17 +799,17 @@ int MDLog::trim_all()
       ceph_assert(expiring_segments.count(ls) == 0);
       expiring_segments.insert(ls);
       expiring_events += ls->num_events;
-      submit_mutex.unlock();
+      locker.unlock();
 
       uint64_t next_seq = ls->seq + 1;
       try_expire(ls, CEPH_MSG_PRIO_DEFAULT);
 
-      submit_mutex.lock();
+      locker.lock();
       p = segments.lower_bound(next_seq);
     }
   }
 
-  _trim_expired_segments();
+  _trim_expired_segments(locker);
 
   return 0;
 }
@@ -847,11 +850,10 @@ void MDLog::_maybe_expired(LogSegment *ls, int op_prio)
   try_expire(ls, op_prio);
 }
 
-void MDLog::_trim_expired_segments()
+void MDLog::_trim_expired_segments(auto& locker, MDSContext* ctx)
 {
   ceph_assert(ceph_mutex_is_locked_by_me(submit_mutex));
-
-  uint64_t const oft_committed_seq = mds->mdcache->open_file_table.get_committed_log_seq();
+  ceph_assert(locker.owns_lock());
 
   // trim expired segments?
   bool trimmed = false;
@@ -898,26 +900,19 @@ void MDLog::_trim_expired_segments()
       break;
     }
 
-    if (!mds_is_shutting_down && ls->seq >= oft_committed_seq) {
-      dout(10) << __func__ << " defer expire for open file table committedseq " << oft_committed_seq
-	       << " <= " << ls->seq << "/" << ls->offset << dendl;
-      break;
-    }
-    
     end = seq;
     dout(10) << __func__ << ": maybe expiring " << *ls << dendl;
   }
 
-  submit_mutex.unlock();
+  locker.unlock();
 
-  if (trimmed)
-    journaler->write_head(0);
-}
-
-void MDLog::trim_expired_segments()
-{
-  submit_mutex.lock();
-  _trim_expired_segments();
+  if (trimmed) {
+    write_head(ctx);
+  } else {
+    if (ctx) {
+      ctx->complete(0);
+    }
+  }
 }
 
 void MDLog::_expired(LogSegment *ls)
