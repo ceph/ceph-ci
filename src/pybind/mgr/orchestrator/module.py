@@ -1890,9 +1890,12 @@ Usage:
             raise OrchestratorValidationError('unrecognized command -i; -h or --help for usage')
 
         spec = NvmeofServiceSpec(
+<<<<<<< HEAD
             service_id=f'{pool}.{group}' if group else pool,
+=======
+            service_id=pool,
+>>>>>>> b638773e63d (Revert "mgr/orchestrator: require "group" field for nvmeof specs")
             pool=pool,
-            group=group,
             placement=PlacementSpec.from_string(placement),
             unmanaged=unmanaged,
             preview_only=dry_run
