@@ -1891,11 +1891,16 @@ Usage:
 
         spec = NvmeofServiceSpec(
 <<<<<<< HEAD
+<<<<<<< HEAD
             service_id=f'{pool}.{group}' if group else pool,
 =======
             service_id=pool,
 >>>>>>> b638773e63d (Revert "mgr/orchestrator: require "group" field for nvmeof specs")
+=======
+            service_id=f'{pool}.{group}',
+>>>>>>> e5e3052f031 (mgr/orchestrator: allow passing group to apply/add nvmeof commands)
             pool=pool,
+            group=group,
             placement=PlacementSpec.from_string(placement),
             unmanaged=unmanaged,
             preview_only=dry_run
