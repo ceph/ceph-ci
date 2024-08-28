@@ -32,8 +32,8 @@ else:
         @EndpointDoc("Get information about the NVMeoF gateway")
         @map_model(model.GatewayInfo)
         @handle_nvmeof_error
-        def list(self):
-            return NVMeoFClient().stub.get_gateway_info(
+        def list(self, gw_group: Optional[str] = None):
+            return NVMeoFClient(gw_group=gw_group).stub.get_gateway_info(
                 NVMeoFClient.pb2.get_gateway_info_req()
             )
 
@@ -43,8 +43,8 @@ else:
         @EndpointDoc("List all NVMeoF subsystems")
         @map_collection(model.Subsystem, pick="subsystems")
         @handle_nvmeof_error
-        def list(self):
-            return NVMeoFClient().stub.list_subsystems(
+        def list(self, gw_group: Optional[str] = None):
+            return NVMeoFClient(gw_group=gw_group).stub.list_subsystems(
                 NVMeoFClient.pb2.list_subsystems_req()
             )
 
@@ -54,8 +54,8 @@ else:
         )
         @map_model(model.Subsystem, first="subsystems")
         @handle_nvmeof_error
-        def get(self, nqn: str):
-            return NVMeoFClient().stub.list_subsystems(
+        def get(self, nqn: str, gw_group: Optional[str] = None):
+            return NVMeoFClient(gw_group=gw_group).stub.list_subsystems(
                 NVMeoFClient.pb2.list_subsystems_req(subsystem_nqn=nqn)
             )
 
@@ -69,8 +69,9 @@ else:
         )
         @empty_response
         @handle_nvmeof_error
-        def create(self, nqn: str, enable_ha: bool, max_namespaces: int = 1024):
-            return NVMeoFClient().stub.create_subsystem(
+        def create(self, nqn: str, enable_ha: bool, max_namespaces: int = 1024,
+                   gw_group: Optional[str] = None):
+            return NVMeoFClient(gw_group=gw_group).stub.create_subsystem(
                 NVMeoFClient.pb2.create_subsystem_req(
                     subsystem_nqn=nqn, max_namespaces=max_namespaces, enable_ha=enable_ha
                 )
@@ -85,8 +86,8 @@ else:
         )
         @empty_response
         @handle_nvmeof_error
-        def delete(self, nqn: str, force: Optional[str] = "false"):
-            return NVMeoFClient().stub.delete_subsystem(
+        def delete(self, nqn: str, force: Optional[str] = "false", gw_group: Optional[str] = None):
+            return NVMeoFClient(gw_group=gw_group).stub.delete_subsystem(
                 NVMeoFClient.pb2.delete_subsystem_req(
                     subsystem_nqn=nqn, force=str_to_bool(force)
                 )
