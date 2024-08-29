@@ -45,6 +45,7 @@ class SubvolumeOpType(Enum):
     LIST                  = 'ls'
     GETPATH               = 'getpath'
     INFO                  = 'info'
+    INTERNAL              = 'internal'
     RESIZE                = 'resize'
     SNAP_CREATE           = 'snap-create'
     SNAP_REMOVE           = 'snap-rm'

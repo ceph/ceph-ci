@@ -280,6 +280,7 @@ class SubvolumeV2(SubvolumeV1):
                 SubvolumeOpType.REMOVE_FORCE,
                 SubvolumeOpType.LIST,
                 SubvolumeOpType.INFO,
+                SubvolumeOpType.INTERNAL,
                 SubvolumeOpType.SNAP_REMOVE,
                 SubvolumeOpType.SNAP_LIST,
                 SubvolumeOpType.SNAP_GETPATH,
