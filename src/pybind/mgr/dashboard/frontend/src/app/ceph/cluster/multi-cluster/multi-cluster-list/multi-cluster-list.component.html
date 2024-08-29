@@ -36,14 +36,12 @@
                     selectionType="single"
                     [maxLimit]="25"
                     (updateSelection)="updateSelection($event)">
-            <div class="table-actions">
-              <cd-table-actions [permission]="permissions.user"
-                                [selection]="selection"
-                                class="btn-group"
-                                id="cluster-actions"
-                                [tableActions]="tableActions">
-              </cd-table-actions>
-            </div>
+            <cd-table-actions [permission]="permissions.user"
+                              [selection]="selection"
+                              class="table-actions"
+                              id="cluster-actions"
+                              [tableActions]="tableActions">
+            </cd-table-actions>
           </cd-table>
         </ng-template>
       </ng-container>
