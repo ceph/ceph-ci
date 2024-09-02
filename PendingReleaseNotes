@@ -243,6 +243,17 @@ CephFS: Disallow delegating preallocated inode ranges to clients. Config
 * NFS: The export create/apply of CephFS based exports will now have a additional parameter `cmount_path` under FSAL block,
   which specifies the path within the CephFS to mount this export on. If this and the other
   `EXPORT { FSAL {} }` options are the same between multiple exports, those exports will share a single CephFS client. If not specified, the default is `/`.
+* CephFS: "ceph fs clone status" command will now print statistics about clone
+  progress in terms of how much data has been cloned (in both percentage as
+  well as bytes) and how many files have been cloned.
+* CephFS: "ceph status" command will now print a progress bar when cloning is
+  ongoing. If clone jobs are more than the cloner threads, it will print one
+  more progress bar that shows total amount of progress made by both ongoing
+  as well as pending clones. Both progress are accompanied by messages that
+  show number of clone jobs in the respective categories and the amount of
+  progress made by each of them.
+* RGW: in bucket notifications, the `principalId` inside `ownerIdentity` now contains
+  complete user id, prefixed with tenant id
 
 >=18.0.0
 
