@@ -810,8 +810,17 @@ public:
     decode(master_zonegroup, bl);
     decode(period_config, bl);
     decode(realm_id, bl);
-    std::string realm_name; // removed
-    decode(realm_name, bl);
+    try {
+      std::string realm_name; // removed
+      decode(realm_name, bl);
+    } catch (const buffer::end_of_buffer&) {
+      // realm_name was removed from v1 without changing the version, then added
+      // back as an empty string. so we need to support both v1 encodings here.
+      // only rethrow if we see a higher version
+      if (struct_v > 1) {
+        throw;
+      }
+    }
     DECODE_FINISH(bl);
   }
   void dump(Formatter *f) const;
