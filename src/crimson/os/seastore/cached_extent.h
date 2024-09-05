@@ -17,6 +17,9 @@
 #include "crimson/os/seastore/seastore_types.h"
 
 struct btree_lba_manager_test;
+struct lba_btree_test;
+struct btree_test_base;
+struct cache_test_t;
 
 namespace crimson::os::seastore {
 
@@ -27,15 +30,6 @@ class SegmentedAllocator;
 class TransactionManager;
 class ExtentPlacementManager;
 
-template <
-  typename node_key_t,
-  typename node_val_t,
-  typename internal_node_t,
-  typename leaf_node_t,
-  typename pin_t,
-  size_t node_size,
-  bool leaf_has_children>
-class FixedKVBtree;
 template <typename, typename>
 class BtreeNodeMapping;
 
@@ -118,6 +112,9 @@ struct trans_spec_view_t {
   // if the extent is pending, contains the id of the owning transaction;
   // TRANS_ID_NULL otherwise
   transaction_id_t pending_for_transaction = TRANS_ID_NULL;
+  trans_spec_view_t() = default;
+  trans_spec_view_t(transaction_id_t id) : pending_for_transaction(id) {}
+  virtual ~trans_spec_view_t() = default;
 
   struct cmp_t {
     bool operator()(
@@ -189,15 +186,6 @@ class CachedExtent
   friend class onode::DummyNodeExtent;
   friend class onode::TestReplayExtent;
 
-  template <
-    typename node_key_t,
-    typename node_val_t,
-    typename internal_node_t,
-    typename leaf_node_t,
-    typename pin_t,
-    size_t node_size,
-    bool leaf_has_children>
-  friend class FixedKVBtree;
   uint32_t last_committed_crc = 0;
 
   // Points at current version while in state MUTATION_PENDING
@@ -296,7 +284,7 @@ public:
    * with the states of Cache and can't wait till transaction
    * completes.
    */
-  virtual void on_replace_prior(Transaction &t) {}
+  virtual void on_replace_prior() {}
 
   /**
    * on_invalidated
@@ -322,6 +310,31 @@ public:
     return true;
   }
 
+  void rewrite(Transaction &t, CachedExtent &e, extent_len_t o) {
+    assert(is_initial_pending());
+    if (!e.is_pending()) {
+      prior_instance = &e;
+    } else {
+      assert(e.is_mutation_pending());
+      prior_instance = e.get_prior_instance();
+    }
+    e.get_bptr().copy_out(
+      o,
+      get_length(),
+      get_bptr().c_str());
+    set_modify_time(e.get_modify_time());
+    set_last_committed_crc(e.get_last_committed_crc());
+    on_rewrite(t, e, o);
+  }
+
+  /**
+   * on_rewrite
+   *
+   * Called when this extent is rewriting another one.
+   *
+   */
+  virtual void on_rewrite(Transaction &, CachedExtent &, extent_len_t) = 0;
+
   friend std::ostream &operator<<(std::ostream &, extent_state_t);
   virtual std::ostream &print_detail(std::ostream &out) const { return out; }
   std::ostream &print(std::ostream &out) const {
@@ -330,6 +343,8 @@ public:
       : "nullopt";
     out << "CachedExtent(addr=" << this
 	<< ", type=" << get_type()
+	<< ", trans=" << pending_for_transaction
+	<< ", pending_io=" << is_pending_io()
 	<< ", version=" << version
 	<< ", dirty_from_or_retired_at=" << dirty_from_or_retired_at
 	<< ", modify_time=" << sea_time_point_printer_t{modify_time}
@@ -416,16 +431,39 @@ public:
     return is_mutable() || state == extent_state_t::EXIST_CLEAN;
   }
 
-  /// Returns true if extent is stable and shared among transactions
-  bool is_stable() const {
+  bool is_rewrite() {
+    return is_initial_pending() && get_prior_instance();
+  }
+
+  /// Returns true if extent is stable, written and shared among transactions
+  bool is_stable_written() const {
     return state == extent_state_t::CLEAN_PENDING ||
       state == extent_state_t::CLEAN ||
       state == extent_state_t::DIRTY;
   }
 
+  bool is_stable_writting() const {
+    // MUTATION_PENDING and under-io extents are already stable and visible,
+    // see prepare_record().
+    //
+    // XXX: It might be good to mark this case as DIRTY from the definition,
+    // which probably can make things simpler.
+    return is_mutation_pending() && is_pending_io();
+  }
+
+  /// Returns true if extent is stable and shared among transactions
+  bool is_stable() const {
+    return is_stable_written() || is_stable_writting();
+  }
+
+  bool is_data_stable() const {
+    return is_stable() || is_exist_clean();
+  }
+
   /// Returns true if extent has a pending delta
   bool is_mutation_pending() const {
-    return state == extent_state_t::MUTATION_PENDING;
+    return state == extent_state_t::MUTATION_PENDING
+      || state == extent_state_t::EXIST_MUTATION_PENDING;
   }
 
   /// Returns true if extent is a fresh extent
@@ -477,7 +515,7 @@ public:
 
   /// Returns true if extent is a plcaeholder
   bool is_placeholder() const {
-    return get_type() == extent_types_t::RETIRED_PLACEHOLDER;
+    return is_retired_placeholder_type(get_type());
   }
 
   bool is_pending_io() const {
@@ -529,7 +567,7 @@ public:
   }
 
   /// Returns crc32c of buffer
-  uint32_t get_crc32c() {
+  virtual uint32_t calc_crc32c() const {
     return ceph_crc32c(
       1,
       reinterpret_cast<const unsigned char *>(get_bptr().c_str()),
@@ -537,11 +575,11 @@ public:
   }
 
   /// Get ref to raw buffer
-  bufferptr &get_bptr() {
+  virtual bufferptr &get_bptr() {
     assert(ptr.has_value());
     return *ptr;
   }
-  const bufferptr &get_bptr() const {
+  virtual const bufferptr &get_bptr() const {
     assert(ptr.has_value());
     return *ptr;
   }
@@ -580,12 +618,19 @@ public:
     rewrite_generation = gen;
   }
 
+  void set_inplace_rewrite_generation() {
+    user_hint = placement_hint_t::REWRITE;
+    rewrite_generation = OOL_GENERATION;
+  }
+
   bool is_inline() const {
     return poffset.is_relative();
   }
 
   paddr_t get_prior_paddr_and_reset() {
-    assert(prior_poffset);
+    if (!prior_poffset) {
+      return poffset;
+    }
     auto ret = *prior_poffset;
     prior_poffset.reset();
     return ret;
@@ -595,8 +640,17 @@ public:
 
   // a rewrite extent has an invalid prior_instance,
   // and a mutation_pending extent has a valid prior_instance
-  CachedExtentRef get_prior_instance() {
+  CachedExtentRef get_prior_instance() const {
     return prior_instance;
+  }
+
+  uint32_t get_last_committed_crc() const {
+    return last_committed_crc;
+  }
+
+  /// Returns true if the extent part of the open transaction
+  bool is_pending_in_trans(transaction_id_t id) const {
+    return is_pending() && pending_for_transaction == id;
   }
 
 private:
@@ -606,6 +660,7 @@ private:
   friend struct paddr_cmp;
   friend struct ref_paddr_cmp;
   friend class ExtentIndex;
+  friend struct trans_retired_extent_link_t;
 
   /// Pointer to containing index (or null)
   ExtentIndex *parent_index = nullptr;
@@ -624,23 +679,13 @@ private:
     return extent_index_hook.is_linked();
   }
 
-  /// set bufferptr
-  void set_bptr(ceph::bufferptr &&nptr) {
-    ptr = nptr;
-  }
-
-  /// Returns true if the extent part of the open transaction
-  bool is_pending_in_trans(transaction_id_t id) const {
-    return is_pending() && pending_for_transaction == id;
-  }
-
   /// hook for intrusive ref list (mainly dirty or lru list)
   boost::intrusive::list_member_hook<> primary_ref_list_hook;
   using primary_ref_list_member_options = boost::intrusive::member_hook<
     CachedExtent,
     boost::intrusive::list_member_hook<>,
     &CachedExtent::primary_ref_list_hook>;
-  using list = boost::intrusive::list<
+  using primary_ref_list = boost::intrusive::list<
     CachedExtent,
     primary_ref_list_member_options>;
 
@@ -700,6 +745,7 @@ private:
 
 protected:
   trans_view_set_t mutation_pendings;
+  trans_view_set_t retired_transactions;
 
   CachedExtent(CachedExtent &&other) = delete;
   CachedExtent(ceph::bufferptr &&_ptr) : ptr(std::move(_ptr)) {
@@ -767,6 +813,17 @@ protected:
     prior_instance.reset();
   }
 
+  /**
+   * Called when updating extents' last_committed_crc, some extents may
+   * have in-extent checksum fields, like LBA/backref nodes, which are
+   * supposed to be updated in this method.
+   */
+  virtual void update_in_extent_chksum_field(uint32_t) {}
+
+  void set_prior_instance(CachedExtentRef p) {
+    prior_instance = p;
+  }
+
   /// Sets last_committed_crc
   void set_last_committed_crc(uint32_t crc) {
     last_committed_crc = crc;
@@ -778,6 +835,11 @@ protected:
       prior_poffset = poffset;
     }
     poffset = offset;
+  }
+
+  /// set bufferptr
+  void set_bptr(ceph::bufferptr &&nptr) {
+    ptr = nptr;
   }
 
   /**
@@ -813,6 +875,9 @@ protected:
   template <typename, typename>
   friend class BtreeNodeMapping;
   friend class ::btree_lba_manager_test;
+  friend class ::lba_btree_test;
+  friend class ::btree_test_base;
+  friend class ::cache_test_t;
 };
 
 std::ostream &operator<<(std::ostream &, CachedExtent::extent_state_t);
@@ -830,17 +895,54 @@ struct paddr_cmp {
   }
 };
 
+// trans_retired_extent_link_t is used to link stable extents with
+// the transactions that retired them. With this link, we can find
+// out whether an extent has been retired by a specific transaction
+// in a way that's more efficient than searching through the transaction's
+// retired_set (Transaction::is_retired())
+struct trans_retired_extent_link_t {
+  CachedExtentRef extent;
+  // We use trans_spec_view_t instead of transaction_id_t, so that,
+  // when a transaction is deleted or reset, we can efficiently remove
+  // that transaction from the extents' extent-transaction link set.
+  // Otherwise, we have to search through each extent's "retired_transactions"
+  // to remove the transaction
+  trans_spec_view_t trans_view;
+  trans_retired_extent_link_t(CachedExtentRef extent, transaction_id_t id)
+    : extent(extent), trans_view{id}
+  {
+    assert(extent->is_stable());
+    extent->retired_transactions.insert(trans_view);
+  }
+};
+
 /// Compare extent refs by paddr
 struct ref_paddr_cmp {
   using is_transparent = paddr_t;
-  bool operator()(const CachedExtentRef &lhs, const CachedExtentRef &rhs) const {
-    return lhs->poffset < rhs->poffset;
+  bool operator()(
+    const trans_retired_extent_link_t &lhs,
+    const trans_retired_extent_link_t &rhs) const {
+    return lhs.extent->poffset < rhs.extent->poffset;
   }
-  bool operator()(const paddr_t &lhs, const CachedExtentRef &rhs) const {
-    return lhs < rhs->poffset;
+  bool operator()(
+    const paddr_t &lhs,
+    const trans_retired_extent_link_t &rhs) const {
+    return lhs < rhs.extent->poffset;
   }
-  bool operator()(const CachedExtentRef &lhs, const paddr_t &rhs) const {
-    return lhs->poffset < rhs;
+  bool operator()(
+    const trans_retired_extent_link_t &lhs,
+    const paddr_t &rhs) const {
+    return lhs.extent->poffset < rhs;
+  }
+  bool operator()(
+    const CachedExtentRef &lhs,
+    const trans_retired_extent_link_t &rhs) const {
+    return lhs->poffset < rhs.extent->poffset;
+  }
+  bool operator()(
+    const trans_retired_extent_link_t &lhs,
+    const CachedExtentRef &rhs) const {
+    return lhs.extent->poffset < rhs->poffset;
   }
 };
 
@@ -856,7 +958,7 @@ class addr_extent_set_base_t
 
 using pextent_set_t = addr_extent_set_base_t<
   paddr_t,
-  CachedExtentRef,
+  trans_retired_extent_link_t,
   ref_paddr_cmp
   >;
 
@@ -1025,6 +1127,10 @@ public:
   virtual val_t get_val() const = 0;
   virtual key_t get_key() const = 0;
   virtual PhysicalNodeMappingRef<key_t, val_t> duplicate() const = 0;
+  virtual PhysicalNodeMappingRef<key_t, val_t> refresh_with_pending_parent() {
+    ceph_abort("impossible");
+    return {};
+  }
   virtual bool has_been_invalidated() const = 0;
   virtual CachedExtentRef get_parent() const = 0;
   virtual uint16_t get_pos() const = 0;
@@ -1033,6 +1139,10 @@ public:
   virtual key_t get_intermediate_key() const { return min_max_t<key_t>::null; }
   virtual key_t get_intermediate_base() const { return min_max_t<key_t>::null; }
   virtual extent_len_t get_intermediate_length() const { return 0; }
+  virtual uint32_t get_checksum() const {
+    ceph_abort("impossible");
+    return 0;
+  }
   // The start offset of the pin, must be 0 if the pin is not indirect
   virtual extent_len_t get_intermediate_offset() const {
     return std::numeric_limits<extent_len_t>::max();
@@ -1044,6 +1154,25 @@ public:
   void link_child(ChildableCachedExtent *c) {
     ceph_assert(child_pos);
     child_pos->link_child(c);
+  }
+
+  // For reserved mappings, the return values are
+  // undefined although it won't crash
+  virtual bool is_stable() const = 0;
+  virtual bool is_data_stable() const = 0;
+  virtual bool is_clone() const = 0;
+  bool is_zero_reserved() const {
+    return !get_val().is_real();
+  }
+  virtual bool is_parent_viewable() const = 0;
+  virtual bool is_parent_valid() const = 0;
+  virtual bool parent_modified() const {
+    ceph_abort("impossible");
+    return false;
+  };
+
+  virtual void maybe_fix_pos() {
+    ceph_abort("impossible");
   }
 
   virtual ~PhysicalNodeMapping() {}
@@ -1105,6 +1234,8 @@ public:
   bool is_logical() const final {
     return false;
   }
+
+  void on_rewrite(Transaction &, CachedExtent&, extent_len_t) final {}
 
   std::ostream &print_detail(std::ostream &out) const final {
     return out << ", RetiredExtentPlaceholder";
@@ -1191,6 +1322,12 @@ public:
     : ChildableCachedExtent(std::forward<T>(t)...)
   {}
 
+  void on_rewrite(Transaction&, CachedExtent &extent, extent_len_t off) final {
+    assert(get_type() == extent.get_type());
+    auto &lextent = (LogicalCachedExtent&)extent;
+    set_laddr((lextent.get_laddr() + off).checked_to_laddr());
+  }
+
   bool has_laddr() const {
     return laddr != L_ADDR_NULL;
   }
@@ -1213,7 +1350,7 @@ public:
   void apply_delta_and_adjust_crc(
     paddr_t base, const ceph::bufferlist &bl) final {
     apply_delta(bl);
-    set_last_committed_crc(get_crc32c());
+    set_last_committed_crc(calc_crc32c());
   }
 
   bool is_logical() const final {
@@ -1222,12 +1359,23 @@ public:
 
   std::ostream &_print_detail(std::ostream &out) const final;
 
-  void on_replace_prior(Transaction &t) final;
+  struct modified_region_t {
+    extent_len_t offset;
+    extent_len_t len;
+  };
+  virtual std::optional<modified_region_t> get_modified_region() {
+    return std::nullopt;
+  }
+
+  virtual void clear_modified_region() {}
 
   virtual ~LogicalCachedExtent();
+
 protected:
+  void on_replace_prior() final;
 
   virtual void apply_delta(const ceph::bufferlist &bl) = 0;
+
   virtual std::ostream &print_detail_l(std::ostream &out) const {
     return out;
   }

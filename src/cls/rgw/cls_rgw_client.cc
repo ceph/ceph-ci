@@ -79,7 +79,7 @@ int CLSRGWConcurrentIO::operator()() {
     cleanup();
   }
   return ret;
-} // CLSRGWConcurrintIO::operator()()
+} // CLSRGWConcurrentIO::operator()()
 
 
 /**
@@ -186,7 +186,7 @@ bool BucketIndexAioManager::wait_for_completions(int valid_ret_code,
   return true;
 }
 
-// note: currently only called by tesing code
+// note: currently only called by testing code
 void cls_rgw_bucket_init_index(ObjectWriteOperation& o)
 {
   bufferlist in;
@@ -535,10 +535,11 @@ void cls_rgw_bucket_link_olh(librados::ObjectWriteOperation& op, const cls_rgw_o
 
 int cls_rgw_bucket_unlink_instance(librados::IoCtx& io_ctx, const string& oid,
                                    const cls_rgw_obj_key& key, const string& op_tag,
-                                   const string& olh_tag, uint64_t olh_epoch, bool log_op, const rgw_zone_set& zones_trace)
+                                   const string& olh_tag, uint64_t olh_epoch, bool log_op,
+                                   uint16_t bilog_flags, const rgw_zone_set& zones_trace)
 {
   librados::ObjectWriteOperation op;
-  cls_rgw_bucket_unlink_instance(op, key, op_tag, olh_tag, olh_epoch, log_op, zones_trace);
+  cls_rgw_bucket_unlink_instance(op, key, op_tag, olh_tag, olh_epoch, log_op, bilog_flags, zones_trace);
   int r = io_ctx.operate(oid, &op);
   if (r < 0)
     return r;
@@ -548,7 +549,8 @@ int cls_rgw_bucket_unlink_instance(librados::IoCtx& io_ctx, const string& oid,
 
 void cls_rgw_bucket_unlink_instance(librados::ObjectWriteOperation& op,
                                    const cls_rgw_obj_key& key, const string& op_tag,
-                                   const string& olh_tag, uint64_t olh_epoch, bool log_op, const rgw_zone_set& zones_trace)
+                                   const string& olh_tag, uint64_t olh_epoch, bool log_op,
+                                   uint16_t bilog_flags, const rgw_zone_set& zones_trace)
 {
   bufferlist in, out;
   rgw_cls_unlink_instance_op call;
@@ -558,6 +560,7 @@ void cls_rgw_bucket_unlink_instance(librados::ObjectWriteOperation& op,
   call.olh_tag = olh_tag;
   call.log_op = log_op;
   call.zones_trace = zones_trace;
+  call.bilog_flags = bilog_flags;
   encode(call, in);
   op.exec(RGW_CLASS, RGW_BUCKET_UNLINK_INSTANCE, in);
 }
@@ -751,12 +754,11 @@ int CLSRGWIssueBucketBILogStop::issue_op(const int shard_id, const string& oid)
 }
 
 class GetDirHeaderCompletion : public ObjectOperationCompletion {
-  RGWGetDirHeader_CB *ret_ctx;
+  boost::intrusive_ptr<RGWGetDirHeader_CB> cb;
 public:
-  explicit GetDirHeaderCompletion(RGWGetDirHeader_CB *_ctx) : ret_ctx(_ctx) {}
-  ~GetDirHeaderCompletion() override {
-    ret_ctx->put();
-  }
+  explicit GetDirHeaderCompletion(boost::intrusive_ptr<RGWGetDirHeader_CB> cb)
+    : cb(std::move(cb)) {}
+
   void handle_completion(int r, bufferlist& outbl) override {
     rgw_cls_list_ret ret;
     try {
@@ -765,20 +767,20 @@ public:
     } catch (ceph::buffer::error& err) {
       r = -EIO;
     }
-
-    ret_ctx->handle_response(r, ret.dir.header);
+    cb->handle_response(r, ret.dir.header);
   }
 };
 
-int cls_rgw_get_dir_header_async(IoCtx& io_ctx, string& oid, RGWGetDirHeader_CB *ctx)
+int cls_rgw_get_dir_header_async(IoCtx& io_ctx, const string& oid,
+                                 boost::intrusive_ptr<RGWGetDirHeader_CB> cb)
 {
   bufferlist in, out;
   rgw_cls_list_op call;
   call.num_entries = 0;
   encode(call, in);
   ObjectReadOperation op;
-  GetDirHeaderCompletion *cb = new GetDirHeaderCompletion(ctx);
-  op.exec(RGW_CLASS, RGW_BUCKET_LIST, in, cb);
+  op.exec(RGW_CLASS, RGW_BUCKET_LIST, in,
+          new GetDirHeaderCompletion(std::move(cb)));
   AioCompletion *c = librados::Rados::aio_create_completion(nullptr, nullptr);
   int r = io_ctx.aio_operate(oid, c, &op, NULL);
   c->release();
@@ -900,19 +902,22 @@ void cls_rgw_gc_defer_entry(ObjectWriteOperation& op, uint32_t expiration_secs, 
   op.exec(RGW_CLASS, RGW_GC_DEFER_ENTRY, in);
 }
 
-int cls_rgw_gc_list(IoCtx& io_ctx, string& oid, string& marker, uint32_t max, bool expired_only,
-                    list<cls_rgw_gc_obj_info>& entries, bool *truncated, string& next_marker)
+void cls_rgw_gc_list(ObjectReadOperation& op, const string& marker,
+                     uint32_t max, bool expired_only, bufferlist& out)
 {
-  bufferlist in, out;
+  bufferlist in;
   cls_rgw_gc_list_op call;
   call.marker = marker;
   call.max = max;
   call.expired_only = expired_only;
   encode(call, in);
-  int r = io_ctx.exec(oid, RGW_CLASS, RGW_GC_LIST, in, out);
-  if (r < 0)
-    return r;
+  op.exec(RGW_CLASS, RGW_GC_LIST, in, &out, nullptr);
+}
 
+int cls_rgw_gc_list_decode(const bufferlist& out,
+                           std::list<cls_rgw_gc_obj_info>& entries,
+                           bool *truncated, std::string& next_marker)
+{
   cls_rgw_gc_list_ret ret;
   try {
     auto iter = out.cbegin();
@@ -926,7 +931,7 @@ int cls_rgw_gc_list(IoCtx& io_ctx, string& oid, string& marker, uint32_t max, bo
   if (truncated)
     *truncated = ret.truncated;
   next_marker = std::move(ret.next_marker);
-  return r;
+  return 0;
 }
 
 void cls_rgw_gc_remove(librados::ObjectWriteOperation& op, const vector<string>& tags)
@@ -938,13 +943,14 @@ void cls_rgw_gc_remove(librados::ObjectWriteOperation& op, const vector<string>&
   op.exec(RGW_CLASS, RGW_GC_REMOVE, in);
 }
 
-int cls_rgw_lc_get_head(IoCtx& io_ctx, const string& oid, cls_rgw_lc_obj_head& head)
+void cls_rgw_lc_get_head(ObjectReadOperation& op, bufferlist& out)
 {
-  bufferlist in, out;
-  int r = io_ctx.exec(oid, RGW_CLASS, RGW_LC_GET_HEAD, in, out);
-  if (r < 0)
-    return r;
+  bufferlist in;
+  op.exec(RGW_CLASS, RGW_LC_GET_HEAD, in, &out, nullptr);
+}
 
+int cls_rgw_lc_get_head_decode(const bufferlist& out, cls_rgw_lc_obj_head& head)
+{
   cls_rgw_lc_get_head_ret ret;
   try {
     auto iter = out.cbegin();
@@ -952,32 +958,32 @@ int cls_rgw_lc_get_head(IoCtx& io_ctx, const string& oid, cls_rgw_lc_obj_head& h
   } catch (ceph::buffer::error& err) {
     return -EIO;
   }
-  head = ret.head;
+  head = std::move(ret.head);
 
- return r;
+  return 0;
 }
 
-int cls_rgw_lc_put_head(IoCtx& io_ctx, const string& oid, cls_rgw_lc_obj_head& head)
+void cls_rgw_lc_put_head(ObjectWriteOperation& op, const cls_rgw_lc_obj_head& head)
 {
-  bufferlist in, out;
+  bufferlist in;
   cls_rgw_lc_put_head_op call;
   call.head = head;
   encode(call, in);
-  int r = io_ctx.exec(oid, RGW_CLASS, RGW_LC_PUT_HEAD, in, out);
-  return r;
+  op.exec(RGW_CLASS, RGW_LC_PUT_HEAD, in);
 }
 
-int cls_rgw_lc_get_next_entry(IoCtx& io_ctx, const string& oid, const string& marker,
-			      cls_rgw_lc_entry& entry)
+void cls_rgw_lc_get_next_entry(ObjectReadOperation& op, const string& marker,
+                               bufferlist& out)
 {
-  bufferlist in, out;
+  bufferlist in;
   cls_rgw_lc_get_next_entry_op call;
   call.marker = marker;
   encode(call, in);
-  int r = io_ctx.exec(oid, RGW_CLASS, RGW_LC_GET_NEXT_ENTRY, in, out);
-  if (r < 0)
-    return r;
+  op.exec(RGW_CLASS, RGW_LC_GET_NEXT_ENTRY, in, &out, nullptr);
+}
 
+int cls_rgw_lc_get_next_entry_decode(const bufferlist& out, cls_rgw_lc_entry& entry)
+{
   cls_rgw_lc_get_next_entry_ret ret;
   try {
     auto iter = out.cbegin();
@@ -985,45 +991,42 @@ int cls_rgw_lc_get_next_entry(IoCtx& io_ctx, const string& oid, const string& ma
   } catch (ceph::buffer::error& err) {
     return -EIO;
   }
-  entry = ret.entry;
+  entry = std::move(ret.entry);
 
- return r;
+  return 0;
 }
 
-int cls_rgw_lc_rm_entry(IoCtx& io_ctx, const string& oid,
-			const cls_rgw_lc_entry& entry)
+void cls_rgw_lc_rm_entry(ObjectWriteOperation& op,
+                         const cls_rgw_lc_entry& entry)
 {
-  bufferlist in, out;
+  bufferlist in;
   cls_rgw_lc_rm_entry_op call;
   call.entry = entry;
   encode(call, in);
-  int r = io_ctx.exec(oid, RGW_CLASS, RGW_LC_RM_ENTRY, in, out);
- return r;
+  op.exec(RGW_CLASS, RGW_LC_RM_ENTRY, in);
 }
 
-int cls_rgw_lc_set_entry(IoCtx& io_ctx, const string& oid,
-			 const cls_rgw_lc_entry& entry)
+void cls_rgw_lc_set_entry(ObjectWriteOperation& op,
+                          const cls_rgw_lc_entry& entry)
 {
   bufferlist in, out;
   cls_rgw_lc_set_entry_op call;
   call.entry = entry;
   encode(call, in);
-  int r = io_ctx.exec(oid, RGW_CLASS, RGW_LC_SET_ENTRY, in, out);
-  return r;
+  op.exec(RGW_CLASS, RGW_LC_SET_ENTRY, in);
 }
 
-int cls_rgw_lc_get_entry(IoCtx& io_ctx, const string& oid,
-			 const std::string& marker, cls_rgw_lc_entry& entry)
+void cls_rgw_lc_get_entry(ObjectReadOperation& op, const std::string& marker,
+                          bufferlist& out)
 {
-  bufferlist in, out;
-  cls_rgw_lc_get_entry_op call{marker};;
+  bufferlist in;
+  cls_rgw_lc_get_entry_op call{marker};
   encode(call, in);
-  int r = io_ctx.exec(oid, RGW_CLASS, RGW_LC_GET_ENTRY, in, out);
+  op.exec(RGW_CLASS, RGW_LC_GET_ENTRY, in, &out, nullptr);
+}
 
-  if (r < 0) {
-    return r;
-  }
-
+int cls_rgw_lc_get_entry_decode(const bufferlist& out, cls_rgw_lc_entry& entry)
+{
   cls_rgw_lc_get_entry_ret ret;
   try {
     auto iter = out.cbegin();
@@ -1033,28 +1036,24 @@ int cls_rgw_lc_get_entry(IoCtx& io_ctx, const string& oid,
   }
 
   entry = std::move(ret.entry);
-  return r;
+  return 0;
 }
 
-int cls_rgw_lc_list(IoCtx& io_ctx, const string& oid,
-                    const string& marker,
-                    uint32_t max_entries,
-                    vector<cls_rgw_lc_entry>& entries)
+void cls_rgw_lc_list(ObjectReadOperation& op, const string& marker,
+                     uint32_t max_entries, bufferlist& out)
 {
-  bufferlist in, out;
-  cls_rgw_lc_list_entries_op op;
+  bufferlist in;
+  cls_rgw_lc_list_entries_op call;
+  call.marker = marker;
+  call.max_entries = max_entries;
 
-  entries.clear();
+  encode(call, in);
 
-  op.marker = marker;
-  op.max_entries = max_entries;
+  op.exec(RGW_CLASS, RGW_LC_LIST_ENTRIES, in, &out, nullptr);
+}
 
-  encode(op, in);
-
-  int r = io_ctx.exec(oid, RGW_CLASS, RGW_LC_LIST_ENTRIES, in, out);
-  if (r < 0)
-    return r;
-
+int cls_rgw_lc_list_decode(const bufferlist& out, std::vector<cls_rgw_lc_entry>& entries)
+{
   cls_rgw_lc_list_entries_ret ret;
   try {
     auto iter = out.cbegin();
@@ -1067,7 +1066,7 @@ int cls_rgw_lc_list(IoCtx& io_ctx, const string& oid,
 	    [](const cls_rgw_lc_entry& a, const cls_rgw_lc_entry& b)
 	      { return a.bucket < b.bucket; });
   entries = std::move(ret.entries);
-  return r;
+  return 0;
 }
 
 void cls_rgw_mp_upload_part_info_update(librados::ObjectWriteOperation& op,
@@ -1084,11 +1083,14 @@ void cls_rgw_mp_upload_part_info_update(librados::ObjectWriteOperation& op,
   op.exec(RGW_CLASS, RGW_MP_UPLOAD_PART_INFO_UPDATE, in);
 }
 
-void cls_rgw_reshard_add(librados::ObjectWriteOperation& op, const cls_rgw_reshard_entry& entry)
+void cls_rgw_reshard_add(librados::ObjectWriteOperation& op,
+			 const cls_rgw_reshard_entry& entry,
+			 const bool create_only)
 {
   bufferlist in;
   cls_rgw_reshard_add_op call;
   call.entry = entry;
+  call.create_only = create_only;
   encode(call, in);
   op.exec(RGW_CLASS, RGW_RESHARD_ADD, in);
 }

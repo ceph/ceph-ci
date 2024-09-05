@@ -72,14 +72,20 @@ class TestCustomContainer(unittest.TestCase):
         self.assertEqual(result, ['SECRET=password'])
 
     def test_get_container_mounts(self):
-        result = self.cc.get_container_mounts('/xyz')
+        # TODO: get_container_mounts was made private. test the private func for
+        # now. in the future update to test base class func
+        # customize_container_mounts
+        result = self.cc._get_container_mounts('/xyz')
         self.assertDictEqual(result, {
             '/CONFIG_DIR': '/foo/conf',
             '/xyz/bar/config': '/bar:ro'
         })
 
     def test_get_container_binds(self):
-        result = self.cc.get_container_binds('/xyz')
+        # TODO: get_container_binds was made private. test the private func for
+        # now. in the future update to test base class fune
+        # customize_container_binds
+        result = self.cc._get_container_binds('/xyz')
         self.assertEqual(result, [
             [
                 'type=bind',
@@ -115,6 +121,9 @@ def test_deploy_custom_container(cephadm_fs):
             '--servers',
             '192.168.8.42,192.168.8.43,192.168.12.11',
         ]
+        ctx.config_blobs = {
+            'envs': ['FOO=1', 'BAR=77'],
+        }
 
         _cephadm._common_deploy(ctx)
 
@@ -132,6 +141,8 @@ def test_deploy_custom_container(cephadm_fs):
             ' --cgroups=split --no-hosts'
             ' -e CONTAINER_IMAGE=quay.io/foobar/quux:latest'
             ' -e NODE_NAME=host1'
+            ' -e FOO=1'
+            ' -e BAR=77'
             ' quay.io/foobar/quux:latest'
             ' --label frobnicationist --servers 192.168.8.42,192.168.8.43,192.168.12.11'
         )
@@ -210,14 +221,20 @@ def test_deploy_custom_container_and_inits(cephadm_fs):
             if not l.startswith(('#', 'set', '/usr/bin/podman run'))
         ]), 'remaining commands should be "rms"'
 
-        idx = runfile_lines.index('# init container cleanup')
-        assert idx > 0
-        assert runfile_lines[idx + 1].startswith('! /usr/bin/podman rm')
-        assert runfile_lines[idx + 2].startswith('! /usr/bin/podman rm')
+        with open(f'/var/lib/ceph/{fsid}/container.tdccai/init_containers.run') as f:
+            icfile_lines = f.read().splitlines()
 
-        idx = runfile_lines.index('# init container 0: ceph-b01dbeef-701d-9abe-0000-e1e5a47004a7-container-tdccai-init')
+        idx = icfile_lines.index('# init container cleanup')
+        assert idx >= 0
+        assert any(
+            l.strip().startswith('! /usr/bin/podman rm')
+            for l in icfile_lines
+        )
+
+        slines = [l.strip() for l in icfile_lines]
+        idx = slines.index('# run init container 0: ceph-b01dbeef-701d-9abe-0000-e1e5a47004a7-container-tdccai-init')
         assert idx > 0
-        assert runfile_lines[idx + 1] == (
+        assert slines[idx + 1] == (
             '/usr/bin/podman run'
             ' --stop-signal=SIGTERM'
             ' --entrypoint /usr/local/bin/prepare.sh'
@@ -226,12 +243,12 @@ def test_deploy_custom_container_and_inits(cephadm_fs):
             ' -v /var/lib/ceph/b01dbeef-701d-9abe-0000-e1e5a47004a7/container.tdccai/data1:/var/lib/myapp'
             ' quay.io/foobar/quux:latest'
         )
-        assert runfile_lines[idx + 2].startswith('! /usr/bin/podman rm')
-        assert runfile_lines[idx + 3].startswith('! /usr/bin/podman rm')
+        assert slines[idx + 3].startswith('! /usr/bin/podman rm')
+        assert slines[idx + 4].startswith('! /usr/bin/podman rm')
 
-        idx = runfile_lines.index('# init container 1: ceph-b01dbeef-701d-9abe-0000-e1e5a47004a7-container-tdccai-init')
+        idx = slines.index('# run init container 1: ceph-b01dbeef-701d-9abe-0000-e1e5a47004a7-container-tdccai-init')
         assert idx > 0
-        assert runfile_lines[idx + 1] == (
+        assert slines[idx + 1] == (
             '/usr/bin/podman run'
             ' --stop-signal=SIGTERM'
             ' --entrypoint /usr/local/bin/populate.sh'
@@ -242,5 +259,5 @@ def test_deploy_custom_container_and_inits(cephadm_fs):
             ' quay.io/foobar/quux:latest'
             ' --source=https://my.cool.example.com/samples/geo.1.txt'
         )
-        assert runfile_lines[idx + 2].startswith('! /usr/bin/podman rm')
-        assert runfile_lines[idx + 3].startswith('! /usr/bin/podman rm')
+        assert slines[idx + 3].startswith('! /usr/bin/podman rm')
+        assert slines[idx + 4].startswith('! /usr/bin/podman rm')

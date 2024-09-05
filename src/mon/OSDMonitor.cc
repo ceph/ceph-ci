@@ -395,7 +395,7 @@ void LastEpochClean::report(unsigned pg_num, const pg_t& pg,
   return lec.report(pg_num, pg.ps(), last_epoch_clean);
 }
 
-epoch_t LastEpochClean::get_lower_bound(const OSDMap& latest) const
+epoch_t LastEpochClean::get_lower_bound_by_pool(const OSDMap& latest) const
 {
   auto floor = latest.get_epoch();
   for (auto& pool : latest.get_pools()) {
@@ -674,16 +674,16 @@ void OSDMonitor::create_initial()
   if (newmap.nearfull_ratio > 1.0) newmap.nearfull_ratio /= 100;
 
   // new cluster should require latest by default
-  if (g_conf().get_val<bool>("mon_debug_no_require_reef")) {
-    if (g_conf().get_val<bool>("mon_debug_no_require_quincy")) {
-      derr << __func__ << " mon_debug_no_require_reef and quincy=true" << dendl;
-      newmap.require_osd_release = ceph_release_t::pacific;
-    } else {
-      derr << __func__ << " mon_debug_no_require_reef=true" << dendl;
+  if (g_conf().get_val<bool>("mon_debug_no_require_squid")) {
+    if (g_conf().get_val<bool>("mon_debug_no_require_reef")) {
+      derr << __func__ << " mon_debug_no_require_squid and reef=true" << dendl;
       newmap.require_osd_release = ceph_release_t::quincy;
+    } else {
+      derr << __func__ << " mon_debug_no_require_squid=true" << dendl;
+      newmap.require_osd_release = ceph_release_t::reef;
     }
   } else {
-    newmap.require_osd_release = ceph_release_t::reef;
+    newmap.require_osd_release = ceph_release_t::squid;
   }
 
   ceph_release_t r = ceph_release_from_name(g_conf()->mon_osd_initial_require_min_compat_client);
@@ -847,6 +847,7 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
 
     bufferlist orig_full_bl;
     get_version_full(osdmap.epoch, orig_full_bl);
+    dout(20) << __func__ << " mon is running version: " << ceph_version_to_str() << dendl;
     if (orig_full_bl.length()) {
       // the primary provided the full map
       ceph_assert(inc.have_crc);
@@ -857,8 +858,12 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
 	// sync with the primary for this and all future maps.  OSDs
 	// will also be brought back into sync when they discover the
 	// crc mismatch and request a full map from a mon.
-	derr << __func__ << " full map CRC mismatch, resetting to canonical"
-	     << dendl;
+	derr << __func__ << " full map CRC mismatch,"
+    << " might be because mons are running mixed versions ..."
+    << " resetting to canonical" << dendl;
+
+  dout(20) << __func__ << " canonical crc: " << inc.full_crc
+    << " my crc: " << osdmap.crc << dendl;
 
 	dout(20) << __func__ << " my (bad) full osdmap:\n";
 	JSONFormatter jf(true);
@@ -901,12 +906,7 @@ void OSDMonitor::update_from_paxos(bool *need_bootstrap)
       if (state & CEPH_OSD_UP) {
 	// could be marked up *or* down, but we're too lazy to check which
 	last_osd_report.erase(osd);
-      }
-    }
-    for (auto [osd, weight] : inc.new_weight) {
-      if (weight == CEPH_OSD_OUT) {
-        // manually marked out, so drop it
-        osd_epochs.erase(osd);
+	osd_epochs.erase(osd);
       }
     }
   }
@@ -1162,7 +1162,6 @@ void OSDMonitor::create_pending()
   pending_inc.fsid = mon.monmap->fsid;
   pending_metadata.clear();
   pending_metadata_rm.clear();
-  pending_pseudo_purged_snaps.clear();
 
   dout(10) << "create_pending e " << pending_inc.epoch << dendl;
 
@@ -1252,10 +1251,8 @@ OSDMonitor::update_pending_pgs(const OSDMap::Incremental& inc,
   }
 
   // process queue
-  unsigned max = std::max<int64_t>(1, g_conf()->mon_osd_max_creating_pgs);
   const auto total = pending_creatings.pgs.size();
-  while (pending_creatings.pgs.size() < max &&
-	 !pending_creatings.queue.empty()) {
+  while (!pending_creatings.queue.empty()) {
     auto p = pending_creatings.queue.begin();
     int64_t poolid = p->first;
     dout(10) << __func__ << " pool " << poolid
@@ -1263,21 +1260,16 @@ OSDMonitor::update_pending_pgs(const OSDMap::Incremental& inc,
 	     << " modified " << p->second.modified
 	     << " [" << p->second.start << "-" << p->second.end << ")"
 	     << dendl;
-    int64_t n = std::min<int64_t>(max - pending_creatings.pgs.size(),
-				  p->second.end - p->second.start);
-    ps_t first = p->second.start;
-    ps_t end = first + n;
-    for (ps_t ps = first; ps < end; ++ps) {
+    for (ps_t ps = p->second.start; ps < p->second.end; ++ps) {
       const pg_t pgid{ps, static_cast<uint64_t>(poolid)};
-      // NOTE: use the *current* epoch as the PG creation epoch so that the
-      // OSD does not have to generate a long set of PastIntervals.
+      // The current epoch must be the pool creation epoch
       pending_creatings.pgs.emplace(
 	pgid,
-	creating_pgs_t::pg_create_info(inc.epoch,
+	creating_pgs_t::pg_create_info(p->second.created,
 				       p->second.modified));
       dout(10) << __func__ << " adding " << pgid << dendl;
     }
-    p->second.start = end;
+    p->second.start = p->second.end;
     if (p->second.done()) {
       dout(10) << __func__ << " done with queue for " << poolid << dendl;
       pending_creatings.queue.erase(p);
@@ -2024,6 +2016,8 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
   bufferlist bl;
   encode(pending_inc, bl, features | CEPH_FEATURE_RESERVED);
 
+  dout(20) << __func__ << " mon is running version: "
+    << ceph_version_to_str() << dendl;
   dout(20) << " full_crc " << tmp.get_crc()
 	   << " inc_crc " << pending_inc.inc_crc << dendl;
 
@@ -2062,13 +2056,6 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
 	 q != i.second.end();
 	 ++q) {
       insert_purged_snap_update(i.first, q.get_start(), q.get_end(),
-				pending_inc.epoch,
-				t);
-    }
-  }
-  for (auto& [pool, snaps] : pending_pseudo_purged_snaps) {
-    for (auto snap : snaps) {
-      insert_purged_snap_update(pool, snap, snap + 1,
 				pending_inc.epoch,
 				t);
     }
@@ -2286,13 +2273,21 @@ version_t OSDMonitor::get_trim_to() const
   return 0;
 }
 
+/* There are two constraints on trimming:
+ * 1. we must not trim past the last_epoch_clean for any pg
+ * 2. we must not trim past the last reported epoch for any up
+ *    osds.
+ *
+ * LastEpochClean::get_lower_bound_by_pool gives a value <= constraint 1.
+ * For constraint 2, we take the min over osd_epochs, which is populated with
+ * MOSDBeacon::version, see OSDMonitor::prepare_beacon
+ */
 epoch_t OSDMonitor::get_min_last_epoch_clean() const
 {
-  auto floor = last_epoch_clean.get_lower_bound(osdmap);
-  // also scan osd epochs
-  // don't trim past the oldest reported osd epoch
+  auto floor = last_epoch_clean.get_lower_bound_by_pool(osdmap);
   for (auto [osd, epoch] : osd_epochs) {
     if (epoch < floor) {
+      ceph_assert(osdmap.is_up(osd));
       floor = epoch;
     }
   }
@@ -3039,27 +3034,26 @@ bool OSDMonitor::preprocess_mark_me_dead(MonOpRequestRef op)
   int from = m->target_osd;
 
   // check permissions
-  if (check_source(op, m->fsid)) {
-    mon.no_reply(op);
-    return true;
-  }
+  if (check_source(op, m->fsid))
+    goto done;
 
   // first, verify the reporting host is valid
-  if (!m->get_orig_source().is_osd()) {
-    mon.no_reply(op);
-    return true;
-  }
+  if (!m->get_orig_source().is_osd())
+    goto done;
 
   if (!osdmap.exists(from) ||
       !osdmap.is_down(from)) {
     dout(5) << __func__ << " from nonexistent or up osd." << from
 	    << ", ignoring" << dendl;
     send_incremental(op, m->get_epoch()+1);
-    mon.no_reply(op);
-    return true;
+    goto done;
   }
 
   return false;
+
+ done:
+  mon.no_reply(op);
+  return true;
 }
 
 bool OSDMonitor::prepare_mark_me_dead(MonOpRequestRef op)
@@ -3486,26 +3480,26 @@ bool OSDMonitor::preprocess_boot(MonOpRequestRef op)
   ceph_assert(m->get_orig_source_inst().name.is_osd());
 
   // lower bound of N-2
-  if (!HAVE_FEATURE(m->osd_features, SERVER_PACIFIC)) {
+  if (!HAVE_FEATURE(m->osd_features, SERVER_QUINCY)) {
     mon.clog->info() << "disallowing boot of OSD "
 		     << m->get_orig_source_inst()
-		     << " because the osd lacks CEPH_FEATURE_SERVER_PACIFIC";
+		     << " because the osd lacks CEPH_FEATURE_SERVER_QUINCY";
     goto ignore;
   }
 
   // make sure osd versions do not span more than 3 releases
-  if (HAVE_FEATURE(m->osd_features, SERVER_QUINCY) &&
-      osdmap.require_osd_release < ceph_release_t::octopus) {
-    mon.clog->info() << "disallowing boot of quincy+ OSD "
-		      << m->get_orig_source_inst()
-		      << " because require_osd_release < octopus";
-    goto ignore;
-  }
   if (HAVE_FEATURE(m->osd_features, SERVER_REEF) &&
       osdmap.require_osd_release < ceph_release_t::pacific) {
     mon.clog->info() << "disallowing boot of reef+ OSD "
 		      << m->get_orig_source_inst()
 		      << " because require_osd_release < pacific";
+    goto ignore;
+  }
+  if (HAVE_FEATURE(m->osd_features, SERVER_SQUID) &&
+      osdmap.require_osd_release < ceph_release_t::quincy) {
+    mon.clog->info() << "disallowing boot of squid+ OSD "
+		      << m->get_orig_source_inst()
+		      << " because require_osd_release < quincy";
     goto ignore;
   }
 
@@ -3518,7 +3512,7 @@ bool OSDMonitor::preprocess_boot(MonOpRequestRef op)
       if (!osdmap.get_allow_crimson()) {
 	mon.clog->info()
 	  << "Disallowing boot of crimson-osd without allow_crimson "
-	  << "OSDMap flag.  Run ceph osd set_allow_crimson to set "
+	  << "OSDMap flag.  Run ceph osd set-allow-crimson to set "
 	  << "allow_crimson flag.  Note that crimson-osd is "
 	  << "considered unstable and may result in crashes or "
 	  << "data loss.  Its usage should be restricted to "
@@ -3656,7 +3650,7 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
     }
 
     // fresh osd?
-    if (m->sb.newest_map == 0 && osdmap.exists(from)) {
+    if (m->sb.get_newest_map() == 0 && osdmap.exists(from)) {
       const osd_info_t& i = osdmap.get_info(from);
       if (i.up_from > i.lost_at) {
 	dout(10) << " fresh osd; marking lost_at too" << dendl;
@@ -4400,8 +4394,8 @@ bool OSDMonitor::prepare_beacon(MonOpRequestRef op)
 
   last_osd_report[from].first = ceph_clock_now();
   last_osd_report[from].second = beacon->osd_beacon_report_interval;
+  ceph_assert(osdmap.is_up(from));
   osd_epochs[from] = beacon->version;
-
   for (const auto& pg : beacon->pgs) {
     if (auto* pool = osdmap.get_pg_pool(pg.pool()); pool != nullptr) {
       unsigned pg_num = pool->get_pg_num();
@@ -4570,6 +4564,17 @@ void OSDMonitor::send_incremental(epoch_t first,
       break;
   }
 }
+
+bool OSDMonitor::remove_pool_snap(std::string_view snapname,
+                                  pg_pool_t &pp, int64_t pool) {
+  snapid_t snapid = pp.snap_exists(snapname);
+  if (snapid) {
+    pp.remove_snap(snapid);
+    pending_inc.new_removed_snaps[pool].insert(snapid);
+    return true;
+  }
+  return false;
+};
 
 int OSDMonitor::get_version(version_t ver, bufferlist& bl)
 {
@@ -5399,7 +5404,7 @@ namespace {
     CSUM_TYPE, CSUM_MAX_BLOCK, CSUM_MIN_BLOCK, FINGERPRINT_ALGORITHM,
     PG_AUTOSCALE_MODE, PG_NUM_MIN, TARGET_SIZE_BYTES, TARGET_SIZE_RATIO,
     PG_AUTOSCALE_BIAS, DEDUP_TIER, DEDUP_CHUNK_ALGORITHM, 
-    DEDUP_CDC_CHUNK_SIZE, POOL_EIO, BULK, PG_NUM_MAX };
+    DEDUP_CDC_CHUNK_SIZE, POOL_EIO, BULK, PG_NUM_MAX, READ_RATIO };
 
   std::set<osd_pool_get_choices>
     subtract_second_from_first(const std::set<osd_pool_get_choices>& first,
@@ -6083,6 +6088,62 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
     }
     r = 0;
 
+  } else if (prefix == "osd pool stretch show") {
+    string poolstr;
+    cmd_getval(cmdmap, "pool", poolstr);
+    int64_t pool = osdmap.lookup_pg_pool_name(poolstr);
+    if (pool < 0) {
+      ss << "unrecognized pool '" << poolstr << "'";
+      r = -ENOENT;
+      goto reply;
+    }
+    const pg_pool_t *p = osdmap.get_pg_pool(pool);
+
+    if (!p->is_stretch_pool()) {
+      ss << poolstr << " " << " is not a stretch pool.";
+      r = -ENOENT;
+      goto reply;
+    } else {
+      if (f) {
+        f->open_object_section("pool");
+        f->dump_string("pool", poolstr);
+        f->dump_int("pool_id", pool);
+        f->dump_bool("is_stretch_pool", p->is_stretch_pool());
+        f->dump_int("peering_crush_bucket_count", p->peering_crush_bucket_count);
+        f->dump_int("peering_crush_bucket_target", p->peering_crush_bucket_target);
+        f->dump_string("peering_crush_bucket_barrier", stringify(osdmap.crush->get_type_name(p->peering_crush_bucket_barrier)));
+        if (osdmap.crush->rule_exists(p->get_crush_rule())) {
+          f->dump_string("crush_rule", osdmap.crush->get_rule_name(p->get_crush_rule()));
+        } else {
+          f->dump_string("crush_rule", stringify(p->get_crush_rule()));
+          // warn if the rule does not exist
+          mon.clog->warn() << __func__ << " pool " << poolstr << " crush rule " << stringify(p->get_crush_rule()) << " does not exist";
+        }
+        f->dump_int("size", p->get_size());
+        f->dump_int("min_size", p->get_min_size());
+        f->close_section();
+        f->flush(rdata);
+      } else {
+        stringstream ss;
+        ss << "pool: " << poolstr << "\n";
+        ss << "pool_id: " << pool << "\n";
+        ss << "is_stretch_pool: " << p->is_stretch_pool() << "\n";
+        ss << "peering_crush_bucket_count: " << p->peering_crush_bucket_count << "\n";
+        ss << "peering_crush_bucket_target: " << p->peering_crush_bucket_target << "\n";
+        ss << "peering_crush_bucket_barrier: " << osdmap.crush->get_type_name(p->peering_crush_bucket_barrier) << "\n";
+        if (osdmap.crush->rule_exists(p->get_crush_rule())) {
+          ss << "crush_rule: " << osdmap.crush->get_rule_name(p->get_crush_rule()) << "\n";
+        } else {
+          ss << "crush_rule: " << p->get_crush_rule() << "\n";
+          // warn if the rule does not exist
+          mon.clog->warn() << __func__ << " pool " << poolstr << " crush rule " << stringify(p->get_crush_rule()) << " does not exist";
+        }
+        ss << "size: " << p->get_size() << "\n";
+        ss << "min_size: " << p->get_min_size() << "\n";
+        rdata.append(ss.str());
+      }
+    }
+    r = 0;
   } else if (prefix == "osd pool get") {
     string poolstr;
     cmd_getval(cmdmap, "pool", poolstr);
@@ -6149,7 +6210,8 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
       {"dedup_tier", DEDUP_TIER},
       {"dedup_chunk_algorithm", DEDUP_CHUNK_ALGORITHM},
       {"dedup_cdc_chunk_size", DEDUP_CDC_CHUNK_SIZE},
-      {"bulk", BULK}
+      {"bulk", BULK},
+      {"read_ratio", READ_RATIO}
     };
 
     typedef std::set<osd_pool_get_choices> choices_set_t;
@@ -6165,6 +6227,9 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
     };
     const choices_set_t ONLY_ERASURE_CHOICES = {
       EC_OVERWRITES, ERASURE_CODE_PROFILE
+    };
+    const choices_set_t ONLY_REPLICA_CHOICES = {
+      READ_RATIO
     };
 
     choices_set_t selected_choices;
@@ -6182,6 +6247,10 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
       if(!p->is_erasure()) {
 	selected_choices = subtract_second_from_first(selected_choices,
 						      ONLY_ERASURE_CHOICES);
+      }
+      if(!p->is_replicated()) {
+        selected_choices = subtract_second_from_first(selected_choices,
+						      ONLY_REPLICA_CHOICES);
       }
     } else /* var != "all" */  {
       choices_map_t::const_iterator found = ALL_CHOICES.find(var);
@@ -6207,6 +6276,15 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 	  != ONLY_ERASURE_CHOICES.end()) {
 	ss << "pool '" << poolstr
 	   << "' is not a erasure pool: variable not applicable";
+	r = -EACCES;
+	goto reply;
+      }
+
+      if (!p->is_replicated() &&
+	  ONLY_REPLICA_CHOICES.find(selected)
+	  != ONLY_REPLICA_CHOICES.end()) {
+	ss << "pool '" << poolstr
+	   << "' is not a replicated pool: variable not applicable";
 	r = -EACCES;
 	goto reply;
       }
@@ -6379,6 +6457,7 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 	  case DEDUP_TIER:
 	  case DEDUP_CHUNK_ALGORITHM:
 	  case DEDUP_CDC_CHUNK_SIZE:
+          case READ_RATIO:
             pool_opts_t::key_t key = pool_opts_t::get_opt_desc(i->first).key;
             if (p->opts.is_set(key)) {
               if(*it == CSUM_TYPE) {
@@ -6542,6 +6621,7 @@ bool OSDMonitor::preprocess_command(MonOpRequestRef op)
 	  case DEDUP_TIER:
 	  case DEDUP_CHUNK_ALGORITHM:
 	  case DEDUP_CDC_CHUNK_SIZE:
+          case READ_RATIO:
 	    for (i = ALL_CHOICES.begin(); i != ALL_CHOICES.end(); ++i) {
 	      if (i->second == *it)
 		break;
@@ -8014,10 +8094,7 @@ int OSDMonitor::prepare_new_pool(string& name,
     /* crimson-osd requires that the pool be replicated and that pg_num/pgp_num
      * be static.  User must also have specified set-allow-crimson */
     const auto *suffix = " (--crimson specified or osd_pool_default_crimson set)";
-    if (pool_type != pg_pool_t::TYPE_REPLICATED) {
-      *ss << "crimson-osd only supports replicated pools" << suffix;
-      return -EINVAL;
-    } else if (pg_autoscale_mode != "off") {
+    if (pg_autoscale_mode != "off") {
       *ss << "crimson-osd does not support changing pg_num or pgp_num, "
 	  << "pg_autoscale_mode must be set to 'off'" << suffix;
       return -EINVAL;
@@ -8073,7 +8150,7 @@ int OSDMonitor::prepare_new_pool(string& name,
     return r;
   }
 
-  if (osdmap.crush->get_rule_type(crush_rule) != (int)pool_type) {
+  if (!osdmap.crush->rule_valid_for_pool_type(crush_rule, pool_type)) {
     *ss << "crush rule " << crush_rule << " type does not match pool";
     return -EINVAL;
   }
@@ -8315,6 +8392,11 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
     return -EACCES;
   }
 
+  if (!p.is_replicated() &&
+      (var == "read_ratio")) {
+    return -EACCES;
+  }
+
   if (var == "size") {
     if (p.has_flag(pg_pool_t::FLAG_NOSIZECHANGE)) {
       ss << "pool size change is disabled; you must unset nosizechange flag for the pool first";
@@ -8345,7 +8427,7 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
 	return -EPERM;
       }
     }
-    if (osdmap.crush->get_rule_type(p.get_crush_rule()) != (int)p.type) {
+    if (!osdmap.crush->rule_valid_for_pool_type(p.get_crush_rule(), p.type)) {
       ss << "crush rule " << p.get_crush_rule() << " type does not match pool";
       return -EINVAL;
     }
@@ -8578,7 +8660,7 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
       ss << cpp_strerror(id);
       return -ENOENT;
     }
-    if (osdmap.crush->get_rule_type(id) != (int)p.get_type()) {
+    if (!osdmap.crush->rule_valid_for_pool_type(id, p.get_type())) {
       ss << "crush rule " << id << " type does not match pool";
       return -EINVAL;
     }
@@ -8949,6 +9031,15 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
         ss << "error parsing int value '" << val << "': " << interr;
         return -EINVAL;
       }
+    } else if (var == "read_ratio") {
+      if (interr.length()) {
+        ss << "error parsing int value '" << val << "': " << interr;
+        return -EINVAL;
+      }
+      if (n < 0 || n > 100) {
+        ss << "read_ratio must be between 0 and 100";
+        return -ERANGE;
+      }
     }
 
     pool_opts_t::opt_desc_t desc = pool_opts_t::get_opt_desc(var);
@@ -9004,6 +9095,149 @@ int OSDMonitor::prepare_command_pool_application(const string &prefix,
                                                  stringstream& ss)
 {
   return _command_pool_application(prefix, cmdmap, ss, nullptr, true);
+}
+
+int OSDMonitor::prepare_command_pool_stretch_set(const cmdmap_t& cmdmap,
+                                                    stringstream& ss)
+{
+  string pool_name;
+  cmd_getval(cmdmap, "pool", pool_name);
+  int64_t pool = osdmap.lookup_pg_pool_name(pool_name);
+  if (pool < 0) {
+    ss << "unrecognized pool '" << pool_name << "'";
+    return -ENOENT;
+  }
+
+  pg_pool_t p = *osdmap.get_pg_pool(pool);
+  if (pending_inc.new_pools.count(pool))
+    p = pending_inc.new_pools[pool];
+
+  int64_t bucket_count = cmd_getval_or<int64_t>(cmdmap, "peering_crush_bucket_count", 0);
+  if (bucket_count <= 0) {
+    ss << "peering_crush_bucket_count must be >= 0! FYI use 'ceph osd pool stretch unset' to unset the stretch values";
+    return -EINVAL;
+  }
+
+  int64_t bucket_target = cmd_getval_or<int64_t>(cmdmap, "peering_crush_bucket_target", 0);
+  if (bucket_target <= 0) {
+    ss << "peering_crush_bucket_target must be >= 0! FYI use 'ceph osd pool stretch unset' to unset the stretch values";
+    return -EINVAL;
+  }
+
+  int bucket_barrier = 0;
+  string bucket_barrier_str;
+  cmd_getval(cmdmap, "peering_crush_bucket_barrier", bucket_barrier_str);
+  CrushWrapper& crush = _get_stable_crush();
+  if (bucket_barrier_str.empty()) {
+    ss << "peering_crush_bucket_barrier must be provided";
+    return -EINVAL;
+  } else {
+    bucket_barrier = crush.get_type_id(bucket_barrier_str);
+    if (bucket_barrier < 0) {
+      ss << "peering_crush_bucket_barrier " << bucket_barrier_str << " does not exist";
+      return -EINVAL;
+    } else if (bucket_barrier == 0) {
+      ss << "peering_crush_bucket_barrier " << bucket_barrier_str << " is not a bucket type";
+      return -EINVAL;
+    }
+  }
+  // Check if the number of peering_crush_bucket_count and peering_crush_bucket_target
+  // exceeds the number of subtrees of the specified bucket_barrier in the cluster.
+  vector<int> subtrees;
+  bool sure = false;
+  crush.get_subtree_of_type(bucket_barrier, &subtrees);
+  cmd_getval(cmdmap, "yes_i_really_mean_it", sure);
+  if (static_cast<uint32_t>(bucket_count) > subtrees.size()) {
+    if (!sure) {
+      ss << "peering_crush_bucket_count=" << bucket_count
+        << " > " << bucket_barrier_str << "=" <<  subtrees.size()
+        << " can lead to data unavailability, pass --yes-i-really-mean-it to proceed";
+      return -EPERM;
+    }
+  } else if (static_cast<uint32_t>(bucket_target) > subtrees.size()) {
+    if (!sure) {
+      ss << "peering_crush_bucket_target=" << bucket_target
+        << " > " << bucket_barrier_str << "=" <<  subtrees.size()
+        << " can lead to data unavailability, pass --yes-i-really-mean-it to proceed";
+      return -EPERM;
+    }
+  }
+
+  string crush_rule_str;
+  cmd_getval(cmdmap, "crush_rule", crush_rule_str);
+  if (crush_rule_str.empty()) {
+    ss << "crush_rule must be provided";
+    return -EINVAL;
+  }
+  int crush_rule = crush.get_rule_id(crush_rule_str);
+  if (crush_rule < 0) {
+    ss << "crush rule " << crush_rule_str << " does not exist";
+    return -ENOENT;
+  }
+  if (!crush.rule_valid_for_pool_type(crush_rule, p.get_type())) {
+    ss << "crush rule " << crush_rule << " type does not match pool";
+    return -EINVAL;
+  }
+  int64_t pool_size = cmd_getval_or<int64_t>(cmdmap, "size", 0);
+  if (pool_size < 0) {
+    ss << "pool size must be non-negative";
+    return -EINVAL;
+  }
+
+  int64_t pool_min_size = cmd_getval_or<int64_t>(cmdmap, "min_size", 0);
+  if (pool_min_size < 0) {
+    ss << "pool min_size must be non-negative";
+    return -EINVAL;
+  }
+
+  p.peering_crush_bucket_count = static_cast<uint32_t>(bucket_count);
+  p.peering_crush_bucket_target = static_cast<uint32_t>(bucket_target);
+  p.peering_crush_bucket_barrier = static_cast<uint32_t>(bucket_barrier);
+  p.crush_rule = static_cast<__u8>(crush_rule);
+  p.size = static_cast<__u8>(pool_size);
+  p.min_size = static_cast<__u8>(pool_min_size);
+  p.last_change = pending_inc.epoch;
+  pending_inc.new_pools[pool] = p;
+  ss << "pool " << pool_name << " stretch values are set successfully";
+  return 0;
+}
+
+int OSDMonitor::prepare_command_pool_stretch_unset(const cmdmap_t& cmdmap,
+                                                    stringstream& ss)
+{
+  /**
+  * Command syntax:
+  *   ceph osd pool stretch unset <pool>
+  */
+  string pool_name;
+  cmd_getval(cmdmap, "pool", pool_name);
+  int64_t pool = osdmap.lookup_pg_pool_name(pool_name);
+  // check if pool exists
+  if (pool < 0) {
+    ss << "unrecognized pool '" << pool_name << "'";
+    return -ENOENT;
+  }
+
+  // get pool
+  pg_pool_t p = *osdmap.get_pg_pool(pool);
+  if (pending_inc.new_pools.count(pool))
+    p = pending_inc.new_pools[pool];
+  
+  // check if pool is a stretch pool
+  if (!p.is_stretch_pool()) {
+    ss << "pool " << pool_name << " is not a stretch pool";
+    return -ENOENT;
+  }
+
+  // unset stretch values
+  p.peering_crush_bucket_count = 0;
+  p.peering_crush_bucket_target = 0;
+  p.peering_crush_bucket_barrier = 0;
+  p.last_change = pending_inc.epoch;
+  pending_inc.new_pools[pool] = p;
+  ss << "pool " << pool_name
+    << " is no longer a stretch pool, all stretch values are unset successfully";
+  return 0;
 }
 
 int OSDMonitor::preprocess_command_pool_application(const string &prefix,
@@ -11273,6 +11507,8 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 	  err = 0;
 	  goto reply_no_propose;
 	}
+	bool force_no_fake = false;
+	cmd_getval(cmdmap, "yes_i_really_mean_it", force_no_fake);
 	if (!force) {
 	  err = -EPERM;
 	  ss << "will not override erasure code profile " << name
@@ -11280,6 +11516,11 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 	     << existing_profile_map
 	     << " is different from the proposed profile "
 	     << profile_map;
+	  goto reply_no_propose;
+	} else if (!force_no_fake) {
+	  err = -EPERM;
+	  ss << "overriding erasure code profile can be DANGEROUS"
+	     << "; add --yes-i-really-mean-it to do it anyway";
 	  goto reply_no_propose;
 	}
       }
@@ -11669,7 +11910,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       err = 0;
       goto reply_no_propose;
     }
-    if (osdmap.require_osd_release < ceph_release_t::pacific && !sure) {
+    if (osdmap.require_osd_release < ceph_release_t::quincy && !sure) {
       ss << "Not advisable to continue since current 'require_osd_release' "
          << "refers to a very old Ceph release. Pass "
 	 << "--yes-i-really-mean-it if you really wish to continue.";
@@ -11682,20 +11923,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       err = -EPERM;
       goto reply_no_propose;
     }
-    if (rel == ceph_release_t::pacific) {
-      if (!mon.monmap->get_required_features().contains_all(
-	    ceph::features::mon::FEATURE_PACIFIC)) {
-	ss << "not all mons are pacific";
-	err = -EPERM;
-	goto reply_no_propose;
-      }
-      if ((!HAVE_FEATURE(osdmap.get_up_osd_features(), SERVER_PACIFIC))
-           && !sure) {
-	ss << "not all up OSDs have CEPH_FEATURE_SERVER_PACIFIC feature";
-	err = -EPERM;
-	goto reply_no_propose;
-      }
-    } else if (rel == ceph_release_t::quincy) {
+    if (rel == ceph_release_t::quincy) {
       if (!mon.monmap->get_required_features().contains_all(
 	    ceph::features::mon::FEATURE_QUINCY)) {
 	ss << "not all mons are quincy";
@@ -11718,6 +11946,19 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       if ((!HAVE_FEATURE(osdmap.get_up_osd_features(), SERVER_REEF))
            && !sure) {
 	ss << "not all up OSDs have CEPH_FEATURE_SERVER_REEF feature";
+	err = -EPERM;
+	goto reply_no_propose;
+      }
+    } else if (rel == ceph_release_t::squid) {
+      if (!mon.monmap->get_required_features().contains_all(
+	    ceph::features::mon::FEATURE_SQUID)) {
+	ss << "not all mons are squid";
+	err = -EPERM;
+	goto reply_no_propose;
+      }
+      if ((!HAVE_FEATURE(osdmap.get_up_osd_features(), SERVER_SQUID))
+           && !sure) {
+	ss << "not all up OSDs have CEPH_FEATURE_SERVER_SQUID feature";
 	err = -EPERM;
 	goto reply_no_propose;
       }
@@ -12195,25 +12436,27 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 
     ceph_release_t min_release = ceph_release_t::unknown;
     string feature_name = "unknown";
+    uint64_t min_feature = CEPH_FEATURES_ALL; // paranoia
     switch (upmap_option) {
     case OP_PG_UPMAP: 		// fall through
     case OP_RM_PG_UPMAP:	// fall through
     case OP_PG_UPMAP_ITEMS:	// fall through
     case OP_RM_PG_UPMAP_ITEMS:
       min_release = ceph_release_t::luminous;
+      min_feature = CEPH_FEATUREMASK_OSDMAP_PG_UPMAP;
       feature_name = "pg-upmap";
       break;
 
     case OP_PG_UPMAP_PRIMARY:	// fall through
     case OP_RM_PG_UPMAP_PRIMARY:
       min_release = ceph_release_t::reef;
+      min_feature = CEPH_FEATUREMASK_SERVER_REEF;
       feature_name = "pg-upmap-primary";
       break;
 
     default:
       ceph_abort_msg("invalid upmap option");
     }
-    uint64_t min_feature = CEPH_FEATUREMASK_OSDMAP_PG_UPMAP;
     string min_release_name = ceph_release_name(static_cast<int>(min_release));
 
     if (osdmap.require_min_compat_client < min_release) {
@@ -12226,7 +12469,6 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       goto reply_no_propose;
     }
 
-    //TODO: Should I add feature and test for upmap-primary?
     err = check_cluster_features(min_feature, ss);
     if (err == -EAGAIN)
       goto wait;
@@ -13051,9 +13293,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       pp = &pending_inc.new_pools[pool];
       *pp = *p;
     }
-    snapid_t sn = pp->snap_exists(snapname.c_str());
-    if (sn) {
-      pp->remove_snap(sn);
+    if (remove_pool_snap(snapname, *pp, pool)) {
       pp->set_snap_epoch(pending_inc.epoch);
       ss << "removed pool " << poolstr << " snap " << snapname;
     } else {
@@ -13062,6 +13302,100 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     getline(ss, rs);
     wait_for_commit(op, new Monitor::C_Command(mon, op, 0, rs,
 					      get_last_committed() + 1));
+    return true;
+  } else if (prefix == "osd pool force-remove-snap") {
+    /*
+     *  Forces removal of snapshots in the range of
+     *  [lower_snapid_bound, upper_snapid_bound) on pool <pool>
+     *  in order to cause OSDs to re-trim them.
+     *  The command has two mutually exclusive variants:
+     *  * Default: All the snapids in the given range which are not
+     *    marked as purged in the Monitor will be removed. Mostly useful
+     *    for cases in which the snapid is leaked in the client side.
+     *    See: https://tracker.ceph.com/issues/64646
+     */
+    string poolstr;
+    cmd_getval(cmdmap, "pool", poolstr);
+    int64_t pool = osdmap.lookup_pg_pool_name(poolstr.c_str());
+    if (pool < 0) {
+      ss << "unrecognized pool '" << poolstr << "'";
+      err = -ENOENT;
+      goto reply_no_propose;
+    }
+
+    const pg_pool_t *p = osdmap.get_pg_pool(pool);
+    pg_pool_t *pp = nullptr;
+    if (pending_inc.new_pools.count(pool))
+      pp = &pending_inc.new_pools[pool];
+    if (!pp) {
+      pp = &pending_inc.new_pools[pool];
+      *pp = *p;
+    }
+
+    if (!p->is_unmanaged_snaps_mode() && !p->is_pool_snaps_mode()) {
+      ss << "pool " << poolstr << " invalid snaps mode";
+      err = -EINVAL;
+      goto reply_no_propose;
+    }
+
+    int64_t lower_snapid_bound =
+      cmd_getval_or<int64_t>(cmdmap, "lower_snapid_bound", 1);
+    int64_t upper_snapid_bound =
+      cmd_getval_or<int64_t>(cmdmap, "upper_snapid_bound",
+                             (int64_t)p->get_snap_seq());
+
+    if (lower_snapid_bound > upper_snapid_bound) {
+      ss << "error, lower bound can't be higher than higher bound";
+      err = -ENOENT;
+      goto reply_no_propose;
+    }
+
+    bool dry_run = false;
+    cmd_getval(cmdmap, "dry_run", dry_run);
+
+    // don't redelete past pool's snap_seq
+    auto snapid_limit = std::min(upper_snapid_bound, (int64_t)p->get_snap_seq());
+
+    if (dry_run) {
+      ss << "Dry run: ";
+    }
+
+    ss << "force removing snap ids in the range of [" << lower_snapid_bound << ","
+       << snapid_limit << ") from pool " << pool << ". ";
+
+    std::set<int64_t> force_removed_snapids;
+    for (auto i = lower_snapid_bound; i < snapid_limit; i++) {
+      snapid_t before_begin, before_end;
+      int res = lookup_purged_snap(pool, i, &before_begin, &before_end);
+      if (res == 0) {
+        ss << "snapids: " << i << " was already marked as purged. ";
+      } else {
+        // Remove non purged_snaps
+        // See: https://tracker.ceph.com/issues/64646
+        force_removed_snapids.insert(i);
+      }
+    }
+
+    for (const auto i : force_removed_snapids) {
+      if (!dry_run) {
+        pending_inc.new_removed_snaps[pool].insert(snapid_t(i));
+      }
+    }
+
+    if (force_removed_snapids.size()) {
+      ss << "removed snapids: " << force_removed_snapids;
+    } else {
+      ss << "no snapshots were removed";
+    }
+
+    if (dry_run) {
+      err = 0;
+      goto reply_no_propose;
+    }
+    pp->set_snap_epoch(pending_inc.epoch);
+    getline(ss, rs);
+    wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, 0, rs,
+                               get_last_committed() + 1));
     return true;
   } else if (prefix == "osd pool create") {
     int64_t pg_num = cmd_getval_or<int64_t>(cmdmap, "pg_num", 0);
@@ -13856,6 +14190,28 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     } else {
       goto update;
     }
+  } else if (prefix == "osd pool stretch set") {
+    err = prepare_command_pool_stretch_set(cmdmap, ss);
+    if (err == -EAGAIN)
+      goto wait;
+    if (err < 0)
+      goto reply_no_propose;
+
+    getline(ss, rs);
+    wait_for_commit(op, new Monitor::C_Command(mon, op, 0, rs,
+						   get_last_committed() + 1));
+    return true;
+  } else if (prefix == "osd pool stretch unset") {
+    err = prepare_command_pool_stretch_unset(cmdmap, ss);
+    if (err == -EAGAIN)
+      goto wait;
+    if (err < 0)
+      goto reply_no_propose;
+
+    getline(ss, rs);
+    wait_for_commit(op, new Monitor::C_Command(mon, op, 0, rs,
+						   get_last_committed() + 1));
+    return true;
   } else if (prefix == "osd force-create-pg") {
     pg_t pgid;
     string pgidstr;
@@ -14274,10 +14630,7 @@ bool OSDMonitor::prepare_pool_op(MonOpRequestRef op)
 
   case POOL_OP_DELETE_SNAP:
     {
-      snapid_t s = pp.snap_exists(m->name.c_str());
-      if (s) {
-	pp.remove_snap(s);
-	pending_inc.new_removed_snaps[m->pool].insert(s);
+      if (remove_pool_snap(m->name, pp, m->pool)) {
 	changed = true;
       }
     }
@@ -14303,10 +14656,6 @@ bool OSDMonitor::prepare_pool_op(MonOpRequestRef op)
 	m->snapid,
 	osdmap.require_osd_release < ceph_release_t::octopus);
       pending_inc.new_removed_snaps[m->pool].insert(m->snapid);
-      // also record the new seq as purged: this avoids a discontinuity
-      // after all of the snaps have been purged, since the seq assigned
-      // during removal lives in the same namespace as the actual snaps.
-      pending_pseudo_purged_snaps[m->pool].insert(pp.get_snap_seq());
       changed = true;
     }
     break;
@@ -14593,6 +14942,25 @@ int OSDMonitor::_prepare_remove_pool(
       } else {
         it++;
       }
+    }
+  }
+  // remove any old pg_upmap_primary mapping for this pool
+  for (auto& p : osdmap.pg_upmap_primaries) {
+    if (p.first.pool() == pool) {
+      dout(10) << __func__ << " " << pool
+               << " removing obsolete pg_upmap_primaries " << p.first
+               << dendl;
+      pending_inc.old_pg_upmap_primary.insert(p.first);
+    }
+  }
+
+  // remove any pending pg_upmap_primary mapping for this pool
+  for (auto& p : osdmap.pg_upmap_primaries) {
+    if (p.first.pool() == pool) {
+      dout(10) << __func__ << " " << pool
+               << " removing pending pg_upmap_primaries " << p.first
+               << dendl;
+      pending_inc.new_pg_upmap_primary.erase(p.first);
     }
   }
 

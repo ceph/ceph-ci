@@ -182,7 +182,7 @@ namespace rgw {
     LookupFHResult fhr{nullptr, 0};
 
     /* XXX the need for two round-trip operations to identify file or
-     * directory leaf objects is unecessary--the current proposed
+     * directory leaf objects is unnecessary--the current proposed
      * mechanism to avoid this is to store leaf object names with an
      * object locator w/o trailing slash */
 
@@ -345,7 +345,7 @@ namespace rgw {
     int rc = g_rgwlib->get_fe()->execute_req(&req);
     if ((rc == 0) &&
         ((rc = req.get_ret()) == 0)) {
-      lock_guard(rgw_fh->mtx);
+      lock_guard guard(rgw_fh->mtx);
       rgw_fh->set_atime(real_clock::to_timespec(real_clock::now()));
       *bytes_read = req.nread;
     }
@@ -415,7 +415,7 @@ namespace rgw {
        * leaf object
        */
       if (! rgw_fh) {
-	/* XXX for now, peform a hard lookup to deduce the type of
+	/* XXX for now, perform a hard lookup to deduce the type of
 	 * object to be deleted ("foo" vs. "foo/")--also, ensures
 	 * atomicity at this endpoint */
 	struct rgw_file_handle *fh;
@@ -1510,7 +1510,7 @@ namespace rgw {
     if (factory == nullptr) {
       return false;
     }
-    /* make sure the reclaiming object is the same partiton with newobject factory,
+    /* make sure the reclaiming object is the same partition with newobject factory,
      * then we can recycle the object, and replace with newobject */
     if (!fs->fh_cache.is_same_partition(factory->fhk.fh_hk.object, fh.fh_hk.object)) {
       return false;
@@ -1838,7 +1838,8 @@ namespace rgw {
     ceph_assert(! dlo_manifest);
     ceph_assert(! slo_info);
 
-    perfcounter->inc(l_rgw_put);
+    counters = rgw::op_counters::get(state);
+    rgw::op_counters::inc(counters, l_rgw_op_put_obj, 1);
     op_ret = -EINVAL;
 
     if (state->object->empty()) {
@@ -1871,7 +1872,7 @@ namespace rgw {
       }
     }
     processor = get_driver()->get_atomic_writer(this, state->yield, state->object.get(),
-					 state->bucket_owner.get_id(),
+					 state->bucket_owner,
 					 &state->dest_placement, 0, state->req_id);
 
     op_ret = processor->prepare(state->yield);
@@ -1937,6 +1938,7 @@ namespace rgw {
     char calc_md5[CEPH_CRYPTO_MD5_DIGESTSIZE * 2 + 1];
     unsigned char m[CEPH_CRYPTO_MD5_DIGESTSIZE];
     req_state* state = get_state();
+    const req_context rctx{this, state->yield, nullptr};
 
     size_t osize = rgw_fh->get_size();
     struct timespec octime = rgw_fh->get_ctime();
@@ -1944,7 +1946,7 @@ namespace rgw {
     real_time appx_t = real_clock::now();
 
     state->obj_size = bytes_written;
-    perfcounter->inc(l_rgw_put_b, state->obj_size);
+    rgw::op_counters::inc(counters, l_rgw_op_put_obj_b, state->obj_size);
 
     // flush data in filters
     op_ret = filter->process({}, state->obj_size);
@@ -1965,12 +1967,14 @@ namespace rgw {
       RGWCompressionInfo cs_info;
       cs_info.compression_type = plugin->get_type_name();
       cs_info.orig_size = state->obj_size;
+      cs_info.compressor_message = compressor->get_compressor_message();
       cs_info.blocks = std::move(compressor->get_compression_blocks());
       encode(cs_info, tmp);
       attrs[RGW_ATTR_COMPRESSION] = tmp;
       ldpp_dout(this, 20) << "storing " << RGW_ATTR_COMPRESSION
 			<< " with type=" << cs_info.compression_type
 			<< ", orig_size=" << cs_info.orig_size
+			<< ", compressor_message=" << cs_info.compressor_message
 			<< ", blocks=" << cs_info.blocks.size() << dendl;
     }
 
@@ -2016,9 +2020,9 @@ namespace rgw {
     }
 
     op_ret = processor->complete(state->obj_size, etag, &mtime, real_time(), attrs,
-                                 (delete_at ? *delete_at : real_time()),
-                                if_match, if_nomatch, nullptr, nullptr, nullptr,
-                                state->yield);
+                                 rgw::cksum::no_cksum, (delete_at ? *delete_at : real_time()),
+				 if_match, if_nomatch, nullptr, nullptr, nullptr,
+				 rctx, rgw::sal::FLAG_LOG_OP);
     if (op_ret != 0) {
       /* revert attr updates */
       rgw_fh->set_mtime(omtime);
@@ -2027,7 +2031,7 @@ namespace rgw {
     }
 
   done:
-    perfcounter->tinc(l_rgw_put_lat, state->time_elapsed());
+    rgw::op_counters::tinc(counters, l_rgw_op_put_obj_lat, state->time_elapsed());
     return op_ret;
   } /* exec_finish */
 

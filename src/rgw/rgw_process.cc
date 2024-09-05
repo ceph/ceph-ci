@@ -351,7 +351,7 @@ int process_request(const RGWProcessEnv& penv,
     goto done;
   }
   req->op = op;
-  ldpp_dout(op, 10) << "op=" << typeid(*op).name() << dendl;
+  ldpp_dout(op, 10) << "op=" << typeid(*op).name() << " " << dendl;
   s->op_type = op->get_type();
 
   try {
@@ -366,7 +366,13 @@ int process_request(const RGWProcessEnv& penv,
     /* FIXME: remove this after switching all handlers to the new authentication
      * infrastructure. */
     if (nullptr == s->auth.identity) {
-      s->auth.identity = rgw::auth::transform_old_authinfo(s);
+      auto result = rgw::auth::transform_old_authinfo(
+          op, yield, driver, s->user.get());
+      if (!result) {
+        abort_early(s, op, result.error(), handler, yield);
+        goto done;
+      }
+      s->auth.identity = std::move(result).value();
     }
 
     ldpp_dout(op, 2) << "normalizing buckets and tenants" << dendl;

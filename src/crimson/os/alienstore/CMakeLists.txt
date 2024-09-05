@@ -50,6 +50,7 @@ set(alien_store_srcs
   ${PROJECT_SOURCE_DIR}/src/os/bluestore/Allocator.cc
   ${PROJECT_SOURCE_DIR}/src/os/bluestore/AvlAllocator.cc
   ${PROJECT_SOURCE_DIR}/src/os/bluestore/BtreeAllocator.cc
+  ${PROJECT_SOURCE_DIR}/src/os/bluestore/Btree2Allocator.cc
   ${PROJECT_SOURCE_DIR}/src/os/bluestore/BitmapFreelistManager.cc
   ${PROJECT_SOURCE_DIR}/src/os/bluestore/BlueFS.cc
   ${PROJECT_SOURCE_DIR}/src/os/bluestore/bluefs_types.cc
@@ -62,12 +63,9 @@ set(alien_store_srcs
   ${PROJECT_SOURCE_DIR}/src/os/bluestore/HybridAllocator.cc
   ${PROJECT_SOURCE_DIR}/src/os/bluestore/StupidAllocator.cc
   ${PROJECT_SOURCE_DIR}/src/os/bluestore/BitmapAllocator.cc
+  ${PROJECT_SOURCE_DIR}/src/os/bluestore/Writer.cc
+  ${PROJECT_SOURCE_DIR}/src/os/bluestore/BlueStore_debug.cc
   ${PROJECT_SOURCE_DIR}/src/os/memstore/MemStore.cc)
-if(WITH_ZBD)
-  list(APPEND alien_store_srcs
-    ${PROJECT_SOURCE_DIR}/src/os/bluestore/ZonedFreelistManager.cc
-    ${PROJECT_SOURCE_DIR}/src/os/bluestore/ZonedAllocator.cc)
-endif()
 add_library(crimson-alienstore STATIC
   ${alien_store_srcs})
 if(WITH_LTTNG)
@@ -76,7 +74,7 @@ endif()
 target_link_libraries(crimson-alienstore
   PRIVATE
     alien::cflags
-    fmt::fmt
+    ${FMT_LIB}
     kv
     heap_profiler
     crimson-alien-common

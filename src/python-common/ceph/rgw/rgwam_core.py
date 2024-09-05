@@ -149,11 +149,12 @@ class RGWCmdBase:
             opt_arg(self.cmd_suffix, '--rgw-zone', zone_env.zone.name)
             opt_arg(self.cmd_suffix, '--zone-id', zone_env.zone.id)
 
-    def run(self, cmd):
+    def run(self, cmd, stdin=None):
         args = cmd + self.cmd_suffix
-        cmd, returncode, stdout, stderr = self.mgr.tool_exec(self.prog, args)
+        cmd, returncode, stdout, stderr = self.mgr.tool_exec(self.prog, args, stdin)
 
         log.debug('cmd=%s' % str(cmd))
+        log.debug(f'stdin={stdin}')
         log.debug('stdout=%s' % stdout)
 
         if returncode != 0:
@@ -174,8 +175,8 @@ class RGWAdminJSONCmd(RGWAdminCmd):
     def __init__(self, zone_env: ZoneEnv):
         super().__init__(zone_env)
 
-    def run(self, cmd):
-        stdout, _ = RGWAdminCmd.run(self, cmd)
+    def run(self, cmd, stdin=None):
+        stdout, _ = RGWAdminCmd.run(self, cmd, stdin)
 
         return json.loads(stdout)
 
@@ -237,8 +238,12 @@ class ZonegroupOp:
     def get(self, zonegroup: EntityKey = None):
         ze = ZoneEnv(self.env)
         params = ['zonegroup', 'get']
-        opt_arg(params, '--rgw-zonegroup', zonegroup)
         return RGWAdminJSONCmd(ze).run(params)
+
+    def set(self, zonegroup: EntityKey, zg_json: str):
+        ze = ZoneEnv(self.env)
+        params = ['zonegroup', 'set']
+        return RGWAdminJSONCmd(ze).run(params, stdin=zg_json.encode('utf-8'))
 
     def create(self, realm: EntityKey, zg: EntityKey = None, endpoints=None, is_master=True):
         ze = ZoneEnv(self.env, realm=realm).init_zg(zg, gen=True)
@@ -724,6 +729,43 @@ class RGWAM:
 
         return (0, success_message, '')
 
+    def zonegroup_modify(self, realm_name, zonegroup_name, zone_name, hostnames):
+        if realm_name is None:
+            raise RGWAMException('Realm name is a mandatory parameter')
+        if zone_name is None:
+            raise RGWAMException('Zone name is a mandatory parameter')
+        if zonegroup_name is None:
+            raise RGWAMException('Zonegroup name is a mandatory parameter')
+
+        realm = EntityName(realm_name)
+        zone = EntityName(zone_name)
+        period_info = self.period_op().get(realm)
+        period = RGWPeriod(period_info)
+        logging.info('Period: ' + period.id)
+        zonegroup = period.find_zonegroup_by_name(zonegroup_name)
+        if not zonegroup:
+            raise RGWAMException(f'zonegroup {zonegroup_name} not found')
+        zg = EntityName(zonegroup.name)
+        zg_json = self.zonegroup_op().get(zg)
+
+        if hostnames:
+            zg_json['hostnames'] = hostnames
+
+        try:
+            self.zonegroup_op().set(zg, json.dumps(zg_json))
+        except RGWAMException as e:
+            raise RGWAMException('failed to set zonegroup', e)
+
+        try:
+            period_info = self.period_op().update(realm, zg, zone, True)
+        except RGWAMException as e:
+            raise RGWAMException('failed to update period', e)
+
+        period = RGWPeriod(period_info)
+        logging.debug(period.to_json())
+
+        return (0, f'Modified zonegroup {zonegroup_name} of realm {realm_name}', '')
+
     def get_realms_info(self):
         realms_info = []
         for realm_name in self.realm_op().list():
@@ -744,7 +786,7 @@ class RGWAM:
                                 "secret": secret})
         return realms_info
 
-    def zone_create(self, rgw_spec, start_radosgw):
+    def zone_create(self, rgw_spec, start_radosgw, secondary_zone_period_retry_limit=5):
 
         if not rgw_spec.rgw_realm_token:
             raise RGWAMException('missing realm token')
@@ -776,12 +818,30 @@ class RGWAM:
 
         zonegroup = period.get_master_zonegroup()
         if not zonegroup:
-            raise RGWAMException('Cannot find master zonegroup of realm {realm_name}')
+            raise RGWAMException(f'Cannot find master zonegroup of realm {realm_name}')
 
         zone = self.create_zone(realm, zonegroup, rgw_spec.rgw_zone,
                                 False,  # secondary zone
                                 access_key, secret, endpoints=rgw_spec.zone_endpoints)
-        self.update_period(realm, zonegroup, zone)
+
+        # Adding a retry limit for period update in case the default 10s timeout is not sufficient
+        rgw_limit = 0
+
+        while rgw_limit != int(secondary_zone_period_retry_limit):
+            try:
+                self.update_period(realm, zonegroup, zone)
+                break
+            except RGWAMException as e:
+                logging.info(f'Failed to update Period in 10s. Retrying with current limit \
+                             & retry-limit values {rgw_limit} {secondary_zone_period_retry_limit}')
+                rgw_limit += 1
+                if rgw_limit == secondary_zone_period_retry_limit:
+                    raise RGWAMException(f'Period Update failed for zone {zone}. \
+                                          Exception raised while period update {e.message}')
+                continue
+
+        # By default the above operation is expected to be completed in 10s timeout but if we
+        # updating this for secondary site it would take some time because of pool creation
 
         period = RGWPeriod(period_info)
         logging.debug(period.to_json())
@@ -795,7 +855,7 @@ class RGWAM:
             realm_token_b = secondary_realm_token.to_json().encode('utf-8')
             realm_token_s = base64.b64encode(realm_token_b).decode('utf-8')
             rgw_spec.update_endpoints = True
-            rgw_spec.rgw_token = realm_token_s
+            rgw_spec.rgw_realm_token = realm_token_s
             rgw_spec.rgw_zonegroup = zonegroup.name  # master zonegroup is used
             self.env.mgr.apply_rgw(rgw_spec)
 

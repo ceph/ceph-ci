@@ -373,40 +373,6 @@ class PGScrubResched : public PGScrubItem {
   void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
 };
 
-/**
- *  all replicas have granted our scrub resources request
- */
-class PGScrubResourcesOK : public PGScrubItem {
- public:
-  PGScrubResourcesOK(spg_t pg, epoch_t epoch_queued)
-      : PGScrubItem{pg, epoch_queued, "PGScrubResourcesOK"}
-  {}
-  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
-};
-
-/**
- *  scrub resources requests denied by replica(s)
- */
-class PGScrubDenied : public PGScrubItem {
- public:
-  PGScrubDenied(spg_t pg, epoch_t epoch_queued)
-      : PGScrubItem{pg, epoch_queued, "PGScrubDenied"}
-  {}
-  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
-};
-
-/**
- *  called when a repair process completes, to initiate scrubbing. No local/remote
- *  resources are allocated.
- */
-class PGScrubAfterRepair : public PGScrubItem {
- public:
-  PGScrubAfterRepair(spg_t pg, epoch_t epoch_queued)
-      : PGScrubItem{pg, epoch_queued, "PGScrubAfterRepair"}
-  {}
-  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
-};
-
 class PGScrubPushesUpdate : public PGScrubItem {
  public:
   PGScrubPushesUpdate(spg_t pg, epoch_t epoch_queued)
@@ -441,14 +407,6 @@ class PGScrubDigestUpdate : public PGScrubItem {
  public:
   PGScrubDigestUpdate(spg_t pg, epoch_t epoch_queued)
       : PGScrubItem{pg, epoch_queued, "PGScrubDigestUpdate"}
-  {}
-  void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
-};
-
-class PGScrubGotLocalMap : public PGScrubItem {
- public:
-  PGScrubGotLocalMap(spg_t pg, epoch_t epoch_queued)
-    : PGScrubItem{pg, epoch_queued, "PGScrubGotLocalMap"}
   {}
   void run(OSD* osd, OSDShard* sdata, PGRef& pg, ThreadPool::TPHandle& handle) final;
 };

@@ -205,6 +205,7 @@ struct bluefs_layout_t {
   void encode(ceph::buffer::list& bl) const;
   void decode(ceph::buffer::list::const_iterator& p);
   void dump(ceph::Formatter *f) const;
+  static void generate_test_instances(std::list<bluefs_layout_t*>& ls);
 };
 WRITE_CLASS_ENCODER(bluefs_layout_t)
 
@@ -218,9 +219,9 @@ struct bluefs_super_t {
 
   std::optional<bluefs_layout_t> memorized_layout;
 
-  bluefs_super_t()
-    : version(0),
-      block_size(4096) { }
+  std::vector<uint64_t> bluefs_max_alloc_size;
+
+  bluefs_super_t();
 
   uint64_t block_mask() const {
     return ~((uint64_t)block_size - 1);

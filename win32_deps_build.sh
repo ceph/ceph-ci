@@ -16,9 +16,9 @@ sslDir="${depsToolsetDir}/openssl"
 sslSrcDir="${depsSrcDir}/openssl"
 
 # For now, we'll keep the version number within the file path when not using git.
-boostUrl="https://boostorg.jfrog.io/artifactory/main/release/1.82.0/source/boost_1_82_0.tar.gz"
-boostSha256Sum="66a469b6e608a51f8347236f4912e27dc5c60c60d7d53ae9bfe4683316c6f04c"
-boostSrcDir="${depsSrcDir}/boost_1_82_0"
+boostUrl="https://download.ceph.com/qa/boost_1_85_0.tar.bz2"
+boostSha256Sum="7009fe1faa1697476bdc7027703a2badb84e849b7b0baad5086b087b971f8617"
+boostSrcDir="${depsSrcDir}/boost_1_85_0"
 boostDir="${depsToolsetDir}/boost"
 zlibDir="${depsToolsetDir}/zlib"
 zlibSrcDir="${depsSrcDir}/zlib"
@@ -40,8 +40,8 @@ dokanTag="v2.0.5.1000"
 dokanSrcDir="${depsSrcDir}/dokany"
 dokanLibDir="${depsToolsetDir}/dokany/lib"
 
-mingwLlvmUrl="https://github.com/mstorsjo/llvm-mingw/releases/download/20230320/llvm-mingw-20230320-msvcrt-ubuntu-18.04-x86_64.tar.xz"
-mingwLlvmSha256Sum="bc97745e702fb9e8f2a16f7d09dd5061ceeef16554dd12e542f619ce937e8d7a"
+mingwLlvmUrl="https://github.com/mstorsjo/llvm-mingw/releases/download/20230320/llvm-mingw-20230320-ucrt-ubuntu-18.04-x86_64.tar.xz"
+mingwLlvmSha256Sum="bc367753dea829d219be32e2e64e2d15d03158ce8e700ae5210ca3d78e6a07ea"
 mingwLlvmDir="${DEPS_DIR}/mingw-llvm"
 
 function _make() {
@@ -70,6 +70,8 @@ case "$OS" in
             libtool \
             ninja-build \
             zip \
+            bzip2 \
+            xz \
             python3-PyYAML \
             gcc \
             diffutils \
@@ -83,12 +85,12 @@ case "$OS" in
         sudo env DEBIAN_FRONTEND=noninteractive apt-get -y install \
             mingw-w64 g++ cmake pkg-config \
             python3-dev python3-yaml \
-                autoconf libtool ninja-build wget zip \
+                autoconf libtool ninja-build wget xz-utils zip bzip2 \
                 git
         ;;
     suse)
         for PKG in mingw64-cross-gcc-c++ mingw64-libgcc_s_seh1 mingw64-libstdc++6 \
-                cmake pkgconf python3-devel autoconf libtool ninja zip \
+                cmake pkgconf python3-devel autoconf libtool ninja xz zip bzip2 \
                 python3-PyYAML \
                 gcc patch wget git; do
             rpm -q $PKG >/dev/null || zypper -n install $PKG
@@ -160,14 +162,14 @@ echo "Building boost."
 cd $depsSrcDir
 if [[ ! -d $boostSrcDir ]]; then
     echo "Downloading boost."
-    wget -q -O boost.tar.gz $boostUrl
-    checksum=`sha256sum boost.tar.gz | cut -d ' ' -f 1`
+    wget -q -O boost.tar.bz2 $boostUrl
+    checksum=`sha256sum boost.tar.bz2 | cut -d ' ' -f 1`
     if [[ "$boostSha256Sum" != "$checksum" ]]; then
         echo "Invalid boost checksum: $checksum" >&2
         exit 1
     fi
-    tar xzf boost.tar.gz
-    rm boost.tar.gz
+    tar -xf boost.tar.bz2
+    rm boost.tar.bz2
 fi
 
 cd $boostSrcDir
@@ -221,27 +223,6 @@ patch -N boost/thread/pthread/thread_data.hpp <<EOL
  #else
            std::size_t page_size = ::sysconf( _SC_PAGESIZE);
  #endif
-EOL
-
-# https://github.com/boostorg/stacktrace/pull/140
-# https://github.com/boostorg/stacktrace/issues/133
-patch -N boost/stacktrace/detail/frame_msvc.ipp <<'EOL'
---- boost/stacktrace/detail/frame_msvc.ipp      2023-08-18 12:29:37.127229733 +0000
-+++ boost/stacktrace/detail/frame_msvc.ipp.new  2023-08-18 12:28:23.713294554 +0000
-@@ -28,9 +28,13 @@
-
-
- #ifdef __CRT_UUID_DECL // for __MINGW32__
-+#if !defined(__MINGW32__) || \
-+    (!defined(__clang__) && __GNUC__ < 12) || \
-+    (defined(__clang__) && __clang_major__ < 16)
-     __CRT_UUID_DECL(IDebugClient,0x27fe5639,0x8407,0x4f47,0x83,0x64,0xee,0x11,0x8f,0xb0,0x8a,0xc8)
-     __CRT_UUID_DECL(IDebugControl,0x5182e668,0x105e,0x416e,0xad,0x92,0x24,0xef,0x80,0x04,0x24,0xba)
-     __CRT_UUID_DECL(IDebugSymbols,0x8c31e98c,0x983a,0x48a5,0x90,0x16,0x6f,0xe5,0xd6,0x67,0xa9,0x50)
-+#endif
- #elif defined(DEFINE_GUID) && !defined(BOOST_MSVC)
-     DEFINE_GUID(IID_IDebugClient,0x27fe5639,0x8407,0x4f47,0x83,0x64,0xee,0x11,0x8f,0xb0,0x8a,0xc8);
-     DEFINE_GUID(IID_IDebugControl,0x5182e668,0x105e,0x416e,0xad,0x92,0x24,0xef,0x80,0x04,0x24,0xba);
 EOL
 
 ./bootstrap.sh

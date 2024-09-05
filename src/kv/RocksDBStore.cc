@@ -585,6 +585,14 @@ int RocksDBStore::load_rocksdb_options(bool create_if_missing, rocksdb::Options&
   if (cct->_conf.get_val<Option::size_t>("rocksdb_metadata_block_size") > 0)
     bbt_opts.metadata_block_size = cct->_conf.get_val<Option::size_t>("rocksdb_metadata_block_size");
 
+  // Set Compact on Deletion Factory
+  if (cct->_conf->rocksdb_cf_compact_on_deletion) {
+    size_t sliding_window = cct->_conf->rocksdb_cf_compact_on_deletion_sliding_window;
+    size_t trigger = cct->_conf->rocksdb_cf_compact_on_deletion_trigger;
+    opt.table_properties_collector_factories.emplace_back(
+        rocksdb::NewCompactOnDeletionCollectorFactory(sliding_window, trigger));
+  }
+
   opt.table_factory.reset(rocksdb::NewBlockBasedTableFactory(bbt_opts));
   dout(10) << __func__ << " block size " << cct->_conf->rocksdb_block_size
            << ", block_cache size " << byte_u_t(block_cache_size)
@@ -934,14 +942,6 @@ int RocksDBStore::update_column_family_options(const std::string& base_name,
       return r;
     }
   }
-
-  // Set Compact on Deletion Factory
-  if (cct->_conf->rocksdb_cf_compact_on_deletion) {
-    size_t sliding_window = cct->_conf->rocksdb_cf_compact_on_deletion_sliding_window;
-    size_t trigger = cct->_conf->rocksdb_cf_compact_on_deletion_trigger;
-    cf_opt->table_properties_collector_factories.emplace_back(
-        rocksdb::NewCompactOnDeletionCollectorFactory(sliding_window, trigger));
-  }
   return 0;
 }
 
@@ -1243,7 +1243,9 @@ int RocksDBStore::do_open(ostream &out,
   plb.add_time_avg(l_rocksdb_submit_latency, "submit_latency", "Submit Latency");
   plb.add_time_avg(l_rocksdb_submit_sync_latency, "submit_sync_latency", "Submit Sync Latency");
   plb.add_u64_counter(l_rocksdb_compact, "compact", "Compactions");
-  plb.add_u64_counter(l_rocksdb_compact_range, "compact_range", "Compactions by range");
+  plb.add_u64_counter(l_rocksdb_compact_running, "compact_running", "Running compactions");
+  plb.add_u64_counter(l_rocksdb_compact_completed, "compact_completed", "Completed compactions");
+  plb.add_time(l_rocksdb_compact_lasted, "compact_lasted", "Last completed compaction duration");
   plb.add_u64_counter(l_rocksdb_compact_queue_merge, "compact_queue_merge", "Mergings of ranges in compaction queue");
   plb.add_u64(l_rocksdb_compact_queue_len, "compact_queue_len", "Length of compaction queue");
   plb.add_time_avg(l_rocksdb_write_wal_time, "rocksdb_write_wal_time", "Rocksdb write wal time");
@@ -1419,21 +1421,34 @@ void RocksDBStore::get_statistics(Formatter *f)
 	     << dendl;
     return;
   }
-
+  
   if (cct->_conf->rocksdb_collect_compaction_stats) {
-    std::string stat_str;
-    bool status = db->GetProperty("rocksdb.stats", &stat_str);
-    if (status) {
-      f->open_object_section("rocksdb_statistics");
+    vector<rocksdb::ColumnFamilyHandle*> handles;
+    handles.push_back(default_cf);
+    for (auto cf : cf_handles) {
+      for (auto shard_cf : cf.second.handles) {
+        handles.push_back(shard_cf);
+      }
+    }
+    f->open_object_section("rocksdb_statistics");
+    for (auto handle : handles) {
+      std::string stat_str;
+      bool status = db->GetProperty(handle, "rocksdb.stats", &stat_str);
+      if (!status) {
+        derr << __func__ << " failed to get rocksdb.stats for the cf: " 
+             << handle->GetName() << dendl;
+        continue;
+      } 
       f->dump_string("rocksdb_compaction_statistics", "");
       vector<string> stats;
       split_stats(stat_str, '\n', stats);
       for (auto st :stats) {
         f->dump_string("", st);
-      }
-      f->close_section();
+      }  
     }
+    f->close_section();
   }
+
   if (cct->_conf->rocksdb_collect_extended_stats) {
     if (dbstats) {
       f->open_object_section("rocksdb_extended_statistics");
@@ -1988,6 +2003,7 @@ int RocksDBStore::split_key(rocksdb::Slice in, string *prefix, string *key)
 
 void RocksDBStore::compact()
 {
+  dout(2) << __func__ << " starting" << dendl;
   logger->inc(l_rocksdb_compact);
   rocksdb::CompactRangeOptions options;
   db->CompactRange(options, default_cf, nullptr, nullptr);
@@ -1999,6 +2015,7 @@ void RocksDBStore::compact()
 	nullptr, nullptr);
     }
   }
+  dout(2) << __func__ << " completed" << dendl;
 }
 
 void RocksDBStore::compact_thread_entry()
@@ -2011,12 +2028,17 @@ void RocksDBStore::compact_thread_entry()
       compact_queue.pop_front();
       logger->set(l_rocksdb_compact_queue_len, compact_queue.size());
       l.unlock();
-      logger->inc(l_rocksdb_compact_range);
+      logger->inc(l_rocksdb_compact_running);
+      auto start = ceph_clock_now();
       if (range.first.empty() && range.second.empty()) {
         compact();
       } else {
         compact_range(range.first, range.second);
       }
+      auto lat = ceph_clock_now() - start;
+      logger->dec(l_rocksdb_compact_running);
+      logger->inc(l_rocksdb_compact_completed);
+      logger->tset(l_rocksdb_compact_lasted, lat);
       l.lock();
       continue;
     }

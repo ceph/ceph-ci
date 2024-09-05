@@ -25,6 +25,7 @@ def nfs_json(**kwargs):
     if kwargs.get("files"):
         result["files"] = {
             "ganesha.conf": "",
+            "idmap.conf": "",
         }
     if kwargs.get("rgw_content"):
         result["rgw"] = dict(kwargs["rgw_content"])
@@ -117,7 +118,7 @@ def test_nfsganesha_container_mounts():
             "fred",
             good_nfs_json(),
         )
-        cmounts = nfsg.get_container_mounts("/var/tmp")
+        cmounts = nfsg._get_container_mounts("/var/tmp")
         assert len(cmounts) == 3
         assert cmounts["/var/tmp/config"] == "/etc/ceph/ceph.conf:z"
         assert cmounts["/var/tmp/keyring"] == "/etc/ceph/keyring:z"
@@ -130,7 +131,7 @@ def test_nfsganesha_container_mounts():
             "fred",
             nfs_json(pool=True, files=True, rgw=True),
         )
-        cmounts = nfsg.get_container_mounts("/var/tmp")
+        cmounts = nfsg._get_container_mounts("/var/tmp")
         assert len(cmounts) == 4
         assert cmounts["/var/tmp/config"] == "/etc/ceph/ceph.conf:z"
         assert cmounts["/var/tmp/keyring"] == "/etc/ceph/keyring:z"
@@ -155,15 +156,17 @@ def test_nfsganesha_container_envs():
 
 
 def test_nfsganesha_get_version():
+    from cephadmlib.daemons import nfs
+
     with with_cephadm_ctx([]) as ctx:
-        nfsg = _cephadm.NFSGanesha(
+        nfsg = nfs.NFSGanesha(
             ctx,
             SAMPLE_UUID,
             "fred",
             good_nfs_json(),
         )
 
-        with mock.patch("cephadm.call") as _call:
+        with mock.patch("cephadmlib.daemons.nfs.call") as _call:
             _call.return_value = ("NFS-Ganesha Release = V100", "", 0)
             ver = nfsg.get_version(ctx, "fake_version")
             _call.assert_called()

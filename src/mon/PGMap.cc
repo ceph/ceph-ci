@@ -882,10 +882,6 @@ void PGMapDigest::dump_object_stat_sum(
   const object_stat_sum_t &sum = pool_stat.stats.sum;
   const store_statfs_t statfs = pool_stat.store_stats;
 
-  if (sum.num_object_copies > 0) {
-    raw_used_rate *= (float)(sum.num_object_copies - sum.num_objects_degraded) / sum.num_object_copies;
-  }
-
   uint64_t used_data_bytes = pool_stat.get_allocated_data_bytes(per_pool);
   uint64_t used_omap_bytes = pool_stat.get_allocated_omap_bytes(per_pool_omap);
   uint64_t used_bytes = used_data_bytes + used_omap_bytes;
@@ -3238,6 +3234,14 @@ void PGMap::get_health_checks(
 	summary += " reporting legacy (not per-pool) BlueStore omap usage stats";
       } else if (asum.first == "BLUESTORE_SPURIOUS_READ_ERRORS") {
         summary += " have spurious read errors";
+      } else if (asum.first == "BLUESTORE_SLOW_OP_ALERT") {
+        summary += " experiencing slow operations in BlueStore";
+      } else if (asum.first == "BLOCK_DEVICE_STALLED_READ_ALERT") {
+        summary += " experiencing stalled read in block device of BlueStore";
+      } else if (asum.first == "WAL_DEVICE_STALLED_READ_ALERT") {
+        summary += " experiencing stalled read in wal device of BlueFS";
+      } else if (asum.first == "DB_DEVICE_STALLED_READ_ALERT") {
+        summary += " experiencing stalled read in db device of BlueFS";
       }
 
       auto& d = checks->add(asum.first, HEALTH_WARN, summary, asum.second.first);

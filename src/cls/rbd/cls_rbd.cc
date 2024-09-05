@@ -4624,6 +4624,7 @@ static const std::string STATUS_GLOBAL_KEY_PREFIX("status_global_");
 static const std::string REMOTE_STATUS_GLOBAL_KEY_PREFIX("remote_status_global_");
 static const std::string INSTANCE_KEY_PREFIX("instance_");
 static const std::string MIRROR_IMAGE_MAP_KEY_PREFIX("image_map_");
+static const std::string REMOTE_NAMESPACE("remote_namespace");
 
 std::string peer_key(const std::string &uuid) {
   return PEER_KEY_PREFIX + uuid;
@@ -5920,6 +5921,54 @@ int mirror_mode_set(cls_method_context_t hctx, bufferlist *in,
     if (r < 0) {
       return r;
     }
+
+    r = remove_key(hctx, mirror::REMOTE_NAMESPACE);
+    if (r < 0) {
+      return r;
+    }
+  }
+  return 0;
+}
+
+int mirror_namespace_get(cls_method_context_t hctx, bufferlist *in,
+                         bufferlist *out) {
+  std::string mirror_ns_decode;
+  int r = read_key(hctx, mirror::REMOTE_NAMESPACE, &mirror_ns_decode);
+  if (r < 0) {
+    CLS_ERR("error getting mirror namespace: %s", cpp_strerror(r).c_str());
+    return r;
+  }
+
+  encode(mirror_ns_decode, *out);
+  return 0;
+}
+
+int mirror_namespace_set(cls_method_context_t hctx, bufferlist *in,
+                         bufferlist *out) {
+  std::string mirror_namespace;
+  try {
+    auto bl_it = in->cbegin();
+    decode(mirror_namespace, bl_it);
+  } catch (const ceph::buffer::error &err) {
+    return -EINVAL;
+  }
+
+  uint32_t mirror_mode;
+  int r = read_key(hctx, mirror::MODE, &mirror_mode);
+  if (r < 0 && r != -ENOENT) {
+    return r;
+  } else if (r == 0 && mirror_mode != cls::rbd::MIRROR_MODE_DISABLED) {
+    CLS_ERR("cannot set mirror remote namespace while mirroring enabled");
+    return -EINVAL;
+  }
+
+  bufferlist bl;
+  encode(mirror_namespace, bl);
+
+  r = cls_cxx_map_set_val(hctx, mirror::REMOTE_NAMESPACE, &bl);
+  if (r < 0) {
+    CLS_ERR("error setting mirror namespace: %s", cpp_strerror(r).c_str());
+    return r;
   }
   return 0;
 }
@@ -6898,6 +6947,8 @@ int dir_remove(cls_method_context_t hctx,
 }
 
 static const string RBD_GROUP_SNAP_KEY_PREFIX = "snapshot_";
+static const string RBD_GROUP_SNAP_ORDER_KEY_PREFIX = "snap_order_";
+static const string RBD_GROUP_SNAP_MAX_ORDER_KEY = "snap_max_order";
 
 std::string snap_key(const std::string &snap_id) {
   ostringstream oss;
@@ -6905,10 +6956,19 @@ std::string snap_key(const std::string &snap_id) {
   return oss.str();
 }
 
+std::string snap_order_key(const std::string &snap_id) {
+  ostringstream oss;
+  oss << RBD_GROUP_SNAP_ORDER_KEY_PREFIX << snap_id;
+  return oss.str();
+}
+
+std::string snap_id_from_order_key(const string &key) {
+  return key.substr(RBD_GROUP_SNAP_ORDER_KEY_PREFIX.size());
+}
+
 int snap_list(cls_method_context_t hctx, cls::rbd::GroupSnapshot start_after,
               uint64_t max_return,
-              std::vector<cls::rbd::GroupSnapshot> *group_snaps)
-{
+              std::vector<cls::rbd::GroupSnapshot> *group_snaps) {
   int max_read = RBD_MAX_KEYS_READ;
   std::map<string, bufferlist> vals;
   string last_read = snap_key(start_after.id);
@@ -6941,6 +7001,8 @@ int snap_list(cls_method_context_t hctx, cls::rbd::GroupSnapshot start_after,
 
     if (!vals.empty()) {
       last_read = vals.rbegin()->first;
+    } else {
+      ceph_assert(!more);
     }
   } while (more && (group_snaps->size() < max_return));
 
@@ -7457,14 +7519,51 @@ int group_snap_set(cls_method_context_t hctx,
     if (r < 0 && r != -ENOENT) {
       return r;
     } else if (r >= 0) {
+      CLS_ERR("snap key already exists : %s", key.c_str());
       return -EEXIST;
+    }
+
+    std::string order_key = group::snap_order_key(group_snap.id);
+    r = cls_cxx_map_get_val(hctx, order_key, &snap_bl);
+    if (r < 0 && r != -ENOENT) {
+      return r;
+    } else if (r >= 0) {
+      CLS_ERR("order key already exists : %s", order_key.c_str());
+      return -EEXIST;
+    }
+
+    uint64_t max_order = 0;
+    r = read_key(hctx, group::RBD_GROUP_SNAP_MAX_ORDER_KEY, &max_order);
+    if (r < 0 && r != -ENOENT) {
+      return r;
+    }
+
+    bufferlist bl;
+    encode(++max_order, bl);
+    r = cls_cxx_map_set_val(hctx, group::RBD_GROUP_SNAP_MAX_ORDER_KEY, &bl);
+    if (r < 0) {
+      CLS_ERR("error setting key: %s : %s",
+              group::RBD_GROUP_SNAP_MAX_ORDER_KEY.c_str(),
+              cpp_strerror(r).c_str());
+      return r;
+    }
+
+    r = cls_cxx_map_set_val(hctx, order_key, &bl);
+    if (r < 0) {
+      CLS_ERR("error setting key: %s : %s", order_key.c_str(),
+              cpp_strerror(r).c_str());
+      return r;
     }
   }
 
   bufferlist obl;
   encode(group_snap, obl);
   r = cls_cxx_map_set_val(hctx, key, &obl);
-  return r;
+  if (r < 0) {
+    CLS_ERR("error setting key: %s : %s", key.c_str(), cpp_strerror(r).c_str());
+    return r;
+  }
+  return 0;
 }
 
 /**
@@ -7492,7 +7591,21 @@ int group_snap_remove(cls_method_context_t hctx,
 
   CLS_LOG(20, "removing snapshot with key %s", snap_key.c_str());
   int r = cls_cxx_map_remove_key(hctx, snap_key);
-  return r;
+  if (r < 0) {
+    CLS_ERR("error removing snapshot with key %s : %s", snap_key.c_str(),
+            cpp_strerror(r).c_str());
+    return r;
+  }
+
+  std::string snap_order_key = group::snap_order_key(snap_id);
+  r = cls_cxx_map_remove_key(hctx, snap_order_key);
+  if (r < 0 && r != -ENOENT) {
+    CLS_ERR("error removing snapshot order key %s : %s", snap_order_key.c_str(),
+            cpp_strerror(r).c_str());
+    return r;
+  }
+
+  return 0;
 }
 
 /**
@@ -7566,10 +7679,67 @@ int group_snap_list(cls_method_context_t hctx,
     return -EINVAL;
   }
   std::vector<cls::rbd::GroupSnapshot> group_snaps;
-  group::snap_list(hctx, start_after, max_return, &group_snaps);
+  int r = group::snap_list(hctx, start_after, max_return, &group_snaps);
+  if (r < 0) {
+    return r;
+  }
 
   encode(group_snaps, *out);
 
+  return 0;
+}
+
+int group_snap_list_order(cls_method_context_t hctx,
+                          bufferlist *in, bufferlist *out)
+{
+  CLS_LOG(20, "group_snap_list_order");
+
+  std::string start_after;
+  uint64_t max_return;
+  try {
+    auto iter = in->cbegin();
+    decode(start_after, iter);
+    decode(max_return, iter);
+  } catch (const ceph::buffer::error &err) {
+    return -EINVAL;
+  }
+
+  std::map<std::string, uint64_t> group_snaps_order;
+  int max_read = RBD_MAX_KEYS_READ;
+  bool more;
+  std::string last_read = group::snap_order_key(start_after);
+  std::map<std::string, bufferlist> vals;
+
+  do {
+    int r = cls_cxx_map_get_vals(hctx, last_read,
+                                 group::RBD_GROUP_SNAP_ORDER_KEY_PREFIX,
+                                 max_read, &vals, &more);
+    if (r < 0) {
+      CLS_ERR("error getting snapshot orders: %s", cpp_strerror(r).c_str());
+      return r;
+    }
+
+    for (auto it = vals.begin();
+         it != vals.end() && group_snaps_order.size() < max_return; ++it) {
+      std::string snap_id = group::snap_id_from_order_key(it->first);
+      auto iter = it->second.cbegin();
+      uint64_t order;
+      try {
+        decode(order, iter);
+      } catch (const ceph::buffer::error &err) {
+        CLS_ERR("error decoding snapshot order: %s", snap_id.c_str());
+        return -EIO;
+      }
+      group_snaps_order[snap_id] = order;
+    }
+    if (!vals.empty()) {
+      last_read = vals.rbegin()->first;
+    } else {
+      ceph_assert(!more);
+    }
+  } while (more && (group_snaps_order.size() < max_return));
+
+  encode(group_snaps_order, *out);
   return 0;
 }
 
@@ -8157,6 +8327,8 @@ CLS_INIT(rbd)
   cls_method_handle_t h_mirror_uuid_set;
   cls_method_handle_t h_mirror_mode_get;
   cls_method_handle_t h_mirror_mode_set;
+  cls_method_handle_t h_mirror_namespace_get;
+  cls_method_handle_t h_mirror_namespace_set;
   cls_method_handle_t h_mirror_peer_ping;
   cls_method_handle_t h_mirror_peer_list;
   cls_method_handle_t h_mirror_peer_add;
@@ -8199,6 +8371,7 @@ CLS_INIT(rbd)
   cls_method_handle_t h_group_snap_remove;
   cls_method_handle_t h_group_snap_get_by_id;
   cls_method_handle_t h_group_snap_list;
+  cls_method_handle_t h_group_snap_list_order;
   cls_method_handle_t h_trash_add;
   cls_method_handle_t h_trash_remove;
   cls_method_handle_t h_trash_list;
@@ -8453,6 +8626,11 @@ CLS_INIT(rbd)
   cls_register_cxx_method(h_class, "mirror_mode_set",
                           CLS_METHOD_RD | CLS_METHOD_WR,
                           mirror_mode_set, &h_mirror_mode_set);
+  cls_register_cxx_method(h_class, "mirror_namespace_get", CLS_METHOD_RD,
+                          mirror_namespace_get, &h_mirror_namespace_get);
+  cls_register_cxx_method(h_class, "mirror_namespace_set",
+                          CLS_METHOD_RD | CLS_METHOD_WR,
+                          mirror_namespace_set, &h_mirror_namespace_set);
   cls_register_cxx_method(h_class, "mirror_peer_ping",
                           CLS_METHOD_RD | CLS_METHOD_WR,
                           mirror_peer_ping, &h_mirror_peer_ping);
@@ -8582,6 +8760,9 @@ CLS_INIT(rbd)
   cls_register_cxx_method(h_class, "group_snap_list",
 			  CLS_METHOD_RD,
 			  group_snap_list, &h_group_snap_list);
+  cls_register_cxx_method(h_class, "group_snap_list_order",
+			  CLS_METHOD_RD,
+			  group_snap_list_order, &h_group_snap_list_order);
 
   /* rbd_trash object methods */
   cls_register_cxx_method(h_class, "trash_add",

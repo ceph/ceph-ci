@@ -13,6 +13,9 @@
  */
 #include <poll.h>
 #include <sys/un.h>
+#include <optional>
+
+#include <stdlib.h>
 
 #include "common/admin_socket.h"
 #include "common/admin_socket_client.h"
@@ -36,6 +39,7 @@
 #include "include/ceph_assert.h"
 #include "include/compat.h"
 #include "include/sock_compat.h"
+#include "fmt/format.h"
 
 #define dout_subsys ceph_subsys_asok
 #undef dout_prefix
@@ -421,7 +425,7 @@ void AdminSocket::do_tell_queue()
     execute_command(
       m->cmd,
       m->get_data(),
-      [m](int r, const std::string& err, bufferlist& outbl) {
+      [m](int r, std::string_view err, bufferlist& outbl) {
 	auto reply = new MCommandReply(r, err);
 	reply->set_tid(m->get_tid());
 	reply->set_data(outbl);
@@ -437,7 +441,7 @@ void AdminSocket::do_tell_queue()
     execute_command(
       m->cmd,
       m->get_data(),
-      [m](int r, const std::string& err, bufferlist& outbl) {
+      [m](int r, std::string_view err, bufferlist& outbl) {
 	auto reply = new MMonCommandAck(m->cmd, r, err, 0);
 	reply->set_tid(m->get_tid());
 	reply->set_data(outbl);
@@ -468,7 +472,7 @@ int AdminSocket::execute_command(
   execute_command(
     cmd,
     inbl,
-    [&errss, outbl, &fin](int r, const std::string& err, bufferlist& out) {
+    [&errss, outbl, &fin](int r, std::string_view err, bufferlist& out) {
       errss << err;
       *outbl = std::move(out);
       fin.finish(r);
@@ -484,7 +488,7 @@ int AdminSocket::execute_command(
 void AdminSocket::execute_command(
   const std::vector<std::string>& cmdvec,
   const bufferlist& inbl,
-  std::function<void(int,const std::string&,bufferlist&)> on_finish)
+  asok_finisher on_finish)
 {
   cmdmap_t cmdmap;
   string format;
@@ -504,7 +508,46 @@ void AdminSocket::execute_command(
 		     empty);
   }
 
-  auto f = Formatter::create(format, "json-pretty", "json-pretty");
+  ldout(m_cct, 20) << __func__ << ": format is " << format << " prefix is " << prefix << dendl;
+
+  string output;
+  try {
+    cmd_getval(cmdmap, "output-file", output);
+    if (!output.empty()) {
+      ldout(m_cct, 20) << __func__ << ": output file is " << output << dendl;
+    }
+  } catch (const bad_cmd_get& e) {
+    output = "";
+  }
+
+  if (output == ":tmp:") {
+    auto path = m_cct->_conf.get_val<std::string>("tmp_file_template");
+    if (int fd = mkstemp(path.data()); fd >= 0) {
+      close(fd);
+      output = path;
+      ldout(m_cct, 20) << __func__ << ": output file created in tmp_dir is " << output << dendl;
+    } else {
+      return on_finish(-errno, "temporary output file could not be opened", empty);
+    }
+  }
+
+  Formatter* f;
+  if (!output.empty()) {
+    if (!(format == "json" || format == "json-pretty")) {
+      return on_finish(-EINVAL, "unsupported format for --output-file", empty);
+    }
+    ldout(m_cct, 10) << __func__ << ": opening file for json output: " << output << dendl;
+    bool pretty = (format == "json-pretty");
+    auto* jff = new JSONFormatterFile(output, pretty);
+    auto&& of = jff->get_ofstream();
+    if (!of.is_open()) {
+      delete jff;
+      return on_finish(-EIO, "output file could not be opened", empty);
+    }
+    f = jff;
+  } else {
+    f = Formatter::create(format, "json-pretty", "json-pretty");
+  }
 
   auto [retval, hook] = find_matched_hook(prefix, cmdmap);
   switch (retval) {
@@ -522,10 +565,27 @@ void AdminSocket::execute_command(
 
   hook->call_async(
     prefix, cmdmap, f, inbl,
-    [f, on_finish](int r, const std::string& err, bufferlist& out) {
+    [f, output, on_finish, m_cct=m_cct](int r, std::string_view err, bufferlist& out) {
       // handle either existing output in bufferlist *or* via formatter
-      if (r >= 0 && out.length() == 0) {
-	f->flush(out);
+      ldout(m_cct, 10) << __func__ << ": command completed with result " << r << dendl;
+      if (auto* jff = dynamic_cast<JSONFormatterFile*>(f); jff != nullptr) {
+        ldout(m_cct, 25) << __func__ << ": flushing file" << dendl;
+        jff->flush();
+        auto* outf = new JSONFormatter(true);
+        outf->open_object_section("result");
+        outf->dump_string("path", output);
+        outf->dump_int("result", r);
+        outf->dump_string("output", out.to_str());
+        outf->dump_int("len", jff->get_len());
+        outf->close_section();
+        CachedStackStringStream css;
+        outf->flush(*css);
+        delete outf;
+        out.clear();
+        out.append(css->strv());
+      } else if (r >= 0 && out.length() == 0) {
+        ldout(m_cct, 25) << __func__ << ": out is empty, dumping formatter" << dendl;
+        f->flush(out);
       }
       delete f;
       on_finish(r, err, out);
@@ -693,6 +753,303 @@ public:
   }
 };
 
+// Define a macro to simplify adding signals to the map
+#define ADD_SIGNAL(signalName)                 \
+  {                                            \
+    ((const char*)#signalName) + 3, signalName \
+  }
+
+static const std::map<std::string, int> known_signals = {
+  // the following 6 signals are recognized in windows according to
+  // https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/raise?view=msvc-170
+  ADD_SIGNAL(SIGABRT),
+  ADD_SIGNAL(SIGFPE),
+  ADD_SIGNAL(SIGILL),
+  ADD_SIGNAL(SIGINT),
+  ADD_SIGNAL(SIGSEGV),
+  ADD_SIGNAL(SIGTERM),
+#ifndef WIN32
+  ADD_SIGNAL(SIGTRAP),
+  ADD_SIGNAL(SIGHUP),
+  ADD_SIGNAL(SIGBUS),
+  ADD_SIGNAL(SIGQUIT),
+  ADD_SIGNAL(SIGKILL),
+  ADD_SIGNAL(SIGUSR1),
+  ADD_SIGNAL(SIGUSR2),
+  ADD_SIGNAL(SIGPIPE),
+  ADD_SIGNAL(SIGALRM),
+  ADD_SIGNAL(SIGCHLD),
+  ADD_SIGNAL(SIGCONT),
+  ADD_SIGNAL(SIGSTOP),
+  ADD_SIGNAL(SIGTSTP),
+  ADD_SIGNAL(SIGTTIN),
+  ADD_SIGNAL(SIGTTOU),
+#endif
+  // Add more signals as needed...
+};
+
+#undef ADD_SIGNAL
+
+static std::string strsignal_compat(int signal) {
+#ifndef WIN32
+  return strsignal(signal);
+#else
+  switch (signal) {
+    case SIGABRT: return "SIGABRT";
+    case SIGFPE: return "SIGFPE";
+    case SIGILL: return "SIGILL";
+    case SIGINT: return "SIGINT";
+    case SIGSEGV: return "SIGSEGV";
+    case SIGTERM: return "SIGTERM";
+    default: return fmt::format("Signal #{}", signal);
+  }
+#endif
+}
+
+class RaiseHook: public AdminSocketHook {
+  using clock = ceph::coarse_mono_clock;
+  struct Killer {
+    CephContext* m_cct;
+    pid_t pid;
+    int signal;
+    clock::time_point due;
+
+    std::string describe()
+    {
+      using std::chrono::duration_cast;
+      using std::chrono::seconds;
+      auto remaining = (due - clock::now());
+      return fmt::format(
+        "pending signal ({}) due in {}", 
+        strsignal_compat(signal),
+        duration_cast<seconds>(remaining).count());
+    }
+
+    bool cancel()
+    {
+#   ifndef WIN32
+      int wstatus;
+      int status;
+      if (0 == (status = waitpid(pid, &wstatus, WNOHANG))) {
+        status = kill(pid, SIGKILL);
+        if (status) {
+          ldout(m_cct, 5) << __func__ << "couldn't kill the killer. Error: " << strerror(errno) << dendl;
+          return false;
+        }
+        while (pid == waitpid(pid, &wstatus, 0)) {
+          if (WIFEXITED(wstatus)) {
+            return false;
+          }
+          if (WIFSIGNALED(wstatus)) {
+            return true;
+          }
+        }
+      }
+      if (status < 0) {
+        ldout(m_cct, 5) << __func__ << "waitpid(killer, NOHANG) returned " << status << "; " << strerror(errno) << dendl;
+      } else {
+        ldout(m_cct, 20) << __func__ << "killer process " << pid << "\"" << describe() << "\" reaped. "
+                         << "WIFEXITED: " << WIFEXITED(wstatus)
+                         << "WIFSIGNALED: " << WIFSIGNALED(wstatus)
+                         << dendl;
+      }
+#   endif
+      return false;
+    }
+
+    static std::optional<Killer> fork(CephContext *m_cct, int signal_to_send, double delay) {
+#   ifndef WIN32
+      pid_t victim = getpid();
+      clock::time_point until = clock::now() + ceph::make_timespan(delay);
+
+      int fresult = ::fork();
+      if (fresult < 0) {
+        ldout(m_cct, 5) << __func__ << "couldn't fork the killer. Error: " << strerror(errno) << dendl;
+        return std::nullopt;
+      }
+
+      if (fresult) {
+        // this is parent
+        return {{m_cct, fresult, signal_to_send, until}};
+      }
+
+      const ceph::signedspan poll_interval = ceph::make_timespan(0.1);
+      while (getppid() == victim) {
+        ceph::signedspan remaining = (until - clock::now());
+        if (remaining.count() > 0) {
+          using std::chrono::duration_cast;
+          using std::chrono::nanoseconds;
+          std::this_thread::sleep_for(duration_cast<nanoseconds>(std::min(remaining, poll_interval)));
+        } else {
+          break;
+        }
+      }
+
+      if (getppid() != victim) {
+        // suicide if my parent has changed
+        // this means that the original parent process has terminated
+        ldout(m_cct, 5) << __func__ << "my parent isn't what it used to be, i'm out" << strerror(errno) << dendl;
+        _exit(1);
+      }
+
+      int status = kill(victim, signal_to_send);
+      if (0 != status) {
+        ldout(m_cct, 5) << __func__ << "couldn't kill the victim: " << strerror(errno) << dendl;
+      }
+      _exit(status);
+#   endif
+      return std::nullopt;
+    }
+  };
+
+  CephContext* m_cct;
+  std::optional<Killer> killer;
+
+  int parse_signal(std::string&& sigdesc, Formatter* f, std::ostream& errss)
+  {
+    int result = 0;
+    std::transform(sigdesc.begin(), sigdesc.end(), sigdesc.begin(),
+        [](unsigned char c) { return std::toupper(c); });
+    if (0 == sigdesc.find("-")) {
+      sigdesc.erase(0, 1);
+    }
+    if (0 == sigdesc.find("SIG")) {
+      sigdesc.erase(0, 3);
+    }
+
+    if (sigdesc == "L") {
+      f->open_object_section("known_signals");
+      for (auto& [name, num] : known_signals) {
+        f->dump_int(name, num);
+      }
+      f->close_section();
+    } else {
+      try {
+        result = std::stoi(sigdesc);
+        if (result < 1 || result > 64) {
+          errss << "signal number should be an integer in the range [1..64]" << std::endl;
+          return -EINVAL;
+        }
+      } catch (const std::invalid_argument&) {
+        auto sig_it = known_signals.find(sigdesc);
+        if (sig_it == known_signals.end()) {
+          errss << "unknown signal name; use -l to see recognized names" << std::endl;
+          return -EINVAL;
+        }
+        result = sig_it->second;
+      }
+    }
+    return result;
+  }
+
+public:
+  RaiseHook(CephContext* cct) : m_cct(cct) { }
+  static const char* get_cmddesc()
+  {
+    return "raise "
+           "name=signal,type=CephString,req=false "
+           "name=cancel,type=CephBool,req=false "
+           "name=after,type=CephFloat,range=0.0,req=false ";
+  }
+
+  static const char* get_help()
+  {
+    return "deliver the <signal> to the daemon process, optionally delaying <after> seconds; "
+           "when --after is used, the program will fork before sleeping, which allows to "
+           "schedule signal delivery to a stopped daemon; it's possible to --cancel a pending signal delivery. "
+           "<signal> can be in the forms '9', '-9', 'kill', '-KILL'. Use `raise -l` to list known signal names.";
+  }
+
+  int call(std::string_view command, const cmdmap_t& cmdmap,
+      const bufferlist&,
+      Formatter* f,
+      std::ostream& errss,
+      bufferlist& out) override
+  {
+    using std::endl;
+    string sigdesc;
+    bool cancel = cmd_getval_or<bool>(cmdmap, "cancel", false);
+    int signal_to_send = 0;
+
+    if (cmd_getval(cmdmap, "signal", sigdesc)) {
+      signal_to_send = parse_signal(std::move(sigdesc), f, errss);
+      if (signal_to_send < 0) {
+        return signal_to_send;
+      }
+    } else if (!cancel) {
+      errss << "signal name or number is required" << endl;
+      return -EINVAL;
+    }
+
+    if (cancel) {
+      if (killer) {
+        if (signal_to_send == 0 || signal_to_send == killer->signal) {
+          if (killer->cancel()) {
+            errss << "cancelled " << killer->describe() << endl;
+            return 0;
+          }
+          killer = std::nullopt;
+        }
+        if (signal_to_send) {
+          errss << "signal " << signal_to_send << " is not pending" << endl;
+        }
+      } else {
+        errss << "no pending signal" << endl;
+      }
+      return 1;
+    }
+
+    if (!signal_to_send) {
+      return 0;
+    }
+
+    double delay = 0;
+    if (cmd_getval(cmdmap, "after", delay)) {
+      #ifdef WIN32
+        errss << "'--after' functionality is unsupported on Windows" << endl;
+        return -ENOTSUP;
+      #endif
+      if (killer) {
+        if (killer->cancel()) {
+          errss << "cancelled " << killer->describe() << endl;
+        }
+      }
+
+      killer = Killer::fork(m_cct, signal_to_send, delay);
+
+      if (killer) {
+        errss << "scheduled " << killer->describe() << endl;
+        ldout(m_cct, 20) << __func__ << "scheduled " << killer->describe() << dendl;
+      } else {
+        errss << "couldn't fork the killer" << std::endl;
+        return -EAGAIN;
+      }
+    } else {
+      ldout(m_cct, 20) << __func__ << "raising "
+                      << " (" << strsignal_compat(signal_to_send) << ")" << dendl;
+      // raise the signal immediately
+      int status = raise(signal_to_send);
+
+      if (0 == status) {
+        errss << "raised signal "
+              << " (" << strsignal_compat(signal_to_send) << ")" << endl;
+      } else {
+        errss << "couldn't raise signal "
+              << " (" << strsignal_compat(signal_to_send) << ")."
+              << " Error: " << strerror(errno) << endl;
+
+        ldout(m_cct, 5) << __func__ << "couldn't raise signal "
+                << " (" << strsignal_compat(signal_to_send) << ")."
+                << " Error: " << strerror(errno) << dendl;
+
+        return 1;
+      }
+    }
+
+    return 0;
+  }
+};
+
 bool AdminSocket::init(const std::string& path)
 {
   ldout(m_cct, 5) << "init " << path << dendl;
@@ -745,6 +1102,12 @@ bool AdminSocket::init(const std::string& path)
   register_command("get_command_descriptions",
 		   getdescs_hook.get(), "list available commands");
 
+  raise_hook = std::make_unique<RaiseHook>(m_cct);
+  register_command(
+      RaiseHook::get_cmddesc(),
+      raise_hook.get(),
+      RaiseHook::get_help());
+
   th = make_named_thread("admin_socket", &AdminSocket::entry, this);
   add_cleanup_file(m_path.c_str());
   return true;
@@ -776,6 +1139,9 @@ void AdminSocket::shutdown()
 
   unregister_commands(getdescs_hook.get());
   getdescs_hook.reset();
+
+  unregister_commands(raise_hook.get());
+  raise_hook.reset();
 
   remove_cleanup_file(m_path);
   m_path.clear();

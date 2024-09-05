@@ -19,6 +19,8 @@ namespace {
   }
 }
 
+SET_SUBSYS(osd);
+
 namespace crimson::osd {
 
 template <class T>
@@ -63,16 +65,19 @@ template <class T>
 seastar::future<> PeeringEvent<T>::with_pg(
   ShardServices &shard_services, Ref<PG> pg)
 {
+  using interruptor = typename T::interruptor;
+  LOG_PREFIX(PeeringEvent<T>::with_pg);
   if (!pg) {
-    logger().warn("{}: pg absent, did not create", *this);
+    WARNI("{}: pg absent, did not create", *this);
     on_pg_absent(shard_services);
     that()->get_handle().exit();
     return complete_rctx_no_pg(shard_services);
   }
+  DEBUGI("start");
 
-  using interruptor = typename T::interruptor;
   return interruptor::with_interruption([this, pg, &shard_services] {
-    logger().debug("{}: pg present", *this);
+    LOG_PREFIX(PeeringEvent<T>::with_pg);
+    DEBUGI("{} {}: pg present", interruptor::get_interrupt_cond(), *this);
     return this->template enter_stage<interruptor>(peering_pp(*pg).await_map
     ).then_interruptible([this, pg] {
       return this->template with_blocking_event<
@@ -84,44 +89,63 @@ seastar::future<> PeeringEvent<T>::with_pg(
     }).then_interruptible([this, pg](auto) {
       return this->template enter_stage<interruptor>(peering_pp(*pg).process);
     }).then_interruptible([this, pg, &shard_services] {
-      return pg->do_peering_event(evt, ctx
-      ).then_interruptible([this, pg, &shard_services] {
-	that()->get_handle().exit();
-	return complete_rctx(shard_services, pg);
+      /* The DeleteSome event invokes PeeringListener::do_delete_work, which
+       * needs to return (without a future) the object to start with on the next
+       * call.  As a consequence, crimson's do_delete_work implementation needs
+       * to use get() for the object listing.  To support that, we wrap
+       * PG::do_peering_event with interruptor::async here.
+       *
+       * Otherwise, it's not ok to yield during peering event handler. Doing so
+       * allows other continuations to observe PeeringState in the middle
+       * of, for instance, a map advance.  The interface *does not* support such
+       * usage.  DeleteSome happens not to trigger that problem so it's ok for
+       * now, but we'll want to remove that as well.
+       * https://tracker.ceph.com/issues/66708
+       */
+      return interruptor::async([this, pg, &shard_services] {
+	pg->do_peering_event(evt, ctx);
+	complete_rctx(shard_services, pg).get();
+      }).then_interruptible([this] {
+	return that()->get_handle().complete();
       });
-    }).then_interruptible([pg, &shard_services]()
-			  -> typename T::template interruptible_future<> {
-      if (!pg->get_need_up_thru()) {
-	return seastar::now();
-      }
-      return shard_services.send_alive(pg->get_same_interval_since());
-    }).then_interruptible([&shard_services] {
-      return shard_services.send_pg_temp();
     });
   }, [this](std::exception_ptr ep) {
-    logger().debug("{}: interrupted with {}", *this, ep);
-  }, pg);
+    LOG_PREFIX(PeeringEvent<T>::with_pg);
+    DEBUGI("{}: interrupted with {}", *this, ep);
+  }, pg, evt.get_epoch_sent()).finally([this] {
+    logger().debug("{}: exit", *this);
+    that()->get_handle().exit();
+  });
 }
 
 template <class T>
 void PeeringEvent<T>::on_pg_absent(ShardServices &)
 {
-  logger().debug("{}: pg absent, dropping", *this);
+  using interruptor = typename T::interruptor;
+  LOG_PREFIX(PeeringEvent<T>::on_pg_absent);
+  DEBUGI("{}: pg absent, dropping", *this);
 }
 
 template <class T>
 typename PeeringEvent<T>::template interruptible_future<>
 PeeringEvent<T>::complete_rctx(ShardServices &shard_services, Ref<PG> pg)
 {
-  logger().debug("{}: submitting ctx", *this);
-  return shard_services.dispatch_context(
-    pg->get_collection_ref(),
-    std::move(ctx));
+  using interruptor = typename T::interruptor;
+  LOG_PREFIX(PeeringEvent<T>::complete_rctx);
+  DEBUGI("{}: submitting ctx", *this);
+  return pg->complete_rctx(std::move(ctx));
 }
 
 ConnectionPipeline &RemotePeeringEvent::get_connection_pipeline()
 {
-  return get_osd_priv(conn.get()).peering_request_conn_pipeline;
+  return get_osd_priv(&get_local_connection()
+         ).peering_request_conn_pipeline;
+}
+
+PerShardPipeline &RemotePeeringEvent::get_pershard_pipeline(
+    ShardServices &shard_services)
+{
+  return shard_services.get_peering_request_pipeline();
 }
 
 void RemotePeeringEvent::on_pg_absent(ShardServices &shard_services)
@@ -166,7 +190,8 @@ seastar::future<> RemotePeeringEvent::complete_rctx_no_pg(
 
 seastar::future<> LocalPeeringEvent::start()
 {
-  logger().debug("{}: start", *this);
+  LOG_PREFIX(LocalPeeringEvent::start);
+  DEBUGI("{}: start", *this);
 
   IRef ref = this;
   auto maybe_delay = seastar::now();
@@ -177,7 +202,8 @@ seastar::future<> LocalPeeringEvent::start()
   return maybe_delay.then([this] {
     return with_pg(pg->get_shard_services(), pg);
   }).finally([ref=std::move(ref)] {
-    logger().debug("{}: complete", *ref);
+    LOG_PREFIX(LocalPeeringEvent::start);
+    DEBUGI("{}: complete", *ref);
   });
 }
 

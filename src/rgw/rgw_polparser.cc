@@ -6,6 +6,7 @@
 #include <exception>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -19,14 +20,14 @@
 #include "rgw/rgw_iam_policy.h"
 
 // Returns true on success
-bool parse(CephContext* cct, const std::string& tenant,
+bool parse(CephContext* cct, const std::string* tenant,
            const std::string& fname, std::istream& in) noexcept
 {
   bufferlist bl;
   bl.append(in);
   try {
     auto p = rgw::IAM::Policy(
-      cct, tenant, bl,
+      cct, tenant, bl.to_str(),
       cct->_conf.get_val<bool>("rgw_policy_reject_invalid_principals"));
   } catch (const rgw::IAM::PolicyParseException& e) {
     std::cerr << fname << ": " << e.what() << std::endl;
@@ -50,10 +51,13 @@ void usage(std::string_view cmdname)
 	    << std::endl;
 }
 
+// This has an uncaught exception. Even if the exception is caught, the program
+// would need to be terminated, so the warning is simply suppressed.
+// coverity[root_function:SUPPRESS]
 int main(int argc, const char** argv)
 {
   std::string_view cmdname = argv[0];
-  std::string tenant;
+  std::optional<std::string> tenant;
 
   auto args = argv_to_vec(argc, argv);
   if (ceph_argparse_need_usage(args)) {
@@ -78,15 +82,11 @@ int main(int argc, const char** argv)
     }
   }
 
-  if (tenant.empty()) {
-    std::cerr << cmdname << ": must specify tenant name" << std::endl;
-    helpful_exit(cmdname);
-  }
-
   bool success = true;
+  const std::string* t = tenant ? &*tenant : nullptr;
 
   if (args.empty()) {
-    success = parse(cct.get(), tenant, "(stdin)", std::cin);
+    success = parse(cct.get(), t, "(stdin)", std::cin);
   } else {
     for (const auto& file : args) {
       std::ifstream in;
@@ -95,7 +95,7 @@ int main(int argc, const char** argv)
 	std::cerr << "Can't read " << file << std::endl;
 	success = false;
       }
-      if (!parse(cct.get(), tenant, file, in)) {
+      if (!parse(cct.get(), t, file, in)) {
 	success = false;
       }
     }

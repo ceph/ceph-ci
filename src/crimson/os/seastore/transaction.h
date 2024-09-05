@@ -41,22 +41,42 @@ inline std::ostream& operator<<(std::ostream& out, const io_stat_t& stat) {
   return out << stat.num << "(" << stat.bytes << "B)";
 }
 
-struct version_stat_t {
-  uint64_t num = 0;
-  uint64_t version = 0;
+struct rewrite_stats_t {
+  uint64_t num_n_dirty = 0;
+  uint64_t num_dirty = 0;
+  uint64_t dirty_version = 0;
 
   bool is_clear() const {
-    return (num == 0 && version == 0);
+    return (num_n_dirty == 0 && num_dirty == 0);
   }
 
-  void increment(extent_version_t v) {
-    ++num;
-    version += v;
+  uint64_t get_num_rewrites() const {
+    return num_n_dirty + num_dirty;
   }
 
-  void increment_stat(const version_stat_t& stat) {
-    num += stat.num;
-    version += stat.version;
+  double get_avg_version() const {
+    return static_cast<double>(dirty_version)/num_dirty;
+  }
+
+  void account_n_dirty() {
+    ++num_n_dirty;
+  }
+
+  void account_dirty(extent_version_t v) {
+    ++num_dirty;
+    dirty_version += v;
+  }
+
+  void add(const rewrite_stats_t& o) {
+    num_n_dirty += o.num_n_dirty;
+    num_dirty += o.num_dirty;
+    dirty_version += o.dirty_version;
+  }
+
+  void minus(const rewrite_stats_t& o) {
+    num_n_dirty -= o.num_n_dirty;
+    num_dirty -= o.num_dirty;
+    dirty_version -= o.dirty_version;
   }
 };
 
@@ -92,7 +112,7 @@ public:
 	*out = CachedExtentRef(&*iter);
       SUBTRACET(seastore_cache, "{} is present in write_set -- {}",
                 *this, addr, *iter);
-      assert((*out)->is_valid());
+      assert(!out || (*out)->is_valid());
       return get_extent_ret::PRESENT;
     } else if (retired_set.count(addr)) {
       return get_extent_ret::RETIRED;
@@ -101,7 +121,7 @@ public:
       iter != read_set.end()) {
       // placeholder in read-set should be in the retired-set
       // at the same time.
-      assert(iter->ref->get_type() != extent_types_t::RETIRED_PLACEHOLDER);
+      assert(!is_retired_placeholder_type(iter->ref->get_type()));
       if (out)
 	*out = iter->ref;
       SUBTRACET(seastore_cache, "{} is present in read_set -- {}",
@@ -126,25 +146,48 @@ public:
       ref->set_invalid(*this);
       write_set.erase(*ref);
       assert(ref->prior_instance);
-      retired_set.insert(ref->prior_instance);
+      retired_set.emplace(ref->prior_instance, trans_id);
       assert(read_set.count(ref->prior_instance->get_paddr()));
       ref->prior_instance.reset();
     } else {
       // && retired_set.count(ref->get_paddr()) == 0
       // If it's already in the set, insert here will be a noop,
       // which is what we want.
-      retired_set.insert(ref);
+      retired_set.emplace(ref, trans_id);
     }
   }
 
-  void add_to_read_set(CachedExtentRef ref) {
-    if (is_weak()) return;
+  // Returns true if added, false if already added or weak
+  bool maybe_add_to_read_set(CachedExtentRef ref) {
+    if (is_weak()) {
+      return false;
+    }
 
     assert(ref->is_valid());
 
     auto it = ref->transactions.lower_bound(
       this, read_set_item_t<Transaction>::trans_cmp_t());
-    if (it != ref->transactions.end() && it->t == this) return;
+    if (it != ref->transactions.end() && it->t == this) {
+      return false;
+    }
+
+    auto [iter, inserted] = read_set.emplace(this, ref);
+    ceph_assert(inserted);
+    ref->transactions.insert_before(
+      it, const_cast<read_set_item_t<Transaction>&>(*iter));
+    return true;
+  }
+
+  void add_to_read_set(CachedExtentRef ref) {
+    if (is_weak()) {
+      return;
+    }
+
+    assert(ref->is_valid());
+
+    auto it = ref->transactions.lower_bound(
+      this, read_set_item_t<Transaction>::trans_cmp_t());
+    assert(it == ref->transactions.end() || it->t != this);
 
     auto [iter, inserted] = read_set.emplace(this, ref);
     ceph_assert(inserted);
@@ -163,10 +206,10 @@ public:
       assert(ref->is_logical());
       ref->set_paddr(make_delayed_temp_paddr(delayed_temp_offset));
       delayed_temp_offset += ref->get_length();
-      delayed_alloc_list.emplace_back(ref->cast<LogicalCachedExtent>());
+      delayed_alloc_list.emplace_back(ref);
       fresh_block_stats.increment(ref->get_length());
     } else if (ref->get_paddr().is_absolute()) {
-      pre_alloc_list.emplace_back(ref->cast<LogicalCachedExtent>());
+      pre_alloc_list.emplace_back(ref);
       fresh_block_stats.increment(ref->get_length());
     } else {
       if (likely(ref->get_paddr() == make_record_relative_paddr(0))) {
@@ -187,7 +230,7 @@ public:
     return fresh_backref_extents;
   }
 
-  void mark_delayed_extent_inline(LogicalCachedExtentRef& ref) {
+  void mark_delayed_extent_inline(CachedExtentRef& ref) {
     write_set.erase(*ref);
     assert(ref->get_paddr().is_delayed());
     ref->set_paddr(make_record_relative_paddr(offset),
@@ -197,8 +240,8 @@ public:
     write_set.insert(*ref);
   }
 
-  void mark_delayed_extent_ool(LogicalCachedExtentRef& ref) {
-    written_ool_block_list.push_back(ref);
+  void mark_delayed_extent_ool(CachedExtentRef& ref) {
+    ool_block_list.push_back(ref);
   }
 
   void update_delayed_ool_extent_addr(LogicalCachedExtentRef& ref,
@@ -211,10 +254,24 @@ public:
     write_set.insert(*ref);
   }
 
-  void mark_allocated_extent_ool(LogicalCachedExtentRef& ref) {
+  void mark_allocated_extent_ool(CachedExtentRef& ref) {
     assert(ref->get_paddr().is_absolute());
     assert(!ref->is_inline());
-    written_ool_block_list.push_back(ref);
+    ool_block_list.push_back(ref);
+  }
+
+  void mark_inplace_rewrite_extent_ool(LogicalCachedExtentRef ref) {
+    assert(ref->get_paddr().is_absolute());
+    assert(!ref->is_inline());
+    inplace_ool_block_list.push_back(ref);
+  }
+
+  void add_inplace_rewrite_extent(CachedExtentRef ref) {
+   ceph_assert(!is_weak());
+   ceph_assert(ref);
+   ceph_assert(ref->get_paddr().is_absolute());
+   assert(ref->state == CachedExtent::extent_state_t::DIRTY);
+   pre_inplace_rewrite_list.emplace_back(ref->cast<LogicalCachedExtent>());
   }
 
   void add_mutated_extent(CachedExtentRef ref) {
@@ -233,9 +290,9 @@ public:
   void replace_placeholder(CachedExtent& placeholder, CachedExtent& extent) {
     ceph_assert(!is_weak());
 
-    assert(placeholder.get_type() == extent_types_t::RETIRED_PLACEHOLDER);
-    assert(extent.get_type() != extent_types_t::RETIRED_PLACEHOLDER);
-    assert(extent.get_type() != extent_types_t::ROOT);
+    assert(is_retired_placeholder_type(placeholder.get_type()));
+    assert(!is_retired_placeholder_type(extent.get_type()));
+    assert(!is_root_type(extent.get_type()));
     assert(extent.get_paddr() == placeholder.get_paddr());
     {
       auto where = read_set.find(placeholder.get_paddr());
@@ -248,14 +305,14 @@ public:
     {
       auto where = retired_set.find(&placeholder);
       assert(where != retired_set.end());
-      assert(where->get() == &placeholder);
+      assert(where->extent.get() == &placeholder);
       where = retired_set.erase(where);
-      retired_set.emplace_hint(where, &extent);
+      retired_set.emplace_hint(where, &extent, trans_id);
     }
   }
 
   auto get_delayed_alloc_list() {
-    std::list<LogicalCachedExtentRef> ret;
+    std::list<CachedExtentRef> ret;
     for (auto& extent : delayed_alloc_list) {
       // delayed extents may be invalidated
       if (extent->is_valid()) {
@@ -269,7 +326,7 @@ public:
   }
 
   auto get_valid_pre_alloc_list() {
-    std::list<LogicalCachedExtentRef> ret;
+    std::list<CachedExtentRef> ret;
     assert(num_allocated_invalid_extents == 0);
     for (auto& extent : pre_alloc_list) {
       if (extent->is_valid()) {
@@ -278,6 +335,11 @@ public:
 	++num_allocated_invalid_extents;
       }
     }
+    for (auto& extent : pre_inplace_rewrite_list) {
+      if (extent->is_valid()) {
+	ret.push_back(extent);
+      } 
+    }
     return ret;
   }
 
@@ -285,38 +347,29 @@ public:
     return inline_block_list;
   }
 
-  const auto &get_mutated_block_list() {
-    return mutated_block_list;
-  }
-
-  const auto &get_existing_block_list() {
-    return existing_block_list;
-  }
-
-  const auto &get_retired_set() {
-    return retired_set;
-  }
-
   bool is_retired(paddr_t paddr, extent_len_t len) {
-    if (retired_set.empty()) {
+    auto iter = retired_set.lower_bound(paddr);
+    if (iter == retired_set.end()) {
       return false;
     }
-    auto iter = retired_set.lower_bound(paddr);
-    if (iter == retired_set.end() ||
-	(*iter)->get_paddr() > paddr) {
-      assert(iter != retired_set.begin());
-      --iter;
+    auto &extent = iter->extent;
+    if (extent->get_paddr() != paddr) {
+      return false;
+    } else {
+      assert(len == extent->get_length());
+      return true;
     }
-    auto retired_paddr = (*iter)->get_paddr();
-    auto retired_length = (*iter)->get_length();
-    return retired_paddr <= paddr &&
-      retired_paddr.add_offset(retired_length) >= paddr.add_offset(len);
   }
 
   template <typename F>
-  auto for_each_fresh_block(F &&f) const {
-    std::for_each(written_ool_block_list.begin(), written_ool_block_list.end(), f);
+  auto for_each_finalized_fresh_block(F &&f) const {
+    std::for_each(ool_block_list.begin(), ool_block_list.end(), f);
     std::for_each(inline_block_list.begin(), inline_block_list.end(), f);
+  }
+
+  template <typename F>
+  auto for_each_existing_block(F &&f) {
+    std::for_each(existing_block_list.begin(), existing_block_list.end(), f);
   }
 
   const io_stat_t& get_fresh_block_stats() const {
@@ -366,8 +419,10 @@ public:
   }
 
   ~Transaction() {
+    get_handle().exit();
     on_destruct(*this);
     invalidate_clear_write_set();
+    views.clear();
   }
 
   friend class crimson::os::seastore::SeaStore;
@@ -386,8 +441,10 @@ public:
     num_allocated_invalid_extents = 0;
     delayed_alloc_list.clear();
     inline_block_list.clear();
-    written_ool_block_list.clear();
+    ool_block_list.clear();
+    inplace_ool_block_list.clear();
     pre_alloc_list.clear();
+    pre_inplace_rewrite_list.clear();
     retired_set.clear();
     existing_block_list.clear();
     existing_block_stats = {};
@@ -396,11 +453,13 @@ public:
     lba_tree_stats = {};
     backref_tree_stats = {};
     ool_write_stats = {};
-    rewrite_version_stats = {};
+    rewrite_stats = {};
     conflicted = false;
     if (!has_reset) {
       has_reset = true;
     }
+    get_handle().exit();
+    views.clear();
   }
 
   bool did_reset() const {
@@ -453,8 +512,8 @@ public:
   ool_write_stats_t& get_ool_write_stats() {
     return ool_write_stats;
   }
-  version_stat_t& get_rewrite_version_stats() {
-    return rewrite_version_stats;
+  rewrite_stats_t& get_rewrite_stats() {
+    return rewrite_stats;
   }
 
   struct existing_block_stats_t {
@@ -484,6 +543,15 @@ public:
 
   transaction_id_t get_trans_id() const {
     return trans_id;
+  }
+
+  using view_ref = std::unique_ptr<trans_spec_view_t>;
+  template <typename T, typename... Args,
+	   std::enable_if_t<std::is_base_of_v<trans_spec_view_t, T>, int> = 0>
+  T& add_transactional_view(Args&&... args) {
+    auto &view = views.emplace_back(
+      std::make_unique<T>(std::forward<Args>(args)...));
+    return static_cast<T&>(*view);
   }
 
 private:
@@ -518,7 +586,7 @@ private:
    * Contains a reference (without a refcount) to every extent mutated
    * as part of *this.  No contained extent may be referenced outside
    * of *this.  Every contained extent will be in one of inline_block_list,
-   * written_ool_block_list or/and pre_alloc_list, mutated_block_list,
+   * ool_block_list or/and pre_alloc_list, mutated_block_list,
    * or delayed_alloc_list.
    */
   ExtentIndex write_set;
@@ -529,16 +597,23 @@ private:
   io_stat_t fresh_block_stats;
   uint64_t num_delayed_invalid_extents = 0;
   uint64_t num_allocated_invalid_extents = 0;
-  /// blocks that will be committed with journal record inline
-  std::list<CachedExtentRef> inline_block_list;
-  /// blocks that will be committed with out-of-line record
-  std::list<CachedExtentRef> written_ool_block_list;
-  /// blocks with delayed allocation, may become inline or ool above
-  std::list<LogicalCachedExtentRef> delayed_alloc_list;
+  /// fresh blocks with delayed allocation,
+  /// may become inline_block_list or ool_block_list below
+  std::list<CachedExtentRef> delayed_alloc_list;
+  /// fresh blocks with pre-allocated addresses with RBM,
+  /// should be released upon conflicts,
+  /// will be added to ool_block_list below
+  std::list<CachedExtentRef> pre_alloc_list;
+  /// dirty blocks for inplace rewrite with RBM,
+  /// will be added to inplace inplace_ool_block_list below
+  std::list<LogicalCachedExtentRef> pre_inplace_rewrite_list;
 
-  /// Extents with pre-allocated addresses,
-  /// will be added to written_ool_block_list after write
-  std::list<LogicalCachedExtentRef> pre_alloc_list;
+  /// fresh blocks that will be committed with inline journal record
+  std::list<CachedExtentRef> inline_block_list;
+  /// fresh blocks that will be committed with out-of-line record
+  std::list<CachedExtentRef> ool_block_list;
+  /// dirty blocks that will be committed out-of-line with inplace rewrite
+  std::list<LogicalCachedExtentRef> inplace_ool_block_list;
 
   /// list of mutated blocks, holds refcounts, subset of write_set
   std::list<CachedExtentRef> mutated_block_list;
@@ -546,6 +621,8 @@ private:
   /// partial blocks of extents on disk, with data and refcounts
   std::list<CachedExtentRef> existing_block_list;
   existing_block_stats_t existing_block_stats;
+
+  std::list<view_ref> views;
 
   /**
    * retire_set
@@ -560,7 +637,7 @@ private:
   tree_stats_t lba_tree_stats;
   tree_stats_t backref_tree_stats;
   ool_write_stats_t ool_write_stats;
-  version_stat_t rewrite_version_stats;
+  rewrite_stats_t rewrite_stats;
 
   bool conflicted = false;
 

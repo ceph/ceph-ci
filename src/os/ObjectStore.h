@@ -111,6 +111,13 @@ public:
    * This appears to be called with nothing locked.
    */
   virtual objectstore_perf_stat_t get_cur_stats() = 0;
+  /**
+   * Propagate Object Store performance counters with the actual values
+   *
+   *
+   * Intended primarily for testing purposes
+   */
+  virtual void refresh_perf_counters() = 0;
 
   /**
    * Fetch Object Store performance counters.
@@ -262,6 +269,12 @@ public:
   virtual bool test_mount_in_use() = 0;
   virtual int mount() = 0;
   virtual int umount() = 0;
+  virtual int mount_readonly() {
+    return -EOPNOTSUPP;
+  }
+  virtual int umount_readonly() {
+    return -EOPNOTSUPP;
+  }
   virtual int fsck(bool deep) {
     return -EOPNOTSUPP;
   }
@@ -388,10 +401,8 @@ public:
 
   /**
    * get ideal max value for collection_list()
-   *
-   * default to some arbitrary values; the implementation will override.
    */
-  virtual int get_ideal_list_max() { return 64; }
+  int get_ideal_list_max();
 
 
   /**
@@ -604,7 +615,7 @@ public:
    *
    * @param cid collection for object
    * @param oid oid of object
-   * @param aset place to put output result.
+   * @param aset upon success, will contain exactly the object attrs
    * @returns 0 on success, negative error code on failure.
    */
   virtual int getattrs(CollectionHandle &c, const ghobject_t& oid,
@@ -615,13 +626,14 @@ public:
    *
    * @param cid collection for object
    * @param oid oid of object
-   * @param aset place to put output result.
+   * @param aset upon success, will contain exactly the object attrs
    * @returns 0 on success, negative error code on failure.
    */
   int getattrs(CollectionHandle &c, const ghobject_t& oid,
 	       std::map<std::string,ceph::buffer::list,std::less<>>& aset) {
     std::map<std::string,ceph::buffer::ptr,std::less<>> bmap;
     int r = getattrs(c, oid, bmap);
+    aset.clear();
     for (auto i = bmap.begin(); i != bmap.end(); ++i) {
       aset[i->first].append(i->second);
     }
@@ -777,7 +789,7 @@ public:
   virtual void inject_data_error(const ghobject_t &oid) {}
   virtual void inject_mdata_error(const ghobject_t &oid) {}
 
-  virtual void compact() {}
+  virtual int compact() { return -ENOTSUP; }
   virtual bool has_builtin_csum() const {
     return false;
   }

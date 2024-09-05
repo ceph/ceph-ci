@@ -11,14 +11,14 @@ describe('Images page', () => {
     cy.login();
     // Need pool for image testing
     pools.navigateTo('create');
-    pools.create(poolName, 8, 'rbd');
+    pools.create(poolName, 8, ['rbd']);
     pools.existTableCell(poolName);
   });
 
   after(() => {
     // Deletes images test pool
     pools.navigateTo();
-    pools.delete(poolName);
+    pools.delete(poolName, null, null, true);
     pools.navigateTo();
     pools.existTableCell(poolName, false);
   });
@@ -58,7 +58,7 @@ describe('Images page', () => {
     });
 
     it('should delete image', () => {
-      images.delete(newImageName);
+      images.delete(newImageName, null, null, true);
     });
   });
 

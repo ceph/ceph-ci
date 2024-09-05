@@ -10,6 +10,7 @@ from ceph_volume.api import lvm as api
 from ceph_volume.util import system, encryption, disk, arg_validators, str_to_int, merge_dict
 from ceph_volume.util.device import Device
 from ceph_volume.systemd import systemctl
+from typing import List
 
 logger = logging.getLogger(__name__)
 mlogger = terminal.MultiLogger(__name__)
@@ -201,8 +202,11 @@ class Zap(object):
         """
         if device.is_encrypted:
             # find the holder
-            holders = [
-                '/dev/%s' % holder for holder in device.sys_api.get('holders', [])
+            pname = device.sys_api.get('parent')
+            devname = device.sys_api.get('devname')
+            parent_device = Device(f'/dev/{pname}')
+            holders: List[str] = [
+                f'/dev/{holder}' for holder in parent_device.sys_api['partitions'][devname]['holders']
             ]
             for mapper_uuid in os.listdir('/dev/mapper'):
                 mapper_path = os.path.join('/dev/mapper', mapper_uuid)

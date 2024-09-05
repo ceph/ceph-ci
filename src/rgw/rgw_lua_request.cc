@@ -260,10 +260,9 @@ struct OwnerMetaTable : public EmptyMetaTable {
     const char* index = luaL_checkstring(L, 2);
 
     if (strcasecmp(index, "DisplayName") == 0) {
-      pushstring(L, owner->get_display_name());
+      pushstring(L, owner->display_name);
     } else if (strcasecmp(index, "User") == 0) {
-      create_metatable<UserMetaTable>(L, name, index, false, 
-          &(owner->get_id()));
+      pushstring(L, to_string(owner->id));
     } else {
       return error_unknown_field(L, index, name);
     }
@@ -304,8 +303,19 @@ struct BucketMetaTable : public EmptyMetaTable {
     } else if (strcasecmp(index, "PlacementRule") == 0) {
       create_metatable<PlacementRuleMetaTable>(L, name, index, false, &(bucket->get_info().placement_rule));
     } else if (strcasecmp(index, "User") == 0) {
-      create_metatable<UserMetaTable>(L, name, index, false, 
-          const_cast<rgw_user*>(&bucket->get_owner()->get_id()));
+      const rgw_owner& owner = bucket->get_owner();
+      if (const rgw_user* u = std::get_if<rgw_user>(&owner); u) {
+        create_metatable<UserMetaTable>(L, name, index, false, const_cast<rgw_user*>(u));
+      } else {
+        lua_pushnil(L);
+      }
+    } else if (strcasecmp(index, "Account") == 0) {
+      const rgw_owner& owner = bucket->get_owner();
+      if (const rgw_account_id* a = std::get_if<rgw_account_id>(&owner); a) {
+        pushstring(L, *a);
+      } else {
+        lua_pushnil(L);
+      }
     } else {
       return error_unknown_field(L, index, name);
     }
@@ -345,7 +355,7 @@ struct ObjectMetaTable : public EmptyMetaTable {
     } else if (strcasecmp(index, "Id") == 0) {
       pushstring(L, obj->get_oid());
     } else if (strcasecmp(index, "Size") == 0) {
-      lua_pushinteger(L, obj->get_obj_size());
+      lua_pushinteger(L, obj->get_size());
     } else if (strcasecmp(index, "MTime") == 0) {
       pushtime(L, obj->get_mtime());
     } else {
@@ -365,19 +375,25 @@ struct GrantMetaTable : public EmptyMetaTable {
     if (strcasecmp(index, "Type") == 0) {
       lua_pushinteger(L, grant->get_type().get_type());
     } else if (strcasecmp(index, "User") == 0) {
-      const auto id_ptr = grant->get_id();
-      if (id_ptr) {
-        create_metatable<UserMetaTable>(L, name, index, false, 
-            const_cast<rgw_user*>(id_ptr));
+      if (const auto user = grant->get_user(); user) {
+        pushstring(L, to_string(user->id));
       } else {
         lua_pushnil(L);
       }
     } else if (strcasecmp(index, "Permission") == 0) {
       lua_pushinteger(L, grant->get_permission().get_permissions());
     } else if (strcasecmp(index, "GroupType") == 0) {
-      lua_pushinteger(L, grant->get_group());
+      if (const auto group = grant->get_group(); group) {
+        lua_pushinteger(L, group->type);
+      } else {
+        lua_pushnil(L);
+      }
     } else if (strcasecmp(index, "Referer") == 0) {
-      pushstring(L, grant->get_referer());
+      if (const auto referer = grant->get_referer(); referer) {
+        pushstring(L, referer->url_spec);
+      } else {
+        lua_pushnil(L);
+      }
     } else {
       return error_unknown_field(L, index, name);
     }
@@ -712,11 +728,11 @@ struct RequestMetaTable : public EmptyMetaTable {
     } else if (strcasecmp(index, "ZoneGroup") == 0) {
       create_metatable<ZoneGroupMetaTable>(L, name, index, false, s);
     } else if (strcasecmp(index, "UserACL") == 0) {
-      create_metatable<ACLMetaTable>(L, name, index, false, s->user_acl);
+      create_metatable<ACLMetaTable>(L, name, index, false, &s->user_acl);
     } else if (strcasecmp(index, "BucketACL") == 0) {
-      create_metatable<ACLMetaTable>(L, name, index, false, s->bucket_acl);
+      create_metatable<ACLMetaTable>(L, name, index, false, &s->bucket_acl);
     } else if (strcasecmp(index, "ObjectACL") == 0) {
-      create_metatable<ACLMetaTable>(L, name, index, false, s->object_acl);
+      create_metatable<ACLMetaTable>(L, name, index, false, &s->object_acl);
     } else if (strcasecmp(index, "Environment") == 0) {
         create_metatable<StringMapMetaTable<rgw::IAM::Environment>>(L, name, index, false, &(s->env));
     } else if (strcasecmp(index, "Policy") == 0) {
@@ -727,7 +743,7 @@ struct RequestMetaTable : public EmptyMetaTable {
         create_metatable<PolicyMetaTable>(L, name, index, false, s->iam_policy.get_ptr());
       }
     } else if (strcasecmp(index, "UserPolicies") == 0) {
-        create_metatable<PoliciesMetaTable>(L, name, index, false, &(s->iam_user_policies));
+        create_metatable<PoliciesMetaTable>(L, name, index, false, &(s->iam_identity_policies));
     } else if (strcasecmp(index, "RGWId") == 0) {
       pushstring(L, s->host_id);
     } else if (strcasecmp(index, "HTTP") == 0) {

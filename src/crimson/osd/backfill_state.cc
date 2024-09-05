@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <boost/type_index.hpp>
 #include <fmt/ranges.h>
-#include "common/hobject_fmt.h"
+#include "common/hobject.h"
 #include "crimson/osd/backfill_state.h"
 #include "osd/osd_types_fmt.h"
 
@@ -73,6 +73,8 @@ BackfillState::Initial::Initial(my_context ctx)
   }
   ceph_assert(peering_state().get_backfill_targets().size());
   ceph_assert(!backfill_state().last_backfill_started.is_max());
+  backfill_state().replicas_in_backfill =
+    peering_state().get_backfill_targets().size();
 }
 
 boost::statechart::result
@@ -99,6 +101,21 @@ BackfillState::Initial::react(const BackfillState::Triggered& evt)
   }
 }
 
+boost::statechart::result
+BackfillState::Cancelled::react(const BackfillState::Triggered& evt)
+{
+  logger().debug("{}: backfill re-triggered", __func__);
+  ceph_assert(peering_state().is_backfilling());
+  if (Enqueuing::all_enqueued(peering_state(),
+                              backfill_state().backfill_info,
+                              backfill_state().peer_backfill_info)) {
+    logger().debug("{}: switching to Done state", __func__);
+    return transit<BackfillState::Done>();
+  } else {
+    logger().debug("{}: switching to Enqueuing state", __func__);
+    return transit<BackfillState::Enqueuing>();
+  }
+}
 
 // -- Enqueuing
 void BackfillState::Enqueuing::maybe_update_range()
@@ -350,9 +367,14 @@ BackfillState::Enqueuing::Enqueuing(my_context ctx)
     logger().debug("{}: reached end for current local chunk",
                    __func__);
     post_event(RequestPrimaryScanning{});
-  } else if (backfill_state().progress_tracker->tracked_objects_completed()) {
-    post_event(RequestDone{});
   } else {
+    if (backfill_state().progress_tracker->tracked_objects_completed()
+	&& Enqueuing::all_enqueued(peering_state(),
+				   backfill_state().backfill_info,
+				   backfill_state().peer_backfill_info)) {
+      backfill_state().last_backfill_started = hobject_t::get_max();
+      backfill_listener().update_peers_last_backfill(hobject_t::get_max());
+    }
     logger().debug("{}: reached end for both local and all peers "
                    "but still has in-flight operations", __func__);
     post_event(RequestWaiting{});
@@ -445,6 +467,15 @@ BackfillState::ReplicasScanning::react(ReplicaScanned evt)
 }
 
 boost::statechart::result
+BackfillState::ReplicasScanning::react(CancelBackfill evt)
+{
+  logger().debug("{}: cancelled within ReplicasScanning",
+                 __func__);
+  waiting_on_backfill.clear();
+  return transit<Cancelled>();
+}
+
+boost::statechart::result
 BackfillState::ReplicasScanning::react(ObjectPushed evt)
 {
   logger().debug("ReplicasScanning::react() on ObjectPushed; evt.object={}",
@@ -470,8 +501,6 @@ BackfillState::Waiting::react(ObjectPushed evt)
                                backfill_state().backfill_info,
                                backfill_state().peer_backfill_info)) {
     return transit<Enqueuing>();
-  } else if (backfill_state().progress_tracker->tracked_objects_completed()) {
-    return transit<Done>();
   } else {
     // we still have something to wait on
     logger().debug("Waiting::react() on ObjectPushed; still waiting");
@@ -491,6 +520,13 @@ BackfillState::Done::Done(my_context ctx)
 BackfillState::Crashed::Crashed()
 {
   ceph_abort_msg("{}: this should not happen");
+}
+
+// -- Cancelled
+BackfillState::Cancelled::Cancelled(my_context ctx)
+  : my_base(ctx)
+{
+  ceph_assert(peering_state().get_backfill_targets().size());
 }
 
 // ProgressTracker is an intermediary between the BackfillListener and

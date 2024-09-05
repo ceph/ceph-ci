@@ -71,7 +71,7 @@ struct Election {
   void queue_timeout_message(int from, int to, function<void()> m);
   void queue_stable_or_timeout(int from, int to,
 			       function<void()> m, function<void()> t);
-  void queue_election_message(int from, int to, function<void()> m);
+  void queue_election_message(int from, int to, function<void(bool)> m);
 
   // test runner interfaces
   int run_timesteps(int max);
@@ -103,6 +103,8 @@ struct Owner : public ElectionOwner, RankProvider {
   bool timer_election; // the timeout is for normal election, or victory
   bool rank_deleted = false;
   string prefix_str;
+  set<int> stretch_marked_down_mons;
+  int tiebreaker_mon_rank;
  Owner(int r, ElectionLogic::election_strategy es, double tracker_halflife,
        Election *p) : parent(p), rank(r), persisted_epoch(0),
     ever_joined(false),
@@ -186,6 +188,18 @@ struct Owner : public ElectionOwner, RankProvider {
     start_victory_timer();
     quorum = members;
     victory_accepters = 1;
+  }
+  bool is_stretch_marked_down_mons(int rank) const {
+    for (auto& i : stretch_marked_down_mons) {
+      if (i == rank) {
+        return true;
+      }
+    }
+    return false;
+  }
+  bool is_tiebreaker(int rank) const
+  {
+    return tiebreaker_mon_rank == rank;
   }
   bool is_current_member(int r) const { return quorum.count(r) != 0; }
   void receive_propose(int from, epoch_t e, ConnectionTracker *oct) {
@@ -317,21 +331,24 @@ void Election::queue_stable_message(int from, int to, function<void()> m)
   }
 }
 
-void Election::queue_election_message(int from, int to, function<void()> m)
+void Election::queue_election_message(int from, int to, function<void(bool)> m)
 {
   if (last_quorum_reported.count(from)) {
     last_quorum_change = timesteps_run;
     last_quorum_reported.clear();
     last_leader = -1;
   }
-  if (!blocked_messages[from].count(to)) {
+  const bool blocked = blocked_messages[from].count(to);
+  if (blocked) {
+    return m(true);
+  } else {
     bufferlist bl;
     electors[from]->encode_scores(bl);
     Owner *o = electors[to];
     messages.push_back([this,m,o,bl] {
 	--this->pending_election_messages;
 	o->receive_scores(bl);
-	m();
+	m(false);
       });
     ++pending_election_messages;
   }
@@ -356,9 +373,11 @@ void Election::queue_stable_or_timeout(int from, int to,
 void Election::defer_to(int from, int to, epoch_t e)
 {
   Owner *o = electors[to];
-  queue_election_message(from, to, [o, from, e] {
-    o->receive_ack(from, e);
-    });
+  queue_election_message(from, to, [o, from, e](bool blocked) {
+    if (!blocked) {
+      o->receive_ack(from, e);
+    }
+  });
 }
 
 void Election::propose_to(int from, int to, epoch_t e, bufferlist& cbl)
@@ -366,27 +385,35 @@ void Election::propose_to(int from, int to, epoch_t e, bufferlist& cbl)
   Owner *o = electors[to];
   ConnectionTracker *oct = NULL;
   if (cbl.length()) {
-    oct = new ConnectionTracker(cbl, g_ceph_context); // we leak these on blocked cons, meh
+    oct = new ConnectionTracker(cbl, g_ceph_context);
   }
-  queue_election_message(from, to, [o, from, e, oct] {
-      o->receive_propose(from, e, oct);
+  queue_election_message(from, to, [o, from, e, oct](bool blocked) {
+      if (blocked) {
+	delete oct;
+      } else {
+	o->receive_propose(from, e, oct);
+      }
     });
 }
 
 void Election::claim_victory(int from, int to, epoch_t e, const set<int>& members)
 {
   Owner *o = electors[to];
-  queue_election_message(from, to, [o, from, e, members] {
+  queue_election_message(from, to, [o, from, e, members](bool blocked) {
+    if (!blocked) {
       o->receive_victory_claim(from, e, members);
-    });
+    }
+  });
 }
 
 void Election::accept_victory(int from, int to, epoch_t e)
 {
   Owner *o = electors[to];
-  queue_election_message(from, to, [o, from, e] {
+  queue_election_message(from, to, [o, from, e](bool blocked) {
+    if (!blocked) {
       o->receive_victory_ack(from, e);
-    });
+    }
+  });
 }
 
 void Election::report_quorum(const set<int>& quorum)

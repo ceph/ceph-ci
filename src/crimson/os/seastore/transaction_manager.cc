@@ -29,12 +29,17 @@ TransactionManager::TransactionManager(
   CacheRef _cache,
   LBAManagerRef _lba_manager,
   ExtentPlacementManagerRef &&_epm,
-  BackrefManagerRef&& _backref_manager)
+  BackrefManagerRef&& _backref_manager,
+  shard_stats_t& _shard_stats)
   : cache(std::move(_cache)),
     lba_manager(std::move(_lba_manager)),
     journal(std::move(_journal)),
     epm(std::move(_epm)),
-    backref_manager(std::move(_backref_manager))
+    backref_manager(std::move(_backref_manager)),
+    full_extent_integrity_check(
+      crimson::common::get_conf<bool>(
+        "seastore_full_integrity_check")),
+    shard_stats(_shard_stats)
 {
   epm->set_extent_callback(this);
   journal->set_write_pipeline(&write_pipeline);
@@ -52,6 +57,12 @@ TransactionManager::mkfs_ertr::future<> TransactionManager::mkfs()
     journal->get_trimmer().set_journal_head(start_seq);
     return epm->open_for_write();
   }).safe_then([this, FNAME]() {
+    ++(shard_stats.io_num);
+    ++(shard_stats.pending_io_num);
+    // For submit_transaction_direct()
+    ++(shard_stats.processing_inlock_io_num);
+    ++(shard_stats.repeat_io_num);
+
     return with_transaction_intr(
       Transaction::src_t::MUTATE,
       "mkfs_tm",
@@ -73,7 +84,13 @@ TransactionManager::mkfs_ertr::future<> TransactionManager::mkfs()
         return mkfs_ertr::now();
       }),
       mkfs_ertr::pass_further{}
-    );
+    ).finally([this] {
+      assert(shard_stats.pending_io_num);
+      --(shard_stats.pending_io_num);
+      // XXX: it's wrong to assume no failure,
+      // but failure leads to fatal error
+      --(shard_stats.processing_postlock_io_num);
+    });
   }).safe_then([this] {
     return close();
   }).safe_then([FNAME] {
@@ -154,10 +171,7 @@ TransactionManager::mount_ertr::future<> TransactionManager::mount()
     INFO("completed");
   }).handle_error(
     mount_ertr::pass_further{},
-    crimson::ct_error::all_same_way([] {
-      ceph_assert(0 == "unhandled error");
-      return mount_ertr::now();
-    })
+    crimson::ct_error::assert_all{"unhandled error"}
   );
 }
 
@@ -178,6 +192,7 @@ TransactionManager::close_ertr::future<> TransactionManager::close() {
   });
 }
 
+#ifdef UNIT_TESTS_BUILT
 TransactionManager::ref_ret TransactionManager::inc_ref(
   Transaction &t,
   LogicalCachedExtentRef &ref)
@@ -191,9 +206,7 @@ TransactionManager::ref_ret TransactionManager::inc_ref(
     return result.refcount;
   }).handle_error_interruptible(
     ref_iertr::pass_further{},
-    ct_error::all_same_way([](auto e) {
-      ceph_assert(0 == "unhandled error, TODO");
-    }));
+    ct_error::assert_all{"unhandled error, TODO"});
 }
 
 TransactionManager::ref_ret TransactionManager::inc_ref(
@@ -209,14 +222,15 @@ TransactionManager::ref_ret TransactionManager::inc_ref(
     return result.refcount;
   });
 }
+#endif
 
-TransactionManager::ref_ret TransactionManager::dec_ref(
+TransactionManager::ref_ret TransactionManager::remove(
   Transaction &t,
   LogicalCachedExtentRef &ref)
 {
-  LOG_PREFIX(TransactionManager::dec_ref);
+  LOG_PREFIX(TransactionManager::remove);
   TRACET("{}", t, *ref);
-  return lba_manager->decref_extent(t, ref->get_laddr(), true
+  return lba_manager->decref_extent(t, ref->get_laddr()
   ).si_then([this, FNAME, &t, ref](auto result) {
     DEBUGT("extent refcount is decremented to {} -- {}",
            t, result.refcount, *ref);
@@ -229,12 +243,11 @@ TransactionManager::ref_ret TransactionManager::dec_ref(
 
 TransactionManager::ref_ret TransactionManager::_dec_ref(
   Transaction &t,
-  laddr_t offset,
-  bool cascade_remove)
+  laddr_t offset)
 {
   LOG_PREFIX(TransactionManager::_dec_ref);
   TRACET("{}", t, offset);
-  return lba_manager->decref_extent(t, offset, cascade_remove
+  return lba_manager->decref_extent(t, offset
   ).si_then([this, FNAME, offset, &t](auto result) -> ref_ret {
     DEBUGT("extent refcount is decremented to {} -- {}~{}, {}",
            t, result.refcount, offset, result.length, result.addr);
@@ -253,17 +266,17 @@ TransactionManager::ref_ret TransactionManager::_dec_ref(
   });
 }
 
-TransactionManager::refs_ret TransactionManager::dec_ref(
+TransactionManager::refs_ret TransactionManager::remove(
   Transaction &t,
   std::vector<laddr_t> offsets)
 {
-  LOG_PREFIX(TransactionManager::dec_ref);
+  LOG_PREFIX(TransactionManager::remove);
   DEBUG("{} offsets", offsets.size());
   return seastar::do_with(std::move(offsets), std::vector<unsigned>(),
       [this, &t] (auto &&offsets, auto &refcnt) {
       return trans_intr::do_for_each(offsets.begin(), offsets.end(),
         [this, &t, &refcnt] (auto &laddr) {
-        return this->dec_ref(t, laddr).si_then([&refcnt] (auto ref) {
+        return this->remove(t, laddr).si_then([&refcnt] (auto ref) {
           refcnt.push_back(ref);
           return ref_iertr::now();
         });
@@ -278,7 +291,7 @@ TransactionManager::submit_transaction(
   Transaction &t)
 {
   LOG_PREFIX(TransactionManager::submit_transaction);
-  SUBTRACET(seastore_t, "start", t);
+  SUBDEBUGT(seastore_t, "start, entering reserve_projected_usage", t);
   return trans_intr::make_interruptible(
     t.get_handle().enter(write_pipeline.reserve_projected_usage)
   ).then_interruptible([this, FNAME, &t] {
@@ -307,6 +320,82 @@ TransactionManager::submit_transaction_direct(
     trim_alloc_to);
 }
 
+TransactionManager::update_lba_mappings_ret
+TransactionManager::update_lba_mappings(
+  Transaction &t,
+  std::list<CachedExtentRef> &pre_allocated_extents)
+{
+  LOG_PREFIX(TransactionManager::update_lba_mappings);
+  SUBTRACET(seastore_t, "update extent lba mappings", t);
+  return seastar::do_with(
+    std::list<LogicalCachedExtentRef>(),
+    std::list<CachedExtentRef>(),
+    [this, &t, &pre_allocated_extents](auto &lextents, auto &pextents) {
+    auto chksum_func = [&lextents, &pextents, this](auto &extent) {
+      if (!extent->is_valid() ||
+          !extent->is_fully_loaded() ||
+          // EXIST_MUTATION_PENDING extents' crc will be calculated when
+          // preparing records
+          extent->is_exist_mutation_pending()) {
+        return;
+      }
+      if (extent->is_logical()) {
+        // for rewritten extents, last_committed_crc should have been set
+        // because the crc of the original extent may be reused.
+        // also see rewrite_logical_extent()
+	if (!extent->get_last_committed_crc()) {
+	  if (get_checksum_needed(extent->get_paddr())) {
+	    extent->set_last_committed_crc(extent->calc_crc32c());
+	  } else {
+	    extent->set_last_committed_crc(CRC_NULL);
+	  }
+	}
+#ifndef NDEBUG
+	if (get_checksum_needed(extent->get_paddr())) {
+	  assert(extent->get_last_committed_crc() == extent->calc_crc32c());
+	} else {
+	  assert(extent->get_last_committed_crc() == CRC_NULL);
+	}
+#endif
+        lextents.emplace_back(extent->template cast<LogicalCachedExtent>());
+      } else {
+        pextents.emplace_back(extent);
+      }
+    };
+
+    // For delayed-ool fresh logical extents, update lba-leaf crc and paddr.
+    // For other fresh logical extents, update lba-leaf crc.
+    t.for_each_finalized_fresh_block(chksum_func);
+    // For existing-clean logical extents, update lba-leaf crc.
+    t.for_each_existing_block(chksum_func);
+    // For pre-allocated fresh logical extents, update lba-leaf crc.
+    // For inplace-rewrite dirty logical extents, update lba-leaf crc.
+    std::for_each(
+      pre_allocated_extents.begin(),
+      pre_allocated_extents.end(),
+      chksum_func);
+
+    return lba_manager->update_mappings(
+      t, lextents
+    ).si_then([&pextents, this] {
+      for (auto &extent : pextents) {
+        assert(!extent->is_logical() && extent->is_valid());
+        // for non-logical extents, we update its last_committed_crc
+        // and in-extent checksum fields
+        // For pre-allocated fresh physical extents, update in-extent crc.
+	checksum_t crc;
+	if (get_checksum_needed(extent->get_paddr())) {
+	  crc = extent->calc_crc32c();
+	} else {
+	  crc = CRC_NULL;
+	}
+	extent->set_last_committed_crc(crc);
+	extent->update_in_extent_chksum_field(crc);
+      }
+    });
+  });
+}
+
 TransactionManager::submit_transaction_direct_ret
 TransactionManager::do_submit_transaction(
   Transaction &tref,
@@ -314,37 +403,42 @@ TransactionManager::do_submit_transaction(
   std::optional<journal_seq_t> trim_alloc_to)
 {
   LOG_PREFIX(TransactionManager::do_submit_transaction);
-  SUBTRACET(seastore_t, "start", tref);
+  SUBDEBUGT(seastore_t, "start, entering ool_writes", tref);
   return trans_intr::make_interruptible(
-    tref.get_handle().enter(write_pipeline.ool_writes)
+    tref.get_handle().enter(write_pipeline.ool_writes_and_lba_updates)
   ).then_interruptible([this, FNAME, &tref,
 			dispatch_result = std::move(dispatch_result)] {
     return seastar::do_with(std::move(dispatch_result),
 			    [this, FNAME, &tref](auto &dispatch_result) {
+      SUBTRACET(seastore_t, "write delayed ool extents", tref);
       return epm->write_delayed_ool_extents(tref, dispatch_result.alloc_map
-      ).si_then([this, FNAME, &tref, &dispatch_result] {
-        SUBTRACET(seastore_t, "update delayed extent mappings", tref);
-        return lba_manager->update_mappings(tref, dispatch_result.delayed_extents);
-      }).handle_error_interruptible(
+      ).handle_error_interruptible(
         crimson::ct_error::input_output_error::pass_further(),
         crimson::ct_error::assert_all("invalid error")
       );
     });
+  }).si_then([&tref, FNAME, this] {
+    return seastar::do_with(
+      tref.get_valid_pre_alloc_list(),
+      [this, FNAME, &tref](auto &allocated_extents) {
+      return update_lba_mappings(tref, allocated_extents
+      ).si_then([this, FNAME, &tref, &allocated_extents] {
+        auto num_extents = allocated_extents.size();
+        SUBTRACET(seastore_t, "process {} allocated extents", tref, num_extents);
+        return epm->write_preallocated_ool_extents(tref, allocated_extents
+        ).handle_error_interruptible(
+          crimson::ct_error::input_output_error::pass_further(),
+          crimson::ct_error::assert_all("invalid error")
+        );
+      });
+    });
   }).si_then([this, FNAME, &tref] {
-    auto allocated_extents = tref.get_valid_pre_alloc_list();
-    auto num_extents = allocated_extents.size();
-    SUBTRACET(seastore_t, "process {} allocated extents", tref, num_extents);
-    return epm->write_preallocated_ool_extents(tref, allocated_extents
-    ).handle_error_interruptible(
-      crimson::ct_error::input_output_error::pass_further(),
-      crimson::ct_error::assert_all("invalid error")
-    );
-  }).si_then([this, FNAME, &tref] {
-    SUBTRACET(seastore_t, "about to prepare", tref);
+    SUBTRACET(seastore_t, "entering prepare", tref);
     return tref.get_handle().enter(write_pipeline.prepare);
   }).si_then([this, FNAME, &tref, trim_alloc_to=std::move(trim_alloc_to)]() mutable
 	      -> submit_transaction_iertr::future<> {
     if (trim_alloc_to && *trim_alloc_to != JOURNAL_SEQ_NULL) {
+      SUBTRACET(seastore_t, "trim backref_bufs to {}", tref, *trim_alloc_to);
       cache->trim_backref_bufs(*trim_alloc_to);
     }
 
@@ -354,8 +448,12 @@ TransactionManager::do_submit_transaction(
       journal->get_trimmer().get_dirty_tail());
 
     tref.get_handle().maybe_release_collection_lock();
+    if (tref.get_src() == Transaction::src_t::MUTATE) {
+      --(shard_stats.processing_inlock_io_num);
+      ++(shard_stats.processing_postlock_io_num);
+    }
 
-    SUBTRACET(seastore_t, "about to submit to journal", tref);
+    SUBTRACET(seastore_t, "submitting record", tref);
     return journal->submit_record(std::move(record), tref.get_handle()
     ).safe_then([this, FNAME, &tref](auto submit_result) mutable {
       SUBDEBUGT(seastore_t, "committed with {}", tref, submit_result);
@@ -365,18 +463,6 @@ TransactionManager::do_submit_transaction(
           tref,
           submit_result.record_block_base,
           start_seq);
-
-      std::vector<CachedExtentRef> lba_to_clear;
-      std::vector<CachedExtentRef> backref_to_clear;
-      lba_to_clear.reserve(tref.get_retired_set().size());
-      backref_to_clear.reserve(tref.get_retired_set().size());
-      for (auto &e: tref.get_retired_set()) {
-	if (e->is_logical() || is_lba_node(e->get_type()))
-	  lba_to_clear.push_back(e);
-	else if (is_backref_node(e->get_type()))
-	  backref_to_clear.push_back(e);
-      }
-
       journal->get_trimmer().update_journal_tails(
 	cache->get_oldest_dirty_from().value_or(start_seq),
 	cache->get_oldest_backref_dirty_from().value_or(start_seq));
@@ -386,12 +472,8 @@ TransactionManager::do_submit_transaction(
       });
     }).handle_error(
       submit_transaction_iertr::pass_further{},
-      crimson::ct_error::all_same_way([](auto e) {
-	ceph_assert(0 == "Hit error submitting to journal");
-      })
+      crimson::ct_error::assert_all{"Hit error submitting to journal"}
     );
-  }).finally([&tref]() {
-      tref.get_handle().exit();
   });
 }
 
@@ -401,7 +483,7 @@ seastar::future<> TransactionManager::flush(OrderingHandle &handle)
   SUBDEBUG(seastore_t, "H{} start", (void*)&handle);
   return handle.enter(write_pipeline.reserve_projected_usage
   ).then([this, &handle] {
-    return handle.enter(write_pipeline.ool_writes);
+    return handle.enter(write_pipeline.ool_writes_and_lba_updates);
   }).then([this, &handle] {
     return handle.enter(write_pipeline.prepare);
   }).then([this, &handle] {
@@ -437,32 +519,103 @@ TransactionManager::rewrite_logical_extent(
 
   auto lextent = extent->cast<LogicalCachedExtent>();
   cache->retire_extent(t, extent);
-  auto nlextent = cache->alloc_new_extent_by_type(
-    t,
-    lextent->get_type(),
-    lextent->get_length(),
-    lextent->get_user_hint(),
-    // get target rewrite generation
-    lextent->get_rewrite_generation())->cast<LogicalCachedExtent>();
-  lextent->get_bptr().copy_out(
-    0,
-    lextent->get_length(),
-    nlextent->get_bptr().c_str());
-  nlextent->set_laddr(lextent->get_laddr());
-  nlextent->set_modify_time(lextent->get_modify_time());
+  if (get_extent_category(lextent->get_type()) == data_category_t::METADATA) {
+    auto nlextent = cache->alloc_new_extent_by_type(
+      t,
+      lextent->get_type(),
+      lextent->get_length(),
+      lextent->get_user_hint(),
+      // get target rewrite generation
+      lextent->get_rewrite_generation())->cast<LogicalCachedExtent>();
+    nlextent->rewrite(t, *lextent, 0);
 
-  DEBUGT("rewriting logical extent -- {} to {}", t, *lextent, *nlextent);
+    DEBUGT("rewriting logical extent -- {} to {}", t, *lextent, *nlextent);
 
-  /* This update_mapping is, strictly speaking, unnecessary for delayed_alloc
-   * extents since we're going to do it again once we either do the ool write
-   * or allocate a relative inline addr.  TODO: refactor AsyncCleaner to
-   * avoid this complication. */
-  return lba_manager->update_mapping(
-    t,
-    lextent->get_laddr(),
-    lextent->get_paddr(),
-    nlextent->get_paddr(),
-    nlextent.get());
+#ifndef NDEBUG
+    if (get_checksum_needed(lextent->get_paddr())) {
+      assert(lextent->get_last_committed_crc() == lextent->calc_crc32c());
+    } else {
+      assert(lextent->get_last_committed_crc() == CRC_NULL);
+    }
+#endif
+    nlextent->set_last_committed_crc(lextent->get_last_committed_crc());
+    /* This update_mapping is, strictly speaking, unnecessary for delayed_alloc
+     * extents since we're going to do it again once we either do the ool write
+     * or allocate a relative inline addr.  TODO: refactor AsyncCleaner to
+     * avoid this complication. */
+    return lba_manager->update_mapping(
+      t,
+      lextent->get_laddr(),
+      lextent->get_length(),
+      lextent->get_paddr(),
+      nlextent->get_length(),
+      nlextent->get_paddr(),
+      nlextent->get_last_committed_crc(),
+      nlextent.get()).discard_result();
+  } else {
+    assert(get_extent_category(lextent->get_type()) == data_category_t::DATA);
+    auto extents = cache->alloc_new_data_extents_by_type(
+      t,
+      lextent->get_type(),
+      lextent->get_length(),
+      lextent->get_user_hint(),
+      // get target rewrite generation
+      lextent->get_rewrite_generation());
+    return seastar::do_with(
+      std::move(extents),
+      0,
+      lextent->get_length(),
+      extent_ref_count_t(0),
+      [this, lextent, &t](auto &extents, auto &off, auto &left, auto &refcount) {
+      return trans_intr::do_for_each(
+        extents,
+        [lextent, this, &t, &off, &left, &refcount](auto &nextent) {
+        LOG_PREFIX(TransactionManager::rewrite_logical_extent);
+        bool first_extent = (off == 0);
+        ceph_assert(left >= nextent->get_length());
+        auto nlextent = nextent->template cast<LogicalCachedExtent>();
+        nlextent->rewrite(t, *lextent, off);
+        DEBUGT("rewriting logical extent -- {} to {}", t, *lextent, *nlextent);
+
+        /* This update_mapping is, strictly speaking, unnecessary for delayed_alloc
+         * extents since we're going to do it again once we either do the ool write
+         * or allocate a relative inline addr.  TODO: refactor AsyncCleaner to
+         * avoid this complication. */
+        auto fut = base_iertr::now();
+        if (first_extent) {
+          fut = lba_manager->update_mapping(
+            t,
+            (lextent->get_laddr() + off).checked_to_laddr(),
+            lextent->get_length(),
+            lextent->get_paddr(),
+            nlextent->get_length(),
+            nlextent->get_paddr(),
+            nlextent->get_last_committed_crc(),
+            nlextent.get()
+	  ).si_then([&refcount](auto c) {
+	    refcount = c;
+	  });
+        } else {
+	  ceph_assert(refcount != 0);
+          fut = lba_manager->alloc_extent(
+            t,
+            (lextent->get_laddr() + off).checked_to_laddr(),
+            *nlextent,
+	    refcount
+          ).si_then([lextent, nlextent, off](auto mapping) {
+            ceph_assert(mapping->get_key() == lextent->get_laddr() + off);
+            ceph_assert(mapping->get_val() == nlextent->get_paddr());
+            return seastar::now();
+          });
+        }
+        return fut.si_then([&off, &left, nlextent] {
+          off += nlextent->get_length();
+          left -= nlextent->get_length();
+          return seastar::now();
+        });
+      });
+    });
+  }
 }
 
 TransactionManager::rewrite_extent_ret TransactionManager::rewrite_extent(
@@ -485,21 +638,39 @@ TransactionManager::rewrite_extent_ret TransactionManager::rewrite_extent(
 
   assert(extent->is_valid() && !extent->is_initial_pending());
   if (extent->is_dirty()) {
+    assert(extent->get_version() > 0);
+    if (is_root_type(extent->get_type())) {
+      // pass
+    } else if (extent->get_version() == 1 && extent->is_mutation_pending()) {
+      t.get_rewrite_stats().account_n_dirty();
+    } else {
+      t.get_rewrite_stats().account_dirty(extent->get_version());
+    }
+    if (epm->can_inplace_rewrite(t, extent)) {
+      // FIXME: is_dirty() is true for mutation pending extents
+      // which shouldn't do inplace rewrite because a pending transaction
+      // may fail.
+      DEBUGT("delta overwriting extent -- {}", t, *extent);
+      t.add_inplace_rewrite_extent(extent);
+      extent->set_inplace_rewrite_generation();
+      return rewrite_extent_iertr::now();
+    }
     extent->set_target_rewrite_generation(INIT_GENERATION);
   } else {
+    assert(!is_root_type(extent->get_type()));
     extent->set_target_rewrite_generation(target_generation);
     ceph_assert(modify_time != NULL_TIME);
     extent->set_modify_time(modify_time);
+    assert(extent->get_version() == 0);
+    t.get_rewrite_stats().account_n_dirty();
   }
-
-  t.get_rewrite_version_stats().increment(extent->get_version());
 
   if (is_backref_node(extent->get_type())) {
     DEBUGT("rewriting backref extent -- {}", t, *extent);
     return backref_manager->rewrite_extent(t, extent);
   }
 
-  if (extent->get_type() == extent_types_t::ROOT) {
+  if (is_root_type(extent->get_type())) {
     DEBUGT("rewriting root extent -- {}", t, *extent);
     cache->duplicate_for_write(t, extent);
     return rewrite_extent_iertr::now();
@@ -521,7 +692,7 @@ TransactionManager::get_extents_if_live(
   laddr_t laddr,
   extent_len_t len)
 {
-  LOG_PREFIX(TransactionManager::get_extent_if_live);
+  LOG_PREFIX(TransactionManager::get_extents_if_live);
   TRACET("{} {}~{} {}", t, type, laddr, len, paddr);
 
   // This only works with segments to check if alive,
@@ -561,13 +732,26 @@ TransactionManager::get_extents_if_live(
             auto pin_paddr = pin->get_val();
             auto &pin_seg_paddr = pin_paddr.as_seg_paddr();
             auto pin_paddr_seg_id = pin_seg_paddr.get_segment_id();
-            auto pin_len = pin->get_length();
+            // auto pin_len = pin->get_length();
             if (pin_paddr_seg_id != paddr_seg_id) {
               return seastar::now();
             }
-            // Only extent split can happen during the lookup
-            ceph_assert(pin_seg_paddr >= paddr &&
-                        pin_seg_paddr.add_offset(pin_len) <= paddr.add_offset(len));
+
+            // pin may be out of the range paddr~len, consider the following scene:
+            // 1. Trans.A writes the final record of Segment S, in which it overwrite
+            //    another extent E in the same segment S;
+            // 2. Before Trans.A "complete_commit", Trans.B tries to rewrite new
+            //    records and roll the segments, which closes Segment S;
+            // 3. Before Trans.A "complete_commit", a new cleaner Transaction C tries
+            //    to clean the segment;
+            //
+            // In this scenario, C might see a part of extent E's laddr space mapped
+            // to another location within the same segment S.
+            //
+            // FIXME: this assert should be re-enabled once we have space reclaiming
+            //        recognize committed segments: https://tracker.ceph.com/issues/66941
+            // ceph_assert(pin_seg_paddr >= paddr &&
+            //             pin_seg_paddr.add_offset(pin_len) <= paddr.add_offset(len));
             return read_pin_by_type(t, std::move(pin), type
             ).si_then([&list](auto ret) {
               list.emplace_back(std::move(ret));
@@ -614,6 +798,7 @@ TransactionManager::~TransactionManager() {}
 TransactionManagerRef make_transaction_manager(
     Device *primary_device,
     const std::vector<Device*> &secondary_devices,
+    shard_stats_t& shard_stats,
     bool is_test)
 {
   auto epm = std::make_unique<ExtentPlacementManager>();
@@ -655,10 +840,10 @@ TransactionManagerRef make_transaction_manager(
     }
   }
 
-  auto journal_type = p_backend_type;
+  auto backend_type = p_backend_type;
   device_off_t roll_size;
   device_off_t roll_start;
-  if (journal_type == journal_type_t::SEGMENTED) {
+  if (backend_type == backend_type_t::SEGMENTED) {
     roll_size = static_cast<SegmentManager*>(primary_device)->get_segment_size();
     roll_start = 0;
   } else {
@@ -681,17 +866,17 @@ TransactionManagerRef make_transaction_manager(
     cleaner_is_detailed = true;
     cleaner_config = SegmentCleaner::config_t::get_test();
     trimmer_config = JournalTrimmerImpl::config_t::get_test(
-        roll_size, journal_type);
+        roll_size, backend_type);
   } else {
     cleaner_is_detailed = false;
     cleaner_config = SegmentCleaner::config_t::get_default();
     trimmer_config = JournalTrimmerImpl::config_t::get_default(
-        roll_size, journal_type);
+        roll_size, backend_type);
   }
 
   auto journal_trimmer = JournalTrimmerImpl::create(
       *backref_manager, trimmer_config,
-      journal_type, roll_start, roll_size);
+      backend_type, roll_start, roll_size);
 
   AsyncCleanerRef cleaner;
   JournalRef journal;
@@ -706,7 +891,7 @@ TransactionManagerRef make_transaction_manager(
       epm->get_ool_segment_seq_allocator(),
       cleaner_is_detailed,
       /* is_cold = */ true);
-    if (journal_type == journal_type_t::SEGMENTED) {
+    if (backend_type == backend_type_t::SEGMENTED) {
       for (auto id : cold_segment_cleaner->get_device_ids()) {
         segment_providers_by_id[id] =
           static_cast<SegmentProvider*>(cold_segment_cleaner.get());
@@ -714,7 +899,7 @@ TransactionManagerRef make_transaction_manager(
     }
   }
 
-  if (journal_type == journal_type_t::SEGMENTED) {
+  if (backend_type == backend_type_t::SEGMENTED) {
     cleaner = SegmentCleaner::create(
       cleaner_config,
       std::move(sms),
@@ -753,7 +938,8 @@ TransactionManagerRef make_transaction_manager(
     std::move(cache),
     std::move(lba_manager),
     std::move(epm),
-    std::move(backref_manager));
+    std::move(backref_manager),
+    shard_stats);
 }
 
 }

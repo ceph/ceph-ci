@@ -33,9 +33,13 @@ public:
   interruptible_future<bool> start_recovery_ops(
     RecoveryBackend::RecoveryBlockingEvent::TriggerI&,
     size_t max_to_start);
+  void on_activate_complete();
   void on_backfill_reserved();
   void dispatch_backfill_event(
     boost::intrusive_ptr<const boost::statechart::event_base> evt);
+  void backfill_target_finished() {
+    backfill_state->backfill_target_done();
+  }
 
   seastar::future<> stop() { return seastar::now(); }
 private:
@@ -64,7 +68,7 @@ private:
     const hobject_t& soid,
     eversion_t need);
 
-  void on_local_recover(
+  RecoveryBackend::interruptible_future<> on_local_recover(
     const hobject_t& soid,
     const ObjectRecoveryInfo& recovery_info,
     bool is_delete,
@@ -94,6 +98,7 @@ private:
   template <class EventT>
   void start_backfill_recovery(
     const EventT& evt);
+  void backfill_cancelled();
   void request_replica_scan(
     const pg_shard_t& target,
     const hobject_t& begin,

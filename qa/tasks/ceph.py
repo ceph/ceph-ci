@@ -28,6 +28,7 @@ from teuthology import misc as teuthology
 from teuthology import contextutil
 from teuthology import exceptions
 from teuthology.orchestra import run
+from teuthology.util.scanner import ValgrindScanner
 from tasks import ceph_client as cclient
 from teuthology.orchestra.daemon import DaemonGroup
 from tasks.daemonwatchdog import DaemonWatchdog
@@ -327,38 +328,15 @@ def valgrind_post(ctx, config):
     try:
         yield
     finally:
-        lookup_procs = list()
-        log.info('Checking for errors in any valgrind logs...')
-        for remote in ctx.cluster.remotes.keys():
-            # look at valgrind logs for each node
-            proc = remote.run(
-                args="sudo zgrep '<kind>' /var/log/ceph/valgrind/* "
-                     # include a second file so that we always get
-                     # a filename prefix on the output
-                     "/dev/null | sort | uniq",
-                wait=False,
-                check_status=False,
-                stdout=StringIO(),
-            )
-            lookup_procs.append((proc, remote))
-
         valgrind_exception = None
-        for (proc, remote) in lookup_procs:
-            proc.wait()
-            out = proc.stdout.getvalue()
-            for line in out.split('\n'):
-                if line == '':
-                    continue
-                try:
-                    (file, kind) = line.split(':')
-                except Exception:
-                    log.error('failed to split line %s', line)
-                    raise
-                log.debug('file %s kind %s', file, kind)
-                if (file.find('mds') >= 0) and kind.find('Lost') > 0:
-                    continue
-                log.error('saw valgrind issue %s in %s', kind, file)
-                valgrind_exception = Exception('saw valgrind issues')
+        valgrind_yaml = os.path.join(ctx.archive, 'valgrind.yaml')
+        for remote in ctx.cluster.remotes.keys():
+            scanner = ValgrindScanner(remote)
+            errors = scanner.scan_all_files('/var/log/ceph/valgrind/*')
+            scanner.write_summary(valgrind_yaml)
+            if errors and not valgrind_exception:
+                log.debug('valgrind exception message: %s', errors[0])
+                valgrind_exception = Exception(errors[0])
 
         if config.get('expect_valgrind_errors'):
             if not valgrind_exception:
@@ -381,6 +359,68 @@ def crush_setup(ctx, config):
               'osd', 'crush', 'tunables', profile])
     yield
 
+
+@contextlib.contextmanager
+def module_setup(ctx, config):
+    cluster_name = config['cluster']
+    first_mon = teuthology.get_first_mon(ctx, config, cluster_name)
+    (mon_remote,) = ctx.cluster.only(first_mon).remotes.keys()
+
+    modules = config.get('mgr-modules', [])
+    for m in modules:
+        m = str(m)
+        cmd = [
+           'sudo',
+           'ceph',
+           '--cluster',
+           cluster_name,
+           'mgr',
+           'module',
+           'enable',
+           m,
+        ]
+        log.info("enabling module %s", m)
+        mon_remote.run(args=cmd)
+    yield
+
+
+@contextlib.contextmanager
+def conf_setup(ctx, config):
+    cluster_name = config['cluster']
+    first_mon = teuthology.get_first_mon(ctx, config, cluster_name)
+    (mon_remote,) = ctx.cluster.only(first_mon).remotes.keys()
+
+    configs = config.get('cluster-conf', {})
+    procs = []
+    for section, confs in configs.items():
+        section = str(section)
+        for k, v in confs.items():
+            k = str(k).replace(' ', '_') # pre-pacific compatibility
+            v = str(v)
+            cmd = [
+                'sudo',
+                'ceph',
+                '--cluster',
+                cluster_name,
+                'config',
+                'set',
+                section,
+                k,
+                v,
+            ]
+            log.info("setting config [%s] %s = %s", section, k, v)
+            procs.append(mon_remote.run(args=cmd, wait=False))
+    log.debug("set %d configs", len(procs))
+    for p in procs:
+        log.debug("waiting for %s", p)
+        p.wait()
+    yield
+
+@contextlib.contextmanager
+def conf_epoch(ctx, config):
+    cm = ctx.managers[config['cluster']]
+    cm.save_conf_epoch()
+    yield
 
 @contextlib.contextmanager
 def check_enable_crimson(ctx, config):
@@ -432,12 +472,7 @@ def create_rbd_pool(ctx, config):
             args=['sudo', 'ceph', '--cluster', cluster_name,
                   'osd', 'pool', 'create', 'rbd', '8'])
         mon_remote.run(
-            args=[
-                'sudo', 'ceph', '--cluster', cluster_name,
-                'osd', 'pool', 'application', 'enable',
-                'rbd', 'rbd', '--yes-i-really-mean-it'
-            ],
-            check_status=False)
+            args=['rbd', '--cluster', cluster_name, 'pool', 'init', 'rbd'])
     yield
 
 @contextlib.contextmanager
@@ -950,7 +985,9 @@ def cluster(ctx, config):
                 try:
                     remote.run(args=['yes', run.Raw('|')] + ['sudo'] + mkfs + [dev])
                 except run.CommandFailedError:
-                    # Newer btfs-tools doesn't prompt for overwrite, use -f
+                    if fs != 'btrfs':
+                        raise
+                    # Newer btrfs-tools doesn't prompt for overwrite, use -f
                     if '-f' not in mount_options:
                         mkfs_options.append('-f')
                         mkfs = ['mkfs.%s' % fs] + mkfs_options
@@ -1921,7 +1958,9 @@ def task(ctx, config):
             mon_bind_addrvec=config.get('mon_bind_addrvec', True),
         )),
         lambda: run_daemon(ctx=ctx, config=config, type_='mon'),
+        lambda: module_setup(ctx=ctx, config=config),
         lambda: run_daemon(ctx=ctx, config=config, type_='mgr'),
+        lambda: conf_setup(ctx=ctx, config=config),
         lambda: crush_setup(ctx=ctx, config=config),
         lambda: check_enable_crimson(ctx=ctx, config=config),
         lambda: run_daemon(ctx=ctx, config=config, type_='osd'),
@@ -1930,6 +1969,7 @@ def task(ctx, config):
         lambda: run_daemon(ctx=ctx, config=config, type_='mds'),
         lambda: cephfs_setup(ctx=ctx, config=config),
         lambda: watchdog_setup(ctx=ctx, config=config),
+        lambda: conf_epoch(ctx=ctx, config=config),
     ]
 
     with contextutil.nested(*subtasks):

@@ -55,6 +55,7 @@ static const std::string DEST_SNAPSHOT_NAME("dest-snap");
 static const std::string PATH("path");
 static const std::string FROM_SNAPSHOT_NAME("from-snap");
 static const std::string WHOLE_OBJECT("whole-object");
+static const std::string REMOTE_NAMESPACE_NAME("remote-namespace");
 
 // encryption arguments
 static const std::string ENCRYPTION_FORMAT("encryption-format");
@@ -158,7 +159,8 @@ void add_image_id_option(boost::program_options::options_description *opt,
 
 void add_snap_option(boost::program_options::options_description *opt,
                      ArgumentModifier modifier);
-void add_snap_id_option(boost::program_options::options_description *opt);
+void add_snap_id_option(boost::program_options::options_description *opt,
+                        ArgumentModifier modifier);
 
 void add_pool_options(boost::program_options::options_description *pos,
                       boost::program_options::options_description *opt,

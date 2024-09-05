@@ -5,6 +5,8 @@ import re
 import socket
 import time
 from abc import ABCMeta, abstractmethod
+import ipaddress
+from urllib.parse import urlparse
 from typing import TYPE_CHECKING, List, Callable, TypeVar, \
     Optional, Dict, Any, Tuple, NewType, cast
 
@@ -42,7 +44,7 @@ def get_auth_entity(daemon_type: str, daemon_id: str, host: str = "") -> AuthEnt
     # the CephService class refers to service types, not daemon types
     if daemon_type in ['rgw', 'rbd-mirror', 'cephfs-mirror', 'nfs', "iscsi", 'nvmeof', 'ingress', 'ceph-exporter']:
         return AuthEntity(f'client.{daemon_type}.{daemon_id}')
-    elif daemon_type in ['crash', 'agent']:
+    elif daemon_type in ['crash', 'agent', 'node-proxy']:
         if host == "":
             raise OrchestratorError(
                 f'Host not provided to generate <{daemon_type}> auth entity name')
@@ -53,6 +55,79 @@ def get_auth_entity(daemon_type: str, daemon_id: str, host: str = "") -> AuthEnt
         return AuthEntity(f'{daemon_type}.{daemon_id}')
     else:
         raise OrchestratorError(f"unknown daemon type {daemon_type}")
+
+
+def simplified_keyring(entity: str, contents: str) -> str:
+    # strip down keyring
+    #  - don't include caps (auth get includes them; get-or-create does not)
+    #  - use pending key if present
+    key = None
+    for line in contents.splitlines():
+        if ' = ' not in line:
+            continue
+        line = line.strip()
+        (ls, rs) = line.split(' = ', 1)
+        if ls == 'key' and not key:
+            key = rs
+        if ls == 'pending key':
+            key = rs
+    keyring = f'[{entity}]\nkey = {key}\n'
+    return keyring
+
+
+def get_dashboard_endpoints(svc: 'CephadmService') -> Tuple[List[str], Optional[str]]:
+    dashboard_endpoints: List[str] = []
+    port = None
+    protocol = None
+    mgr_map = svc.mgr.get('mgr_map')
+    url = mgr_map.get('services', {}).get('dashboard', None)
+    if url:
+        p_result = urlparse(url.rstrip('/'))
+        protocol = p_result.scheme
+        port = p_result.port
+        # assume that they are all dashboards on the same port as the active mgr.
+        for dd in svc.mgr.cache.get_daemons_by_service('mgr'):
+            if not port:
+                continue
+            assert dd.hostname is not None
+            addr = svc.mgr.get_fqdn(dd.hostname)
+            dashboard_endpoints.append(f'{addr}:{port}')
+
+    return dashboard_endpoints, protocol
+
+
+def get_dashboard_urls(svc: 'CephadmService') -> List[str]:
+    # dashboard(s)
+    dashboard_urls: List[str] = []
+    mgr_map = svc.mgr.get('mgr_map')
+    port = None
+    proto = None  # http: or https:
+    url = mgr_map.get('services', {}).get('dashboard', None)
+    if url:
+        p_result = urlparse(url.rstrip('/'))
+        hostname = socket.getfqdn(p_result.hostname)
+        try:
+            ip = ipaddress.ip_address(hostname)
+        except ValueError:
+            pass
+        else:
+            if ip.version == 6:
+                hostname = f'[{hostname}]'
+        dashboard_urls.append(f'{p_result.scheme}://{hostname}:{p_result.port}{p_result.path}')
+        proto = p_result.scheme
+        port = p_result.port
+
+    # assume that they are all dashboards on the same port as the active mgr.
+    for dd in svc.mgr.cache.get_daemons_by_service('mgr'):
+        if not port:
+            continue
+        if dd.daemon_id == svc.mgr.get_mgr_id():
+            continue
+        assert dd.hostname is not None
+        addr = svc.mgr.get_fqdn(dd.hostname)
+        dashboard_urls.append(build_url(scheme=proto, host=addr, port=port).rstrip('/'))
+
+    return dashboard_urls
 
 
 class CephadmDaemonDeploySpec:
@@ -213,7 +288,7 @@ class CephadmService(metaclass=ABCMeta):
         """
         return None
 
-    def ranked(self) -> bool:
+    def ranked(self, spec: ServiceSpec) -> bool:
         """
         If True, we will assign a stable rank (0, 1, ...) and monotonically increasing
         generation (0, 1, ...) to each daemon we create/deploy.
@@ -307,48 +382,23 @@ class CephadmService(metaclass=ABCMeta):
             })
             if err:
                 raise OrchestratorError(f"Unable to fetch keyring for {entity}: {err}")
+        return simplified_keyring(entity, keyring)
 
-        # strip down keyring
-        #  - don't include caps (auth get includes them; get-or-create does not)
-        #  - use pending key if present
-        key = None
-        for line in keyring.splitlines():
-            if ' = ' not in line:
-                continue
-            line = line.strip()
-            (ls, rs) = line.split(' = ', 1)
-            if ls == 'key' and not key:
-                key = rs
-            if ls == 'pending key':
-                key = rs
-        keyring = f'[{entity}]\nkey = {key}\n'
-        return keyring
-
-    def _inventory_get_fqdn(self, hostname: str) -> str:
-        """Get a host's FQDN with its hostname.
-
-           If the FQDN can't be resolved, the address from the inventory will
-           be returned instead.
-        """
-        addr = self.mgr.inventory.get_addr(hostname)
-        return socket.getfqdn(addr)
-
-    def _set_service_url_on_dashboard(self,
-                                      service_name: str,
-                                      get_mon_cmd: str,
-                                      set_mon_cmd: str,
-                                      service_url: str) -> None:
-        """A helper to get and set service_url via Dashboard's MON command.
-
-           If result of get_mon_cmd differs from service_url, set_mon_cmd will
+    def _set_value_on_dashboard(self,
+                                service_name: str,
+                                get_mon_cmd: str,
+                                set_mon_cmd: str,
+                                new_value: str) -> None:
+        """A helper to get and set values via Dashboard's MON command.
+           If result of get_mon_cmd differs from the new_value, set_mon_cmd will
            be sent to set the service_url.
         """
         def get_set_cmd_dicts(out: str) -> List[dict]:
             cmd_dict = {
                 'prefix': set_mon_cmd,
-                'value': service_url
+                'value': new_value
             }
-            return [cmd_dict] if service_url != out else []
+            return [cmd_dict] if new_value != out else []
 
         self._check_and_set_dashboard(
             service_name=service_name,
@@ -513,6 +563,16 @@ class CephadmService(metaclass=ABCMeta):
     def purge(self, service_name: str) -> None:
         """Called to carry out any purge tasks following service removal"""
         logger.debug(f'Purge called for {self.TYPE} - no action taken')
+
+    def ignore_possible_stray(
+        self, service_type: str, daemon_id: str, name: str
+    ) -> bool:
+        """Called to decide if a possible stray service should be ignored
+        because it "virtually" belongs to a service.
+        This is mainly needed when properly managed services spawn layered ceph
+        services with different names (for example).
+        """
+        return False
 
 
 class CephService(CephadmService):
@@ -965,6 +1025,17 @@ class RgwService(CephService):
                 'val': cert_data,
             })
 
+        if spec.zonegroup_hostnames:
+            zg_update_cmd = {
+                'prefix': 'rgw zonegroup modify',
+                'realm_name': spec.rgw_realm,
+                'zonegroup_name': spec.rgw_zonegroup,
+                'zone_name': spec.rgw_zone,
+                'hostnames': spec.zonegroup_hostnames,
+            }
+            logger.debug(f'rgw cmd: {zg_update_cmd}')
+            ret, out, err = self.mgr.check_mon_command(zg_update_cmd)
+
         # TODO: fail, if we don't have a spec
         logger.info('Saving service %s spec with placement %s' % (
             spec.service_name(), spec.placement.pretty_str()))
@@ -1022,13 +1093,45 @@ class RgwService(CephService):
             args.extend(spec.rgw_frontend_extra_args)
 
         frontend = f'{ftype} {" ".join(args)}'
+        daemon_name = utils.name_to_config_section(daemon_spec.name())
 
         ret, out, err = self.mgr.check_mon_command({
             'prefix': 'config set',
-            'who': utils.name_to_config_section(daemon_spec.name()),
+            'who': daemon_name,
             'name': 'rgw_frontends',
             'value': frontend
         })
+
+        if spec.rgw_user_counters_cache:
+            ret, out, err = self.mgr.check_mon_command({
+                'prefix': 'config set',
+                'who': daemon_name,
+                'name': 'rgw_user_counters_cache',
+                'value': 'true',
+            })
+        if spec.rgw_bucket_counters_cache:
+            ret, out, err = self.mgr.check_mon_command({
+                'prefix': 'config set',
+                'who': daemon_name,
+                'name': 'rgw_bucket_counters_cache',
+                'value': 'true',
+            })
+
+        if spec.rgw_user_counters_cache_size:
+            ret, out, err = self.mgr.check_mon_command({
+                'prefix': 'config set',
+                'who': daemon_name,
+                'name': 'rgw_user_counters_cache_size',
+                'value': str(spec.rgw_user_counters_cache_size),
+            })
+
+        if spec.rgw_bucket_counters_cache_size:
+            ret, out, err = self.mgr.check_mon_command({
+                'prefix': 'config set',
+                'who': daemon_name,
+                'name': 'rgw_bucket_counters_cache_size',
+                'value': str(spec.rgw_bucket_counters_cache_size),
+            })
 
         daemon_spec.keyring = keyring
         daemon_spec.final_config, daemon_spec.deps = self.generate_config(daemon_spec)
@@ -1170,7 +1273,7 @@ class CephExporterService(CephService):
                                               'mon', 'allow r',
                                               'mgr', 'allow r',
                                               'osd', 'allow r'])
-        exporter_config = {}
+        exporter_config: Dict[str, Any] = {}
         if spec.sock_dir:
             exporter_config.update({'sock-dir': spec.sock_dir})
         if spec.port:
@@ -1180,10 +1283,29 @@ class CephExporterService(CephService):
         if spec.stats_period:
             exporter_config.update({'stats-period': f'{spec.stats_period}'})
 
+        security_enabled, _, _ = self.mgr._get_security_config()
+        if security_enabled:
+            exporter_config.update({'https_enabled': True})
+            crt, key = self.get_certificates(daemon_spec)
+            exporter_config['files'] = {
+                'ceph-exporter.crt': crt,
+                'ceph-exporter.key': key
+            }
         daemon_spec.keyring = keyring
         daemon_spec.final_config, daemon_spec.deps = self.generate_config(daemon_spec)
         daemon_spec.final_config = merge_dicts(daemon_spec.final_config, exporter_config)
+
+        deps = []
+        deps += [d.name() for d in self.mgr.cache.get_daemons_by_service('mgmt-gateway')]
+        deps += [f'secure_monitoring_stack:{self.mgr.secure_monitoring_stack}']
+        daemon_spec.deps = deps
+
         return daemon_spec
+
+    def get_certificates(self, daemon_spec: CephadmDaemonDeploySpec) -> Tuple[str, str]:
+        node_ip = self.mgr.inventory.get_addr(daemon_spec.host)
+        host_fqdn = self.mgr.get_fqdn(daemon_spec.host)
+        return self.mgr.cert_mgr.generate_cert(host_fqdn, node_ip)
 
 
 class CephfsMirrorService(CephService):
@@ -1240,7 +1362,6 @@ class CephadmAgent(CephService):
         agent = self.mgr.http_server.agent
         try:
             assert agent
-            assert agent.ssl_certs.get_root_cert()
             assert agent.server_port
         except Exception:
             raise OrchestratorError(
@@ -1253,15 +1374,15 @@ class CephadmAgent(CephService):
                'host': daemon_spec.host,
                'device_enhanced_scan': str(self.mgr.device_enhanced_scan)}
 
-        listener_cert, listener_key = agent.ssl_certs.generate_cert(daemon_spec.host, self.mgr.inventory.get_addr(daemon_spec.host))
+        listener_cert, listener_key = self.mgr.cert_mgr.generate_cert(daemon_spec.host, self.mgr.inventory.get_addr(daemon_spec.host))
         config = {
             'agent.json': json.dumps(cfg),
             'keyring': daemon_spec.keyring,
-            'root_cert.pem': agent.ssl_certs.get_root_cert(),
+            'root_cert.pem': self.mgr.cert_mgr.get_root_ca(),
             'listener.crt': listener_cert,
             'listener.key': listener_key,
         }
 
         return config, sorted([str(self.mgr.get_mgr_ip()), str(agent.server_port),
-                               agent.ssl_certs.get_root_cert(),
+                               self.mgr.cert_mgr.get_root_ca(),
                                str(self.mgr.get_module_option('device_enhanced_scan'))])

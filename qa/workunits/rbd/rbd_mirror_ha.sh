@@ -1,7 +1,9 @@
-#!/bin/sh -ex
+#!/usr/bin/env bash
 #
 # rbd_mirror_ha.sh - test rbd-mirror daemons in HA mode
 #
+
+set -ex
 
 RBD_MIRROR_INSTANCES=${RBD_MIRROR_INSTANCES:-7}
 
@@ -77,7 +79,7 @@ test_replay()
 	    wait_for_status_in_pool_dir ${CLUSTER2} ${POOL} ${image} \
 					'down+unknown'
 	fi
-	compare_images ${POOL} ${image}
+	compare_images ${CLUSTER1} ${CLUSTER2} ${POOL} ${POOL} ${image}
     done
 }
 

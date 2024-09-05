@@ -36,6 +36,8 @@
 #include "rgw_putobj_processor.h"
 #include "rgw_aio_throttle.h"
 #include "rgw_compression.h"
+#include "rgw_perf_counters.h"
+#include "rgw_cksum.h"
 
 
 /* XXX
@@ -259,7 +261,7 @@ namespace rgw {
     static constexpr uint32_t FLAG_ROOT =    0x0002;
     static constexpr uint32_t FLAG_CREATE =  0x0004;
     static constexpr uint32_t FLAG_CREATING =  0x0008;
-    static constexpr uint32_t FLAG_SYMBOLIC_LINK = 0x0009;
+    static constexpr uint32_t FLAG_SYMBOLIC_LINK = 0x0009; // XXXX bug?
     static constexpr uint32_t FLAG_DIRECTORY = 0x0010;
     static constexpr uint32_t FLAG_BUCKET = 0x0020;
     static constexpr uint32_t FLAG_LOCK =   0x0040;
@@ -1913,11 +1915,9 @@ public:
 
   int get_params(optional_yield) override {
     req_state* state = get_state();
-    RGWAccessControlPolicy_S3 s3policy(state->cct);
-    /* we don't have (any) headers, so just create canned ACLs */
-    int ret = s3policy.create_canned(state->owner, state->bucket_owner, state->canned_acl);
-    policy = s3policy;
-    return ret;
+    /* we don't have (any) headers, so just create default ACLs */
+    policy.create_default(state->owner.id, state->owner.display_name);
+    return 0;
   }
 
   void send_response() override {
@@ -2029,11 +2029,9 @@ public:
 
   int get_params(optional_yield) override {
     req_state* state = get_state();
-    RGWAccessControlPolicy_S3 s3policy(state->cct);
-    /* we don't have (any) headers, so just create canned ACLs */
-    int ret = s3policy.create_canned(state->owner, state->bucket_owner, state->canned_acl);
-    policy = s3policy;
-    return ret;
+    /* we don't have (any) headers, so just create default ACLs */
+    policy.create_default(state->owner.id, state->owner.display_name);
+    return 0;
   }
 
   int get_data(buffer::list& _bl) override {
@@ -2485,6 +2483,7 @@ public:
   off_t real_ofs;
   size_t bytes_written;
   bool eio;
+  rgw::op_counters::CountersContainer counters;
 
   RGWWriteRequest(rgw::sal::Driver* driver, const RGWProcessEnv& penv,
 		  std::unique_ptr<rgw::sal::User> _user,
@@ -2532,11 +2531,9 @@ public:
 
   int get_params(optional_yield) override {
     req_state* state = get_state();
-    RGWAccessControlPolicy_S3 s3policy(state->cct);
-    /* we don't have (any) headers, so just create canned ACLs */
-    int ret = s3policy.create_canned(state->owner, state->bucket_owner, state->canned_acl);
-    policy = s3policy;
-    return ret;
+    /* we don't have (any) headers, so just create default ACLs */
+    policy.create_default(state->owner.id, state->owner.display_name);
+    return 0;
   }
 
   int get_data(buffer::list& _bl) override {
@@ -2578,6 +2575,8 @@ public:
   RGWFileHandle* dst_parent;
   const std::string& src_name;
   const std::string& dst_name;
+  std::string src_obj_name;
+  std::string dst_obj_name;
 
   RGWCopyObjRequest(CephContext* _cct, std::unique_ptr<rgw::sal::User> _user,
 		    RGWFileHandle* _src_parent, RGWFileHandle* _dst_parent,
@@ -2611,13 +2610,14 @@ public:
     state->src_bucket_name = src_parent->bucket_name();
     state->bucket_name = dst_parent->bucket_name();
 
-    std::string dest_obj_name = dst_parent->format_child_name(dst_name, false);
+    src_obj_name = src_parent->format_child_name(src_name, false /* is_dir */);
+    dst_obj_name = dst_parent->format_child_name(dst_name, false);
 
-    int rc = valid_s3_object_name(dest_obj_name);
+    int rc = valid_s3_object_name(dst_obj_name);
     if (rc != 0)
       return rc;
 
-    state->object = RGWHandler::driver->get_object(rgw_obj_key(dest_obj_name));
+    state->object = RGWHandler::driver->get_object(rgw_obj_key(dst_obj_name));
 
     /* XXX and fixup key attr (could optimize w/string ref and
      * dest_obj_name) */
@@ -2639,15 +2639,12 @@ public:
 
   int get_params(optional_yield) override {
     req_state* s = get_state();
-    RGWAccessControlPolicy_S3 s3policy(s->cct);
-    /* we don't have (any) headers, so just create canned ACLs */
-    int ret = s3policy.create_canned(s->owner, s->bucket_owner, s->canned_acl);
-    dest_policy = s3policy;
+    /* we don't have (any) headers, so just create default ACLs */
+    dest_policy.create_default(s->owner.id, s->owner.display_name);
     /* src_object required before RGWCopyObj::verify_permissions() */
-    rgw_obj_key k = rgw_obj_key(src_name);
+    rgw_obj_key k = rgw_obj_key(src_obj_name);
     s->src_object = s->bucket->get_object(k);
-    s->object = s->src_object->clone(); // needed to avoid trap at rgw_op.cc:5150
-    return ret;
+    return 0;
   }
 
   void send_response() override {}

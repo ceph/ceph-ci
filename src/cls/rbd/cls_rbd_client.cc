@@ -1882,6 +1882,54 @@ int mirror_mode_set(librados::IoCtx *ioctx,
   return 0;
 }
 
+void mirror_remote_namespace_get_start(librados::ObjectReadOperation *op) {
+  bufferlist bl;
+  op->exec("rbd", "mirror_namespace_get", bl);
+}
+
+int mirror_remote_namespace_get_finish(bufferlist::const_iterator *it,
+                                       std::string *mirror_namespace) {
+  try {
+    decode(*mirror_namespace, *it);
+  } catch (const ceph::buffer::error &err) {
+    return -EBADMSG;
+  }
+  return 0;
+}
+
+int mirror_remote_namespace_get(librados::IoCtx *ioctx,
+			        std::string *mirror_namespace) {
+  librados::ObjectReadOperation op;
+  mirror_remote_namespace_get_start(&op);
+
+  bufferlist out_bl;
+  int r = ioctx->operate(RBD_MIRRORING, &op, &out_bl);
+  if (r < 0) {
+    return r;
+  }
+
+  auto it = out_bl.cbegin();
+  r = mirror_remote_namespace_get_finish(&it, mirror_namespace);
+  if (r < 0) {
+    return r;
+  }
+  return 0;
+}
+
+int mirror_remote_namespace_set(librados::IoCtx *ioctx,
+                                const std::string &mirror_namespace) {
+  bufferlist in_bl;
+  encode(mirror_namespace, in_bl);
+
+  bufferlist out_bl;
+  int r = ioctx->exec(RBD_MIRRORING, "rbd", "mirror_namespace_set", in_bl,
+                      out_bl);
+  if (r < 0) {
+    return r;
+  }
+  return 0;
+}
+
 void mirror_peer_list_start(librados::ObjectReadOperation *op) {
   bufferlist bl;
   op->exec("rbd", "mirror_peer_list", bl);
@@ -2775,6 +2823,30 @@ int group_snap_list(librados::IoCtx *ioctx, const std::string &oid,
   auto iter = outbl.cbegin();
   try {
     decode(*snapshots, iter);
+  } catch (const ceph::buffer::error &err) {
+    return -EBADMSG;
+  }
+
+  return 0;
+}
+
+int group_snap_list_order(librados::IoCtx *ioctx, const std::string &oid,
+                          const std::string &start, uint64_t max_return,
+                          std::map<std::string, uint64_t> *snap_order)
+{
+  using ceph::encode;
+  using ceph::decode;
+  bufferlist inbl, outbl;
+  encode(start, inbl);
+  encode(max_return, inbl);
+
+  int r = ioctx->exec(oid, "rbd", "group_snap_list_order", inbl, outbl);
+  if (r < 0) {
+    return r;
+  }
+  auto iter = outbl.cbegin();
+  try {
+    decode(*snap_order, iter);
   } catch (const ceph::buffer::error &err) {
     return -EBADMSG;
   }

@@ -116,7 +116,7 @@ The mechanism provided for this purpose is called an ``export pin``, an
 extended attribute of directories. The name of this extended attribute is
 ``ceph.dir.pin``.  Users can set this attribute using standard commands:
 
-::
+.. prompt:: bash #
 
     setfattr -n ceph.dir.pin -v 2 path/to/dir
 
@@ -128,7 +128,7 @@ pin.  In this way, setting the export pin on a directory affects all of its
 children. However, the parents pin can be overridden by setting the child
 directory's export pin. For example:
 
-::
+.. prompt:: bash #
 
     mkdir -p a/b
     # "a" and "a/b" both start without an export pin set
@@ -173,7 +173,7 @@ immediate children across a range of MDS ranks.  The canonical example use-case
 would be the ``/home`` directory: we want every user's home directory to be
 spread across the entire MDS cluster. This can be set via:
 
-::
+.. prompt:: bash #
 
     setfattr -n ceph.dir.pin.distributed -v 1 /cephfs/home
 
@@ -183,7 +183,7 @@ may be ephemerally pinned. This is set through the extended attribute
 ``ceph.dir.pin.random`` with the value set to the percentage of directories
 that should be pinned. For example:
 
-::
+.. prompt:: bash #
 
     setfattr -n ceph.dir.pin.random -v 0.5 /cephfs/tmp
 
@@ -205,7 +205,7 @@ Ephemeral pins may override parent export pins and vice versa. What determines
 which policy is followed is the rule of the closest parent: if a closer parent
 directory has a conflicting policy, use that one instead. For example:
 
-::
+.. prompt:: bash #
 
     mkdir -p foo/bar1/baz foo/bar2
     setfattr -n ceph.dir.pin -v 0 foo
@@ -217,7 +217,7 @@ directory will obey the pin on ``foo`` normally.
 
 For the reverse situation:
 
-::
+.. prompt:: bash #
 
     mkdir -p home/{patrick,john}
     setfattr -n ceph.dir.pin.distributed -v 1 home
@@ -229,7 +229,8 @@ because its export pin overrides the policy on ``home``.
 To remove a partitioning policy, remove the respective extended attribute
 or set the value to 0.
 
-.. code::bash
+.. prompt:: bash #
+
    $ setfattr -n ceph.dir.pin.distributed -v 0 home
    # or
    $ setfattr -x ceph.dir.pin.distributed home
@@ -237,50 +238,79 @@ or set the value to 0.
 For export pins, remove the extended attribute or set the extended attribute
 value to `-1`.
 
-.. code::bash
+.. prompt:: bash #
+
    $ setfattr -n ceph.dir.pin -v -1 home
+
+
+Dynamic Subtree Partitioning
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+CephFS has long had a dynamic metadata balancer (sometimes called the "default
+balancer") which can split or merge subtrees while placing them on "colder" MDS
+ranks. Moving the metadata in this way improves overall file system throughput
+and cache size.
+
+However, the balancer is sometimes inefficient or slow, so by default it is
+turned off. This is to avoid an administrator "turning on multimds" by
+increasing the ``max_mds`` setting only to find that the balancer has made a
+mess of the cluster performance (reverting from this messy state of affairs is
+straightforward but can take time).
+
+To turn on the balancer, run a command of the following form: 
+
+.. prompt:: bash #
+
+   ceph fs set <fs_name> balance_automate true
+
+Turn on the balancer only with an appropriate configuration, such as a
+configuration that includes the ``bal_rank_mask`` setting (described
+:ref:`below <bal-rank-mask>`).
+
+Careful monitoring of the file system performance and MDS is advised.
 
 
 Dynamic subtree partitioning with Balancer on specific ranks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The CephFS file system provides the ``bal_rank_mask`` option to enable the balancer
-to dynamically rebalance subtrees within particular active MDS ranks. This
-allows administrators to employ both the dynamic subtree partitioning and
-static pining schemes in different active MDS ranks so that metadata loads
-are optimized based on user demand. For instance, in realistic cloud
-storage environments, where a lot of subvolumes are allotted to multiple
-computing nodes (e.g., VMs and containers), some subvolumes that require
-high performance are managed by static partitioning, whereas most subvolumes
-that experience a moderate workload are managed by the balancer. As the balancer
-evenly spreads the metadata workload to all active MDS ranks, performance of
-static pinned subvolumes inevitably may be affected or degraded. If this option
-is enabled, subtrees managed by the balancer are not affected by
-static pinned subtrees.
+.. _bal-rank-mask:
+
+The CephFS file system provides the ``bal_rank_mask`` option to enable the
+balancer to dynamically rebalance subtrees within particular active MDS ranks.
+This allows administrators to employ both the dynamic subtree partitioning and
+static pining schemes in different active MDS ranks so that metadata loads are
+optimized based on user demand. For instance, in realistic cloud storage
+environments, where a lot of subvolumes are allotted to multiple computing
+nodes (e.g., VMs and containers), some subvolumes that require high performance
+are managed by static partitioning, whereas most subvolumes that experience a
+moderate workload are managed by the balancer. As the balancer evenly spreads
+the metadata workload to all active MDS ranks, performance of static pinned
+subvolumes inevitably may be affected or degraded. If this option is enabled,
+subtrees managed by the balancer are not affected by static pinned subtrees.
 
 This option can be configured with the ``ceph fs set`` command. For example:
 
-::
+.. prompt:: bash #
 
     ceph fs set <fs_name> bal_rank_mask <hex> 
 
 Each bitfield of the ``<hex>`` number represents a dedicated rank. If the ``<hex>`` is
 set to ``0x3``, the balancer runs on active ``0`` and ``1`` ranks. For example:
 
-::
+.. prompt:: bash #
 
     ceph fs set <fs_name> bal_rank_mask 0x3
 
 If the ``bal_rank_mask`` is set to ``-1`` or ``all``, all active ranks are masked
 and utilized by the balancer. As an example:
 
-::
+.. prompt:: bash #
 
     ceph fs set <fs_name> bal_rank_mask -1
 
 On the other hand, if the balancer needs to be disabled,
 the ``bal_rank_mask`` should be set to ``0x0``. For example:
 
-::
+.. prompt:: bash #
 
     ceph fs set <fs_name> bal_rank_mask 0x0

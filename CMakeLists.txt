@@ -1,20 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(ceph
-  VERSION 18.0.0
+  VERSION 19.0.0
   LANGUAGES CXX C ASM)
 
-cmake_policy(SET CMP0028 NEW)
-cmake_policy(SET CMP0046 NEW)
-cmake_policy(SET CMP0048 NEW)
-cmake_policy(SET CMP0051 NEW)
-cmake_policy(SET CMP0054 NEW)
-cmake_policy(SET CMP0056 NEW)
-cmake_policy(SET CMP0065 NEW)
-cmake_policy(SET CMP0074 NEW)
-cmake_policy(SET CMP0075 NEW)
-cmake_policy(SET CMP0093 NEW)
-cmake_policy(SET CMP0094 NEW)
 foreach(policy CMP0127 CMP0135)
   if(POLICY ${policy})
     cmake_policy(SET ${policy} NEW)
@@ -23,10 +12,15 @@ endforeach()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules/")
 
-if(NOT CMAKE_BUILD_TYPE AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
-  set(default_build_type "Debug")
-  set(CMAKE_BUILD_TYPE "${default_build_type}" CACHE
-      STRING "Default BUILD_TYPE is Debug, other options are: RelWithDebInfo, Release, and MinSizeRel." FORCE)
+if(NOT CMAKE_BUILD_TYPE)
+  if (EXISTS "${CMAKE_SOURCE_DIR}/.git")
+    message(WARNING "CMAKE_BUILD_TYPE not specified, assuming CMAKE_BUILD_TYPE=Debug because .git exists.")
+    set(default_build_type "Debug")
+    set(CMAKE_BUILD_TYPE "${default_build_type}" CACHE
+        STRING "Default BUILD_TYPE is Debug, other options are: RelWithDebInfo, Release, and MinSizeRel." FORCE)
+  else()
+    message(WARNING "CMAKE_BUILD_TYPE not specified, leaving unset because .git does NOT exist.")
+  endif()
 endif()
 
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
@@ -88,6 +82,40 @@ if(WITH_CCACHE)
     set(CMAKE_CXX_COMPILER_LAUNCHER ${CCACHE_EXECUTABLE})
   endif()
 endif(WITH_CCACHE)
+
+option(WITH_SCCACHE "Build with sccache.")
+if(WITH_SCCACHE)
+  find_program(SCCACHE_EXECUTABLE sccache)
+  if(NOT SCCACHE_EXECUTABLE)
+    message(FATAL_ERROR "Can't find sccache. Is it installed?")
+  endif()
+  if(NOT NINJA_MAX_COMPILE_JOBS)
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.19")
+      execute_process(
+        COMMAND "sccache" "--dist-status"
+        OUTPUT_VARIABLE sccache_dist_status
+      )
+      string(
+        JSON sccache_cores
+        ERROR_VARIABLE sccache_dist_status_error
+        GET "${sccache_dist_status}" SchedulerStatus 1 num_cpus
+      )
+      string(FIND "${sccache_dist_status}" "disabled" find_result)
+      if(find_result EQUAL -1)
+        message(STATUS "Using sccache with distributed compilation. Effective cores: ${sccache_cores}")
+        set(NINJA_MAX_COMPILE_JOBS ${sccache_cores})
+        set(NINJA_MAX_LINK_JOBS ${sccache_cores})
+      else()
+        message(WARNING "Using sccache, but it is not configured for distributed complilation")
+      endif()
+    else()
+      message(WARNING "Using sccache, but cannot determine maximum job value since cmake version is <3.19")
+    endif()
+  endif()
+  message(STATUS "Building with sccache: ${SCCACHE_EXECUTABLE}, SCCACHE_CONF=$ENV{SCCACHE_CONF}")
+  set(CMAKE_C_COMPILER_LAUNCHER ${SCCACHE_EXECUTABLE})
+  set(CMAKE_CXX_COMPILER_LAUNCHER ${SCCACHE_EXECUTABLE})
+endif(WITH_SCCACHE)
 
 option(WITH_MANPAGE "Build man pages." ON)
 if(WITH_MANPAGE)
@@ -214,12 +242,6 @@ if(WITH_XFS)
   set(HAVE_LIBXFS ${XFS_FOUND})
 endif()
 
-option(WITH_ZFS "enable LibZFS if found" OFF)
-if(WITH_ZFS)
-  find_package(zfs)
-  set(HAVE_LIBZFS ${ZFS_FOUND})
-endif()
-
 option(WITH_BLUESTORE "Bluestore OSD backend" ON)
 if(WITH_BLUESTORE)
   if(LINUX)
@@ -239,19 +261,26 @@ endif()
 
 include(CMakeDependentOption)
 
-CMAKE_DEPENDENT_OPTION(WITH_ZBD "Enable libzbd bluestore backend" OFF
-  "WITH_BLUESTORE" OFF)
-if(WITH_ZBD)
-  find_package(zbd REQUIRED)
-  set(HAVE_LIBZBD ${ZBD_FOUND})
-endif()
-
 CMAKE_DEPENDENT_OPTION(WITH_LIBURING "Enable io_uring bluestore backend" ON
   "WITH_BLUESTORE;HAVE_LIBAIO" OFF)
 set(HAVE_LIBURING ${WITH_LIBURING})
 
 CMAKE_DEPENDENT_OPTION(WITH_SYSTEM_LIBURING "Require and build with system liburing" OFF
   "HAVE_LIBAIO;WITH_BLUESTORE" OFF)
+
+if(WITH_LIBURING)
+  if(WITH_SYSTEM_LIBURING)
+    find_package(uring REQUIRED)
+  else()
+    include(Builduring)
+    build_uring()
+  endif()
+  # enable uring in boost::asio
+
+  if(CMAKE_SYSTEM_VERSION VERSION_GREATER_EQUAL "5.10")
+    add_compile_definitions("BOOST_ASIO_HAS_IO_URING")
+  endif()
+endif()
 
 CMAKE_DEPENDENT_OPTION(WITH_BLUESTORE_PMEM "Enable PMDK libraries" OFF
   "WITH_BLUESTORE" OFF)
@@ -309,17 +338,55 @@ endif()
 
 option(WITH_BLUEFS "libbluefs library" OFF)
 
-option(WITH_QAT "Enable Qat driver" OFF)
-if(WITH_QAT)
+CMAKE_DEPENDENT_OPTION(WITH_QATLIB "Enable QAT with qatlib" ON
+  "CMAKE_SYSTEM_PROCESSOR MATCHES amd64|x86_64|AMD64" OFF)
+option(WITH_SYSTEM_QATLIB "Use system packages for qatlib" OFF)
+option(WITH_QATDRV "Enable QAT with out-of-tree driver" OFF)
+CMAKE_DEPENDENT_OPTION(WITH_QATZIP "Enable QATzip" ON
+  "CMAKE_SYSTEM_PROCESSOR MATCHES amd64|x86_64|AMD64" OFF)
+option(WITH_SYSTEM_QATZIP "Use system packages for QATzip" OFF)
+
+if(WITH_QATDRV)
   find_package(QatDrv REQUIRED COMPONENTS qat_s usdm_drv_s)
-  set(HAVE_QATDRV $(QatDrv_FOUND))
+  set(HAVE_QAT TRUE)
+elseif(WITH_QATLIB)
+  if(NOT WITH_SYSTEM_QAT)
+    include(BuildQAT)
+    build_qat()
+  endif()
+  find_package(QAT REQUIRED)
+  if(NOT WITH_SYSTEM_QAT)
+    add_dependencies(QAT::qat qatlib_ext)
+    add_dependencies(QAT::usdm qatlib_ext)
+  endif()
+  set(HAVE_QAT TRUE)
 endif()
 
-option(WITH_QATZIP "Enable QATZIP" OFF)
 if(WITH_QATZIP)
-  find_package(qatzip REQUIRED)
-  set(HAVE_QATZIP ${qatzip_FOUND})
+  if(NOT HAVE_QAT)
+    message(FATAL_ERROR "WITH_QATZIP requires WITH_QATLIB or WITH_QATDRV")
+  endif()
+  if(NOT WITH_SYSTEM_QATZIP)
+    include(BuildQATzip)
+    build_qatzip()
+    # qatzip build depends on qatlib
+    add_dependencies(qatzip_ext QAT::qat)
+  endif()
+  find_package(QATzip REQUIRED)
+  if(NOT WITH_SYSTEM_QATZIP)
+    add_dependencies(QAT::zip qatzip_ext)
+  endif()
+  set(HAVE_QATZIP TRUE)
 endif(WITH_QATZIP)
+
+CMAKE_DEPENDENT_OPTION(WITH_UADK "Enable UADK" ON
+        "CMAKE_SYSTEM_PROCESSOR MATCHES aarch64" OFF)
+if(WITH_UADK)
+  include(Builduadk)
+  build_uadk()
+  set(HAVE_UADK TRUE)
+  message("HAVE_UADK " ${HAVE_UADK})
+endif(WITH_UADK)
 
 # needs mds and? XXX
 option(WITH_LIBCEPHFS "libcephfs client library" ON)
@@ -519,10 +586,13 @@ endif (WITH_RADOSGW)
 option(WITH_CEPHFS "CephFS is enabled" ON)
 
 if(NOT WIN32)
-# Please specify 3.[0-7] if you want to build with a certain version of python3.
+# Please specify 3.x if you want to build with a certain version of python3.
 set(WITH_PYTHON3 "3" CACHE STRING "build with specified python3 version")
 find_package(Python3 ${WITH_PYTHON3} EXACT REQUIRED
   COMPONENTS Interpreter Development)
+if(Python3_VERSION VERSION_LESS 3.9)
+  message(FATAL_ERROR "${Python3_VERSION} is not supported, please use Python 3.9 and up")
+endif()
 
 option(WITH_MGR "ceph-mgr is enabled" ON)
 if(WITH_MGR)
@@ -576,12 +646,11 @@ if(WITH_BABELTRACE)
 endif(WITH_BABELTRACE)
 
 option(DEBUG_GATHER "C_Gather debugging is enabled" ON)
-option(ENABLE_COVERAGE "Coverage is enabled" OFF)
 option(PG_DEBUG_REFS "PG Ref debugging is enabled" OFF)
 
 option(WITH_TESTS "enable the build of ceph-test package scripts/binaries" ON)
 set(UNIT_TESTS_BUILT ${WITH_TESTS})
-set(CEPH_TEST_TIMEOUT 3600 CACHE STRING 
+set(CEPH_TEST_TIMEOUT 7200 CACHE STRING
   "Maximum time before a CTest gets killed" )
 
 # fio
@@ -639,7 +708,7 @@ option(WITH_SYSTEM_BOOST "require and build with system Boost" OFF)
 # Boost::thread depends on Boost::atomic, so list it explicitly.
 set(BOOST_COMPONENTS
   atomic chrono thread system regex random program_options date_time
-  iostreams context coroutine)
+  iostreams context coroutine url)
 set(BOOST_HEADER_COMPONENTS container)
 
 if(WITH_MGR)
@@ -668,7 +737,7 @@ if(WITH_SYSTEM_BOOST)
   if(BOOST_ROOT AND CMAKE_LIBRARY_ARCHITECTURE)
     set(BOOST_LIBRARYDIR "${BOOST_ROOT}/lib/${CMAKE_LIBRARY_ARCHITECTURE}")
   endif()
-  find_package(Boost 1.82 COMPONENTS ${BOOST_COMPONENTS} REQUIRED)
+  find_package(Boost 1.85 COMPONENTS ${BOOST_COMPONENTS} REQUIRED)
   if(NOT ENABLE_SHARED)
     set_property(TARGET Boost::iostreams APPEND PROPERTY
       INTERFACE_LINK_LIBRARIES ZLIB::ZLIB)
@@ -682,15 +751,10 @@ else()
   set(BOOST_J ${DEFAULT_BOOST_J} CACHE STRING "max jobs for Boost build") # override w/-DBOOST_J=<n>
   set(Boost_USE_STATIC_LIBS ON)
   include(BuildBoost)
-  build_boost(1.82
+  build_boost(1.85
     COMPONENTS ${BOOST_COMPONENTS} ${BOOST_HEADER_COMPONENTS})
 endif()
 include_directories(BEFORE SYSTEM ${Boost_INCLUDE_DIRS})
-
-if(Boost_VERSION VERSION_EQUAL 1.81 OR Boost_VERSION VERSION_EQUAL 1.82)
-  # This is a workaround for https://github.com/boostorg/phoenix/issues/111
-  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-DBOOST_PHOENIX_STL_TUPLE_H_>)
-endif()
 
 # dashboard angular2 frontend
 option(WITH_MGR_DASHBOARD_FRONTEND "Build the mgr/dashboard frontend using `npm`" ON)
@@ -701,7 +765,7 @@ if(WITH_SYSTEM_NPM)
     message(FATAL_ERROR "Can't find npm.")
   endif()
 endif()
-set(DASHBOARD_FRONTEND_LANGS "" CACHE STRING
+set(DASHBOARD_FRONTEND_LANGS "ALL" CACHE STRING
   "List of comma separated ceph-dashboard frontend languages to build. \
   Use value `ALL` to build all languages")
 CMAKE_DEPENDENT_OPTION(WITH_MGR_ROOK_CLIENT "Enable the mgr's Rook support" ON

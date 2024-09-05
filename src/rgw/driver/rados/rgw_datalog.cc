@@ -618,7 +618,7 @@ void RGWDataChangesLog::update_renewed(const rgw_bucket_shard& bs,
   auto status = _get_change(bs, gen);
   l.unlock();
 
-  ldout(cct, 20) << "RGWDataChangesLog::update_renewd() bucket_name="
+  ldout(cct, 20) << "RGWDataChangesLog::update_renewed() bucket_name="
 		 << bs.bucket.name << " shard_id=" << bs.shard_id
 		 << " expiration=" << expiration << dendl;
 
@@ -737,7 +737,8 @@ int RGWDataChangesLog::add_entry(const DoutPrefixProvider *dpp,
     ldpp_dout(dpp, 20) << "RGWDataChangesLog::add_entry() sending update with now=" << now << " cur_expiration=" << expiration << dendl;
 
     auto be = bes->head();
-    ret = be->push(dpp, index, now, change.key, std::move(bl), y);
+    // TODO: pass y once we fix the deadlock from https://tracker.ceph.com/issues/63373
+    ret = be->push(dpp, index, now, change.key, std::move(bl), null_yield);
 
     now = real_clock::now();
 

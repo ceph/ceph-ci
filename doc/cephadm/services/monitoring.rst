@@ -83,6 +83,37 @@ steps below:
 
      ceph orch apply grafana
 
+Enabling security for the monitoring stack
+----------------------------------------------
+
+By default, in a cephadm-managed cluster, the monitoring components are set up and configured without enabling security measures.
+While this suffices for certain deployments, others with strict security needs may find it necessary to protect the
+monitoring stack against unauthorized access. In such cases, cephadm relies on a specific configuration parameter,
+`mgr/cephadm/secure_monitoring_stack`, which toggles the security settings for all monitoring components. To activate security
+measures, set this option to ``true`` with a command of the following form:
+
+   .. prompt:: bash #
+
+     ceph config set mgr mgr/cephadm/secure_monitoring_stack true
+
+This change will trigger a sequence of reconfigurations across all monitoring daemons, typically requiring
+few minutes until all components are fully operational. The updated secure configuration includes the following modifications:
+
+#. Prometheus: basic authentication is required to access the web portal and TLS is enabled for secure communication.
+#. Alertmanager: basic authentication is required to access the web portal and TLS is enabled for secure communication.
+#. Node Exporter: TLS is enabled for secure communication.
+#. Grafana: TLS is enabled and authentication is requiered to access the datasource information.
+
+In this secure setup, users will need to setup authentication
+(username/password) for both Prometheus and Alertmanager. By default the
+username and password are set to ``admin``/``admin``. The user can change these
+value with the commands ``ceph orch prometheus set-credentials`` and ``ceph
+orch alertmanager set-credentials`` respectively. These commands offer the
+flexibility to input the username/password either as parameters or via a JSON
+file, which enhances security. Additionally, Cephadm provides the commands
+`orch prometheus get-credentials` and `orch alertmanager get-credentials` to
+retrieve the current credentials.
+
 .. _cephadm-monitoring-centralized-logs:
 
 Centralized Logging in Ceph
@@ -129,12 +160,44 @@ example spec file:
 
 .. _cephadm_monitoring-images:
 
+.. _cephadm_default_images:
+
+Default images
+~~~~~~~~~~~~~~
+
+*The information in this section was developed by Eugen Block in a thread on
+the [ceph-users] mailing list in April of 2024. The thread can be viewed here:
+``https://lists.ceph.io/hyperkitty/list/ceph-users@ceph.io/thread/QGC66QIFBKRTPZAQMQEYFXOGZJ7RLWBN/``.*
+
+``cephadm`` stores a local copy of the ``cephadm`` binary in
+``var/lib/ceph/{FSID}/cephadm.{DIGEST}``, where ``{DIGEST}`` is an alphanumeric
+string representing the currently-running version of Ceph.
+
+To see the default container images, run a command of the following form:
+
+.. prompt:: bash #
+
+   grep -E "DEFAULT*IMAGE" /var/lib/ceph/{FSID}/cephadm.{DIGEST}
+
+::
+
+   DEFAULT_PROMETHEUS_IMAGE = 'quay.io/prometheus/prometheus:v2.51.0'
+   DEFAULT_LOKI_IMAGE = 'docker.io/grafana/loki:2.9.5'    
+   DEFAULT_PROMTAIL_IMAGE = 'docker.io/grafana/promtail:2.9.5'    
+   DEFAULT_NODE_EXPORTER_IMAGE = 'quay.io/prometheus/node-exporter:v1.7.0'    
+   DEFAULT_ALERT_MANAGER_IMAGE = 'quay.io/prometheus/alertmanager:v0.27.0'   
+   DEFAULT_GRAFANA_IMAGE = 'quay.io/ceph/grafana:10.4.0'
+
+Default monitoring images are specified in
+``/src/cephadm/cephadmlib/constants.py`` and in
+``/src/pybind/mgr/cephadm/module.py``.
+
 Using custom images
 ~~~~~~~~~~~~~~~~~~~
 
 It is possible to install or upgrade monitoring components based on other
-images.  To do so, the name of the image to be used needs to be stored in the
-configuration first.  The following configuration options are available.
+images. The ID of the image that you plan to use must be stored in the
+configuration. The following configuration options are available:
 
 - ``container_image_prometheus``
 - ``container_image_grafana``
@@ -150,51 +213,53 @@ configuration first.  The following configuration options are available.
 - ``container_image_jaeger_collector``
 - ``container_image_jaeger_query``
 
-Custom images can be set with the ``ceph config`` command
+Custom images can be set with the ``ceph config`` command. To set custom images, run a command of the following form:
+ 
+.. prompt:: bash #
 
-.. code-block:: bash
+   ceph config set mgr mgr/cephadm/<option_name> <value>
 
-     ceph config set mgr mgr/cephadm/<option_name> <value>
-
-For example
-
-.. code-block:: bash
-
-     ceph config set mgr mgr/cephadm/container_image_prometheus prom/prometheus:v1.4.1
-
-If there were already running monitoring stack daemon(s) of the type whose
-image you've changed, you must redeploy the daemon(s) in order to have them
-actually use the new image.
-
-For example, if you had changed the prometheus image
+For example:
 
 .. prompt:: bash #
 
-     ceph orch redeploy prometheus
+   ceph config set mgr mgr/cephadm/container_image_prometheus prom/prometheus:v1.4.1
+
+If you were already running monitoring stack daemon(s) of the same image type
+that you changed, then you must redeploy the daemon(s) in order to make them
+use the new image.
+
+For example, if you changed the Prometheus image, you would have to run the
+following command in order to pick up the changes:
+
+.. prompt:: bash #
+
+   ceph orch redeploy prometheus
 
 
 .. note::
 
      By setting a custom image, the default value will be overridden (but not
-     overwritten).  The default value changes when updates become available.
-     By setting a custom image, you will not be able to update the component
-     you have set the custom image for automatically.  You will need to
-     manually update the configuration (image name and tag) to be able to
-     install updates.
+     overwritten). The default value will change when an update becomes
+     available. If you set a custom image, you will not be able automatically
+     to update the component you have modified with the custom image. You will
+     need to manually update the configuration (that includes the image name
+     and the tag) to be able to install updates.
 
-     If you choose to go with the recommendations instead, you can reset the
-     custom image you have set before.  After that, the default value will be
-     used again.  Use ``ceph config rm`` to reset the configuration option
+     If you choose to accept the recommendations, you can reset the custom
+     image that you have set before. If you do this, the default value will be
+     used again.  Use ``ceph config rm`` to reset the configuration option, in
+     a command of the following form:
 
-     .. code-block:: bash
+     .. prompt:: bash #
 
-          ceph config rm mgr mgr/cephadm/<option_name>
+        ceph config rm mgr mgr/cephadm/<option_name>
 
-     For example
+     For example:
 
-     .. code-block:: bash
+     .. prompt:: bash #
 
-          ceph config rm mgr mgr/cephadm/container_image_prometheus
+        ceph config rm mgr mgr/cephadm/container_image_prometheus
 
 See also :ref:`cephadm-airgap`.
 
@@ -214,7 +279,7 @@ definition and management of the embedded Prometheus service. The endpoint liste
 ``https://<mgr-ip>:8765/sd/`` (the port is
 configurable through the variable ``service_discovery_port``) and returns scrape target
 information in `http_sd_config format
-<https://prometheus.io/docs/prometheus/latest/configuration/configuration/#http_sd_config/>`_
+<https://prometheus.io/docs/prometheus/latest/configuration/configuration/#http_sd_config>`_
 
 Customers with external monitoring stack can use `ceph-mgr` service discovery endpoint
 to get scraping configuration. Root certificate of the server can be obtained by the

@@ -94,42 +94,6 @@
           </div>
         </div>
 
-        <!-- Placement target -->
-        <div class="form-group row">
-          <label class="cd-col-form-label"
-                 [ngClass]="{required: !editing}"
-                 for="placement-target"
-                 i18n>Placement target</label>
-          <div class="cd-col-form-input">
-            <ng-template #placementTargetSelect>
-              <select id="placement-target"
-                      name="placement-target"
-                      formControlName="placement-target"
-                      class="form-select">
-                <option i18n
-                        *ngIf="placementTargets === null"
-                        [ngValue]="null">Loading...</option>
-                <option i18n
-                        *ngIf="placementTargets !== null"
-                        [ngValue]="null">-- Select a placement target --</option>
-                <option *ngFor="let placementTarget of placementTargets"
-                        [value]="placementTarget.name">{{ placementTarget.description }}</option>
-              </select>
-              <span class="invalid-feedback"
-                    *ngIf="bucketForm.showError('placement-target', frm, 'required')"
-                    i18n>This field is required.</span>
-            </ng-template>
-            <ng-container *ngIf="editing; else placementTargetSelect">
-              <input id="placement-target"
-                     name="placement-target"
-                     formControlName="placement-target"
-                     class="form-control"
-                     type="text"
-                     readonly>
-            </ng-container>
-          </div>
-        </div>
-
         <!-- Versioning -->
         <fieldset *ngIf="editing">
           <legend class="cd-header"
@@ -213,30 +177,34 @@
           </div>
         </fieldset>
 
-        <!-- Locking -->
-        <fieldset>
+        <!-- Object Locking -->
+        <fieldset *ngIf="!editing || (editing && bucketForm.getValue('lock_enabled'))">
           <legend class="cd-header"
-                  i18n>Locking</legend>
-
-          <!-- Locking enabled -->
+                  i18n>
+            Object Locking
+            <cd-help-text>
+                Store objects using a write-once-read-many (WORM) model to prevent objects from being deleted or overwritten for a fixed amount of time or indefinitely.
+                Object Locking works only in versioned buckets.
+            </cd-help-text>
+          </legend>
+          <!-- Object Locking enable -->
           <div class="form-group row">
-            <div class="cd-col-form-offset">
-              <div class="custom-control custom-checkbox">
-                <input class="custom-control-input"
-                       id="lock_enabled"
-                       formControlName="lock_enabled"
-                       type="checkbox">
-                <label class="custom-control-label"
-                       for="lock_enabled"
-                       i18n>Enabled</label>
-                <cd-helper>
-                  <span i18n>Enables locking for the objects in the bucket. Locking can only be enabled while creating a bucket.</span>
-                </cd-helper>
-              </div>
+            <label class="cd-col-form-label pt-0"
+                   for="lock_enabled"
+                   i18n>
+                    Enable
+            </label>
+            <div class="cd-col-form-input">
+              <input class="form-check-input"
+                     id="lock_enabled"
+                     formControlName="lock_enabled"
+                     type="checkbox"/>
+              <cd-help-text>
+                <span i18n>Enables locking for the objects in the bucket. Locking can only be enabled while creating a bucket.</span>
+              </cd-help-text>
             </div>
           </div>
-
-          <!-- Locking mode -->
+          <!-- Object Locking mode -->
           <div *ngIf="bucketForm.getValue('lock_enabled')"
                class="form-group row">
             <label class="cd-col-form-label"
@@ -248,27 +216,42 @@
                       name="lock_mode"
                       id="lock_mode">
                 <option i18n
-                        value="COMPLIANCE">Compliance</option>
+                        value="COMPLIANCE" >
+                  Compliance
+                </option>
                 <option i18n
-                        value="GOVERNANCE">Governance</option>
+                        value="GOVERNANCE">
+                  Governance
+                </option>
               </select>
+              <cd-help-text>
+                <span *ngIf="bucketForm.getValue('lock_mode') === 'COMPLIANCE'"
+                      i18n>
+                  In COMPLIANCE an object version cannot be overwritten or deleted for the duration of the period.
+                </span>
+                <span *ngIf="bucketForm.getValue('lock_mode') === 'GOVERNANCE'"
+                      i18n>
+                  In GOVERNANCE mode, users cannot overwrite or delete an object version or alter its lock settings unless they have special permissions.
+                </span>
+              </cd-help-text>
             </div>
           </div>
-
           <!-- Retention period (days) -->
           <div *ngIf="bucketForm.getValue('lock_enabled')"
                class="form-group row">
             <label class="cd-col-form-label"
                    for="lock_retention_period_days">
               <ng-container i18n>Days</ng-container>
-              <cd-helper i18n>The number of days that you want to specify for the default retention period that will be applied to new objects placed in this bucket.</cd-helper>
             </label>
             <div class="cd-col-form-input">
               <input class="form-control"
                      type="number"
                      id="lock_retention_period_days"
                      formControlName="lock_retention_period_days"
-                     min="0">
+                     min="1">
+              <cd-help-text>
+                <span i18n>The number of days that you want to specify for the default retention period that will be applied to new objects placed in this bucket.</span>
+              </cd-help-text>
               <span class="invalid-feedback"
                     *ngIf="bucketForm.showError('lock_retention_period_days', frm, 'pattern')"
                     i18n>The entered value must be a positive integer.</span>
@@ -277,31 +260,49 @@
                     i18n>Retention Days must be a positive integer.</span>
             </div>
           </div>
+          <!-- Alerts -->
+          <div class="form-group row">
+            <div class="cd-col-form-label"></div>
+            <div class="cd-col-form-input">
+              <cd-alert-panel
+                type="info"
+                *ngIf="bucketForm.getValue('lock_enabled')"
+                class="me-1"
+                i18n-title>
+                  Bucket Versioning can't be disabled when Object Locking is enabled.
+              </cd-alert-panel>
+              <cd-alert-panel
+                type="warning"
+                *ngIf="bucketForm.getValue('lock_enabled')">
+                  Enabling Object Locking will allow the configuration of GOVERNANCE or COMPLIANCE modes, which will help ensure that an object version cannot be overwritten or deleted for the specified period.
+              </cd-alert-panel>
+            </div>
+          </div>
         </fieldset>
 
+        <!-- Encryption -->
         <fieldset>
           <legend class="cd-header"
-                  i18n>Security</legend>
+                  i18n>Encryption</legend>
           <div class="form-group row">
-            <div class="cd-col-form-offset">
-              <div class="custom-control custom-checkbox">
-                <input class="form-check-input"
-                       id="encryption_enabled"
-                       name="encryption_enabled"
-                       formControlName="encryption_enabled"
-                       type="checkbox"
-                       [attr.disabled]="!kmsVaultConfig && !s3VaultConfig ? true : null">
-                <label class="form-check-label"
-                       for="encryption_enabled"
-                       i18n>Encryption</label>
-                <cd-helper aria-label="toggle encryption helper">
-                  <span i18n>Enables encryption for the objects in the bucket.
-                     To enable encryption on a bucket you need to set the configuration values for SSE-S3 or SSE-KMS.
-                     To set the configuration values <a href="#/rgw/bucket/create"
-                                                        (click)="openConfigModal()"
-                                                        aria-label="click here">Click here</a></span>
-                </cd-helper>
-              </div>
+            <label class="cd-col-form-label pt-0"
+                   for="encryption_enabled"
+                   i18n>
+                    Enable
+            </label>
+            <div class="cd-col-form-input">
+              <input class="form-check-input"
+                     id="encryption_enabled"
+                     name="encryption_enabled"
+                     formControlName="encryption_enabled"
+                     type="checkbox"
+                     [attr.disabled]="!kmsConfigured && !s3Configured ? true : null"/>
+              <cd-help-text aria-label="encryption helper">
+                <span i18n>Enables encryption for the objects in the bucket.
+                    To enable encryption on a bucket you need to set the configuration values for SSE-S3 or SSE-KMS.
+                    To set the configuration values <a href="#/rgw/configuration"
+                                                       aria-label="click here">Click here</a></span>
+              </cd-help-text>
             </div>
           </div>
 
@@ -315,10 +316,11 @@
                          type="radio"
                          name="encryption_type"
                          value="AES256"
-                         [attr.disabled]="!s3VaultConfig ? true : null">
+                         [attr.disabled]="!s3Configured ? true : null">
                   <label class="form-control-label"
+                         [ngClass]="{'text-muted': !s3Configured}"
                          for="sse_S3_enabled"
-                         i18n>SSE-S3 Encryption</label>
+                         i18n>SSE-S3</label>
                 </div>
               </div>
             </div>
@@ -331,9 +333,10 @@
                          id="kms_enabled"
                          name="encryption_type"
                          value="aws:kms"
-                         [attr.disabled]="!kmsVaultConfig ? true : null"
+                         [attr.disabled]="!kmsConfigured ? true : null"
                          type="radio">
                   <label class="form-control-label"
+                         [ngClass]="{'text-muted': !kmsConfigured}"
                          for="kms_enabled"
                          i18n>Connect to an external key management service</label>
                 </div>
@@ -385,7 +388,249 @@
           </div>
         </fieldset>
 
+        <!-- Replication -->
+        <fieldset>
+          <legend class="cd-header"
+                  i18n>Replication</legend>
+          <div class="form-group row">
+            <label class="cd-col-form-label pt-0"
+                   for="replication"
+                   i18n>
+                    Enable
+            </label>
+            <div class="cd-col-form-input"
+                 *ngIf="{status: multisiteStatus$, isDefaultZg: isDefaultZoneGroup$ | async} as multisiteStatus; else loadingTpl">
+              <input type="checkbox"
+                     class="form-check-input"
+                     id="replication"
+                     name="replication"
+                     formControlName="replication"
+                     [attr.disabled]="!multisiteStatus.isDefaultZg && !multisiteStatus.status.available ? true : null">
+              <cd-help-text>
+                <span i18n>Enables replication for the objects in the bucket.</span>
+              </cd-help-text>
+              <div class="mt-1"
+                   *ngIf="!editing">
+                <cd-alert-panel type="info"
+                                class="me-1"
+                                id="replication-info"
+                                i18n>
+                  A bi-directional sync policy group will be created by the dashboard along with flows and pipes.
+                  The pipe id will then be used for applying the replication policy to the bucket.
+                </cd-alert-panel>
+              </div>
+            </div>
+          </div>
+        </fieldset>
+
+        <!-- Tags -->
+        <fieldset>
+          <legend class="cd-header"
+                  i18n>Tags
+            <cd-help-text>Tagging provides a way to categorize storage</cd-help-text>
+          </legend>
+          <span *ngFor="let tag of tags; let i=index;">
+            <ng-container *ngTemplateOutlet="tagTpl; context:{index: i, tag: tag}"></ng-container>
+          </span>
+
+          <div class="row">
+            <div class="col-12">
+              <strong *ngIf="tags.length > 19"
+                      class="text-warning"
+                      i18n>Maximum of 20 tags reached</strong>
+              <button type="button"
+                      id="add-tag"
+                      class="btn btn-light float-end my-3"
+                      [disabled]="tags.length > 19"
+                      (click)="showTagModal()">
+                <i [ngClass]="[icons.add]"></i>
+                <ng-container i18n>Add tag</ng-container>
+              </button>
+            </div>
+          </div>
+        </fieldset>
+
+        <!-- Policies -->
+        <fieldset>
+          <legend class="cd-header"
+                  i18n>Policies
+          </legend>
+          <div class="row">
+            <div class="col-12">
+              <div class="form-group row">
+
+                <!-- Bucket policy -->
+                <label i18n
+                       class="cd-col-form-label"
+                       for="id">Bucket policy</label>
+                <div class="cd-col-form-input">
+                  <textarea #bucketPolicyTextArea
+                            class="form-control resize-vertical"
+                            id="bucket_policy"
+                            formControlName="bucket_policy"
+                            (change)="textAreaOnChange('bucketPolicyTextArea')">
+                  </textarea>
+                  <span class="invalid-feedback"
+                        *ngIf="bucketForm.showError('bucket_policy', frm, 'invalidJson')"
+                        i18n>Invalid json text.</span>
+                  <button type="button"
+                          id="clear-bucket-policy"
+                          class="btn btn-light my-3"
+                          (click)="clearTextArea('bucket_policy', '{}')"
+                          i18n>
+                    <i [ngClass]="[icons.destroy]"></i>
+                    Clear
+                  </button>
+                  <div class="btn-group float-end"
+                       role="group"
+                       aria-label="bucket-policy-helpers">
+                    <button type="button"
+                            id="example-generator-button"
+                            class="btn btn-light my-3"
+                            (click)="openUrl('https://docs.aws.amazon.com/AmazonS3/latest/userguide/example-bucket-policies.html?icmpid=docs_amazons3_console')"
+                            i18n>
+                      <i [ngClass]="[icons.externalUrl]"></i>
+                      Policy examples
+                    </button>
+                    <button type="button"
+                            id="example-generator-button"
+                            class="btn btn-light my-3"
+                            (click)="openUrl('https://awspolicygen.s3.amazonaws.com/policygen.html')"
+                            i18n>
+                      <i [ngClass]="[icons.externalUrl]"></i>
+                      Policy generator
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Lifecycle -->
+              <div *ngIf="editing"
+                   class="form-group row">
+              <label i18n
+                     class="cd-col-form-label"
+                     for="id">Lifecycle
+                <cd-helper>JSON or XML formatted document</cd-helper>
+              </label>
+                <div class="cd-col-form-input">
+                  <textarea #lifecycleTextArea
+                            class="form-control resize-vertical"
+                            id="lifecycle"
+                            formControlName="lifecycle"
+                            (change)="textAreaOnChange('lifecycleTextArea')">
+                  </textarea>
+                  <span class="invalid-feedback"
+                        *ngIf="bucketForm.showError('lifecycle', frm, 'invalidJson')"
+                        i18n>Invalid json text.</span>
+                  <span class="invalid-feedback"
+                        *ngIf="bucketForm.showError('lifecycle', frm, 'invalidXml')"
+                        i18n>Invalid xml text.</span>
+                  <button type="button"
+                          id="clear-lifecycle"
+                          class="btn btn-light my-3"
+                          (click)="clearTextArea('lifecycle', '{}')"
+                          i18n>
+                    <i [ngClass]="[icons.destroy]"></i>
+                    Clear
+                  </button>
+                  <div class="btn-group float-end"
+                       role="group"
+                       aria-label="bucket-policy-helpers">
+                    <button type="button"
+                            id="lifecycle-examples-button"
+                            class="btn btn-light my-3"
+                            (click)="openUrl('https://docs.aws.amazon.com/cli/latest/reference/s3api/put-bucket-lifecycle.html#examples')"
+                            i18n>
+                      <i [ngClass]="[icons.externalUrl]"></i>
+                      Policy examples
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="form-group row">
+
+                <!-- ACL -->
+                <label class="cd-col-form-label"
+                       i18n>ACL
+                  <cd-helper>Any changes to the ACL will overwrite previous one.
+                    You can choose any of the available options to modify the spcified user group.</cd-helper>
+                </label>
+                <div class="cd-col-form-input">
+                  <div class="input-group">
+                    <span class="input-group-text"
+                          for="grantee"
+                          i18n>Grantee
+                      <cd-helper>Select a grantee (user group) to modify it's permisions</cd-helper>
+                    </span>
+                    <select id="grantee"
+                            name="grantee"
+                            class="form-input form-select"
+                            formControlName="grantee"
+                            (change)="onSelectionFilter()">
+                      <option *ngFor="let item of grantees"
+                              [value]="item"
+                              i18n>{{ item }}</option>
+                    </select>
+                    <span class="invalid-feedback"
+                          *ngIf="bucketForm.showError('grantee', frm, 'required')"
+                          i18n>This field is required.</span>
+                    <span class="input-group-text"
+                          for="aclPermission"
+                          i18n>Permissions
+                      <cd-helper>Select the permision to give to the selected grantee.
+                          Regardless, the owner of the bucket will always have
+                            FULL CONTROL access</cd-helper>
+                      </span>
+                    <select id="aclPermission"
+                            name="aclPermission"
+                            class="form-input form-select"
+                            formControlName="aclPermission">
+                      <option *ngFor="let permission of aclPermissions"
+                              [value]="permission"
+                              i18n>{{ permission }}</option>
+                    </select>
+                    <span class="invalid-feedback"
+                          *ngIf="bucketForm.showError('aclPermission', frm, 'required')"
+                          i18n>This field is required.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </fieldset>
+
+        <!--Advanced-->
+        <cd-form-advanced-fieldset *ngIf="!editing">
+          <!-- Placement target -->
+          <div class="form-group row">
+            <label class="cd-col-form-label"
+                   for="placement-target"
+                   i18n>Placement target</label>
+            <div class="cd-col-form-input">
+              <select id="placement-target"
+                      name="placement-target"
+                      formControlName="placement-target"
+                      class="form-select">
+                <option i18n
+                        *ngIf="placementTargets === null"
+                        [ngValue]="null">Loading...</option>
+                <option i18n
+                        *ngIf="placementTargets !== null"
+                        [ngValue]="null">-- Select a placement target --</option>
+                <option *ngFor="let placementTarget of placementTargets"
+                        [value]="placementTarget.name">{{ placementTarget.description }}</option>
+              </select>
+              <cd-help-text>
+                <span i18n>
+                  When creating a bucket, a placement target can be provided as part of the LocationConstraint to override the default placement targets from the user and zonegroup.
+                </span>
+              </cd-help-text>
+            </div>
+          </div>
+        </cd-form-advanced-fieldset>
       </div>
+
       <div class="card-footer">
         <cd-form-button-panel (submitActionEvent)="submit()"
                               [form]="bucketForm"
@@ -395,3 +640,43 @@
     </div>
   </form>
 </div>
+
+<ng-template #tagTpl
+             let-tag="tag"
+             let-index="index">
+  <div class="input-group my-2">
+    <ng-container *ngFor="let config of tagConfig">
+      <input type="text"
+             id="tag-{{config.attribute}}-{{index}}"
+             class="form-control"
+             [ngbTooltip]="config.attribute"
+             [value]="tag[config.attribute]"
+             disabled
+             readonly>
+    </ng-container>
+
+    <!-- Tag actions -->
+    <button type="button"
+            class="btn btn-light"
+            id="tag-edit-{{index}}"
+            i18n-ngbTooltip
+            ngbTooltip="Edit"
+            (click)="showTagModal(index)">
+      <i [ngClass]="[icons.edit]"></i>
+    </button>
+    <button type="button"
+            class="btn btn-light"
+            id="tag-delete-{{index}}"
+            i18n-ngbTooltip
+            ngbTooltip="Delete"
+            (click)="deleteTag(index)">
+      <i [ngClass]="[icons.trash]"></i>
+    </button>
+  </div>
+</ng-template>
+
+<ng-template #loadingTpl>
+  <div class="cd-col-form-input">
+    <cd-loading-panel i18n>Checking multi-site status...</cd-loading-panel>
+  </div>
+</ng-template>

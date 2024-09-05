@@ -349,18 +349,18 @@ void JournalTrimmerImpl::config_t::validate() const
 
 JournalTrimmerImpl::config_t
 JournalTrimmerImpl::config_t::get_default(
-  std::size_t roll_size, journal_type_t type)
+  std::size_t roll_size, backend_type_t type)
 {
   assert(roll_size);
   std::size_t target_dirty_bytes = 0;
   std::size_t target_alloc_bytes = 0;
   std::size_t max_journal_bytes = 0;
-  if (type == journal_type_t::SEGMENTED) {
+  if (type == backend_type_t::SEGMENTED) {
     target_dirty_bytes = 12 * roll_size;
     target_alloc_bytes = 2 * roll_size;
     max_journal_bytes = 16 * roll_size;
   } else {
-    assert(type == journal_type_t::RANDOM_BLOCK);
+    assert(type == backend_type_t::RANDOM_BLOCK);
     target_dirty_bytes = roll_size / 4;
     target_alloc_bytes = roll_size / 4;
     max_journal_bytes = roll_size / 2;
@@ -376,19 +376,19 @@ JournalTrimmerImpl::config_t::get_default(
 
 JournalTrimmerImpl::config_t
 JournalTrimmerImpl::config_t::get_test(
-  std::size_t roll_size, journal_type_t type)
+  std::size_t roll_size, backend_type_t type)
 {
   assert(roll_size);
   std::size_t target_dirty_bytes = 0;
   std::size_t target_alloc_bytes = 0;
   std::size_t max_journal_bytes = 0;
-  if (type == journal_type_t::SEGMENTED) {
+  if (type == backend_type_t::SEGMENTED) {
     target_dirty_bytes = 2 * roll_size;
     target_alloc_bytes = 2 * roll_size;
     max_journal_bytes = 4 * roll_size;
   } else {
-    assert(type == journal_type_t::RANDOM_BLOCK);
-    target_dirty_bytes = roll_size / 4;
+    assert(type == backend_type_t::RANDOM_BLOCK);
+    target_dirty_bytes = roll_size / 36;
     target_alloc_bytes = roll_size / 4;
     max_journal_bytes = roll_size / 2;
   }
@@ -404,12 +404,12 @@ JournalTrimmerImpl::config_t::get_test(
 JournalTrimmerImpl::JournalTrimmerImpl(
   BackrefManager &backref_manager,
   config_t config,
-  journal_type_t type,
+  backend_type_t type,
   device_off_t roll_start,
   device_off_t roll_size)
   : backref_manager(backref_manager),
     config(config),
-    journal_type(type),
+    backend_type(type),
     roll_start(roll_start),
     roll_size(roll_size),
     reserved_usage(0)
@@ -441,6 +441,18 @@ void JournalTrimmerImpl::set_journal_head(journal_seq_t head)
           head, journal_head, stat_printer_t{*this, false});
   }
   background_callback->maybe_wake_background();
+}
+
+void JournalTrimmerImpl::set_journal_head_sequence(
+  segment_seq_t seq)
+{
+  if (journal_head != JOURNAL_SEQ_NULL) {
+    ceph_assert(seq == journal_head.segment_seq + 1);
+  }
+  if (journal_head_seq != NULL_SEG_SEQ) {
+    ceph_assert(seq == journal_head_seq + 1);
+  }
+  journal_head_seq = seq;
 }
 
 void JournalTrimmerImpl::update_journal_tails(
@@ -495,7 +507,7 @@ journal_seq_t JournalTrimmerImpl::get_tail_limit() const
 {
   assert(background_callback->is_ready());
   auto ret = journal_head.add_offset(
-      journal_type,
+      backend_type,
       -static_cast<device_off_t>(config.max_journal_bytes),
       roll_start,
       roll_size);
@@ -506,7 +518,7 @@ journal_seq_t JournalTrimmerImpl::get_dirty_tail_target() const
 {
   assert(background_callback->is_ready());
   auto ret = journal_head.add_offset(
-      journal_type,
+      backend_type,
       -static_cast<device_off_t>(config.target_journal_dirty_bytes),
       roll_start,
       roll_size);
@@ -517,7 +529,7 @@ journal_seq_t JournalTrimmerImpl::get_alloc_tail_target() const
 {
   assert(background_callback->is_ready());
   auto ret = journal_head.add_offset(
-      journal_type,
+      backend_type,
       -static_cast<device_off_t>(config.target_journal_alloc_bytes),
       roll_start,
       roll_size);
@@ -530,7 +542,7 @@ std::size_t JournalTrimmerImpl::get_dirty_journal_size() const
     return 0;
   }
   auto ret = journal_head.relative_to(
-      journal_type,
+      backend_type,
       journal_dirty_tail,
       roll_start,
       roll_size);
@@ -544,7 +556,7 @@ std::size_t JournalTrimmerImpl::get_alloc_journal_size() const
     return 0;
   }
   auto ret = journal_head.relative_to(
-      journal_type,
+      backend_type,
       journal_alloc_tail,
       roll_start,
       roll_size);
@@ -586,7 +598,14 @@ JournalTrimmerImpl::trim_alloc()
 {
   LOG_PREFIX(JournalTrimmerImpl::trim_alloc);
   assert(background_callback->is_ready());
-  return repeat_eagain([this, FNAME] {
+
+  auto& shard_stats = extent_callback->get_shard_stats();
+  ++(shard_stats.trim_alloc_num);
+  ++(shard_stats.pending_bg_num);
+
+  return repeat_eagain([this, FNAME, &shard_stats] {
+    ++(shard_stats.repeat_trim_alloc_num);
+
     return extent_callback->with_transaction_intr(
       Transaction::src_t::TRIM_ALLOC,
       "trim_alloc",
@@ -610,8 +629,11 @@ JournalTrimmerImpl::trim_alloc()
         return seastar::now();
       });
     });
-  }).safe_then([this, FNAME] {
+  }).finally([this, FNAME, &shard_stats] {
     DEBUG("finish, alloc_tail={}", journal_alloc_tail);
+
+    assert(shard_stats.pending_bg_num);
+    --(shard_stats.pending_bg_num);
   });
 }
 
@@ -620,7 +642,14 @@ JournalTrimmerImpl::trim_dirty()
 {
   LOG_PREFIX(JournalTrimmerImpl::trim_dirty);
   assert(background_callback->is_ready());
-  return repeat_eagain([this, FNAME] {
+
+  auto& shard_stats = extent_callback->get_shard_stats();
+  ++(shard_stats.trim_dirty_num);
+  ++(shard_stats.pending_bg_num);
+
+  return repeat_eagain([this, FNAME, &shard_stats] {
+    ++(shard_stats.repeat_trim_dirty_num);
+
     return extent_callback->with_transaction_intr(
       Transaction::src_t::TRIM_DIRTY,
       "trim_dirty",
@@ -650,8 +679,11 @@ JournalTrimmerImpl::trim_dirty()
         return extent_callback->submit_transaction_direct(t);
       });
     });
-  }).safe_then([this, FNAME] {
+  }).finally([this, FNAME, &shard_stats] {
     DEBUG("finish, dirty_tail={}", journal_dirty_tail);
+
+    assert(shard_stats.pending_bg_num);
+    --(shard_stats.pending_bg_num);
   });
 }
 
@@ -976,6 +1008,10 @@ segment_id_t SegmentCleaner::allocate_segment(
     if (segment_info.is_empty()) {
       auto old_usage = calc_utilization(seg_id);
       segments.mark_open(seg_id, seq, type, category, generation);
+      if (type == segment_type_t::JOURNAL) {
+        assert(trimmer != nullptr);
+        trimmer->set_journal_head_sequence(seq);
+      }
       background_callback->maybe_wake_background();
       auto new_usage = calc_utilization(seg_id);
       adjust_segment_util(old_usage, new_usage);
@@ -1057,13 +1093,34 @@ SegmentCleaner::do_reclaim_space(
     std::size_t &reclaimed,
     std::size_t &runs)
 {
-  return repeat_eagain([this, &backref_extents,
+  auto& shard_stats = extent_callback->get_shard_stats();
+  if (is_cold) {
+    ++(shard_stats.cleaner_cold_num);
+  } else {
+    ++(shard_stats.cleaner_main_num);
+  }
+  ++(shard_stats.pending_bg_num);
+
+  // Extents satisfying any of the following requirements
+  // are considered DEAD:
+  // 1. can't find the corresponding mapping in both the
+  // 	backref tree and the backref cache;
+  // 2. the extent is logical, but its lba mapping doesn't
+  // 	exist in the lba tree or the lba mapping in the lba
+  // 	tree doesn't match the extent's paddr
+  // 3. the extent is physical and doesn't exist in the
+  // 	lba tree, backref tree or backref cache;
+  return repeat_eagain([this, &backref_extents, &shard_stats,
                         &pin_list, &reclaimed, &runs] {
     reclaimed = 0;
     runs++;
-    auto src = Transaction::src_t::CLEANER_MAIN;
+    transaction_type_t src;
     if (is_cold) {
       src = Transaction::src_t::CLEANER_COLD;
+      ++(shard_stats.repeat_cleaner_cold_num);
+    } else {
+      src = Transaction::src_t::CLEANER_MAIN;
+      ++(shard_stats.repeat_cleaner_main_num);
     }
     return extent_callback->with_transaction_intr(
       src,
@@ -1142,6 +1199,9 @@ SegmentCleaner::do_reclaim_space(
         return extent_callback->submit_transaction_direct(t);
       });
     });
+  }).finally([&shard_stats] {
+    assert(shard_stats.pending_bg_num);
+    --(shard_stats.pending_bg_num);
   });
 }
 
@@ -1153,7 +1213,7 @@ SegmentCleaner::clean_space_ret SegmentCleaner::clean_space()
   if (!reclaim_state) {
     segment_id_t seg_id = get_next_reclaim_segment();
     auto &segment_info = segments[seg_id];
-    INFO("reclaim {} {} start, usage={}, time_bound={}",
+    INFO("reclaim start... {} {}, usage={}, time_bound={}",
          seg_id, segment_info,
          space_tracker->calc_utilization(seg_id),
          sea_time_point_printer_t{segments.get_time_bound()});
@@ -1177,6 +1237,7 @@ SegmentCleaner::clean_space_ret SegmentCleaner::clean_space()
     std::pair<std::vector<CachedExtentRef>, backref_pin_list_t>(),
     [this](auto &weak_read_ret) {
     return repeat_eagain([this, &weak_read_ret] {
+      // Note: not tracked by shard_stats_t intentionally.
       return extent_callback->with_transaction_intr(
 	  Transaction::src_t::READ,
 	  "retrieve_from_backref_tree",
@@ -1230,7 +1291,7 @@ SegmentCleaner::clean_space_ret SegmentCleaner::clean_space()
               d, pavail_ratio, runs);
         if (reclaim_state->is_complete()) {
           auto segment_to_release = reclaim_state->get_segment_id();
-          INFO("reclaim {} finish, reclaimed alive/total={}",
+          INFO("reclaim finish {}, reclaimed alive/total={}",
                segment_to_release,
                stats.reclaiming_bytes/(double)segments.get_segment_size());
           stats.reclaimed_bytes += stats.reclaiming_bytes;
@@ -1254,7 +1315,7 @@ SegmentCleaner::clean_space_ret SegmentCleaner::clean_space()
             segments.mark_empty(segment_to_release);
             auto new_usage = calc_utilization(segment_to_release);
             adjust_segment_util(old_usage, new_usage);
-            INFO("released {}, {}",
+            INFO("reclaim released {}, {}",
                  segment_to_release, stat_printer_t{*this, false});
             background_callback->maybe_wake_blocked_io();
           });
@@ -1311,20 +1372,33 @@ SegmentCleaner::mount_ret SegmentCleaner::mount()
         segment_id
       ).safe_then([this, FNAME, segment_id, header](auto tail)
         -> scan_extents_ertr::future<> {
-        if (tail.segment_nonce != header.segment_nonce) {
+	bool tail_valid = (tail.segment_nonce == header.segment_nonce);
+        if (!tail_valid && header.type == segment_type_t::JOURNAL) {
           return scan_no_tail_segment(header, segment_id);
         }
-        ceph_assert(header.get_type() == tail.get_type());
+        ceph_assert(header.get_type() == tail.get_type() || !tail_valid);
 
-        sea_time_point modify_time = mod_to_timepoint(tail.modify_time);
-        std::size_t num_extents = tail.num_extents;
-        if ((modify_time == NULL_TIME && num_extents == 0) ||
-            (modify_time != NULL_TIME && num_extents != 0)) {
-          segments.update_modify_time(segment_id, modify_time, num_extents);
-        } else {
-          ERROR("illegal modify time {}", tail);
-          return crimson::ct_error::input_output_error::make();
-        }
+	sea_time_point header_time = mod_to_timepoint(header.modify_time);
+	if (tail_valid) {
+	  sea_time_point tail_time = mod_to_timepoint(tail.modify_time);
+	  std::size_t num_extents = tail.num_extents;
+	  DEBUG("updating modify time for segment {}, "
+		"mod time {}-{}, num_extents {}",
+		segment_id, header_time, tail_time, num_extents);
+	  if (num_extents == 0) {
+	    ceph_assert(tail_time == NULL_TIME);
+	  } else {
+	    ceph_assert(header_time != NULL_TIME);
+	    ceph_assert(tail_time != NULL_TIME);
+	    sea_time_point avg_time = get_average_time(
+	      header_time, 1, tail_time, 1);
+	    segments.update_modify_time(segment_id, avg_time, num_extents);
+	  }
+	} else {
+	  DEBUG("updating modify time for segment {}, mod time {}, without tail",
+		segment_id, header_time);
+	  segments.init_modify_time(segment_id, header_time);
+	}
 
         init_mark_segment_closed(
           segment_id,
@@ -1335,8 +1409,22 @@ SegmentCleaner::mount_ret SegmentCleaner::mount()
         return seastar::now();
       }).handle_error(
         crimson::ct_error::enodata::handle(
-          [this, header, segment_id](auto) {
-          return scan_no_tail_segment(header, segment_id);
+          [this, header, segment_id, FNAME](auto) {
+	  if (header.type == segment_type_t::JOURNAL) {
+	    return scan_no_tail_segment(header, segment_id);
+	  } else {
+	    sea_time_point modify_time = mod_to_timepoint(header.modify_time);
+	    DEBUG("updating modify time for segment {}, mod time {}",
+	      segment_id, modify_time);
+	    segments.init_modify_time(segment_id, modify_time);
+	    init_mark_segment_closed(
+	      segment_id,
+	      header.segment_seq,
+	      header.type,
+	      header.category,
+	      header.generation);
+	    return scan_extents_ertr::now();
+	  }
         }),
         crimson::ct_error::pass_further_all{}
       );
@@ -1403,7 +1491,7 @@ SegmentCleaner::scan_extents_ret SegmentCleaner::scan_no_tail_segment(
       cursor,
       segment_header.segment_nonce,
       segments.get_segment_size(),
-      handler).discard_result();
+      handler);
   }).safe_then([this, segment_id, segment_header] {
     init_mark_segment_closed(
       segment_id,
@@ -1452,7 +1540,7 @@ bool SegmentCleaner::check_usage()
         }
       }
     });
-  }).unsafe_get0();
+  }).unsafe_get();
   return space_tracker->equals(*tracker);
 }
 
@@ -1634,7 +1722,7 @@ void RBMCleaner::mark_space_used(
   for (auto rbm : rbms) {
     if (addr.get_device_id() == rbm->get_device_id()) {
       if (rbm->get_start() <= addr) {
-	INFO("allocate addr: {} len: {}", addr, len);
+	DEBUG("allocate addr: {} len: {}", addr, len);
 	stats.used_bytes += len;
 	rbm->mark_space_used(addr, len);
       }
@@ -1653,7 +1741,7 @@ void RBMCleaner::mark_space_free(
   for (auto rbm : rbms) {
     if (addr.get_device_id() == rbm->get_device_id()) {
       if (rbm->get_start() <= addr) {
-	INFO("free addr: {} len: {}", addr, len);
+	DEBUG("free addr: {} len: {}", addr, len);
 	ceph_assert(stats.used_bytes >= len);
 	stats.used_bytes -= len;
 	rbm->mark_space_free(addr, len);
@@ -1757,7 +1845,7 @@ bool RBMCleaner::check_usage()
 	}
       }
     });
-  }).unsafe_get0();
+  }).unsafe_get();
   return equals(tracker);
 }
 

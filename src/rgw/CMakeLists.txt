@@ -48,7 +48,6 @@ set(librgw_common_srcs
   services/svc_otp.cc
   services/svc_quota.cc
   services/svc_sync_modules.cc
-  services/svc_rados.cc
   services/svc_role_rados.cc
   services/svc_sys_obj.cc
   services/svc_sys_obj_cache.cc
@@ -58,11 +57,13 @@ set(librgw_common_srcs
   services/svc_user_rados.cc
   services/svc_zone.cc
   services/svc_zone_utils.cc
+  rgw_account.cc
   rgw_acl.cc
   rgw_acl_s3.cc
   rgw_acl_swift.cc
   rgw_aio.cc
   rgw_aio_throttle.cc
+  rgw_asio_thread.cc
   rgw_auth.cc
   rgw_auth_s3.cc
   rgw_arn.cc
@@ -70,6 +71,7 @@ set(librgw_common_srcs
   rgw_bucket.cc
   rgw_bucket_layout.cc
   rgw_cache.cc
+  rgw_cksum_pipe.cc
   rgw_common.cc
   rgw_compression.cc
   rgw_cors.cc
@@ -104,12 +106,15 @@ set(librgw_common_srcs
   rgw_quota.cc
   rgw_resolve.cc
   rgw_rest.cc
+  rgw_rest_account.cc
   rgw_rest_client.cc
   rgw_rest_config.cc
   rgw_rest_conn.cc
   rgw_rest_metadata.cc
   rgw_rest_ratelimit.cc
   rgw_rest_role.cc
+  rgw_rest_iam_group.cc
+  rgw_rest_iam_user.cc
   rgw_rest_s3.cc
   rgw_rest_pubsub.cc
   rgw_rest_zero.cc
@@ -128,6 +133,7 @@ set(librgw_common_srcs
   rgw_crypt.cc
   rgw_crypt_sanitize.cc
   rgw_iam_policy.cc
+  rgw_iam_managed_policy.cc
   rgw_rest_user_policy.cc
   rgw_zone.cc
   rgw_sts.cc
@@ -148,7 +154,12 @@ set(librgw_common_srcs
   rgw_bucket_encryption.cc
   rgw_tracer.cc
   rgw_lua_background.cc
+  rgw_data_access.cc
+  driver/rados/account.cc
+  driver/rados/buckets.cc
   driver/rados/cls_fifo_legacy.cc
+  driver/rados/group.cc
+  driver/rados/groups.cc
   driver/rados/rgw_bucket.cc
   driver/rados/rgw_bucket_sync.cc
   driver/rados/rgw_cr_rados.cc
@@ -193,7 +204,12 @@ set(librgw_common_srcs
   driver/rados/rgw_trim_mdlog.cc
   driver/rados/rgw_user.cc
   driver/rados/rgw_zone.cc
-  driver/rados/sync_fairness.cc)
+  driver/rados/roles.cc
+  driver/rados/sync_fairness.cc
+  driver/rados/topic.cc
+  driver/rados/topic_migration.cc
+  driver/rados/topics.cc
+  driver/rados/users.cc)
 
 list(APPEND librgw_common_srcs
   driver/immutable_config/store.cc
@@ -222,11 +238,6 @@ endif()
 if(WITH_RADOSGW_DAOS)
   list(APPEND librgw_common_srcs driver/motr/rgw_sal_daos.cc)
 endif()
-if(WITH_RADOSGW_D4N)
-  list(APPEND librgw_common_srcs driver/d4n/d4n_directory.cc)
-  list(APPEND librgw_common_srcs driver/d4n/d4n_datacache.cc)
-  list(APPEND librgw_common_srcs driver/d4n/rgw_sal_d4n.cc)
-endif()
 if(WITH_RADOSGW_POSIX)
   #add_subdirectory(driver/posix)
   find_package(LMDB REQUIRED)
@@ -245,6 +256,15 @@ if(WITH_RADOSGW_ARROW_FLIGHT)
   list(APPEND librgw_common_srcs rgw_flight.cc rgw_flight_frontend.cc)
 endif(WITH_RADOSGW_ARROW_FLIGHT)
 
+if(WITH_RADOSGW_D4N)
+  list(APPEND librgw_common_srcs
+        rgw_redis_driver.cc
+        rgw_ssd_driver.cc
+        driver/d4n/d4n_directory.cc
+        driver/d4n/d4n_policy.cc
+        driver/d4n/rgw_sal_d4n.cc)
+endif()
+
 add_library(rgw_common STATIC ${librgw_common_srcs})
 
 include(CheckCXXCompilerFlag)
@@ -257,6 +277,7 @@ endif()
 
 target_link_libraries(rgw_common
   PRIVATE
+    legacy-option-headers
     global
     cls_2pc_queue_client
     cls_cmpomap_client
@@ -270,6 +291,7 @@ target_link_libraries(rgw_common
     cls_user_client
     cls_version_client
     librados
+    libneorados
     rt
     ICU::uc
     OATH::OATH
@@ -279,24 +301,22 @@ target_link_libraries(rgw_common
     ${ARROW_LIBRARIES}
     ${ARROW_FLIGHT_LIBRARIES}
     ${LMDB_LIBRARIES}
-    ${ALLOC_LIBS}
   PUBLIC
     ${LUA_LIBRARIES}
     RapidJSON::RapidJSON
-    spawn
-    fmt::fmt)
+    Boost::context
+    ${FMT_LIB}
+    OpenSSL::SSL
+    BLAKE3::blake3)
 target_include_directories(rgw_common
   PUBLIC "${CMAKE_SOURCE_DIR}/src/rgw/services"
-  PUBLIC "${CMAKE_SOURCE_DIR}/src/rgw/driver/rados"
   PUBLIC "${CMAKE_SOURCE_DIR}/src/rgw"
   PUBLIC "${LUA_INCLUDE_DIR}")
 
-if(WITH_RADOSGW_D4N)
-  add_dependencies(rgw_common cpp_redis)
-  target_link_libraries(rgw_common PRIVATE cpp_redis)
-  target_include_directories(rgw_common SYSTEM PUBLIC "${CMAKE_SOURCE_DIR}/src/cpp_redis/includes")
-  target_include_directories(rgw_common SYSTEM PUBLIC "${CMAKE_SOURCE_DIR}/src/cpp_redis/tacopie/includes")
-endif()
+# work around https://github.com/Cyan4973/xxHash/issues/943 for debug builds
+target_compile_definitions(rgw_common PUBLIC
+  $<$<CONFIG:Debug>:XXH_NO_INLINE_HINTS=1>
+  $<$<CONFIG:RelWithDebInfo>:XXH_NO_INLINE_HINTS=1>)
 
 if(WITH_RADOSGW_KAFKA_ENDPOINT)
   # used by rgw_kafka.cc
@@ -308,8 +328,7 @@ if(WITH_RADOSGW_AMQP_ENDPOINT)
   # used by rgw_amqp.cc
   target_link_libraries(rgw_common
     PRIVATE
-      RabbitMQ::RabbitMQ
-      OpenSSL::SSL)
+      RabbitMQ::RabbitMQ)
 endif()
 if(WITH_OPENLDAP)
   target_link_libraries(rgw_common
@@ -412,6 +431,7 @@ endif()
 
 target_link_libraries(rgw_a
   PRIVATE
+    legacy-option-headers
     common_utf8 global
     ${CRYPTO_LIBS}
     ${ARROW_LIBRARIES}
@@ -419,7 +439,7 @@ target_link_libraries(rgw_a
     OATH::OATH
   PUBLIC
     rgw_common
-    spawn)
+    Boost::context)
 
 if(WITH_CURL_OPENSSL)
   # used by rgw_http_client_curl.cc
@@ -435,7 +455,7 @@ set(rgw_schedulers_srcs
 
 add_library(rgw_schedulers STATIC ${rgw_schedulers_srcs})
 target_link_libraries(rgw_schedulers
-  PUBLIC dmclock::dmclock spawn)
+  PUBLIC dmclock::dmclock Boost::context)
 
 set(radosgw_srcs
   rgw_main.cc)
@@ -459,11 +479,13 @@ target_include_directories(radosgw
 
 target_include_directories(radosgw SYSTEM PUBLIC "../rapidjson/include")
 
-target_link_libraries(radosgw PRIVATE ${rgw_libs} rgw_schedulers kmip)
-if(WITH_RADOSGW_BEAST_OPENSSL)
-  # used by rgw_asio_frontend.cc
-  target_link_libraries(radosgw PRIVATE OpenSSL::SSL)
-endif()
+target_link_libraries(radosgw PRIVATE
+  legacy-option-headers
+  ${rgw_libs}
+  rgw_schedulers
+  kmip
+  ${ALLOC_LIBS})
+
 install(TARGETS radosgw DESTINATION bin)
 
 set(radosgw_admin_srcs
@@ -478,7 +500,9 @@ if(WITH_RADOSGW_ARROW_FLIGHT)
 endif(WITH_RADOSGW_ARROW_FLIGHT)
 
 add_executable(radosgw-admin ${radosgw_admin_srcs})
-target_link_libraries(radosgw-admin ${rgw_libs} librados
+target_link_libraries(radosgw-admin
+  legacy-option-headers
+  ${rgw_libs} librados
   cls_rgw_client cls_otp_client cls_lock_client cls_refcount_client
   cls_log_client cls_timeindex_client
   cls_version_client cls_user_client
@@ -508,8 +532,10 @@ install(TARGETS radosgw-es DESTINATION bin)
 set(radosgw_token_srcs
   rgw_token.cc)
 add_executable(radosgw-token ${radosgw_token_srcs})
-target_link_libraries(radosgw-token librados
-  global ${ALLOC_LIBS})
+target_link_libraries(radosgw-token
+  legacy-option-headers
+  librados
+  global)
 install(TARGETS radosgw-token DESTINATION bin)
 
 set(radosgw_object_expirer_srcs

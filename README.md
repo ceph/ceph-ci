@@ -2,6 +2,9 @@
 
 See https://ceph.com/ for current information about Ceph.
 
+## Status
+
+[![Issue Backporting](https://github.com/ceph/ceph/actions/workflows/create-backport-trackers.yml/badge.svg)](https://github.com/ceph/ceph/actions/workflows/create-backport-trackers.yml)
 
 ## Contributing Code
 
@@ -40,7 +43,7 @@ following commands to move into the cloned `ceph/ceph` repository and to check
 out the git submodules associated with it:
 
     cd ceph
-	git submodule update --init --recursive
+	git submodule update --init --recursive --progress
 
 
 ## Build Prerequisites
@@ -70,28 +73,39 @@ we recommend that you build `.deb` or `.rpm` packages, or refer to
 ``ceph.spec.in`` or ``debian/rules`` to see which configuration options are
 specified for production builds.
 
-To build Ceph, make sure that you are in the top-level `ceph` directory that
-contains `do_cmake.sh` and `CONTRIBUTING.rst` and run the following commands:
+To build Ceph, follow this procedure: 
 
-	./do_cmake.sh
-	cd build
-	ninja
+1. Make sure that you are in the top-level `ceph` directory that
+   contains `do_cmake.sh` and `CONTRIBUTING.rst`.
+2. Run the `do_cmake.sh` script:
 
-``do_cmake.sh`` by default creates a "debug build" of Ceph, which can be up to
-five times slower than a non-debug build.  Pass
-``-DCMAKE_BUILD_TYPE=RelWithDebInfo`` to ``do_cmake.sh`` to create a non-debug
-build.
+    ``./do_cmake.sh``
 
-[Ninja](https://ninja-build.org/) is the buildsystem used by the Ceph project
-to build test builds.  The number of jobs used by `ninja` is derived from the
-number of CPU cores of the building host if unspecified. Use the `-j` option to
-limit the job number if the build jobs are running out of memory. If you
-attempt to run `ninja` and receive a message that reads `g++: fatal error:
-Killed signal terminated program cc1plus`, then you have run out of memory.
-Using the `-j` option with an argument appropriate to the hardware on which the
-`ninja` command is run is expected to result in a successful build. For example,
-to limit the job number to 3, run the command `ninja -j 3`. On average, each
-`ninja` job run in parallel needs approximately 2.5 GiB of RAM.
+   ``do_cmake.sh`` by default creates a "debug build" of Ceph, which can be 
+   up to five times slower than a non-debug build. Pass 
+   ``-DCMAKE_BUILD_TYPE=RelWithDebInfo`` to ``do_cmake.sh`` to create a 
+   non-debug build.
+3. Move into the `build` directory:
+
+    ``cd build``
+4. Use the `ninja` buildsystem to build the development environment:
+
+    ``ninja``
+
+   > [!TIP]
+   > [Ninja](https://ninja-build.org/) is the build system used by the Ceph
+   > project to build test builds.  The number of jobs used by `ninja` is 
+   > derived from the number of CPU cores of the building host if unspecified. 
+   > Use the `-j` option to limit the job number if build jobs are running 
+   > out of memory. If you attempt to run `ninja` and receive a message that 
+   > reads `g++: fatal error: Killed signal terminated program cc1plus`, then 
+   > you have run out of memory.
+   >
+   > Using the `-j` option with an argument appropriate to the hardware on
+   > which the `ninja` command is run is expected to result in a successful
+   > build. For example, to limit the job number to 3, run the command `ninja
+   > -j 3`. On average, each `ninja` job run in parallel needs approximately
+   > 2.5 GiB of RAM.
 
 This documentation assumes that your build directory is a subdirectory of the
 `ceph.git` checkout. If the build directory is located elsewhere, point

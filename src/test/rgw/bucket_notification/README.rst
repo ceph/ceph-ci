@@ -9,6 +9,23 @@ with the `vstart.sh` script.
 For the tests covering Kafka and RabbitMQ security, the RGW will need to accept use/password without TLS connection between the client and the RGW.
 So, the cluster will have to be started with the following ``rgw_allow_notification_secrets_in_cleartext`` parameter set to ``true``.
 
+The test suite can be run against a multisite setup, in the configuration file we will have to decide which RGW and which cluster will be used for the test,
+and using which version (v1 or v2) of topics/notifications we should use. By default, a new cluster would use v2, which means that if a realm was never defined, v1 cannot be used.
+For example, if the ``test-rgw-multisite.sh`` script is used to setup multisite, and we want to test v1 against the first RGW in the first cluster, 
+we would need the following configuration file::
+
+				[DEFAULT]
+				port = 8101
+				host = localhost
+				zonegroup = zg1
+				cluster = c1
+				version = v1
+
+				[s3 main]
+				access_key = 1234567890
+				secret_key = pencil
+
+Add boto3 extension to the standard client: https://github.com/ceph/ceph/tree/main/examples/rgw/boto3#introduction.
 
 ===========
 Kafka Tests
@@ -109,7 +126,7 @@ To run the Kafka security test, you also need to provide the test with the locat
 RabbitMQ Tests
 ==============
 
-You need to install RabbitMQ in the following way::
+You need to install RabbitMQ, check supported platforms: https://www.rabbitmq.com/docs/platforms. For example, for Fedora::
 
         sudo dnf install rabbitmq-server
 
@@ -117,13 +134,17 @@ Then you need to run the following command::
 
         sudo chkconfig rabbitmq-server on
 
+Update rabbitmq-server configuration to allow access to the guest user from anywhere on the network. Uncomment or add line to rabbirmq configuration, usually `/etc/rabbitmq/rabbirmq.comf`::
+
+        loopback_user.guest = false
+
 Finally, to start the RabbitMQ server you need to run the following command::
 
-        sudo /sbin/service rabbitmq-server start
+        sudo systemctl start rabbitmq-server
 
 To confirm that the RabbitMQ server is running you can run the following command to check the status of the server::
 
-        sudo /sbin/service rabbitmq-server status
+        sudo systemctl status rabbitmq-server
 
 After running `vstart.sh` and RabbitMQ server you're ready to run the AMQP tests::
 
@@ -131,7 +152,7 @@ After running `vstart.sh` and RabbitMQ server you're ready to run the AMQP tests
 
 After running the tests you need to stop the vstart cluster (``/path/to/ceph/src/stop.sh``) and the RabbitMQ server by running the following command::
 
-        sudo /sbin/service rabbitmq-server stop
+        sudo systemctl stop rabbitmq-server
 
 To run the RabbitMQ SSL security tests use the following::
 
@@ -140,4 +161,3 @@ To run the RabbitMQ SSL security tests use the following::
 During these tests, the test script will restart the RabbitMQ server with the correct security configuration (``sudo`` privileges will be needed).
 For that reason it is not recommended to run the `amqp_ssl_test` tests, that assumes a manually configured rabbirmq server, in the same run as `amqp_test` tests, 
 that assume the rabbitmq daemon running on the host as a service.
-

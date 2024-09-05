@@ -3,9 +3,11 @@ import os
 import re
 import stat
 import time
-from ceph_volume import process
+import json
+from ceph_volume import process, allow_loop_devices
 from ceph_volume.api import lvm
 from ceph_volume.util.system import get_file_contents
+from typing import Dict, List, Any
 
 
 logger = logging.getLogger(__name__)
@@ -364,30 +366,18 @@ def is_device(dev):
         return TYPE in ['disk', 'mpath']
 
     # fallback to stat
-    return _stat_is_device(os.lstat(dev).st_mode)
+    return _stat_is_device(os.lstat(dev).st_mode) and not is_partition(dev)
 
 
-def is_partition(dev):
+def is_partition(dev: str) -> bool:
     """
     Boolean to determine if a given device is a partition, like /dev/sda1
     """
     if not os.path.exists(dev):
         return False
-    # use lsblk first, fall back to using stat
-    TYPE = lsblk(dev).get('TYPE')
-    if TYPE:
-        return TYPE == 'part'
 
-    # fallback to stat
-    stat_obj = os.stat(dev)
-    if _stat_is_device(stat_obj.st_mode):
-        return False
-
-    major = os.major(stat_obj.st_rdev)
-    minor = os.minor(stat_obj.st_rdev)
-    if os.path.exists('/sys/dev/block/%d:%d/partition' % (major, minor)):
-        return True
-    return False
+    partitions = get_partitions()
+    return dev.split("/")[-1] in partitions
 
 
 def is_ceph_rbd(dev):
@@ -738,61 +728,34 @@ def is_mapper_device(device_name):
     return device_name.startswith(('/dev/mapper', '/dev/dm-'))
 
 
-class AllowLoopDevices(object):
-    allow = False
-    warned = False
-
-    @classmethod
-    def __call__(cls):
-        val = os.environ.get("CEPH_VOLUME_ALLOW_LOOP_DEVICES", "false").lower()
-        if val not in ("false", 'no', '0'):
-            cls.allow = True
-            if not cls.warned:
-                logger.warning(
-                    "CEPH_VOLUME_ALLOW_LOOP_DEVICES is set in your "
-                    "environment, so we will allow the use of unattached loop"
-                    " devices as disks. This feature is intended for "
-                    "development purposes only and will never be supported in"
-                    " production. Issues filed based on this behavior will "
-                    "likely be ignored."
-                )
-                cls.warned = True
-        return cls.allow
-
-
-allow_loop_devices = AllowLoopDevices()
-
-
-def get_block_devs_sysfs(_sys_block_path='/sys/block', _sys_dev_block_path='/sys/dev/block', device=''):
-    def holder_inner_loop():
+def get_block_devs_sysfs(_sys_block_path: str = '/sys/block', _sys_dev_block_path: str = '/sys/dev/block', device: str = '') -> List[List[str]]:
+    def holder_inner_loop() -> bool:
         for holder in holders:
             # /sys/block/sdy/holders/dm-8/dm/uuid
-            holder_dm_type = get_file_contents(os.path.join(_sys_block_path, dev, f'holders/{holder}/dm/uuid')).split('-')[0].lower()
+            holder_dm_type: str = get_file_contents(os.path.join(_sys_block_path, dev, f'holders/{holder}/dm/uuid')).split('-')[0].lower()
             if holder_dm_type == 'mpath':
                 return True
 
     # First, get devices that are _not_ partitions
-    result = list()
+    result: List[List[str]] = list()
     if not device:
-        dev_names = os.listdir(_sys_block_path)
+        dev_names: List[str] = os.listdir(_sys_block_path)
     else:
         dev_names = [device]
     for dev in dev_names:
-        name = kname = os.path.join("/dev", dev)
+        name = kname = pname = os.path.join("/dev", dev)
         if not os.path.exists(name):
             continue
-        type_ = 'disk'
-        holders = os.listdir(os.path.join(_sys_block_path, dev, 'holders'))
-        if get_file_contents(os.path.join(_sys_block_path, dev, 'removable')) == "1":
-            continue
+        type_: str = 'disk'
+        holders: List[str] = os.listdir(os.path.join(_sys_block_path, dev, 'holders'))
         if holder_inner_loop():
             continue
-        dm_dir_path = os.path.join(_sys_block_path, dev, 'dm')
+        dm_dir_path: str = os.path.join(_sys_block_path, dev, 'dm')
         if os.path.isdir(dm_dir_path):
-            dm_type = get_file_contents(os.path.join(dm_dir_path, 'uuid'))
-            type_ = dm_type.split('-')[0].lower()
-            basename = get_file_contents(os.path.join(dm_dir_path, 'name'))
-            name = os.path.join("/dev/mapper", basename)
+            dm_type: str = get_file_contents(os.path.join(dm_dir_path, 'uuid'))
+            type_: List[str] = dm_type.split('-')[0].lower()
+            basename: str = get_file_contents(os.path.join(dm_dir_path, 'name'))
+            name: str = os.path.join("/dev/mapper", basename)
         if dev.startswith('loop'):
             if not allow_loop_devices():
                 continue
@@ -800,28 +763,25 @@ def get_block_devs_sysfs(_sys_block_path='/sys/block', _sys_dev_block_path='/sys
             if not os.path.exists(os.path.join(_sys_block_path, dev, 'loop')):
                 continue
             type_ = 'loop'
-        result.append([kname, name, type_])
+        result.append([kname, name, type_, pname])
     # Next, look for devices that _are_ partitions
-    for item in os.listdir(_sys_dev_block_path):
-        is_part = get_file_contents(os.path.join(_sys_dev_block_path, item, 'partition')) == "1"
-        dev = os.path.basename(os.readlink(os.path.join(_sys_dev_block_path, item)))
-        if not is_part:
-            continue
-        name = kname = os.path.join("/dev", dev)
-        result.append([name, kname, "part"])
+    partitions: Dict[str, str] = get_partitions()
+    for partition in partitions.keys():
+        name = kname = os.path.join("/dev", partition)
+        result.append([name, kname, "part", partitions[partition]])
     return sorted(result, key=lambda x: x[0])
 
-def get_partitions(_sys_dev_block_path ='/sys/dev/block'):
-    devices = os.listdir(_sys_dev_block_path)
-    result = dict()
+def get_partitions(_sys_dev_block_path ='/sys/dev/block') -> List[str]:
+    devices: List[str] = os.listdir(_sys_dev_block_path)
+    result: Dict[str, str] = dict()
     for device in devices:
-        device_path = os.path.join(_sys_dev_block_path, device)
-        is_partition = get_file_contents(os.path.join(device_path, 'partition')) == "1"
+        device_path: str = os.path.join(_sys_dev_block_path, device)
+        is_partition: bool = int(get_file_contents(os.path.join(device_path, 'partition'), '0')) > 0
         if not is_partition:
             continue
 
-        partition_sys_name = os.path.basename(os.readlink(device_path))
-        parent_device_sys_name = os.readlink(device_path).split('/')[-2:-1][0]
+        partition_sys_name: str = os.path.basename(os.path.realpath(device_path))
+        parent_device_sys_name: str = os.path.realpath(device_path).split('/')[-2:-1][0]
         result[partition_sys_name] = parent_device_sys_name
     return result
 
@@ -839,13 +799,13 @@ def get_devices(_sys_block_path='/sys/block', device=''):
     device_facts = {}
 
     block_devs = get_block_devs_sysfs(_sys_block_path)
-    partitions = get_partitions()
 
     block_types = ['disk', 'mpath', 'lvm', 'part']
     if allow_loop_devices():
         block_types.append('loop')
 
     for block in block_devs:
+        metadata: Dict[str, Any] = {}
         if block[2] == 'lvm':
             block[1] = lvm.get_lv_path_from_mapper(block[1])
         devname = os.path.basename(block[0])
@@ -854,8 +814,7 @@ def get_devices(_sys_block_path='/sys/block', device=''):
             continue
         sysdir = os.path.join(_sys_block_path, devname)
         if block[2] == 'part':
-            sysdir = os.path.join(_sys_block_path, partitions[devname], devname)
-        metadata = {}
+            sysdir = os.path.join(_sys_block_path, block[3], devname)
 
         # If the device is ceph rbd it gets excluded
         if is_ceph_rbd(diskname):
@@ -882,6 +841,7 @@ def get_devices(_sys_block_path='/sys/block', device=''):
         for key, file_ in facts:
             metadata[key] = get_file_contents(os.path.join(sysdir, file_))
 
+        device_slaves = []
         if block[2] != 'part':
             device_slaves = os.listdir(os.path.join(sysdir, 'slaves'))
             metadata['partitions'] = get_partitions_facts(sysdir)
@@ -890,7 +850,7 @@ def get_devices(_sys_block_path='/sys/block', device=''):
             metadata['device_nodes'] = ','.join(device_slaves)
         else:
             if block[2] == 'part':
-                metadata['device_nodes'] = partitions[devname]
+                metadata['device_nodes'] = block[3]
             else:
                 metadata['device_nodes'] = devname
 
@@ -920,7 +880,13 @@ def get_devices(_sys_block_path='/sys/block', device=''):
         metadata['size'] = float(size) * 512
         metadata['human_readable_size'] = human_readable_size(metadata['size'])
         metadata['path'] = diskname
+        metadata['devname'] = devname
         metadata['type'] = block[2]
+        metadata['parent'] = block[3]
+
+        # some facts from udevadm
+        p = udevadm_property(sysdir)
+        metadata['id_bus'] = p.get('ID_BUS', '')
 
         device_facts[diskname] = metadata
     return device_facts
@@ -941,3 +907,225 @@ def has_bluestore_label(device_path):
         logger.info(f'{device_path} is a directory, skipping.')
 
     return isBluestore
+
+def get_lvm_mappers(sys_block_path: str = '/sys/block') -> List[str]:
+    """
+    Retrieve a list of Logical Volume Manager (LVM) device mappers.
+
+    This function scans the given system block path for device mapper (dm) devices
+    and identifies those that are managed by LVM. For each LVM device found, it adds
+    the corresponding paths to the result list.
+
+    Args:
+        sys_block_path (str, optional): The path to the system block directory. Defaults to '/sys/block'.
+
+    Returns:
+        List[str]: A list of strings representing the paths of LVM device mappers.
+                   Each LVM device will have two entries: the /dev/mapper/ path and the /dev/ path.
+    """
+    result: List[str] = []
+    for device in os.listdir(sys_block_path):
+        path: str = os.path.join(sys_block_path, device, 'dm')
+        uuid_path: str = os.path.join(path, 'uuid')
+        name_path: str = os.path.join(path, 'name')
+
+        if os.path.exists(uuid_path):
+            with open(uuid_path, 'r') as f:
+                mapper_type: str = f.read().split('-')[0]
+
+            if mapper_type == 'LVM':
+                with open(name_path, 'r') as f:
+                    name: str = f.read()
+                    result.append(f'/dev/mapper/{name.strip()}')
+                    result.append(f'/dev/{device}')
+    return result
+
+def _dd_read(device: str, count: int, skip: int = 0) -> str:
+    """Read bytes from a device
+
+    Args:
+        device (str): The device to read bytes from.
+        count (int): The number of bytes to read.
+        skip (int, optional): The number of bytes to skip at the beginning. Defaults to 0.
+
+    Returns:
+        str: A string containing the read bytes.
+    """
+    result: str = ''
+    try:
+        with open(device, 'rb') as b:
+            b.seek(skip)
+            data: bytes = b.read(count)
+            result = data.decode('utf-8').replace('\x00', '')
+    except OSError:
+        logger.warning(f"Can't read from {device}")
+        pass
+    except UnicodeDecodeError:
+        pass
+    except Exception as e:
+        logger.error(f"An error occurred while reading from {device}: {e}")
+        raise
+
+    return result
+
+def _dd_write(device: str, data: str, skip: int = 0) -> None:
+    """Write bytes to a device
+
+    Args:
+        device (str): The device to write bytes to.
+        data (str): The data to write to the device.
+        skip (int, optional): The number of bytes to skip at the beginning. Defaults to 0.
+
+    Raises:
+        OSError: If there is an error opening or writing to the device.
+        Exception: If any other error occurs during the write operation.
+    """
+    try:
+        with open(device, 'r+b') as b:
+            b.seek(skip)
+            b.write(data.encode('utf-8'))
+    except OSError:
+        logger.warning(f"Can't write to {device}")
+        raise
+    except Exception as e:
+        logger.error(f"An error occurred while writing to {device}: {e}")
+        raise
+
+def get_bluestore_header(device: str) -> Dict[str, Any]:
+    """Retrieve BlueStore header information from a given device.
+
+    This function retrieves BlueStore header information from the specified 'device'.
+    It first checks if the device exists. If the device does not exist, a RuntimeError
+    is raised. Then, it calls the 'ceph-bluestore-tool' command to show the label
+    information of the device. If the command execution is successful, it parses the
+    JSON output containing the BlueStore header information and returns it as a dictionary.
+
+    Args:
+        device (str): The path to the device.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing BlueStore header information.
+    """
+    data: Dict[str, Any] = {}
+
+    if os.path.exists(device):
+        out, err, rc = process.call([
+            'ceph-bluestore-tool', 'show-label',
+            '--dev', device], verbose_on_failure=False)
+        if rc:
+            logger.debug(f'device {device} is not BlueStore; ceph-bluestore-tool failed to get info from device: {out}\n{err}')
+        else:
+            data = json.loads(''.join(out))
+    else:
+        logger.warning(f'device {device} not found.')
+    return data
+
+def bluestore_info(device: str, bluestore_labels: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a dict representation of a BlueStore header
+
+    Args:
+        device (str): The path of the BlueStore device.
+        bluestore_labels (Dict[str, Any]): Plain text output from `ceph-bluestore-tool show-label`
+
+    Returns:
+        Dict[str, Any]: Generated dict representation of the BlueStore header
+    """
+    result: Dict[str, Any] = {}
+    result['osd_uuid'] = bluestore_labels[device]['osd_uuid']
+    if bluestore_labels[device]['description'] == 'main':
+        whoami = bluestore_labels[device]['whoami']
+        result.update({
+            'type': bluestore_labels[device].get('type', 'bluestore'),
+            'osd_id': int(whoami),
+            'ceph_fsid': bluestore_labels[device]['ceph_fsid'],
+            'device': device,
+        })
+        if bluestore_labels[device].get('db_device_uuid', ''):
+            result['db_device_uuid'] = bluestore_labels[device].get('db_device_uuid')
+        if bluestore_labels[device].get('wal_device_uuid', ''):
+            result['wal_device_uuid'] = bluestore_labels[device].get('wal_device_uuid')
+    elif bluestore_labels[device]['description'] == 'bluefs db':
+        result['device_db'] = device
+    elif bluestore_labels[device]['description'] == 'bluefs wal':
+        result['device_wal'] = device
+    return result
+
+def get_block_device_holders(sys_block: str = '/sys/block') -> Dict[str, Any]:
+    """Get a dictionary of device mappers with their corresponding parent devices.
+
+    This function retrieves information about device mappers and their parent devices
+    from the '/sys/block' directory. It iterates through each directory within 'sys_block',
+    and for each directory, it checks if a 'holders' directory exists. If so, it lists
+    the contents of the 'holders' directory and constructs a dictionary where the keys
+    are the device mappers and the values are their corresponding parent devices.
+
+    Args:
+        sys_block (str, optional): The path to the '/sys/block' directory. Defaults to '/sys/block'.
+
+    Returns:
+        Dict[str, Any]: A dictionary where keys are device mappers (e.g., '/dev/mapper/...') and
+        values are their corresponding parent devices (e.g., '/dev/sdX').
+    """
+    result: Dict[str, Any] = {}
+    for b in os.listdir(sys_block):
+        path: str = os.path.join(sys_block, b, 'holders')
+        if os.path.exists(path):
+            for h in os.listdir(path):
+                result[f'/dev/{h}'] = f'/dev/{b}'
+
+    return result
+
+def get_parent_device_from_mapper(mapper: str, abspath: bool = True) -> str:
+    """Get the parent device corresponding to a given device mapper.
+
+    This function retrieves the parent device corresponding to a given device mapper
+    from the dictionary returned by the 'get_block_device_holders' function. It first
+    checks if the specified 'mapper' exists. If it does, it resolves the real path of
+    the mapper using 'os.path.realpath'. Then, it attempts to retrieve the parent device
+    from the dictionary. If the mapper is not found in the dictionary, an empty string
+    is returned.
+
+    Args:
+        mapper (str): The path to the device mapper.
+        abspath (bool, optional): If True (default), returns the absolute path of the parent device.
+                                  If False, returns only the basename of the parent device.
+
+    Returns:
+        str: The parent device corresponding to the given device mapper, or an empty string
+        if the mapper is not found in the dictionary of device mappers.
+    """
+    result: str = ''
+    if os.path.exists(mapper):
+        _mapper: str = os.path.realpath(mapper)
+        try:
+            result = get_block_device_holders()[_mapper]
+            if not abspath:
+                result = os.path.basename(result)
+        except KeyError:
+            pass
+    return result
+
+
+def get_lvm_mapper_path_from_dm(path: str, sys_block: str = '/sys/block') -> str:
+    """_summary_
+    Retrieve the logical volume path for a given device.
+
+    This function takes the path of a device and returns the corresponding
+    logical volume path by reading the 'dm/name' file within the sysfs
+    directory.
+
+    Args:
+        path (str): The device path for which to retrieve the logical volume path.
+        sys_block (str, optional): The base sysfs block directory. Defaults to '/sys/block'.
+
+    Returns:
+        str: The device mapper path in the form of '/dev/dm-X'.
+    """
+    result: str = ''
+    dev: str = os.path.basename(path)
+    sys_block_path: str = os.path.join(sys_block, dev, 'dm/name')
+    if os.path.exists(sys_block_path):
+        with open(sys_block_path, 'r') as f:
+            content: str = f.read()
+            result = f'/dev/mapper/{content}'
+    return result

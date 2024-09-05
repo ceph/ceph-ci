@@ -23,7 +23,7 @@ Synopsis
 
 | **ceph** **df** *{detail}*
 
-| **ceph** **fs** [ *add_data_pool* \| *authorize* \| *dump* \| *feature ls* \| *flag set* \| *get* \| *ls* \| *lsflags* \| *new* \| *rename* \| *reset* \| *required_client_features add* \| *required_client_features rm* \| *rm* \| *rm_data_pool* \| *set*] ...
+| **ceph** **fs** [ *add_data_pool* \| *authorize* \| *dump* \| *feature ls* \| *flag set* \| *get* \| *ls* \| *lsflags* \| *new* \| *rename* \| *reset* \| *required_client_features add* \| *required_client_features rm* \| *rm* \| *rm_data_pool* \| *set* \| *swap* ] ...
 
 | **ceph** **fsid**
 
@@ -473,6 +473,15 @@ Subcommand ``set`` sets or updates a FS setting value for given FS name.
 Usage::
 
     ceph fs set <fs-name> <fs-setting> <value>
+
+Subcommand ``swap`` swaps the names of two Ceph file system and updates
+application tags on the pool of the file systems accordingly. Optionally,
+FSIDs of the filesystems can also be swapped along with names by passing
+``--swap-fscids``.
+
+Usage::
+
+    ceph fs swap <fs1-name> <fs1-id> <fs2-name> <fs2-id> [--swap-fscids] {--yes-i-really-meant-it}
 
 fsid
 ----
@@ -1622,13 +1631,13 @@ Usage::
 Options
 =======
 
-.. option:: -i infile
+.. option:: -i infile, --in-file=infile
 
    will specify an input file to be passed along as a payload with the
    command to the monitor cluster. This is only used for specific
    monitor commands.
 
-.. option:: -o outfile
+.. option:: -o outfile, --out-file=outfile
 
    will write any payload returned by the monitor cluster with its
    reply to outfile.  Only specific monitor commands (e.g. osd getmap)
@@ -1715,7 +1724,25 @@ Options
 
 .. option:: -f {json,json-pretty,xml,xml-pretty,plain,yaml}, --format
 
-	Format of output. Note: yaml is only valid for orch commands. 
+	Format of output.
+
+    Note: yaml is only valid for orch commands.
+
+.. option:: --daemon-output-file OUTPUT_FILE
+
+    When using --format=json|json-pretty, you may specify a file name on the
+    host running the daemon to stream output to. Be mindful this is probably
+    not the same machine running the ceph command. So to analyze the output, it
+    will be necessary to fetch the file once the command completes.
+
+    OUTPUT_FILE may also be ``:tmp:``, indicating that the daemon should create
+    a temporary file (subject to configurations tmp_dir and tmp_file_template).
+
+    The ``tell`` command will output json with the path to the output file
+    written to, the size of the file, the result code of the command, and any
+    output produced by the command.
+
+    Note: this option is only used for ``ceph tell`` commands.
 
 .. option:: --connect-timeout CLUSTER_TIMEOUT
 

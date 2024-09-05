@@ -144,11 +144,13 @@ def test_apply_prometheus(spec: PrometheusSpec, raise_exception: bool, msg: str)
         ('2 host1 host2', "PlacementSpec(count=2, hosts=[HostPlacementSpec(hostname='host1', network='', name=''), HostPlacementSpec(hostname='host2', network='', name='')])"),
         ('label:foo', "PlacementSpec(label='foo')"),
         ('3 label:foo', "PlacementSpec(count=3, label='foo')"),
-        ('*', "PlacementSpec(host_pattern='*')"),
-        ('3 data[1-3]', "PlacementSpec(count=3, host_pattern='data[1-3]')"),
-        ('3 data?', "PlacementSpec(count=3, host_pattern='data?')"),
-        ('3 data*', "PlacementSpec(count=3, host_pattern='data*')"),
+        ('*', "PlacementSpec(host_pattern=HostPattern(pattern='*', pattern_type=PatternType.fnmatch))"),
+        ('3 data[1-3]', "PlacementSpec(count=3, host_pattern=HostPattern(pattern='data[1-3]', pattern_type=PatternType.fnmatch))"),
+        ('3 data?', "PlacementSpec(count=3, host_pattern=HostPattern(pattern='data?', pattern_type=PatternType.fnmatch))"),
+        ('3 data*', "PlacementSpec(count=3, host_pattern=HostPattern(pattern='data*', pattern_type=PatternType.fnmatch))"),
         ("count-per-host:4 label:foo", "PlacementSpec(count_per_host=4, label='foo')"),
+        ('regex:Foo[0-9]|Bar[0-9]', "PlacementSpec(host_pattern=HostPattern(pattern='Foo[0-9]|Bar[0-9]', pattern_type=PatternType.regex))"),
+        ('3 regex:Foo[0-9]|Bar[0-9]', "PlacementSpec(count=3, host_pattern=HostPattern(pattern='Foo[0-9]|Bar[0-9]', pattern_type=PatternType.regex))"),
     ])
 def test_parse_placement_specs(test_input, expected):
     ret = PlacementSpec.from_string(test_input)
@@ -161,6 +163,9 @@ def test_parse_placement_specs(test_input, expected):
         ("host=a host*"),
         ("host=a label:wrong"),
         ("host? host*"),
+        ("host? regex:host*"),
+        ("regex:host? host*"),
+        ("regex:host? regex:host*"),
         ('host=a count-per-host:0'),
         ('host=a count-per-host:-10'),
         ('count:2 count-per-host:1'),
@@ -313,6 +318,13 @@ placement:
   host_pattern: '*'
 unmanaged: true
 ---
+service_type: crash
+service_name: crash
+placement:
+  host_pattern:
+    pattern: Foo[0-9]|Bar[0-9]
+    pattern_type: regex
+---
 service_type: rgw
 service_id: default-rgw-realm.eu-central-1.1
 service_name: rgw.default-rgw-realm.eu-central-1.1
@@ -384,6 +396,12 @@ service_type: nfs
 service_id: mynfs
 service_name: nfs.mynfs
 spec:
+  idmap_conf:
+    general:
+      local-realms: domain.org
+    mapping:
+      nobody-group: nfsnobody
+      nobody-user: nfsnobody
   port: 1234
 ---
 service_type: iscsi
@@ -470,6 +488,15 @@ spec:
   privacy_protocol: AES
   snmp_destination: 192.168.1.42:162
   snmp_version: V3
+---
+service_type: grafana
+service_name: grafana
+placement:
+  count: 1
+spec:
+  anonymous_access: false
+  initial_admin_password: password
+  protocol: https
 """.split('---\n'))
 def test_yaml(y):
     data = yaml.safe_load(y)

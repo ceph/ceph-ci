@@ -35,7 +35,7 @@ echo "version $version"
 # update submodules
 echo "updating submodules..."
 force=$(if git submodule usage 2>&1 | grep --quiet 'update.*--force'; then echo --force ; fi)
-if ! git submodule sync || ! git submodule update $force --init --recursive; then
+if ! git submodule sync || ! git submodule update $force --init --recursive --progress; then
     echo "Error: could not initialize submodule projects"
     echo "  Network connectivity might be required."
     exit 1
@@ -55,7 +55,7 @@ download_from() {
             exit
         fi
         url=$url_base/$fname
-        wget -c --no-verbose -O $fname $url
+        wget --no-verbose -O $fname $url
         if [ $? != 0 -o ! -e $fname ]; then
             echo "Download of $url failed"
         elif [ $(sha256sum $fname | awk '{print $1}') != $sha256 ]; then
@@ -132,7 +132,7 @@ build_dashboard_frontend() {
 
   $CURR_DIR/src/tools/setup-virtualenv.sh $TEMP_DIR
   $TEMP_DIR/bin/pip install nodeenv
-  $TEMP_DIR/bin/nodeenv --verbose -p --node=18.17.0
+  $TEMP_DIR/bin/nodeenv --verbose -p --node=20.13.1
   cd src/pybind/mgr/dashboard/frontend
 
   . $TEMP_DIR/bin/activate
@@ -140,7 +140,7 @@ build_dashboard_frontend() {
   echo "Building ceph-dashboard frontend with build:localize script";
   # we need to use "--" because so that "--configuration production"
   # survives accross all scripts redirections inside package.json
-  npm run build:localize -- --configuration production
+  DASHBOARD_FRONTEND_LANGS="ALL" npm run build:localize -- --configuration production
   deactivate
   cd $CURR_DIR
   rm -rf $TEMP_DIR
@@ -154,7 +154,7 @@ generate_rook_ceph_client() {
 
 # clean out old cruft...
 echo "cleanup..."
-rm -f $outfile*
+rm -rf $outfile*
 
 # build new tarball
 echo "building tarball..."
@@ -191,11 +191,11 @@ ln -s . $outfile
 tar cvf $outfile.version.tar $outfile/src/.git_version $outfile/ceph.spec
 # NOTE: If you change this version number make sure the package is available
 # at the three URLs referenced below (may involve uploading to download.ceph.com)
-boost_version=1.82.0
-download_boost $boost_version a6e1ab9b0860e6a2881dd7b21fe9f737a095e5f33a3a874afc6a345228597ee6 \
-               https://boostorg.jfrog.io/artifactory/main/release/$boost_version/source \
-               https://download.ceph.com/qa
-download_liburing 0.7 8e2842cfe947f3a443af301bdd6d034455536c38a455c7a700d0c1ad165a7543 \
+boost_version=1.85.0
+download_boost $boost_version 7009fe1faa1697476bdc7027703a2badb84e849b7b0baad5086b087b971f8617 \
+               https://download.ceph.com/qa \
+               https://archives.boost.io/release/$boost_version/source
+download_liburing 2.5 456f5f882165630f0dc7b75e8fd53bd01a955d5d4720729b4323097e6e9f2a98 \
                   https://github.com/axboe/liburing/archive \
                   https://git.kernel.dk/cgit/liburing/snapshot
 pmdk_version=1.10

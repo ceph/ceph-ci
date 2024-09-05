@@ -19,16 +19,28 @@
 
 #pragma once
 
-#include <string_view>
+#include <iosfwd>
+#include <string>
+#include <variant>
 #include <fmt/format.h>
 
 #include "common/dout.h"
 #include "common/Formatter.h"
 
+// strong typedef to std::string
+struct rgw_account_id : std::string {
+  using std::string::string;
+  using std::string::operator=;
+  explicit rgw_account_id(const std::string& s) : std::string(s) {}
+};
+void encode_json_impl(const char* name, const rgw_account_id& id, Formatter* f);
+void decode_json_obj(rgw_account_id& id, JSONObj* obj);
+
 struct rgw_user {
+  // note: order of member variables matches the sort order of operator<=>
   std::string tenant;
-  std::string id;
   std::string ns;
+  std::string id;
 
   rgw_user() {}
   explicit rgw_user(const std::string& s) {
@@ -36,13 +48,13 @@ struct rgw_user {
   }
   rgw_user(const std::string& tenant, const std::string& id, const std::string& ns="")
     : tenant(tenant),
-      id(id),
-      ns(ns) {
+      ns(ns),
+      id(id) {
   }
   rgw_user(std::string&& tenant, std::string&& id, std::string&& ns="")
     : tenant(std::move(tenant)),
-      id(std::move(id)),
-      ns(std::move(ns)) {
+      ns(std::move(ns)),
+      id(std::move(id)) {
   }
 
   void encode(ceph::buffer::list& bl) const {
@@ -118,41 +130,25 @@ struct rgw_user {
     return *this;
   }
 
-  int compare(const rgw_user& u) const {
-    int r = tenant.compare(u.tenant);
-    if (r != 0)
-      return r;
-    r = ns.compare(u.ns);
-    if (r != 0) {
-      return r;
-    }
-    return id.compare(u.id);
-  }
-  int compare(const std::string& str) const {
-    rgw_user u(str);
-    return compare(u);
-  }
+  friend auto operator<=>(const rgw_user&, const rgw_user&) = default;
 
-  bool operator!=(const rgw_user& rhs) const {
-    return (compare(rhs) != 0);
-  }
-  bool operator==(const rgw_user& rhs) const {
-    return (compare(rhs) == 0);
-  }
-  bool operator<(const rgw_user& rhs) const {
-    if (tenant < rhs.tenant) {
-      return true;
-    } else if (tenant > rhs.tenant) {
-      return false;
-    }
-    if (ns < rhs.ns) {
-      return true;
-    } else if (ns > rhs.ns) {
-      return false;
-    }
-    return (id < rhs.id);
-  }
   void dump(ceph::Formatter *f) const;
   static void generate_test_instances(std::list<rgw_user*>& o);
 };
 WRITE_CLASS_ENCODER(rgw_user)
+
+
+/// Resources are either owned by accounts, or by users or roles (represented as
+/// rgw_user) that don't belong to an account.
+///
+/// This variant is present in binary encoding formats, so existing types cannot
+/// be changed or removed. New types can only be added to the end.
+using rgw_owner = std::variant<rgw_user, rgw_account_id>;
+
+rgw_owner parse_owner(const std::string& str);
+std::string to_string(const rgw_owner& o);
+
+std::ostream& operator<<(std::ostream& out, const rgw_owner& o);
+
+void encode_json_impl(const char *name, const rgw_owner& o, ceph::Formatter *f);
+void decode_json_obj(rgw_owner& o, JSONObj *obj);

@@ -15,10 +15,12 @@
                 introduced in the Ceph Kraken release. The Luminous release of
                 Ceph promoted BlueStore to the default OSD back end,
                 supplanting FileStore. As of the Reef release, FileStore is no
-                longer available as a storage backend.
+                longer available as a storage back end.
                 
-                BlueStore stores objects directly on Ceph block devices without
-                a mounted file system.  
+                BlueStore stores objects directly on raw block devices or
+                partitions, and does not interact with mounted file systems.
+                BlueStore uses RocksDB's key/value database to map object names
+                to block locations on disk.
 
         Bucket
                 In the context of :term:`RGW`, a bucket is a group of objects.
@@ -40,6 +42,11 @@
                 Ceph is a distributed network storage and file system with
                 distributed metadata management and POSIX semantics.
 
+        `ceph-ansible <https://docs.ceph.com/projects/ceph-ansible/en/latest/index.html>`_
+                A GitHub repository, supported from the Jewel release to the
+                Quincy release, that facilitates the installation of a Ceph
+                cluster.
+                
 	Ceph Block Device
                 Also called "RADOS Block Device" and :term:`RBD`. A software
                 instrument that orchestrates the storage of block-based data in
@@ -87,6 +94,11 @@
                 POSIX-compliant file system built on top of Ceph’s distributed
                 object store, RADOS.  See :ref:`CephFS Architecture
                 <arch-cephfs>` for more details.
+
+        :ref:`ceph-fuse <man-ceph-fuse>`
+                :ref:`ceph-fuse <man-ceph-fuse>` is a FUSE ("**F**\ilesystem in
+                **USE**\rspace") client for CephFS. ceph-fuse mounts a Ceph FS
+                ata  specified mount point. 
 
 	Ceph Interim Release
                 See :term:`Releases`.
@@ -211,10 +223,24 @@
                 Ceph cluster. See :ref:`the "Cluster Map" section of the
                 Architecture document<architecture_cluster_map>` for details.
 
+        Crimson
+                A next-generation OSD architecture whose main aim is the
+                reduction of latency costs incurred due to cross-core
+                communications. A re-design of the OSD reduces lock
+                contention by reducing communication between shards in the data
+                path. Crimson improves upon the performance of classic Ceph
+                OSDs by eliminating reliance on thread pools. See `Crimson:
+                Next-generation Ceph OSD for Multi-core Scalability
+                <https://ceph.io/en/news/blog/2023/crimson-multi-core-scalability/>`_.
+                See the :ref:`Crimson developer
+                documentation<crimson_dev_doc>`.
+
 	CRUSH
                 **C**\ontrolled **R**\eplication **U**\nder **S**\calable
                 **H**\ashing. The algorithm that Ceph uses to compute object
-                storage locations.
+                storage locations. See `CRUSH: Controlled, Scalable,
+                Decentralized Placement of Replicated Data
+                <https://ceph.com/assets/pdfs/weil-crush-sc06.pdf>`_.
 
 	CRUSH rule
                 The CRUSH data placement rule that applies to a particular
@@ -235,6 +261,10 @@
                 Another name for :term:`Dashboard`.
 
 	Dashboard Plugin
+        Flapping OSD
+                An OSD that is repeatedly marked ``up`` and then ``down`` in
+                rapid succession. See :ref:`rados_tshooting_flapping_osd`.
+
         FQDN
                 **F**\ully **Q**\ualified **D**\omain **N**\ame. A domain name
                 that is applied to a node in a network and that specifies the
@@ -253,30 +283,76 @@
         Hybrid OSD  
                 Refers to an OSD that has both HDD and SSD drives.
 
+        librados
+                An API that can be used to create a custom interface to a Ceph
+                storage cluster. ``librados`` makes it possible to interact
+                with Ceph Monitors and with OSDs. See :ref:`Introduction to
+                librados <librados-intro>`. See :ref:`librados (Python)
+                <librados-python>`.
+
 	LVM tags
                 **L**\ogical **V**\olume **M**\anager tags. Extensible metadata
                 for LVM volumes and groups. They are used to store
                 Ceph-specific information about devices and its relationship
                 with OSDs.
 
-	:ref:`MDS<cephfs_add_remote_mds>`
+	MDS
                 The Ceph **M**\eta\ **D**\ata **S**\erver daemon. Also referred
                 to as "ceph-mds". The Ceph metadata server daemon must be
                 running in any Ceph cluster that runs the CephFS file system.
-                The MDS stores all filesystem metadata. 
+                The MDS stores all filesystem metadata. :term:`Client`\s work
+                together with either a single MDS or a group of MDSes to
+                maintain a distributed metadata cache that is required by
+                CephFS.
+
+                See :ref:`Deploying Metadata Servers<cephfs_add_remote_mds>`.
+
+                See the :ref:`ceph-mds man page<ceph_mds_man>`.
 
 	MGR
                 The Ceph manager software, which collects all the state from
                 the whole cluster in one place.
 
-	MON
+	:ref:`MON<arch_monitor>`
 		The Ceph monitor software.
+
+        Monitor Store
+                The persistent storage that is used by the Monitor. This
+                includes the Monitor's RocksDB and all related files in
+                ``/var/lib/ceph``.
 
 	Node
                 See :term:`Ceph Node`.
 
+	Object Storage
+                Object storage is one of three kinds of storage relevant to
+                Ceph. The other two kinds of storage relevant to Ceph are file
+                storage and block storage. Object storage is the category of
+                storage most fundamental to Ceph.
+
 	Object Storage Device
                 See :term:`OSD`.
+
+        OMAP
+                "object map". A key-value store (a database) that is used to
+                reduce the time it takes to read data from and to write to the
+                Ceph cluster. RGW bucket indexes are stored as OMAPs.
+                Erasure-coded pools cannot store RADOS OMAP data structures.
+               
+                Run the command ``ceph osd df`` to see your OMAPs.
+
+                See Eleanor Cawthon's 2012 paper `A Distributed Key-Value Store
+                using Ceph
+                <https://ceph.io/assets/pdfs/CawthonKeyValueStore.pdf>`_ (17
+                pages).
+
+        OpenStack Swift
+                In the context of Ceph, OpenStack Swift is one of the two APIs
+                supported by the Ceph Object Store. The other API supported by
+                the Ceph Object Store is S3.
+
+                See `the OpenStack Storage API overview page
+                <https://docs.openstack.org/swift/latest/api/object_api_v1_overview.html>`_.
 
 	OSD
                 Probably :term:`Ceph OSD`, but not necessarily. Sometimes
@@ -289,18 +365,22 @@
                 mid-2010s to insist that "OSD" should refer to "Object Storage
                 Device", so it is important to know which meaning is intended. 
 
-	OSD fsid
-                This is a unique identifier used to identify an OSD. It is
-                found in the OSD path in a file called ``osd_fsid``. The
-                term ``fsid`` is used interchangeably with ``uuid``
+        OSD, flapping
+                See :term:`Flapping OSD`.
 
-	OSD id
-                The integer that defines an OSD. It is generated by the
-                monitors during the creation of each OSD.
+	OSD FSID 
+                The OSD fsid is a unique identifier that is used to identify an
+                OSD. It is found in the OSD path in a file called ``osd_fsid``.
+                The term ``FSID`` is used interchangeably with ``UUID``.
 
-	OSD uuid
-                This is the unique identifier of an OSD. This term is used
-                interchangeably with ``fsid``
+	OSD ID 
+                The OSD id an integer unique to each OSD (each OSD has a unique
+                OSD ID). Each OSD id is generated by the monitors during the
+                creation of its associated OSD.
+
+	OSD UUID 
+                The OSD UUID is the unique identifier of an OSD. This term is
+                used interchangeably with ``FSID``.
 
         Period
                 In the context of :term:`RGW`, a period is the configuration
@@ -334,6 +414,18 @@
                 OSD") in an acting set. Primary affinity was introduced in
                 Firefly (v. 0.80). See :ref:`Primary Affinity
                 <rados_ops_primary_affinity>`.
+
+        :ref:`Prometheus <mgr-prometheus>`
+                An open-source monitoring and alerting toolkit. Ceph offers a
+                :ref:`"Prometheus module" <mgr-prometheus>`, which provides a
+                Prometheus exporter that passes performance counters from a
+                collection point in ``ceph-mgr`` to Prometheus.
+
+        Quorum	
+                Quorum is the state that exists when a majority of the
+                :ref:`Monitors<arch_monitor>` in the cluster are ``up``. A
+                minimum of three :ref:`Monitors<arch_monitor>` must exist in
+                the cluster in order for Quorum to be possible.
 
 	RADOS
                 **R**\eliable **A**\utonomic **D**\istributed **O**\bject
@@ -397,6 +489,14 @@
                 provides a gateway to both the Amazon S3 RESTful API and the
                 OpenStack Swift API. 
 
+        S3
+                In the context of Ceph, S3 is one of the two APIs supported by
+                the Ceph Object Store. The other API supported by the Ceph
+                Object Store is OpenStack Swift.
+
+                See `the Amazon S3 overview page
+                <https://aws.amazon.com/s3/>`_.
+
         scrubs
 
                 The processes by which Ceph ensures data integrity. During the
@@ -409,7 +509,7 @@
                 "inconsistent" (that is, the PG is marked "inconsistent"). 
 
                 There are two kinds of scrubbing: light scrubbing and deep
-                scrubbing (also called "normal scrubbing" and "deep scrubbing",
+                scrubbing (also called "shallow scrubbing" and "deep scrubbing",
                 respectively). Light scrubbing is performed daily and does
                 nothing more than confirm that a given object exists and that
                 its metadata is correct. Deep scrubbing is performed weekly and
@@ -432,6 +532,9 @@
                 A systemd ``type`` where a command is defined in ``ExecStart``
                 which will exit upon completion (it is not intended to
                 daemonize)
+
+        Swift
+                See :term:`OpenStack Swift`.
 
 	Teuthology
 		The collection of software that performs scripted tests on Ceph.

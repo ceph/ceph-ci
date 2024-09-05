@@ -61,6 +61,9 @@ using namespace TOPNSPC::common;
 
 #define CEPH_MON_PROTOCOL     13 /* cluster internal */
 
+// NVMe-oF gateway monitor and HA is disabled by default upstream for now.
+// see doc/nvmeof/ha.md for more details
+//#define WITH_NVMEOF_GATEWAY_MONITOR
 
 enum {
   l_cluster_first = 555000,
@@ -712,6 +715,15 @@ public:
     return (class KVMonitor*) paxos_service[PAXOS_KV].get();
   }
 
+  class NVMeofGwMon *nvmegwmon() {
+#ifdef WITH_NVMEOF_GATEWAY_MONITOR
+      return (class NVMeofGwMon*) paxos_service[PAXOS_NVMEGW].get();
+#else
+      return nullptr;
+#endif
+  }
+
+
   friend class Paxos;
   friend class OSDMonitor;
   friend class MDSMonitor;
@@ -957,7 +969,7 @@ public:
   MonCap mon_caps;
   bool get_authorizer(int dest_type, AuthAuthorizer **authorizer);
 public: // for AuthMonitor msgr1:
-  int ms_handle_fast_authentication(Connection *con) override;
+  bool ms_handle_fast_authentication(Connection *con) override;
 private:
   void ms_handle_accept(Connection *con) override;
   bool ms_handle_reset(Connection *con) override;
@@ -1099,6 +1111,18 @@ public:
   }
 
   bool is_keyring_required();
+
+public:
+  ceph::coarse_mono_time get_starttime() const {
+    return starttime;
+  }
+  std::chrono::milliseconds get_uptime() const {
+    auto now = ceph::coarse_mono_clock::now();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(now-starttime);
+  }
+
+private:
+  ceph::coarse_mono_time const starttime = coarse_mono_clock::now();
 };
 
 #define CEPH_MON_FEATURE_INCOMPAT_BASE CompatSet::Feature (1, "initial feature set (~v.18)")
@@ -1116,6 +1140,7 @@ public:
 #define CEPH_MON_FEATURE_INCOMPAT_PACIFIC CompatSet::Feature(13, "pacific ondisk layout")
 #define CEPH_MON_FEATURE_INCOMPAT_QUINCY CompatSet::Feature(14, "quincy ondisk layout")
 #define CEPH_MON_FEATURE_INCOMPAT_REEF CompatSet::Feature(15, "reef ondisk layout")
+#define CEPH_MON_FEATURE_INCOMPAT_SQUID CompatSet::Feature(16, "squid ondisk layout")
 // make sure you add your feature to Monitor::get_supported_features
 
 

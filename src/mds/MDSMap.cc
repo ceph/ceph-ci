@@ -53,6 +53,7 @@ CompatSet MDSMap::get_compat_set_all() {
   feature_incompat.insert(MDS_FEATURE_INCOMPAT_FILE_LAYOUT_V2);
   feature_incompat.insert(MDS_FEATURE_INCOMPAT_SNAPREALM_V2);
   feature_incompat.insert(MDS_FEATURE_INCOMPAT_MINORLOGSEGMENTS);
+  feature_incompat.insert(MDS_FEATURE_INCOMPAT_QUIESCE_SUBVOLUMES);
 
   return CompatSet(feature_compat, feature_ro_compat, feature_incompat);
 }
@@ -71,6 +72,7 @@ CompatSet MDSMap::get_compat_set_default() {
   feature_incompat.insert(MDS_FEATURE_INCOMPAT_FILE_LAYOUT_V2);
   feature_incompat.insert(MDS_FEATURE_INCOMPAT_SNAPREALM_V2);
   feature_incompat.insert(MDS_FEATURE_INCOMPAT_MINORLOGSEGMENTS);
+  feature_incompat.insert(MDS_FEATURE_INCOMPAT_QUIESCE_SUBVOLUMES);
 
   return CompatSet(feature_compat, feature_ro_compat, feature_incompat);
 }
@@ -228,6 +230,12 @@ void MDSMap::dump(Formatter *f) const
   f->dump_string("balancer", balancer);
   f->dump_string("bal_rank_mask", bal_rank_mask);
   f->dump_int("standby_count_wanted", std::max(0, standby_count_wanted));
+  f->dump_unsigned("qdb_leader", qdb_cluster_leader);
+  f->open_array_section("qdb_cluster");
+  for (auto m: qdb_cluster_members) {
+    f->dump_int("member", m);
+  }
+  f->close_section();
 }
 
 void MDSMap::dump_flags_state(Formatter *f) const
@@ -239,6 +247,7 @@ void MDSMap::dump_flags_state(Formatter *f) const
     f->dump_bool(flag_display.at(CEPH_MDSMAP_ALLOW_STANDBY_REPLAY), allows_standby_replay());
     f->dump_bool(flag_display.at(CEPH_MDSMAP_REFUSE_CLIENT_SESSION), test_flag(CEPH_MDSMAP_REFUSE_CLIENT_SESSION));
     f->dump_bool(flag_display.at(CEPH_MDSMAP_REFUSE_STANDBY_FOR_ANOTHER_FS), test_flag(CEPH_MDSMAP_REFUSE_STANDBY_FOR_ANOTHER_FS));
+    f->dump_bool(flag_display.at(CEPH_MDSMAP_BALANCE_AUTOMATE), test_flag(CEPH_MDSMAP_BALANCE_AUTOMATE));
     f->close_section();
 }
 
@@ -289,6 +298,7 @@ void MDSMap::print(ostream& out) const
   out << "balancer\t" << balancer << "\n";
   out << "bal_rank_mask\t" << bal_rank_mask << "\n";
   out << "standby_count_wanted\t" << std::max(0, standby_count_wanted) << "\n";
+  out << "qdb_cluster\tleader: " << qdb_cluster_leader << " members: " << qdb_cluster_members << std::endl;
 
   multimap< pair<mds_rank_t, unsigned>, mds_gid_t > foo;
   for (const auto &p : mds_info) {
@@ -383,6 +393,8 @@ void MDSMap::print_flags(std::ostream& out) const {
     out << " " << flag_display.at(CEPH_MDSMAP_REFUSE_CLIENT_SESSION);
   if (test_flag(CEPH_MDSMAP_REFUSE_STANDBY_FOR_ANOTHER_FS))
     out << " " << flag_display.at(CEPH_MDSMAP_REFUSE_STANDBY_FOR_ANOTHER_FS);
+  if (test_flag(CEPH_MDSMAP_BALANCE_AUTOMATE))
+    out << " " << flag_display.at(CEPH_MDSMAP_BALANCE_AUTOMATE);
 }
 
 void MDSMap::get_health(list<pair<health_status_t,string> >& summary,
@@ -770,7 +782,7 @@ void MDSMap::encode(bufferlist& bl, uint64_t features) const
   encode(data_pools, bl);
   encode(cas_pool, bl);
 
-  __u16 ev = 17;
+  __u16 ev = 19;
   encode(ev, bl);
   encode(compat, bl);
   encode(metadata_pool, bl);
@@ -797,8 +809,10 @@ void MDSMap::encode(bufferlist& bl, uint64_t features) const
     encode(min_compat_client, bl);
   }
   encode(required_client_features, bl);
-  encode(max_xattr_size, bl);
   encode(bal_rank_mask, bl);
+  encode(max_xattr_size, bl);
+  encode(qdb_cluster_leader, bl);
+  encode(qdb_cluster_members, bl);
   ENCODE_FINISH(bl);
 }
 
@@ -849,7 +863,8 @@ void MDSMap::decode(bufferlist::const_iterator& p)
     decode(cas_pool, p);
   }
 
-  // kclient ignores everything from here
+  // kclient skips most of what's below
+  // see fs/ceph/mdsmap.c for current decoding
   __u16 ev = 1;
   if (struct_v >= 2)
     decode(ev, p);
@@ -946,8 +961,16 @@ void MDSMap::decode(bufferlist::const_iterator& p)
   }
 
   if (ev >= 17) {
-    decode(max_xattr_size, p);
     decode(bal_rank_mask, p);
+  }
+
+  if (ev >= 18) {
+    decode(max_xattr_size, p);
+  }
+
+  if (ev >= 19) {
+    decode(qdb_cluster_leader, p);
+    decode(qdb_cluster_members, p);
   }
 
   /* All MDS since at least v14.0.0 understand INLINE */

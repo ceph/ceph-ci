@@ -48,10 +48,13 @@
       group image add                   Add an image to a group.
       group image list (... ls)         List images in a group.
       group image remove (... rm)       Remove an image from a group.
+      group info                        Show information about a group.
       group list (group ls)             List rbd groups.
       group remove (group rm)           Delete a group.
-      group rename                      Rename a group within pool.
+      group rename                      Rename a group within its pool or
+                                        namespace.
       group snap create                 Make a snapshot of a group.
+      group snap info                   Show information about a group snapshot.
       group snap list (... ls)          List snapshots of a group.
       group snap remove (... rm)        Remove a snapshot from a group.
       group snap rename                 Rename group's snapshot.
@@ -63,7 +66,8 @@
                                         associated.
       image-meta set                    Image metadata set key with value.
       import                            Import image from file.
-      import-diff                       Import an incremental diff.
+      import-diff                       Apply an incremental diff to image HEAD,
+                                        then create a snapshot.
       info                              Show information about image size,
                                         striping, etc.
       journal client disconnect         Flag image journal client as disconnected.
@@ -93,13 +97,14 @@
                                         mirroring.
       mirror image snapshot             Create RBD mirroring image snapshot.
       mirror image status               Show RBD mirroring status for an image.
-      mirror pool demote                Demote all primary images in the pool.
-      mirror pool disable               Disable RBD mirroring by default within a
-                                        pool.
-      mirror pool enable                Enable RBD mirroring by default within a
-                                        pool.
-      mirror pool info                  Show information about the pool mirroring
-                                        configuration.
+      mirror pool demote                Demote all primary images in a pool or
+                                        namespace.
+      mirror pool disable               Disable RBD mirroring in a pool or
+                                        namespace.
+      mirror pool enable                Enable RBD mirroring in a pool or
+                                        namespace.
+      mirror pool info                  Show mirroring configuration for a pool
+                                        or namespace.
       mirror pool peer add              Add a mirroring peer to a pool.
       mirror pool peer bootstrap create Create a peer bootstrap token to import
                                         in a remote cluster
@@ -107,10 +112,10 @@
                                         from a remote cluster
       mirror pool peer remove           Remove a mirroring peer from a pool.
       mirror pool peer set              Update mirroring peer settings.
-      mirror pool promote               Promote all non-primary images in the
-                                        pool.
-      mirror pool status                Show status for all mirrored images in
-                                        the pool.
+      mirror pool promote               Promote all non-primary images in a pool
+                                        or namespace.
+      mirror pool status                Show status for all mirrored images in a
+                                        pool or namespace.
       mirror snapshot schedule add      Add mirror snapshot schedule.
       mirror snapshot schedule list (... ls)
                                         List mirror snapshot schedule.
@@ -130,7 +135,8 @@
       pool init                         Initialize pool for use by RBD.
       pool stats                        Display pool statistics.
       remove (rm)                       Delete an image.
-      rename (mv)                       Rename image within pool.
+      rename (mv)                       Rename an image within its pool or
+                                        namespace.
       resize                            Resize (expand or shrink) image.
       snap create (snap add)            Create a snapshot.
       snap limit clear                  Remove snapshot limit.
@@ -194,9 +200,9 @@
   
   rbd help children
   usage: rbd children [--pool <pool>] [--namespace <namespace>] 
-                      [--image <image>] [--snap <snap>] [--snap-id <snap-id>] 
-                      [--all] [--descendants] [--format <format>] 
-                      [--pretty-format] 
+                      [--image <image>] [--snap <snap>] [--image-id <image-id>] 
+                      [--snap-id <snap-id>] [--all] [--descendants] 
+                      [--format <format>] [--pretty-format] 
                       <image-or-snap-spec> 
   
   Display children of an image or its snapshot.
@@ -211,6 +217,7 @@
     --namespace arg       namespace name
     --image arg           image name
     --snap arg            snapshot name
+    --image-id arg        image id
     --snap-id arg         snapshot id
     -a [ --all ]          list all children (include trash)
     --descendants         include all descendants
@@ -219,9 +226,10 @@
   
   rbd help clone
   usage: rbd clone [--pool <pool>] [--namespace <namespace>] [--image <image>] 
-                   [--snap <snap>] [--dest-pool <dest-pool>] 
-                   [--dest-namespace <dest-namespace>] [--dest <dest>] 
-                   [--order <order>] [--object-size <object-size>] 
+                   [--snap <snap>] [--snap-id <snap-id>] 
+                   [--dest-pool <dest-pool>] [--dest-namespace <dest-namespace>] 
+                   [--dest <dest>] [--order <order>] 
+                   [--object-size <object-size>] 
                    [--image-feature <image-feature>] [--image-shared] 
                    [--stripe-unit <stripe-unit>] [--stripe-count <stripe-count>] 
                    [--data-pool <data-pool>] 
@@ -246,6 +254,7 @@
     --namespace arg           source namespace name
     --image arg               source image name
     --snap arg                source snapshot name
+    --snap-id arg             source snapshot id
     --dest-pool arg           destination pool name
     --dest-namespace arg      destination namespace name
     --dest arg                destination image name
@@ -970,6 +979,24 @@
     -p [ --pool ] arg     pool name unless overridden
     --image-id arg        image id
   
+  rbd help group info
+  usage: rbd group info [--pool <pool>] [--namespace <namespace>] 
+                        [--group <group>] [--format <format>] [--pretty-format] 
+                        <group-spec> 
+  
+  Show information about a group.
+  
+  Positional arguments
+    <group-spec>         group specification
+                         (example: [<pool-name>/[<namespace>/]]<group-name>)
+  
+  Optional arguments
+    -p [ --pool ] arg    pool name
+    --namespace arg      namespace name
+    --group arg          group name
+    --format arg         output format (plain, json, or xml) [default: plain]
+    --pretty-format      pretty formatting (json and xml)
+  
   rbd help group list
   usage: rbd group list [--pool <pool>] [--namespace <namespace>] 
                         [--format <format>] [--pretty-format] 
@@ -1010,7 +1037,7 @@
                           [--dest-group <dest-group>] 
                           <source-group-spec> <dest-group-spec> 
   
-  Rename a group within pool.
+  Rename a group within its pool or namespace.
   
   Positional arguments
     <source-group-spec>  source group specification
@@ -1046,6 +1073,27 @@
     --snap arg              snapshot name
     --skip-quiesce          do not run quiesce hooks
     --ignore-quiesce-error  ignore quiesce hook error
+  
+  rbd help group snap info
+  usage: rbd group snap info [--pool <pool>] [--namespace <namespace>] 
+                             [--group <group>] [--snap <snap>] 
+                             [--format <format>] [--pretty-format] 
+                             <group-snap-spec> 
+  
+  Show information about a group snapshot.
+  
+  Positional arguments
+    <group-snap-spec>    group specification
+                         (example:
+                         [<pool-name>/[<namespace>/]]<group-name>@<snap-name>)
+  
+  Optional arguments
+    -p [ --pool ] arg    pool name
+    --namespace arg      namespace name
+    --group arg          group name
+    --snap arg           snapshot name
+    --format arg         output format (plain, json, or xml) [default: plain]
+    --pretty-format      pretty formatting (json and xml)
   
   rbd help group snap list
   usage: rbd group snap list [--format <format>] [--pretty-format] 
@@ -1254,7 +1302,7 @@
                          [--sparse-size <sparse-size>] [--no-progress] 
                          <path-name> <image-spec> 
   
-  Import an incremental diff.
+  Apply an incremental diff to image HEAD, then create a snapshot.
   
   Positional arguments
     <path-name>          import file (or '-' for stdin)
@@ -1757,7 +1805,7 @@
   usage: rbd mirror pool demote [--pool <pool>] [--namespace <namespace>] 
                                 <pool-spec> 
   
-  Demote all primary images in the pool.
+  Demote all primary images in a pool or namespace.
   
   Positional arguments
     <pool-spec>          pool specification
@@ -1771,7 +1819,7 @@
   usage: rbd mirror pool disable [--pool <pool>] [--namespace <namespace>] 
                                  <pool-spec> 
   
-  Disable RBD mirroring by default within a pool.
+  Disable RBD mirroring in a pool or namespace.
   
   Positional arguments
     <pool-spec>          pool specification
@@ -1784,26 +1832,28 @@
   rbd help mirror pool enable
   usage: rbd mirror pool enable [--pool <pool>] [--namespace <namespace>] 
                                 [--site-name <site-name>] 
-                                <pool-spec> <mode> 
-  
-  Enable RBD mirroring by default within a pool.
-  
+                                [--remote-namespace <remote-namespace>]
+	                        <pool-spec> <mode>
+
+  Enable RBD mirroring in a pool or namespace.
+
   Positional arguments
-    <pool-spec>          pool specification
-                         (example: <pool-name>[/<namespace>]
-    <mode>               mirror mode [image or pool]
-  
+    <pool-spec>            pool specification
+                           (example: <pool-name>[/<namespace>]
+    <mode>                 mirror mode [image or pool]
+
   Optional arguments
-    -p [ --pool ] arg    pool name
-    --namespace arg      namespace name
-    --site-name arg      local site name
-  
+    -p [ --pool ] arg      pool name
+    --namespace arg        namespace name
+    --site-name arg        local site name
+    --remote-namespace arg remote namespace name
+
   rbd help mirror pool info
   usage: rbd mirror pool info [--pool <pool>] [--namespace <namespace>] 
                               [--format <format>] [--pretty-format] [--all] 
                               <pool-spec> 
   
-  Show information about the pool mirroring configuration.
+  Show mirroring configuration for a pool or namespace.
   
   Positional arguments
     <pool-spec>          pool specification
@@ -1911,7 +1961,7 @@
                                  [--namespace <namespace>] 
                                  <pool-spec> 
   
-  Promote all non-primary images in the pool.
+  Promote all non-primary images in a pool or namespace.
   
   Positional arguments
     <pool-spec>          pool specification
@@ -1927,7 +1977,7 @@
                                 [--format <format>] [--pretty-format] [--verbose] 
                                 <pool-spec> 
   
-  Show status for all mirrored images in the pool.
+  Show status for all mirrored images in a pool or namespace.
   
   Positional arguments
     <pool-spec>          pool specification
@@ -2217,7 +2267,7 @@
                     [--dest-namespace <dest-namespace>] [--dest <dest>] 
                     <source-image-spec> <dest-image-spec> 
   
-  Rename image within pool.
+  Rename an image within its pool or namespace.
   
   Positional arguments
     <source-image-spec>  source image specification

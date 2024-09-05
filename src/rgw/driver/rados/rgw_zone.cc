@@ -516,7 +516,6 @@ int create_realm(const DoutPrefixProvider* dpp, optional_yield y,
     period->period_map.id = period->id;
     period->epoch = FIRST_EPOCH;
     period->realm_id = info.id;
-    period->realm_name = info.name;
 
     r = cfgstore->create_period(dpp, y, true, *period);
     if (r < 0) {
@@ -531,14 +530,6 @@ int create_realm(const DoutPrefixProvider* dpp, optional_yield y,
   r = realm_set_current_period(dpp, y, cfgstore, *writer, info, *period);
   if (r < 0) {
     return r;
-  }
-
-  // try to set as default. may race with another create, so pass exclusive=true
-  // so we don't override an existing default
-  r = set_default_realm(dpp, y, cfgstore, info, true);
-  if (r < 0 && r != -EEXIST) {
-    ldpp_dout(dpp, 0) << "WARNING: failed to set realm as default: "
-        << cpp_strerror(r) << dendl;
   }
 
   if (writer_out) {
@@ -770,7 +761,6 @@ int commit_period(const DoutPrefixProvider* dpp, optional_yield y,
     }
     ldpp_dout(dpp, 4) << "Promoted to master zone and committed new period "
         << info.id << dendl;
-    (void) cfgstore->realm_notify_new_period(dpp, y, info);
     return 0;
   }
   // period must be based on current epoch
@@ -789,10 +779,6 @@ int commit_period(const DoutPrefixProvider* dpp, optional_yield y,
   // write the period
   constexpr bool exclusive = true;
   int r = cfgstore->create_period(dpp, y, exclusive, info);
-  if (r == -EEXIST) {
-    // already have this epoch (or a more recent one)
-    return 0;
-  }
   if (r < 0) {
     ldpp_dout(dpp, 0) << "failed to store period: " << cpp_strerror(r) << dendl;
     return r;
@@ -804,7 +790,6 @@ int commit_period(const DoutPrefixProvider* dpp, optional_yield y,
   }
   ldpp_dout(dpp, 4) << "Committed new epoch " << info.epoch
       << " for period " << info.id << dendl;
-  (void) cfgstore->realm_notify_new_period(dpp, y, info);
   return 0;
 }
 
@@ -1036,10 +1021,12 @@ int create_zone(const DoutPrefixProvider* dpp, optional_yield y,
   }
 
   // add default placement with empty pool name
+  RGWZonePlacementInfo placement;
   rgw_pool pool;
-  auto& placement = info.placement_pools["default-placement"];
   placement.storage_classes.set_storage_class(
       RGW_STORAGE_CLASS_STANDARD, &pool, nullptr);
+  // don't overwrite if it already exists
+  info.placement_pools.emplace("default-placement", std::move(placement));
 
   // build a set of all pool names used by other zones
   std::set<rgw_pool> pools;
@@ -1094,6 +1081,40 @@ int delete_zone(const DoutPrefixProvider* dpp, optional_yield y,
   return writer.remove(dpp, y);
 }
 
+auto find_zone_placement(const DoutPrefixProvider* dpp,
+                         const RGWZoneParams& info,
+                         const rgw_placement_rule& rule)
+    -> const RGWZonePlacementInfo*
+{
+  auto i = info.placement_pools.find(rule.name);
+  if (i == info.placement_pools.end()) {
+    ldpp_dout(dpp, 0) << "ERROR: This zone does not contain placement rule "
+        << rule.name << dendl;
+    return nullptr;
+  }
+
+  const std::string& storage_class = rule.get_storage_class();
+  if (!i->second.storage_class_exists(storage_class)) {
+    ldpp_dout(dpp, 5) << "ERROR: The zone placement for rule " << rule.name
+        << " does not contain storage class " << storage_class << dendl;
+    return nullptr;
+  }
+
+  return &i->second;
+}
+
+bool all_zonegroups_support(const SiteConfig& site, std::string_view feature)
+{
+  const auto& period = site.get_period();
+  if (!period) {
+    // if we're not in a realm, just check the local zonegroup
+    return site.get_zonegroup().supports(feature);
+  }
+  const auto& zgs = period->period_map.zonegroups;
+  return std::all_of(zgs.begin(), zgs.end(), [feature] (const auto& pair) {
+      return pair.second.supports(feature);
+    });
+}
 
 static int read_or_create_default_zone(const DoutPrefixProvider* dpp,
                                        optional_yield y,
@@ -1143,7 +1164,7 @@ static int read_or_create_default_zonegroup(const DoutPrefixProvider* dpp,
 }
 
 int SiteConfig::load(const DoutPrefixProvider* dpp, optional_yield y,
-                     sal::ConfigStore* cfgstore)
+                     sal::ConfigStore* cfgstore, bool force_local_zonegroup)
 {
   // clear existing configuration
   zone = nullptr;
@@ -1178,6 +1199,18 @@ int SiteConfig::load(const DoutPrefixProvider* dpp, optional_yield y,
   } else if (realm) {
     // load the realm's default zone
     r = cfgstore->read_default_zone(dpp, y, realm->id, zone_params, nullptr);
+    if (r == -ENOENT) {
+      if (realm_name.empty()) {
+        // rgw_realm was not specified, and we found a default realm that
+        // doesn't have a default zone. ignore the realm and try to load the
+        // global default zone
+        realm = std::nullopt;
+        r = read_or_create_default_zone(dpp, y, cfgstore, zone_params);
+      } else {
+        ldpp_dout(dpp, 0) << "No rgw_zone configured, and the selected realm \""
+            << realm->name << "\" does not have a default zone." << dendl;
+      }
+    }
   } else {
     // load or create the "default" zone
     r = read_or_create_default_zone(dpp, y, cfgstore, zone_params);
@@ -1197,15 +1230,27 @@ int SiteConfig::load(const DoutPrefixProvider* dpp, optional_yield y,
     }
   }
 
-  if (realm) {
+  if (realm && !force_local_zonegroup) {
     // try to load the realm's period
     r = load_period_zonegroup(dpp, y, cfgstore, *realm, zone_params.id);
-  } else {
-    // fall back to a local zonegroup
-    r = load_local_zonegroup(dpp, y, cfgstore, zone_params.id);
+    if (r != -ENOENT) {
+      return r;
+    }
+    ldpp_dout(dpp, 10) << "cannot find current period zonegroup, "
+        "using local zonegroup configuration" << dendl;
   }
 
-  return r;
+  // fall back to a local zonegroup
+  return load_local_zonegroup(dpp, y, cfgstore, zone_params.id);
+}
+
+std::unique_ptr<SiteConfig> SiteConfig::make_fake() {
+  auto fake = std::make_unique<SiteConfig>();
+  fake->local_zonegroup.emplace();
+  fake->local_zonegroup->zones.emplace(""s, RGWZone{});
+  fake->zonegroup = &*fake->local_zonegroup;
+  fake->zone = &fake->zonegroup->zones.begin()->second;
+  return fake;
 }
 
 int SiteConfig::load_period_zonegroup(const DoutPrefixProvider* dpp,
@@ -1253,6 +1298,9 @@ int SiteConfig::load_local_zonegroup(const DoutPrefixProvider* dpp,
   std::string zonegroup_name = dpp->get_cct()->_conf->rgw_zonegroup;
   if (!zonegroup_name.empty()) {
     r = cfgstore->read_zonegroup_by_name(dpp, y, zonegroup_name,
+                                         *local_zonegroup, nullptr);
+  } else if (realm) {
+    r = cfgstore->read_default_zonegroup(dpp, y, realm->id,
                                          *local_zonegroup, nullptr);
   } else {
     r = read_or_create_default_zonegroup(dpp, y, cfgstore, zone_params,

@@ -768,15 +768,6 @@ RGWBucketSyncPolicyHandler::RGWBucketSyncPolicyHandler(const RGWBucketSyncPolicy
                                                                                                        bucket_attrs(std::move(_bucket_attrs)) {
   if (_bucket_info.sync_policy) {
     sync_policy = *_bucket_info.sync_policy;
-
-    for (auto& entry : sync_policy.groups) {
-      for (auto& pipe : entry.second.pipes) {
-        if (pipe.params.mode == rgw_sync_pipe_params::MODE_USER &&
-            pipe.params.user.empty()) {
-          pipe.params.user = _bucket_info.owner;
-        }
-      }
-    }
   }
   legacy_config = parent->legacy_config;
   bucket = _bucket_info.bucket;
@@ -991,6 +982,19 @@ void RGWBucketSyncPolicyHandler::get_pipes(std::set<rgw_sync_bucket_pipe> *_sour
       _targets->insert(target_pipe);
     }
   }
+}
+
+bool RGWBucketSyncPolicyHandler::bucket_exports_object(const std::string& obj_name, const RGWObjTags& tags) const {
+  if (bucket_exports_data()) {
+    for (auto& entry : target_pipes.pipe_map) {
+      auto& filter = entry.second.params.source.filter;
+      if (filter.check_prefix(obj_name) && filter.check_tags(tags.get_tags())) {
+	return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 bool RGWBucketSyncPolicyHandler::bucket_exports_data() const

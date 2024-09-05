@@ -52,6 +52,7 @@ protected:
   CephContext *cct;
 
   std::string method;
+  std::string url_orig;
   std::string url;
 
   std::string protocol;
@@ -150,9 +151,9 @@ public:
     req_timeout = timeout;
   }
 
-  int process(optional_yield y);
+  int process(const DoutPrefixProvider* dpp, optional_yield y);
 
-  int wait(optional_yield y);
+  int wait(const DoutPrefixProvider* dpp, optional_yield y);
   void cancel();
   bool is_done();
 
@@ -164,6 +165,10 @@ public:
 
   void set_url(const std::string& _url) {
     url = _url;
+  }
+
+  const std::string& get_url_orig() const {
+    return url_orig;
   }
 
   void set_method(const std::string& _method) {
@@ -344,5 +349,6 @@ class RGWHTTP
 {
 public:
   static int send(RGWHTTPClient *req);
-  static int process(RGWHTTPClient *req, optional_yield y);
+  static int process(const DoutPrefixProvider* dpp, RGWHTTPClient *req,
+                     optional_yield y);
 };

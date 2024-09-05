@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <boost/intrusive_ptr.hpp>
+#include <boost/smart_ptr/intrusive_ref_counter.hpp>
 #include "include/str_list.h"
 #include "include/rados/librados.hpp"
 #include "cls_rgw_ops.h"
@@ -151,10 +153,10 @@ public:
   }
 };
 
-class RGWGetDirHeader_CB : public RefCountedObject {
+class RGWGetDirHeader_CB : public boost::intrusive_ref_counter<RGWGetDirHeader_CB> {
 public:
-  ~RGWGetDirHeader_CB() override {}
-  virtual void handle_response(int r, rgw_bucket_dir_header& header) = 0;
+  virtual ~RGWGetDirHeader_CB() {}
+  virtual void handle_response(int r, const rgw_bucket_dir_header& header) = 0;
 };
 
 class BucketIndexShardsManager {
@@ -379,7 +381,7 @@ void cls_rgw_bucket_link_olh(librados::ObjectWriteOperation& op,
                             uint64_t olh_epoch, ceph::real_time unmod_since, bool high_precision_time, bool log_op, const rgw_zone_set& zones_trace);
 void cls_rgw_bucket_unlink_instance(librados::ObjectWriteOperation& op,
                                    const cls_rgw_obj_key& key, const std::string& op_tag,
-                                   const std::string& olh_tag, uint64_t olh_epoch, bool log_op, const rgw_zone_set& zones_trace);
+                                   const std::string& olh_tag, uint64_t olh_epoch, bool log_op, uint16_t bilog_flags, const rgw_zone_set& zones_trace);
 void cls_rgw_get_olh_log(librados::ObjectReadOperation& op, const cls_rgw_obj_key& olh, uint64_t ver_marker, const std::string& olh_tag, rgw_cls_read_olh_log_ret& log_ret, int& op_ret);
 void cls_rgw_trim_olh_log(librados::ObjectWriteOperation& op, const cls_rgw_obj_key& olh, uint64_t ver, const std::string& olh_tag);
 void cls_rgw_clear_olh(librados::ObjectWriteOperation& op, const cls_rgw_obj_key& olh, const std::string& olh_tag);
@@ -393,7 +395,8 @@ int cls_rgw_bucket_link_olh(librados::IoCtx& io_ctx, const std::string& oid,
                             uint64_t olh_epoch, ceph::real_time unmod_since, bool high_precision_time, bool log_op, const rgw_zone_set& zones_trace);
 int cls_rgw_bucket_unlink_instance(librados::IoCtx& io_ctx, const std::string& oid,
                                    const cls_rgw_obj_key& key, const std::string& op_tag,
-                                   const std::string& olh_tag, uint64_t olh_epoch, bool log_op, const rgw_zone_set& zones_trace);
+                                   const std::string& olh_tag, uint64_t olh_epoch, bool log_op,
+                                   uint16_t bilog_flags, const rgw_zone_set& zones_trace);
 int cls_rgw_get_olh_log(librados::IoCtx& io_ctx, std::string& oid, const cls_rgw_obj_key& olh, uint64_t ver_marker,
                         const std::string& olh_tag, rgw_cls_read_olh_log_ret& log_ret);
 int cls_rgw_clear_olh(librados::IoCtx& io_ctx, std::string& oid, const cls_rgw_obj_key& olh, const std::string& olh_tag);
@@ -405,7 +408,7 @@ int cls_rgw_usage_log_trim(librados::IoCtx& io_ctx, const std::string& oid, cons
 /**
  * Std::list the bucket with the starting object and filter prefix.
  * NOTE: this method do listing requests for each bucket index shards identified by
- *       the keys of the *list_results* std::map, which means the std::map should be popludated
+ *       the keys of the *list_results* std::map, which means the std::map should be populated
  *       by the caller to fill with each bucket index object id.
  *
  * io_ctx        - IO context for rados.
@@ -572,7 +575,8 @@ public:
   virtual ~CLSRGWIssueBucketBILogStop() override {}
 };
 
-int cls_rgw_get_dir_header_async(librados::IoCtx& io_ctx, std::string& oid, RGWGetDirHeader_CB *ctx);
+int cls_rgw_get_dir_header_async(librados::IoCtx& io_ctx, const std::string& oid,
+                                 boost::intrusive_ptr<RGWGetDirHeader_CB> cb);
 
 void cls_rgw_encode_suggestion(char op, rgw_bucket_dir_entry& dirent, ceph::buffer::list& updates);
 
@@ -596,34 +600,34 @@ void cls_rgw_usage_log_add(librados::ObjectWriteOperation& op, rgw_usage_log_inf
 void cls_rgw_gc_set_entry(librados::ObjectWriteOperation& op, uint32_t expiration_secs, cls_rgw_gc_obj_info& info);
 void cls_rgw_gc_defer_entry(librados::ObjectWriteOperation& op, uint32_t expiration_secs, const std::string& tag);
 void cls_rgw_gc_remove(librados::ObjectWriteOperation& op, const std::vector<std::string>& tags);
-
-// these overloads which call io_ctx.operate() should not be called in the rgw.
-// rgw_rados_operate() should be called after the overloads w/o calls to io_ctx.operate()
-#ifndef CLS_CLIENT_HIDE_IOCTX
-int cls_rgw_gc_list(librados::IoCtx& io_ctx, std::string& oid, std::string& marker, uint32_t max, bool expired_only,
-                    std::list<cls_rgw_gc_obj_info>& entries, bool *truncated, std::string& next_marker);
-#endif
+void cls_rgw_gc_list(librados::ObjectReadOperation& op, const std::string& marker,
+                     uint32_t max, bool expired_only, bufferlist& bl);
+int cls_rgw_gc_list_decode(const bufferlist& bl,
+                           std::list<cls_rgw_gc_obj_info>& entries,
+                           bool *truncated, std::string& next_marker);
 
 /* lifecycle */
-// these overloads which call io_ctx.operate() should not be called in the rgw.
-// rgw_rados_operate() should be called after the overloads w/o calls to io_ctx.operate()
-#ifndef CLS_CLIENT_HIDE_IOCTX
-int cls_rgw_lc_get_head(librados::IoCtx& io_ctx, const std::string& oid, cls_rgw_lc_obj_head& head);
-int cls_rgw_lc_put_head(librados::IoCtx& io_ctx, const std::string& oid, cls_rgw_lc_obj_head& head);
-int cls_rgw_lc_get_next_entry(librados::IoCtx& io_ctx, const std::string& oid, const std::string& marker, cls_rgw_lc_entry& entry);
-int cls_rgw_lc_rm_entry(librados::IoCtx& io_ctx, const std::string& oid, const cls_rgw_lc_entry& entry);
-int cls_rgw_lc_set_entry(librados::IoCtx& io_ctx, const std::string& oid, const cls_rgw_lc_entry& entry);
-int cls_rgw_lc_get_entry(librados::IoCtx& io_ctx, const std::string& oid, const std::string& marker, cls_rgw_lc_entry& entry);
-int cls_rgw_lc_list(librados::IoCtx& io_ctx, const std::string& oid,
-		    const std::string& marker, uint32_t max_entries,
-                    std::vector<cls_rgw_lc_entry>& entries);
-#endif
+void cls_rgw_lc_get_head(librados::ObjectReadOperation& op, bufferlist& bl);
+int cls_rgw_lc_get_head_decode(const bufferlist& bl, cls_rgw_lc_obj_head& head);
+void cls_rgw_lc_put_head(librados::ObjectWriteOperation& op, const cls_rgw_lc_obj_head& head);
+void cls_rgw_lc_get_next_entry(librados::ObjectReadOperation& op, const std::string& marker, bufferlist& bl);
+int cls_rgw_lc_get_next_entry_decode(const bufferlist& bl, cls_rgw_lc_entry& entry);
+void cls_rgw_lc_rm_entry(librados::ObjectWriteOperation& op, const cls_rgw_lc_entry& entry);
+void cls_rgw_lc_set_entry(librados::ObjectWriteOperation& op, const cls_rgw_lc_entry& entry);
+void cls_rgw_lc_get_entry(librados::ObjectReadOperation& op, const std::string& marker, bufferlist& bl);
+int cls_rgw_lc_get_entry_decode(const bufferlist& bl, cls_rgw_lc_entry& entry);
+void cls_rgw_lc_list(librados::ObjectReadOperation& op,
+                     const std::string& marker, uint32_t max_entries,
+                     bufferlist& bl);
+int cls_rgw_lc_list_decode(const bufferlist& bl, std::vector<cls_rgw_lc_entry>& entries);
 
 /* multipart */
 void cls_rgw_mp_upload_part_info_update(librados::ObjectWriteOperation& op, const std::string& part_key, const RGWUploadPartInfo& info);
 
 /* resharding */
-void cls_rgw_reshard_add(librados::ObjectWriteOperation& op, const cls_rgw_reshard_entry& entry);
+void cls_rgw_reshard_add(librados::ObjectWriteOperation& op,
+			 const cls_rgw_reshard_entry& entry,
+			 const bool create_only);
 void cls_rgw_reshard_remove(librados::ObjectWriteOperation& op, const cls_rgw_reshard_entry& entry);
 // these overloads which call io_ctx.operate() should not be called in the rgw.
 // rgw_rados_operate() should be called after the overloads w/o calls to io_ctx.operate()

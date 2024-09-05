@@ -26,6 +26,7 @@
 #include "include/str_list.h"
 #include "include/stringify.h"
 #include "rgw_main.h"
+#include "rgw_asio_thread.h"
 #include "rgw_common.h"
 #include "rgw_sal.h"
 #include "rgw_sal_config.h"
@@ -37,6 +38,7 @@
 #include "rgw_rest_admin.h"
 #include "rgw_rest_info.h"
 #include "rgw_rest_usage.h"
+#include "rgw_rest_account.h"
 #include "rgw_rest_bucket.h"
 #include "rgw_rest_metadata.h"
 #include "rgw_rest_log.h"
@@ -58,12 +60,6 @@
 #include "rgw_kmip_client_impl.h"
 #include "rgw_perf_counters.h"
 #include "rgw_signal.h"
-#ifdef WITH_RADOSGW_AMQP_ENDPOINT
-#include "rgw_amqp.h"
-#endif
-#ifdef WITH_RADOSGW_KAFKA_ENDPOINT
-#include "rgw_kafka.h"
-#endif
 #ifdef WITH_ARROW_FLIGHT
 #include "rgw_flight_frontend.h"
 #endif
@@ -203,6 +199,17 @@ void rgw::AppMain::init_numa()
   }
 } /* init_numa */
 
+void rgw::AppMain::need_context_pool() {
+  if (!context_pool) {
+    context_pool.emplace(
+      dpp->get_cct()->_conf->rgw_thread_pool_size,
+      [] {
+	// request warnings on synchronous librados calls in this thread
+	is_asio_thread = true;
+      });
+  }
+}
+
 int rgw::AppMain::init_storage()
 {
   auto config_store_type = g_conf().get_val<std::string>("rgw_config_store");
@@ -234,9 +241,12 @@ int rgw::AppMain::init_storage()
     (g_conf()->rgw_run_sync_thread &&
       ((!nfs) || (nfs && g_conf()->rgw_nfs_run_sync_thread)));
 
+  need_context_pool();
   DriverManager::Config cfg = DriverManager::get_config(false, g_ceph_context);
   env.driver = DriverManager::get_storage(dpp, dpp->get_cct(),
           cfg,
+	  *context_pool,
+	  site,
           run_gc,
           run_lc,
           run_quota,
@@ -346,6 +356,7 @@ void rgw::AppMain::cond_init_apis()
       RGWRESTMgr_Admin *admin_resource = new RGWRESTMgr_Admin;
       admin_resource->register_resource("info", new RGWRESTMgr_Info);
       admin_resource->register_resource("usage", new RGWRESTMgr_Usage);
+      admin_resource->register_resource("account", new RGWRESTMgr_Account);
       /* Register driver-specific admin APIs */
       env.driver->register_admin_apis(admin_resource);
       rest.register_resource(g_conf()->rgw_admin_entry, admin_resource);
@@ -366,6 +377,10 @@ void rgw::AppMain::init_ldap()
   const string &ldap_searchfilter = cct->_conf->rgw_ldap_searchfilter;
   const string &ldap_dnattr = cct->_conf->rgw_ldap_dnattr;
   std::string ldap_bindpw = parse_rgw_ldap_bindpw(cct);
+
+  if (ldap_uri.empty()) {
+    return;
+  }
 
   ldh.reset(new rgw::LDAPHelper(ldap_uri, ldap_binddn,
             ldap_bindpw.c_str(), ldap_searchdn, ldap_searchfilter, ldap_dnattr));
@@ -456,7 +471,8 @@ int rgw::AppMain::init_frontends2(RGWLib* rgwlib)
       fe = new RGWLoadGenFrontend(env, config);
     }
     else if (framework == "beast") {
-      fe = new RGWAsioFrontend(env, config, *sched_ctx);
+      need_context_pool();
+      fe = new RGWAsioFrontend(env, config, *sched_ctx, *context_pool);
     }
     else if (framework == "rgw-nfs") {
       fe = new RGWLibFrontend(env, config);
@@ -514,8 +530,9 @@ int rgw::AppMain::init_frontends2(RGWLib* rgwlib)
     if (env.lua.background) {
       rgw_pauser->add_pauser(env.lua.background);
     }
+    need_context_pool();
     reloader = std::make_unique<RGWRealmReloader>(
-        env, *implicit_tenant_context, service_map_meta, rgw_pauser.get());
+      env, *implicit_tenant_context, service_map_meta, rgw_pauser.get(), *context_pool);
     realm_watcher = std::make_unique<RGWRealmWatcher>(dpp, g_ceph_context,
 				  static_cast<rgw::sal::RadosStore*>(env.driver)->svc()->zone->get_realm());
     realm_watcher->add_watcher(RGWRealmNotify::Reload, *reloader);
@@ -531,20 +548,6 @@ void rgw::AppMain::init_tracepoints()
   TracepointProvider::initialize<rgw_op_tracepoint_traits>(dpp->get_cct());
   tracing::rgw::tracer.init(dpp->get_cct(), "rgw");
 } /* init_tracepoints() */
-
-void rgw::AppMain::init_notification_endpoints()
-{
-#ifdef WITH_RADOSGW_AMQP_ENDPOINT
-  if (!rgw::amqp::init(dpp->get_cct())) {
-    derr << "ERROR: failed to initialize AMQP manager" << dendl;
-  }
-#endif
-#ifdef WITH_RADOSGW_KAFKA_ENDPOINT
-  if (!rgw::kafka::init(dpp->get_cct())) {
-    derr << "ERROR: failed to initialize Kafka manager" << dendl;
-  }
-#endif
-} /* init_notification_endpoints */
 
 void rgw::AppMain::init_lua()
 {
@@ -587,6 +590,23 @@ void rgw::AppMain::shutdown(std::function<void(void)> finalize_async_signals)
     fe->stop();
   }
 
+  ldh.reset(nullptr); // deletes ldap helper if it was created
+  rgw_log_usage_finalize();
+
+  delete olog;
+
+  if (lua_background) {
+    lua_background->shutdown();
+  }
+
+  // Do this before closing storage so requests don't try to call into
+  // closed storage.
+  context_pool->finish();
+
+  cfgstore.reset(); // deletes
+  DriverManager::close_storage(env.driver);
+
+  // Fe can't be deleted until nobody's exeucting `io_context::run`
   for (auto& fe : fes) {
     fe->join();
     delete fe;
@@ -596,18 +616,7 @@ void rgw::AppMain::shutdown(std::function<void(void)> finalize_async_signals)
     delete fec;
   }
 
-  ldh.reset(nullptr); // deletes
   finalize_async_signals(); // callback
-  rgw_log_usage_finalize();
-  
-  delete olog;
-
-  if (lua_background) {
-    lua_background->shutdown();
-  }
-
-  cfgstore.reset(); // deletes
-  DriverManager::close_storage(env.driver);
 
   rgw_tools_cleanup();
   rgw_shutdown_resolver();
@@ -616,12 +625,6 @@ void rgw::AppMain::shutdown(std::function<void(void)> finalize_async_signals)
   rgw::curl::cleanup_curl();
   g_conf().remove_observer(implicit_tenant_context.get());
   implicit_tenant_context.reset(); // deletes
-#ifdef WITH_RADOSGW_AMQP_ENDPOINT
-  rgw::amqp::shutdown();
-#endif
-#ifdef WITH_RADOSGW_KAFKA_ENDPOINT
-  rgw::kafka::shutdown();
-#endif
   rgw_perf_stop(g_ceph_context);
   ratelimiter.reset(); // deletes--ensure this happens before we destruct
 } /* AppMain::shutdown */

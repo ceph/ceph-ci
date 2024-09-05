@@ -60,7 +60,7 @@ export class HealthComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     this.clientStatsConfig = {
-      colors: [
+      dataset: [
         {
           backgroundColor: [
             this.cssHelper.propertyValue('chart-color-cyan'),
@@ -71,7 +71,7 @@ export class HealthComponent implements OnInit, OnDestroy {
     };
 
     this.rawCapacityChartConfig = {
-      colors: [
+      dataset: [
         {
           backgroundColor: [
             this.cssHelper.propertyValue('chart-color-blue'),
@@ -164,14 +164,17 @@ export class HealthComponent implements OnInit, OnDestroy {
       data.df.stats.total_bytes
     );
 
-    if (percentUsed / 100 >= this.osdSettings.nearfull_ratio) {
+    const nearfullRatio = this.osdSettings.nearfull_ratio;
+    const fullRatio = this.osdSettings.nearfull_ratio;
+
+    if (nearfullRatio >= 0 && percentUsed / 100 >= nearfullRatio) {
       this.color = 'chart-color-red';
-    } else if (percentUsed / 100 >= this.osdSettings.full_ratio) {
+    } else if (fullRatio >= 0 && percentUsed / 100 >= fullRatio) {
       this.color = 'chart-color-yellow';
     } else {
       this.color = 'chart-color-blue';
     }
-    this.rawCapacityChartConfig.colors[0].backgroundColor[0] = this.cssHelper.propertyValue(
+    this.rawCapacityChartConfig.dataset[0].backgroundColor[0] = this.cssHelper.propertyValue(
       this.color
     );
 

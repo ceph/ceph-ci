@@ -21,6 +21,15 @@ import { RbdImageFeature } from './rbd-feature.interface';
 import { RbdFormMode } from './rbd-form-mode.enum';
 import { RbdFormResponseModel } from './rbd-form-response.model';
 import { RbdFormComponent } from './rbd-form.component';
+import {
+  ButtonModule,
+  CheckboxModule,
+  GridModule,
+  InputModule,
+  NumberModule,
+  RadioModule,
+  SelectModule
+} from 'carbon-components-angular';
 
 describe('RbdFormComponent', () => {
   const urlPrefix = {
@@ -55,7 +64,14 @@ describe('RbdFormComponent', () => {
       ReactiveFormsModule,
       RouterTestingModule,
       ToastrModule.forRoot(),
-      SharedModule
+      SharedModule,
+      CheckboxModule,
+      InputModule,
+      SelectModule,
+      RadioModule,
+      NumberModule,
+      GridModule,
+      ButtonModule
     ],
     declarations: [RbdFormComponent, RbdConfigurationFormComponent],
     providers: [
@@ -293,12 +309,24 @@ describe('RbdFormComponent', () => {
   });
 
   describe('test image configuration component', () => {
-    it('is visible', () => {
+    beforeEach(() => {
+      fixture.detectChanges();
+    });
+    it('is hidden by default under Advanced', () => {
       fixture.detectChanges();
       expect(
-        fixture.debugElement.query(By.css('cd-rbd-configuration-form')).nativeElement.parentElement
-          .hidden
-      ).toBe(true);
+        queryNativeElement('cd-rbd-configuration-form')
+          .closest('.cds--accordion__item ')
+          .classList.contains('.cds--accordion__item--active')
+      ).toBeFalsy();
+    });
+
+    it('is visible when Advanced is not collapsed', () => {
+      queryNativeElement('.cds--accordion__heading').click();
+      fixture.detectChanges();
+      expect(queryNativeElement('.cds--accordion__heading').getAttribute('aria-expanded')).toBe(
+        'true'
+      );
     });
   });
 
@@ -324,7 +352,8 @@ describe('RbdFormComponent', () => {
       component.featuresList = component.objToArray(features);
       component.createForm();
     };
-    const getFeatureNativeElements = () => allFeatureNames.map((f) => queryNativeElement(`#${f}`));
+    const getFeatureNativeElements = () =>
+      allFeatureNames.map((f) => queryNativeElement(`#${f}_input`));
 
     it('should convert feature flags correctly in the constructor', () => {
       setFeatures({
@@ -352,6 +381,11 @@ describe('RbdFormComponent', () => {
         spyOn(rbdService, 'defaultFeatures').and.returnValue(of(defaultFeatures));
         setRouterUrl('edit', pool, image);
         fixture.detectChanges();
+        queryNativeElement('.cds--accordion__heading').click();
+        fixture.detectChanges();
+        expect(queryNativeElement('.cds--accordion__heading').getAttribute('aria-expanded')).toBe(
+          'true'
+        );
         [deepFlatten, layering, exclusiveLock, objectMap, fastDiff] = getFeatureNativeElements();
       };
 
@@ -414,12 +448,14 @@ describe('RbdFormComponent', () => {
 
       it('should disable features if their requirements are not met (exclusive-lock)', () => {
         exclusiveLock.click(); // unchecks exclusive-lock
+        fixture.detectChanges();
         expect(objectMap.disabled).toBe(true);
         expect(fastDiff.disabled).toBe(true);
       });
 
       it('should disable features if their requirements are not met (object-map)', () => {
         objectMap.click(); // unchecks object-map
+        fixture.detectChanges();
         expect(fastDiff.disabled).toBe(true);
       });
     });
@@ -427,21 +463,19 @@ describe('RbdFormComponent', () => {
     describe('test mirroring options', () => {
       beforeEach(() => {
         component.ngOnInit();
-        fixture.detectChanges();
-        const mirroring = fixture.debugElement.query(By.css('#mirroring')).nativeElement;
-        mirroring.click();
+        component.setMirrorMode();
         fixture.detectChanges();
       });
 
       it('should verify two mirroring options are shown', () => {
-        const journal = fixture.debugElement.query(By.css('#journal')).nativeElement;
+        const journal = fixture.debugElement.query(By.css('input#journal')).nativeElement;
         const snapshot = fixture.debugElement.query(By.css('#snapshot')).nativeElement;
         expect(journal).not.toBeNull();
         expect(snapshot).not.toBeNull();
       });
 
       it('should verify only snapshot is disabled for pools that are in pool mirror mode', () => {
-        component.poolMirrorMode = 'pool';
+        component.currentPoolMirrorMode = 'pool';
         fixture.detectChanges();
         const journal = fixture.debugElement.query(By.css('#journal')).nativeElement;
         const snapshot = fixture.debugElement.query(By.css('#snapshot')).nativeElement;
@@ -455,7 +489,8 @@ describe('RbdFormComponent', () => {
         const journal = fixture.debugElement.query(By.css('#journal')).nativeElement;
         journal.click();
         fixture.detectChanges();
-        const exclusiveLocks = fixture.debugElement.query(By.css('#exclusive-lock')).nativeElement;
+        const exclusiveLocks = fixture.debugElement.query(By.css('#exclusive-lock_input'))
+          .nativeElement;
         expect(exclusiveLocks.checked).toBe(true);
         expect(exclusiveLocks.disabled).toBe(true);
       });

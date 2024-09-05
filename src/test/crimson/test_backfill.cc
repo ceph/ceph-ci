@@ -1,3 +1,6 @@
+// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
+// vim: ts=8 sw=2 smarttab
+
 #include <algorithm>
 #include <cstdlib>
 #include <deque>
@@ -151,6 +154,18 @@ public:
     }
   }
 
+  template <class EventT>
+  void next_round2() {
+    ceph_assert(events_to_dispatch.size());
+    // workaround for Clang's `-Wpotentially-evaluated-expression`. See:
+    //   * https://gitlab.cern.ch/gaudi/Gaudi/-/merge_requests/970
+    //   * https://stackoverflow.com/q/46494928
+    const auto& front_event = *events_to_dispatch.front();
+    ceph_assert(typeid(front_event) == typeid(EventT));
+    backfill_state.process_event(std::move(events_to_dispatch.front()));
+    events_to_dispatch.pop_front();
+  }
+
   void next_till_done() {
     while (!events_to_dispatch.empty()) {
       next_round();
@@ -168,6 +183,15 @@ public:
 
   struct PeeringFacade;
   struct PGFacade;
+
+  void cancel() {
+    events_to_dispatch.clear();
+    schedule_event(crimson::osd::BackfillState::CancelBackfill{});
+  }
+
+  void resume() {
+    schedule_event(crimson::osd::BackfillState::Triggered{});
+  }
 };
 
 struct BackfillFixture::PeeringFacade
@@ -308,6 +332,9 @@ void BackfillFixture::maybe_flush()
 void BackfillFixture::update_peers_last_backfill(
   const hobject_t& new_last_backfill)
 {
+  if (new_last_backfill.is_max()) {
+    schedule_event(crimson::osd::BackfillState::RequestDone{});
+  }
 }
 
 bool BackfillFixture::budget_available() const
@@ -356,6 +383,7 @@ TEST(backfill, same_primary_same_replica)
   ).get_result();
 
   cluster_fixture.next_round();
+  cluster_fixture.next_round();
   EXPECT_CALL(cluster_fixture, backfilled);
   cluster_fixture.next_round();
   EXPECT_TRUE(cluster_fixture.all_stores_look_like(reference_store));
@@ -377,6 +405,7 @@ TEST(backfill, one_empty_replica)
   cluster_fixture.next_round();
   cluster_fixture.next_round();
   cluster_fixture.next_round(2);
+  cluster_fixture.next_round();
   EXPECT_CALL(cluster_fixture, backfilled);
   cluster_fixture.next_round();
   EXPECT_TRUE(cluster_fixture.all_stores_look_like(reference_store));
@@ -398,6 +427,68 @@ TEST(backfill, two_empty_replicas)
   ).get_result();
 
   EXPECT_CALL(cluster_fixture, backfilled);
+  cluster_fixture.next_till_done();
+
+  EXPECT_TRUE(cluster_fixture.all_stores_look_like(reference_store));
+}
+
+TEST(backfill, cancel_resume)
+{
+  const auto reference_store = FakeStore{ {
+    { "1:00058bcc:::rbd_data.1018ac3e755.00000000000000d5:head", {10, 234} },
+    { "1:00ed7f8e:::rbd_data.1018ac3e755.00000000000000af:head", {10, 196} },
+    { "1:01483aea:::rbd_data.1018ac3e755.0000000000000095:head", {10, 169} },
+  }};
+  auto cluster_fixture = BackfillFixtureBuilder::add_source(
+    reference_store.objs
+  ).add_target(
+    { /* nothing 1 */ }
+  ).add_target(
+    { /* nothing 2 */ }
+  ).get_result();
+
+  EXPECT_CALL(cluster_fixture, backfilled);
+  cluster_fixture.next_round2<crimson::osd::BackfillState::PrimaryScanned>();
+  cluster_fixture.cancel();
+  cluster_fixture.next_round2<crimson::osd::BackfillState::CancelBackfill>();
+  cluster_fixture.resume();
+  cluster_fixture.next_round2<crimson::osd::BackfillState::Triggered>();
+  cluster_fixture.next_round2<crimson::osd::BackfillState::ReplicaScanned>();
+  cluster_fixture.next_round2<crimson::osd::BackfillState::ReplicaScanned>();
+  cluster_fixture.next_round2<crimson::osd::BackfillState::ObjectPushed>();
+  cluster_fixture.next_round2<crimson::osd::BackfillState::ObjectPushed>();
+  cluster_fixture.next_round2<crimson::osd::BackfillState::ObjectPushed>();
+  cluster_fixture.next_till_done();
+
+  EXPECT_TRUE(cluster_fixture.all_stores_look_like(reference_store));
+}
+
+TEST(backfill, cancel_resume_middle_of_scan)
+{
+  const auto reference_store = FakeStore{ {
+    { "1:00058bcc:::rbd_data.1018ac3e755.00000000000000d5:head", {10, 234} },
+    { "1:00ed7f8e:::rbd_data.1018ac3e755.00000000000000af:head", {10, 196} },
+    { "1:01483aea:::rbd_data.1018ac3e755.0000000000000095:head", {10, 169} },
+  }};
+  auto cluster_fixture = BackfillFixtureBuilder::add_source(
+    reference_store.objs
+  ).add_target(
+    { /* nothing 1 */ }
+  ).add_target(
+    { /* nothing 2 */ }
+  ).get_result();
+
+  EXPECT_CALL(cluster_fixture, backfilled);
+  cluster_fixture.next_round2<crimson::osd::BackfillState::PrimaryScanned>();
+  cluster_fixture.next_round2<crimson::osd::BackfillState::ReplicaScanned>();
+  cluster_fixture.cancel();
+  cluster_fixture.next_round2<crimson::osd::BackfillState::CancelBackfill>();
+  cluster_fixture.resume();
+  cluster_fixture.next_round2<crimson::osd::BackfillState::Triggered>();
+  cluster_fixture.next_round2<crimson::osd::BackfillState::ReplicaScanned>();
+  cluster_fixture.next_round2<crimson::osd::BackfillState::ObjectPushed>();
+  cluster_fixture.next_round2<crimson::osd::BackfillState::ObjectPushed>();
+  cluster_fixture.next_round2<crimson::osd::BackfillState::ObjectPushed>();
   cluster_fixture.next_till_done();
 
   EXPECT_TRUE(cluster_fixture.all_stores_look_like(reference_store));

@@ -14,6 +14,7 @@
 #define CEPH_CRYPTO_SHA1_DIGESTSIZE 20
 #define CEPH_CRYPTO_HMACSHA256_DIGESTSIZE 32
 #define CEPH_CRYPTO_SHA256_DIGESTSIZE 32
+#define CEPH_CRYPTO_HMACSHA512_DIGESTSIZE 64
 #define CEPH_CRYPTO_SHA512_DIGESTSIZE 64
 
 #include <openssl/evp.h>
@@ -89,7 +90,6 @@ namespace TOPNSPC::crypto {
         static constexpr size_t digest_size = CEPH_CRYPTO_SHA512_DIGESTSIZE;
         SHA512 () : OpenSSLDigest(EVP_sha512()) { }
     };
-
 
 # if OPENSSL_VERSION_NUMBER < 0x10100000L
   class HMAC {
@@ -187,6 +187,12 @@ namespace TOPNSPC::crypto {
       : HMAC(EVP_sha256(), key, length) {
     }
   };
+
+  struct HMACSHA512 : public HMAC {
+    HMACSHA512 (const unsigned char *key, size_t length)
+      : HMAC(EVP_sha512(), key, length) {
+    }
+  };
 }
 
 
@@ -197,6 +203,7 @@ namespace TOPNSPC::crypto {
 
   using ssl::HMACSHA256;
   using ssl::HMACSHA1;
+  using ssl::HMACSHA512;
 
 template<class Digest>
 auto digest(const ceph::buffer::list& bl)

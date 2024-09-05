@@ -87,9 +87,6 @@
 /* Defined if you have libdml */
 #cmakedefine HAVE_LIBDML
 
-/* Defined if you have libzbd */
-#cmakedefine HAVE_LIBZBD
-
 /* Defined if you have liburing */
 #cmakedefine HAVE_LIBURING
 
@@ -371,6 +368,9 @@
 
 /* Defined if Intel QAT compress/decompress is supported */
 #cmakedefine HAVE_QATZIP
+
+/* Defined if UADK compress/decompress is supported */
+#cmakedefine HAVE_UADK
 
 /* Define if seastar is available. */
 #cmakedefine HAVE_SEASTAR

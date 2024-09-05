@@ -21,7 +21,6 @@
 # https://rpm-software-management.github.io/rpm/manual/conditionalbuilds.html
 #################################################################################
 %bcond_with make_check
-%bcond_with zbd
 %bcond_with cmake_verbose_logging
 %bcond_without ceph_test_package
 %ifarch s390
@@ -98,7 +97,7 @@
 %else
 %bcond_without jaeger
 %endif
-%if 0%{?fedora} || 0%{?suse_version} >= 1500
+%if 0%{?fedora} || 0%{?suse_version} >= 1500 || 0%{?rhel} >= 9
 # distros that ship cmd2 and/or colorama
 %bcond_without cephfs_shell
 %else
@@ -112,6 +111,18 @@
 # this is tracked in https://bugzilla.redhat.com/2152265
 %bcond_with system_arrow
 %endif
+# qat only supported for intel devices
+%ifarch x86_64
+%if 0%{?fedora} || 0%{?rhel} >= 9
+%bcond_without system_qat
+%else
+# not fedora/rhel
+%bcond_with system_qat
+%endif
+%else
+# not x86_64
+%bcond_with system_qat
+%endif
 %if 0%{?fedora} || 0%{?suse_version} || 0%{?rhel} >= 8 || 0%{?openEuler}
 %global weak_deps 1
 %endif
@@ -124,13 +135,34 @@
 %{!?_selinux_policy_version: %global _selinux_policy_version 0.0.0}
 %endif
 %endif
+%bcond_without cephadm_bundling
+%bcond_without cephadm_pip_deps
 
 %{!?_udevrulesdir: %global _udevrulesdir /lib/udev/rules.d}
 %{!?tmpfiles_create: %global tmpfiles_create systemd-tmpfiles --create}
 %{!?python3_pkgversion: %global python3_pkgversion 3}
 %{!?python3_version_nodots: %global python3_version_nodots 3}
 %{!?python3_version: %global python3_version 3}
-%{!?gts_prefix: %global gts_prefix gcc-toolset-11}
+%if 0%{with seastar}
+%{!?gts_version: %global gts_version 13}
+%else
+%if 0%{?rhel} == 8
+%{!?gts_version: %global gts_version 11}
+%endif
+%endif
+
+# gcc-toolset-13 seems to trigger a linker bug resulting in a segfault in SafeTimer
+# and perhaps elsewhere.  For now, let's just disable it.  See
+# ceph bug https://tracker.ceph.com/issues/63867
+# and
+# gcc bug https://bugzilla.redhat.com/show_bug.cgi?id=2241339
+# for details.
+#
+# Also disable lto on systems that do not support symver attribute
+# See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=48200 for details
+%if 0%{?gts_version} == 13 || (0%{?rhel} && 0%{?rhel} < 9)  || ( 0%{?suse_version} && 0%{?suse_version} <= 1500 )
+%define _lto_cflags %{nil}
+%endif
 
 %if ! 0%{?suse_version}
 # use multi-threaded xz compression: xz level 7 using ncpus threads
@@ -162,8 +194,16 @@
 # do not provide gcc-annobin.so anymore, despite that they provide annobin.so. but
 # redhat-rpm-config still passes -fplugin=gcc-annobin to the compiler.
 %undefine _annotated_build
-%if 0%{?rhel} == 8 && 0%{?enable_devtoolset11:1}
+%if 0%{?gts_version} > 0
+%if 0%{gts_version} == 13
+%if 0%{?enable_devtoolset13:1}
+%enable_devtoolset13
+%endif
+%else
+%if 0%{?enable_devtoolset11:1}
 %enable_devtoolset11
+%endif
+%endif
 %endif
 
 #################################################################################
@@ -189,7 +229,7 @@ URL:		http://ceph.com/
 Source0:	%{?_remote_tarball_prefix}@TARBALL_BASENAME@.tar.bz2
 %if 0%{?suse_version}
 # _insert_obs_source_lines_here
-ExclusiveArch:  x86_64 aarch64 ppc64le s390x
+ExclusiveArch:  x86_64 aarch64 ppc64le s390x riscv64
 %endif
 #################################################################################
 # dependencies that apply across all distro families
@@ -211,16 +251,22 @@ BuildRequires:	selinux-policy-devel
 BuildRequires:	gperf
 BuildRequires:  cmake > 3.5
 BuildRequires:	fuse-devel
+BuildRequires:	git
+BuildRequires:	grpc-devel
 %if 0%{?fedora} || 0%{?suse_version} > 1500 || 0%{?rhel} == 9 || 0%{?openEuler}
 BuildRequires:	gcc-c++ >= 11
 %endif
 %if 0%{?suse_version} == 1500
 BuildRequires: gcc11-c++
 %endif
-%if 0%{?rhel} == 8
-BuildRequires:	%{gts_prefix}-gcc-c++
-BuildRequires:	%{gts_prefix}-build
-BuildRequires:	%{gts_prefix}-libatomic-devel
+%if 0%{?gts_version} > 0
+BuildRequires:	gcc-toolset-%{gts_version}-gcc-c++
+%if 0%{?gts_version} >= 12
+BuildRequires:	gcc-toolset-%{gts_version}-runtime
+%else
+BuildRequires:	gcc-toolset-%{gts_version}-build
+%endif
+BuildRequires:	gcc-toolset-%{gts_version}-libatomic-devel
 %endif
 %if 0%{?fedora} || 0%{?rhel} == 9 || 0%{?openEuler}
 BuildRequires:  libatomic
@@ -281,7 +327,8 @@ BuildRequires:  librabbitmq-devel
 BuildRequires:  librdkafka-devel
 %endif
 %if 0%{with lua_packages}
-BuildRequires:  %{luarocks_package_name}
+Requires:  lua-devel
+Requires:  %{luarocks_package_name}
 %endif
 %if 0%{with make_check}
 BuildRequires:  hostname
@@ -296,9 +343,6 @@ BuildRequires:	python%{python3_pkgversion}-pyOpenSSL
 BuildRequires:	socat
 BuildRequires:	python%{python3_pkgversion}-asyncssh
 BuildRequires:	python%{python3_pkgversion}-natsort
-%endif
-%if 0%{with zbd}
-BuildRequires:  libzbd-devel
 %endif
 %if 0%{?suse_version}
 BuildRequires:  libthrift-devel >= 0.13.0
@@ -332,6 +376,10 @@ BuildRequires:  libarrow-devel
 BuildRequires:  parquet-libs-devel
 BuildRequires:  utf8proc-devel
 %endif
+%if 0%{with system_qat}
+BuildRequires:  qatlib-devel
+BuildRequires:  qatzip-devel
+%endif
 %if 0%{with seastar}
 BuildRequires:  c-ares-devel
 BuildRequires:  gnutls-devel
@@ -342,11 +390,17 @@ BuildRequires:  ragel
 BuildRequires:  systemtap-sdt-devel
 BuildRequires:  libubsan
 BuildRequires:  libasan
-%if 0%{?rhel} == 8
-BuildRequires:  %{gts_prefix}-annobin
-BuildRequires:  %{gts_prefix}-annobin-plugin-gcc
-BuildRequires:  %{gts_prefix}-libubsan-devel
-BuildRequires:  %{gts_prefix}-libasan-devel
+BuildRequires:  protobuf-devel
+BuildRequires:  protobuf-compiler
+%if 0%{?gts_version} > 0
+%if 0%{?gts_version} >= 12
+BuildRequires:  gcc-toolset-%{gts_version}-gcc-plugin-annobin
+%else
+BuildRequires:  gcc-toolset-%{gts_version}-annobin
+BuildRequires:  gcc-toolset-%{gts_version}-annobin-plugin-gcc
+%endif
+BuildRequires:  gcc-toolset-%{gts_version}-libubsan-devel
+BuildRequires:  gcc-toolset-%{gts_version}-libasan-devel
 %endif
 %endif
 #################################################################################
@@ -388,6 +442,7 @@ BuildRequires:	libibverbs-devel
 BuildRequires:  librdmacm-devel
 BuildRequires:  ninja-build
 BuildRequires:  openldap-devel
+BuildRequires:  numactl-devel
 #BuildRequires:  krb5-devel
 BuildRequires:  openssl-devel
 BuildRequires:  CUnit-devel
@@ -411,7 +466,6 @@ BuildRequires:	xmlsec1-nss
 BuildRequires:	xmlsec1-openssl
 BuildRequires:	xmlsec1-openssl-devel
 BuildRequires:	python%{python3_pkgversion}-cherrypy
-BuildRequires:	python%{python3_pkgversion}-jwt
 BuildRequires:	python%{python3_pkgversion}-routes
 BuildRequires:	python%{python3_pkgversion}-scipy
 BuildRequires:	python%{python3_pkgversion}-werkzeug
@@ -424,7 +478,6 @@ BuildRequires:	libxmlsec1-1
 BuildRequires:	libxmlsec1-nss1
 BuildRequires:	libxmlsec1-openssl1
 BuildRequires:	python%{python3_pkgversion}-CherryPy
-BuildRequires:	python%{python3_pkgversion}-PyJWT
 BuildRequires:	python%{python3_pkgversion}-Routes
 BuildRequires:	python%{python3_pkgversion}-Werkzeug
 BuildRequires:	python%{python3_pkgversion}-numpy-devel
@@ -459,7 +512,6 @@ BuildRequires:  openEuler-rpm-config
 %if 0%{with seastar}
 %if 0%{?fedora} || 0%{?rhel} || 0%{?openEuler}
 BuildRequires:  cryptopp-devel
-BuildRequires:  numactl-devel
 %endif
 %if 0%{?suse_version}
 BuildRequires:  libcryptopp-devel
@@ -527,6 +579,13 @@ Requires:       which
 %if 0%{?weak_deps}
 Recommends:     podman >= 2.0.2
 %endif
+%if 0%{with cephadm_bundling}
+%if 0%{without cephadm_pip_deps}
+BuildRequires: python3-jinja2 >= 2.10
+%endif
+%else
+Requires: python3-jinja2 >= 2.10
+%endif
 %description -n cephadm
 Utility to bootstrap a Ceph cluster and manage Ceph daemons deployed
 with systemd and podman.
@@ -586,6 +645,17 @@ system. One or more instances of ceph-mon form a Paxos part-time
 parliament cluster that provides extremely reliable and durable storage
 of cluster membership, configuration, and state.
 
+%package mon-client-nvmeof
+Summary:	Ceph NVMeoF Gateway Monitor Client
+%if 0%{?suse_version}
+Group:		System/Filesystems
+%endif
+Provides:	ceph-test:/usr/bin/ceph-nvmeof-monitor-client
+Requires:	librados2 = %{_epoch_prefix}%{version}-%{release}
+%description mon-client-nvmeof
+Ceph NVMeoF Gateway Monitor Client distributes Paxos ANA info
+to NVMeoF Gateway and provides beacons to the monitor daemon
+
 %package mgr
 Summary:        Ceph Manager Daemon
 %if 0%{?suse_version}
@@ -616,19 +686,23 @@ Group:          System/Filesystems
 Requires:       ceph-mgr = %{_epoch_prefix}%{version}-%{release}
 Requires:       ceph-grafana-dashboards = %{_epoch_prefix}%{version}-%{release}
 Requires:       ceph-prometheus-alerts = %{_epoch_prefix}%{version}-%{release}
-Requires:       python%{python3_pkgversion}-setuptools
+%if 0%{?fedora} || 0%{?rhel} >= 9
+Requires:       python%{python3_pkgversion}-grpcio
+Requires:       python%{python3_pkgversion}-grpcio-tools
+%endif
 %if 0%{?fedora} || 0%{?rhel} || 0%{?openEuler}
 Requires:       python%{python3_pkgversion}-cherrypy
-Requires:       python%{python3_pkgversion}-jwt
 Requires:       python%{python3_pkgversion}-routes
-Requires:       python%{python3_pkgversion}-werkzeug
 %if 0%{?weak_deps}
 Recommends:     python%{python3_pkgversion}-saml
+%if 0%{?fedora} || 0%{?rhel} <= 8
+Recommends:     python%{python3_pkgversion}-grpcio
+Recommends:     python%{python3_pkgversion}-grpcio-tools
+%endif
 %endif
 %endif
 %if 0%{?suse_version}
 Requires:       python%{python3_pkgversion}-CherryPy
-Requires:       python%{python3_pkgversion}-PyJWT
 Requires:       python%{python3_pkgversion}-Routes
 Requires:       python%{python3_pkgversion}-Werkzeug
 Recommends:     python%{python3_pkgversion}-python3-saml
@@ -662,6 +736,7 @@ BuildArch:      noarch
 Group:          System/Filesystems
 %endif
 Requires:       python%{python3_pkgversion}-bcrypt
+Requires:       python%{python3_pkgversion}-packaging
 Requires:       python%{python3_pkgversion}-pecan
 Requires:       python%{python3_pkgversion}-pyOpenSSL
 Requires:       python%{python3_pkgversion}-requests
@@ -676,6 +751,11 @@ Requires:       python%{python3_pkgversion}-werkzeug
 Requires:       python%{python3_pkgversion}-CherryPy
 Requires:       python%{python3_pkgversion}-PyYAML
 Requires:       python%{python3_pkgversion}-Werkzeug
+%endif
+# RHEL8 has python 3.6 and that lacks dataclasses in the stdlib, so pull in the
+# backport dataclasses module instead.
+%if 0%{?rhel} <= 8
+Requires:       python%{python3_pkgversion}-dataclasses
 %endif
 %if 0%{?weak_deps}
 Recommends:	ceph-mgr-rook = %{_epoch_prefix}%{version}-%{release}
@@ -860,6 +940,9 @@ Provides:	ceph-test:/usr/bin/ceph-osdomap-tool
 Requires:	ceph-base = %{_epoch_prefix}%{version}-%{release}
 Requires:	sudo
 Requires:	libstoragemgmt
+%if 0%{with seastar}
+Requires:	protobuf
+%endif
 %if 0%{?weak_deps}
 Recommends:	ceph-volume = %{_epoch_prefix}%{version}-%{release}
 %endif
@@ -1290,6 +1373,15 @@ Group:          System/Monitoring
 %description mib
 This package provides a Ceph MIB for SNMP traps.
 
+%package node-proxy
+Summary:        hw monitoring agent for Ceph
+BuildArch:      noarch
+%if 0%{?suse_version}
+Group:          System/Monitoring
+%endif
+%description node-proxy
+This package provides a Ceph hardware monitoring agent.
+
 #################################################################################
 # common
 #################################################################################
@@ -1297,11 +1389,6 @@ This package provides a Ceph MIB for SNMP traps.
 %autosetup -p1 -n @TARBALL_BASENAME@
 
 %build
-# Disable lto on systems that do not support symver attribute
-# See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=48200 for details
-%if ( 0%{?rhel} && 0%{?rhel} < 9 ) || ( 0%{?suse_version} && 0%{?suse_version} <= 1500 )
-%define _lto_cflags %{nil}
-%endif
 
 %if 0%{with cephfs_java}
 # Find jni.h
@@ -1338,6 +1425,9 @@ cmake .. \
 %if 0%{?suse_version} == 1500
     -DCMAKE_C_COMPILER=gcc-11 \
     -DCMAKE_CXX_COMPILER=g++-11 \
+%endif
+%if 0%{?gts_version} == 13
+    -DCMAKE_EXE_LINKER_FLAGS=-lstdc++ \
 %endif
     -DCMAKE_INSTALL_PREFIX=%{_prefix} \
     -DCMAKE_INSTALL_LIBDIR:PATH=%{_libdir} \
@@ -1397,9 +1487,6 @@ cmake .. \
 %if 0%{without lua_packages}
     -DWITH_RADOSGW_LUA_PACKAGES:BOOL=OFF \
 %endif
-%if 0%{with zbd}
-    -DWITH_ZBD:BOOL=ON \
-%endif
 %if 0%{with cmake_verbose_logging}
     -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON \
 %endif
@@ -1427,11 +1514,24 @@ cmake .. \
     -DWITH_SYSTEM_ARROW:BOOL=ON \
     -DWITH_SYSTEM_UTF8PROC:BOOL=ON \
 %endif
+%if 0%{with system_qat}
+    -DWITH_SYSTEM_QATLIB:BOOL=ON \
+    -DWITH_SYSTEM_QATZIP:BOOL=ON \
+%endif
 %if 0%{with seastar}
     -DWITH_SEASTAR:BOOL=ON \
     -DWITH_JAEGER:BOOL=OFF \
 %endif
-    -DWITH_GRAFANA:BOOL=ON
+    -DWITH_GRAFANA:BOOL=ON \
+%if 0%{with cephadm_bundling}
+%if 0%{with cephadm_pip_deps}
+    -DCEPHADM_BUNDLED_DEPENDENCIES=pip
+%else
+    -DCEPHADM_BUNDLED_DEPENDENCIES=rpm
+%endif
+%else
+    -DCEPHADM_BUNDLED_DEPENDENCIES=none
+%endif
 
 %if %{with cmake_verbose_logging}
 cat ./CMakeFiles/CMakeOutput.log
@@ -1530,6 +1630,9 @@ mkdir -p %{buildroot}%{_localstatedir}/lib/ceph/bootstrap-rbd-mirror
 # prometheus alerts
 install -m 644 -D monitoring/ceph-mixin/prometheus_alerts.yml %{buildroot}/etc/prometheus/ceph/ceph_default_alerts.yml
 
+# grafana charts
+install -m 644 -D monitoring/ceph-mixin/dashboards_out/* %{buildroot}/etc/grafana/dashboards/ceph-dashboard/
+
 # SNMP MIB
 install -m 644 -D -t %{buildroot}%{_datadir}/snmp/mibs monitoring/snmp/CEPH-MIB.txt
 
@@ -1581,6 +1684,7 @@ rm -rf %{_vpath_builddir}
 %if %{with lttng}
 %{_libdir}/libos_tp.so*
 %{_libdir}/libosd_tp.so*
+%{_libdir}/libmgr_op_tp.so*
 %endif
 %config(noreplace) %{_sysconfdir}/logrotate.d/ceph
 %if 0%{?fedora} || 0%{?rhel} || 0%{?openEuler}
@@ -1894,6 +1998,7 @@ fi
 %{_datadir}/ceph/mgr/restful
 %{_datadir}/ceph/mgr/rgw
 %{_datadir}/ceph/mgr/selftest
+%{_datadir}/ceph/mgr/smb
 %{_datadir}/ceph/mgr/snap_schedule
 %{_datadir}/ceph/mgr/stats
 %{_datadir}/ceph/mgr/status
@@ -1985,6 +2090,9 @@ if [ $1 -ge 1 ] ; then
   fi
 fi
 
+%files mon-client-nvmeof
+%{_bindir}/ceph-nvmeof-monitor-client
+
 %files fuse
 %{_bindir}/ceph-fuse
 %{_mandir}/man8/ceph-fuse.8*
@@ -2036,6 +2144,7 @@ fi
 
 %files -n ceph-exporter
 %{_bindir}/ceph-exporter
+%{_unitdir}/ceph-exporter.service
 
 %files -n rbd-fuse
 %{_bindir}/rbd-fuse
@@ -2470,6 +2579,7 @@ fi
 %{_bindir}/ceph-coverage
 %{_bindir}/ceph-debugpack
 %{_bindir}/ceph-dedup-tool
+%{_bindir}/ceph-dedup-daemon
 %if 0%{with seastar}
 %{_bindir}/crimson-store-nbd
 %endif
@@ -2622,5 +2732,11 @@ exit 0
 %files mib
 %attr(0755,root,root) %dir %{_datadir}/snmp
 %{_datadir}/snmp/mibs
+
+%files node-proxy
+%{_sbindir}/ceph-node-proxy
+%dir %{python3_sitelib}/ceph_node_proxy
+%{python3_sitelib}/ceph_node_proxy/*
+%{python3_sitelib}/ceph_node_proxy-*
 
 %changelog

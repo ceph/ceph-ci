@@ -1,9 +1,17 @@
-import { AfterViewChecked, ChangeDetectorRef, Component, OnInit } from '@angular/core';
+import {
+  AfterViewChecked,
+  ChangeDetectorRef,
+  Component,
+  OnInit,
+  ViewChild,
+  ElementRef
+} from '@angular/core';
 import { AbstractControl, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 
 import _ from 'lodash';
-import { forkJoin } from 'rxjs';
+import { Observable, forkJoin } from 'rxjs';
+import * as xml2js from 'xml2js';
 
 import { RgwBucketService } from '~/app/shared/api/rgw-bucket.service';
 import { RgwSiteService } from '~/app/shared/api/rgw-site.service';
@@ -17,18 +25,32 @@ import { CdFormGroup } from '~/app/shared/forms/cd-form-group';
 import { CdValidators } from '~/app/shared/forms/cd-validators';
 import { ModalService } from '~/app/shared/services/modal.service';
 import { NotificationService } from '~/app/shared/services/notification.service';
-import { RgwBucketEncryptionModel } from '../models/rgw-bucket-encryption';
+import { rgwBucketEncryptionModel } from '../models/rgw-bucket-encryption';
 import { RgwBucketMfaDelete } from '../models/rgw-bucket-mfa-delete';
+import {
+  AclPermissionsType,
+  RgwBucketAclPermissions as aclPermission,
+  RgwBucketAclGrantee as Grantee
+} from './rgw-bucket-acl-permissions.enum';
 import { RgwBucketVersioning } from '../models/rgw-bucket-versioning';
-import { RgwConfigModalComponent } from '../rgw-config-modal/rgw-config-modal.component';
+import { BucketTagModalComponent } from '../bucket-tag-modal/bucket-tag-modal.component';
+import { TextAreaJsonFormatterService } from '~/app/shared/services/text-area-json-formatter.service';
+import { RgwMultisiteService } from '~/app/shared/api/rgw-multisite.service';
+import { RgwDaemonService } from '~/app/shared/api/rgw-daemon.service';
+import { map, switchMap } from 'rxjs/operators';
+import { TextAreaXmlFormatterService } from '~/app/shared/services/text-area-xml-formatter.service';
 
 @Component({
   selector: 'cd-rgw-bucket-form',
   templateUrl: './rgw-bucket-form.component.html',
-  styleUrls: ['./rgw-bucket-form.component.scss'],
-  providers: [RgwBucketEncryptionModel]
+  styleUrls: ['./rgw-bucket-form.component.scss']
 })
 export class RgwBucketFormComponent extends CdForm implements OnInit, AfterViewChecked {
+  @ViewChild('bucketPolicyTextArea')
+  public bucketPolicyTextArea: ElementRef<any>;
+  @ViewChild('lifecycleTextArea')
+  public lifecycleTextArea: ElementRef<any>;
+
   bucketForm: CdFormGroup;
   editing = false;
   owners: string[] = null;
@@ -40,8 +62,22 @@ export class RgwBucketFormComponent extends CdForm implements OnInit, AfterViewC
   isVersioningAlreadyEnabled = false;
   isMfaDeleteAlreadyEnabled = false;
   icons = Icons;
-  kmsVaultConfig = false;
-  s3VaultConfig = false;
+  kmsConfigured = false;
+  s3Configured = false;
+  tags: Record<string, string>[] = [];
+  dirtyTags = false;
+  tagConfig = [
+    {
+      attribute: 'key'
+    },
+    {
+      attribute: 'value'
+    }
+  ];
+  grantees: string[] = [Grantee.Owner, Grantee.Everyone, Grantee.AuthenticatedUsers];
+  aclPermissions: AclPermissionsType[] = [aclPermission.FullControl];
+  multisiteStatus$: Observable<any>;
+  isDefaultZoneGroup$: Observable<boolean>;
 
   get isVersioningEnabled(): boolean {
     return this.bucketForm.getValue('versioning');
@@ -59,9 +95,12 @@ export class RgwBucketFormComponent extends CdForm implements OnInit, AfterViewC
     private modalService: ModalService,
     private rgwUserService: RgwUserService,
     private notificationService: NotificationService,
-    private rgwEncryptionModal: RgwBucketEncryptionModel,
+    private textAreaJsonFormatterService: TextAreaJsonFormatterService,
+    private textAreaXmlFormatterService: TextAreaXmlFormatterService,
     public actionLabels: ActionLabelsI18n,
-    private readonly changeDetectorRef: ChangeDetectorRef
+    private readonly changeDetectorRef: ChangeDetectorRef,
+    private rgwMultisiteService: RgwMultisiteService,
+    private rgwDaemonService: RgwDaemonService
   ) {
     super();
     this.editing = this.router.url.startsWith(`/rgw/bucket/${URLVerbs.EDIT}`);
@@ -72,6 +111,8 @@ export class RgwBucketFormComponent extends CdForm implements OnInit, AfterViewC
 
   ngAfterViewChecked(): void {
     this.changeDetectorRef.detectChanges();
+    this.textAreaOnChange(this.bucketPolicyTextArea);
+    this.textAreaOnChange(this.lifecycleTextArea);
   }
 
   createForm() {
@@ -94,7 +135,7 @@ export class RgwBucketFormComponent extends CdForm implements OnInit, AfterViewC
       ],
       owner: [null, [Validators.required]],
       kms_provider: ['vault'],
-      'placement-target': [null, this.editing ? [] : [Validators.required]],
+      'placement-target': [null],
       versioning: [null],
       'mfa-delete': [null],
       'mfa-token-serial': [''],
@@ -119,7 +160,12 @@ export class RgwBucketFormComponent extends CdForm implements OnInit, AfterViewC
         ]
       ],
       lock_mode: ['COMPLIANCE'],
-      lock_retention_period_days: [0, [CdValidators.number(false), lockDaysValidator]]
+      lock_retention_period_days: [10, [CdValidators.number(false), lockDaysValidator]],
+      bucket_policy: ['{}', CdValidators.json()],
+      lifecycle: ['{}', CdValidators.jsonOrXml()],
+      grantee: [Grantee.Owner, [Validators.required]],
+      aclPermission: [[aclPermission.FullControl], [Validators.required]],
+      replication: [false]
     });
   }
 
@@ -127,16 +173,31 @@ export class RgwBucketFormComponent extends CdForm implements OnInit, AfterViewC
     const promises = {
       owners: this.rgwUserService.enumerate()
     };
+    this.multisiteStatus$ = this.rgwMultisiteService.status();
+    this.isDefaultZoneGroup$ = this.rgwDaemonService.selectedDaemon$.pipe(
+      switchMap((daemon) =>
+        this.rgwSiteService.get('default-zonegroup').pipe(
+          map((defaultZoneGroup) => {
+            return daemon.zonegroup_id === defaultZoneGroup;
+          })
+        )
+      )
+    );
 
-    this.kmsProviders = this.rgwEncryptionModal.kmsProviders;
+    this.kmsProviders = rgwBucketEncryptionModel.kmsProviders;
     this.rgwBucketService.getEncryptionConfig().subscribe((data) => {
-      this.kmsVaultConfig = data[0];
-      this.s3VaultConfig = data[1];
-      if (this.kmsVaultConfig && this.s3VaultConfig) {
+      if (data['SSE_KMS']?.length > 0) {
+        this.kmsConfigured = true;
+      }
+      if (data['SSE_S3']?.length > 0) {
+        this.s3Configured = true;
+      }
+      // Set the encryption type based on the configurations
+      if (this.kmsConfigured && this.s3Configured) {
         this.bucketForm.get('encryption_type').setValue('');
-      } else if (this.kmsVaultConfig) {
+      } else if (this.kmsConfigured) {
         this.bucketForm.get('encryption_type').setValue('aws:kms');
-      } else if (this.s3VaultConfig) {
+      } else if (this.s3Configured) {
         this.bucketForm.get('encryption_type').setValue('AES256');
       } else {
         this.bucketForm.get('encryption_type').setValue('');
@@ -191,9 +252,21 @@ export class RgwBucketFormComponent extends CdForm implements OnInit, AfterViewC
           value['versioning'] = bidResp['versioning'] === RgwBucketVersioning.ENABLED;
           value['mfa-delete'] = bidResp['mfa_delete'] === RgwBucketMfaDelete.ENABLED;
           value['encryption_enabled'] = bidResp['encryption'] === 'Enabled';
+          if (bidResp['tagset']) {
+            for (const [key, value] of Object.entries(bidResp['tagset'])) {
+              this.tags.push({ key: key, value: value.toString() });
+            }
+          }
           // Append default values.
           value = _.merge(defaults, value);
           // Update the form.
+          if (this.editing) {
+            [value['grantee'], value['aclPermission']] = this.aclXmlToFormValues(
+              bidResp['acl'],
+              bidResp['owner']
+            );
+            value['lifecycle'] = JSON.stringify(bidResp['lifecycle'] || {});
+          }
           this.bucketForm.setValue(value);
           if (this.editing) {
             this.isVersioningAlreadyEnabled = this.isVersioningEnabled;
@@ -202,6 +275,20 @@ export class RgwBucketFormComponent extends CdForm implements OnInit, AfterViewC
             if (value['lock_enabled']) {
               this.bucketForm.controls['versioning'].disable();
             }
+            if (value['bucket_policy']) {
+              this.bucketForm
+                .get('bucket_policy')
+                .setValue(JSON.stringify(value['bucket_policy'], null, 2));
+            }
+            if (value['replication']) {
+              const replicationConfig = value['replication'];
+              if (replicationConfig?.['Rule']?.['Status'] === 'Enabled') {
+                this.bucketForm.get('replication').setValue(true);
+              } else {
+                this.bucketForm.get('replication').setValue(false);
+              }
+            }
+            this.filterAclPermissions();
           }
         }
         this.loadingReady();
@@ -215,15 +302,27 @@ export class RgwBucketFormComponent extends CdForm implements OnInit, AfterViewC
 
   submit() {
     // Exit immediately if the form isn't dirty.
-    if (this.bucketForm.getValue('encryption_enabled') == null) {
-      this.bucketForm.get('encryption_enabled').setValue(false);
-      this.bucketForm.get('encryption_type').setValue(null);
-    }
     if (this.bucketForm.pristine) {
       this.goToListView();
       return;
     }
+
+    // Ensure that no validation is pending
+    if (this.bucketForm.pending) {
+      this.bucketForm.setErrors({ cdSubmitButton: true });
+      return;
+    }
+
+    if (this.bucketForm.getValue('encryption_enabled') == null) {
+      this.bucketForm.get('encryption_enabled').setValue(false);
+      this.bucketForm.get('encryption_type').setValue(null);
+    }
+
     const values = this.bucketForm.value;
+    const xmlStrTags = this.tagsToXML(this.tags);
+    const bucketPolicy = this.getBucketPolicy();
+    const cannedAcl = this.permissionToCannedAcl();
+
     if (this.editing) {
       // Edit
       const versioning = this.getVersioningStatus();
@@ -241,7 +340,12 @@ export class RgwBucketFormComponent extends CdForm implements OnInit, AfterViewC
           values['mfa-token-serial'],
           values['mfa-token-pin'],
           values['lock_mode'],
-          values['lock_retention_period_days']
+          values['lock_retention_period_days'],
+          xmlStrTags,
+          bucketPolicy,
+          cannedAcl,
+          values['replication'],
+          values['lifecycle']
         )
         .subscribe(
           () => {
@@ -269,7 +373,11 @@ export class RgwBucketFormComponent extends CdForm implements OnInit, AfterViewC
           values['lock_retention_period_days'],
           values['encryption_enabled'],
           values['encryption_type'],
-          values['keyId']
+          values['keyId'],
+          xmlStrTags,
+          bucketPolicy,
+          cannedAcl,
+          values['replication']
         )
         .subscribe(
           () => {
@@ -319,6 +427,10 @@ export class RgwBucketFormComponent extends CdForm implements OnInit, AfterViewC
     return this.isMfaDeleteEnabled ? RgwBucketMfaDelete.ENABLED : RgwBucketMfaDelete.DISABLED;
   }
 
+  getBucketPolicy() {
+    return this.bucketForm.getValue('bucket_policy') || '{}';
+  }
+
   fileUpload(files: FileList, controlName: string) {
     const file: File = files[0];
     const reader = new FileReader();
@@ -331,10 +443,150 @@ export class RgwBucketFormComponent extends CdForm implements OnInit, AfterViewC
     });
   }
 
-  openConfigModal() {
-    const modalRef = this.modalService.show(RgwConfigModalComponent, null, { size: 'lg' });
-    modalRef.componentInstance.configForm
-      .get('encryptionType')
-      .setValue(this.bucketForm.getValue('encryption_type') || 'AES256');
+  textAreaOnChange(textArea: ElementRef<any>) {
+    if (textArea?.nativeElement?.value?.startsWith?.('<')) {
+      this.textAreaXmlFormatterService.format(textArea);
+    } else {
+      this.textAreaJsonFormatterService.format(textArea);
+    }
+  }
+
+  openUrl(url: string) {
+    window.open(url, '_blank');
+  }
+
+  clearTextArea(field: string, defaultValue: string = '') {
+    this.bucketForm.get(field).setValue(defaultValue);
+    this.bucketForm.markAsDirty();
+    this.bucketForm.updateValueAndValidity();
+  }
+
+  showTagModal(index?: number) {
+    const modalRef = this.modalService.show(BucketTagModalComponent);
+    const modalComponent = modalRef.componentInstance as BucketTagModalComponent;
+    modalComponent.currentKeyTags = this.tags.map((item) => item.key);
+
+    if (_.isNumber(index)) {
+      modalComponent.editMode = true;
+      modalComponent.fillForm(this.tags[index]);
+      modalComponent.storedKey = this.tags[index]['key'];
+    }
+
+    modalComponent.submitAction.subscribe((tag: Record<string, string>) => {
+      this.setTag(tag, index);
+    });
+  }
+
+  deleteTag(index: number) {
+    this.tags.splice(index, 1);
+    this.dirtyTags = true;
+    this.bucketForm.markAsDirty();
+    this.bucketForm.updateValueAndValidity();
+  }
+
+  private setTag(tag: Record<string, string>, index?: number) {
+    if (_.isNumber(index)) {
+      this.tags[index] = tag;
+    } else {
+      this.tags.push(tag);
+    }
+    this.dirtyTags = true;
+    this.bucketForm.markAsDirty();
+    this.bucketForm.updateValueAndValidity();
+  }
+
+  private tagsToXML(tags: Record<string, string>[]): string {
+    if (!this.dirtyTags && tags.length === 0) return '';
+    let xml = '<Tagging><TagSet>';
+    for (const tag of tags) {
+      xml += '<Tag>';
+      for (const key in tag) {
+        if (key === 'key') {
+          xml += `<Key>${tag[key]}</Key>`;
+        } else if (key === 'value') {
+          xml += `<Value>${tag[key]}</Value>`;
+        }
+      }
+      xml += '</Tag>';
+    }
+    xml += '</TagSet></Tagging>';
+    return xml;
+  }
+
+  aclXmlToFormValues(xml: any, bucketOwner: string): [Grantee, AclPermissionsType] {
+    const parser = new xml2js.Parser({ explicitArray: false, trim: true });
+    let selectedAclPermission: AclPermissionsType = aclPermission.FullControl;
+    let selectedGrantee: Grantee = Grantee.Owner;
+    parser.parseString(xml, (err, result) => {
+      if (err) return null;
+
+      const xmlGrantees: any = result['AccessControlPolicy']['AccessControlList']['Grant'];
+      for (let i = 0; i < xmlGrantees.length; i++) {
+        if (xmlGrantees[i]['Grantee']['ID'] === bucketOwner) continue;
+        if (
+          xmlGrantees[i]['Grantee']['URI'] &&
+          xmlGrantees[i]['Grantee']['URI'].includes('AllUsers')
+        ) {
+          selectedGrantee = Grantee.Everyone;
+          if (
+            xmlGrantees[i]['Permission'] === 'READ' &&
+            selectedAclPermission !== aclPermission.Write
+          ) {
+            selectedAclPermission = aclPermission.Read;
+          } else if (
+            xmlGrantees[i]['Permission'] === ' WRITE' &&
+            selectedAclPermission !== aclPermission.Read
+          ) {
+            selectedAclPermission = aclPermission.Write;
+          } else {
+            selectedAclPermission = aclPermission.All;
+          }
+        } else if (
+          xmlGrantees[i]['Grantee']['URI'] &&
+          xmlGrantees[i]['Grantee']['URI'].includes('AuthenticatedUsers')
+        ) {
+          selectedGrantee = Grantee.AuthenticatedUsers;
+          selectedAclPermission = aclPermission.Read;
+        }
+      }
+    });
+    return [selectedGrantee, selectedAclPermission];
+  }
+
+  /*
+   Set the selector's options to the available options depending
+   on the selected Grantee and reset it's value
+   */
+  onSelectionFilter() {
+    this.filterAclPermissions();
+    this.bucketForm.get('aclPermission').setValue(this.aclPermissions[0]);
+  }
+
+  filterAclPermissions() {
+    const selectedGrantee: Grantee = this.bucketForm.get('grantee').value;
+    switch (selectedGrantee) {
+      case Grantee.Owner:
+        this.aclPermissions = [aclPermission.FullControl];
+        break;
+      case Grantee.Everyone:
+        this.aclPermissions = [aclPermission.Read, aclPermission.All];
+        break;
+      case Grantee.AuthenticatedUsers:
+        this.aclPermissions = [aclPermission.Read];
+        break;
+    }
+  }
+
+  permissionToCannedAcl(): string {
+    const selectedGrantee: Grantee = this.bucketForm.get('grantee').value;
+    const selectedAclPermission = this.bucketForm.get('aclPermission').value;
+    switch (selectedGrantee) {
+      case Grantee.Everyone:
+        return selectedAclPermission === aclPermission.Read ? 'public-read' : 'public-read-write';
+      case Grantee.AuthenticatedUsers:
+        return 'authenticated-read';
+      default:
+        return 'private';
+    }
   }
 }

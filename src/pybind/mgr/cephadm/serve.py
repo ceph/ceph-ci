@@ -34,13 +34,17 @@ from mgr_util import format_bytes, verify_tls, get_cert_issuer_info, ServerConfi
 
 from . import utils
 from . import exchange
+from . import ssh
 
 if TYPE_CHECKING:
     from cephadm.module import CephadmOrchestrator
 
 logger = logging.getLogger(__name__)
 
-REQUIRES_POST_ACTIONS = ['grafana', 'iscsi', 'prometheus', 'alertmanager', 'rgw']
+REQUIRES_POST_ACTIONS = ['grafana', 'iscsi', 'prometheus', 'alertmanager', 'rgw', 'nvmeof', 'mgmt-gateway']
+
+WHICH = ssh.RemoteExecutable('which')
+CEPHADM_EXE = ssh.RemoteExecutable('/usr/bin/cephadm')
 
 
 class CephadmServe:
@@ -67,7 +71,6 @@ class CephadmServe:
         of cephadm. This loop will then attempt to apply this new state.
         """
         self.log.debug("serve starting")
-        self.mgr.config_checker.load_network_config()
 
         while self.mgr.run:
             self.log.debug("serve loop start")
@@ -113,8 +116,14 @@ class CephadmServe:
                     if self.mgr.agent_helpers._handle_use_agent_setting():
                         continue
 
+                    if self.mgr.node_proxy_service.handle_hw_monitoring_setting():
+                        continue
+
                     if self.mgr.upgrade.continue_upgrade():
                         continue
+
+                    # refresh node-proxy cache
+                    self.mgr.node_proxy_cache.load()
 
             except OrchestratorError as e:
                 if e.event_subject:
@@ -127,8 +136,10 @@ class CephadmServe:
 
     def _check_certificates(self) -> None:
         for d in self.mgr.cache.get_daemons_by_type('grafana'):
-            cert = self.mgr.get_store(f'{d.hostname}/grafana_crt')
-            key = self.mgr.get_store(f'{d.hostname}/grafana_key')
+            host = d.hostname
+            assert host is not None
+            cert = self.mgr.cert_key_store.get_cert('grafana_cert', host=host)
+            key = self.mgr.cert_key_store.get_key('grafana_key', host=host)
             if (not cert or not cert.strip()) and (not key or not key.strip()):
                 # certificate/key are empty... nothing to check
                 return
@@ -186,6 +197,9 @@ class CephadmServe:
             val = None
         else:
             total_mem *= 1024   # kb -> bytes
+            self.log.debug(f'Autotuning memory for host {host} with '
+                           f'{total_mem} total bytes of memory and '
+                           f'{self.mgr.autotune_memory_target_ratio} target ratio')
             total_mem *= self.mgr.autotune_memory_target_ratio
             a = MemoryAutotuner(
                 daemons=self.mgr.cache.get_daemons_by_host(host),
@@ -222,6 +236,9 @@ class CephadmServe:
             # options as users may be using them. Since there is no way to set autotuning
             # on/off at a host level, best we can do is check if it is globally on.
             if self.mgr.get_foreign_ceph_option('osd', 'osd_memory_target_autotune'):
+                self.mgr.log.debug(f'Removing osd_memory_target for OSDs on {host}'
+                                   ' as either there were no OSDs to tune or the '
+                                   ' per OSD memory calculation result was <= 0')
                 self.mgr.check_mon_command({
                     'prefix': 'config rm',
                     'who': f'osd/host:{host.split(".")[0]}',
@@ -316,7 +333,9 @@ class CephadmServe:
         self.mgr.agent_helpers._update_agent_down_healthcheck(agents_down)
         self.mgr.http_server.config_update()
 
-        self.mgr.config_checker.run_checks()
+        if self.mgr.config_checks_enabled:
+            self.mgr.config_checker.load_network_config()
+            self.mgr.config_checker.run_checks()
 
         for k in [
                 'CEPHADM_HOST_CHECK_FAILED',
@@ -455,10 +474,17 @@ class CephadmServe:
         for k in ['CEPHADM_STRAY_HOST',
                   'CEPHADM_STRAY_DAEMON']:
             self.mgr.remove_health_warning(k)
+        # clear recently altered daemons that were created/removed more than 60 seconds ago
+        self.mgr.recently_altered_daemons = {
+            d: t for (d, t) in self.mgr.recently_altered_daemons.items()
+            if ((datetime_now() - t).total_seconds() < 60)
+        }
         if self.mgr.warn_on_stray_hosts or self.mgr.warn_on_stray_daemons:
             ls = self.mgr.list_servers()
             self.log.debug(ls)
-            managed = self.mgr.cache.get_daemon_names()
+            managed_daemons = self.mgr.cache.get_daemons()
+            stray_filter = self._build_stray_filter(managed_daemons)
+            managed = [d.name() for d in managed_daemons]
             host_detail = []     # type: List[str]
             host_num_daemons = 0
             daemon_detail = []  # type: List[str]
@@ -471,28 +497,13 @@ class CephadmServe:
                 for s in daemons:
                     daemon_id = s.get('id')
                     assert daemon_id
-                    name = '%s.%s' % (s.get('type'), daemon_id)
-                    if s.get('type') in ['rbd-mirror', 'cephfs-mirror', 'rgw', 'rgw-nfs']:
-                        metadata = self.mgr.get_metadata(
-                            cast(str, s.get('type')), daemon_id, {})
-                        assert metadata is not None
-                        try:
-                            if s.get('type') == 'rgw-nfs':
-                                # https://tracker.ceph.com/issues/49573
-                                name = metadata['id'][:-4]
-                            else:
-                                name = '%s.%s' % (s.get('type'), metadata['id'])
-                        except (KeyError, TypeError):
-                            self.log.debug(
-                                "Failed to find daemon id for %s service %s" % (
-                                    s.get('type'), s.get('id')
-                                )
-                            )
-                    if s.get('type') == 'tcmu-runner':
-                        # because we don't track tcmu-runner daemons in the host cache
-                        # and don't have a way to check if the daemon is part of iscsi service
-                        # we assume that all tcmu-runner daemons are managed by cephadm
-                        managed.append(name)
+                    name = self._service_reference_name(s.get('type'), daemon_id)
+                    managed.extend(stray_filter(s.get('type'), daemon_id, name))
+                    # Don't mark daemons we just created/removed in the last minute as stray.
+                    # It may take some time for the mgr to become aware the daemon
+                    # had been created/removed.
+                    if name in self.mgr.recently_altered_daemons:
+                        continue
                     if host not in self.mgr.inventory:
                         missing_names.append(name)
                         host_num_daemons += 1
@@ -509,6 +520,52 @@ class CephadmServe:
             if self.mgr.warn_on_stray_daemons and daemon_detail:
                 self.mgr.set_health_warning(
                     'CEPHADM_STRAY_DAEMON', f'{len(daemon_detail)} stray daemon(s) not managed by cephadm', len(daemon_detail), daemon_detail)
+
+    def _service_reference_name(self, service_type: str, daemon_id: str) -> str:
+        if service_type not in ['rbd-mirror', 'cephfs-mirror', 'rgw', 'rgw-nfs']:
+            name = f'{service_type}.{daemon_id}'
+            return name
+
+        metadata = self.mgr.get_metadata(service_type, daemon_id, {})
+        assert metadata is not None
+        try:
+            if service_type == 'rgw-nfs':
+                # https://tracker.ceph.com/issues/49573
+                name = metadata['id'][:-4]
+            else:
+                name = '%s.%s' % (service_type, metadata['id'])
+        except (KeyError, TypeError):
+            self.log.debug(
+                "Failed to find daemon id for %s service %s" % (
+                    service_type, daemon_id
+                )
+            )
+        return name
+
+    def _build_stray_filter(
+        self, managed: List[orchestrator.DaemonDescription]
+    ) -> Callable[[str, str, str], List[str]]:
+        svcs = {
+            daemon_type_to_service(cast(str, dd.daemon_type))
+            for dd in managed
+        }
+        _services = [self.mgr.cephadm_services[dt] for dt in svcs]
+
+        def _filter(
+            service_type: str, daemon_id: str, name: str
+        ) -> List[str]:
+            if service_type == 'tcmu-runner':
+                # because we don't track tcmu-runner daemons in the host cache
+                # and don't have a way to check if the daemon is part of iscsi service
+                # we assume that all tcmu-runner daemons are managed by cephadm
+                return [name]
+            out = []
+            for svc in _services:
+                if svc.ignore_possible_stray(service_type, daemon_id, name):
+                    out.append(name)
+            return out
+
+        return _filter
 
     def _check_for_moved_osds(self) -> None:
         self.log.debug('_check_for_moved_osds')
@@ -673,7 +730,7 @@ class CephadmServe:
         if service_type == 'agent':
             try:
                 assert self.mgr.http_server.agent
-                assert self.mgr.http_server.agent.ssl_certs.get_root_cert()
+                assert self.mgr.cert_mgr.get_root_ca()
             except Exception:
                 self.log.info(
                     'Delaying applying agent spec until cephadm endpoint root cert created')
@@ -751,7 +808,7 @@ class CephadmServe:
         }
 
         rank_map = None
-        if svc.ranked():
+        if svc.ranked(spec):
             rank_map = self.mgr.spec_store[spec.service_name()].rank_map or {}
         ha = HostAssignment(
             spec=spec,
@@ -882,6 +939,13 @@ class CephadmServe:
                         hosts_altered.add(d.hostname)
                         break
 
+                # do not attempt to deploy node-proxy agent when oob details are not provided.
+                if slot.daemon_type == 'node-proxy' and slot.hostname not in self.mgr.node_proxy_cache.oob.keys():
+                    self.log.debug(
+                        f'Not deploying node-proxy agent on {slot.hostname} as oob details are not present.'
+                    )
+                    continue
+
                 # deploy new daemon
                 daemon_id = slot.name
 
@@ -976,9 +1040,11 @@ class CephadmServe:
                 hosts_altered.add(d.hostname)
                 self.mgr.spec_store.mark_needs_configuration(spec.service_name())
 
-            self.mgr.remote('progress', 'complete', progress_id)
+            if progress_total:
+                self.mgr.remote('progress', 'complete', progress_id)
         except Exception as e:
-            self.mgr.remote('progress', 'fail', progress_id, str(e))
+            if progress_total:
+                self.mgr.remote('progress', 'fail', progress_id, str(e))
             raise
         finally:
             if self.mgr.spec_store.needs_configuration(spec.service_name()):
@@ -1055,11 +1121,18 @@ class CephadmServe:
                 self.log.debug(f'{dd.name()} deps {last_deps} -> {deps}')
                 self.log.info(f'Reconfiguring {dd.name()} (dependencies changed)...')
                 action = 'reconfig'
-                # we need only redeploy if secure_monitoring_stack value has changed:
-                if dd.daemon_type in ['prometheus', 'node-exporter', 'alertmanager']:
-                    diff = list(set(last_deps) - set(deps))
-                    if any('secure_monitoring_stack' in e for e in diff):
+                # we need only redeploy if secure_monitoring_stack or mgmt-gateway value has changed:
+                # TODO(redo): check if we should just go always with redeploy (it's fast enough)
+                if dd.daemon_type in ['prometheus', 'node-exporter', 'alertmanager', 'ceph-exporter']:
+                    diff = list(set(last_deps).symmetric_difference(set(deps)))
+                    REDEPLOY_TRIGGERS = ['secure_monitoring_stack', 'mgmt-gateway']
+                    if any(svc in e for e in diff for svc in REDEPLOY_TRIGGERS):
                         action = 'redeploy'
+                elif dd.daemon_type == 'jaeger-agent':
+                    # changes to jaeger-agent deps affect the way the unit.run for
+                    # the daemon is written, which we rewrite on redeploy, but not
+                    # on reconfig.
+                    action = 'redeploy'
 
             elif spec is not None and hasattr(spec, 'extra_container_args') and dd.extra_container_args != spec.extra_container_args:
                 self.log.debug(
@@ -1209,11 +1282,12 @@ class CephadmServe:
                     if host not in client_files:
                         client_files[host] = {}
                     ceph_conf = (0o644, 0, 0, bytes(config), str(config_digest))
-                    client_files[host]['/etc/ceph/ceph.conf'] = ceph_conf
-                    client_files[host][f'{cluster_cfg_dir}/ceph.conf'] = ceph_conf
-                    ceph_admin_key = (ks.mode, ks.uid, ks.gid, keyring.encode('utf-8'), digest)
-                    client_files[host][ks.path] = ceph_admin_key
-                    client_files[host][f'{cluster_cfg_dir}/{os.path.basename(ks.path)}'] = ceph_admin_key
+                    if ks.include_ceph_conf:
+                        client_files[host]['/etc/ceph/ceph.conf'] = ceph_conf
+                        client_files[host][f'{cluster_cfg_dir}/ceph.conf'] = ceph_conf
+                    client_key = (ks.mode, ks.uid, ks.gid, keyring.encode('utf-8'), digest)
+                    client_files[host][ks.path] = client_key
+                    client_files[host][f'{cluster_cfg_dir}/{os.path.basename(ks.path)}'] = client_key
             except Exception as e:
                 self.log.warning(
                     f'unable to calc client keyring {ks.entity} placement {ks.placement}: {e}')
@@ -1253,7 +1327,7 @@ class CephadmServe:
             if path == '/etc/ceph/ceph.conf':
                 continue
             self.log.info(f'Removing {host}:{path}')
-            cmd = ['rm', '-f', path]
+            cmd = ssh.RemoteCommand(ssh.Executables.RM, ['-f', path])
             self.mgr.ssh.check_execute_command(host, cmd)
             updated_files = True
             self.mgr.cache.removed_client_file(host, path)
@@ -1350,6 +1424,7 @@ class CephadmServe:
                         ),
                         config_blobs=daemon_spec.final_config,
                     ).dump_json_str(),
+                    use_current_daemon_image=reconfig,
                 )
 
                 if daemon_spec.daemon_type == 'agent':
@@ -1384,6 +1459,7 @@ class CephadmServe:
                     what = 'reconfigure' if reconfig else 'deploy'
                     self.mgr.events.for_daemon(
                         daemon_spec.name(), OrchestratorEvent.ERROR, f'Failed to {what}: {err}')
+                self.mgr.recently_altered_daemons[daemon_spec.name()] = datetime_now()
                 return msg
             except OrchestratorError:
                 redeploy = daemon_spec.name() in self.mgr.cache.get_daemon_names()
@@ -1483,6 +1559,7 @@ class CephadmServe:
                                                             daemon_type)].post_remove(daemon, is_failed_deploy=False))
                     self.mgr._kick_serve_loop()
 
+            self.mgr.recently_altered_daemons[name] = datetime_now()
             return "Removed {} from host '{}'".format(name, host)
 
     async def _run_cephadm_json(self,
@@ -1494,11 +1571,12 @@ class CephadmServe:
                                 error_ok: Optional[bool] = False,
                                 image: Optional[str] = "",
                                 log_output: Optional[bool] = True,
+                                use_current_daemon_image: bool = False,
                                 ) -> Any:
         try:
             out, err, code = await self._run_cephadm(
                 host, entity, command, args, no_fsid=no_fsid, error_ok=error_ok,
-                image=image, log_output=log_output)
+                image=image, log_output=log_output, use_current_daemon_image=use_current_daemon_image)
             if code:
                 raise OrchestratorError(f'host {host} `cephadm {command}` returned {code}: {err}')
         except Exception as e:
@@ -1523,6 +1601,7 @@ class CephadmServe:
                            env_vars: Optional[List[str]] = None,
                            log_output: Optional[bool] = True,
                            timeout: Optional[int] = None,  # timeout in seconds
+                           use_current_daemon_image: bool = False,
                            ) -> Tuple[List[str], List[str], int]:
         """
         Run cephadm on the remote host with the given command + args
@@ -1543,7 +1622,10 @@ class CephadmServe:
         # Skip the image check for daemons deployed that are not ceph containers
         if not str(entity).startswith(bypass_image):
             if not image and entity is not cephadmNoImage:
-                image = self.mgr._get_container_image(entity)
+                image = self.mgr._get_container_image(
+                    entity,
+                    use_current_daemon_image=use_current_daemon_image
+                )
 
         final_args = []
 
@@ -1602,15 +1684,24 @@ class CephadmServe:
             if stdin and 'agent' not in str(entity):
                 self.log.debug('stdin: %s' % stdin)
 
-            cmd = ['which', 'python3']
+            cmd = ssh.RemoteCommand(WHICH, ['python3'])
             python = await self.mgr.ssh._check_execute_command(host, cmd, addr=addr)
-            cmd = [python, self.mgr.cephadm_binary_path] + final_args
+            # N.B. because the python3 executable is based on the results of the
+            # which command we can not know it ahead of time and must be converted
+            # into a RemoteExecutable.
+            cmd = ssh.RemoteCommand(
+                ssh.RemoteExecutable(python),
+                [self.mgr.cephadm_binary_path] + final_args
+            )
 
             try:
                 out, err, code = await self.mgr.ssh._execute_command(
                     host, cmd, stdin=stdin, addr=addr)
                 if code == 2:
-                    ls_cmd = ['ls', self.mgr.cephadm_binary_path]
+                    ls_cmd = ssh.RemoteCommand(
+                        ssh.Executables.LS,
+                        [self.mgr.cephadm_binary_path]
+                    )
                     out_ls, err_ls, code_ls = await self.mgr.ssh._execute_command(host, ls_cmd, addr=addr,
                                                                                   log_command=log_output)
                     if code_ls == 2:
@@ -1631,7 +1722,7 @@ class CephadmServe:
 
         elif self.mgr.mode == 'cephadm-package':
             try:
-                cmd = ['/usr/bin/cephadm'] + final_args
+                cmd = ssh.RemoteCommand(CEPHADM_EXE, final_args)
                 out, err, code = await self.mgr.ssh._execute_command(
                     host, cmd, stdin=stdin, addr=addr)
             except Exception as e:

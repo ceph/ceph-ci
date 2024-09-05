@@ -1,7 +1,6 @@
 import { Component, OnDestroy, OnInit } from '@angular/core';
 import { UntypedFormControl } from '@angular/forms';
 
-import { NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
 import { Subscription } from 'rxjs';
 
 import { Pool } from '~/app/ceph/pool/pool';
@@ -14,10 +13,10 @@ import { CdTableSelection } from '~/app/shared/models/cd-table-selection';
 import { FinishedTask } from '~/app/shared/models/finished-task';
 import { Permission } from '~/app/shared/models/permissions';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
-import { ModalService } from '~/app/shared/services/modal.service';
 import { TaskWrapperService } from '~/app/shared/services/task-wrapper.service';
 import { BootstrapCreateModalComponent } from '../bootstrap-create-modal/bootstrap-create-modal.component';
 import { BootstrapImportModalComponent } from '../bootstrap-import-modal/bootstrap-import-modal.component';
+import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
 
 @Component({
   selector: 'cd-mirroring',
@@ -29,7 +28,7 @@ export class OverviewComponent implements OnInit, OnDestroy {
   permission: Permission;
   tableActions: CdTableAction[];
   selection = new CdTableSelection();
-  modalRef: NgbModalRef;
+  modalRef: any;
   peersExist = true;
   siteName: any;
   status: ViewCacheStatus;
@@ -41,25 +40,27 @@ export class OverviewComponent implements OnInit, OnDestroy {
   constructor(
     private authStorageService: AuthStorageService,
     private rbdMirroringService: RbdMirroringService,
-    private modalService: ModalService,
+    private modalService: ModalCdsService,
     private taskWrapper: TaskWrapperService
   ) {
     this.permission = this.authStorageService.getPermissions().rbdMirroring;
 
     const createBootstrapAction: CdTableAction = {
       permission: 'update',
-      icon: Icons.upload,
+      icon: 'document--add',
       click: () => this.createBootstrapModal(),
       name: $localize`Create Bootstrap Token`,
       canBePrimary: () => true,
-      disable: () => false
+      disable: () => false,
+      buttonKind: 'primary'
     };
     const importBootstrapAction: CdTableAction = {
       permission: 'update',
-      icon: Icons.download,
+      icon: 'document--import',
       click: () => this.importBootstrapModal(),
       name: $localize`Import Bootstrap Token`,
-      disable: () => false
+      disable: () => false,
+      buttonKind: 'tertiary'
     };
     this.tableActions = [createBootstrapAction, importBootstrapAction];
   }

@@ -24,6 +24,7 @@ import { AdministrationComponent } from '../administration/administration.compon
 import { IdentityComponent } from '../identity/identity.component';
 import { NgbModule } from '@ng-bootstrap/ng-bootstrap';
 import { DashboardHelpComponent } from '../dashboard-help/dashboard-help.component';
+import { DialogModule, GridModule, ThemeModule, UIShellModule } from 'carbon-components-angular';
 
 function everythingPermittedExcept(disabledPermissions: string[] = []): any {
   const permissions: Permissions = new Permissions({});
@@ -71,7 +72,11 @@ describe('NavigationComponent', () => {
       ToastrModule.forRoot(),
       RouterTestingModule,
       SimplebarAngularModule,
-      NgbModule
+      NgbModule,
+      UIShellModule,
+      ThemeModule,
+      DialogModule,
+      GridModule
     ],
     providers: [AuthStorageService, SummaryService, FeatureTogglesService, PrometheusAlertService]
   });
@@ -102,31 +107,31 @@ describe('NavigationComponent', () => {
       [
         ['hosts'],
         [
-          '.tc_submenuitem_hosts',
+          '.tc_submenuitem_cluster_hosts',
           '.tc_submenuitem_cluster_inventory',
-          '.tc_submenuitem_cluster_services'
+          '.tc_submenuitem_admin_services'
         ]
       ],
       [['monitor'], ['.tc_submenuitem_cluster_monitor']],
-      [['osd'], ['.tc_submenuitem_osds', '.tc_submenuitem_crush']],
+      [['osd'], ['.tc_submenuitem_cluster_osds', '.tc_submenuitem_cluster_crush']],
       [
         ['configOpt'],
         [
-          '.tc_submenuitem_configuration',
-          '.tc_submenuitem_modules',
-          '.tc_submenuitem_users',
-          '.tc_submenuitem_upgrade'
+          '.tc_submenuitem_admin_configuration',
+          '.tc_submenuitem_admin_modules',
+          '.tc_submenuitem_admin_users',
+          '.tc_submenuitem_admin_upgrade'
         ]
       ],
-      [['log'], ['.tc_submenuitem_log']],
-      [['prometheus'], ['.tc_submenuitem_monitoring']],
-      [['pool'], ['.tc_menuitem_pool']],
+      [['log'], ['.tc_submenuitem_observe_log']],
+      [['prometheus'], ['.tc_submenuitem_observe_monitoring']],
+      [['pool'], ['.tc_submenuitem_cluster_pool']],
       [['rbdImage'], ['.tc_submenuitem_block_images']],
       [['rbdMirroring'], ['.tc_submenuitem_block_mirroring']],
       [['iscsi'], ['.tc_submenuitem_block_iscsi']],
       [['rbdImage', 'rbdMirroring', 'iscsi'], ['.tc_menuitem_block']],
-      [['nfs'], ['.tc_menuitem_nfs']],
-      [['cephfs'], ['.tc_menuitem_cephfs']],
+      [['nfs'], ['.tc_submenuitem_file_nfs']],
+      [['cephfs'], ['.tc_submenuitem_file_cephfs']],
       [
         ['rgw'],
         [
@@ -173,8 +178,8 @@ describe('NavigationComponent', () => {
       [['mirroring'], ['.tc_submenuitem_block_mirroring']],
       [['iscsi'], ['.tc_submenuitem_block_iscsi']],
       [['rbd', 'mirroring', 'iscsi'], ['.tc_menuitem_block']],
-      [['nfs'], ['.tc_menuitem_nfs']],
-      [['cephfs'], ['.tc_menuitem_cephfs']],
+      [['nfs'], ['.tc_submenuitem_file_nfs']],
+      [['cephfs'], ['.tc_submenuitem_file_cephfs']],
       [
         ['rgw'],
         [
@@ -215,55 +220,47 @@ describe('NavigationComponent', () => {
     }
   });
 
-  describe('showTopNotification', () => {
-    const notification1 = 'notificationName1';
-    const notification2 = 'notificationName2';
+  describe('Test Side Navigation Text', () => {
+    it('should display correct text for navigation items', () => {
+      fixture.detectChanges();
 
-    beforeEach(() => {
-      component.notifications = [];
-    });
+      const expectedTexts = {
+        '.tc_menuitem_dashboard': 'Dashboard',
+        '.tc_submenuitem_multiCluster_overview': 'Overview',
+        '.tc_submenuitem_multiCluster_manage_clusters': 'Manage Clusters',
+        '.tc_submenuitem_cluster_pool': 'Pools',
+        '.tc_submenuitem_cluster_hosts': 'Hosts',
+        '.tc_submenuitem_cluster_inventory': 'Physical Disks',
+        '.tc_submenuitem_admin_services': 'Services',
+        '.tc_submenuitem_cluster_monitor': 'Monitors',
+        '.tc_submenuitem_cluster_osds': 'OSDs',
+        '.tc_submenuitem_cluster_crush': 'CRUSH Map',
+        '.tc_submenuitem_admin_configuration': 'Configuration',
+        '.tc_submenuitem_admin_modules': 'Manager Modules',
+        '.tc_submenuitem_admin_users': 'Ceph Users',
+        '.tc_submenuitem_admin_upgrade': 'Upgrade',
+        '.tc_submenuitem_observe_log': 'Logs',
+        '.tc_submenuitem_observe_monitoring': 'Alerts',
+        '.tc_submenuitem_block_images': 'Images',
+        '.tc_submenuitem_block_mirroring': 'Mirroring',
+        '.tc_submenuitem_block_iscsi': 'iSCSI',
+        '.tc_submenuitem_block_nvme': 'NVMe/TCP',
+        '.tc_submenuitem_rgw_overview': 'Overview',
+        '.tc_submenuitem_rgw_buckets': 'Buckets',
+        '.tc_submenuitem_rgw_users': 'Users',
+        '.tc_submenuitem_rgw_multi-site': 'Multi-site',
+        '.tc_submenuitem_rgw_daemons': 'Gateways',
+        '.tc_submenuitem_rgw_nfs': 'NFS',
+        '.tc_submenuitem_rgw_configuration': 'Configuration',
+        '.tc_submenuitem_file_cephfs': 'File Systems',
+        '.tc_submenuitem_file_nfs': 'NFS'
+      };
 
-    it('should show notification', () => {
-      component.showTopNotification(notification1, true);
-      expect(component.notifications.includes(notification1)).toBeTruthy();
-      expect(component.notifications.length).toBe(1);
-    });
-
-    it('should not add a second notification if it is already shown', () => {
-      component.showTopNotification(notification1, true);
-      component.showTopNotification(notification1, true);
-      expect(component.notifications.includes(notification1)).toBeTruthy();
-      expect(component.notifications.length).toBe(1);
-    });
-
-    it('should add a second notification if the first one is different', () => {
-      component.showTopNotification(notification1, true);
-      component.showTopNotification(notification2, true);
-      expect(component.notifications.includes(notification1)).toBeTruthy();
-      expect(component.notifications.includes(notification2)).toBeTruthy();
-      expect(component.notifications.length).toBe(2);
-    });
-
-    it('should hide an active notification', () => {
-      component.showTopNotification(notification1, true);
-      expect(component.notifications.includes(notification1)).toBeTruthy();
-      expect(component.notifications.length).toBe(1);
-      component.showTopNotification(notification1, false);
-      expect(component.notifications.length).toBe(0);
-    });
-
-    it('should not fail if it tries to hide an inactive notification', () => {
-      expect(() => component.showTopNotification(notification1, false)).not.toThrow();
-      expect(component.notifications.length).toBe(0);
-    });
-
-    it('should keep other notifications if it hides one', () => {
-      component.showTopNotification(notification1, true);
-      component.showTopNotification(notification2, true);
-      expect(component.notifications.length).toBe(2);
-      component.showTopNotification(notification2, false);
-      expect(component.notifications.length).toBe(1);
-      expect(component.notifications.includes(notification1)).toBeTruthy();
+      for (const [selector, expectedText] of Object.entries(expectedTexts)) {
+        const element = fixture.debugElement.query(By.css(selector));
+        expect(element).toBeTruthy();
+        expect(element.nativeElement.textContent.trim()).toBe(expectedText);
+      }
     });
   });
 });

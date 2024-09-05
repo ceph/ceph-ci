@@ -137,7 +137,7 @@ class TestValue final : public Value {
 
     void apply_value_delta(ceph::bufferlist::const_iterator& delta,
                            NodeExtentMutable& payload_mut,
-                           laddr_t value_addr) override {
+                           laddr_offset_t value_addr_offset) override {
       delta_op_t op;
       try {
         ceph::decode(op, delta);
@@ -159,13 +159,13 @@ class TestValue final : public Value {
           break;
         }
         default:
-          logger().error("OTree::TestValue::Replay: got unknown op {} when replay {:#x}+{:#x}",
-                         op, value_addr, payload_mut.get_length());
+          logger().error("OTree::TestValue::Replay: got unknown op {} when replay {}~{:#x}",
+                         op, value_addr_offset, payload_mut.get_length());
           ceph_abort();
         }
       } catch (buffer::error& e) {
-        logger().error("OTree::TestValue::Replay: got decode error {} when replay {:#x}+{:#x}",
-                       e.what(), value_addr, payload_mut.get_length());
+        logger().error("OTree::TestValue::Replay: got decode error {} when replay {}~{:#x}",
+                       e.what(), value_addr_offset, payload_mut.get_length());
         ceph_abort();
       }
     }
@@ -176,7 +176,11 @@ class TestValue final : public Value {
     }
   };
 
-  TestValue(NodeExtentManager& nm, const ValueBuilder& vb, Ref<tree_cursor_t>& p_cursor)
+  TestValue(
+    const hobject_t &hobj,
+    NodeExtentManager& nm,
+    const ValueBuilder& vb,
+    Ref<tree_cursor_t>& p_cursor)
     : Value(nm, vb, p_cursor) {}
   ~TestValue() override = default;
 

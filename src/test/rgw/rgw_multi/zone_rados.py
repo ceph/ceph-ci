@@ -1,5 +1,6 @@
 import logging
 from boto.s3.deletemarker import DeleteMarker
+from boto.exception import BotoServerError
 
 from itertools import zip_longest  # type: ignore
 
@@ -127,7 +128,50 @@ class RadosZone(Zone):
             return True
 
         def create_role(self, path, rolename, policy_document, tag_list):
+            if policy_document is None:
+                policy_document = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":[\"arn:aws:iam:::user/testuser\"]},\"Action\":[\"sts:AssumeRole\"]}]}"
             return self.iam_conn.create_role(rolename, policy_document, path)
+
+        def delete_role(self, role_name):
+            return self.iam_conn.delete_role(role_name)
+
+        def has_role(self, role_name):
+            try:
+                self.get_role(role_name)
+            except BotoServerError:
+                return False
+            return True
+
+        def create_topic(self, topicname, attributes):
+            result = self.sns_client.create_topic(Name=topicname, Attributes=attributes)
+            self.topic_arn = result['TopicArn']
+            return self.topic_arn
+
+        def delete_topic(self, topic_arn):
+            return self.sns_client.delete_topic(TopicArn=topic_arn)
+
+        def get_topic(self, topic_arn):
+            return self.sns_client.get_topic_attributes(TopicArn=topic_arn)
+
+        def list_topics(self):
+            return self.sns_client.list_topics()['Topics']
+
+        def create_notification(self, bucket_name, topic_conf_list):
+            return self.s3_client.put_bucket_notification_configuration(
+                Bucket=bucket_name, NotificationConfiguration={'TopicConfigurations': topic_conf_list})
+
+        def delete_notifications(self, bucket_name):
+            return self.s3_client.put_bucket_notification_configuration(Bucket=bucket_name,
+                                                                        NotificationConfiguration={})
+
+        def list_notifications(self, bucket_name):
+            out = self.s3_client.get_bucket_notification_configuration(Bucket=bucket_name)
+            if 'TopicConfigurations' in out:
+              return out['TopicConfigurations']
+            return []
+
+        def head_object(self, bucket_name, obj_name):
+            return self.s3_client.head_object(Bucket=bucket_name, Key=obj_name)
 
     def get_conn(self, credentials):
         return self.Conn(self, credentials)

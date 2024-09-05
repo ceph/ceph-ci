@@ -1,6 +1,7 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab ft=cpp
 
+#include <optional>
 #include "common/errno.h"
 #include "rgw_rest_realm.h"
 #include "rgw_rest_s3.h"
@@ -65,31 +66,33 @@ class RGWOp_Period_Get : public RGWOp_Period_Base {
 
 void RGWOp_Period_Get::execute(optional_yield y)
 {
-  string realm_id, realm_name, period_id;
+  string realm_id, period_id;
   epoch_t epoch = 0;
   RESTArgs::get_string(s, "realm_id", realm_id, &realm_id);
-  RESTArgs::get_string(s, "realm_name", realm_name, &realm_name);
   RESTArgs::get_string(s, "period_id", period_id, &period_id);
   RESTArgs::get_uint32(s, "epoch", 0, &epoch);
 
   period.set_id(period_id);
   period.set_epoch(epoch);
 
-  op_ret = period.init(this, driver->ctx(), static_cast<rgw::sal::RadosStore*>(driver)->svc()->sysobj, realm_id, y, realm_name);
+  op_ret = period.init(this, driver->ctx(), static_cast<rgw::sal::RadosStore*>(driver)->svc()->sysobj, realm_id, y);
   if (op_ret < 0)
     ldpp_dout(this, 5) << "failed to read period" << dendl;
 }
 
 // POST /admin/realm/period
 class RGWOp_Period_Post : public RGWOp_Period_Base {
+  std::optional<RGWRealm> notify_realm;
  public:
   void execute(optional_yield y) override;
+  void send_response() override;
   int check_caps(const RGWUserCaps& caps) override {
     return caps.check_cap("zone", RGW_CAP_WRITE);
   }
   int verify_permission(optional_yield) override {
     return check_caps(s->user->get_caps());
   }
+
   const char* name() const override { return "post_period"; }
   RGWOpType get_type() override { return RGW_OP_PERIOD_POST; }
 };
@@ -140,9 +143,15 @@ void RGWOp_Period_Post::execute(optional_yield y)
   // if period id is empty, handle as 'period commit'
   if (period.get_id().empty()) {
     op_ret = period.commit(this, driver, realm, current_period, error_stream, y);
+    if (op_ret == -EEXIST) {
+      op_ret = 0; // succeed on retries so the op is idempotent
+      return;
+    }
     if (op_ret < 0) {
       ldpp_dout(this, -1) << "master zone failed to commit period" << dendl;
+      return;
     }
+    notify_realm = std::move(realm); // trigger realm reload
     return;
   }
 
@@ -222,7 +231,7 @@ void RGWOp_Period_Post::execute(optional_yield y)
     ldpp_dout(this, 4) << "period " << period.get_id()
         << " is newer than current period " << current_period.get_id()
         << ", updating realm's current period and notifying zone" << dendl;
-    realm.notify_new_period(this, period, y);
+    notify_realm = std::move(realm); // trigger realm reload
     return;
   }
   // reflect the period into our local objects
@@ -235,9 +244,20 @@ void RGWOp_Period_Post::execute(optional_yield y)
   ldpp_dout(this, 4) << "period epoch " << period.get_epoch()
       << " is newer than current epoch " << current_period.get_epoch()
       << ", updating period's latest epoch and notifying zone" << dendl;
-  realm.notify_new_period(this, period, y);
+  notify_realm = std::move(realm); // trigger realm reload
   // update the period history
   period_history->insert(RGWPeriod{period});
+}
+
+void RGWOp_Period_Post::send_response()
+{
+  RGWOp_Period_Base::send_response();
+
+  if (notify_realm) {
+    // trigger realm reload after sending the response, because reload may
+    // race to close this connection
+    notify_realm->notify_new_period(this, period, s->yield);
+  }
 }
 
 class RGWHandler_Period : public RGWHandler_Auth_S3 {

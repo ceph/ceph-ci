@@ -14,6 +14,7 @@
 #include "auth/RotatingKeyRing.h"
 
 #include "common/hostname.h"
+#include "include/utime_fmt.h"
 
 #include "crimson/auth/KeyRing.h"
 #include "crimson/common/config_proxy.h"
@@ -243,7 +244,7 @@ Connection::do_auth_single(Connection::request_t what)
       return std::make_optional(auth_result_t::canceled);
     }
     logger().info("do_auth_single: {} returns {}: {}",
-                  *conn, *m, m->result);
+                  *conn, *m, (int)m->result);
     auto p = m->result_bl.cbegin();
     auto ret = auth->handle_response(m->result, p,
 				     nullptr, nullptr);
@@ -432,6 +433,7 @@ Client::~Client() = default;
 seastar::future<> Client::start() {
   entity_name = crimson::common::local_conf()->name;
   auth_registry.refresh_config();
+  sub.want("config", 0, 0);
   return load_keyring().then([this] {
     return monmap.build_initial(crimson::common::local_conf(), false);
   }).then([this] {
@@ -805,7 +807,7 @@ seastar::future<> Client::handle_auth_reply(crimson::net::Connection &conn,
                                             Ref<MAuthReply> m)
 {
   logger().info("handle_auth_reply {} returns {}: {}",
-                conn, *m, m->result);
+                conn, *m, (int)m->result);
   auto found = std::find_if(pending_conns.begin(), pending_conns.end(),
                             [peer_addr = conn.get_peer_addr()](auto& mc) {
                               return mc->is_my_peer(peer_addr);

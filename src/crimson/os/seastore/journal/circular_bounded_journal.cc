@@ -94,9 +94,10 @@ CircularBoundedJournal::do_submit_record(
 	(void*)&handle,
 	action == RecordSubmitter::action_t::SUBMIT_FULL ?
 	"FULL" : "NOT_FULL");
-  auto submit_fut = record_submitter.submit(std::move(record));
+  auto submit_ret = record_submitter.submit(std::move(record));
+  // submit_ret.record_base_regardless_md is wrong for journaling
   return handle.enter(write_pipeline->device_submission
-  ).then([submit_fut=std::move(submit_fut)]() mutable {
+  ).then([submit_fut=std::move(submit_ret.future)]() mutable {
     return std::move(submit_fut);
   }).safe_then([FNAME, this, &handle](record_locator_t result) {
     return handle.enter(write_pipeline->finalize
@@ -188,7 +189,7 @@ Journal::replay_ret CircularBoundedJournal::replay_segment(
         cursor,
 	cjs.get_cbj_header().magic,
         std::numeric_limits<size_t>::max(),
-        dhandler).safe_then([](auto){}
+        dhandler
       ).handle_error(
         replay_ertr::pass_further{},
         crimson::ct_error::assert_all{
@@ -316,7 +317,8 @@ Journal::replay_ret CircularBoundedJournal::replay(
     return seastar::do_with(
       std::move(delta_handler),
       std::map<paddr_t, journal_seq_t>(),
-      [this](auto &d_handler, auto &map) {
+      std::map<paddr_t, std::pair<CachedExtentRef, uint32_t>>(),
+      [this](auto &d_handler, auto &map, auto &crc_info) {
       auto build_paddr_seq_map = [&map](
         const auto &offsets,
         const auto &e,
@@ -339,8 +341,8 @@ Journal::replay_ret CircularBoundedJournal::replay(
       // The first pass to build the paddr->journal_seq_t map 
       // from extent allocations
       return scan_valid_record_delta(std::move(build_paddr_seq_map), tail
-      ).safe_then([this, &map, &d_handler, tail]() {
-	auto call_d_handler_if_valid = [this, &map, &d_handler](
+      ).safe_then([this, &map, &d_handler, tail, &crc_info]() {
+	auto call_d_handler_if_valid = [this, &map, &d_handler, &crc_info](
 	  const auto &offsets,
 	  const auto &e,
 	  sea_time_point modify_time)
@@ -353,12 +355,27 @@ Journal::replay_ret CircularBoundedJournal::replay(
 	      get_dirty_tail(),
 	      get_alloc_tail(),
 	      modify_time
-	    );
+	    ).safe_then([&e, &crc_info](auto ret) {
+	      auto [applied, ext] = ret;
+	      if (applied && ext && can_inplace_rewrite(
+		  ext->get_type())) {
+		crc_info[ext->get_paddr()] =
+		  std::make_pair(ext, e.final_crc);
+	      }
+	      return replay_ertr::make_ready_future<bool>(applied);
+	    });
 	  }
 	  return replay_ertr::make_ready_future<bool>(true);
 	};
 	// The second pass to replay deltas
-	return scan_valid_record_delta(std::move(call_d_handler_if_valid), tail);
+	return scan_valid_record_delta(std::move(call_d_handler_if_valid), tail
+	).safe_then([&crc_info]() {
+	  for (auto p : crc_info) {
+	    ceph_assert_always(p.second.first->get_last_committed_crc() == p.second.second);	
+	  }
+	  crc_info.clear();
+	  return replay_ertr::now();
+	});
       });
     }).safe_then([this]() {
       // make sure that committed_to is JOURNAL_SEQ_NULL if jounal is the initial state

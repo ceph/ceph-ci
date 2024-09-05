@@ -4,6 +4,21 @@
  Placement Groups
 ==================
 
+Placement groups (PGs) are subsets of each logical Ceph pool. Placement groups
+perform the function of placing objects (as a group) into OSDs. Ceph manages
+data internally at placement-group granularity: this scales better than would
+managing individual RADOS objects. A cluster that has a larger number of
+placement groups (for example, 150 per OSD) is better balanced than an
+otherwise identical cluster with a smaller number of placement groups.
+
+Ceph’s internal RADOS objects are each mapped to a specific placement group,
+and each placement group belongs to exactly one Ceph pool.
+
+See Sage Weil's blog post `New in Nautilus: PG merging and autotuning
+<https://ceph.io/en/news/blog/2019/new-in-nautilus-pg-merging-and-autotuning/>`_
+for more information about the relationship of placement groups to pools and to
+objects.
+
 .. _pg-autoscaler:
 
 Autoscaling placement groups
@@ -131,11 +146,11 @@ The output will resemble the following::
   if a ``pg_num`` change is in progress, the current number of PGs that the
   pool is working towards. 
 
-- **NEW PG_NUM** (if present) is the value that the system is recommending the
-  ``pg_num`` of the pool to be changed to. It is always a power of 2, and it is
-  present only if the recommended value varies from the current value by more
-  than the default factor of ``3``. To adjust this factor (in the following
-  example, it is changed to ``2``), run the following command:
+- **NEW PG_NUM** (if present) is the value that the system recommends that the
+  ``pg_num`` of the pool should be. It is always a power of two, and it
+  is present only if the recommended value varies from the current value by
+  more than the default factor of ``3``. To adjust this multiple (in the
+  following example, it is changed to ``2``), run the following command:
 
   .. prompt:: bash #
 
@@ -168,7 +183,6 @@ The output will resemble the following::
    .. prompt:: bash #
 
       ceph osd pool set .mgr crush_rule replicated-ssd
-      ceph osd pool set pool 1 crush_rule to replicated-ssd
 
    This intervention will result in a small amount of backfill, but
    typically this traffic completes quickly.
@@ -626,14 +640,13 @@ pools, each with 512 PGs on 10 OSDs, the OSDs will have to handle ~50,000 PGs
 each. This cluster will require significantly more resources and significantly
 more time for peering.
 
-For determining the optimal number of PGs per OSD, we recommend the `PGCalc`_
-tool.
-
 
 .. _setting the number of placement groups:
 
 Setting the Number of PGs
 =========================
+
+:ref:`Placement Group Link <pgcalc>`
 
 Setting the initial number of PGs in a pool must be done at the time you create
 the pool. See `Create a Pool`_ for details. 
@@ -664,6 +677,7 @@ In releases of Ceph that are Nautilus and later (inclusive), when the
 ``pg_num``. This process manifests as periods of remapping of PGs and of
 backfill, and is expected behavior and normal.
 
+.. _rados_ops_pgs_get_pg_num:
 
 Get the Number of PGs
 =====================
@@ -746,22 +760,48 @@ To see statistics for a particular PG, run a command of the following form:
 
    ceph pg {pg-id} query
 
-
 Scrub a PG
 ==========
 
-To scrub a PG, run a command of the following form:
+To force an immediate scrub of a PG, run a command of the following form:
 
 .. prompt:: bash #
 
-   ceph pg scrub {pg-id}
+   ceph tell {pg-id} scrub
 
-Ceph checks the primary and replica OSDs, generates a catalog of all objects in
-the PG, and compares the objects against each other in order to ensure that no
-objects are missing or mismatched and that their contents are consistent. If
-the replicas all match, then a final semantic sweep takes place to ensure that
-all snapshot-related object metadata is consistent.  Errors are reported in
-logs.
+or
+
+.. prompt:: bash #
+
+   ceph tell {pg-id} deep-scrub
+
+Ceph checks the primary and replica OSDs and generates a catalog of all objects in
+the PG. For each object, Ceph compares all instances of the object (in the primary
+and replica OSDs) to ensure that they are consistent. For shallow scrubs (initiated
+by the first command format), only object metadata is compared. Deep scrubs
+(initiated by the second command format) compare the contents of the objects as well.
+If the replicas all match, a final semantic sweep takes place to ensure that all
+snapshot-related object metadata is consistent.  Errors are reported in logs.
+
+Scrubs initiated using the command format above are deemed high priority, and
+are performed immediately. Such scrubs are not subject to any day-of-week or
+time-of-day restrictions that are in effect for regular, periodic, scrubs.
+They are not limited by 'osd_max_scrubs', and are not required to wait for
+their replicas' scrub resources.
+
+A second command format exists for initiating a scrub as-if it were a regular
+scrub. This command format is as follows:
+
+.. prompt:: bash #
+
+   ceph tell {pg-id} schedule-scrub
+
+or
+
+.. prompt:: bash #
+
+   ceph tell {pg-id} schedule-deep-scrub
+
 
 To scrub all PGs from a specific pool, run a command of the following form:
 
@@ -893,4 +933,3 @@ about it entirely (if it is too new to have a previous version). To mark the
 
 .. _Create a Pool: ../pools#createpool
 .. _Mapping PGs to OSDs: ../../../architecture#mapping-pgs-to-osds
-.. _pgcalc: https://old.ceph.com/pgcalc/

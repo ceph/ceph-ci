@@ -222,13 +222,13 @@ void rgw_rest_init(CephContext *cct, const rgw::sal::ZoneGroup& zone_group)
   hostnames_set.erase(""); // filter out empty hostnames
   ldout(cct, 20) << "RGW hostnames: " << hostnames_set << dendl;
   /* TODO: We should have a sanity check that no hostname matches the end of
-   * any other hostname, otherwise we will get ambigious results from
+   * any other hostname, otherwise we will get ambiguous results from
    * rgw_find_host_in_domains.
    * Eg: 
    * Hostnames: [A, B.A]
    * Inputs: [Z.A, X.B.A]
    * Z.A clearly splits to subdomain=Z, domain=Z
-   * X.B.A ambigously splits to both {X, B.A} and {X.B, A}
+   * X.B.A ambiguously splits to both {X, B.A} and {X.B, A}
    */
 
   zone_group.get_s3website_hostnames(names);
@@ -397,6 +397,10 @@ void dump_content_length(req_state* const s, const uint64_t len)
 
 static void dump_chunked_encoding(req_state* const s)
 {
+  // omit transfer-encoding for HEAD requests so ChunkingFilter doesn't
+  // try to write the final chunk
+  if(s->op == OP_HEAD)
+    return;
   try {
     RESTFUL_IO(s)->send_chunked_transfer_encoding();
   } catch (rgw::io::Exception& e) {
@@ -498,15 +502,24 @@ void dump_time(req_state *s, const char *name, real_time t)
   s->formatter->dump_string(name, buf);
 }
 
-void dump_owner(req_state *s, const rgw_user& id, const string& name,
+void dump_owner(req_state *s, const std::string& id, const string& name,
 		const char *section)
 {
   if (!section)
     section = "Owner";
   s->formatter->open_object_section(section);
-  s->formatter->dump_string("ID", id.to_str());
-  s->formatter->dump_string("DisplayName", name);
+  s->formatter->dump_string("ID", id);
+  if (!name.empty()) {
+    s->formatter->dump_string("DisplayName", name);
+  }
   s->formatter->close_section();
+}
+
+void dump_owner(req_state *s, const rgw_owner& owner, const string& name,
+		const char *section)
+{
+  std::string id = to_string(owner);
+  dump_owner(s, id, name, section);
 }
 
 void dump_access_control(req_state *s, const char *origin,
@@ -581,7 +594,7 @@ void end_header(req_state* s, RGWOp* op, const char *content_type,
   dump_trans_id(s);
 
   if ((!s->is_err()) && s->bucket &&
-      (s->bucket->get_info().owner != s->user->get_id()) &&
+      (!s->auth.identity->is_owner_of(s->bucket->get_info().owner)) &&
       (s->bucket->get_info().requester_pays)) {
     dump_header(s, "x-amz-request-charged", "requester");
   }
@@ -646,7 +659,7 @@ static void build_redirect_url(req_state *s, const string& redirect_base, string
   
   dest_uri = redirect_base;
   /*
-   * reqest_uri is always start with slash, so we need to remove
+   * request_uri is always start with slash, so we need to remove
    * the unnecessary slash at the end of dest_uri.
    */
   if (dest_uri[dest_uri.size() - 1] == '/') {
@@ -670,13 +683,13 @@ void abort_early(req_state *s, RGWOp* op, int err_no,
   if (op != NULL) {
     int new_err_no;
     new_err_no = op->error_handler(err_no, &error_content, y);
-    ldpp_dout(s, 1) << "op->ERRORHANDLER: err_no=" << err_no
+    ldpp_dout(s, 20) << "op->ERRORHANDLER: err_no=" << err_no
 		      << " new_err_no=" << new_err_no << dendl;
     err_no = new_err_no;
   } else if (handler != NULL) {
     int new_err_no;
     new_err_no = handler->error_handler(err_no, &error_content, y);
-    ldpp_dout(s, 1) << "handler->ERRORHANDLER: err_no=" << err_no
+    ldpp_dout(s, 20) << "handler->ERRORHANDLER: err_no=" << err_no
 		      << " new_err_no=" << new_err_no << dendl;
     err_no = new_err_no;
   }
@@ -766,11 +779,11 @@ int dump_body(req_state* const s,
               const char* const buf,
               const size_t len)
 {
-  bool healthchk = false;
+  bool healthcheck = false;
   // we dont want to limit health checks
   if(s->op_type == RGW_OP_GET_HEALTH_CHECK)
-    healthchk = true;
-  if(len > 0 && !healthchk) {
+    healthcheck = true;
+  if(len > 0 && !healthcheck) {
     const char *method = s->info.method;
     s->ratelimit_data->decrease_bytes(method, s->ratelimit_user_name, len, &s->user_ratelimit);
     if(!rgw::sal::Bucket::empty(s->bucket.get()))
@@ -803,11 +816,11 @@ int recv_body(req_state* const s,
   } catch (rgw::io::Exception& e) {
     return -e.code().value();
   }
-  bool healthchk = false;
+  bool healthcheck = false;
   // we dont want to limit health checks
   if(s->op_type ==  RGW_OP_GET_HEALTH_CHECK)
-    healthchk = true;
-  if(len > 0 && !healthchk) {
+    healthcheck = true;
+  if(len > 0 && !healthcheck) {
     const char *method = s->info.method;
     s->ratelimit_data->decrease_bytes(method, s->ratelimit_user_name, len, &s->user_ratelimit);
     if(!rgw::sal::Bucket::empty(s->bucket.get()))
@@ -1080,7 +1093,7 @@ int RGWPutObj_ObjStore::get_data(bufferlist& bl)
   }
 
   return len;
-}
+} /* RGWPutObj_ObjStore::get_data(bufferlist& bl) */
 
 
 /*
@@ -1865,20 +1878,6 @@ static http_op op_from_method(const char *method)
 int RGWHandler_REST::init_permissions(RGWOp* op, optional_yield y)
 {
   if (op->get_type() == RGW_OP_CREATE_BUCKET) {
-    // We don't need user policies in case of STS token returned by AssumeRole, hence the check for user type
-    if (! s->user->get_id().empty() && s->auth.identity->get_identity_type() != TYPE_ROLE) {
-      try {
-        if (auto ret = s->user->read_attrs(s, y); ! ret) {
-          auto user_policies = get_iam_user_policy_from_attr(s->cct, s->user->get_attrs(), s->user->get_tenant());
-          s->iam_user_policies.insert(s->iam_user_policies.end(),
-                                      std::make_move_iterator(user_policies.begin()),
-                                      std::make_move_iterator(user_policies.end()));
-
-        }
-      } catch (const std::exception& e) {
-        ldpp_dout(op, -1) << "Error reading IAM User Policy: " << e.what() << dendl;
-      }
-    }
     rgw_build_iam_environment(driver, s);
     return 0;
   }
@@ -2008,23 +2007,6 @@ RGWRESTMgr::~RGWRESTMgr()
     delete iter->second;
   }
   delete default_mgr;
-}
-
-int64_t parse_content_length(const char *content_length)
-{
-  int64_t len = -1;
-
-  if (*content_length == '\0') {
-    len = 0;
-  } else {
-    string err;
-    len = strict_strtoll(content_length, 10, &err);
-    if (!err.empty()) {
-      len = -1;
-    }
-  }
-
-  return len;
 }
 
 int RGWREST::preprocess(req_state *s, rgw::io::BasicClient* cio)
@@ -2186,6 +2168,11 @@ int RGWREST::preprocess(req_state *s, rgw::io::BasicClient* cio)
       << " s->info.domain=" << s->info.domain
       << " s->info.request_uri=" << s->info.request_uri
       << dendl;
+  } else if (s3website_enabled && api_priority_s3website > api_priority_s3) {
+    // If the Host header is missing, but the s3website API is enabled and has
+    // a higher priority than the regular S3 API, then we should still treat
+    // the request as a website request.
+    s->prot_flags |= RGW_REST_WEBSITE;
   }
 
   if (s->info.domain.empty()) {
@@ -2283,8 +2270,6 @@ int RGWREST::preprocess(req_state *s, rgw::io::BasicClient* cio)
   }
   s->op = op_from_method(info.method);
 
-  info.init_meta_info(s, &s->has_bad_meta);
-
   return 0;
 }
 
@@ -2326,6 +2311,8 @@ RGWHandler_REST* RGWREST::get_handler(
     m->put_handler(handler);
     return nullptr;
   }
+
+  s->info.init_meta_info(s, &s->has_bad_meta, s->prot_flags);
 
   return handler;
 } /* get stream handler */

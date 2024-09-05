@@ -1,7 +1,6 @@
-import os
 import pytest
 from ceph_volume.util import disk
-from mock.mock import patch, MagicMock
+from mock.mock import patch, Mock, MagicMock, mock_open
 
 
 class TestFunctions:
@@ -33,6 +32,16 @@ class TestFunctions:
     def test_is_device_type_part(self):
         assert not disk.is_device('/dev/foo1')
 
+    @patch('ceph_volume.util.disk.os.path.exists', MagicMock(return_value=True))
+    @patch('ceph_volume.util.disk.get_partitions', MagicMock(return_value={"sda1": "sda"}))
+    def test_is_partition(self):
+        assert disk.is_partition('sda1')
+
+
+    @patch('os.path.exists', Mock(return_value=True))
+    def test_get_lvm_mapper_path_from_dm(self):
+        with patch('builtins.open', mock_open(read_data='test--foo--vg-test--foo--lv')):
+            assert disk.get_lvm_mapper_path_from_dm('/dev/dm-123') == '/dev/mapper/test--foo--vg-test--foo--lv'
 
 class TestLsblkParser(object):
 
@@ -255,64 +264,72 @@ class TestGetDevices(object):
         result = disk.get_devices(_sys_block_path=str(tmpdir))
         assert result == {}
 
-    def test_sda_block_is_found(self, patched_get_block_devs_sysfs, fake_filesystem):
+    @patch('ceph_volume.util.disk.udevadm_property')
+    def test_sda_block_is_found(self, m_udev_adm_property, patched_get_block_devs_sysfs, fake_filesystem):
         sda_path = '/dev/sda'
-        patched_get_block_devs_sysfs.return_value = [[sda_path, sda_path, 'disk']]
+        patched_get_block_devs_sysfs.return_value = [[sda_path, sda_path, 'disk', sda_path]]
         result = disk.get_devices()
         assert len(result.keys()) == 1
         assert result[sda_path]['human_readable_size'] == '0.00 B'
         assert result[sda_path]['model'] == ''
         assert result[sda_path]['partitions'] == {}
 
-    def test_sda_size(self, patched_get_block_devs_sysfs, fake_filesystem):
+    @patch('ceph_volume.util.disk.udevadm_property')
+    def test_sda_size(self, m_udev_adm_property, patched_get_block_devs_sysfs, fake_filesystem):
         sda_path = '/dev/sda'
-        patched_get_block_devs_sysfs.return_value = [[sda_path, sda_path, 'disk']]
+        patched_get_block_devs_sysfs.return_value = [[sda_path, sda_path, 'disk', sda_path]]
         fake_filesystem.create_file('/sys/block/sda/size', contents = '1024')
         result = disk.get_devices()
         assert list(result.keys()) == [sda_path]
         assert result[sda_path]['human_readable_size'] == '512.00 KB'
 
-    def test_sda_sectorsize_fallsback(self, patched_get_block_devs_sysfs, fake_filesystem):
+    @patch('ceph_volume.util.disk.udevadm_property')
+    def test_sda_sectorsize_fallsback(self, m_udev_adm_property, patched_get_block_devs_sysfs, fake_filesystem):
         # if no sectorsize, it will use queue/hw_sector_size
         sda_path = '/dev/sda'
-        patched_get_block_devs_sysfs.return_value = [[sda_path, sda_path, 'disk']]
+        patched_get_block_devs_sysfs.return_value = [[sda_path, sda_path, 'disk', sda_path]]
         fake_filesystem.create_file('/sys/block/sda/queue/hw_sector_size', contents = '1024')
         result = disk.get_devices()
         assert list(result.keys()) == [sda_path]
         assert result[sda_path]['sectorsize'] == '1024'
 
-    def test_sda_sectorsize_from_logical_block(self, patched_get_block_devs_sysfs, fake_filesystem):
+    @patch('ceph_volume.util.disk.udevadm_property')
+    def test_sda_sectorsize_from_logical_block(self, m_udev_adm_property, patched_get_block_devs_sysfs, fake_filesystem):
         sda_path = '/dev/sda'
-        patched_get_block_devs_sysfs.return_value = [[sda_path, sda_path, 'disk']]
+        patched_get_block_devs_sysfs.return_value = [[sda_path, sda_path, 'disk', sda_path]]
         fake_filesystem.create_file('/sys/block/sda/queue/logical_block_size', contents = '99')
         result = disk.get_devices()
         assert result[sda_path]['sectorsize'] == '99'
 
-    def test_sda_sectorsize_does_not_fallback(self, patched_get_block_devs_sysfs, fake_filesystem):
+    @patch('ceph_volume.util.disk.udevadm_property')
+    def test_sda_sectorsize_does_not_fallback(self, m_udev_adm_property, patched_get_block_devs_sysfs, fake_filesystem):
         sda_path = '/dev/sda'
-        patched_get_block_devs_sysfs.return_value = [[sda_path, sda_path, 'disk']]
+        patched_get_block_devs_sysfs.return_value = [[sda_path, sda_path, 'disk', sda_path]]
         fake_filesystem.create_file('/sys/block/sda/queue/logical_block_size', contents = '99')
         fake_filesystem.create_file('/sys/block/sda/queue/hw_sector_size', contents = '1024')
         result = disk.get_devices()
         assert result[sda_path]['sectorsize'] == '99'
 
-    def test_is_rotational(self, patched_get_block_devs_sysfs, fake_filesystem):
+    @patch('ceph_volume.util.disk.udevadm_property')
+    def test_is_rotational(self, m_udev_adm_property, patched_get_block_devs_sysfs, fake_filesystem):
         sda_path = '/dev/sda'
-        patched_get_block_devs_sysfs.return_value = [[sda_path, sda_path, 'disk']]
+        patched_get_block_devs_sysfs.return_value = [[sda_path, sda_path, 'disk', sda_path]]
         fake_filesystem.create_file('/sys/block/sda/queue/rotational', contents = '1')
         result = disk.get_devices()
         assert result[sda_path]['rotational'] == '1'
 
-    def test_is_ceph_rbd(self, patched_get_block_devs_sysfs, fake_filesystem):
+    @patch('ceph_volume.util.disk.udevadm_property')
+    def test_is_ceph_rbd(self, m_udev_adm_property, patched_get_block_devs_sysfs, fake_filesystem):
         rbd_path = '/dev/rbd0'
-        patched_get_block_devs_sysfs.return_value = [[rbd_path, rbd_path, 'disk']]
+        patched_get_block_devs_sysfs.return_value = [[rbd_path, rbd_path, 'disk', rbd_path]]
         result = disk.get_devices()
         assert rbd_path not in result
 
-    def test_actuator_device(self, patched_get_block_devs_sysfs, fake_filesystem):
+    @patch('ceph_volume.util.disk.udevadm_property')
+    def test_actuator_device(self, m_udev_adm_property, patched_get_block_devs_sysfs, fake_filesystem):
         sda_path = '/dev/sda'
         fake_actuator_nb = 2
-        patched_get_block_devs_sysfs.return_value = [[sda_path, sda_path, 'disk']]
+        patched_get_block_devs_sysfs.return_value = [[sda_path, sda_path, 'disk', sda_path]]
         for actuator in range(0, fake_actuator_nb):
             fake_filesystem.create_dir(f'/sys/block/sda/queue/independent_access_ranges/{actuator}')
         result = disk.get_devices()
@@ -536,17 +553,6 @@ class TestSizeSpecificFormatting(object):
         result = "%s" % size.tb
         assert "%s" % size.tb == "%s" % size.terabytes
         assert result == "1027.00 TB"
-
-
-class TestAllowLoopDevsWarning(object):
-    def test_loop_dev_warning(self, fake_call, caplog):
-        assert disk.allow_loop_devices() is False
-        assert not caplog.records
-        os.environ['CEPH_VOLUME_ALLOW_LOOP_DEVICES'] = "y"
-        assert disk.allow_loop_devices() is True
-        log = caplog.records[0]
-        assert log.levelname == "WARNING"
-        assert "will never be supported in production" in log.message
 
 
 class TestHasBlueStoreLabel(object):

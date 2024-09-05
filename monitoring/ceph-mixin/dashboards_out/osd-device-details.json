@@ -63,6 +63,15 @@
          "dashes": false,
          "datasource": "$datasource",
          "description": "",
+         "fieldConfig": {
+            "defaults": {
+               "custom": {
+                  "fillOpacity": 8,
+                  "showPoints": "never"
+               },
+               "unit": "s"
+            }
+         },
          "fill": 1,
          "fillGradient": 0,
          "gridPos": {
@@ -87,7 +96,7 @@
          "lines": true,
          "linewidth": 1,
          "links": [ ],
-         "nullPointMode": "null",
+         "nullPointMode": "null as zero",
          "percentage": false,
          "pointradius": 5,
          "points": false,
@@ -104,14 +113,14 @@
          "steppedLine": false,
          "targets": [
             {
-               "expr": "rate(ceph_osd_op_r_latency_sum{job=~\"$job\", ceph_daemon=~\"$osd\"}[$__rate_interval]) /\n  on (ceph_daemon) rate(ceph_osd_op_r_latency_count{job=~\"$job\"}[$__rate_interval])\n",
+               "expr": "rate(ceph_osd_op_r_latency_sum{ceph_daemon=~\"$osd\", cluster=~\"$cluster\", }[$__rate_interval]) /\n  on (ceph_daemon) rate(ceph_osd_op_r_latency_count{cluster=~\"$cluster\", }[$__rate_interval])\n",
                "format": "time_series",
                "intervalFactor": 1,
                "legendFormat": "read",
                "refId": "A"
             },
             {
-               "expr": "rate(ceph_osd_op_w_latency_sum{job=~\"$job\", ceph_daemon=~\"$osd\"}[$__rate_interval]) /\n  on (ceph_daemon) rate(ceph_osd_op_w_latency_count{job=~\"$job\"}[$__rate_interval])\n",
+               "expr": "rate(ceph_osd_op_w_latency_sum{ceph_daemon=~\"$osd\", cluster=~\"$cluster\", }[$__rate_interval]) /\n  on (ceph_daemon) rate(ceph_osd_op_w_latency_count{cluster=~\"$cluster\", }[$__rate_interval])\n",
                "format": "time_series",
                "intervalFactor": 1,
                "legendFormat": "write",
@@ -127,7 +136,7 @@
             "sort": 0,
             "value_type": "individual"
          },
-         "type": "graph",
+         "type": "timeseries",
          "xaxis": {
             "buckets": null,
             "mode": "time",
@@ -161,6 +170,15 @@
          "dashes": false,
          "datasource": "$datasource",
          "description": "",
+         "fieldConfig": {
+            "defaults": {
+               "custom": {
+                  "fillOpacity": 8,
+                  "showPoints": "never"
+               },
+               "unit": "short"
+            }
+         },
          "fill": 1,
          "fillGradient": 0,
          "gridPos": {
@@ -185,7 +203,7 @@
          "lines": true,
          "linewidth": 1,
          "links": [ ],
-         "nullPointMode": "null",
+         "nullPointMode": "null as zero",
          "percentage": false,
          "pointradius": 5,
          "points": false,
@@ -202,14 +220,14 @@
          "steppedLine": false,
          "targets": [
             {
-               "expr": "rate(ceph_osd_op_r{job=~\"$job\", ceph_daemon=~\"$osd\"}[$__rate_interval])",
+               "expr": "rate(ceph_osd_op_r{ceph_daemon=~\"$osd\", cluster=~\"$cluster\", }[$__rate_interval])",
                "format": "time_series",
                "intervalFactor": 1,
                "legendFormat": "Reads",
                "refId": "A"
             },
             {
-               "expr": "rate(ceph_osd_op_w{job=~\"$job\", ceph_daemon=~\"$osd\"}[$__rate_interval])",
+               "expr": "rate(ceph_osd_op_w{ceph_daemon=~\"$osd\", cluster=~\"$cluster\", }[$__rate_interval])",
                "format": "time_series",
                "intervalFactor": 1,
                "legendFormat": "Writes",
@@ -225,7 +243,7 @@
             "sort": 0,
             "value_type": "individual"
          },
-         "type": "graph",
+         "type": "timeseries",
          "xaxis": {
             "buckets": null,
             "mode": "time",
@@ -259,6 +277,15 @@
          "dashes": false,
          "datasource": "$datasource",
          "description": "",
+         "fieldConfig": {
+            "defaults": {
+               "custom": {
+                  "fillOpacity": 8,
+                  "showPoints": "never"
+               },
+               "unit": "bytes"
+            }
+         },
          "fill": 1,
          "fillGradient": 0,
          "gridPos": {
@@ -283,7 +310,7 @@
          "lines": true,
          "linewidth": 1,
          "links": [ ],
-         "nullPointMode": "null",
+         "nullPointMode": "null as zero",
          "percentage": false,
          "pointradius": 5,
          "points": false,
@@ -300,14 +327,14 @@
          "steppedLine": false,
          "targets": [
             {
-               "expr": "rate(ceph_osd_op_r_out_bytes{job=~\"$job\", ceph_daemon=~\"$osd\"}[$__rate_interval])",
+               "expr": "rate(ceph_osd_op_r_out_bytes{ceph_daemon=~\"$osd\", cluster=~\"$cluster\", }[$__rate_interval])",
                "format": "time_series",
                "intervalFactor": 1,
                "legendFormat": "Read Bytes",
                "refId": "A"
             },
             {
-               "expr": "rate(ceph_osd_op_w_in_bytes{job=~\"$job\", ceph_daemon=~\"$osd\"}[$__rate_interval])",
+               "expr": "rate(ceph_osd_op_w_in_bytes{ceph_daemon=~\"$osd\", cluster=~\"$cluster\", }[$__rate_interval])",
                "format": "time_series",
                "intervalFactor": 1,
                "legendFormat": "Write Bytes",
@@ -323,7 +350,7 @@
             "sort": 0,
             "value_type": "individual"
          },
-         "type": "graph",
+         "type": "timeseries",
          "xaxis": {
             "buckets": null,
             "mode": "time",
@@ -376,6 +403,15 @@
          "dashes": false,
          "datasource": "$datasource",
          "description": "",
+         "fieldConfig": {
+            "defaults": {
+               "custom": {
+                  "fillOpacity": 8,
+                  "showPoints": "never"
+               },
+               "unit": "s"
+            }
+         },
          "fill": 1,
          "fillGradient": 0,
          "gridPos": {
@@ -400,7 +436,7 @@
          "lines": true,
          "linewidth": 1,
          "links": [ ],
-         "nullPointMode": "null",
+         "nullPointMode": "null as zero",
          "percentage": false,
          "pointradius": 5,
          "points": false,
@@ -417,14 +453,14 @@
          "steppedLine": false,
          "targets": [
             {
-               "expr": "(\n  label_replace(\n    rate(node_disk_read_time_seconds_total{}[$__rate_interval]) /\n      rate(node_disk_reads_completed_total{}[$__rate_interval]),\n    \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n  ) and on (instance, device) label_replace(\n    label_replace(\n      ceph_disk_occupation_human{job=~\"$job\", ceph_daemon=~\"$osd\"},\n      \"device\", \"$1\", \"device\", \"/dev/(.*)\"\n    ), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n  )\n)\n",
+               "expr": "(\n  label_replace(\n    rate(node_disk_read_time_seconds_total[$__rate_interval]) /\n      rate(node_disk_reads_completed_total[$__rate_interval]),\n    \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n  ) and on (instance, device) label_replace(\n    label_replace(\n      ceph_disk_occupation_human{ceph_daemon=~\"$osd\", cluster=~\"$cluster\", },\n      \"device\", \"$1\", \"device\", \"/dev/(.*)\"\n    ), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n  )\n)\n",
                "format": "time_series",
                "intervalFactor": 1,
                "legendFormat": "{{instance}}/{{device}} Reads",
                "refId": "A"
             },
             {
-               "expr": "(\n  label_replace(\n    rate(node_disk_write_time_seconds_total{}[$__rate_interval]) /\n      rate(node_disk_writes_completed_total{}[$__rate_interval]),\n    \"instance\", \"$1\", \"instance\", \"([^:.]*).*\") and on (instance, device)\n    label_replace(\n      label_replace(\n        ceph_disk_occupation_human{job=~\"$job\", ceph_daemon=~\"$osd\"}, \"device\", \"$1\", \"device\", \"/dev/(.*)\"\n      ), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n    )\n  )\n",
+               "expr": "(\n  label_replace(\n    rate(node_disk_write_time_seconds_total[$__rate_interval]) /\n      rate(node_disk_writes_completed_total[$__rate_interval]),\n    \"instance\", \"$1\", \"instance\", \"([^:.]*).*\") and on (instance, device)\n    label_replace(\n      label_replace(\n        ceph_disk_occupation_human{ceph_daemon=~\"$osd\", cluster=~\"$cluster\", }, \"device\", \"$1\", \"device\", \"/dev/(.*)\"\n      ), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n    )\n  )\n",
                "format": "time_series",
                "intervalFactor": 1,
                "legendFormat": "{{instance}}/{{device}} Writes",
@@ -440,7 +476,7 @@
             "sort": 0,
             "value_type": "individual"
          },
-         "type": "graph",
+         "type": "timeseries",
          "xaxis": {
             "buckets": null,
             "mode": "time",
@@ -474,6 +510,15 @@
          "dashes": false,
          "datasource": "$datasource",
          "description": "",
+         "fieldConfig": {
+            "defaults": {
+               "custom": {
+                  "fillOpacity": 8,
+                  "showPoints": "never"
+               },
+               "unit": "short"
+            }
+         },
          "fill": 1,
          "fillGradient": 0,
          "gridPos": {
@@ -498,7 +543,7 @@
          "lines": true,
          "linewidth": 1,
          "links": [ ],
-         "nullPointMode": "null",
+         "nullPointMode": "null as zero",
          "percentage": false,
          "pointradius": 5,
          "points": false,
@@ -515,14 +560,14 @@
          "steppedLine": false,
          "targets": [
             {
-               "expr": "label_replace(\n  rate(node_disk_writes_completed_total{}[$__rate_interval]),\n  \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n) and on (instance, device) label_replace(\n  label_replace(\n    ceph_disk_occupation_human{job=~\"$job\", ceph_daemon=~\"$osd\"},\n    \"device\", \"$1\", \"device\", \"/dev/(.*)\"\n  ), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n)\n",
+               "expr": "label_replace(\n  rate(node_disk_writes_completed_total[$__rate_interval]),\n  \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n) and on (instance, device) label_replace(\n  label_replace(\n    ceph_disk_occupation_human{ceph_daemon=~\"$osd\", cluster=~\"$cluster\", },\n    \"device\", \"$1\", \"device\", \"/dev/(.*)\"\n  ), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n)\n",
                "format": "time_series",
                "intervalFactor": 1,
                "legendFormat": "{{device}} on {{instance}} Writes",
                "refId": "A"
             },
             {
-               "expr": "label_replace(\n  rate(node_disk_reads_completed_total{}[$__rate_interval]),\n  \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n) and on (instance, device) label_replace(\n  label_replace(\n    ceph_disk_occupation_human{job=~\"$job\", ceph_daemon=~\"$osd\"},\n    \"device\", \"$1\", \"device\", \"/dev/(.*)\"\n  ), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n)\n",
+               "expr": "label_replace(\n  rate(node_disk_reads_completed_total[$__rate_interval]),\n  \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n) and on (instance, device) label_replace(\n  label_replace(\n    ceph_disk_occupation_human{ceph_daemon=~\"$osd\", cluster=~\"$cluster\", },\n    \"device\", \"$1\", \"device\", \"/dev/(.*)\"\n  ), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n)\n",
                "format": "time_series",
                "intervalFactor": 1,
                "legendFormat": "{{device}} on {{instance}} Reads",
@@ -538,7 +583,7 @@
             "sort": 0,
             "value_type": "individual"
          },
-         "type": "graph",
+         "type": "timeseries",
          "xaxis": {
             "buckets": null,
             "mode": "time",
@@ -572,6 +617,15 @@
          "dashes": false,
          "datasource": "$datasource",
          "description": "",
+         "fieldConfig": {
+            "defaults": {
+               "custom": {
+                  "fillOpacity": 8,
+                  "showPoints": "never"
+               },
+               "unit": "Bps"
+            }
+         },
          "fill": 1,
          "fillGradient": 0,
          "gridPos": {
@@ -596,7 +650,7 @@
          "lines": true,
          "linewidth": 1,
          "links": [ ],
-         "nullPointMode": "null",
+         "nullPointMode": "null as zero",
          "percentage": false,
          "pointradius": 5,
          "points": false,
@@ -613,14 +667,14 @@
          "steppedLine": false,
          "targets": [
             {
-               "expr": "label_replace(\n  rate(node_disk_read_bytes_total{}[$__rate_interval]), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n) and on (instance, device) label_replace(\n  label_replace(\n    ceph_disk_occupation_human{job=~\"$job\", ceph_daemon=~\"$osd\"},\n    \"device\", \"$1\", \"device\", \"/dev/(.*)\"\n  ), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n)\n",
+               "expr": "label_replace(\n  rate(node_disk_read_bytes_total[$__rate_interval]), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n) and on (instance, device) label_replace(\n  label_replace(\n    ceph_disk_occupation_human{ceph_daemon=~\"$osd\", cluster=~\"$cluster\", },\n    \"device\", \"$1\", \"device\", \"/dev/(.*)\"\n  ), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n)\n",
                "format": "time_series",
                "intervalFactor": 1,
                "legendFormat": "{{instance}} {{device}} Reads",
                "refId": "A"
             },
             {
-               "expr": "label_replace(\n  rate(node_disk_written_bytes_total{}[$__rate_interval]), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n) and on (instance, device) label_replace(\n  label_replace(\n    ceph_disk_occupation_human{job=~\"$job\", ceph_daemon=~\"$osd\"},\n    \"device\", \"$1\", \"device\", \"/dev/(.*)\"\n  ), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n)\n",
+               "expr": "label_replace(\n  rate(node_disk_written_bytes_total[$__rate_interval]), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n) and on (instance, device) label_replace(\n  label_replace(\n    ceph_disk_occupation_human{ceph_daemon=~\"$osd\", cluster=~\"$cluster\", },\n    \"device\", \"$1\", \"device\", \"/dev/(.*)\"\n  ), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n)\n",
                "format": "time_series",
                "intervalFactor": 1,
                "legendFormat": "{{instance}} {{device}} Writes",
@@ -636,7 +690,7 @@
             "sort": 0,
             "value_type": "individual"
          },
-         "type": "graph",
+         "type": "timeseries",
          "xaxis": {
             "buckets": null,
             "mode": "time",
@@ -670,6 +724,15 @@
          "dashes": false,
          "datasource": "$datasource",
          "description": "",
+         "fieldConfig": {
+            "defaults": {
+               "custom": {
+                  "fillOpacity": 8,
+                  "showPoints": "never"
+               },
+               "unit": "percentunit"
+            }
+         },
          "fill": 1,
          "fillGradient": 0,
          "gridPos": {
@@ -706,7 +769,7 @@
          "steppedLine": false,
          "targets": [
             {
-               "expr": "label_replace(\n  rate(node_disk_io_time_seconds_total{}[$__rate_interval]),\n  \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n) and on (instance, device) label_replace(\n  label_replace(\n    ceph_disk_occupation_human{job=~\"$job\", ceph_daemon=~\"$osd\"}, \"device\", \"$1\", \"device\", \"/dev/(.*)\"\n  ), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n)\n",
+               "expr": "label_replace(\n  rate(node_disk_io_time_seconds_total[$__rate_interval]),\n  \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n) and on (instance, device) label_replace(\n  label_replace(\n    ceph_disk_occupation_human{ceph_daemon=~\"$osd\", cluster=~\"$cluster\", }, \"device\", \"$1\", \"device\", \"/dev/(.*)\"\n  ), \"instance\", \"$1\", \"instance\", \"([^:.]*).*\"\n)\n",
                "format": "time_series",
                "intervalFactor": 1,
                "legendFormat": "{{device}} on {{instance}}",
@@ -722,7 +785,7 @@
             "sort": 0,
             "value_type": "individual"
          },
-         "type": "graph",
+         "type": "timeseries",
          "xaxis": {
             "buckets": null,
             "mode": "time",
@@ -774,36 +837,16 @@
             "type": "datasource"
          },
          {
-            "allValue": ".+",
-            "current": { },
-            "datasource": "$datasource",
-            "hide": 2,
-            "includeAll": true,
-            "label": "cluster",
-            "multi": true,
-            "name": "cluster",
-            "options": [ ],
-            "query": "label_values(ceph_osd_metadata, cluster)",
-            "refresh": 1,
-            "regex": "(.*)",
-            "sort": 1,
-            "tagValuesQuery": "",
-            "tags": [ ],
-            "tagsQuery": "",
-            "type": "query",
-            "useTags": false
-         },
-         {
-            "allValue": ".+",
+            "allValue": null,
             "current": { },
             "datasource": "$datasource",
             "hide": 0,
-            "includeAll": true,
-            "label": "job",
-            "multi": true,
-            "name": "job",
+            "includeAll": false,
+            "label": "cluster",
+            "multi": false,
+            "name": "cluster",
             "options": [ ],
-            "query": "label_values(ceph_osd_metadata{}, job)",
+            "query": "label_values(ceph_health_status, cluster)",
             "refresh": 1,
             "regex": "(.*)",
             "sort": 1,
@@ -823,7 +866,7 @@
             "multi": false,
             "name": "osd",
             "options": [ ],
-            "query": "label_values(ceph_osd_metadata{job=~\"$job\"}, ceph_daemon)",
+            "query": "label_values(ceph_osd_metadata{cluster=~\"$cluster\", }, ceph_daemon)",
             "refresh": 1,
             "regex": "(.*)",
             "sort": 1,

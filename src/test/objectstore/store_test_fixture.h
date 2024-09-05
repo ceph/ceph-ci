@@ -8,12 +8,12 @@ class ObjectStore;
 
 class StoreTestFixture : virtual public ::testing::Test {
   const std::string type;
-  const std::string data_dir;
 
   std::stack<std::pair<std::string, std::string>> saved_settings;
   ConfigProxy* conf = nullptr;
 
-  std::string orig_death_test_style;
+protected:
+  const std::string data_dir;
 
 public:
   std::unique_ptr<ObjectStore> store;
@@ -25,12 +25,6 @@ public:
 
   void SetUp() override;
   void TearDown() override;
-  void SetDeathTestStyle(const char* new_style) {
-    if (orig_death_test_style.empty()) {
-      orig_death_test_style = ::testing::FLAGS_gtest_death_test_style;
-    }
-    ::testing::FLAGS_gtest_death_test_style = new_style;
-  }
 
   void SetVal(ConfigProxy& conf, const char* key, const char* val);
   struct SettingsBookmark {
@@ -49,4 +43,11 @@ public:
   }
   void PopSettings(size_t);
   void CloseAndReopen();
+  void RemoveTestObjectStore();
+  const std::string get_type() const {
+    return type;
+  }
+  const std::string get_data_dir() const {
+    return data_dir;
+  }
 };

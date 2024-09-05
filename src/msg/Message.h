@@ -32,6 +32,7 @@
 #include "common/ref.h"
 #include "common/debug.h"
 #include "common/zipkin_trace.h"
+#include "common/tracer.h"
 #include "include/ceph_assert.h" // Because intrusive_ptr clobbers our assert...
 #include "include/buffer.h"
 #include "include/types.h"
@@ -198,6 +199,8 @@
 #define MSG_MDS_METRICS            0x501  // for mds metric aggregator
 #define MSG_MDS_PING               0x502  // for mds pinger
 #define MSG_MDS_SCRUB_STATS        0x503  // for mds scrub stack
+#define MSG_MDS_QUIESCE_DB_LISTING 0x505  // quiesce db replication
+#define MSG_MDS_QUIESCE_DB_ACK     0x506  // quiesce agent ack back to the db
 
 // *** generic ***
 #define MSG_TIMECHECK             0x600
@@ -238,6 +241,12 @@
 
 // *** ceph-mgr <-> MON daemons ***
 #define MSG_MGR_UPDATE     0x70b
+
+// *** nvmeof mon -> gw daemons ***
+#define MSG_MNVMEOF_GW_MAP        0x800
+
+// *** gw daemons -> nvmeof mon  ***
+#define MSG_MNVMEOF_GW_BEACON     0x801
 
 // ======================================================
 
@@ -281,6 +290,11 @@ public:
   ZTracer::Trace trace;
   void encode_trace(ceph::buffer::list &bl, uint64_t features) const;
   void decode_trace(ceph::buffer::list::const_iterator &p, bool create = false);
+
+  // otel tracing
+  jspan_context otel_trace{false, false};
+  void encode_otel_trace(ceph::buffer::list &bl, uint64_t features) const;
+  void decode_otel_trace(ceph::buffer::list::const_iterator &p, bool create = false);
 
   class CompletionHook : public Context {
   protected:
@@ -603,7 +617,7 @@ struct formatter<M> {
     std::ostringstream oss;
     m.print(oss);
     if (auto ver = m.get_header().version; ver) {
-      return fmt::format_to(ctx.out(), "{} v{}", oss.str(), ver);
+      return fmt::format_to(ctx.out(), "{} v{}", oss.str(), (uint32_t)ver);
     } else {
       return fmt::format_to(ctx.out(), "{}", oss.str());
     }

@@ -229,7 +229,7 @@ struct ElasticConfig {
 
   bool should_handle_operation(RGWBucketInfo& bucket_info) {
     return index_buckets.exists(bucket_info.bucket.name) &&
-           allow_owners.exists(bucket_info.owner.to_str());
+           allow_owners.exists(to_string(bucket_info.owner));
   }
 };
 
@@ -501,15 +501,12 @@ struct es_obj_metadata {
 
         const RGWAccessControlList& acl = policy.get_acl();
 
-        permissions.insert(policy.get_owner().get_id().to_str());
-        for (auto acliter : acl.get_grant_map()) {
+        permissions.insert(to_string(policy.get_owner().id));
+        for (const auto& acliter : acl.get_grant_map()) {
           const ACLGrant& grant = acliter.second;
-          if (grant.get_type().get_type() == ACL_TYPE_CANON_USER &&
-              ((uint32_t)grant.get_permission().get_permissions() & RGW_PERM_READ) != 0) {
-            rgw_user user;
-            if (grant.get_id(user)) {
-              permissions.insert(user.to_str());
-            }
+          const auto* user = grant.get_user();
+          if (user && (grant.get_permission().get_permissions() & RGW_PERM_READ) != 0) {
+            permissions.insert(to_string(user->id));
           }
         }
       } else if (attr_name == RGW_ATTR_TAGS) {
@@ -608,7 +605,7 @@ struct es_obj_metadata {
       f->open_array_section("custom-date");
       for (auto i : custom_date) {
         /*
-         * try to exlicitly parse date field, otherwise elasticsearch could reject the whole doc,
+         * try to explicitly parse date field, otherwise elasticsearch could reject the whole doc,
          * which will end up with failed sync
          */
         real_time t;

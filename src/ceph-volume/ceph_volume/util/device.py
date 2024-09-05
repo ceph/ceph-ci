@@ -3,12 +3,11 @@
 import logging
 import os
 from functools import total_ordering
-from ceph_volume import sys_info
+from ceph_volume import sys_info, allow_loop_devices
 from ceph_volume.api import lvm
 from ceph_volume.util import disk, system
 from ceph_volume.util.lsmdisk import LSMDisk
 from ceph_volume.util.constants import ceph_disk_guids
-from ceph_volume.util.disk import allow_loop_devices
 
 
 logger = logging.getLogger(__name__)
@@ -119,15 +118,10 @@ class Device(object):
             self.symlink = self.path
             real_path = os.path.realpath(self.path)
             # check if we are not a device mapper
-            if "dm-" not in real_path:
+            if "dm-" not in real_path and not self.is_lv:
                 self.path = real_path
-        if not sys_info.devices:
-            if self.path:
-                sys_info.devices = disk.get_devices(device=self.path)
-            else:
-                sys_info.devices = disk.get_devices()
-        if sys_info.devices.get(self.path, {}):
-            self.device_nodes = sys_info.devices[self.path]['device_nodes']
+        if not sys_info.devices.get(self.path):
+            sys_info.devices = disk.get_devices()
         self.sys_api = sys_info.devices.get(self.path, {})
         self.partitions = self._get_partitions()
         self.lv_api = None
@@ -143,6 +137,8 @@ class Device(object):
         self._is_lvm_member = None
         self.ceph_device = False
         self._parse()
+        if self.path in sys_info.devices.keys():
+            self.device_nodes = sys_info.devices[self.path]['device_nodes']
         self.lsm_data = self.fetch_lsm(with_lsm)
 
         self.available_lvm, self.rejected_reasons_lvm = self._check_lvm_reject_reasons()
@@ -215,12 +211,21 @@ class Device(object):
                         lv = _lv
                         break
         else:
+            filters = {}
             if self.path[0] == '/':
-                lv = lvm.get_single_lv(filters={'lv_path': self.path})
+                lv_mapper_path: str = self.path
+                field: str = 'lv_path'
+
+                if self.path.startswith('/dev/mapper') or self.path.startswith('/dev/dm-'):
+                    path = os.path.realpath(self.path) if self.path.startswith('/dev/mapper') else self.path
+                    lv_mapper_path = disk.get_lvm_mapper_path_from_dm(path)
+                    field = 'lv_dm_path'
+
+                filters = {field: lv_mapper_path}
             else:
                 vgname, lvname = self.path.split('/')
-                lv = lvm.get_single_lv(filters={'lv_name': lvname,
-                                                'vg_name': vgname})
+                filters = {'lv_name': lvname, 'vg_name': vgname}
+            lv = lvm.get_single_lv(filters=filters)
 
         if lv:
             self.lv_api = lv
@@ -460,27 +465,28 @@ class Device(object):
     def device_type(self):
         self.load_blkid_api()
         if 'type' in self.sys_api:
-            return self.sys_api['type']
+            return self.sys_api.get('type')
         elif self.disk_api:
-            return self.disk_api['TYPE']
+            return self.disk_api.get('TYPE')
         elif self.blkid_api:
-            return self.blkid_api['TYPE']
+            return self.blkid_api.get('TYPE')
 
     @property
     def is_mpath(self):
         return self.device_type == 'mpath'
 
     @property
-    def is_lv(self):
-        return self.lv_api is not None
+    def is_lv(self) -> bool:
+        path = os.path.realpath(self.path)
+        return path in disk.get_lvm_mappers()
 
     @property
     def is_partition(self):
         self.load_blkid_api()
         if self.disk_api:
-            return self.disk_api['TYPE'] == 'part'
+            return self.disk_api.get('TYPE') == 'part'
         elif self.blkid_api:
-            return self.blkid_api['TYPE'] == 'part'
+            return self.blkid_api.get('TYPE') == 'part'
         return False
 
     @property
@@ -594,8 +600,8 @@ class Device(object):
 
     def _check_generic_reject_reasons(self):
         reasons = [
-            ('removable', 1, 'removable'),
-            ('ro', 1, 'read-only'),
+            ('id_bus', 'usb', 'id_bus'),
+            ('ro', '1', 'read-only'),
         ]
         rejected = [reason for (k, v, reason) in reasons if
                     self.sys_api.get(k, '') == v]

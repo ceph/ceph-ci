@@ -11,6 +11,8 @@
 #  Boost_USE_STATIC_LIBS : boolean (default: OFF)
 #  Boost_USE_MULTITHREADED : boolean (default: OFF)
 #  BOOST_J: integer (defanult 1)
+#
+# Note: Remove boost_redis submodule once upgraded to Boost version that includes it
 
 function(check_boost_version source_dir expected_version)
   set(version_hpp "${source_dir}/boost/version.hpp")
@@ -47,7 +49,11 @@ endmacro()
 
 function(do_build_boost root_dir version)
   cmake_parse_arguments(Boost_BUILD "" "" COMPONENTS ${ARGN})
-  set(boost_features "variant=release")
+  if(CMAKE_BUILD_TYPE STREQUAL Debug)
+    set(boost_features "variant=debug")
+  else()
+    set(boost_features "variant=release")
+  endif()
   if(Boost_USE_MULTITHREADED)
     list(APPEND boost_features "threading=multi")
   else()
@@ -149,18 +155,19 @@ function(do_build_boost root_dir version)
     check_boost_version("${PROJECT_SOURCE_DIR}/src/boost" ${version})
     set(source_dir
       SOURCE_DIR "${PROJECT_SOURCE_DIR}/src/boost")
-  elseif(version VERSION_GREATER 1.82)
+  elseif(version VERSION_GREATER 1.85)
     message(FATAL_ERROR "Unknown BOOST_REQUESTED_VERSION: ${version}")
   else()
     message(STATUS "boost will be downloaded...")
     # NOTE: If you change this version number make sure the package is available
     # at the three URLs below (may involve uploading to download.ceph.com)
-    set(boost_version 1.82.0)
-    set(boost_sha256 a6e1ab9b0860e6a2881dd7b21fe9f737a095e5f33a3a874afc6a345228597ee6)
+    set(boost_version 1.85.0)
+    set(boost_sha256 7009fe1faa1697476bdc7027703a2badb84e849b7b0baad5086b087b971f8617)
     string(REPLACE "." "_" boost_version_underscore ${boost_version} )
-    string(JOIN " " boost_url
-      https://boostorg.jfrog.io/artifactory/main/release/${boost_version}/source/boost_${boost_version_underscore}.tar.bz2
-      https://download.ceph.com/qa/boost_${boost_version_underscore}.tar.bz2)
+    list(APPEND boost_url
+      https://download.ceph.com/qa/boost_${boost_version_underscore}.tar.bz2
+      https://archives.boost.io//release/${boost_version}/source/boost_${boost_version_underscore}.tar.bz2
+      https://boostorg.jfrog.io/artifactory/main/release/${boost_version}/source/boost_${boost_version_underscore}.tar.bz2)
     set(source_dir
       URL ${boost_url}
       URL_HASH SHA256=${boost_sha256}

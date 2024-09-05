@@ -96,7 +96,7 @@ as follows:
   Invoke with --marker to resume if the command is interrupted.
 
 :command:`bucket stats`
-  Returns bucket statistics.
+  List bucket statistics plus other internal information about a bucket.
 
 :command:`bucket rm`
   Remove a bucket.
@@ -139,6 +139,9 @@ as follows:
 
 :command:`object stat`
   Stat an object for its metadata.
+
+:command:`object manifest`
+  Display the manifest of RADOS objects containing the data.
 
 :command:`object unlink`
   Unlink object from bucket index.
@@ -339,7 +342,7 @@ as follows:
   List placement active set.
 
 :command:`policy`
-  Display bucket/object policy.
+  Display bucket/object policies (e.g. permissions/ACLs etc.).
 
 :command:`log list`
   List log objects.
@@ -363,6 +366,9 @@ as follows:
 
 :command:`gc process`
   Manually process garbage.
+
+:command:`lc get`
+  Get lifecycle config for a bucket.
 
 :command:`lc list`
   List all bucket lifecycle progress.

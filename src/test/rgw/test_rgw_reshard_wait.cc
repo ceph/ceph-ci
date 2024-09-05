@@ -13,7 +13,7 @@
  */
 
 #include "rgw_reshard.h"
-#include <spawn/spawn.hpp>
+#include <boost/asio/spawn.hpp>
 
 #include <gtest/gtest.h>
 
@@ -23,10 +23,11 @@ using Clock = RGWReshardWait::Clock;
 TEST(ReshardWait, wait_block)
 {
   constexpr ceph::timespan wait_duration = 10ms;
+  const auto dpp = NoDoutPrefix{g_ceph_context, ceph_subsys_rgw};
   RGWReshardWait waiter(wait_duration);
 
   const auto start = Clock::now();
-  EXPECT_EQ(0, waiter.wait(null_yield));
+  EXPECT_EQ(0, waiter.wait(&dpp, null_yield));
   const ceph::timespan elapsed = Clock::now() - start;
 
   EXPECT_LE(wait_duration, elapsed); // waited at least 10ms
@@ -37,16 +38,17 @@ TEST(ReshardWait, stop_block)
 {
   constexpr ceph::timespan short_duration = 10ms;
   constexpr ceph::timespan long_duration = 10s;
+  const auto dpp = NoDoutPrefix{g_ceph_context, ceph_subsys_rgw};
 
   RGWReshardWait long_waiter(long_duration);
   RGWReshardWait short_waiter(short_duration);
 
   const auto start = Clock::now();
-  std::thread thread([&long_waiter] {
-    EXPECT_EQ(-ECANCELED, long_waiter.wait(null_yield));
+  std::thread thread([&dpp, &long_waiter] {
+    EXPECT_EQ(-ECANCELED, long_waiter.wait(&dpp, null_yield));
   });
 
-  EXPECT_EQ(0, short_waiter.wait(null_yield));
+  EXPECT_EQ(0, short_waiter.wait(&dpp, null_yield));
 
   long_waiter.stop(); // cancel long waiter
 
@@ -58,15 +60,20 @@ TEST(ReshardWait, stop_block)
   short_waiter.stop();
 }
 
+void rethrow(std::exception_ptr eptr) {
+  if (eptr) std::rethrow_exception(eptr);
+}
+
 TEST(ReshardWait, wait_yield)
 {
   constexpr ceph::timespan wait_duration = 50ms;
+  const auto dpp = NoDoutPrefix{g_ceph_context, ceph_subsys_rgw};
   RGWReshardWait waiter(wait_duration);
 
   boost::asio::io_context context;
-  spawn::spawn(context, [&] (yield_context yield) {
-      EXPECT_EQ(0, waiter.wait(optional_yield{context, yield}));
-    });
+  boost::asio::spawn(context, [&] (boost::asio::yield_context yield) {
+      EXPECT_EQ(0, waiter.wait(&dpp, yield));
+    }, rethrow);
 
   const auto start = Clock::now();
   EXPECT_EQ(1u, context.poll()); // spawn
@@ -84,21 +91,22 @@ TEST(ReshardWait, stop_yield)
 {
   constexpr ceph::timespan short_duration = 50ms;
   constexpr ceph::timespan long_duration = 10s;
+  const auto dpp = NoDoutPrefix{g_ceph_context, ceph_subsys_rgw};
 
   RGWReshardWait long_waiter(long_duration);
   RGWReshardWait short_waiter(short_duration);
 
   boost::asio::io_context context;
-  spawn::spawn(context,
-    [&] (yield_context yield) {
-      EXPECT_EQ(-ECANCELED, long_waiter.wait(optional_yield{context, yield}));
-    });
+  boost::asio::spawn(context,
+    [&] (boost::asio::yield_context yield) {
+      EXPECT_EQ(-ECANCELED, long_waiter.wait(&dpp, yield));
+    }, rethrow);
 
   const auto start = Clock::now();
   EXPECT_EQ(1u, context.poll()); // spawn
   EXPECT_FALSE(context.stopped());
 
-  EXPECT_EQ(0, short_waiter.wait(null_yield));
+  EXPECT_EQ(0, short_waiter.wait(&dpp, null_yield));
 
   long_waiter.stop(); // cancel long waiter
 
@@ -115,6 +123,7 @@ TEST(ReshardWait, stop_multiple)
 {
   constexpr ceph::timespan short_duration = 50ms;
   constexpr ceph::timespan long_duration = 10s;
+  const auto dpp = NoDoutPrefix{g_ceph_context, ceph_subsys_rgw};
 
   RGWReshardWait long_waiter(long_duration);
   RGWReshardWait short_waiter(short_duration);
@@ -122,8 +131,8 @@ TEST(ReshardWait, stop_multiple)
   // spawn 4 threads
   std::vector<std::thread> threads;
   {
-    auto sync_waiter([&long_waiter] {
-      EXPECT_EQ(-ECANCELED, long_waiter.wait(null_yield));
+    auto sync_waiter([&dpp, &long_waiter] {
+      EXPECT_EQ(-ECANCELED, long_waiter.wait(&dpp, null_yield));
     });
     threads.emplace_back(sync_waiter);
     threads.emplace_back(sync_waiter);
@@ -133,20 +142,20 @@ TEST(ReshardWait, stop_multiple)
   // spawn 4 coroutines
   boost::asio::io_context context;
   {
-    auto async_waiter = [&] (yield_context yield) {
-        EXPECT_EQ(-ECANCELED, long_waiter.wait(optional_yield{context, yield}));
+    auto async_waiter = [&] (boost::asio::yield_context yield) {
+        EXPECT_EQ(-ECANCELED, long_waiter.wait(&dpp, yield));
       };
-    spawn::spawn(context, async_waiter);
-    spawn::spawn(context, async_waiter);
-    spawn::spawn(context, async_waiter);
-    spawn::spawn(context, async_waiter);
+    boost::asio::spawn(context, async_waiter, rethrow);
+    boost::asio::spawn(context, async_waiter, rethrow);
+    boost::asio::spawn(context, async_waiter, rethrow);
+    boost::asio::spawn(context, async_waiter, rethrow);
   }
 
   const auto start = Clock::now();
   EXPECT_EQ(4u, context.poll()); // spawn
   EXPECT_FALSE(context.stopped());
 
-  EXPECT_EQ(0, short_waiter.wait(null_yield));
+  EXPECT_EQ(0, short_waiter.wait(&dpp, null_yield));
 
   long_waiter.stop(); // cancel long waiter
 

@@ -96,6 +96,7 @@ namespace {
         GlobalParams.op.user.uinfo.display_name = user1;
         GlobalParams.op.user.uinfo.user_id.id = user_id1;
         GlobalParams.op.bucket.info.bucket.name = bucket1;
+        GlobalParams.op.bucket.owner = user_id1;
         GlobalParams.op.obj.state.obj.bucket = GlobalParams.op.bucket.info.bucket;
         GlobalParams.op.obj.state.obj.key.name = object1;
         GlobalParams.op.obj.state.obj.key.instance = "inst1";
@@ -444,7 +445,7 @@ TEST_F(DBStoreTest, GetBucket) {
   ASSERT_EQ(params.op.bucket.info.objv_tracker.read_version.ver, 3);
   ASSERT_EQ(params.op.bucket.info.objv_tracker.read_version.tag, "read_tag");
   ASSERT_EQ(params.op.bucket.mtime, bucket_mtime);
-  ASSERT_EQ(params.op.bucket.info.owner.id, "user_id1");
+  ASSERT_EQ(to_string(params.op.bucket.info.owner), "user_id1");
   bufferlist k, k2;
   string acl;
   map<std::string, bufferlist>::iterator it2 = params.op.bucket.bucket_attrs.begin();
@@ -461,45 +462,37 @@ TEST_F(DBStoreTest, CreateBucket) {
   struct DBOpParams params = GlobalParams;
   int ret = -1;
   RGWBucketInfo info;
-  RGWUserInfo owner;
+  rgw_user owner;
   rgw_bucket bucket;
   obj_version objv;
   rgw_placement_rule rule;
   map<std::string, bufferlist> attrs;
 
-  owner.user_id.id = "user_id1";
+  owner.id = "user_id1";
   bucket.name = "bucket1";
   bucket.tenant = "tenant";
-
-  objv.ver = 2;
-  objv.tag = "write_tag";
 
   rule.name = "rule1";
   rule.storage_class = "sc1";
 
-  ret = db->create_bucket(dpp, owner, bucket, "zid", rule, "swift_ver", NULL,
-      attrs, info, &objv, NULL, bucket_mtime, NULL, NULL,
-      null_yield, false);
+  ret = db->create_bucket(dpp, owner, bucket, "zid", rule, attrs, "swift_ver",
+      std::nullopt, bucket_mtime, nullptr, info, null_yield);
   ASSERT_EQ(ret, 0);
   bucket.name = "bucket2";
-  ret = db->create_bucket(dpp, owner, bucket, "zid", rule, "swift_ver", NULL,
-      attrs, info, &objv, NULL, bucket_mtime, NULL, NULL,
-      null_yield, false);
+  ret = db->create_bucket(dpp, owner, bucket, "zid", rule, attrs, "swift_ver",
+      std::nullopt, bucket_mtime, nullptr, info, null_yield);
   ASSERT_EQ(ret, 0);
   bucket.name = "bucket3";
-  ret = db->create_bucket(dpp, owner, bucket, "zid", rule, "swift_ver", NULL,
-      attrs, info, &objv, NULL, bucket_mtime, NULL, NULL,
-      null_yield, false);
+  ret = db->create_bucket(dpp, owner, bucket, "zid", rule, attrs, "swift_ver",
+      std::nullopt, bucket_mtime, nullptr, info, null_yield);
   ASSERT_EQ(ret, 0);
   bucket.name = "bucket4";
-  ret = db->create_bucket(dpp, owner, bucket, "zid", rule, "swift_ver", NULL,
-      attrs, info, &objv, NULL, bucket_mtime, NULL, NULL,
-      null_yield, false);
+  ret = db->create_bucket(dpp, owner, bucket, "zid", rule, attrs, "swift_ver",
+      std::nullopt, bucket_mtime, nullptr, info, null_yield);
   ASSERT_EQ(ret, 0);
   bucket.name = "bucket5";
-  ret = db->create_bucket(dpp, owner, bucket, "zid", rule, "swift_ver", NULL,
-      attrs, info, &objv, NULL, bucket_mtime, NULL, NULL,
-      null_yield, false);
+  ret = db->create_bucket(dpp, owner, bucket, "zid", rule, attrs, "swift_ver",
+      std::nullopt, bucket_mtime, nullptr, info, null_yield);
   ASSERT_EQ(ret, 0);
 }
 
@@ -515,15 +508,15 @@ TEST_F(DBStoreTest, GetBucketQueryByName) {
   ASSERT_EQ(ret, 0);
   ASSERT_EQ(binfo.bucket.name, "bucket2");
   ASSERT_EQ(binfo.bucket.tenant, "tenant");
-  ASSERT_EQ(binfo.owner.id, "user_id1");
-  ASSERT_EQ(binfo.objv_tracker.read_version.ver, 2);
-  ASSERT_EQ(binfo.objv_tracker.read_version.tag, "write_tag");
+  ASSERT_EQ(to_string(binfo.owner), "user_id1");
+  ASSERT_EQ(binfo.objv_tracker.read_version.ver, 1);
+  ASSERT_FALSE(binfo.objv_tracker.read_version.tag.empty());
   ASSERT_EQ(binfo.zonegroup, "zid");
   ASSERT_EQ(binfo.creation_time, bucket_mtime);
   ASSERT_EQ(binfo.placement_rule.name, "rule1");
   ASSERT_EQ(binfo.placement_rule.storage_class, "sc1");
-  ASSERT_EQ(objv.ver, 2);
-  ASSERT_EQ(objv.tag, "write_tag");
+  ASSERT_EQ(objv.ver, 1);
+  ASSERT_FALSE(objv.tag.empty());
 
   marker1 = binfo.bucket.marker;
 }
@@ -531,13 +524,11 @@ TEST_F(DBStoreTest, GetBucketQueryByName) {
 TEST_F(DBStoreTest, ListUserBuckets) {
   struct DBOpParams params = GlobalParams;
   int ret = -1;
-  rgw_user owner;
+  std::string owner = "user_id1";
   int max = 2;
   bool need_stats = true;
   bool is_truncated = false;
   RGWUserBuckets ulist;
-
-  owner.id = "user_id1";
 
   marker1 = "";
   do {
@@ -568,14 +559,13 @@ TEST_F(DBStoreTest, ListUserBuckets) {
 TEST_F(DBStoreTest, BucketChown) {
   int ret = -1;
   RGWBucketInfo info;
-  rgw_user user;
-  user.id = "user_id2";
+  rgw_owner user = rgw_user{"user_id2"};
 
   info.bucket.name = "bucket5";
 
   ret = db->update_bucket(dpp, "owner", info, false, &user, nullptr, &bucket_mtime, nullptr);
   ASSERT_EQ(ret, 0);
-  ASSERT_EQ(info.objv_tracker.read_version.ver, 3);
+  ASSERT_EQ(info.objv_tracker.read_version.ver, 2);
 }
 
 TEST_F(DBStoreTest, ListAllBuckets) {
@@ -589,7 +579,7 @@ TEST_F(DBStoreTest, ListAllBuckets) {
 TEST_F(DBStoreTest, ListAllBuckets2) {
   struct DBOpParams params = GlobalParams;
   int ret = -1;
-  rgw_user owner;
+  std::string owner; // empty
   int max = 2;
   bool need_stats = true;
   bool is_truncated = false;
@@ -603,7 +593,7 @@ TEST_F(DBStoreTest, ListAllBuckets2) {
     ASSERT_EQ(ret, 0);
 
     cout << "^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ \n";
-    cout << "ownerID : " << owner.id << "\n";
+    cout << "ownerID : " << owner << "\n";
     cout << "marker1 :" << marker1 << "\n";
 
     cout << "is_truncated :" << is_truncated << "\n";

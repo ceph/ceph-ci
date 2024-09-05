@@ -65,7 +65,7 @@ def parse_retention(retention: str) -> Dict[str, int]:
     return ret
 
 
-RETENTION_MULTIPLIERS = ['n', 'm', 'h', 'd', 'w', 'M', 'Y']
+RETENTION_MULTIPLIERS = ['n', 'm', 'h', 'd', 'w', 'M', 'y']
 
 TableRowT = Dict[str, Union[int, str]]
 
@@ -89,6 +89,7 @@ class Schedule(object):
                  rel_path: str,
                  start: Optional[str] = None,
                  subvol: Optional[str] = None,
+                 group: Optional[str] = None,
                  retention_policy: str = '{}',
                  created: Optional[str] = None,
                  first: Optional[str] = None,
@@ -100,13 +101,14 @@ class Schedule(object):
                  ) -> None:
         self.fs = fs_name
         self.subvol = subvol
+        self.group = group
         self.path = path
         self.rel_path = rel_path
         self.schedule = schedule
         # test to see if period and spec are valid
         # this test will throw a ValueError exception if
         # period is negative or zero
-        # spec is empty or other than n,m,h,d,w,M,Y
+        # spec is empty or other than n,m,h,d,w,M,y
         rep = self.repeat
         self.retention = json.loads(retention_policy)
         if start is None:
@@ -145,6 +147,7 @@ class Schedule(object):
                    cast(str, table_row['rel_path']),
                    cast(str, table_row['start']),
                    cast(str, table_row['subvol']),
+                   cast(str, table_row['group_name']),
                    cast(str, table_row['retention']),
                    cast(str, table_row['created']),
                    cast(str, table_row['first']),
@@ -200,7 +203,7 @@ class Schedule(object):
         ORDER BY until;'''
 
     PROTO_GET_SCHEDULES = '''SELECT
-          s.path, s.subvol, s.rel_path, sm.active,
+          s.path, s.subvol, s.group_name, s.rel_path, sm.active,
           sm.schedule, s.retention, sm.start, sm.first, sm.last,
           sm.last_pruned, sm.created, sm.created_count, sm.pruned_count
           FROM schedules s
@@ -255,8 +258,8 @@ class Schedule(object):
             return [cls._from_db_row(row, fs) for row in c.fetchall()]
 
     INSERT_SCHEDULE = '''INSERT INTO
-        schedules(path, subvol, retention, rel_path)
-        Values(?, ?, ?, ?);'''
+        schedules(path, subvol, group_name, retention, rel_path)
+        Values(?, ?, ?, ?, ?);'''
     INSERT_SCHEDULE_META = '''INSERT INTO
         schedules_meta(schedule_id, start, created, repeat, schedule,
         active)
@@ -270,6 +273,7 @@ class Schedule(object):
                 c = db.execute(self.INSERT_SCHEDULE,
                                (self.path,
                                 self.subvol,
+                                self.group,
                                 json.dumps(self.retention),
                                 self.rel_path,))
                 sched_id = c.lastrowid
@@ -408,7 +412,7 @@ class Schedule(object):
         except ValueError:
             raise ValueError('invalid schedule specified - period should be '
                              'non-zero positive value and multiplier should '
-                             'be one of h,d,w,M,Y e.g. 1h or 4d etc.')
+                             'be one of h,d,w,M,y e.g. 1h or 4d etc.')
         if period <= 0:
             raise ValueError('invalid schedule specified - period must be a '
                              'non-zero positive value e.g. 1h or 4d etc.')
@@ -423,11 +427,11 @@ class Schedule(object):
             return period * 60 * 60 * 24 * 7
         elif mult == 'M':
             return period * 60 * 60 * 24 * 30
-        elif mult == 'Y':
+        elif mult == 'y':
             return period * 60 * 60 * 24 * 365
         else:
             raise ValueError('invalid schedule specified - multiplier should '
-                             'be one of h,d,w,M,Y')
+                             'be one of h,d,w,M,y')
 
     UPDATE_LAST = '''UPDATE schedules_meta
     SET

@@ -20,11 +20,12 @@ namespace crimson {
   };
 }
 
+SET_SUBSYS(osd);
 
 namespace crimson::osd {
 
 InternalClientRequest::InternalClientRequest(Ref<PG> pg)
-  : pg(std::move(pg))
+  : pg(pg), start_epoch(pg->get_osdmap_epoch())
 {
   assert(bool(this->pg));
   assert(this->pg->is_primary());
@@ -32,7 +33,8 @@ InternalClientRequest::InternalClientRequest(Ref<PG> pg)
 
 InternalClientRequest::~InternalClientRequest()
 {
-  logger().debug("{}: destroying", *this);
+  LOG_PREFIX(InternalClientRequest::~InternalClientRequest);
+  DEBUGI("{}: destroying", *this);
 }
 
 void InternalClientRequest::print(std::ostream &) const
@@ -53,7 +55,8 @@ seastar::future<> InternalClientRequest::start()
   track_event<StartEvent>();
   return crimson::common::handle_system_shutdown([this] {
     return seastar::repeat([this] {
-      logger().debug("{}: in repeat", *this);
+      LOG_PREFIX(InternalClientRequest::start);
+      DEBUGI("{}: in repeat", *this);
       return interruptor::with_interruption([this]() mutable {
         return enter_stage<interruptor>(
 	  client_pp().wait_for_active
@@ -66,21 +69,30 @@ seastar::future<> InternalClientRequest::start()
           return enter_stage<interruptor>(
             client_pp().recover_missing);
         }).then_interruptible([this] {
-          return do_recover_missing(pg, get_target_oid());
-        }).then_interruptible([this] {
+          return do_recover_missing(pg, get_target_oid(), osd_reqid_t());
+        }).then_interruptible([this](bool unfound) {
+          if (unfound) {
+            throw std::system_error(
+              std::make_error_code(std::errc::operation_canceled),
+              fmt::format("{} is unfound, drop it!", get_target_oid()));
+          }
           return enter_stage<interruptor>(
             client_pp().get_obc);
         }).then_interruptible([this] () -> PG::load_obc_iertr::future<> {
-          logger().debug("{}: getting obc lock", *this);
+          LOG_PREFIX(InternalClientRequest::start);
+          DEBUGI("{}: getting obc lock", *this);
           return seastar::do_with(create_osd_ops(),
             [this](auto& osd_ops) mutable {
-            logger().debug("InternalClientRequest: got {} OSDOps to execute",
+            LOG_PREFIX(InternalClientRequest::start);
+            DEBUGI("InternalClientRequest: got {} OSDOps to execute",
                            std::size(osd_ops));
             [[maybe_unused]] const int ret = op_info.set_from_op(
               std::as_const(osd_ops), pg->get_pgid().pgid, *pg->get_osdmap());
             assert(ret == 0);
+            // call with_locked_obc() in order, but wait concurrently for loading.
+            enter_stage_sync(client_pp().lock_obc);
             return pg->with_locked_obc(get_target_oid(), op_info,
-              [&osd_ops, this](auto obc) {
+              [&osd_ops, this](auto, auto obc) {
               return enter_stage<interruptor>(client_pp().process
               ).then_interruptible(
                 [obc=std::move(obc), &osd_ops, this] {
@@ -88,13 +100,7 @@ seastar::future<> InternalClientRequest::start()
                   std::move(obc),
                   osd_ops,
                   std::as_const(op_info),
-                  get_do_osd_ops_params(),
-                  [] {
-                    return PG::do_osd_ops_iertr::now();
-                  },
-                  [] (const std::error_code& e) {
-                    return PG::do_osd_ops_iertr::now();
-                  }
+                  get_do_osd_ops_params()
                 ).safe_then_unpack_interruptible(
                   [](auto submitted, auto all_completed) {
                     return all_completed.handle_error_interruptible(
@@ -108,9 +114,14 @@ seastar::future<> InternalClientRequest::start()
               });
             });
           });
-        }).handle_error_interruptible(PG::load_obc_ertr::all_same_way([] {
-          return seastar::now();
-        })).then_interruptible([] {
+        }).si_then([this] {
+          logger().debug("{}: complete", *this);
+          return handle.complete();
+        }).handle_error_interruptible(
+          PG::load_obc_ertr::all_same_way([] {
+            return seastar::now();
+          })
+        ).then_interruptible([] {
           return seastar::stop_iteration::yes;
         });
       }, [this](std::exception_ptr eptr) {
@@ -119,9 +130,15 @@ seastar::future<> InternalClientRequest::start()
         } else {
           return seastar::stop_iteration::no;
         }
-      }, pg);
+      }, pg, start_epoch);
     }).then([this] {
       track_event<CompletionEvent>();
+    }).handle_exception_type([](std::system_error &error) {
+      logger().debug("error {}, message: {}", error.code(), error.what());
+      return seastar::now();
+    }).finally([this] {
+      logger().debug("{}: exit", *this);
+      handle.exit();
     });
   });
 }

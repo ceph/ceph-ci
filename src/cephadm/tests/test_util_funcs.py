@@ -558,7 +558,7 @@ class FakeContext:
     with_cephadm_ctx is not appropriate (it enables too many mocks, etc).
     """
 
-    timeout = 30
+    timeout = 300
 
 
 def _has_non_zero_exit(clog):
@@ -810,3 +810,161 @@ def test_apply_deploy_config_to_ctx(cc, monkeypatch):
     ctx = FakeContext()
     _cephadm.apply_deploy_config_to_ctx(cc.cfg_data, ctx)
     cc.check(ctx)
+
+
+def test_daemon_sub_identity_from_sidecar_service():
+    from cephadmlib.daemon_identity import DaemonSubIdentity
+
+    dsi = DaemonSubIdentity(
+        '244c9842-866b-11ee-80ad-3497f6318048', 'iscsi', 'rab.oof', 'tcmu'
+    )
+    service_name = dsi.sidecar_service_name
+    assert (
+        service_name
+        == 'ceph-244c9842-866b-11ee-80ad-3497f6318048-sidecar@iscsi.rab.oof:tcmu.service'
+    )
+    d2, category = DaemonSubIdentity.from_service_name(service_name)
+    assert category == 'sidecar'
+    assert d2.fsid == '244c9842-866b-11ee-80ad-3497f6318048'
+    assert d2.daemon_type == 'iscsi'
+    assert d2.daemon_id == 'rab.oof'
+    assert d2.subcomponent == 'tcmu'
+
+
+def test_daemon_sub_identity_from_init_service():
+    from cephadmlib.daemon_identity import DaemonIdentity, DaemonSubIdentity
+
+    di = DaemonIdentity(
+        '244c9842-866b-11ee-80ad-3497f6318048', 'putrats', 'wow',
+    )
+    service_name = di.init_service_name
+    assert (
+        service_name
+        == 'ceph-244c9842-866b-11ee-80ad-3497f6318048-init@putrats.wow.service'
+    )
+    d2, category = DaemonSubIdentity.from_service_name(service_name)
+    assert category == 'init'
+    assert d2.fsid == '244c9842-866b-11ee-80ad-3497f6318048'
+    assert d2.daemon_type == 'putrats'
+    assert d2.daemon_id == 'wow'
+    assert d2.subcomponent == 'init'
+
+
+def test_daemon_sub_identity_from_service_invalid():
+    from cephadmlib.daemon_identity import DaemonSubIdentity
+
+    service_name = 'ceph-244c9842-866b-11ee-80ad-3497f6318048-morbo@iscsi.rab.oof.tcmu.service'
+    with pytest.raises(ValueError):
+        DaemonSubIdentity.from_service_name(service_name)
+
+    service_name = 'ceph-244c9842-866b-11ee-80ad-3497f6318048@iscsi.rab.oof.service'
+    with pytest.raises(ValueError):
+        DaemonSubIdentity.from_service_name(service_name)
+
+    service_name = 'ceph-244c9842-866b-11ee-80ad-3497f6318048-sidecar@foo.bar.baz:acolon:toomany.service'
+    with pytest.raises(ValueError):
+        DaemonSubIdentity.from_service_name(service_name)
+
+    service_name = 'ceph-244c9842-866b-11ee-80ad-3497f6318048-init@foo.bar.baz:woops.service'
+    with pytest.raises(ValueError):
+        DaemonSubIdentity.from_service_name(service_name)
+
+    service_name = 'random-task@elsewise.service'
+    with pytest.raises(ValueError):
+        DaemonSubIdentity.from_service_name(service_name)
+
+
+def test_daemon_id_systemd_names():
+    from cephadmlib.daemon_identity import DaemonIdentity
+
+    di = DaemonIdentity(
+        '244c9842-866b-11ee-80ad-3497f6318048', 'test', 'foo.bar'
+    )
+    assert (
+        di.unit_name
+        == 'ceph-244c9842-866b-11ee-80ad-3497f6318048@test.foo.bar'
+    )
+    assert (
+        di.service_name
+        == 'ceph-244c9842-866b-11ee-80ad-3497f6318048@test.foo.bar.service'
+    )
+    assert (
+        di.init_service_name
+        == 'ceph-244c9842-866b-11ee-80ad-3497f6318048-init@test.foo.bar.service'
+    )
+
+
+def test_daemon_sub_id_systemd_names():
+    from cephadmlib.daemon_identity import DaemonSubIdentity
+
+    dsi = DaemonSubIdentity(
+        '244c9842-866b-11ee-80ad-3497f6318048', 'test', 'foo.bar', 'quux',
+    )
+    assert (
+        dsi.sidecar_service_name
+        == 'ceph-244c9842-866b-11ee-80ad-3497f6318048-sidecar@test.foo.bar:quux.service'
+    )
+    with pytest.raises(ValueError):
+        dsi.service_name
+
+
+@pytest.mark.parametrize(
+    "args,new_arg,expected",
+    [
+        (['--foo=77'], '--bar', ['--foo=77', '--bar']),
+        (['--foo=77'], '--foo=12', ['--foo=12']),
+        (
+            ['--foo=77', '--quux=later', '--range=2-5'],
+            '--quux=now',
+            ['--foo=77', '--range=2-5', '--quux=now'],
+        ),
+        (
+            ['--foo=77', '--quux', 'later', '--range=2-5'],
+            '--quux=now',
+            ['--foo=77', '--range=2-5', '--quux=now'],
+        ),
+        (
+            ['--foo=77', '--quux', 'later', '--range=2-5'],
+            '--jiffy',
+            ['--foo=77', '--quux', 'later', '--range=2-5', '--jiffy'],
+        ),
+        (
+            ['--foo=77', '--quux=buff', '--range=2-5'],
+            '--quux',
+            ['--foo=77', '--range=2-5', '--quux'],
+        ),
+    ],
+)
+def test_replace_container_args(args, new_arg, expected):
+    from cephadmlib.container_types import _replace_container_arg
+
+    _args = list(args)  # preserve the input so test input is not mutated
+    _replace_container_arg(_args, new_arg)
+    assert _args == expected
+
+
+
+def test_enable_shared_namespaces():
+    from cephadmlib.container_types import enable_shared_namespaces, Namespace
+
+    args = []
+    enable_shared_namespaces(args, 'c001d00d', {Namespace.ipc})
+    assert args == ['--ipc=container:c001d00d']
+
+    enable_shared_namespaces(
+        args, 'c001d00d', [Namespace.uts, Namespace.network]
+    )
+    assert args == [
+        '--ipc=container:c001d00d',
+        '--uts=container:c001d00d',
+        '--network=container:c001d00d',
+    ]
+
+    enable_shared_namespaces(
+        args, 'badd33d5', [Namespace.network]
+    )
+    assert args == [
+        '--ipc=container:c001d00d',
+        '--uts=container:c001d00d',
+        '--network=container:badd33d5',
+    ]

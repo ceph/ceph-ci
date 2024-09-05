@@ -33,6 +33,9 @@ public:
   mount_ertr::future<> mount() final;
   seastar::future<> umount() final;
 
+  base_errorator::future<bool> exists(
+    CollectionRef c,
+    const ghobject_t& oid) final;
   mkfs_ertr::future<> mkfs(uuid_d new_osd_fsid) final;
   read_errorator::future<ceph::bufferlist> read(CollectionRef c,
                                    const ghobject_t& oid,
@@ -72,6 +75,8 @@ public:
   seastar::future<CollectionRef> create_new_collection(const coll_t& cid) final;
   seastar::future<CollectionRef> open_collection(const coll_t& cid) final;
   seastar::future<std::vector<coll_core_t>> list_collections() final;
+  seastar::future<> set_collection_opts(CollectionRef c,
+                                        const pool_opts_t& opts) final;
 
   seastar::future<> do_transaction_no_callbacks(
     CollectionRef c,
@@ -87,6 +92,7 @@ public:
     const std::string& key) final;
   uuid_d get_fsid() const final;
   seastar::future<store_statfs_t> stat() const final;
+  seastar::future<store_statfs_t> pool_statfs(int64_t pool_id) const final;
   unsigned get_max_attr_name_length() const final;
   seastar::future<struct stat> stat(
     CollectionRef,
@@ -117,9 +123,6 @@ private:
     });
   }
 
-  // number of cores that are PREVENTED from being scheduled
-  // to run alien store threads.
-  static constexpr int N_CORES_FOR_SEASTAR = 3;
   mutable std::unique_ptr<crimson::os::ThreadPool> tp;
   const std::string type;
   const std::string path;
@@ -128,6 +131,29 @@ private:
   std::unique_ptr<ObjectStore> store;
   std::unique_ptr<CephContext> cct;
   mutable seastar::gate op_gate;
+
+  /**
+   * coll_map
+   *
+   * Contains a reference to every CollectionRef returned to the upper layer.
+   * It's important that ObjectStore::CollectionHandle instances (in particular,
+   * those from BlueStore) not be released from seastar reactor threads.
+   * Keeping a reference here and breaking the
+   * CollectionRef->ObjectStore::CollectionHandle links in AlienStore::stop()
+   * ensures that all CollectionHandle's are released in the alien thread pool.
+   *
+   * Long term, we probably want to drop this map.  To do that two things need
+   * to happen:
+   * 1. ~AlienCollection() needs to submit the ObjectStore::CollectionHandle
+   *    instance to the alien thread pool to be released.
+   * 2. OSD shutdown needs to *guarantee* that all outstanding CollectionRefs
+   *    are released before unmounting and stopping the store.
+   *
+   * coll_map is accessed exclusively from alien threadpool threads under the
+   * coll_map_lock.
+   */
+  std::mutex coll_map_lock;
   std::unordered_map<coll_t, CollectionRef> coll_map;
+  CollectionRef get_alien_coll_ref(ObjectStore::CollectionHandle c);
 };
 }

@@ -360,6 +360,10 @@ class RbdService(object):
             # snapshots
             stat['snapshots'] = []
             for snap in img.list_snaps():
+                # Skip trash snapshots (cloned-and-then-deleted format v2 snapshots)
+                if snap['namespace'] == rbd.RBD_SNAP_NAMESPACE_TYPE_TRASH:
+                    continue
+
                 try:
                     snap['mirror_mode'] = MIRROR_IMAGE_MODE(img.mirror_image_get_mode()).name
                 except ValueError as ex:
@@ -369,7 +373,7 @@ class RbdService(object):
                     img.get_snap_timestamp(snap['id']).isoformat())
 
                 snap['is_protected'] = None
-                if mirror_mode != rbd.RBD_MIRROR_IMAGE_MODE_SNAPSHOT:
+                if snap['namespace'] == rbd.RBD_SNAP_NAMESPACE_TYPE_USER:
                     snap['is_protected'] = img.is_protected_snap(snap['name'])
                 snap['used_bytes'] = None
                 snap['children'] = []
@@ -555,8 +559,8 @@ class RbdService(object):
     @ttl_cache_invalidator(RBD_IMAGE_REFS_CACHE_REFERENCE)
     def set(cls, image_spec, name=None, size=None, features=None,
             configuration=None, metadata=None, enable_mirror=None, primary=None,
-            force=False, resync=False, mirror_mode=None, schedule_interval='',
-            remove_scheduling=False):
+            force=False, resync=False, mirror_mode=None, image_mirror_mode=None,
+            schedule_interval='', remove_scheduling=False):
         # pylint: disable=too-many-branches
         pool_name, namespace, image_name = parse_image_spec(image_spec)
 
@@ -570,15 +574,22 @@ class RbdService(object):
             if size and size != image.size():
                 image.resize(size)
 
+            if image_mirror_mode is not None and mirror_mode is not None:
+                if image_mirror_mode != mirror_mode:
+                    RbdMirroringService.disable_image(image_name, pool_name, namespace)
+
             mirror_image_info = image.mirror_image_get_info()
-            if enable_mirror and mirror_image_info['state'] == rbd.RBD_MIRROR_IMAGE_DISABLED:
+            if (enable_mirror is True
+                    and mirror_image_info['state'] == rbd.RBD_MIRROR_IMAGE_DISABLED):
                 RbdMirroringService.enable_image(
                     image_name, pool_name, namespace,
-                    MIRROR_IMAGE_MODE[mirror_mode])
+                    MIRROR_IMAGE_MODE[mirror_mode]
+                )
             elif (enable_mirror is False
-                  and mirror_image_info['state'] == rbd.RBD_MIRROR_IMAGE_ENABLED):
+                    and mirror_image_info['state'] == rbd.RBD_MIRROR_IMAGE_ENABLED):
                 RbdMirroringService.disable_image(
-                    image_name, pool_name, namespace)
+                    image_name, pool_name, namespace
+                )
 
             # check enable/disable features
             if features is not None:

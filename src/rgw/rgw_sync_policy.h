@@ -244,6 +244,7 @@ struct rgw_sync_pipe_filter {
   bool check_tag(const std::string& k, const std::string& v) const;
   bool check_tags(const std::vector<std::string>& tags) const;
   bool check_tags(const RGWObjTags::tag_map_t& tags) const;
+  bool check_prefix(const std::string& obj_name) const;
 };
 WRITE_CLASS_ENCODER(rgw_sync_pipe_filter)
 
@@ -591,7 +592,7 @@ WRITE_CLASS_ENCODER(rgw_sync_data_flow_group)
 struct rgw_sync_policy_group {
   std::string id;
 
-  rgw_sync_data_flow_group data_flow; /* override data flow, howver, will not be able to
+  rgw_sync_data_flow_group data_flow; /* override data flow, however, will not be able to
                                                         add new flows that don't exist at higher level */
   std::vector<rgw_sync_bucket_pipes> pipes; /* if not defined then applies to all
                                                               buckets (DR sync) */

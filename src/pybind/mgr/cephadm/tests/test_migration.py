@@ -1,13 +1,21 @@
 import json
 import pytest
 
-from ceph.deployment.service_spec import PlacementSpec, ServiceSpec, HostPlacementSpec
+from ceph.deployment.service_spec import (
+    PlacementSpec,
+    ServiceSpec,
+    HostPlacementSpec,
+    RGWSpec,
+    IngressSpec,
+    IscsiServiceSpec
+)
 from ceph.utils import datetime_to_str, datetime_now
 from cephadm import CephadmOrchestrator
 from cephadm.inventory import SPEC_STORE_PREFIX
 from cephadm.migrations import LAST_MIGRATION
 from cephadm.tests.fixtures import _run_cephadm, wait, with_host, receive_agent_metadata_all_hosts
 from cephadm.serve import CephadmServe
+from orchestrator import DaemonDescription
 from tests import mock
 
 
@@ -338,3 +346,175 @@ def test_migrate_rgw_spec(cephadm_module: CephadmOrchestrator, rgw_spec_store_en
             # if it was migrated, so we can use this to test the spec
             # was untouched
             assert 'rgw.foo' not in cephadm_module.spec_store.all_specs
+
+
+def test_migrate_cert_store(cephadm_module: CephadmOrchestrator):
+    rgw_spec = RGWSpec(service_id='foo', rgw_frontend_ssl_certificate='rgw_cert', ssl=True)
+    iscsi_spec = IscsiServiceSpec(service_id='foo', pool='foo', ssl_cert='iscsi_cert', ssl_key='iscsi_key')
+    ingress_spec = IngressSpec(service_id='rgw.foo', ssl_cert='ingress_cert', ssl_key='ingress_key', ssl=True)
+    cephadm_module.spec_store._specs = {
+        'rgw.foo': rgw_spec,
+        'iscsi.foo': iscsi_spec,
+        'ingress.rgw.foo': ingress_spec
+    }
+
+    cephadm_module.set_store('cephadm_agent/root/cert', 'agent_cert')
+    cephadm_module.set_store('cephadm_agent/root/key', 'agent_key')
+    cephadm_module.set_store('service_discovery/root/cert', 'service_discovery_cert')
+    cephadm_module.set_store('service_discovery/root/key', 'service_discovery_key')
+
+    cephadm_module.set_store('host1/grafana_crt', 'grafana_cert1')
+    cephadm_module.set_store('host1/grafana_key', 'grafana_key1')
+    cephadm_module.set_store('host2/grafana_crt', 'grafana_cert2')
+    cephadm_module.set_store('host2/grafana_key', 'grafana_key2')
+    cephadm_module.cache.daemons = {'host1': {'grafana.host1': DaemonDescription('grafana', 'host1', 'host1')},
+                                    'host2': {'grafana.host2': DaemonDescription('grafana', 'host2', 'host2')}}
+
+    cephadm_module.migration.migrate_6_7()
+
+    assert cephadm_module.cert_key_store.get_cert('rgw_frontend_ssl_cert', service_name='rgw.foo')
+    assert cephadm_module.cert_key_store.get_cert('iscsi_ssl_cert', service_name='iscsi.foo')
+    assert cephadm_module.cert_key_store.get_key('iscsi_ssl_key', service_name='iscsi.foo')
+    assert cephadm_module.cert_key_store.get_cert('ingress_ssl_cert', service_name='ingress.rgw.foo')
+    assert cephadm_module.cert_key_store.get_key('ingress_ssl_key', service_name='ingress.rgw.foo')
+
+    assert cephadm_module.cert_key_store.get_cert('grafana_cert', host='host1')
+    assert cephadm_module.cert_key_store.get_cert('grafana_cert', host='host2')
+    assert cephadm_module.cert_key_store.get_key('grafana_key', host='host1')
+    assert cephadm_module.cert_key_store.get_key('grafana_key', host='host2')
+
+
+@pytest.mark.parametrize(
+    "nvmeof_spec_store_entries, should_migrate_specs, expected_groups",
+    [
+        (
+            [
+                {'spec': {
+                    'service_type': 'nvmeof',
+                    'service_name': 'nvmeof.foo',
+                    'service_id': 'foo',
+                    'placement': {
+                        'hosts': ['host1']
+                    },
+                    'spec': {
+                        'pool': 'foo',
+                    },
+                },
+                    'created': datetime_to_str(datetime_now())},
+                {'spec': {
+                    'service_type': 'nvmeof',
+                    'service_name': 'nvmeof.bar',
+                    'service_id': 'bar',
+                    'placement': {
+                        'hosts': ['host2']
+                    },
+                    'spec': {
+                        'pool': 'bar',
+                    },
+                },
+                    'created': datetime_to_str(datetime_now())}
+            ],
+            [True, True], ['default1', 'default2']),
+        (
+            [
+                {'spec':
+                    {
+                        'service_type': 'nvmeof',
+                        'service_name': 'nvmeof.foo',
+                        'service_id': 'foo',
+                        'placement': {
+                            'hosts': ['host1']
+                        },
+                        'spec': {
+                            'pool': 'foo',
+                        },
+                    },
+                 'created': datetime_to_str(datetime_now())},
+                {'spec':
+                    {
+                        'service_type': 'nvmeof',
+                        'service_name': 'nvmeof.bar',
+                        'service_id': 'bar',
+                        'placement': {
+                            'hosts': ['host2']
+                        },
+                        'spec': {
+                            'pool': 'bar',
+                            'group': 'bar'
+                        },
+                    },
+                 'created': datetime_to_str(datetime_now())},
+                {'spec':
+                    {
+                        'service_type': 'nvmeof',
+                        'service_name': 'nvmeof.testing_testing',
+                        'service_id': 'testing_testing',
+                        'placement': {
+                            'label': 'baz'
+                        },
+                        'spec': {
+                            'pool': 'baz',
+                        },
+                    },
+                 'created': datetime_to_str(datetime_now())}
+            ], [True, False, True], ['default1', 'bar', 'default2']
+        ),
+    ]
+)
+@mock.patch("cephadm.serve.CephadmServe._run_cephadm", _run_cephadm('[]'))
+def test_migrate_nvmeof_spec(
+    cephadm_module: CephadmOrchestrator,
+    nvmeof_spec_store_entries,
+    should_migrate_specs,
+    expected_groups
+):
+    with with_host(cephadm_module, 'host1'):
+        for spec in nvmeof_spec_store_entries:
+            cephadm_module.set_store(
+                SPEC_STORE_PREFIX + spec['spec']['service_name'],
+                json.dumps(spec, sort_keys=True),
+            )
+
+        # make sure nvmeof_migration_queue is populated accordingly
+        cephadm_module.migration_current = 1
+        cephadm_module.spec_store.load()
+        ls = json.loads(cephadm_module.get_store('nvmeof_migration_queue'))
+        assert all([s['spec']['service_type'] == 'nvmeof' for s in ls])
+        # shortcut nvmeof_migration_queue loading by directly assigning
+        # ls output to nvmeof_migration_queue list
+        cephadm_module.migration.nvmeof_migration_queue = ls
+
+        # skip other migrations and go directly to 7_8 migration (nvmeof spec)
+        cephadm_module.migration_current = 7
+        cephadm_module.migration.migrate()
+        assert cephadm_module.migration_current == LAST_MIGRATION
+
+        print(cephadm_module.spec_store.all_specs)
+
+        for i in range(len(nvmeof_spec_store_entries)):
+            nvmeof_spec_store_entry = nvmeof_spec_store_entries[i]
+            should_migrate = should_migrate_specs[i]
+            expected_group = expected_groups[i]
+
+            service_name = nvmeof_spec_store_entry['spec']['service_name']
+            service_id = nvmeof_spec_store_entry['spec']['service_id']
+            placement = nvmeof_spec_store_entry['spec']['placement']
+            pool = nvmeof_spec_store_entry['spec']['spec']['pool']
+
+            if should_migrate:
+                assert service_name in cephadm_module.spec_store.all_specs
+                nvmeof_spec = cephadm_module.spec_store.all_specs[service_name]
+                nvmeof_spec_json = nvmeof_spec.to_json()
+                assert nvmeof_spec_json['service_type'] == 'nvmeof'
+                assert nvmeof_spec_json['service_id'] == service_id
+                assert nvmeof_spec_json['service_name'] == service_name
+                assert nvmeof_spec_json['placement'] == placement
+                assert nvmeof_spec_json['spec']['pool'] == pool
+                # make sure spec has the "group" parameter set to "default<counter>"
+                assert nvmeof_spec_json['spec']['group'] == expected_group
+            else:
+                nvmeof_spec = cephadm_module.spec_store.all_specs[service_name]
+                nvmeof_spec_json = nvmeof_spec.to_json()
+                assert nvmeof_spec_json['spec']['pool'] == pool
+                # make sure spec has the "group" parameter still set to its old value
+                assert nvmeof_spec_json['spec']['group'] == expected_group

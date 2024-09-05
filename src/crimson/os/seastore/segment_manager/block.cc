@@ -33,7 +33,7 @@ using segment_state_t = crimson::os::seastore::Segment::segment_state_t;
 template <> struct fmt::formatter<segment_state_t>: fmt::formatter<std::string_view> {
   // parse is inherited from formatter<string_view>.
   template <typename FormatContext>
-  auto format(segment_state_t s, FormatContext& ctx) {
+  auto format(segment_state_t s, FormatContext& ctx) const {
     std::string_view name = "unknown";
     switch (s) {
     case segment_state_t::EMPTY:
@@ -236,7 +236,7 @@ block_sm_superblock_t make_superblock(
        uint64_t(config_segment_size),
        data.block_size);
   for (unsigned int i = 0; i < seastar::smp::count; i++) {
-    INFO("shard {} infos:", i, shard_infos[i]);
+    INFO("shard {} infos: {}", i, shard_infos[i]);
   }
 
   return block_sm_superblock_t{

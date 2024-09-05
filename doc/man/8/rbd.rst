@@ -333,7 +333,7 @@ Commands
   be specified.
 
 :command:`flatten` [--encryption-format *encryption-format* --encryption-passphrase-file *passphrase-file*]... *image-spec*
-  If image is a clone, copy all shared blocks from the parent snapshot and
+  If the image is a clone, copy all shared blocks from the parent snapshot and
   make the child independent of the parent, severing the link between
   parent snap and child.  The parent snapshot can be unprotected and
   deleted if it has no further dependent clones.
@@ -367,6 +367,9 @@ Commands
 :command:`group snap list` *group-spec*
   List snapshots of a group.
 
+:command:`group snap info` *group-snap-spec*
+  Get information about a snapshot of a group.
+
 :command:`group snap rm` *group-snap-spec*
   Remove a snapshot from a group.
 
@@ -390,7 +393,7 @@ Commands
   Set metadata key with the value. They will displayed in `image-meta list`.
 
 :command:`import` [--export-format *format (1 or 2)*] [--image-format *format-id*] [--object-size *size-in-B/K/M*] [--stripe-unit *size-in-B/K/M* --stripe-count *num*] [--image-feature *feature-name*]... [--image-shared] *src-path* [*image-spec*]
-  Create a new image and imports its data from path (use - for
+  Create a new image and import its data from path (use - for
   stdin).  The import operation will try to create sparse rbd images 
   if possible.  For import from stdin, the sparsification unit is
   the data block size of the destination image (object size).
@@ -402,14 +405,14 @@ Commands
   of image, but also the snapshots and other properties, such as image_order, features.
 
 :command:`import-diff` *src-path* *image-spec*
-  Import an incremental diff of an image and applies it to the current image.  If the diff
+  Import an incremental diff of an image and apply it to the current image.  If the diff
   was generated relative to a start snapshot, we verify that snapshot already exists before
   continuing.  If there was an end snapshot we verify it does not already exist before
   applying the changes, and create the snapshot when we are done.
   
 :command:`info` *image-spec* | *snap-spec*
   Will dump information (such as size and object size) about a specific rbd image.
-  If image is a clone, information about its parent is also displayed.
+  If the image is a clone, information about its parent is also displayed.
   If a snapshot is specified, whether it is protected is shown as well.
 
 :command:`journal client disconnect` *journal-spec*
@@ -472,7 +475,7 @@ Commands
   the destination image are lost.
 
 :command:`migration commit` *image-spec*
-  Commit image migration. This step is run after a successful migration
+  Commit image migration. This step is run after successful migration
   prepare and migration execute steps and removes the source image data.
 
 :command:`migration execute` *image-spec*
@@ -499,14 +502,12 @@ Commands
 :command:`mirror image disable` [--force] *image-spec*
   Disable RBD mirroring for an image. If the mirroring is
   configured in ``image`` mode for the image's pool, then it
-  can be explicitly disabled mirroring for each image within
-  the pool.
+  must be disabled for each image individually.
 
 :command:`mirror image enable` *image-spec* *mode*
   Enable RBD mirroring for an image. If the mirroring is
   configured in ``image`` mode for the image's pool, then it
-  can be explicitly enabled mirroring for each image within
-  the pool.
+  must be enabled for each image individually.
 
   The mirror image mode can either be ``journal`` (default) or
   ``snapshot``. The ``journal`` mode requires the RBD journaling
@@ -522,28 +523,29 @@ Commands
   Show RBD mirroring status for an image.
 
 :command:`mirror pool demote` [*pool-name*]
-  Demote all primary images within a pool to non-primary.
-  Every mirroring enabled image will demoted in the pool.
+  Demote all primary images within a pool or namespace to non-primary.
+  Every mirror-enabled image in the pool or namespace will be demoted.
 
 :command:`mirror pool disable` [*pool-name*]
-  Disable RBD mirroring by default within a pool. When mirroring
-  is disabled on a pool in this way, mirroring will also be
-  disabled on any images (within the pool) for which mirroring
-  was enabled explicitly.
+  Disable RBD mirroring within a pool or namespace. When mirroring
+  is disabled on a pool or namespace in this way, mirroring will also be
+  disabled on all images (within the pool or namespace) for which mirroring
+  was enabled, whether by default or explicitly.
 
 :command:`mirror pool enable` [*pool-name*] *mode*
-  Enable RBD mirroring by default within a pool.
+  Enable RBD mirroring within a pool or namespace.
   The mirroring mode can either be ``pool`` or ``image``.
-  If configured in ``pool`` mode, all images in the pool
+  If configured in ``pool`` mode, all images in the pool or namespace
   with the journaling feature enabled are mirrored.
   If configured in ``image`` mode, mirroring needs to be
   explicitly enabled (by ``mirror image enable`` command)
   on each image.
 
 :command:`mirror pool info` [*pool-name*]
-  Show information about the pool mirroring configuration.
-  It includes mirroring mode, peer UUID, remote cluster name,
-  and remote client name.
+  Show information about the pool or namespace mirroring configuration.
+  For both pools and namespaces, it includes the mirroring mode, mirror uuid
+  and remote namespace. For pools, it additonally includes the site name,
+  peer uuid, remote cluster name, and remote client name.
 
 :command:`mirror pool peer add` [*pool-name*] *remote-cluster-spec*
   Add a mirroring peer to a pool.
@@ -551,7 +553,7 @@ Commands
 
   The default for *remote client name* is "client.admin".
 
-  This requires mirroring mode is enabled.
+  This requires mirroring to be enabled on the pool.
 
 :command:`mirror pool peer remove` [*pool-name*] *uuid*
   Remove a mirroring peer from a pool. The peer uuid is available
@@ -563,13 +565,13 @@ Commands
   is corresponding to remote client name or remote cluster name.
 
 :command:`mirror pool promote` [--force] [*pool-name*]
-  Promote all non-primary images within a pool to primary.
-  Every mirroring enabled image will promoted in the pool.
+  Promote all non-primary images within a pool or namespace to primary.
+  Every mirror-enabled image in the pool or namespace will be promoted.
 
 :command:`mirror pool status` [--verbose] [*pool-name*]
-  Show status for all mirrored images in the pool.
-  With --verbose, also show additionally output status
-  details for every mirroring image in the pool.
+  Show status for all mirrored images in the pool or namespace.
+  With ``--verbose``, show additional output status
+  details for every mirror-enabled image in the pool or namespace.
 
 :command:`mirror snapshot schedule add` [-p | --pool *pool*] [--namespace *namespace*] [--image *image*] *interval* [*start-time*]
   Add mirror snapshot schedule.
@@ -603,7 +605,7 @@ Commands
   specified to rebuild an invalid object map for a snapshot.
 
 :command:`pool init` [*pool-name*] [--force]
-  Initialize pool for use by RBD. Newly created pools must initialized
+  Initialize pool for use by RBD. Newly created pools must be initialized
   prior to use.
 
 :command:`resize` (-s | --size *size-in-M/G/T*) [--allow-shrink] [--encryption-format *encryption-format* --encryption-passphrase-file *passphrase-file*]... *image-spec*
@@ -615,7 +617,7 @@ Commands
   snapshots, this fails and nothing is deleted.
 
 :command:`snap create` *snap-spec*
-  Create a new snapshot. Requires the snapshot name parameter specified.
+  Create a new snapshot. Requires the snapshot name parameter to be specified.
 
 :command:`snap limit clear` *image-spec*
   Remove any previously set limit on the number of snapshots allowed on
@@ -625,7 +627,7 @@ Commands
   Set a limit for the number of snapshots allowed on an image.
 
 :command:`snap ls` *image-spec*
-  Dump the list of snapshots inside a specific image.
+  Dump the list of snapshots of a specific image.
 
 :command:`snap protect` *snap-spec*
   Protect a snapshot from deletion, so that clones can be made of it
@@ -668,9 +670,11 @@ Commands
 :command:`trash ls` [*pool-name*]
   List all entries from trash.
 
-:command:`trash mv` *image-spec*
+:command:`trash mv` [--expires-at <expires-at>] *image-spec*
   Move an image to the trash. Images, even ones actively in-use by 
-  clones, can be moved to the trash and deleted at a later time.
+  clones, can be moved to the trash and deleted at a later time. Use
+  ``--expires-at`` to set the expiration time of an image after which
+  it's allowed to be removed.
 
 :command:`trash purge` [*pool-name*]
   Remove all expired images from trash.
@@ -678,10 +682,10 @@ Commands
 :command:`trash restore` *image-id*  
   Restore an image from trash.
 
-:command:`trash rm` *image-id* 
-  Delete an image from trash. If image deferment time has not expired
-  you can not removed it unless use force. But an actively in-use by clones 
-  or has snapshots can not be removed.
+:command:`trash rm` [--force] *image-id*
+  Delete an image from trash. If the image deferment time has not expired
+  it can be removed using ``--force``. An image that is actively in-use by clones
+  or has snapshots cannot be removed.
 
 :command:`trash purge schedule add` [-p | --pool *pool*] [--namespace *namespace*] *interval* [*start-time*]
   Add trash purge schedule.

@@ -145,6 +145,12 @@ struct chunk_refs_by_object_t : public chunk_refs_t::refs_t {
     }
     f->close_section();
   }
+  static void generate_test_instances(std::list<chunk_refs_by_object_t*>& ls) {
+    ls.push_back(new chunk_refs_by_object_t());
+    ls.push_back(new chunk_refs_by_object_t());
+    ls.back()->by_object.insert(hobject_t(sobject_t("foo", CEPH_NOSNAP)));
+    ls.back()->by_object.insert(hobject_t(sobject_t("bar", CEPH_NOSNAP)));
+  }
 };
 WRITE_CLASS_ENCODER(chunk_refs_by_object_t)
 
@@ -238,7 +244,7 @@ struct chunk_refs_by_hash_t : public chunk_refs_t::refs_t {
     int hash_bytes = (hash_bits + 7) / 8;
     while (n--) {
       int64_t poolid;
-      ceph_le32 hash;
+      ceph_le32 hash{0};
       uint64_t count;
       denc_signed_varint(poolid, p);
       memcpy(&hash, p.get_pos_add(hash_bytes), hash_bytes);
@@ -385,6 +391,11 @@ struct chunk_refs_count_t : public chunk_refs_t::refs_t {
   void dump(Formatter *f) const override {
     f->dump_string("type", "count");
     f->dump_unsigned("count", total);
+  }
+  static void generate_test_instances(std::list<chunk_refs_count_t*>& o) {
+    o.push_back(new chunk_refs_count_t);
+    o.push_back(new chunk_refs_count_t);
+    o.back()->total = 123;
   }
 };
 WRITE_CLASS_ENCODER(chunk_refs_count_t)

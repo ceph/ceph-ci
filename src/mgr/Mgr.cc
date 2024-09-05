@@ -214,12 +214,6 @@ std::map<std::string, std::string> Mgr::load_store()
   return loaded;
 }
 
-void Mgr::handle_signal(int signum)
-{
-  ceph_assert(signum == SIGINT || signum == SIGTERM);
-  shutdown();
-}
-
 static void handle_mgr_signal(int signum)
 {
   derr << " *** Got signal " << sig_str(signum) << " ***" << dendl;
@@ -490,27 +484,6 @@ void Mgr::load_all_metadata()
   }
 }
 
-
-void Mgr::shutdown()
-{
-  dout(10) << "mgr shutdown init" << dendl;
-  finisher.queue(new LambdaContext([&](int) {
-    {
-      std::lock_guard l(lock);
-      // First stop the server so that we're not taking any more incoming
-      // requests
-      server.shutdown();
-    }
-    // after the messenger is stopped, signal modules to shutdown via finisher
-    py_module_registry->active_shutdown();
-  }));
-
-  // Then stop the finisher to ensure its enqueued contexts aren't going
-  // to touch references to the things we're about to tear down
-  finisher.wait_for_empty();
-  finisher.stop();
-}
-
 void Mgr::handle_osd_map()
 {
   ceph_assert(ceph_mutex_is_locked_by_me(lock));
@@ -537,9 +510,16 @@ void Mgr::handle_osd_map()
       if (daemon_state.is_updating(k)) {
         continue;
       }
+        
+      DaemonStatePtr daemon = daemon_state.get(k);
+        
+      if (daemon && osd_map.is_out(osd_id) && osd_map.is_down(osd_id)) {
+        std::lock_guard l(daemon->lock);
+        daemon->daemon_health_metrics.clear();
+      }
 
       bool update_meta = false;
-      if (daemon_state.exists(k)) {
+      if (daemon) {
         if (osd_map.get_up_from(osd_id) == osd_map.get_epoch()) {
           dout(4) << "Mgr::handle_osd_map: osd." << osd_id
 		  << " joined cluster at " << "e" << osd_map.get_epoch()
@@ -615,16 +595,16 @@ bool Mgr::ms_dispatch2(const ref_t<Message>& m)
       handle_mgr_digest(ref_cast<MMgrDigest>(m));
       break;
     case CEPH_MSG_MON_MAP:
+      /* MonClient passthrough of MonMap to us */
+      handle_mon_map(); /* use monc's monmap */
       py_module_registry->notify_all("mon_map", "");
-      handle_mon_map();
       break;
     case CEPH_MSG_FS_MAP:
-      py_module_registry->notify_all("fs_map", "");
       handle_fs_map(ref_cast<MFSMap>(m));
+      py_module_registry->notify_all("fs_map", "");
       return false; // I shall let this pass through for Client
     case CEPH_MSG_OSD_MAP:
       handle_osd_map();
-
       py_module_registry->notify_all("osd_map", "");
 
       // Continuous subscribe, so that we can generate notifications

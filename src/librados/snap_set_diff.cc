@@ -31,9 +31,8 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
   *clone_end_snap_id = 0;
   *whole_object = false;
 
-  for (vector<librados::clone_info_t>::const_iterator r = snap_set.clones.begin();
-       r != snap_set.clones.end();
-       ) {
+  auto r = snap_set.clones.begin();
+  while (r != snap_set.clones.end()) {
     // make an interval, and hide the fact that the HEAD doesn't
     // include itself in the snaps list
     librados::snap_t a, b;
@@ -76,42 +75,58 @@ void calc_snap_set_diff(CephContext *cct, const librados::snap_set_t& snap_set,
       saw_start = true;
     }
 
-    *end_size = r->size;
     if (end < a) {
-      ldout(cct, 20) << " past end " << end << ", end object does not exist" << dendl;
-      *end_exists = false;
-      diff->clear();
-      if (start_size) {
-	diff->insert(0, start_size);
-      }
       break;
     }
     if (end <= b) {
       ldout(cct, 20) << " end" << dendl;
+      *end_size = r->size;
       *end_exists = true;
       *clone_end_snap_id = b;
-      break;
+      return;
     }
 
-    // start with the max(this size, next size), and subtract off any
-    // overlap
+    // start with the largest possible diff to next, and subtract off
+    // any overlap
     const vector<pair<uint64_t, uint64_t> > *overlap = &r->overlap;
     interval_set<uint64_t> diff_to_next;
-    uint64_t max_size = r->size;
+    uint64_t diff_boundary;
+    uint64_t prev_size = r->size;
     ++r;
     if (r != snap_set.clones.end()) {
-      if (r->size > max_size)
-	max_size = r->size;
+      if (r->size >= prev_size) {
+        diff_boundary = r->size;
+      } else if (prev_size <= start_size) {
+        // truncated range below size at start
+        diff_boundary = prev_size;
+      } else {
+        // truncated range (partially) above size at start -- drop that
+        // part from the running diff
+        diff_boundary = std::max(r->size, start_size);
+        ldout(cct, 20) << "  no more diff beyond " << diff_boundary << dendl;
+        diff->erase(diff_boundary, prev_size - diff_boundary);
+      }
+      if (diff_boundary) {
+        diff_to_next.insert(0, diff_boundary);
+      }
+      for (auto p = overlap->begin(); p != overlap->end(); ++p) {
+        diff_to_next.erase(p->first, p->second);
+      }
+      ldout(cct, 20) << "  diff_to_next " << diff_to_next << dendl;
+      diff->union_of(diff_to_next);
+      ldout(cct, 20) << "  diff now " << *diff << dendl;
     }
-    if (max_size)
-      diff_to_next.insert(0, max_size);
-    for (vector<pair<uint64_t, uint64_t> >::const_iterator p = overlap->begin();
-	 p != overlap->end();
-	 ++p) {
-      diff_to_next.erase(p->first, p->second);
-    }
-    ldout(cct, 20) << "  diff_to_next " << diff_to_next << dendl;
-    diff->union_of(diff_to_next);
-    ldout(cct, 20) << "  diff now " << *diff << dendl;
+  }
+
+  if (r != snap_set.clones.end()) {
+    ldout(cct, 20) << " past end " << end
+                   << ", end object does not exist" << dendl;
+  } else {
+    ldout(cct, 20) << " ran out of clones before reaching end " << end
+                   << ", end object does not exist" << dendl;
+  }
+  diff->clear();
+  if (start_size) {
+    diff->insert(0, start_size);
   }
 }

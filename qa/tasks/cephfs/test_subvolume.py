@@ -1,4 +1,5 @@
 import logging
+from time import sleep
 
 from tasks.cephfs.cephfs_test_case import CephFSTestCase
 from teuthology.exceptions import CommandFailedError
@@ -132,6 +133,33 @@ class TestSubvolume(CephFSTestCase):
             self.mount_a.run_shell(['ln', 'group/subvol2/file1',
                                     'group/subvol3/file1'])
 
+    def test_subvolume_setfattr_empty_value(self):
+        """
+        To verify that an empty value fails on subvolume xattr
+        """
+
+        # create subvol
+        self.mount_a.run_shell(['mkdir', 'group/subvol4'])
+
+        try:
+            self.mount_a.setfattr('group/subvol4', 'ceph.dir.subvolume', '')
+        except CommandFailedError:
+            pass
+        else:
+            self.fail("run_shell should raise CommandFailedError")
+
+    def test_subvolume_rmattr(self):
+        """
+        To verify that rmattr can be used to reset subvolume xattr
+        """
+
+        # create subvol
+        self.mount_a.run_shell(['mkdir', 'group/subvol4'])
+        self.mount_a.setfattr('group/subvol4', 'ceph.dir.subvolume', '1')
+
+        # clear subvolume flag
+        self.mount_a.removexattr('group/subvol4', 'ceph.dir.subvolume')
+
     def test_subvolume_create_subvolume_inside_subvolume(self):
         """
         To verify that subvolume can't be created inside a subvolume
@@ -168,3 +196,40 @@ class TestSubvolume(CephFSTestCase):
 
         # clean up
         self.mount_a.run_shell(['rmdir', 'group/subvol2/dir/.snap/s2'])
+
+
+class TestSubvolumeReplicated(CephFSTestCase):
+    CLIENTS_REQUIRED = 1
+    MDSS_REQUIRED = 2
+
+    def test_subvolume_replicated(self):
+        """
+        That a replica sees the subvolume flag on a directory.
+        """
+
+
+        self.mount_a.run_shell_payload("mkdir -p dir1/dir2/dir3/dir4")
+
+        self.fs.set_max_mds(2)
+        status = self.fs.wait_for_daemons()
+
+        self.mount_a.setfattr("dir1", "ceph.dir.pin", "1")
+        self.mount_a.setfattr("dir1/dir2/dir3", "ceph.dir.pin", "0") # force dir2 to be replicated
+        status = self._wait_subtrees([("/dir1", 1), ("/dir1/dir2/dir3", 0)], status=status, rank=1)
+
+        op = self.fs.rank_tell("lock", "path", "/dir1/dir2", "snap:r", rank=1)
+        p = self.mount_a.setfattr("dir1/dir2", "ceph.dir.subvolume", "1", wait=False)
+        sleep(2)
+        reqid = self._reqid_tostr(op['reqid'])
+        self.fs.kill_op(reqid, rank=1)
+        p.wait()
+
+        ino1 = self.fs.read_cache("/dir1/dir2", depth=0, rank=1)[0]
+        self.assertTrue(ino1['is_subvolume'])
+        self.assertTrue(ino1['is_auth'])
+        replicas = ino1['auth_state']['replicas']
+        self.assertIn("0", replicas)
+
+        ino0 = self.fs.read_cache("/dir1/dir2", depth=0, rank=0)[0]
+        self.assertFalse(ino0['is_auth'])
+        self.assertTrue(ino0['is_subvolume'])

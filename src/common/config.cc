@@ -55,7 +55,7 @@ using ceph::decode;
 using ceph::encode;
 using ceph::Formatter;
 
-static const char *CEPH_CONF_FILE_DEFAULT = "$data_dir/config,/etc/ceph/$cluster.conf,$home/.ceph/$cluster.conf,$cluster.conf"
+const char *CEPH_CONF_FILE_DEFAULT = "$data_dir/config,/etc/ceph/$cluster.conf,$home/.ceph/$cluster.conf,$cluster.conf"
 #if defined(__FreeBSD__)
     ",/usr/local/etc/ceph/$cluster.conf"
 #elif defined(_WIN32)
@@ -491,6 +491,11 @@ void md_config_t::parse_env(unsigned entity_type,
       ceph_assert(o);
       _set_val(values, tracker, dir, *o, CONF_ENV, &err);
     }
+  }
+
+  if (auto s = getenv("TMPDIR"); s) {
+    string err;
+    _set_val(values, tracker, s, *find_option("tmp_dir"), CONF_ENV, &err);
   }
 
   // Apply pod memory limits:

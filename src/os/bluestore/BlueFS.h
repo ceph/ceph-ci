@@ -43,9 +43,10 @@ enum {
   l_bluefs_max_bytes_wal,
   l_bluefs_max_bytes_db,
   l_bluefs_max_bytes_slow,
-  l_bluefs_main_alloc_unit,
+  l_bluefs_slow_alloc_unit,
   l_bluefs_db_alloc_unit,
   l_bluefs_wal_alloc_unit,
+  l_bluefs_read_random_lat,
   l_bluefs_read_random_count,
   l_bluefs_read_random_bytes,
   l_bluefs_read_random_disk_count,
@@ -55,6 +56,7 @@ enum {
   l_bluefs_read_random_disk_bytes_slow,
   l_bluefs_read_random_buffer_count,
   l_bluefs_read_random_buffer_bytes,
+  l_bluefs_read_lat,
   l_bluefs_read_count,
   l_bluefs_read_bytes,
   l_bluefs_read_disk_count,
@@ -69,10 +71,20 @@ enum {
   l_bluefs_write_bytes,
   l_bluefs_compaction_lat,
   l_bluefs_compaction_lock_lat,
+  l_bluefs_fsync_lat,
+  l_bluefs_flush_lat,
+  l_bluefs_unlink_lat,
+  l_bluefs_truncate_lat,
   l_bluefs_alloc_shared_dev_fallbacks,
   l_bluefs_alloc_shared_size_fallbacks,
   l_bluefs_read_zeros_candidate,
   l_bluefs_read_zeros_errors,
+  l_bluefs_wal_alloc_lat,
+  l_bluefs_db_alloc_lat,
+  l_bluefs_slow_alloc_lat,
+  l_bluefs_wal_alloc_max_lat,
+  l_bluefs_db_alloc_max_lat,
+  l_bluefs_slow_alloc_max_lat,
   l_bluefs_last,
 };
 
@@ -82,15 +94,102 @@ public:
 
   virtual ~BlueFSVolumeSelector() {
   }
+  /**
+  *  Method to learn a hint (aka logic level discriminator)  specific for
+  *  BlueFS log
+  *
+  */
   virtual void* get_hint_for_log() const = 0;
+  /**
+  *  Method to learn a hint (aka logic level discriminator) provided directory
+  *  bound to.
+  *
+  */
   virtual void* get_hint_by_dir(std::string_view dirname) const = 0;
 
-  virtual void add_usage(void* file_hint, const bluefs_fnode_t& fnode) = 0;
-  virtual void sub_usage(void* file_hint, const bluefs_fnode_t& fnode) = 0;
-  virtual void add_usage(void* file_hint, uint64_t fsize) = 0;
-  virtual void sub_usage(void* file_hint, uint64_t fsize) = 0;
+  /**
+  *  Increments stats for a given logical level using provided fnode as a delta,
+  *  Parameters:
+  *    hint: logical level discriminator
+  *    fnode: fnode metadata to be used as a complex delta value:
+  *           (+1 file count, +file size, +all the extents)
+  *
+  */
+  void add_usage(void* hint, const bluefs_fnode_t& fnode) {
+    for (auto& e : fnode.extents) {
+      add_usage(hint, e);
+    }
+    add_usage(hint, fnode.size, true);
+  }
+  /**
+  *  Decrements stats for a given logical level using provided fnode as a delta
+  *  Parameters:
+  *    hint: logical level discriminator
+  *    fnode: fnode metadata to be used as a complex delta value:
+  *           (-1 file count, -file size, -all the extents)
+  *
+  */
+  void sub_usage(void* hint, const bluefs_fnode_t& fnode) {
+    for (auto& e : fnode.extents) {
+      sub_usage(hint, e);
+    }
+    sub_usage(hint, fnode.size, true);
+  }
+  /**
+  *  Increments stats for a given logical level using provided extent as a delta,
+  *  Parameters:
+  *    hint: logical level discriminator
+  *    extent: bluefs extent to be used as a complex delta value:
+  *           (.bdev determines physical location, +length)
+  *
+  */
+  virtual void add_usage(void* hint, const bluefs_extent_t& extent) = 0;
+  /**
+  *  Decrements stats for a given logical level using provided extent as a delta,
+  *  Parameters:
+  *    hint: logical level discriminator
+  *    extent: bluefs extent to be used as a complex delta value:
+  *           (.bdev determines physical location, -length)
+  *
+  */
+  virtual void sub_usage(void* hint, const bluefs_extent_t& extent) = 0;
+  /**
+  *  Increments files count and overall files size for a given logical level
+  *  Parameters:
+  *    hint: logical level discriminator
+  *    fsize: delta value for file size
+  *    upd_files: whether or not to increment file count
+  *
+  */
+  virtual void add_usage(void* hint, uint64_t fsize, bool upd_files = false) = 0;
+  /**
+  *  Decrements files count and overall files size for a given logical level
+  *  Parameters:
+  *    hint: logical level discriminator
+  *    fsize: delta value for file size
+  *    upd_files: whether or not to decrement file count
+  *
+  */
+  virtual void sub_usage(void* hint, uint64_t fsize, bool upd_files = false) = 0;
+
+  /**
+  *  Determines preferred physical device for the given logical level
+  *  Parameters:
+  *    hint: logical level discriminator
+  *
+  */
   virtual uint8_t select_prefer_bdev(void* hint) = 0;
+  /**
+  *  Builds path set for RocksDB to use
+  *  Parameters:
+  *    base: path's root
+  *
+  */
   virtual void get_paths(const std::string& base, paths& res) const = 0;
+  /**
+  *  Dumps VSelector's state
+  *
+  */
   virtual void dump(std::ostream& sout) = 0;
 
   /* used for sanity checking of vselector */
@@ -132,6 +231,7 @@ public:
     WRITER_WAL,
     WRITER_SST,
   };
+  void collect_alerts(osd_alert_list_t& alerts);
 
   struct File : public RefCountedObject {
     MEMPOOL_CLASS_HELPERS();
@@ -334,7 +434,6 @@ public:
     FileRef file;
     explicit FileLock(FileRef f) : file(std::move(f)) {}
   };
-
 private:
   PerfCounters *logger = nullptr;
 
@@ -346,6 +445,8 @@ private:
     l_bluefs_max_bytes_wal,
     l_bluefs_max_bytes_db,
   };
+
+  ceph::timespan max_alloc_lat[MAX_BDEV] = {ceph::make_timespan(0)};
 
   // cache
   struct {
@@ -433,9 +534,13 @@ private:
     return bdev[BDEV_SLOW] ? BDEV_SLOW : BDEV_DB;
   }
   const char* get_device_name(unsigned id);
+
+  typedef std::function<void(const bluefs_extent_t)> update_fn_t;
+  void _update_allocate_stats(uint8_t id, const ceph::timespan& d);
   int _allocate(uint8_t bdev, uint64_t len,
                 uint64_t alloc_unit,
 		bluefs_fnode_t* node,
+                update_fn_t cb = nullptr,
                 size_t alloc_attempts = 0,
                 bool permit_dev_fallback = true);
 
@@ -445,7 +550,6 @@ private:
   int _flush_data(FileWriter *h, uint64_t offset, uint64_t length, bool buffered);
   int _flush_F(FileWriter *h, bool force, bool *flushed = nullptr);
   uint64_t _flush_special(FileWriter *h);
-  int _fsync(FileWriter *h);
 
 #ifdef HAVE_LIBAIO
   void _claim_completed_aios(FileWriter *h, std::list<aio_t> *ls);
@@ -497,9 +601,6 @@ private:
   void _flush_bdev(FileWriter *h, bool check_mutex_locked = true);
   void _flush_bdev();  // this is safe to call without a lock
   void _flush_bdev(std::array<bool, MAX_BDEV>& dirty_bdevs);  // this is safe to call without a lock
-
-  int _preallocate(FileRef f, uint64_t off, uint64_t len);
-  int _truncate(FileWriter *h, uint64_t off);
 
   int64_t _read(
     FileReader *h,   ///< [in] read from here
@@ -639,6 +740,7 @@ public:
 		       bluefs_shared_alloc_context_t* _shared_alloc = nullptr);
   bool bdev_support_label(unsigned id);
   uint64_t get_block_device_size(unsigned bdev) const;
+  BlockDevice* get_block_device(unsigned bdev) const;
 
   // handler for discard event
   void handle_discard(unsigned dev, interval_set<uint64_t>& to_release);
@@ -674,6 +776,7 @@ public:
   }
   uint64_t debug_get_dirty_seq(FileWriter *h);
   bool debug_get_is_dev_dirty(FileWriter *h, uint8_t dev);
+  void trim_free_space(const std::string& type, std::ostream& outss);
 
 private:
   // Wrappers for BlockDevice::read(...) and BlockDevice::read_random(...)
@@ -711,19 +814,19 @@ public:
   void* get_hint_for_log() const override;
   void* get_hint_by_dir(std::string_view dirname) const override;
 
-  void add_usage(void* hint, const bluefs_fnode_t& fnode) override {
+  void add_usage(void* hint, const bluefs_extent_t& extent) override {
     // do nothing
     return;
   }
-  void sub_usage(void* hint, const bluefs_fnode_t& fnode) override {
+  void sub_usage(void* hint, const bluefs_extent_t& extent) override {
     // do nothing
     return;
   }
-  void add_usage(void* hint, uint64_t fsize) override {
+  void add_usage(void*, uint64_t, bool) override {
     // do nothing
     return;
   }
-  void sub_usage(void* hint, uint64_t fsize) override {
+  void sub_usage(void*, uint64_t, bool) override {
     // do nothing
     return;
   }

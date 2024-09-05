@@ -23,6 +23,7 @@ public:
     other.dencoders.clear();
   }
   ~DencoderPlugin() {
+    unregister_dencoders();
 #if !defined(__FreeBSD__)
     if (mod) {
       dlclose(mod);
@@ -66,6 +67,7 @@ private:
 };
 
 #define TYPE(t) plugin->emplace<DencoderImplNoFeature<t>>(#t, false, false);
+#define TYPE_VARARGS(t, ...) plugin->emplace<DencoderImplNoFeature<t>>(#t, false, false, ##__VA_ARGS__);
 #define TYPE_STRAYDATA(t) plugin->emplace<DencoderImplNoFeature<t>>(#t, true, false);
 #define TYPE_NONDETERMINISTIC(t) plugin->emplace<DencoderImplNoFeature<t>>(#t, false, true);
 #define TYPE_FEATUREFUL(t) plugin->emplace<DencoderImplFeatureful<t>>(#t, false, false);

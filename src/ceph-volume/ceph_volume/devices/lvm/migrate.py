@@ -10,7 +10,7 @@ from ceph_volume.util import encryption as encryption_utils
 from ceph_volume import decorators, terminal, process
 from ceph_volume.api import lvm as api
 from ceph_volume.systemd import systemctl
-
+from ceph_volume.devices.lvm import zap
 
 logger = logging.getLogger(__name__)
 mlogger = terminal.MultiLogger(__name__)
@@ -167,9 +167,14 @@ class VolumeTagTracker(object):
             aux_dev.lv_api.set_tags(tags)
 
     def remove_lvs(self, source_devices, target_type):
-        remaining_devices = [self.data_device, self.db_device, self.wal_device]
+        remaining_devices = [self.data_device]
+        if self.db_device:
+            remaining_devices.append(self.db_device)
+        if self.wal_device:
+            remaining_devices.append(self.wal_device)
 
         outdated_tags = []
+        removed_devices = []
         for device, type in source_devices:
             if type == "block" or type == target_type:
                 continue
@@ -178,10 +183,13 @@ class VolumeTagTracker(object):
                 outdated_tags.append("ceph.{}_uuid".format(type))
                 outdated_tags.append("ceph.{}_device".format(type))
                 device.lv_api.clear_tags()
+                removed_devices.append(device)
+
         if len(outdated_tags) > 0:
             for d in remaining_devices:
                 if d and d.is_lv:
                     d.lv_api.clear_tags(outdated_tags)
+        return removed_devices
 
     def replace_lvs(self, source_devices, target_type):
         remaining_devices = [self.data_device]
@@ -191,6 +199,7 @@ class VolumeTagTracker(object):
             remaining_devices.append(self.wal_device)
 
         outdated_tags = []
+        removed_devices = []
         for device, type in source_devices:
             if type == "block":
                 continue
@@ -199,6 +208,7 @@ class VolumeTagTracker(object):
                 outdated_tags.append("ceph.{}_uuid".format(type))
                 outdated_tags.append("ceph.{}_device".format(type))
                 device.lv_api.clear_tags()
+                removed_devices.append(device)
 
         new_tags = {}
         new_tags["ceph.{}_uuid".format(target_type)] = self.target_lv.lv_uuid
@@ -220,6 +230,7 @@ class VolumeTagTracker(object):
         tags["ceph.{}_uuid".format(target_type)] = self.target_lv.lv_uuid
         tags["ceph.{}_device".format(target_type)] = self.target_lv.lv_path
         self.target_lv.set_tags(tags)
+        return removed_devices
 
     def undo(self):
         mlogger.info(
@@ -335,7 +346,7 @@ class Migrate(object):
 
             # ceph-bluestore-tool removes source volume(s) other than block one
             # and attaches target one after successful migration
-            tag_tracker.replace_lvs(source_devices, target_type)
+            removed_devices = tag_tracker.replace_lvs(source_devices, target_type)
 
             osd_path = get_osd_path(osd_id, osd_fsid)
             source_args = self.get_source_args(osd_path, source_devices)
@@ -360,6 +371,9 @@ class Migrate(object):
                 target_type)))
             if tag_tracker.data_device.lv_api.encrypted:
                 self.close_encrypted(source_devices)
+            for d in removed_devices:
+                if d and d.is_lv:
+                  zap.Zap([d.lv_api.lv_path]).main()
             terminal.success('Migration successful.')
 
         except:
@@ -391,7 +405,7 @@ class Migrate(object):
         try:
             # ceph-bluestore-tool removes source volume(s) other than
             # block and target ones after successful migration
-            tag_tracker.remove_lvs(source_devices, target_type)
+            removed_devices = tag_tracker.remove_lvs(source_devices, target_type)
             source_args = self.get_source_args(osd_path, source_devices)
             mlogger.info("Migrate to existing, Source: {} Target: {}".format(
                 source_args, target_path))
@@ -411,6 +425,9 @@ class Migrate(object):
                     'Failed to migrate to : {}'.format(self.args.target))
             if tag_tracker.data_device.lv_api.encrypted:
                 self.close_encrypted(source_devices)
+            for d in removed_devices:
+                if d and d.is_lv:
+                  zap.Zap([d.lv_api.lv_path]).main()
             terminal.success('Migration successful.')
         except:
             tag_tracker.undo()

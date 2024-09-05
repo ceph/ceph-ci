@@ -33,7 +33,6 @@ std::string zonegroup_names_oid_prefix = "zonegroups_names.";
 std::string RGW_DEFAULT_ZONE_ROOT_POOL = "rgw.root";
 std::string RGW_DEFAULT_ZONEGROUP_ROOT_POOL = "rgw.root";
 std::string RGW_DEFAULT_PERIOD_ROOT_POOL = "rgw.root";
-std::string avail_pools = ".pools.avail";
 std::string default_storage_pool_suffix = "rgw.buckets.data";
 
 }
@@ -297,12 +296,14 @@ void RGWZoneParams::decode_json(JSONObj *obj)
   JSONDecoder::decode_json("user_swift_pool", user_swift_pool, obj);
   JSONDecoder::decode_json("user_uid_pool", user_uid_pool, obj);
   JSONDecoder::decode_json("otp_pool", otp_pool, obj);
+  JSONDecoder::decode_json("notif_pool", notif_pool, obj);
+  JSONDecoder::decode_json("topics_pool", topics_pool, obj);
+  JSONDecoder::decode_json("account_pool", account_pool, obj);
+  JSONDecoder::decode_json("group_pool", group_pool, obj);
   JSONDecoder::decode_json("system_key", system_key, obj);
   JSONDecoder::decode_json("placement_pools", placement_pools, obj);
   JSONDecoder::decode_json("tier_config", tier_config, obj);
   JSONDecoder::decode_json("realm_id", realm_id, obj);
-  JSONDecoder::decode_json("notif_pool", notif_pool, obj);
-
 }
 
 void RGWZoneParams::dump(Formatter *f) const
@@ -322,11 +323,14 @@ void RGWZoneParams::dump(Formatter *f) const
   encode_json("user_swift_pool", user_swift_pool, f);
   encode_json("user_uid_pool", user_uid_pool, f);
   encode_json("otp_pool", otp_pool, f);
+  encode_json("notif_pool", notif_pool, f);
+  encode_json("topics_pool", topics_pool, f);
+  encode_json("account_pool", account_pool, f);
+  encode_json("group_pool", group_pool, f);
   encode_json_plain("system_key", system_key, f);
   encode_json("placement_pools", placement_pools, f);
   encode_json("tier_config", tier_config, f);
   encode_json("realm_id", realm_id, f);
-  encode_json("notif_pool", notif_pool, f);
 }
 
 int RGWZoneParams::init(const DoutPrefixProvider *dpp, 
@@ -412,22 +416,14 @@ int RGWZoneParams::set_as_default(const DoutPrefixProvider *dpp, optional_yield 
 
 int RGWZoneParams::create(const DoutPrefixProvider *dpp, optional_yield y, bool exclusive)
 {
-  /* check for old pools config */
-  rgw_raw_obj obj(domain_root, avail_pools);
-  auto sysobj = sysobj_svc->get_obj(obj);
-  int r = sysobj.rop().stat(y, dpp);
-  if (r < 0) {
-    ldpp_dout(dpp, 10) << "couldn't find old data placement pools config, setting up new ones for the zone" << dendl;
-    /* a new system, let's set new placement info */
-    RGWZonePlacementInfo default_placement;
-    default_placement.index_pool = name + "." + default_bucket_index_pool_suffix;
-    rgw_pool pool = name + "." + default_storage_pool_suffix;
-    default_placement.storage_classes.set_storage_class(RGW_STORAGE_CLASS_STANDARD, &pool, nullptr);
-    default_placement.data_extra_pool = name + "." + default_storage_extra_pool_suffix;
-    placement_pools["default-placement"] = default_placement;
-  }
+  RGWZonePlacementInfo default_placement;
+  default_placement.index_pool = name + "." + default_bucket_index_pool_suffix;
+  rgw_pool pool = name + "." + default_storage_pool_suffix;
+  default_placement.storage_classes.set_storage_class(RGW_STORAGE_CLASS_STANDARD, &pool, nullptr);
+  default_placement.data_extra_pool = name + "." + default_storage_extra_pool_suffix;
+  placement_pools["default-placement"] = default_placement;
 
-  r = fix_pool_names(dpp, y);
+  int r = fix_pool_names(dpp, y);
   if (r < 0) {
     ldpp_dout(dpp, 0) << "ERROR: fix_pool_names returned r=" << r << dendl;
     return r;
@@ -489,6 +485,9 @@ void add_zone_pools(const RGWZoneParams& info,
   pools.insert(info.reshard_pool);
   pools.insert(info.oidc_pool);
   pools.insert(info.notif_pool);
+  pools.insert(info.topics_pool);
+  pools.insert(info.account_pool);
+  pools.insert(info.group_pool);
 
   for (const auto& [pname, placement] : info.placement_pools) {
     pools.insert(placement.index_pool);
@@ -593,6 +592,9 @@ int RGWZoneParams::fix_pool_names(const DoutPrefixProvider *dpp, optional_yield 
   otp_pool = fix_zone_pool_dup(pools, name, ".rgw.otp", otp_pool);
   oidc_pool = fix_zone_pool_dup(pools, name, ".rgw.meta:oidc", oidc_pool);
   notif_pool = fix_zone_pool_dup(pools, name ,".rgw.log:notif", notif_pool);
+  topics_pool = fix_zone_pool_dup(pools, name, ".rgw.meta:topics", topics_pool);
+  account_pool = fix_zone_pool_dup(pools, name, ".rgw.meta:accounts", account_pool);
+  group_pool = fix_zone_pool_dup(pools, name, ".rgw.meta:groups", group_pool);
 
   for(auto& iter : placement_pools) {
     iter.second.index_pool = fix_zone_pool_dup(pools, name, "." + default_bucket_index_pool_suffix,
@@ -1254,6 +1256,10 @@ int init_zone_pool_names(const DoutPrefixProvider *dpp, optional_yield y,
   info.otp_pool = fix_zone_pool_dup(pools, info.name, ".rgw.otp", info.otp_pool);
   info.oidc_pool = fix_zone_pool_dup(pools, info.name, ".rgw.meta:oidc", info.oidc_pool);
   info.notif_pool = fix_zone_pool_dup(pools, info.name, ".rgw.log:notif", info.notif_pool);
+  info.topics_pool =
+      fix_zone_pool_dup(pools, info.name, ".rgw.meta:topics", info.topics_pool);
+  info.account_pool = fix_zone_pool_dup(pools, info.name, ".rgw.meta:accounts", info.account_pool);
+  info.group_pool = fix_zone_pool_dup(pools, info.name, ".rgw.meta:groups", info.group_pool);
 
   for (auto& [pname, placement] : info.placement_pools) {
     placement.index_pool = fix_zone_pool_dup(pools, info.name, "." + default_bucket_index_pool_suffix, placement.index_pool);
@@ -1266,6 +1272,19 @@ int init_zone_pool_names(const DoutPrefixProvider *dpp, optional_yield y,
   }
 
   return 0;
+}
+
+std::string get_zonegroup_endpoint(const RGWZoneGroup& info)
+{
+  if (!info.endpoints.empty()) {
+    return info.endpoints.front();
+  }
+  // use zonegroup's master zone endpoints
+  auto z = info.zones.find(info.master_zone);
+  if (z != info.zones.end() && !z->second.endpoints.empty()) {
+    return z->second.endpoints.front();
+  }
+  return "";
 }
 
 int add_zone_to_group(const DoutPrefixProvider* dpp, RGWZoneGroup& zonegroup,

@@ -2,7 +2,7 @@
 set -ex
 
 if [ -d .git ]; then
-    git submodule update --init --recursive
+    git submodule update --init --recursive --progress --recommend-shallow
 fi
 
 : ${BUILD_DIR:=build}
@@ -14,24 +14,19 @@ if [ -e $BUILD_DIR ]; then
 fi
 
 PYBUILD="3"
-ARGS="-GNinja"
+ARGS="${ARGS} -GNinja"
 if [ -r /etc/os-release ]; then
   source /etc/os-release
   case "$ID" in
       fedora)
-          if [ "$VERSION_ID" -ge "37" ] ; then
-            PYBUILD="3.11"
-          elif [ "$VERSION_ID" -ge "35" ] ; then
-            PYBUILD="3.10"
-          elif [ "$VERSION_ID" -ge "33" ] ; then
-            PYBUILD="3.9"
-          elif [ "$VERSION_ID" -ge "32" ] ; then
-            PYBUILD="3.8"
+          if [ "$VERSION_ID" -ge "39" ] ; then
+            PYBUILD="3.12"
           else
-            PYBUILD="3.7"
+            # Fedora 37 and above
+            PYBUILD="3.11"
           fi
           ;;
-      rocky|rhel|centos)
+      almalinux|rocky|rhel|centos)
           MAJOR_VER=$(echo "$VERSION_ID" | sed -e 's/\..*$//')
           if [ "$MAJOR_VER" -ge "9" ] ; then
               PYBUILD="3.9"
@@ -63,7 +58,10 @@ fi
 
 ARGS+=" -DWITH_PYTHON3=${PYBUILD}"
 
-if type ccache > /dev/null 2>&1 ; then
+if type sccache > /dev/null 2>&1 ; then
+    echo "enabling sccache"
+    ARGS+=" -DWITH_SCCACHE=ON"
+elif type ccache > /dev/null 2>&1 ; then
     echo "enabling ccache"
     ARGS+=" -DWITH_CCACHE=ON"
 fi

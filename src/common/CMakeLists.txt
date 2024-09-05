@@ -6,7 +6,7 @@ add_library(common_texttable_obj OBJECT
 
 add_library(common_prioritycache_obj OBJECT
   PriorityCache.cc)
-add_dependencies(common_prioritycache_obj legacy-option-headers)
+target_link_libraries(common_prioritycache_obj legacy-option-headers)
 
 if(WIN32)
   add_library(dlfcn_win32 STATIC win32/dlfcn.cc win32/errno.cc)
@@ -83,6 +83,7 @@ set(common_srcs
   options.cc
   page.cc
   perf_counters.cc
+  perf_counters_cache.cc
   perf_counters_collection.cc
   perf_counters_key.cc
   perf_histogram.cc
@@ -191,8 +192,8 @@ target_compile_definitions(common-common-objs PRIVATE
   "CMAKE_INSTALL_LIBDIR=\"${CMAKE_INSTALL_LIBDIR}\""
   "CEPH_INSTALL_FULL_PKGLIBDIR=\"${CEPH_INSTALL_FULL_PKGLIBDIR}\""
   "CEPH_INSTALL_DATADIR=\"${CEPH_INSTALL_DATADIR}\""
-  $<TARGET_PROPERTY:fmt::fmt,INTERFACE_COMPILE_DEFINITIONS>)
-add_dependencies(common-common-objs legacy-option-headers)
+  $<TARGET_PROPERTY:${FMT_LIB},INTERFACE_COMPILE_DEFINITIONS>)
+target_link_libraries(common-common-objs legacy-option-headers)
 
 set(common_mountcephfs_srcs
   armor.c
@@ -214,6 +215,7 @@ if(HAVE_INTEL)
     set(CMAKE_ASM_FLAGS "-i ${PROJECT_SOURCE_DIR}/src/isa-l/include/ ${CMAKE_ASM_FLAGS}")
     list(APPEND crc32_srcs
       ${PROJECT_SOURCE_DIR}/src/isa-l/crc/crc32_iscsi_00.asm
+      ${PROJECT_SOURCE_DIR}/src/isa-l/crc/crc32_iscsi_01.asm
       crc32c_intel_fast_zero_asm.s)
   endif(HAVE_NASM_X64)
 elseif(HAVE_POWER8)
@@ -227,6 +229,11 @@ elseif(HAVE_POWER8)
 elseif(HAVE_ARMV8_CRC)
   list(APPEND crc32_srcs
     crc32c_aarch64.c)
+elseif(HAVE_S390X)
+  list(APPEND crc32_srcs
+    crc32c_s390x.c
+    crc32c_s390x_le-vx.S
+  )
 endif(HAVE_INTEL)
 
 add_library(crc32 OBJECT ${crc32_srcs})

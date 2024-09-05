@@ -246,6 +246,33 @@ class ESZone(Zone):
         def create_role(self, path, rolename, policy_document, tag_list):
             assert False
 
+        def delete_role(self, role_name):
+            assert False
+
+        def has_role(self, role_name):
+            assert False
+
+        def create_topic(self, topicname, attributes):
+            assert False
+
+        def delete_topic(self, topic_arn):
+            assert False
+
+        def list_topics(self):
+            assert False
+
+        def get_topic(self, topic_arn):
+            assert False
+
+        def create_notification(self, bucket_name, config):
+            assert False
+
+        def delete_notification(self, bucket_name):
+            assert False
+
+        def list_notifications(self, bucket_name):
+            assert False
+
     def get_conn(self, credentials):
         return self.Conn(self, credentials)
 

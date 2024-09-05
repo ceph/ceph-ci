@@ -9,6 +9,7 @@
 #include <curl/easy.h>
 #include <curl/multi.h>
 
+#include "rgw_asio_thread.h"
 #include "rgw_common.h"
 #include "rgw_http_client.h"
 #include "rgw_http_errors.h"
@@ -61,33 +62,29 @@ struct rgw_http_req_data : public RefCountedObject {
     memset(error_buf, 0, sizeof(error_buf));
   }
 
-  template <typename ExecutionContext, typename CompletionToken>
-  auto async_wait(ExecutionContext& ctx, CompletionToken&& token) {
-    boost::asio::async_completion<CompletionToken, Signature> init(token);
-    auto& handler = init.completion_handler;
-    {
-      std::unique_lock l{lock};
-      completion = Completion::create(ctx.get_executor(), std::move(handler));
-    }
-    return init.result.get();
+  template <typename Executor, typename CompletionToken>
+  auto async_wait(const Executor& ex, std::unique_lock<ceph::mutex>& lock,
+                  CompletionToken&& token) {
+    return boost::asio::async_initiate<CompletionToken, Signature>(
+        [this, &lock] (auto handler, auto ex) {
+          completion = Completion::create(ex, std::move(handler));
+          lock.unlock(); // unlock before suspend
+        }, token, ex);
   }
 
-  int wait(optional_yield y) {
+  int wait(const DoutPrefixProvider* dpp, optional_yield y) {
+    std::unique_lock l{lock};
     if (done) {
       return ret;
     }
     if (y) {
-      auto& context = y.get_io_context();
       auto& yield = y.get_yield_context();
       boost::system::error_code ec;
-      async_wait(context, yield[ec]);
+      async_wait(yield.get_executor(), l, yield[ec]);
       return -ec.value();
     }
-    // work on asio threads should be asynchronous, so warn when they block
-    if (is_asio_thread) {
-      dout(20) << "WARNING: blocking http request" << dendl;
-    }
-    std::unique_lock l{lock};
+    maybe_warn_about_blocking(dpp);
+
     cond.wait(l, [this]{return done==true;});
     return ret;
   }
@@ -306,6 +303,7 @@ RGWHTTPClient::RGWHTTPClient(CephContext *cct,
       verify_ssl(cct->_conf->rgw_verify_ssl),
       cct(cct),
       method(_method),
+      url_orig(_url),
       url(_url) {
   init();
 }
@@ -535,9 +533,9 @@ static bool is_upload_request(const string& method)
 /*
  * process a single simple one off request
  */
-int RGWHTTPClient::process(optional_yield y)
+int RGWHTTPClient::process(const DoutPrefixProvider* dpp, optional_yield y)
 {
-  return RGWHTTP::process(this, y);
+  return RGWHTTP::process(dpp, this, y);
 }
 
 string RGWHTTPClient::to_str()
@@ -590,6 +588,8 @@ int RGWHTTPClient::init_request(rgw_http_req_data *_req_data)
   curl_easy_setopt(easy_handle, CURLOPT_READFUNCTION, send_http_data);
   curl_easy_setopt(easy_handle, CURLOPT_READDATA, (void *)req_data);
   curl_easy_setopt(easy_handle, CURLOPT_BUFFERSIZE, cct->_conf->rgw_curl_buffersize);
+  curl_easy_setopt(easy_handle, CURLOPT_PATH_AS_IS, 1L);
+
   if (send_data_hint || is_upload_request(method)) {
     curl_easy_setopt(easy_handle, CURLOPT_UPLOAD, 1L);
   }
@@ -647,9 +647,9 @@ bool RGWHTTPClient::is_done()
 /*
  * wait for async request to complete
  */
-int RGWHTTPClient::wait(optional_yield y)
+int RGWHTTPClient::wait(const DoutPrefixProvider* dpp, optional_yield y)
 {
-  return req_data->wait(y);
+  return req_data->wait(dpp, y);
 }
 
 void RGWHTTPClient::cancel()
@@ -1147,7 +1147,6 @@ void *RGWHTTPManager::reqs_thread_entry()
           http_status = err.http_ret;
         }
         int id = req_data->id;
-	finish_request(req_data, status, http_status);
         switch (result) {
           case CURLE_OK:
             break;
@@ -1160,6 +1159,7 @@ void *RGWHTTPManager::reqs_thread_entry()
             dout(20) << "ERROR: curl error: " << curl_easy_strerror((CURLcode)result) << " req_data->error_buf=" << req_data->error_buf << dendl;
 	    break;
         }
+	finish_request(req_data, status, http_status);
       }
     }
   }
@@ -1213,7 +1213,7 @@ int RGWHTTP::send(RGWHTTPClient *req) {
   return 0;
 }
 
-int RGWHTTP::process(RGWHTTPClient *req, optional_yield y) {
+int RGWHTTP::process(const DoutPrefixProvider* dpp, RGWHTTPClient *req, optional_yield y) {
   if (!req) {
     return 0;
   }
@@ -1222,6 +1222,6 @@ int RGWHTTP::process(RGWHTTPClient *req, optional_yield y) {
     return r;
   }
 
-  return req->wait(y);
+  return req->wait(dpp, y);
 }
 

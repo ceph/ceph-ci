@@ -261,21 +261,21 @@ namespace ceph {
     /**
      * Return the size (in bytes) of a single chunk created by a call
      * to the **decode** method. The returned size multiplied by
-     * **get_chunk_count()** is greater or equal to **object_size**.
+     * **get_chunk_count()** is greater or equal to **stripe_width**.
      *
      * If the object size is properly aligned, the chunk size is
-     * **object_size / get_chunk_count()**. However, if
-     * **object_size** is not a multiple of **get_chunk_count** or if
+     * **stripe_width / get_chunk_count()**. However, if
+     * **stripe_width** is not a multiple of **get_chunk_count** or if
      * the implementation imposes additional alignment constraints,
      * the chunk size may be larger.
      *
      * The byte found at offset **B** of the original object is mapped
      * to chunk **B / get_chunk_size()** at offset **B % get_chunk_size()**.
      *
-     * @param [in] object_size the number of bytes of the object to **encode()**
+     * @param [in] stripe_width the number of bytes of the object to **encode()**
      * @return the size (in bytes) of a single chunk created by **encode()**
      */
-    virtual unsigned int get_chunk_size(unsigned int object_size) const = 0;
+    virtual unsigned int get_chunk_size(unsigned int stripe_width) const = 0;
 
     /**
      * Compute the smallest subset of **available** chunks that needs
@@ -453,12 +453,20 @@ namespace ceph {
      *
      * Returns 0 on success.
      *
-     * @param [in] chunks map chunk indexes to chunk data
-     * @param [out] decoded concatenante of the data chunks
+     * @param [in] want_to_read mapped std::set of chunks caller wants
+     *				concatenated to `decoded`. This works as
+     *				selectors for `chunks`
+     * @param [in] chunks set of chunks with data available for decoding
+     * @param [out] decoded must be non-null, chunks specified in `want_to_read`
+     * 			    will be concatenated into `decoded` in index order
      * @return **0** on success or a negative errno on error.
      */
+    virtual int decode_concat(const std::set<int>& want_to_read,
+			      const std::map<int, bufferlist> &chunks,
+			      bufferlist *decoded) = 0;
     virtual int decode_concat(const std::map<int, bufferlist> &chunks,
 			      bufferlist *decoded) = 0;
+
   };
 
   typedef std::shared_ptr<ErasureCodeInterface> ErasureCodeInterfaceRef;

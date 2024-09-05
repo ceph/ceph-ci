@@ -52,6 +52,12 @@ int ErasureCode::init(
   err |= to_string("crush-failure-domain", profile,
 		   &rule_failure_domain,
 		   DEFAULT_RULE_FAILURE_DOMAIN, ss);
+  err |= to_int("crush-osds-per-failure-domain", profile,
+		&rule_osds_per_failure_domain,
+		"0", ss);
+  err |= to_int("crush-num-failure-domains", profile,
+		&rule_num_failure_domains,
+		"0", ss);
   err |= to_string("crush-device-class", profile,
 		   &rule_device_class,
 		   "", ss);
@@ -66,19 +72,33 @@ int ErasureCode::create_rule(
   CrushWrapper &crush,
   std::ostream *ss) const
 {
-  int ruleid = crush.add_simple_rule(
-    name,
-    rule_root,
-    rule_failure_domain,
-    rule_device_class,
-    "indep",
-    pg_pool_t::TYPE_ERASURE,
-    ss);
-
-  if (ruleid < 0)
-    return ruleid;
-
-  return ruleid;
+  if (rule_osds_per_failure_domain <= 1) {
+    return crush.add_simple_rule(
+      name,
+      rule_root,
+      rule_failure_domain,
+      rule_num_failure_domains,
+      rule_device_class,
+      "indep",
+      pg_pool_t::TYPE_ERASURE,
+      ss);
+  } else {
+    if (rule_num_failure_domains < 1)  {
+      if (ss) {
+	*ss << "crush-num-failure-domains " << rule_num_failure_domains
+	    << " must be >= 1 if crush-osds-per-failure-domain specified";
+	return -EINVAL;
+      }
+    }
+    return crush.add_indep_multi_osd_per_failure_domain_rule(
+      name,
+      rule_root,
+      rule_failure_domain,
+      rule_num_failure_domains,
+      rule_osds_per_failure_domain,
+      rule_device_class,
+      ss);
+  }
 }
 
 int ErasureCode::sanity_check_k_m(int k, int m, ostream *ss)
@@ -328,21 +348,35 @@ int ErasureCode::to_string(const std::string &name,
   return 0;
 }
 
-int ErasureCode::decode_concat(const map<int, bufferlist> &chunks,
+int ErasureCode::decode_concat(const set<int>& want_to_read,
+			       const map<int, bufferlist> &chunks,
 			       bufferlist *decoded)
 {
-  set<int> want_to_read;
-
-  for (unsigned int i = 0; i < get_data_chunk_count(); i++) {
-    want_to_read.insert(chunk_index(i));
-  }
   map<int, bufferlist> decoded_map;
   int r = _decode(want_to_read, chunks, &decoded_map);
   if (r == 0) {
     for (unsigned int i = 0; i < get_data_chunk_count(); i++) {
-      decoded->claim_append(decoded_map[chunk_index(i)]);
+      // XXX: the ErasureCodeInterface allows `decode()` to return
+      // *at least* `want_to_read chunks`; that is, they may more.
+      // Some implementations are consistently exact but jerasure
+      // is quirky: it outputs more only when deailing with degraded.
+      // The check below uniforms the behavior.
+      if (want_to_read.contains(chunk_index(i)) &&
+	  decoded_map.contains(chunk_index(i))) {
+        decoded->claim_append(decoded_map[chunk_index(i)]);
+      }
     }
   }
   return r;
+}
+
+int ErasureCode::decode_concat(const map<int, bufferlist> &chunks,
+			       bufferlist *decoded)
+{
+  set<int> want_to_read;
+  for (unsigned int i = 0; i < get_data_chunk_count(); i++) {
+    want_to_read.insert(chunk_index(i));
+  }
+  return decode_concat(want_to_read, chunks, decoded);
 }
 }

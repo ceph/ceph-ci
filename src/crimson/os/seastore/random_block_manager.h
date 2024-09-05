@@ -22,6 +22,11 @@
 
 namespace crimson::os::seastore {
 
+struct alloc_paddr_result {
+  paddr_t start;
+  extent_len_t len;
+};
+
 struct rbm_shard_info_t {
   std::size_t size = 0;
   uint64_t start_offset = 0;
@@ -34,7 +39,11 @@ struct rbm_shard_info_t {
   }
 };
 
-struct rbm_metadata_header_t {
+enum class rbm_feature_t : uint64_t {
+  RBM_NVME_END_TO_END_PROTECTION = 1,
+};
+
+struct rbm_superblock_t {
   size_t size = 0;
   size_t block_size = 0;
   uint64_t feature = 0;
@@ -42,9 +51,11 @@ struct rbm_metadata_header_t {
   checksum_t crc = 0;
   device_config_t config;
   unsigned int shard_num = 0;
+  // Must be assigned if ent-to-end-data-protection features is enabled
+  uint32_t nvme_block_size = 0;
   std::vector<rbm_shard_info_t> shard_infos;
 
-  DENC(rbm_metadata_header_t, v, p) {
+  DENC(rbm_superblock_t, v, p) {
     DENC_START(1, 1, p);
     denc(v.size, p);
     denc(v.block_size, p);
@@ -54,6 +65,7 @@ struct rbm_metadata_header_t {
     denc(v.crc, p);
     denc(v.config, p);
     denc(v.shard_num, p);
+    denc(v.nvme_block_size, p);
     denc(v.shard_infos, p);
     DENC_FINISH(p);
   }
@@ -74,6 +86,13 @@ struct rbm_metadata_header_t {
     ceph_assert(get_default_backend_of_device(config.spec.dtype) ==
 		backend_type_t::RANDOM_BLOCK);
     ceph_assert(config.spec.id <= DEVICE_ID_MAX_VALID);
+  }
+
+  bool is_end_to_end_data_protection() const {
+    return (feature & (uint64_t)rbm_feature_t::RBM_NVME_END_TO_END_PROTECTION);
+  }
+  void set_end_to_end_data_protection() {
+    feature |= (uint64_t)rbm_feature_t::RBM_NVME_END_TO_END_PROTECTION;
   }
 };
 
@@ -125,6 +144,10 @@ public:
   // allocator, return start addr of allocated blocks
   virtual paddr_t alloc_extent(size_t size) = 0;
 
+  using allocate_ret_bare = std::list<alloc_paddr_result>;
+  using allo_extents_ret = allocate_ertr::future<allocate_ret_bare>;
+  virtual allocate_ret_bare alloc_extents(size_t size) = 0;
+
   virtual void mark_space_used(paddr_t paddr, size_t len) = 0;
   virtual void mark_space_free(paddr_t paddr, size_t len) = 0;
 
@@ -140,6 +163,9 @@ public:
   virtual rbm_extent_state_t get_extent_state(paddr_t addr, size_t size) = 0;
   virtual size_t get_journal_size() const = 0;
   virtual ~RandomBlockManager() {}
+#ifdef UNIT_TESTS_BUILT
+  virtual void prefill_fragmented_device() = 0;
+#endif
 };
 using RandomBlockManagerRef = std::unique_ptr<RandomBlockManager>;
 
@@ -159,7 +185,7 @@ namespace random_block_device {
 seastar::future<std::unique_ptr<random_block_device::RBMDevice>> 
   get_rb_device(const std::string &device);
 
-std::ostream &operator<<(std::ostream &out, const rbm_metadata_header_t &header);
+std::ostream &operator<<(std::ostream &out, const rbm_superblock_t &header);
 std::ostream &operator<<(std::ostream &out, const rbm_shard_info_t &shard);
 }
 
@@ -167,10 +193,10 @@ WRITE_CLASS_DENC_BOUNDED(
   crimson::os::seastore::rbm_shard_info_t
 )
 WRITE_CLASS_DENC_BOUNDED(
-  crimson::os::seastore::rbm_metadata_header_t
+  crimson::os::seastore::rbm_superblock_t
 )
 
 #if FMT_VERSION >= 90000
-template<> struct fmt::formatter<crimson::os::seastore::rbm_metadata_header_t> : fmt::ostream_formatter {};
+template<> struct fmt::formatter<crimson::os::seastore::rbm_superblock_t> : fmt::ostream_formatter {};
 template<> struct fmt::formatter<crimson::os::seastore::rbm_shard_info_t> : fmt::ostream_formatter {};
 #endif

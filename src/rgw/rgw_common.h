@@ -17,14 +17,20 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <string_view>
 #include <atomic>
 #include <unordered_map>
 
 #include <fmt/format.h>
+#include <boost/container/flat_map.hpp>
+#include <boost/container/flat_set.hpp>
 
+#include "common/dout_fmt.h"
 #include "common/ceph_crypto.h"
 #include "common/random_string.h"
+#include "common/tracer.h"
+#include "common/versioned_variant.h"
 #include "rgw_acl.h"
 #include "rgw_bucket_layout.h"
 #include "rgw_cors.h"
@@ -43,8 +49,8 @@
 #include "cls/rgw/cls_rgw_types.h"
 #include "include/rados/librados.hpp"
 #include "rgw_public_access.h"
-#include "common/tracer.h"
 #include "rgw_sal_fwd.h"
+#include "rgw_hex.h"
 
 namespace ceph {
   class Formatter;
@@ -78,7 +84,8 @@ using ceph::crypto::MD5;
 #define RGW_ATTR_RATELIMIT	RGW_ATTR_PREFIX "ratelimit"
 #define RGW_ATTR_LC		RGW_ATTR_PREFIX "lc"
 #define RGW_ATTR_CORS		RGW_ATTR_PREFIX "cors"
-#define RGW_ATTR_ETAG    	RGW_ATTR_PREFIX "etag"
+#define RGW_ATTR_ETAG RGW_ATTR_PREFIX "etag"
+#define RGW_ATTR_CKSUM    	RGW_ATTR_PREFIX "cksum"
 #define RGW_ATTR_BUCKETS	RGW_ATTR_PREFIX "buckets"
 #define RGW_ATTR_META_PREFIX	RGW_ATTR_PREFIX RGW_AMZ_META_PREFIX
 #define RGW_ATTR_CONTENT_TYPE	RGW_ATTR_PREFIX "content_type"
@@ -145,10 +152,12 @@ using ceph::crypto::MD5;
 
 #define RGW_ATTR_OBJ_REPLICATION_STATUS RGW_ATTR_PREFIX "amz-replication-status"
 #define RGW_ATTR_OBJ_REPLICATION_TRACE RGW_ATTR_PREFIX "replication-trace"
+#define RGW_ATTR_OBJ_REPLICATION_TIMESTAMP RGW_ATTR_PREFIX "replicated-at"
 
 /* IAM Policy */
 #define RGW_ATTR_IAM_POLICY	RGW_ATTR_PREFIX "iam-policy"
 #define RGW_ATTR_USER_POLICY    RGW_ATTR_PREFIX "user-policy"
+#define RGW_ATTR_MANAGED_POLICY RGW_ATTR_PREFIX "managed-policy"
 #define RGW_ATTR_PUBLIC_ACCESS  RGW_ATTR_PREFIX "public-access"
 
 /* RGW File Attributes */
@@ -170,6 +179,8 @@ using ceph::crypto::MD5;
 #define RGW_ATTR_BUCKET_ENCRYPTION_KEY_ID RGW_ATTR_BUCKET_ENCRYPTION_PREFIX "key-id"
 
 #define RGW_ATTR_TRACE RGW_ATTR_PREFIX "trace"
+
+#define RGW_ATTR_BUCKET_NOTIFICATION RGW_ATTR_PREFIX "bucket-notification"
 
 enum class RGWFormat : int8_t {
   BAD_FORMAT = -1,
@@ -209,7 +220,16 @@ static inline const char* to_mime_type(const RGWFormat f)
 #define RGW_REST_WEBSITE     0x8
 #define RGW_REST_STS            0x10
 #define RGW_REST_IAM            0x20
-#define RGW_REST_SNS            0x30
+#define RGW_REST_SNS            0x40
+
+inline constexpr const char* RGW_REST_IAM_XMLNS =
+    "https://iam.amazonaws.com/doc/2010-05-08/";
+
+inline constexpr const char* RGW_REST_SNS_XMLNS =
+    "https://sns.amazonaws.com/doc/2010-03-31/";
+
+inline constexpr const char* RGW_REST_STS_XMLNS =
+    "https://sts.amazonaws.com/doc/2011-06-15/";
 
 #define RGW_SUSPENDED_USER_AUID (uint64_t)-2
 
@@ -282,6 +302,7 @@ static inline const char* to_mime_type(const RGWFormat f)
 #define ERR_NO_SUCH_OBJECT_LOCK_CONFIGURATION  2046
 #define ERR_INVALID_RETENTION_PERIOD 2047
 #define ERR_NO_SUCH_BUCKET_ENCRYPTION_CONFIGURATION 2048
+#define ERR_NO_SUCH_PUBLIC_ACCESS_BLOCK_CONFIGURATION 2049
 #define ERR_USER_SUSPENDED       2100
 #define ERR_INTERNAL_ERROR       2200
 #define ERR_NOT_IMPLEMENTED      2201
@@ -306,6 +327,9 @@ static inline const char* to_mime_type(const RGWFormat f)
 #define ERR_OBJECT_NOT_APPENDABLE                        2220
 #define ERR_INVALID_BUCKET_STATE                         2221
 #define ERR_INVALID_OBJECT_STATE			 2222
+#define ERR_PRESIGNED_URL_EXPIRED			 2223
+#define ERR_PRESIGNED_URL_DISABLED     2224
+#define ERR_AUTHORIZATION        2225 // SNS 403 AuthorizationError
 
 #define ERR_BUSY_RESHARDING      2300
 #define ERR_NO_SUCH_ENTITY       2301
@@ -316,6 +340,7 @@ static inline const char* to_mime_type(const RGWFormat f)
 #define ERR_INVALID_IDENTITY_TOKEN  2401
 
 #define ERR_NO_SUCH_TAG_SET 2402
+#define ERR_ACCOUNT_EXISTS 2403
 
 #ifndef UINT32_MAX
 #define UINT32_MAX (0xffffffffu)
@@ -445,8 +470,10 @@ public:
   }
 };
 
+using env_map_t = std::map<std::string, std::string, ltstr_nocase>;
+
 class RGWEnv {
-  std::map<std::string, std::string, ltstr_nocase> env_map;
+  env_map_t env_map;
   RGWConf conf;
 public:
   void init(CephContext *cct);
@@ -506,6 +533,7 @@ enum RGWIdentityType
   TYPE_LDAP=3,
   TYPE_ROLE=4,
   TYPE_WEB=5,
+  TYPE_ROOT=6, // account root user
 };
 
 void encode_json(const char *name, const rgw_placement_rule& val, ceph::Formatter *f);
@@ -563,21 +591,24 @@ struct RGWUserInfo
   int32_t max_buckets;
   uint32_t op_mask;
   RGWUserCaps caps;
-  __u8 admin;
-  __u8 system;
+  __u8 admin = 0;
+  __u8 system = 0;
   rgw_placement_rule default_placement;
   std::list<std::string> placement_tags;
   std::map<int, std::string> temp_url_keys;
   RGWQuota quota;
   uint32_t type;
   std::set<std::string> mfa_ids;
+  rgw_account_id account_id;
+  std::string path = "/";
+  ceph::real_time create_date;
+  std::multimap<std::string, std::string> tags;
+  boost::container::flat_set<std::string, std::less<>> group_ids;
 
   RGWUserInfo()
     : suspended(0),
       max_buckets(RGW_DEFAULT_MAX_BUCKETS),
       op_mask(RGW_OP_TYPE_ALL),
-      admin(0),
-      system(0),
       type(TYPE_NONE) {
   }
 
@@ -593,7 +624,7 @@ struct RGWUserInfo
   }
 
   void encode(bufferlist& bl) const {
-     ENCODE_START(22, 9, bl);
+     ENCODE_START(23, 9, bl);
      encode((uint64_t)0, bl); // old auid
      std::string access_key;
      std::string secret_key;
@@ -640,10 +671,15 @@ struct RGWUserInfo
        encode(assumed_role_arn, bl);
      }
      encode(user_id.ns, bl);
+     encode(account_id, bl);
+     encode(path, bl);
+     encode(create_date, bl);
+     encode(tags, bl);
+     encode(group_ids, bl);
      ENCODE_FINISH(bl);
   }
   void decode(bufferlist::const_iterator& bl) {
-     DECODE_START_LEGACY_COMPAT_LEN_32(22, 9, 9, bl);
+     DECODE_START_LEGACY_COMPAT_LEN_32(23, 9, 9, bl);
      if (struct_v >= 2) {
        uint64_t old_auid;
        decode(old_auid, bl);
@@ -730,6 +766,15 @@ struct RGWUserInfo
     } else {
       user_id.ns.clear();
     }
+    if (struct_v >= 23) {
+      decode(account_id, bl);
+      decode(path, bl);
+      decode(create_date, bl);
+      decode(tags, bl);
+      decode(group_ids, bl);
+    } else {
+      path = "/";
+    }
     DECODE_FINISH(bl);
   }
   void dump(Formatter *f) const;
@@ -738,6 +783,104 @@ struct RGWUserInfo
   void decode_json(JSONObj *obj);
 };
 WRITE_CLASS_ENCODER(RGWUserInfo)
+
+// user account metadata
+struct RGWAccountInfo {
+  rgw_account_id id;
+  std::string tenant;
+  std::string name;
+  std::string email;
+  RGWQuotaInfo quota;
+  RGWQuotaInfo bucket_quota;
+
+  static constexpr int32_t DEFAULT_USER_LIMIT = 1000;
+  int32_t max_users = DEFAULT_USER_LIMIT;
+
+  static constexpr int32_t DEFAULT_ROLE_LIMIT = 1000;
+  int32_t max_roles = DEFAULT_ROLE_LIMIT;
+
+  static constexpr int32_t DEFAULT_GROUP_LIMIT = 1000;
+  int32_t max_groups = DEFAULT_GROUP_LIMIT;
+
+  static constexpr int32_t DEFAULT_BUCKET_LIMIT = 1000;
+  int32_t max_buckets = DEFAULT_BUCKET_LIMIT;
+
+  static constexpr int32_t DEFAULT_ACCESS_KEY_LIMIT = 4;
+  int32_t max_access_keys = DEFAULT_ACCESS_KEY_LIMIT;
+
+  void encode(bufferlist& bl) const {
+    ENCODE_START(2, 1, bl);
+    encode(id, bl);
+    encode(tenant, bl);
+    encode(name, bl);
+    encode(email, bl);
+    encode(quota, bl);
+    encode(max_users, bl);
+    encode(max_roles, bl);
+    encode(max_groups, bl);
+    encode(max_buckets, bl);
+    encode(max_access_keys, bl);
+    encode(bucket_quota, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(bufferlist::const_iterator& bl) {
+    DECODE_START(2, bl);
+    decode(id, bl);
+    decode(tenant, bl);
+    decode(name, bl);
+    decode(email, bl);
+    decode(quota, bl);
+    decode(max_users, bl);
+    decode(max_roles, bl);
+    decode(max_groups, bl);
+    decode(max_buckets, bl);
+    decode(max_access_keys, bl);
+    if (struct_v >= 2) {
+      decode(bucket_quota, bl);
+    }
+    DECODE_FINISH(bl);
+  }
+
+  void dump(Formatter* f) const;
+  void decode_json(JSONObj* obj);
+  static void generate_test_instances(std::list<RGWAccountInfo*>& o);
+};
+WRITE_CLASS_ENCODER(RGWAccountInfo)
+
+// user group metadata
+struct RGWGroupInfo {
+  std::string id;
+  std::string tenant;
+  std::string name;
+  std::string path;
+  rgw_account_id account_id;
+
+  void encode(bufferlist& bl) const {
+    ENCODE_START(1, 1, bl);
+    encode(id, bl);
+    encode(tenant, bl);
+    encode(name, bl);
+    encode(path, bl);
+    encode(account_id, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(bufferlist::const_iterator& bl) {
+    DECODE_START(1, bl);
+    decode(id, bl);
+    decode(tenant, bl);
+    decode(name, bl);
+    decode(path, bl);
+    decode(account_id, bl);
+    DECODE_FINISH(bl);
+  }
+
+  void dump(Formatter* f) const;
+  void decode_json(JSONObj* obj);
+  static void generate_test_instances(std::list<RGWGroupInfo*>& o);
+};
+WRITE_CLASS_ENCODER(RGWGroupInfo)
 
 /// `RGWObjVersionTracker`
 /// ======================
@@ -888,9 +1031,11 @@ enum RGWBucketFlags {
 
 class RGWSI_Zone;
 
+#include "rgw_cksum.h"
+
 struct RGWBucketInfo {
   rgw_bucket bucket;
-  rgw_user owner;
+  rgw_owner owner;
   uint32_t flags{0};
   std::string zonegroup;
   ceph::real_time creation_time;
@@ -915,6 +1060,8 @@ struct RGWBucketInfo {
 
   std::map<std::string, uint32_t> mdsearch_config;
 
+  rgw::cksum::Type cksum_type = rgw::cksum::Type::none;
+
   // resharding
   cls_rgw_reshard_status reshard_status{cls_rgw_reshard_status::NOT_RESHARDING};
   std::string new_bucket_instance_id;
@@ -925,7 +1072,6 @@ struct RGWBucketInfo {
 
   void encode(bufferlist& bl) const;
   void decode(bufferlist::const_iterator& bl);
-
   void dump(Formatter *f) const;
   static void generate_test_instances(std::list<RGWBucketInfo*>& o);
 
@@ -965,7 +1111,7 @@ WRITE_CLASS_ENCODER(RGWBucketInfo)
 struct RGWBucketEntryPoint
 {
   rgw_bucket bucket;
-  rgw_user owner;
+  rgw_owner owner;
   ceph::real_time creation_time;
   bool linked;
 
@@ -975,13 +1121,19 @@ struct RGWBucketEntryPoint
   RGWBucketEntryPoint() : linked(false), has_bucket_info(false) {}
 
   void encode(bufferlist& bl) const {
+    const rgw_user* user = std::get_if<rgw_user>(&owner);
     ENCODE_START(10, 8, bl);
     encode(bucket, bl);
-    encode(owner.id, bl);
+    if (user) {
+      encode(user->id, bl);
+    } else {
+      encode(std::string{}, bl); // empty user id
+    }
     encode(linked, bl);
     uint64_t ctime = (uint64_t)real_clock::to_time_t(creation_time);
     encode(ctime, bl);
-    encode(owner, bl);
+    // 'rgw_user owner' converted to 'rgw_owner'
+    ceph::converted_variant::encode(owner, bl);
     encode(creation_time, bl);
     ENCODE_FINISH(bl);
   }
@@ -996,7 +1148,8 @@ struct RGWBucketEntryPoint
     }
     has_bucket_info = false;
     decode(bucket, bl);
-    decode(owner.id, bl);
+    std::string user_id;
+    decode(user_id, bl);
     decode(linked, bl);
     uint64_t ctime;
     decode(ctime, bl);
@@ -1004,7 +1157,9 @@ struct RGWBucketEntryPoint
       creation_time = real_clock::from_time_t((time_t)ctime);
     }
     if (struct_v >= 9) {
-      decode(owner, bl);
+      ceph::converted_variant::decode(owner, bl);
+    } else {
+      owner = rgw_user{"", user_id};
     }
     if (struct_v >= 10) {
       decode(creation_time, bl);
@@ -1073,8 +1228,8 @@ struct req_info {
   std::string storage_class;
 
   req_info(CephContext *cct, const RGWEnv *env);
-  void rebuild_from(req_info& src);
-  void init_meta_info(const DoutPrefixProvider *dpp, bool *found_bad_meta);
+  void rebuild_from(const req_info& src);
+  void init_meta_info(const DoutPrefixProvider *dpp, bool *found_bad_meta, const int prot_flags);
 };
 
 struct req_init_state {
@@ -1112,6 +1267,7 @@ struct req_state : DoutPrefixProvider {
   uint64_t obj_size{0};
   bool enable_ops_log;
   bool enable_usage_log;
+  rgw_s3select_usage_data s3select_usage;
   uint8_t defer_to_bucket_acls;
   uint32_t perm_mask{0};
 
@@ -1129,6 +1285,7 @@ struct req_state : DoutPrefixProvider {
   std::string src_bucket_name;
   std::unique_ptr<rgw::sal::Object> src_object;
   ACLOwner bucket_owner;
+  // Resource owner for the authenticated identity, initialized in authorize()
   ACLOwner owner;
 
   std::string zonegroup_name;
@@ -1180,14 +1337,14 @@ struct req_state : DoutPrefixProvider {
     } s3_postobj_creds;
   } auth;
 
-  std::unique_ptr<RGWAccessControlPolicy> user_acl;
-  std::unique_ptr<RGWAccessControlPolicy> bucket_acl;
-  std::unique_ptr<RGWAccessControlPolicy> object_acl;
+  RGWAccessControlPolicy user_acl;
+  RGWAccessControlPolicy bucket_acl;
+  RGWAccessControlPolicy object_acl;
 
   rgw::IAM::Environment env;
   boost::optional<rgw::IAM::Policy> iam_policy;
   boost::optional<PublicAccessBlockConfiguration> bucket_access_conf;
-  std::vector<rgw::IAM::Policy> iam_user_policies;
+  std::vector<rgw::IAM::Policy> iam_identity_policies;
 
   /* Is the request made by an user marked as a system one?
    * Being system user means we also have the admin status. */
@@ -1232,7 +1389,7 @@ struct req_state : DoutPrefixProvider {
 
   std::vector<rgw::IAM::Policy> session_policies;
 
-  jspan trace;
+  jspan_ptr trace;
   bool trace_enabled = false;
 
   //Principal tags that come in as part of AssumeRoleWithWebIdentity
@@ -1356,16 +1513,42 @@ inline std::ostream& operator<<(std::ostream& out, const rgw_obj &o) {
 struct multipart_upload_info
 {
   rgw_placement_rule dest_placement;
+  //object lock
+  bool obj_retention_exist{false};
+  bool obj_legal_hold_exist{false};
+  RGWObjectRetention obj_retention;
+  RGWObjectLegalHold obj_legal_hold;
+  rgw::cksum::Type cksum_type {rgw::cksum::Type::none};
 
   void encode(bufferlist& bl) const {
-    ENCODE_START(1, 1, bl);
+    ENCODE_START(3, 1, bl);
     encode(dest_placement, bl);
+    encode(obj_retention_exist, bl);
+    encode(obj_legal_hold_exist, bl);
+    encode(obj_retention, bl);
+    encode(obj_legal_hold, bl);
+    uint16_t ct{uint16_t(cksum_type)};
+    encode(ct, bl);
     ENCODE_FINISH(bl);
   }
 
   void decode(bufferlist::const_iterator& bl) {
-    DECODE_START(1, bl);
+    DECODE_START_LEGACY_COMPAT_LEN(3, 1, 1, bl);
     decode(dest_placement, bl);
+    if (struct_v >= 2) {
+      decode(obj_retention_exist, bl);
+      decode(obj_legal_hold_exist, bl);
+      decode(obj_retention, bl);
+      decode(obj_legal_hold, bl);
+      if (struct_v >= 3) {
+	uint16_t ct;
+	decode(ct, bl);
+	cksum_type = rgw::cksum::Type(ct);
+      }
+    } else {
+      obj_retention_exist = false;
+      obj_legal_hold_exist = false;
+    }
     DECODE_FINISH(bl);
   }
 
@@ -1381,61 +1564,6 @@ struct multipart_upload_info
   }
 };
 WRITE_CLASS_ENCODER(multipart_upload_info)
-
-static inline void buf_to_hex(const unsigned char* const buf,
-                              const size_t len,
-                              char* const str)
-{
-  str[0] = '\0';
-  for (size_t i = 0; i < len; i++) {
-    ::sprintf(&str[i*2], "%02x", static_cast<int>(buf[i]));
-  }
-}
-
-template<size_t N> static inline std::array<char, N * 2 + 1>
-buf_to_hex(const std::array<unsigned char, N>& buf)
-{
-  static_assert(N > 0, "The input array must be at least one element long");
-
-  std::array<char, N * 2 + 1> hex_dest;
-  buf_to_hex(buf.data(), N, hex_dest.data());
-  return hex_dest;
-}
-
-static inline int hexdigit(char c)
-{
-  if (c >= '0' && c <= '9')
-    return (c - '0');
-  c = toupper(c);
-  if (c >= 'A' && c <= 'F')
-    return c - 'A' + 0xa;
-  return -EINVAL;
-}
-
-static inline int hex_to_buf(const char *hex, char *buf, int len)
-{
-  int i = 0;
-  const char *p = hex;
-  while (*p) {
-    if (i >= len)
-      return -EINVAL;
-    buf[i] = 0;
-    int d = hexdigit(*p);
-    if (d < 0)
-      return d;
-    buf[i] = d << 4;
-    p++;
-    if (!*p)
-      return -EINVAL;
-    d = hexdigit(*p);
-    if (d < 0)
-      return d;
-    buf[i] += d;
-    i++;
-    p++;
-  }
-  return i;
-}
 
 static inline int rgw_str_to_bool(const char *s, int def_val)
 {
@@ -1490,8 +1618,8 @@ bool rgw_set_amz_meta_header(
 
 extern std::string rgw_string_unquote(const std::string& s);
 extern void parse_csv_string(const std::string& ival, std::vector<std::string>& ovals);
-extern int parse_key_value(std::string& in_str, std::string& key, std::string& val);
-extern int parse_key_value(std::string& in_str, const char *delim, std::string& key, std::string& val);
+extern int parse_key_value(const std::string& in_str, std::string& key, std::string& val);
+extern int parse_key_value(const std::string& in_str, const char *delim, std::string& key, std::string& val);
 
 extern boost::optional<std::pair<std::string_view,std::string_view>>
 parse_key_value(const std::string_view& in_str,
@@ -1531,14 +1659,14 @@ struct perm_state_base {
                   const RGWBucketInfo& _bucket_info,
                   int _perm_mask,
                   bool _defer_to_bucket_acls,
-                  boost::optional<PublicAccessBlockConfiguration> _bucket_acess_conf = boost::none) :
+                  boost::optional<PublicAccessBlockConfiguration> _bucket_access_conf = boost::none) :
                                                 cct(_cct),
                                                 env(_env),
                                                 identity(_identity),
                                                 bucket_info(_bucket_info),
                                                 perm_mask(_perm_mask),
                                                 defer_to_bucket_acls(_defer_to_bucket_acls),
-                                                bucket_access_conf(_bucket_acess_conf)
+                                                bucket_access_conf(_bucket_access_conf)
   {}
 
   virtual ~perm_state_base() {}
@@ -1584,32 +1712,35 @@ struct perm_state : public perm_state_base {
 bool verify_bucket_permission_no_policy(
   const DoutPrefixProvider* dpp,
   struct perm_state_base * const s,
-  RGWAccessControlPolicy * const user_acl,
-  RGWAccessControlPolicy * const bucket_acl,
+  const RGWAccessControlPolicy& user_acl,
+  const RGWAccessControlPolicy& bucket_acl,
   const int perm);
 
 bool verify_user_permission_no_policy(const DoutPrefixProvider* dpp,
                                       struct perm_state_base * const s,
-                                      RGWAccessControlPolicy * const user_acl,
+                                      const RGWAccessControlPolicy& user_acl,
                                       const int perm);
 
 bool verify_object_permission_no_policy(const DoutPrefixProvider* dpp,
                                         struct perm_state_base * const s,
-					RGWAccessControlPolicy * const user_acl,
-					RGWAccessControlPolicy * const bucket_acl,
-					RGWAccessControlPolicy * const object_acl,
+					const RGWAccessControlPolicy& user_acl,
+					const RGWAccessControlPolicy& bucket_acl,
+					const RGWAccessControlPolicy& object_acl,
 					const int perm);
 
-/** Check if the req_state's user has the necessary permissions
- * to do the requested action */
-rgw::IAM::Effect eval_identity_or_session_policies(const DoutPrefixProvider* dpp,
-			  const std::vector<rgw::IAM::Policy>& user_policies,
-                          const rgw::IAM::Environment& env,
-                          const uint64_t op,
-                          const rgw::ARN& arn);
+// determine whether a request is allowed or denied within an account
+rgw::IAM::Effect evaluate_iam_policies(
+    const DoutPrefixProvider* dpp,
+    const rgw::IAM::Environment& env,
+    const rgw::auth::Identity& identity,
+    bool account_root, uint64_t op, const rgw::ARN& arn,
+    const boost::optional<rgw::IAM::Policy>& resource_policy,
+    const std::vector<rgw::IAM::Policy>& identity_policies,
+    const std::vector<rgw::IAM::Policy>& session_policies);
+
 bool verify_user_permission(const DoutPrefixProvider* dpp,
                             req_state * const s,
-                            RGWAccessControlPolicy * const user_acl,
+                            const RGWAccessControlPolicy& user_acl,
                             const std::vector<rgw::IAM::Policy>& user_policies,
                             const std::vector<rgw::IAM::Policy>& session_policies,
                             const rgw::ARN& res,
@@ -1617,7 +1748,7 @@ bool verify_user_permission(const DoutPrefixProvider* dpp,
                             bool mandatory_policy=true);
 bool verify_user_permission_no_policy(const DoutPrefixProvider* dpp,
                                       req_state * const s,
-                                      RGWAccessControlPolicy * const user_acl,
+                                      const RGWAccessControlPolicy& user_acl,
                                       const int perm);
 bool verify_user_permission(const DoutPrefixProvider* dpp,
                             req_state * const s,
@@ -1630,32 +1761,33 @@ bool verify_user_permission_no_policy(const DoutPrefixProvider* dpp,
 bool verify_bucket_permission(
   const DoutPrefixProvider* dpp,
   req_state * const s,
-  const rgw_bucket& bucket,
-  RGWAccessControlPolicy * const user_acl,
-  RGWAccessControlPolicy * const bucket_acl,
+  const rgw::ARN& arn,
+  const RGWAccessControlPolicy& user_acl,
+  const RGWAccessControlPolicy& bucket_acl,
   const boost::optional<rgw::IAM::Policy>& bucket_policy,
   const std::vector<rgw::IAM::Policy>& identity_policies,
   const std::vector<rgw::IAM::Policy>& session_policies,
   const uint64_t op);
-bool verify_bucket_permission(const DoutPrefixProvider* dpp, req_state * const s, const uint64_t op);
+bool verify_bucket_permission(const DoutPrefixProvider* dpp, req_state* s,
+                              const rgw::ARN& arn, uint64_t op);
+bool verify_bucket_permission(const DoutPrefixProvider* dpp,
+                              req_state* s, uint64_t op);
 bool verify_bucket_permission_no_policy(
   const DoutPrefixProvider* dpp,
   req_state * const s,
-  RGWAccessControlPolicy * const user_acl,
-  RGWAccessControlPolicy * const bucket_acl,
+  const RGWAccessControlPolicy& user_acl,
+  const RGWAccessControlPolicy& bucket_acl,
   const int perm);
 bool verify_bucket_permission_no_policy(const DoutPrefixProvider* dpp,
                                         req_state * const s,
 					const int perm);
-int verify_bucket_owner_or_policy(req_state* const s,
-				  const uint64_t op);
 extern bool verify_object_permission(
   const DoutPrefixProvider* dpp,
   req_state * const s,
   const rgw_obj& obj,
-  RGWAccessControlPolicy * const user_acl,
-  RGWAccessControlPolicy * const bucket_acl,
-  RGWAccessControlPolicy * const object_acl,
+  const RGWAccessControlPolicy& user_acl,
+  const RGWAccessControlPolicy& bucket_acl,
+  const RGWAccessControlPolicy& object_acl,
   const boost::optional<rgw::IAM::Policy>& bucket_policy,
   const std::vector<rgw::IAM::Policy>& identity_policies,
   const std::vector<rgw::IAM::Policy>& session_policies,
@@ -1664,9 +1796,9 @@ extern bool verify_object_permission(const DoutPrefixProvider* dpp, req_state *s
 extern bool verify_object_permission_no_policy(
   const DoutPrefixProvider* dpp,
   req_state * const s,
-  RGWAccessControlPolicy * const user_acl,
-  RGWAccessControlPolicy * const bucket_acl,
-  RGWAccessControlPolicy * const object_acl,
+  const RGWAccessControlPolicy& user_acl,
+  const RGWAccessControlPolicy& bucket_acl,
+  const RGWAccessControlPolicy& object_acl,
   int perm);
 extern bool verify_object_permission_no_policy(const DoutPrefixProvider* dpp, req_state *s,
 					       int perm);
@@ -1684,7 +1816,7 @@ extern std::string url_decode(const std::string_view& src_str,
 extern void url_encode(const std::string& src, std::string& dst,
                        bool encode_slash = true);
 extern std::string url_encode(const std::string& src, bool encode_slash = true);
-extern std::string url_remove_prefix(const std::string& url); // Removes hhtp, https and www from url
+extern std::string url_remove_prefix(const std::string& url); // Removes http, https and www from url
 /* destination should be CEPH_CRYPTO_HMACSHA1_DIGESTSIZE bytes long */
 extern void calc_hmac_sha1(const char *key, int key_len,
                           const char *msg, int msg_len, char *dest);
@@ -1767,11 +1899,11 @@ static constexpr uint32_t MATCH_POLICY_RESOURCE = 0x02;
 static constexpr uint32_t MATCH_POLICY_ARN = 0x04;
 static constexpr uint32_t MATCH_POLICY_STRING = 0x08;
 
-extern bool match_policy(std::string_view pattern, std::string_view input,
+extern bool match_policy(const std::string& pattern, const std::string& input,
                          uint32_t flag);
 
-extern std::string camelcase_dash_http_attr(const std::string& orig);
-extern std::string lowercase_dash_http_attr(const std::string& orig);
+extern std::string camelcase_dash_http_attr(const std::string& orig, bool convert2dash = true);
+extern std::string lowercase_dash_http_attr(const std::string& orig, bool bidirection = false);
 
 void rgw_setup_saved_curl_handles();
 void rgw_release_all_curl_handles();
@@ -1824,13 +1956,14 @@ static inline ssize_t rgw_unescape_str(const std::string& s, ssize_t ofs,
   return std::string::npos;
 }
 
-static inline std::string rgw_bl_str(ceph::buffer::list& raw)
+/// Return a string copy of the given bufferlist with trailing nulls removed
+static inline std::string rgw_bl_str(const ceph::buffer::list& bl)
 {
-  size_t len = raw.length();
-  std::string s(raw.c_str(), len);
-  while (len && !s[len - 1]) {
-    --len;
-    s.resize(len);
+  // use to_str() instead of c_str() so we don't reallocate a flat bufferlist
+  std::string s = bl.to_str();
+  // with to_str(), the result may include null characters. trim trailing nulls
+  while (!s.empty() && s.back() == '\0') {
+    s.pop_back();
   }
   return s;
 }
@@ -1847,6 +1980,18 @@ int decode_bl(bufferlist& bl, T& t)
   return 0;
 }
 
+static inline std::string ys_header_mangle(std::string_view name)
+{
+  /* can we please stop doing this? */
+  std::string out;
+  out.reserve(name.length());
+  std::transform(std::begin(name), std::end(name),
+		 std::back_inserter(out), [](const int c) {
+		   return c == '-' ? '_' : c == '_' ? '-' : std::toupper(c);
+		 });
+  return out;
+} /* ys_header_mangle */
+
 extern int rgw_bucket_parse_bucket_instance(const std::string& bucket_instance, std::string *bucket_name, std::string *bucket_id, int *shard_id);
 
 boost::intrusive_ptr<CephContext>
@@ -1854,3 +1999,9 @@ rgw_global_init(const std::map<std::string,std::string> *defaults,
 		    std::vector < const char* >& args,
 		    uint32_t module_type, code_environment_t code_env,
 		    int flags);
+
+
+struct AioCompletionDeleter {
+  void operator()(librados::AioCompletion* c) { c->release(); }
+};
+using aio_completion_ptr = std::unique_ptr<librados::AioCompletion, AioCompletionDeleter>;

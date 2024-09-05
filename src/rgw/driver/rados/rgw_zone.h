@@ -114,6 +114,9 @@ struct RGWZoneParams : RGWSystemMetaObj {
   rgw_pool otp_pool;
   rgw_pool oidc_pool;
   rgw_pool notif_pool;
+  rgw_pool topics_pool;
+  rgw_pool account_pool;
+  rgw_pool group_pool;
 
   RGWAccessKey system_key;
 
@@ -150,7 +153,7 @@ struct RGWZoneParams : RGWSystemMetaObj {
   const std::string& get_compression_type(const rgw_placement_rule& placement_rule) const;
   
   void encode(bufferlist& bl) const override {
-    ENCODE_START(14, 1, bl);
+    ENCODE_START(15, 1, bl);
     encode(domain_root, bl);
     encode(control_pool, bl);
     encode(gc_pool, bl);
@@ -176,11 +179,14 @@ struct RGWZoneParams : RGWSystemMetaObj {
     encode(tier_config, bl);
     encode(oidc_pool, bl);
     encode(notif_pool, bl);
+    encode(topics_pool, bl);
+    encode(account_pool, bl);
+    encode(group_pool, bl);
     ENCODE_FINISH(bl);
   }
 
   void decode(bufferlist::const_iterator& bl) override {
-    DECODE_START(14, bl);
+    DECODE_START(15, bl);
     decode(domain_root, bl);
     decode(control_pool, bl);
     decode(gc_pool, bl);
@@ -248,6 +254,15 @@ struct RGWZoneParams : RGWSystemMetaObj {
       decode(notif_pool, bl);
     } else {
       notif_pool = log_pool.name + ":notif";
+    }
+    if (struct_v >= 15) {
+      decode(topics_pool, bl);
+      decode(account_pool, bl);
+      decode(group_pool, bl);
+    } else {
+      topics_pool = name + ".rgw.meta:topics";
+      account_pool = name + ".rgw.meta:accounts";
+      group_pool = name + ".rgw.meta:groups";
     }
     DECODE_FINISH(bl);
   }
@@ -318,7 +333,7 @@ struct RGWZoneGroup : public RGWSystemMetaObj {
   // TODO: Maybe convert hostnames to a map<std::string,std::list<std::string>> for
   // endpoint_type->hostnames
 /*
-20:05 < _robbat21irssi> maybe I do someting like: if (hostname_map.empty()) { populate all map keys from hostnames; };
+20:05 < _robbat21irssi> maybe I do something like: if (hostname_map.empty()) { populate all map keys from hostnames; };
 20:05 < _robbat21irssi> but that's a later compatability migration planning bit
 20:06 < yehudasa> more like if (!hostnames.empty()) {
 20:06 < yehudasa> for (std::list<std::string>::iterator iter = hostnames.begin(); iter != hostnames.end(); ++iter) {
@@ -642,7 +657,6 @@ public:
   rgw_zone_id master_zone;
 
   std::string realm_id;
-  std::string realm_name;
   epoch_t realm_epoch{1}; //< realm epoch when period was made current
 
   CephContext *cct{nullptr};
@@ -678,7 +692,6 @@ public:
   const rgw_zone_id& get_master_zone() const { return master_zone; }
   const std::string& get_master_zonegroup() const { return master_zonegroup; }
   const std::string& get_realm() const { return realm_id; }
-  const std::string& get_realm_name() const { return realm_name; }
   const RGWPeriodMap& get_map() const { return period_map; }
   RGWPeriodConfig& get_config() { return period_config; }
   const RGWPeriodConfig& get_config() const { return period_config; }
@@ -750,7 +763,7 @@ public:
   int update_latest_epoch(const DoutPrefixProvider *dpp, epoch_t epoch, optional_yield y);
 
   int init(const DoutPrefixProvider *dpp, CephContext *_cct, RGWSI_SysObj *_sysobj_svc, const std::string &period_realm_id, optional_yield y,
-	   const std::string &period_realm_name = "", bool setup_obj = true);
+	    bool setup_obj = true);
   int init(const DoutPrefixProvider *dpp, CephContext *_cct, RGWSI_SysObj *_sysobj_svc, optional_yield y, bool setup_obj = true);  
 
   int create(const DoutPrefixProvider *dpp, optional_yield y, bool exclusive = true);
@@ -780,6 +793,7 @@ public:
     encode(master_zonegroup, bl);
     encode(period_config, bl);
     encode(realm_id, bl);
+    std::string realm_name; // removed
     encode(realm_name, bl);
     ENCODE_FINISH(bl);
   }
@@ -796,6 +810,7 @@ public:
     decode(master_zonegroup, bl);
     decode(period_config, bl);
     decode(realm_id, bl);
+    std::string realm_name; // removed
     decode(realm_name, bl);
     DECODE_FINISH(bl);
   }
@@ -885,6 +900,9 @@ int set_default_zonegroup(const DoutPrefixProvider* dpp, optional_yield y,
                           sal::ConfigStore* cfgstore, const RGWZoneGroup& info,
                           bool exclusive = false);
 
+/// Return an endpoint from the zonegroup or its master zone.
+std::string get_zonegroup_endpoint(const RGWZoneGroup& info);
+
 /// Add a zone to the zonegroup, or update an existing zone entry.
 int add_zone_to_group(const DoutPrefixProvider* dpp,
                       RGWZoneGroup& zonegroup,
@@ -940,6 +958,12 @@ int delete_zone(const DoutPrefixProvider* dpp, optional_yield y,
                 sal::ConfigStore* cfgstore, const RGWZoneParams& info,
                 sal::ZoneWriter& writer);
 
+/// Return the zone placement corresponding to the given rule, or nullptr.
+auto find_zone_placement(const DoutPrefixProvider* dpp,
+                         const RGWZoneParams& info,
+                         const rgw_placement_rule& rule)
+    -> const RGWZonePlacementInfo*;
+
 
 /// Global state about the site configuration. Initialized once during
 /// startup and may be reinitialized by RGWRealmReloader, but is otherwise
@@ -956,11 +980,25 @@ class SiteConfig {
   const RGWZoneGroup& get_zonegroup() const { return *zonegroup; }
   /// Return the public zone configuration.
   const RGWZone& get_zone() const { return *zone; }
+  /// Return true if the local zone can write metadata.
+  bool is_meta_master() const {
+    return zonegroup->is_master && zonegroup->master_zone == zone->id;
+  }
 
   /// Load or reload the multisite configuration from storage. This is not
   /// thread-safe, so requires careful coordination with the RGWRealmReloader.
   int load(const DoutPrefixProvider* dpp, optional_yield y,
-           sal::ConfigStore* cfgstore);
+           sal::ConfigStore* cfgstore, bool force_local_zonegroup = false);
+
+  /// Create a fake site config to be used by tests and similar, just
+  /// to have a site config.
+  ///
+  /// \warning Do not use this anywhere but unittests where we need to
+  /// bring up parts of RGW that require a SiteConfig exist, but need
+  /// to run without a cluster.
+  static std::unique_ptr<SiteConfig> make_fake();
+
+  virtual ~SiteConfig() = default;
 
  private:
   int load_period_zonegroup(const DoutPrefixProvider* dpp, optional_yield y,
@@ -977,5 +1015,9 @@ class SiteConfig {
   const RGWZoneGroup* zonegroup = nullptr;
   const RGWZone* zone = nullptr;
 };
+
+
+/// Test whether all zonegroups in the realm support the given zone feature.
+bool all_zonegroups_support(const SiteConfig& site, std::string_view feature);
 
 } // namespace rgw

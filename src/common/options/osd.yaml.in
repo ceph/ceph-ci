@@ -194,6 +194,11 @@ options:
     load on busy clusters.
   default: false
   with_legacy: true
+- name: osd_debug_trim_objects
+  type: bool
+  level: advanced
+  desc: Asserts that no clone-objects were added to a snap after we start trimming it
+  default: false
 - name: osd_repair_during_recovery
   type: bool
   level: advanced
@@ -376,9 +381,11 @@ options:
 - name: osd_scrub_sleep
   type: float
   level: advanced
-  desc: Duration to inject a delay during scrubbing
-  fmt_desc: Time to sleep before scrubbing the next group of chunks (seconds). Increasing this value will slow
-    down the overall rate of scrubbing so that client operations will be less impacted.
+  desc: Duration (in seconds) of delay injected between chunks when scrubbing
+  fmt_desc: Sleep time in seconds before scrubbing the next group of objects (the next chunk).
+    Increasing this value will slow down the overall rate of scrubbing, reducing scrub
+    impact on client operations.
+    This setting is ignored when the mClock scheduler is used.
   default: 0
   flags:
   - runtime
@@ -387,7 +394,13 @@ options:
 - name: osd_scrub_extended_sleep
   type: float
   level: advanced
-  desc: Duration to inject a delay during scrubbing out of scrubbing hours (seconds)
+  desc: Duration (in seconds) of delay injected between chunks when scrubbing out
+    of scrubbing hours
+  fmt_desc: Sleep time in seconds before scrubbing the next group of objects (the next chunk).
+    This configuration value is used for scrubbing out of scrubbing hours.
+    Increasing this value will slow down the overall rate of scrubbing, reducing scrub
+    impact on client operations.
+    This setting is ignored when the mClock scheduler is used.
   default: 0
   see_also:
   - osd_scrub_begin_hour
@@ -507,28 +520,15 @@ options:
     stats (inc. scrub/block duration) every this many seconds.
   default: 120
   with_legacy: false
-- name: osd_scrub_slow_reservation_response
-  type: millisecs
+- name: osd_scrub_disable_reservation_queuing
+  type: bool
   level: advanced
-  desc: Maximum wait (milliseconds) for scrub reservations before issuing a cluster-log warning
-  long_desc: Waiting too long for a replica to respond to scrub resource reservation request
-   (after at least half of the replicas have responded). Disable by setting to a very large value.
-  default: 2200
-  min: 500
-  see_also:
-  - osd_scrub_reservation_timeout
-  with_legacy: false
-- name: osd_scrub_reservation_timeout
-  type: millisecs
-  level: advanced
-  desc: Maximum wait (milliseconds) for replicas' response to scrub reservation requests
-  long_desc: Maximum wait (milliseconds) for all replicas to respond to
-    scrub reservation requests, before the scrub session is aborted. Disable by setting
-    to a very large value.
-  default: 5000
-  min: 2000
-  see_also:
-  - osd_scrub_slow_reservation_response
+  desc: Disable queuing of scrub reservations
+  long_desc: When set - scrub replica reservations are responded to immediately, with
+    either success or failure (the pre-Squid version behaviour). This configuration
+    option is introduced to support mixed-version clusters and debugging, and will
+    be removed in the next release.
+  default: false
   with_legacy: false
 # where rados plugins are stored
 - name: osd_class_dir
@@ -892,13 +892,13 @@ options:
   desc: Do not store full-object checksums if the backend (bluestore) does its own
     checksums.  Only usable with all BlueStore OSDs.
   default: false
-# PrioritzedQueue (prio), Weighted Priority Queue (wpq ; default),
-# mclock_opclass, mclock_client, or debug_random. "mclock_opclass"
-# and "mclock_client" are based on the mClock/dmClock algorithm
-# (Gulati, et al. 2010). "mclock_opclass" prioritizes based on the
-# class the operation belongs to. "mclock_client" does the same but
-# also works to ienforce fairness between clients. "debug_random"
-# chooses among all four with equal probability.
+# Weighted Priority Queue (wpq), mClock Scheduler (mclock_scheduler: default)
+# or debug_random. "mclock_scheduler" is based on the mClock/dmClock
+# algorithm (Gulati, et al. 2010). "mclock_scheduler" prioritizes based on
+# the class the operation belongs to. "wpq" dequeues ops based on their
+# priorities. "debug_random" chooses among the two with equal probability.
+# Note: PrioritzedQueue (prio) implementation is not used for scheduling ops
+# within OSDs and is therefore not listed.
 - name: osd_op_queue
   type: str
   level: advanced
@@ -1233,6 +1233,11 @@ options:
   type: bool
   level: advanced
   default: false
+  with_legacy: true
+- name: osd_ec_partial_reads
+  type: bool
+  level: advanced
+  default: true
   with_legacy: true
 - name: osd_recovery_delay_start
   type: float

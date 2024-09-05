@@ -55,12 +55,40 @@ options:
   default: 1_min
   services:
   - mon
+- name: mon_down_uptime_grace
+  type: secs
+  level: advanced
+  desc: Period in seconds that the cluster may have a mon down after this (leader) monitor comes up.
+  default: 1_min
+  services:
+  - mon
+  flags:
+  - runtime
 - name: mon_mgr_beacon_grace
   type: secs
   level: advanced
   desc: Period in seconds from last beacon to monitor marking a manager daemon as
     failed
   default: 30
+  services:
+  - mon
+- name: mon_nvmeofgw_beacon_grace
+  type: secs
+  level: advanced
+  desc: Period in seconds from last beacon to monitor marking a  NVMeoF gateway as
+    failed
+  default: 10
+  services:
+  - mon
+- name: mon_nvmeofgw_set_group_id_retry
+  type: uint
+  level: advanced
+  desc: Retry wait time in microsecond for set group id between the monitor client
+    and gateway
+  long_desc: The monitor server determines the gateway's group ID. If the monitor client
+    receives a monitor group ID assignment before the gateway is fully up during
+    initialization, a retry is required.
+  default: 1000
   services:
   - mon
 - name: mon_mgr_inactive_grace
@@ -112,18 +140,6 @@ options:
   flags:
   - runtime
   with_legacy: true
-- name: mon_cluster_log_to_syslog_level
-  type: str
-  level: advanced
-  desc: Syslog level for cluster log messages
-  default: info
-  services:
-  - mon
-  see_also:
-  - mon_cluster_log_to_syslog
-  flags:
-  - runtime
-  with_legacy: true
 - name: mon_cluster_log_to_syslog_facility
   type: str
   level: advanced
@@ -172,10 +188,12 @@ options:
   flags:
   - runtime
   with_legacy: true
-- name: mon_cluster_log_file_level
+- name: mon_cluster_log_level
   type: str
   level: advanced
-  desc: Lowest level to include is cluster log file
+  desc: Lowest level to include in cluster log file and/or in external log server
+  long_desc: Log level to control the cluster log message verbosity for the cluster
+    log file as well as for all external entities.
   default: debug
   services:
   - mon
@@ -779,6 +797,18 @@ options:
   services:
   - mon
   with_legacy: true
+- name: mon_fsmap_prune_threshold
+  type: secs
+  level: advanced
+  desc: prune fsmap older than this threshold in seconds
+  fmt_desc: The monitors keep historical fsmaps in memory to optimize asking
+    when an MDS daemon was last seen in the FSMap. This option controls
+    how far back in time the monitors will look.
+  default: 300
+  flags:
+  - runtime
+  services:
+  - mon
 - name: mds_beacon_mon_down_grace
   type: secs
   level: advanced
@@ -1249,14 +1279,6 @@ options:
   services:
   - mon
   with_legacy: true
-- name: mon_osd_max_creating_pgs
-  type: int
-  level: advanced
-  desc: maximum number of PGs the mon will create at once
-  default: 1024
-  services:
-  - mon
-  with_legacy: true
 - name: mon_osd_max_initial_pgs
   type: int
   level: advanced
@@ -1338,3 +1360,18 @@ options:
   with_legacy: true
   see_also:
   - osd_heartbeat_use_min_delay_socket
+- name: nvmeof_mon_client_disconnect_panic
+  type: secs
+  level: advanced
+  desc: The duration, expressed in seconds, after which the nvmeof gateway
+    should trigger a panic if it loses connection to the monitor
+  default: 100
+  services:
+  - mon
+- name: nvmeof_mon_client_tick_period
+  type: secs
+  level: advanced
+  desc: Period in seconds of nvmeof gateway beacon messages to monitor
+  default: 2
+  services:
+  - mon
