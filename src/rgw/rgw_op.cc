@@ -955,15 +955,6 @@ int handle_cloudtier_obj(req_state* s, const DoutPrefixProvider *dpp, rgw::sal::
       attrs[RGW_ATTR_CLOUD_TIER_CONFIG] = t_tier;
       return op_ret;
     }
-    if (!restore_op) {
-      if (tier_config.tier_placement.allow_read_through) {
-        days = tier_config.tier_placement.read_through_restore_days;
-      } else { //read-through is not enabled
-        op_ret = -ERR_INVALID_OBJECT_STATE;
-        s->err.message = "Read through is not enabled for this config";
-        return op_ret;
-      }
-    }
     attr_iter = attrs.find(RGW_ATTR_RESTORE_STATUS);
     rgw::sal::RGWRestoreStatus restore_status = rgw::sal::RGWRestoreStatus::None;
     if (attr_iter != attrs.end()) {
@@ -975,6 +966,17 @@ int handle_cloudtier_obj(req_state* s, const DoutPrefixProvider *dpp, rgw::sal::
       // first time restore or previous restore failed
       rgw::sal::Bucket* pbucket = NULL;
       pbucket = s->bucket.get();
+
+      if (!restore_op) {
+        if (tier_config.tier_placement.allow_read_through) {
+          days = tier_config.tier_placement.read_through_restore_days;
+        } else { //read-through is not enabled
+          op_ret = -ERR_INVALID_OBJECT_STATE;
+          s->err.message = "Read through is not enabled for this config";
+          return op_ret;
+        }
+      }
+
       std::unique_ptr<rgw::sal::PlacementTier> tier;
       rgw_placement_rule target_placement;
       target_placement.inherit_from(pbucket->get_placement_rule());
