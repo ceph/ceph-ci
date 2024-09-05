@@ -967,16 +967,6 @@ int handle_cloudtier_obj(req_state* s, const DoutPrefixProvider *dpp, rgw::sal::
       rgw::sal::Bucket* pbucket = NULL;
       pbucket = s->bucket.get();
 
-      if (!restore_op) {
-        if (tier_config.tier_placement.allow_read_through) {
-          days = tier_config.tier_placement.read_through_restore_days;
-        } else { //read-through is not enabled
-          op_ret = -ERR_INVALID_OBJECT_STATE;
-          s->err.message = "Read through is not enabled for this config";
-          return op_ret;
-        }
-      }
-
       std::unique_ptr<rgw::sal::PlacementTier> tier;
       rgw_placement_rule target_placement;
       target_placement.inherit_from(pbucket->get_placement_rule());
@@ -991,7 +981,17 @@ int handle_cloudtier_obj(req_state* s, const DoutPrefixProvider *dpp, rgw::sal::
         s->err.message = "failed to restore object";
         return op_ret;
       }
-
+      rgw::sal::RadosPlacementTier* rtier = static_cast<rgw::sal::RadosPlacementTier*>(tier.get());
+      tier_config.tier_placement = rtier->get_rt();
+      if (!restore_op) {
+        if (tier_config.tier_placement.allow_read_through) {
+          days = tier_config.tier_placement.read_through_restore_days;
+        } else { //read-through is not enabled
+          op_ret = -ERR_INVALID_OBJECT_STATE;
+          s->err.message = "Read through is not enabled for this config";
+          return op_ret;
+        }
+      }
       // fill in the entry. XXX: Maybe we can avoid it by passing only necessary params
       rgw_bucket_dir_entry ent;
       ent.key.name = s->object->get_key().name;
