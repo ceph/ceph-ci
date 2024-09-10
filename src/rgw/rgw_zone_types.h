@@ -559,7 +559,7 @@ struct RGWZoneGroupPlacementTier {
   int clear_params(const JSONFormattable& config);
 
   void encode(bufferlist& bl) const {
-    ENCODE_START(1, 1, bl);
+    ENCODE_START(2, 1, bl);
     encode(tier_type, bl);
     encode(storage_class, bl);
     encode(retain_head_object, bl);
@@ -572,14 +572,16 @@ struct RGWZoneGroupPlacementTier {
   }
 
   void decode(bufferlist::const_iterator& bl) {
-    DECODE_START(1, bl);
+    DECODE_START(2, bl);
     decode(tier_type, bl);
     decode(storage_class, bl);
     decode(retain_head_object, bl);
-    decode(allow_read_through, bl);
-    decode(read_through_restore_days, bl);
     if (tier_type == "cloud-s3") {
       decode(t.s3, bl);
+    }
+    if (struct_v >= 2) {
+      decode(allow_read_through, bl);
+      decode(read_through_restore_days, bl);
     }
     DECODE_FINISH(bl);
   }
