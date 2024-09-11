@@ -576,12 +576,12 @@ struct RGWZoneGroupPlacementTier {
     decode(tier_type, bl);
     decode(storage_class, bl);
     decode(retain_head_object, bl);
-    if (tier_type == "cloud-s3") {
-      decode(t.s3, bl);
-    }
     if (struct_v >= 2) {
       decode(allow_read_through, bl);
       decode(read_through_restore_days, bl);
+    }
+    if (tier_type == "cloud-s3") {
+      decode(t.s3, bl);
     }
     DECODE_FINISH(bl);
   }
