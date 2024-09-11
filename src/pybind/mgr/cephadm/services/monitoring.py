@@ -543,8 +543,8 @@ class PrometheusService(CephadmService):
             'cluster_fsid': FSID,
             'nvmeof_sd_url': nvmeof_sd_url,
             'clusters_credentials': clusters_credentials,
-            'nfs_sd_url': nfs_sd_url
-            'smb_sd_url': smb_sd_url
+            'nfs_sd_url': nfs_sd_url,
+            'smb_sd_url': smb_sd_url,
         }
 
         ip_to_bind_to = ''

@@ -195,7 +195,7 @@ class TestServiceDiscovery:
 
         # check content
         assert cfg[0]['targets'] == ['1.2.3.4:10008']
-    
+
     def test_get_sd_config_nfs(self):
         mgr = FakeMgr()
         root = Root(mgr, 5000, '0.0.0.0')
