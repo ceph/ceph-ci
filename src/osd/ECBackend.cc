@@ -195,8 +195,8 @@ struct RecoveryMessages {
     const map<pg_shard_t, vector<pair<int, int>>> &need,
     bool attrs)
   {
-    list<ECCommon::ec_align_t> to_read;
-    to_read.emplace_back(off, len, 0);
+    list<boost::tuple<uint64_t, uint64_t, uint32_t> > to_read;
+    to_read.push_back(boost::make_tuple(off, len, 0));
     ceph_assert(!recovery_reads.count(hoid));
     want_to_read.insert(make_pair(hoid, std::move(_want_to_read)));
     recovery_reads.insert(
@@ -463,7 +463,7 @@ struct RecoveryReadCompleter : ECCommon::ReadCompleter {
   void finish_single_request(
     const hobject_t &hoid,
     ECCommon::read_result_t &res,
-    list<ECCommon::ec_align_t>) override
+    list<boost::tuple<uint64_t, uint64_t, uint32_t> >) override
   {
     if (!(res.r == 0 && res.errors.empty())) {
       backend._failed_push(hoid, res);
@@ -1214,7 +1214,7 @@ void ECBackend::handle_sub_read_reply(
       dout(20) << __func__ << " to_read skipping" << dendl;
       continue;
     }
-    list<ec_align_t>::const_iterator req_iter =
+    list<boost::tuple<uint64_t, uint64_t, uint32_t> >::const_iterator req_iter =
       rop.to_read.find(i->first)->second.to_read.begin();
     list<
       boost::tuple<
@@ -1227,7 +1227,7 @@ void ECBackend::handle_sub_read_reply(
       ceph_assert(riter != rop.complete[i->first].returned.end());
       pair<uint64_t, uint64_t> aligned =
 	sinfo.aligned_offset_len_to_chunk(
-	  make_pair(req_iter->offset, req_iter->size));
+	  make_pair(req_iter->get<0>(), req_iter->get<1>()));
       ceph_assert(aligned.first == j->first);
       riter->get<2>()[from] = std::move(j->second);
     }
@@ -1536,21 +1536,27 @@ void ECBackend::objects_read_async(
   Context *on_complete,
   bool fast_read)
 {
-  map<hobject_t,std::list<ec_align_t>> reads;
+  map<hobject_t,std::list<boost::tuple<uint64_t, uint64_t, uint32_t> > >
+    reads;
 
   uint32_t flags = 0;
   extent_set es;
-  for (const auto& [read, ctx] : to_read) {
+  for (list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
+	 pair<bufferlist*, Context*> > >::const_iterator i =
+	 to_read.begin();
+       i != to_read.end();
+       ++i) {
 #if 0
     pair<uint64_t, uint64_t> tmp =
       sinfo.offset_len_to_stripe_bounds(
-	make_pair(read.offset, read.size));
+	make_pair(i->first.get<0>(), i->first.get<1>()));
 #else
-    pair<uint64_t, uint64_t> tmp = make_pair(read.offset, read.size);
+    pair<uint64_t, uint64_t> tmp =
+      make_pair(i->first.get<0>(), i->first.get<1>());
 #endif
 
     es.union_insert(tmp.first, tmp.second);
-    flags |= read.flags;
+    flags |= i->first.get<2>();
   }
 
   if (!es.empty()) {
@@ -1558,21 +1564,25 @@ void ECBackend::objects_read_async(
     for (auto j = es.begin();
 	 j != es.end();
 	 ++j) {
-      offsets.emplace_back(j.get_start(), j.get_len(), flags);
+      offsets.push_back(
+	boost::make_tuple(
+	  j.get_start(),
+	  j.get_len(),
+	  flags));
     }
   }
 
   struct cb {
     ECBackend *ec;
     hobject_t hoid;
-    list<pair<ECCommon::ec_align_t,
+    list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
 	      pair<bufferlist*, Context*> > > to_read;
     unique_ptr<Context> on_complete;
     cb(const cb&) = delete;
     cb(cb &&) = default;
     cb(ECBackend *ec,
        const hobject_t &hoid,
-       const list<pair<ECCommon::ec_align_t,
+       const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
                   pair<bufferlist*, Context*> > > &to_read,
        Context *on_complete)
       : ec(ec),
@@ -1599,8 +1609,8 @@ void ECBackend::objects_read_async(
 	    r = got.first;
 	} else {
 	  ceph_assert(read.second.first);
-	  uint64_t offset = read.first.offset;
-	  uint64_t length = read.first.size;
+	  uint64_t offset = read.first.get<0>();
+	  uint64_t length = read.first.get<1>();
 	  auto range = got.second.get_containing_range(offset, length);
 	  ceph_assert(range.first != range.second);
 	  ceph_assert(range.first.get_off() <= offset);
@@ -1646,7 +1656,7 @@ void ECBackend::objects_read_async(
 
 void ECBackend::objects_read_and_reconstruct(
   const map<hobject_t,
-    std::list<ECBackend::ec_align_t>
+    std::list<boost::tuple<uint64_t, uint64_t, uint32_t> >
   > &reads,
   bool fast_read,
   GenContextURef<map<hobject_t,pair<int, extent_map> > &&> &&func)
