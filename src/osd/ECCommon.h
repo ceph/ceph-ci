@@ -456,12 +456,6 @@ struct ECCommon {
       uint64_t length,    			///< [in]
       std::set<int> *want_to_read               ///< [out]
       );
-    static void get_min_want_to_read_shards(
-      const uint64_t offset,
-      const uint64_t length,
-      const ECUtil::stripe_info_t& sinfo,
-      const std::vector<int>& chunk_mapping,
-      std::set<int> *want_to_read);
 
     int get_remaining_shards(
       const hobject_t &hoid,
