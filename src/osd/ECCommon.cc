@@ -158,16 +158,16 @@ ostream &operator<<(ostream &lhs, const ECCommon::RMWPipeline::Op &rhs)
 
 void ECCommon::ReadPipeline::complete_read_op(ReadOp &rop)
 {
-  map<hobject_t, read_request_t>::iterator req_iter =
+  map<hobject_t, read_request_t>::iterator reqiter =
     rop.to_read.begin();
   map<hobject_t, read_result_t>::iterator resiter =
     rop.complete.begin();
   ceph_assert(rop.to_read.size() == rop.complete.size());
-  for (; req_iter != rop.to_read.end(); ++req_iter, ++resiter) {
+  for (; reqiter != rop.to_read.end(); ++reqiter, ++resiter) {
     rop.on_complete->finish_single_request(
-      req_iter->first,
+      reqiter->first,
       resiter->second,
-      req_iter->second.to_read);
+      reqiter->second.to_read);
   }
   ceph_assert(rop.on_complete);
   std::move(*rop.on_complete).finish(rop.priority);
