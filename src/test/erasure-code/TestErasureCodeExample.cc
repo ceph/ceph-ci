@@ -200,10 +200,7 @@ TEST(ErasureCodeExample, decode)
   // partial chunk decode
   map<int, bufferlist> partial_decode;
   partial_decode[0] = encoded[0];
-  set<int> partial_want_to_read{want_to_encode, want_to_encode+1};
-  EXPECT_EQ(0, example.decode_concat(partial_want_to_read,
-				     partial_decode,
-				     &out));
+  EXPECT_EQ(0, example.decode_concat(partial_decode, &out));
 
   // cannot recover
   map<int, bufferlist> degraded;  

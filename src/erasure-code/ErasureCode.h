@@ -112,11 +112,8 @@ namespace ceph {
 			 const std::string &default_value,
 			 std::ostream *ss);
 
-    int decode_concat(const std::set<int>& want_to_read,
-		      const std::map<int, bufferlist> &chunks,
-		      bufferlist *decoded) override;
     int decode_concat(const std::map<int, bufferlist> &chunks,
-		      bufferlist *decoded) override;
+			      bufferlist *decoded) override;
 
     bool is_systematic() const override;
 
