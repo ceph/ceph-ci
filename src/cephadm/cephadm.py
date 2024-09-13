@@ -2404,13 +2404,6 @@ def enable_cephadm_mgr_module(
     logger.info('Enabling cephadm module...')
     cli(['mgr', 'module', 'enable', 'cephadm'])
     wait_for_mgr_restart()
-    # https://tracker.ceph.com/issues/67969
-    # luckily `ceph mgr module enable <module>` returns
-    # a zero rc when the module is already enabled so
-    # this is no issue even if it is unnecessary
-    logger.info('Verifying orchestrator module is enabled...')
-    cli(['mgr', 'module', 'enable', 'orchestrator'])
-    wait_for_mgr_restart()
     logger.info('Setting orchestrator backend to cephadm...')
     cli(['orch', 'set', 'backend', 'cephadm'])
 
@@ -3003,7 +2996,20 @@ def command_bootstrap(ctx):
             except Exception as e:
                 logger.debug('tell mgr mgr_status failed: %s' % e)
                 return False
+
+        # https://tracker.ceph.com/issues/67969
+        def orch_module_available():
+            # type: () -> bool
+            try:
+                out = cli(['mgr', 'dump'])
+                j = json.loads(out)
+                available_modules = [m['name'] for m in j['available_modules']]
+                return 'orchestrator' in available_modules
+            except Exception as e:
+                logger.debug('mgr dump failed: %s' % e)
+                return False
         is_available(ctx, 'mgr epoch %d' % epoch, mgr_has_latest_epoch)
+        is_available(ctx, 'orchestrator module', orch_module_available)
 
     enable_cephadm_mgr_module(cli, wait_for_mgr_restart)
 
