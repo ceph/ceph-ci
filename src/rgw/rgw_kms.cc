@@ -704,12 +704,6 @@ public:
         << dendl;
       return res;
     }
-    if (dummy_bl.length() != 0) {
-      ldpp_dout(dpp, 0) << "ERROR: unexpected response from Vault deleting key: "
-        << std::string_view(dummy_bl.c_str(), dummy_bl.length())
-        << dendl;
-      return -EINVAL;
-    }
     return 0;
   }
 };
