@@ -1197,7 +1197,6 @@ Group:		Development/Libraries/C and C++
 %endif
 Requires:	libcephfs2 = %{_epoch_prefix}%{version}-%{release}
 Requires:	libcephfs-proxy2 = %{_epoch_prefix}%{version}-%{release}
-Requires:	libcephfs-daemon = %{_epoch_prefix}%{version}-%{release}
 Requires:	librados-devel = %{_epoch_prefix}%{version}-%{release}
 Obsoletes:	ceph-devel < %{_epoch_prefix}%{version}-%{release}
 Provides:	libcephfs2-devel = %{_epoch_prefix}%{version}-%{release}
