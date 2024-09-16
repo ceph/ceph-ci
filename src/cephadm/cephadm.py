@@ -2405,7 +2405,18 @@ def enable_cephadm_mgr_module(
     cli(['mgr', 'module', 'enable', 'cephadm'])
     wait_for_mgr_restart()
     logger.info('Setting orchestrator backend to cephadm...')
-    cli(['orch', 'set', 'backend', 'cephadm'])
+    # attempt retries on failure to work around https://tracker.ceph.com/issues/67969
+    for sleep_secs in [2, 5, 10]:
+        try:
+            cli(['orch', 'set', 'backend', 'cephadm'])
+        except Exception as e:
+            logger.info(f'Setting orch backend to cephadm failed transiently: {str(e)}')
+            logger.info(f'Trying again in {sleep_secs} seconds...')
+            time.sleep(sleep_secs)
+            continue
+        return
+    # if we get here, we failed all three times
+    raise Error('Failed to set orch backend to cephadm: maximum retries reached')
 
 
 def prepare_dashboard(
@@ -2997,7 +3008,6 @@ def command_bootstrap(ctx):
                 logger.debug('tell mgr mgr_status failed: %s' % e)
                 return False
 
-        # https://tracker.ceph.com/issues/67969
         def orch_module_available():
             # type: () -> bool
             try:
