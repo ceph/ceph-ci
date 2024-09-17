@@ -413,6 +413,16 @@ struct C_ImageSnapshotCreate : public Context {
       return;
     }
 
+    {
+      std::shared_lock image_locker{ictx->image_lock};
+      if (ictx->parent) {
+        lderr(ictx->cct) << "image has a parent, snapshot based mirroring is not supported"
+                         << dendl;
+        on_finish->complete(-EINVAL);
+        return;
+      }
+    }
+
     auto req = mirror::snapshot::CreatePrimaryRequest<I>::create(
       ictx, mirror_image.global_image_id, CEPH_NOSNAP, snap_create_flags, 0U,
       snap_id, on_finish);
@@ -460,6 +470,12 @@ int Mirror<I>::image_enable(I *ictx, mirror_image_mode_t mode,
     std::shared_lock image_locker{ictx->image_lock};
     ImageCtx *parent = ictx->parent;
     if (parent) {
+      if (mode == RBD_MIRROR_IMAGE_MODE_SNAPSHOT) {
+        lderr(cct) << "image has a parent, snapshot based mirroring is not supported"
+                   << dendl;
+        return -EINVAL;
+      }
+
       if (parent->md_ctx.get_id() != ictx->md_ctx.get_id() ||
           !relax_same_pool_parent_check) {
         cls::rbd::MirrorImage mirror_image_internal;
