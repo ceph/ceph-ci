@@ -39,7 +39,7 @@
 </ng-template>
 
 <ng-template #urlTpl
-             let-row="row">
+             let-row="data.row">
   <ng-container *ngIf="serviceUrls[row.service_type] else noUrl">
     <a *ngIf="!isMgmtGateway else mgmtGateway"
        target="_blank"
