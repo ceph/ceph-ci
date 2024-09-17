@@ -788,18 +788,33 @@ cd-table {
   table {
     thead,
     th,
-    tr,
     button.cds--table-sort {
       background-color: vv.$white !important;
+    }
+
+    tr.cds--parent-row.cds--data-table--selected {
+      background-color: vv.$table-active-row !important;
+    }
+
+    tr {
+      &:hover {
+        background-color: vv.$table-active-row !important;
+      }
+
+      .cds--data-table tbody tr:not([data-child-row]):hover {
+        background-color: vv.$table-active-row !important;
+      }
     }
 
     .cds--expandable-row {
       border-left: 2px solid vv.$primary !important;
     }
+
+    tr.cds--parent-row.cds--expandable-row:hover td,
+    tr.cds--parent-row.cds--expandable-row:hover+tr[data-child-row] td {
+      background-color: vv.$white !important;
+    }
   }
-  // .cds--toolbar-content {
-  //   flex-direction: row-reverse !important;
-  // }
 
   .table-actions {
     flex-direction: row !important;
