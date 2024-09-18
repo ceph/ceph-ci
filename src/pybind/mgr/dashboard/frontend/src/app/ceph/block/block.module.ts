@@ -54,6 +54,7 @@ import { environment } from '~/environments/environment';
 import {
   ButtonModule,
   CheckboxModule,
+  ComboBoxModule,
   DatePickerModule,
   GridModule,
   IconModule,
@@ -96,7 +97,8 @@ import Reset from '@carbon/icons/es/reset/32';
     SelectModule,
     NumberModule,
     ModalModule,
-    DatePickerModule
+    DatePickerModule,
+    ComboBoxModule
   ],
   declarations: [
     RbdListComponent,
