@@ -12,6 +12,10 @@
   of the column showing the state of a group snapshot in the unformatted CLI
   output is changed from 'STATUS' to 'STATE'. The state of a group snapshot
   that was shown as 'ok' is now shown as 'complete', which is more descriptive.
+* CephFS: EOPNOTSUPP (Operation not supported ) is now returned by the CephFS
+  fuse client for `fallocate` for the default case (i.e. mode == 0) since
+  CephFS does not support disk space reservation. The only flags supported are
+  `FALLOC_FL_KEEP_SIZE` and `FALLOC_FL_PUNCH_HOLE`.
 
 >=19.0.0
 
