@@ -71,7 +71,8 @@ export class StorageInsightsModalComponent extends CdForm implements OnInit {
       lastName: new FormControl({ value: null, disabled: this.callHomeEnabled }, [
         Validators.required
       ]),
-      email: new FormControl({ value: null, disabled: this.callHomeEnabled }, [Validators.required])
+      email: new FormControl({ value: null, disabled: this.callHomeEnabled }, [Validators.required]),
+      ownerTenantId: new FormControl({ value: null, disabled: true })
     });
   }
 
@@ -83,7 +84,8 @@ export class StorageInsightsModalComponent extends CdForm implements OnInit {
       this.modalForm.get('firstName').setValue(data.IBM_storage_insights.owner_first_name);
       this.modalForm.get('lastName').setValue(data.IBM_storage_insights.owner_last_name);
       this.modalForm.get('email').setValue(data.IBM_storage_insights.owner_email);
-      const tenantId = data.IBM_storage_insights.owner_IBM_tenant_id;
+      this.modalForm.get('ownerTenantId').setValue(data.IBM_storage_insights.owner_tenant_id);
+      const tenantId = data.IBM_storage_insights.owner_tenant_id;
       this.modalForm.get('tenants').setValue(tenantId);
       this.fetchTenants(this.modalForm.value, tenantId);
     });
