@@ -15,7 +15,9 @@ export class AppConstants {
     environment.build === 'ibm'
       ? `Copyright(c) ${environment.year} IBM Corporation`
       : 'Copyright(c) ' + environment.year + ' Red Hat Inc. and contributors.';
-  public static readonly cephLogo = 'assets/Logo-RedHat-Hat-Color-RGB.png';
+  public static readonly cephLogo = environment.build === 'ibm'
+      ? 'assets/StorageCeph_dark_theme.svg'
+      : 'assets/Logo-RedHat-Hat-Color-RGB.png';
 }
 
 export enum URLVerbs {

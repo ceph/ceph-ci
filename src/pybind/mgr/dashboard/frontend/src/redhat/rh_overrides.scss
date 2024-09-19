@@ -282,6 +282,10 @@ cd-form-button-panel {
 
 /* Password Change form on login */
 cd-login-password-form {
+  form {
+    margin-left: 0 !important;
+  }
+
   .form-control {
     @extend .pf-c-form-control;
     background-color: vv.$white !important;
@@ -819,15 +823,19 @@ cd-table {
   .table-actions {
     flex-direction: row !important;
     margin-left: 3rem !important;
-    margin-right: 50% !important;
   }
 
-  // .toolbar-action.cds--btn.cds--btn--ghost {
-  //   margin-left: 40% !important;
-  // }
   .cds--table-toolbar {
     background-color: vv.$white !important;
     margin: 1rem !important;
+  }
+
+  .cds--select-input.cds--select-input--md {
+    width: 100px !important;
+  }
+
+  .cds--toolbar-content {
+    width: 50% !important;
   }
 }
 
@@ -982,7 +990,6 @@ textarea.form-control {
 .badge {
   @extend .pf-c-label, .pf-m-compact;
   border-radius: 30em !important;
-  color: vv.$white !important;
   font-size: 0.8rem !important;
   font-weight: 400 !important;
 }
