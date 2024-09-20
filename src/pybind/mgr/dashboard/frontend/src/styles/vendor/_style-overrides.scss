@@ -331,3 +331,52 @@ cd-create-cluster {
     height: 128px;
   }
 }
+
+/* Notification Sidebar */
+cd-notifications-sidebar {
+  .card-body {
+    font-size: x-small !important;
+    padding: 0.5rem !important;
+    padding-left: 0 !important;
+
+    .row {
+      padding-top: 0.5rem !important;
+    }
+
+    h6 {
+      font-size: 15px !important;
+    }
+
+    .card-text {
+      font-size: 13px !important;
+    }
+
+    small {
+      font-size: 10px !important;
+    }
+
+    .btn-block {
+      width: 99% !important;
+    }
+
+    /* stylelint-disable */
+    .btn-light:hover {
+      border-color: unset !important;
+    }
+    /* stylelint-enable */
+  }
+
+  .close {
+    font-size: 1rem !important;
+    padding-top: 2px !important;
+  }
+}
+
+.ceph-icon {
+  display: none !important;
+}
+
+.dot {
+  background-color: vv.$primary !important;
+  border: 0 !important;
+}
