@@ -282,7 +282,9 @@ cd-form-button-panel {
 
 /* Password Change form on login */
 cd-login-password-form {
-  form {
+  form,
+  h2,
+  h4 {
     margin-left: 0 !important;
   }
 
