@@ -1155,6 +1155,10 @@ h3 {
 
 // cluster expansion wizard
 cd-create-cluster {
+  .img-fluid {
+    height: auto !important;
+  }
+
   .blank-page {
     margin-top: -10rem;
   }
