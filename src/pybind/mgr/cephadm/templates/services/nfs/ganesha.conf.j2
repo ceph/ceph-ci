@@ -4,6 +4,7 @@ NFS_CORE_PARAM {
         Enable_RQUOTA = false;
         Protocols = 3, 4;
         mount_path_pseudo = true;
+        Enable_UDP = false;
         NFS_Port = {{ port }};
 {% if bind_addr %}
         Bind_addr = {{ bind_addr }};
