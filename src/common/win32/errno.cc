@@ -598,6 +598,7 @@ std::string win32_lasterror_str()
   return win32_strerror(err);
 }
 
+/*
 static const ceph::unordered_map<int,NTSTATUS> cephfs_errno_to_ntstatus = {
   {CEPHFS_EBLOCKLISTED,    STATUS_SYSTEM_SHUTDOWN},
   {CEPHFS_EPERM,           STATUS_ACCESS_DENIED},
@@ -649,4 +650,4 @@ __u32 cephfs_errno_to_ntstatus_map(int cephfs_errno)
   if (it != cephfs_errno_to_ntstatus.end())
     return it->second;
   return STATUS_INTERNAL_ERROR;
-}
+}*/
