@@ -618,9 +618,9 @@ def test_ps_s3_topic_on_master():
     assert_equal(len(result['ListTopicsResponse']['ListTopicsResult']['Topics']['member']), 2)
 
     # delete topics
-    result = topic_conf2.del_config()
+    status = topic_conf2.del_config()
     assert_equal(status, 200)
-    result = topic_conf3.del_config()
+    status = topic_conf3.del_config()
     assert_equal(status, 200)
 
     # get topic list, make sure it is empty
