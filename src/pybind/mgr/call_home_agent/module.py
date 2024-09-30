@@ -991,7 +991,7 @@ class CallHomeAgent(MgrModule):
             name='interval_last_contact_report_seconds',
             type='int',
             min=0,
-            default=60 * 5,  # 5 minutes
+            default=60 * 30,  # 30 minutes
             desc='Time frequency for the last contact report'
         ),
         Option(
