@@ -3398,6 +3398,7 @@ class TestIngressService:
             '        Protocols = 3, 4;\n'
             '        mount_path_pseudo = true;\n'
             '        NFS_Port = 2049;\n'
+            '        allow_set_io_flusher_fail = true;\n'
             '        HAProxy_Hosts = 192.168.122.111, 10.10.2.20, 192.168.122.222;\n'
             '}\n'
             '\n'
