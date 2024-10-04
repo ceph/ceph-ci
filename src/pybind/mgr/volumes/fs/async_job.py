@@ -120,11 +120,16 @@ class AsyncJobs(threading.Thread):
         self.vc = volume_client
         # queue of volumes for starting async jobs
         self.q = deque()  # type: deque
+
         # volume => job tracking
+        # self.jobs is dict where volname (str) is key and a tuple is value.
+        # the tuple will contain 2 members job and thread_inst.
         self.jobs = {}
+
         # lock, cv for kickstarting jobs
         self.lock = threading.Lock()
         self.cv = threading.Condition(self.lock)
+        # rishabh: self.waiting is not used anywhere, delete and its comment
         # cv for job cancelation
         self.waiting = False
         self.stopping = threading.Event()
@@ -174,6 +179,10 @@ class AsyncJobs(threading.Thread):
         self.cancel_all_jobs()
         with lock_timeout_log(self.lock):
             self.cv.notifyAll()
+        # rishabh: calling join() blocks caller till termination happens of
+        # thread to which method join() belongs. so it's pointless to call
+        # join() of self. point of blocking self till self terminates makes
+        # no sense.
         self.join()
 
     def reconfigure_max_async_threads(self, nr_concurrent_jobs):
