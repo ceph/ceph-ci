@@ -65,7 +65,10 @@ else:
 
         @EndpointDoc(
             "Get information from a specific NVMeoF subsystem",
-            parameters={"nqn": Param(str, "NVMeoF subsystem NQN")},
+            parameters={
+                "nqn": Param(str, "NVMeoF subsystem NQN"),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
+            },
         )
         @map_model(model.Subsystem, first="subsystems")
         @handle_nvmeof_error
@@ -80,6 +83,7 @@ else:
                 "nqn": Param(str, "NVMeoF subsystem NQN"),
                 "max_namespaces": Param(int, "Maximum number of namespaces", True, 1024),
                 "enable_ha": Param(bool, "Enable high availability"),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
             },
         )
         @empty_response
@@ -97,6 +101,7 @@ else:
             parameters={
                 "nqn": Param(str, "NVMeoF subsystem NQN"),
                 "force": Param(bool, "Force delete", "false"),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
             },
         )
         @empty_response
@@ -113,12 +118,15 @@ else:
     class NVMeoFListener(RESTController):
         @EndpointDoc(
             "List all NVMeoF listeners",
-            parameters={"nqn": Param(str, "NVMeoF subsystem NQN")},
+            parameters={
+                "nqn": Param(str, "NVMeoF subsystem NQN"),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
+            },
         )
         @map_collection(model.Listener, pick="listeners")
         @handle_nvmeof_error
-        def list(self, nqn: str):
-            return NVMeoFClient().stub.list_listeners(
+        def list(self, nqn: str, gw_group: Optional[str] = None):
+            return NVMeoFClient(gw_group=gw_group).stub.list_listeners(
                 NVMeoFClient.pb2.list_listeners_req(subsystem=nqn)
             )
 
@@ -130,6 +138,7 @@ else:
                 "traddr": Param(str, "NVMeoF transport address"),
                 "trsvcid": Param(int, "NVMeoF transport service port", True, 4420),
                 "adrfam": Param(int, "NVMeoF address family (0 - IPv4, 1 - IPv6)", True, 0),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
             },
         )
         @empty_response
@@ -140,9 +149,10 @@ else:
             host_name: str,
             traddr: str,
             trsvcid: int = 4420,
-            adrfam: int = 0,  # IPv4
+            adrfam: int = 0,  # IPv4,
+            gw_group: Optional[str] = None
         ):
-            return NVMeoFClient(traddr=traddr).stub.create_listener(
+            return NVMeoFClient(gw_group=gw_group, traddr=traddr).stub.create_listener(
                 NVMeoFClient.pb2.create_listener_req(
                     nqn=nqn,
                     host_name=host_name,
@@ -160,6 +170,7 @@ else:
                 "traddr": Param(str, "NVMeoF transport address"),
                 "trsvcid": Param(int, "NVMeoF transport service port", True, 4420),
                 "adrfam": Param(int, "NVMeoF address family (0 - IPv4, 1 - IPv6)", True, 0),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
             },
         )
         @empty_response
@@ -172,8 +183,9 @@ else:
             trsvcid: int = 4420,
             adrfam: int = 0,  # IPv4
             force: bool = False,
+            gw_group: Optional[str] = None
         ):
-            return NVMeoFClient().stub.delete_listener(
+            return NVMeoFClient(gw_group=gw_group).stub.delete_listener(
                 NVMeoFClient.pb2.delete_listener_req(
                     nqn=nqn,
                     host_name=host_name,
@@ -189,12 +201,15 @@ else:
     class NVMeoFNamespace(RESTController):
         @EndpointDoc(
             "List all NVMeoF namespaces in a subsystem",
-            parameters={"nqn": Param(str, "NVMeoF subsystem NQN")},
+            parameters={
+                "nqn": Param(str, "NVMeoF subsystem NQN"),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
+            },
         )
         @map_collection(model.Namespace, pick="namespaces")
         @handle_nvmeof_error
-        def list(self, nqn: str):
-            return NVMeoFClient().stub.list_namespaces(
+        def list(self, nqn: str, gw_group: Optional[str] = None):
+            return NVMeoFClient(gw_group=gw_group).stub.list_namespaces(
                 NVMeoFClient.pb2.list_namespaces_req(subsystem=nqn)
             )
 
@@ -203,12 +218,13 @@ else:
             parameters={
                 "nqn": Param(str, "NVMeoF subsystem NQN"),
                 "nsid": Param(str, "NVMeoF Namespace ID"),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
             },
         )
         @map_model(model.Namespace, first="namespaces")
         @handle_nvmeof_error
-        def get(self, nqn: str, nsid: str):
-            return NVMeoFClient().stub.list_namespaces(
+        def get(self, nqn: str, nsid: str, gw_group: Optional[str] = None):
+            return NVMeoFClient(gw_group=gw_group).stub.list_namespaces(
                 NVMeoFClient.pb2.list_namespaces_req(subsystem=nqn, nsid=int(nsid))
             )
 
@@ -219,12 +235,13 @@ else:
             parameters={
                 "nqn": Param(str, "NVMeoF subsystem NQN"),
                 "nsid": Param(str, "NVMeoF Namespace ID"),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
             },
         )
         @map_model(model.NamespaceIOStats)
         @handle_nvmeof_error
-        def io_stats(self, nqn: str, nsid: str):
-            return NVMeoFClient().stub.namespace_get_io_stats(
+        def io_stats(self, nqn: str, nsid: str, gw_group: Optional[str] = None):
+            return NVMeoFClient(gw_group=gw_group).stub.namespace_get_io_stats(
                 NVMeoFClient.pb2.namespace_get_io_stats_req(
                     subsystem_nqn=nqn, nsid=int(nsid))
             )
@@ -239,6 +256,7 @@ else:
                 "size": Param(int, "RBD image size"),
                 "block_size": Param(int, "NVMeoF namespace block size"),
                 "load_balancing_group": Param(int, "Load balancing group"),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
             },
         )
         @map_model(model.NamespaceCreation)
@@ -252,8 +270,9 @@ else:
             size: Optional[int] = 1024,
             block_size: int = 512,
             load_balancing_group: Optional[int] = None,
+            gw_group: Optional[str] = None,
         ):
-            return NVMeoFClient().stub.namespace_add(
+            return NVMeoFClient(gw_group=gw_group).stub.namespace_add(
                 NVMeoFClient.pb2.namespace_add_req(
                     subsystem_nqn=nqn,
                     rbd_image_name=rbd_image_name,
@@ -276,6 +295,7 @@ else:
                 "rw_mbytes_per_second": Param(int, "Read/Write MB/s"),
                 "r_mbytes_per_second": Param(int, "Read MB/s"),
                 "w_mbytes_per_second": Param(int, "Write MB/s"),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
             },
         )
         @empty_response
@@ -290,12 +310,13 @@ else:
             rw_mbytes_per_second: Optional[int] = None,
             r_mbytes_per_second: Optional[int] = None,
             w_mbytes_per_second: Optional[int] = None,
+            gw_group: Optional[str] = None
         ):
             if rbd_image_size:
                 mib = 1024 * 1024
                 new_size_mib = int((rbd_image_size + mib - 1) / mib)
 
-                response = NVMeoFClient().stub.namespace_resize(
+                response = NVMeoFClient(gw_group=gw_group).stub.namespace_resize(
                     NVMeoFClient.pb2.namespace_resize_req(
                         subsystem_nqn=nqn, nsid=int(nsid), new_size=new_size_mib
                     )
@@ -338,12 +359,13 @@ else:
             parameters={
                 "nqn": Param(str, "NVMeoF subsystem NQN"),
                 "nsid": Param(str, "NVMeoF Namespace ID"),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
             },
         )
         @empty_response
         @handle_nvmeof_error
-        def delete(self, nqn: str, nsid: str):
-            return NVMeoFClient().stub.namespace_delete(
+        def delete(self, nqn: str, nsid: str, gw_group: Optional[str] = None):
+            return NVMeoFClient(gw_group=gw_group).stub.namespace_delete(
                 NVMeoFClient.pb2.namespace_delete_req(subsystem_nqn=nqn, nsid=int(nsid))
             )
 
@@ -353,7 +375,10 @@ else:
     class NVMeoFHost(RESTController):
         @EndpointDoc(
             "List all allowed hosts for an NVMeoF subsystem",
-            parameters={"nqn": Param(str, "NVMeoF subsystem NQN")},
+            parameters={
+                "nqn": Param(str, "NVMeoF subsystem NQN"),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
+            },
         )
         @map_collection(
             model.Host,
@@ -364,8 +389,8 @@ else:
             else o,
         )
         @handle_nvmeof_error
-        def list(self, nqn: str):
-            return NVMeoFClient().stub.list_hosts(
+        def list(self, nqn: str, gw_group: Optional[str] = None):
+            return NVMeoFClient(gw_group=gw_group).stub.list_hosts(
                 NVMeoFClient.pb2.list_hosts_req(subsystem=nqn)
             )
 
@@ -374,12 +399,13 @@ else:
             parameters={
                 "nqn": Param(str, "NVMeoF subsystem NQN"),
                 "host_nqn": Param(str, 'NVMeoF host NQN. Use "*" to allow any host.'),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
             },
         )
         @empty_response
         @handle_nvmeof_error
-        def create(self, nqn: str, host_nqn: str):
-            return NVMeoFClient().stub.add_host(
+        def create(self, nqn: str, host_nqn: str, gw_group: Optional[str] = None):
+            return NVMeoFClient(gw_group=gw_group).stub.add_host(
                 NVMeoFClient.pb2.add_host_req(subsystem_nqn=nqn, host_nqn=host_nqn)
             )
 
@@ -388,12 +414,13 @@ else:
             parameters={
                 "nqn": Param(str, "NVMeoF subsystem NQN"),
                 "host_nqn": Param(str, 'NVMeoF host NQN. Use "*" to disallow any host.'),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
             },
         )
         @empty_response
         @handle_nvmeof_error
-        def delete(self, nqn: str, host_nqn: str):
-            return NVMeoFClient().stub.remove_host(
+        def delete(self, nqn: str, host_nqn: str, gw_group: Optional[str] = None):
+            return NVMeoFClient(gw_group=gw_group).stub.remove_host(
                 NVMeoFClient.pb2.remove_host_req(subsystem_nqn=nqn, host_nqn=host_nqn)
             )
 
@@ -402,12 +429,15 @@ else:
     class NVMeoFConnection(RESTController):
         @EndpointDoc(
             "List all NVMeoF Subsystem Connections",
-            parameters={"nqn": Param(str, "NVMeoF subsystem NQN")},
+            parameters={
+                "nqn": Param(str, "NVMeoF subsystem NQN"),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
+            },
         )
         @map_collection(model.Connection, pick="connections")
         @handle_nvmeof_error
-        def list(self, nqn: str):
-            return NVMeoFClient().stub.list_connections(
+        def list(self, nqn: str, gw_group: Optional[str] = None):
+            return NVMeoFClient(gw_group=gw_group).stub.list_connections(
                 NVMeoFClient.pb2.list_connections_req(subsystem=nqn)
             )
 
