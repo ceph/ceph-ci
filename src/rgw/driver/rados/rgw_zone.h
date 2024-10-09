@@ -257,8 +257,13 @@ struct RGWZoneParams : RGWSystemMetaObj {
     }
     if (struct_v >= 15) {
       decode(topics_pool, bl);
-      decode(account_pool, bl);
-      decode(group_pool, bl);
+      try {
+        decode(account_pool, bl);
+        decode(group_pool, bl);
+      } catch (buffer::error& err) {
+        account_pool = name + ".rgw.meta:accounts";
+        group_pool = name + ".rgw.meta:groups";
+      }
     } else {
       topics_pool = name + ".rgw.meta:topics";
       account_pool = name + ".rgw.meta:accounts";
