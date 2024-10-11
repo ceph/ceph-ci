@@ -6,10 +6,9 @@ match the output produced by the Ceph Erasure Code Tool.
 import logging
 import json
 import os
-import atexit
-import tempfile
 import shutil
 import time
+import atexit
 from io import StringIO
 from io import BytesIO
 from typing import Dict, List, Any
@@ -88,9 +87,23 @@ class ErasureCodeObject:
         data_out = bytearray()
         for shard in shards:
             data_out += shard
-        with open(filepath, "wb") as binary_file:
-            binary_file.write(data_out)
-            binary_file.close()
+        # buffer = BytesIO(data_out)
+        log.info("data_out out length: %i", len(data_out))
+        try:
+            binary_file = os.open(filepath, os.O_CREAT | os.O_WRONLY)
+            try:
+                os.write(binary_file, data_out)
+                os.close(binary_file)
+                # buffer.seek(0)
+                # binary_file.write(buffer.read())
+            except (IOError, OSError) as e:
+                log.error("Error writing to file: %s", e)
+        except (FileNotFoundError, PermissionError, OSError) as e:
+            log.error("Error opening file for writing: %s", e)
+        if os.path.isfile(filepath):
+            log.info("write: File created, filesize is: %i", os.path.getsize(filepath))
+        else:
+            log.error("write: File %s not found!", filepath)
 
     def delete_shards(self):
         """
@@ -504,8 +517,7 @@ def get_tmp_directory():
     Returns a temporary directory name that will be used to store shard data
     Includes the PID so different instances can be run in parallel
     """
-    tmpdir = (tempfile.gettempdir() +
-              '/consistency-check-' + str(os.getpid()) + '/')
+    tmpdir = '/var/tmp/consistency-check-' + str(os.getpid()) + '/'
     return tmpdir
 
 
@@ -603,7 +615,7 @@ def task(ctx, config: Dict[str, Any]):
     assert not manager.cephadm, cephadm_not_supported
 
     retain_files = config.get('retain_files', False)
-    max_time = int(config.get('max_run_time', 3600))
+    max_time = config.get('max_run_time', None)
     assert_on_mismatch = config.get('assert_on_mismatch', True)
 
     osds = manager.get_osd_dump()
@@ -634,7 +646,7 @@ def task(ctx, config: Dict[str, Any]):
     consistent, inconsistent = [], []
     for ec_object in ec_objects.objects:
         time_elapsed = time.time() - start_time
-        if time_elapsed > max_time:
+        if max_time is not None and time_elapsed > max_time:
             log.info("%i seconds elapsed, stopping "
                      "due to time limit.", time_elapsed)
             break
@@ -643,8 +655,17 @@ def task(ctx, config: Dict[str, Any]):
         object_uid = ec_object.uid
         object_dir = get_tmp_directory() + object_uid + '/'
         object_filepath = object_dir + DATA_SHARD_FILENAME
-        os.makedirs(object_dir)
+        try:
+            os.makedirs(object_dir)
+        except OSError as e:
+            log.error("Directory '%s' can not be created: %s", object_dir, e)
+
         ec_object.write_data_shards_to_file(object_filepath)
+        if os.path.isfile(object_filepath):
+            log.info("task: File exists, filesize is: %i", os.path.getsize(object_filepath))
+        else:
+            log.error("task: File %s not found!", object_filepath)
+
         # Encode the shards and output to the object dir
         want_to_encode = ec_object.get_want_to_encode_str()
         ec_profile = ec_object.get_ec_tool_profile()
@@ -661,6 +682,15 @@ def task(ctx, config: Dict[str, Any]):
             inconsistent.append(object_uid)
         # Free up memory consumed by shards
         ec_object.delete_shards()
+
+    # Can revive the OSDs now
+    for osd in osds:
+        osd_id = osd["osd"]
+        manager.revive_osd(osd_id, skip_admin_check=False)
+
+    # Delete test files unless retain_files is set
+    if not retain_files:
+        shutil.rmtree(get_tmp_directory())
 
     # Print a summary of matches, raise a RunTimeError if required
     print_summary(consistent, inconsistent)

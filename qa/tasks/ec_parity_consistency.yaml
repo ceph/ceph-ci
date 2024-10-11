@@ -1,0 +1,46 @@
+roles: 
+- - host.a
+  - mon.a
+  - mgr.y
+  - osd.0
+  - osd.1
+  - osd.2
+  - osd.3
+  - osd.4
+  - osd.5
+  - client.0
+tasks:
+- install:
+- ceph:
+- exec:
+    client.0:
+        - ceph osd erasure-code-profile set reedsol plugin=jerasure k=4 m=2 technique=reed_sol_van
+        - ceph osd pool create rbd_erasure erasure reedsol
+        - ceph osd pool create rbd_replicated replicated
+        - ceph osd pool application enable rbd_erasure rbd
+        - ceph osd pool application enable rbd_replicated rbd
+        - ceph osd pool set rbd_erasure allow_ec_overwrites true
+        - rbd pool init rbd_erasure
+        - rbd pool init rbd_replicated
+        - rbd create --pool rbd_replicated --data-pool rbd_erasure --size 1024 vol1
+- sequential:
+  - rados:
+      clients: [client.0]
+      ops: 100
+      objects: 32
+      ec_pool: true
+      pools: [rbd_erasure]
+      op_weights:
+        read: 0
+        write: 0
+        append: 100
+        delete: 50
+        snap_create: 50
+        snap_remove: 50
+        rollback: 0
+        copy_from: 0
+        setattr: 0
+        rmattr: 0
+- ec_parity_consistency:
+    retain_files: false
+    assert_on_mismatch: true
