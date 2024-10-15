@@ -35,10 +35,10 @@ export class DocService {
 
       sections = {
         iscsi: `${domain}dashboard-management-iscsi-functions-using-ceph`,
-        prometheus: `${domain}dashboard-managing-alerts`,
-        'nfs-ganesha': `${domain}dashboard-managing-nfs-exports`,
-        'rgw-nfs': `${domain}dashboard-managing-nfs-exports`,
-        rgw: `${domain}dashboard-managing-ceph-object-gateway`,
+        prometheus: `${domain}dashboard-management-alerts-ceph`,
+        'nfs-ganesha': `${domain}dashboard-management-nfs-ganesha-exports-ceph`,
+        'rgw-nfs': `${domain}dashboard-management-nfs-ganesha-exports-ceph`,
+        rgw: `${domain}dashboard-management-ceph-object-gateway-using`,
         'rgw-multisite': `${domain}zone-failover-disaster-recovery`,
         multisite: `${domain}gateway-multi-site-configuration-administration`,
         dashboard: `${domain}dashboard`,
