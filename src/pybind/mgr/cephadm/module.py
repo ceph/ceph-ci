@@ -143,8 +143,8 @@ DEFAULT_KEEPALIVED_IMAGE = 'registry.redhat.io/rhceph/keepalived-rhel9:latest'
 DEFAULT_SNMP_GATEWAY_IMAGE = 'registry.redhat.io/rhceph/snmp-notifier-rhel9:latest'
 DEFAULT_NGINX_IMAGE = 'registry.redhat.io/rhel9/nginx-124:latest'
 DEFAULT_OAUTH2_PROXY = 'registry.redhat.io/rhceph/oauth2-proxy-rhel9:v7.6.0'
-DEFAULT_SAMBA_IMAGE = 'cp.icr.io/cp/ibm-ceph/samba-server-rhel9:latest'
-DEFAULT_SAMBA_METRICS_IMAGE = 'quay.io/samba.org/samba-metrics:latest'
+DEFAULT_SAMBA_IMAGE = 'cp.icr.io/cp/ibm-ceph/samba-server-rhel9:v0.5'
+DEFAULT_SAMBA_METRICS_IMAGE = 'cp.icr.io/cp/ibm-ceph/samba-metrics-rhel9:v0.5'
 # ------------------------------------------------------------------------------
 
 
