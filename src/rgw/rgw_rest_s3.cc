@@ -6725,7 +6725,7 @@ rgw::auth::s3::LocalEngine::authenticate(
   /* Ignore signature for HTTP OPTIONS */
   if (s->op_type == RGW_OP_OPTIONS_CORS) {
     auto apl = apl_factory->create_apl_local(
-        cct, s, user->get_info(), std::move(account), std::move(policies),
+        cct, s, std::move(user), std::move(account), std::move(policies),
         k.subuser, std::nullopt, access_key_id);
     return result_t::grant(std::move(apl), completer_factory(k.key));
   }
@@ -6746,7 +6746,7 @@ rgw::auth::s3::LocalEngine::authenticate(
   }
 
   auto apl = apl_factory->create_apl_local(
-      cct, s, user->get_info(), std::move(account), std::move(policies),
+      cct, s, std::move(user), std::move(account), std::move(policies),
       k.subuser, std::nullopt, access_key_id);
   return result_t::grant(std::move(apl), completer_factory(k.key));
 }
@@ -6982,7 +6982,7 @@ rgw::auth::s3::STSEngine::authenticate(
 
     string subuser;
     auto apl = local_apl_factory->create_apl_local(
-        cct, s, user->get_info(), std::move(account), std::move(policies),
+        cct, s, std::move(user), std::move(account), std::move(policies),
         subuser, token.perm_mask, std::string(_access_key_id));
     return result_t::grant(std::move(apl), completer_factory(token.secret_access_key));
   }
