@@ -61,7 +61,7 @@ export class DocService {
         'nfs-ganesha': `${domain}dashboard_guide/management-of-nfs-ganesha-exports-on-the-ceph-dashboard#configuring-nfs-ganesha-daemons-on-the-ceph-dashboard_dash`,
         'rgw-nfs': `${domain}dashboard_guide/management-of-nfs-ganesha-exports-on-the-ceph-dashboard`,
         rgw: `${domain}dashboard_guide/management-of-ceph-object-gateway-using-the-dashboard`,
-        'rgw-multisite': `${domain}object_gateway_guide_for_red_hat_enterprise_linux/multi_site#failover_and_disaster_recovery`,
+        'rgw-multisite': `${domain}object_gateway_guide/multisite-configuration-and-administration#failover-and-disaster-recovery-rgw`,
         multisite: `${domain}object_gateway_guide/multisite-configuration-and-administration`,
         dashboard: `${domain}dashboard_guide/`,
         grafana: `${domain}dashboard_guide/management-of-alerts-on-the-ceph-dashboard#enabling-monitoring-stack_dash`,
