@@ -2,9 +2,8 @@
 // vim: ts=8 sw=2 smarttab ft=cpp
 
 #include "rgw_metadata.h"
-
 #include "rgw_mdlog.h"
-
+#include "rgw_pubsub.h"
 
 #include "services/svc_meta.h"
 #include "services/svc_meta_be_sobj.h"
@@ -564,8 +563,26 @@ int RGWMetadataManager::remove(string& metadata_key, optional_yield y, const Dou
   RGWMetadataObject *obj;
   ret = handler->get(entry, &obj, y, dpp);
   if (ret < 0) {
-    return ret;
+    if (handler->get_type() != "topic") {
+      return ret;
+    }
+
+    // to handle the create & delete case when the system is in mixed mode:
+    //   secondary cluster (running the squid code) will get the key formed in
+    //   old (reef) format in this case, since primary cluster runs on reef.
+    //   Here, we just transform the key to squid format.
+    string tenant;
+    string topic_name;
+    parse_topic_metadata_key(entry, tenant, topic_name);
+    entry = get_topic_metadata_key(tenant, entry);
+    ret = handler->get(entry, &obj, y, dpp);
+    ldpp_dout(dpp, 0) << "INFO: [BLP] " << __func__ << " replicated remove entry="
+      << entry << " ret=" << ret << dendl;
+    if (ret < 0) {
+      return ret;
+    }
   }
+
   RGWObjVersionTracker objv_tracker;
   objv_tracker.read_version = obj->get_version();
   delete obj;
