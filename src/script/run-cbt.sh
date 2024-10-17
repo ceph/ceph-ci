@@ -80,6 +80,10 @@ fi
 
 if test -z "$cbt_dir"; then
     cbt_dir=$PWD/cbt
+<<<<<<< HEAD
+=======
+    # testing my CBT changes rather than using standard CBT
+>>>>>>> cd995d8776 (changes to run cbt sandbox in teuthology)
     git clone --depth 1 -b master https://github.com/harriscr/cbt.git $cbt_dir
 fi
 
