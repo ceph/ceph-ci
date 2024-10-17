@@ -110,7 +110,7 @@ class CBT(Task):
         testdir = misc.get_testdir(self.ctx)
         # Setting this so that I can test my CBT changes with the standard ceph build
         repo = self.config.get('repo', 'https://github.com/harriscr/cbt.git')
-        branch = self.config.get('branch', 'ch_wip_fio_common_files')
+        branch = self.config.get('branch', 'ch_wip_graphing')
         branch = self.config.get('force-branch', branch)
         sha1 = self.config.get('sha1')
         if sha1 is None:
