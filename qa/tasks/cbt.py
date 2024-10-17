@@ -108,10 +108,7 @@ class CBT(Task):
 
     def checkout_cbt(self):
         testdir = misc.get_testdir(self.ctx)
-<<<<<<< HEAD
-=======
         # Setting this so that I can test my CBT changes with the standard ceph build
->>>>>>> cd995d8776 (changes to run cbt sandbox in teuthology)
         repo = self.config.get('repo', 'https://github.com/harriscr/cbt.git')
         branch = self.config.get('branch', 'ch_wip_fio_common_files')
         branch = self.config.get('force-branch', branch)
