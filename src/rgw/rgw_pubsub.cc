@@ -22,10 +22,83 @@
 
 static constexpr std::string_view topic_tenant_delim = ":";
 
+//
+// temporary api funcs to add backward-compatibility for topic metadata key naming
+//   - topic_exists (helper)
+//   - api funcs: get_existing_topic_key (by either tenant&topic names or topic-object)
+//
+static bool topic_exists(
+  const DoutPrefixProvider* dpp, optional_yield y,
+  RGWSI_SysObj* sysobj,
+  const rgw_pool& pool,
+  std::string_view tenant,
+  std::string_view topic_name,
+  const bool reef_style_naming=false)
+{
+  std::string metadata_key;
+
+  if (reef_style_naming) {
+      metadata_key = std::move(get_topic_metadata_key_reef(tenant, topic_name));
+  } else {
+      metadata_key = std::move(get_topic_metadata_key(tenant, topic_name));
+  }
+  std::string oid = string_cat_reserve("topic.", metadata_key);
+  int r = rgw_stat_system_obj(dpp, sysobj, pool, oid, nullptr, nullptr, y, nullptr);
+
+  return r == 0;
+}
+
+std::string get_existing_topic_key(
+  const DoutPrefixProvider* dpp, optional_yield y,
+  RGWSI_SysObj* sysobj,
+  const rgw_pool& pool,
+  const std::string_view topic_name,
+  const std::string_view tenant)
+{
+  if (topic_exists(dpp, y, sysobj, pool, tenant, topic_name)) {
+    ldpp_dout(dpp, 0) << "INFO: [BLP] tenant=" << tenant
+      << " topic_name=" << topic_name << " found using the default key naming" << dendl;
+    return get_topic_metadata_key(tenant, topic_name);
+  } else {
+      if (topic_exists(dpp, y, sysobj, pool, tenant, topic_name, true)) {
+        ldpp_dout(dpp, 0) << "INFO: [BLP] tenant=" << tenant
+          << " topic_name=" << topic_name << " found using the reef-style key naming" << dendl;
+        return get_topic_metadata_key_reef(tenant, topic_name);
+      }
+  }
+
+  ldpp_dout(dpp, 0) << "INFO: [BLP] tenant=" << tenant << " topic_name=" << topic_name
+    << " no existing key found, returning the key using default key naming format" << dendl;
+  return get_topic_metadata_key(tenant, topic_name);
+}
+
+std::string get_existing_topic_key(
+  const DoutPrefixProvider* dpp, optional_yield y,
+  RGWSI_SysObj* sysobj,
+  const rgw_pool& pool,
+  const rgw_pubsub_topic& topic)
+{
+    std::string_view tenant = std::visit(fu2::overload(
+      [] (const rgw_user& u) -> std::string_view { return u.tenant; },
+      [] (const rgw_account_id& a) -> std::string_view { return a; }
+      ), topic.owner);
+
+    return get_existing_topic_key(dpp, y, sysobj, pool, topic.name, tenant);
+}
+
 // format and parse topic metadata keys as tenant:name
 std::string get_topic_metadata_key(std::string_view tenant,
                                    std::string_view topic_name)
 {
+  return string_cat_reserve(tenant, topic_tenant_delim, topic_name);
+}
+
+std::string get_topic_metadata_key_reef(std::string_view tenant,
+                                   std::string_view topic_name)
+{
+  if (tenant.empty()) {
+    return string_cat_reserve(topic_name);
+  }
   return string_cat_reserve(tenant, topic_tenant_delim, topic_name);
 }
 

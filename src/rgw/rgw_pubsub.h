@@ -756,3 +756,31 @@ std::string get_topic_metadata_key(const rgw_pubsub_topic& topic);
 void parse_topic_metadata_key(const std::string& key,
                               std::string& tenant_name,
                               std::string& topic_name);
+
+
+//
+// temporary api funcs to add backward-compatibility for topic metadata key naming
+//  * Why: See ENGSDU-537 for more details. TLDR; we backported notification feature ourselves to our Reef version.
+//    In the meantime, upstream Squid release has changed how notifications-related rados objects are named; hence
+//    this discrepancy we need to address. We need these temporary changes to make Squid understand our naming convention.
+//  * When to retire these temporary changes: once all our rgw-users are migrated to accounts (a new IAM feature Squid
+//    release introduces), we can revert the merge-request that introduces these temporary changes.
+
+// reef-style topic metadata key naming
+std::string get_topic_metadata_key_reef(std::string_view tenant,
+                                        std::string_view topic_name);
+
+// Get the current/existing key used for the given topic by trying out both
+//   - (first) current/default/squid format and
+//   - (if default format is not found) reef format.
+std::string get_existing_topic_key(
+  const DoutPrefixProvider* dpp, optional_yield y,
+  RGWSI_SysObj* sysobj,
+  const rgw_pool& pool,
+  std::string_view topic_name,
+  std::string_view tenant);
+std::string get_existing_topic_key(
+  const DoutPrefixProvider* dpp, optional_yield y,
+  RGWSI_SysObj* sysobj,
+  const rgw_pool& pool,
+  const rgw_pubsub_topic& topic);
