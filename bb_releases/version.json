@@ -1,5 +1,5 @@
 {
     "ceph-base-version": "19.0.0",
     "bb-version": "2",
-    "bb-patch": ""
+    "bb-patch": "init_squid_release"
 }
