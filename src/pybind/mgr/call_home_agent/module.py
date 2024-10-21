@@ -1153,6 +1153,9 @@ class CallHomeAgent(MgrModule):
         # set up some members to enable the serve() method and shutdown()
         self.run = True
 
+        # Load operations from db, this makes them persistent across mgr restarts
+        self.init_operations()
+
         # Module options
         self.refresh_options()
 
@@ -1166,6 +1169,17 @@ class CallHomeAgent(MgrModule):
 
         # Prepare reports
         self.prepare_reports()
+
+    def init_operations(self) -> None:
+        # We fetch from db the operations we already processed,
+        # and assign it to the global operations dictionary
+        db_operations = self.get_store('db_operations')
+
+        global operations
+        if db_operations is not None:
+            # We already set_store('db_operations') in the past
+            operations = json.loads(db_operations)
+            self.log.debug(f"operations loaded from db after restart: {operations}")
 
     def refresh_options(self):
         # Env vars (if they exist) have preference over module options
@@ -1450,6 +1464,11 @@ class CallHomeAgent(MgrModule):
                     self.log.info('Operations: Processing operations finished')
                 except Exception as ex:
                     self.log.error(f"Operations ({operation_key}): error: {ex}")
+
+                # persist operations
+                self.set_store('db_operations', json.dumps(operations))
+                self.log.debug(f"updating operations db: {json.dumps(operations)}")
+
                 await asyncio.sleep(seconds)
         except asyncio.CancelledError:
             return
@@ -1767,6 +1786,11 @@ class CallHomeAgent(MgrModule):
                 operations.clear()
 
             output = json.dumps(operations)
+
+            # persist operations
+            self.set_store('db_operations', json.dumps(operations))
+            self.log.debug(f"updating operations db after cleaning: {json.dumps(operations)}")
+
         except Exception as ex:
             return HandleCommandResult(stderr=str(ex))
         else:
