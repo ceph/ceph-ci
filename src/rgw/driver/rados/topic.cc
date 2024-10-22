@@ -103,7 +103,7 @@ int write(const DoutPrefixProvider* dpp, optional_yield y,
           const rgw_pubsub_topic& info, RGWObjVersionTracker& objv,
           ceph::real_time mtime, bool exclusive)
 {
-  const std::string topic_key = get_topic_metadata_key(info);
+  const std::string topic_key = get_existing_topic_key(dpp, y, &sysobj, zone.topics_pool, info);
   const rgw_raw_obj obj = get_topic_obj(zone, topic_key);
 
   bufferlist bl;
@@ -141,7 +141,7 @@ int remove(const DoutPrefixProvider* dpp, optional_yield y,
            const std::string& tenant, const std::string& name,
            RGWObjVersionTracker& objv)
 {
-  const std::string topic_key = get_topic_metadata_key(tenant, name);
+  const std::string topic_key = get_existing_topic_key(dpp, y, &sysobj, zone.topics_pool, name, tenant);
 
   // delete topic info
   const rgw_raw_obj topic = get_topic_obj(zone, topic_key);

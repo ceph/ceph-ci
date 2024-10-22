@@ -1683,7 +1683,8 @@ int RadosStore::read_topic_v2(const std::string& topic_name,
                               const DoutPrefixProvider* dpp)
 {
   const RGWZoneParams& zone = svc()->zone->get_zone_params();
-  const std::string key = get_topic_metadata_key(tenant, topic_name);
+  const std::string key = get_existing_topic_key(dpp, y, svc()->sysobj, zone.topics_pool, topic_name, tenant);
+
   return rgwrados::topic::read(dpp, y, *svc()->sysobj, svc()->cache,
                                zone, key, topic, *ctl()->meta.topic_cache,
                                nullptr, objv_tracker);
@@ -1771,7 +1772,7 @@ int RadosStore::update_bucket_topic_mapping(const rgw_pubsub_topic& topic,
                                             const DoutPrefixProvider* dpp) {
   librados::Rados& rados = *getRados()->get_rados_handle();
   const RGWZoneParams& zone = svc()->zone->get_zone_params();
-  const std::string key = get_topic_metadata_key(topic);
+  const std::string key = get_existing_topic_key(dpp, y, svc()->sysobj, zone.topics_pool, topic);
   int ret = 0;
   if (add_mapping) {
     ret = rgwrados::topic::link_bucket(dpp, y, rados, zone, key, bucket_key);
@@ -1797,7 +1798,8 @@ int RadosStore::get_bucket_topic_mapping(const rgw_pubsub_topic& topic,
 {
   librados::Rados& rados = *getRados()->get_rados_handle();
   const RGWZoneParams& zone = svc()->zone->get_zone_params();
-  const std::string key = get_topic_metadata_key(topic);
+  const std::string key = get_existing_topic_key(dpp, y, svc()->sysobj, zone.topics_pool, topic);
+
   constexpr int max_chunk = 1024;
   std::string marker;
 
