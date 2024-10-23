@@ -511,7 +511,10 @@ void rgw_pubsub_topic::dump_xml_as_attributes(Formatter *f) const
 }
 
 void rgw_pubsub_topic::decode_json(JSONObj* f) {
-  JSONDecoder::decode_json("owner", owner, f);
+  // in mixed mode primary will send the data as rgw_user.
+  if (!JSONDecoder::decode_json("owner", owner, f)) {
+    JSONDecoder::decode_json("user", owner, f);
+  }
   JSONDecoder::decode_json("name", name, f);
   JSONDecoder::decode_json("dest", dest, f);
   JSONDecoder::decode_json("arn", arn, f);
@@ -619,7 +622,12 @@ void rgw_pubsub_dest::decode_json(JSONObj* f) {
   JSONDecoder::decode_json("push_endpoint_topic", arn_topic, f);
   JSONDecoder::decode_json("stored_secret", stored_secret, f);
   JSONDecoder::decode_json("persistent", persistent, f);
-  JSONDecoder::decode_json("persistent_queue", persistent_queue, f);
+  // in mixed mode persistent_queue will be empty as primary does not send it.
+  if (!JSONDecoder::decode_json("persistent_queue", persistent_queue, f)) {
+    if (persistent) {
+      persistent_queue = ":" + arn_topic;
+    }
+  }
   std::string ttl;
   JSONDecoder::decode_json("time_to_live", ttl, f);
   time_to_live = ttl == DEFAULT_CONFIG ? DEFAULT_GLOBAL_VALUE : std::stoul(ttl);
