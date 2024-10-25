@@ -140,8 +140,8 @@ void RadosIo::applyIoOp(IoOp& op) {
         ceph_assert(ec == boost::system::errc::success);
         finish_io();
       };
-      librados::async_operate(asio, io, oid, &op_info->wop, 0, nullptr,
-                              create_cb);
+      librados::async_operate(asio.get_executor(), io, oid,
+                              &op_info->wop, 0, nullptr, create_cb);
       break;
     }
 
@@ -153,8 +153,8 @@ void RadosIo::applyIoOp(IoOp& op) {
         ceph_assert(ec == boost::system::errc::success);
         finish_io();
       };
-      librados::async_operate(asio, io, oid, &op_info->wop, 0, nullptr,
-                              remove_cb);
+      librados::async_operate(asio.get_executor(), io, oid,
+                              &op_info->wop, 0, nullptr, remove_cb);
       break;
     }
     case OpType::Read:
@@ -211,7 +211,8 @@ void RadosIo::applyReadWriteOp(IoOp& op) {
       }
       finish_io();
     };
-    librados::async_operate(asio, io, oid, &op_info->rop, 0, nullptr, read_cb);
+    librados::async_operate(asio.get_executor(), io, oid,
+                            &op_info->rop, 0, nullptr, read_cb);
     num_io++;
   };
 
@@ -229,7 +230,8 @@ void RadosIo::applyReadWriteOp(IoOp& op) {
       ceph_assert(ec == boost::system::errc::success);
       finish_io();
     };
-    librados::async_operate(asio, io, oid, &op_info->wop, 0, nullptr, write_cb);
+    librados::async_operate(asio.get_executor(), io, oid,
+                            &op_info->wop, 0, nullptr, write_cb);
     num_io++;
   };
 
@@ -248,7 +250,8 @@ void RadosIo::applyReadWriteOp(IoOp& op) {
       ceph_assert(ec != boost::system::errc::success);
       finish_io();
     };
-    librados::async_operate(asio, io, oid, &op_info->wop, 0, nullptr, write_cb);
+    librados::async_operate(asio.get_executor(), io, oid,
+                            &op_info->wop, 0, nullptr, write_cb);
     num_io++;
   };
 
