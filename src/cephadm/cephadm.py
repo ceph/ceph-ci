@@ -4845,7 +4845,7 @@ def command_sos(ctx: CephadmContext):
             else:
                 raise Exception(f'Error executing command <{cmd_sos}>:{code}-{err}')
 
-        file_path_pattern = r'Your sosreport has been generated and saved in:\s+(\S+)'
+        file_path_pattern = r'Your sos\s?report has been generated and saved in:\s+(\S+)'
         match = re.search(file_path_pattern, out)
         if not match:
             raise Exception(f'Cannot locate sos report file in sos command <{cmd_sos}> output: {out}')
