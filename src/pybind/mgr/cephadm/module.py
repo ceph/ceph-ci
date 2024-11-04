@@ -2425,6 +2425,15 @@ Then run the following:
 
         self._kick_serve_loop()
 
+    def _invalidate_all_host_metadata_and_kick_serve(self, filter_host: Optional[str] = None) -> None:
+        if filter_host:
+            self.cache.refresh_all_host_info(filter_host)
+        else:
+            for h in self.cache.get_hosts():
+                self.cache.refresh_all_host_info(h)
+
+        self._kick_serve_loop()
+
     @handle_orch_error
     def describe_service(self, service_type: Optional[str] = None, service_name: Optional[str] = None,
                          refresh: bool = False) -> List[orchestrator.ServiceDescription]:
