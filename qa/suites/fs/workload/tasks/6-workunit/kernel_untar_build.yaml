@@ -8,3 +8,4 @@ tasks:
     clients:
       all:
         - kernel_untar_build.sh
+      timeout: 5h
