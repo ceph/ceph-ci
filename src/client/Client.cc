@@ -11434,6 +11434,8 @@ int Client::_read_async(Fh *f, uint64_t off, uint64_t len, bufferlist *bl,
 
     client_lock.lock();
     put_cap_ref(in, CEPH_CAP_FILE_CACHE);
+  } else {
+    put_cap_ref(in, CEPH_CAP_FILE_CACHE);
   }
 
   if (r >= 0) {
@@ -11448,8 +11450,6 @@ int Client::_read_async(Fh *f, uint64_t off, uint64_t len, bufferlist *bl,
     r = bl->length();
 
     update_read_io_size(bl->length());
-  } else {
-    put_cap_ref(in, CEPH_CAP_FILE_CACHE);
   }
 
   do_readahead(f, in, off, len);
