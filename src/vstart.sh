@@ -1512,7 +1512,8 @@ else
         debug paxos = 20
         debug auth = 20
         debug mgrc = 20
-        debug ms = 1'
+        debug ms = 1
+        debug monc = 20'
     CCLIENTDEBUG='
         debug client = 20'
     CMDSDEBUG='

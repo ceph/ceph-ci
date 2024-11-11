@@ -667,7 +667,7 @@ public:
 		     ceph_release_t min_mon_release);
   // end election (called by Elector)
   void finish_election();
-
+  
   void update_logger();
 
   /**
@@ -738,6 +738,8 @@ public:
     std::forward<Func>(func)(session_map);
   }
   void send_latest_monmap(Connection *con);
+  void send_quorum_changed(Subscription *sub);
+  void check_quorum_subs();
 
   // messages
   void handle_get_version(MonOpRequestRef op);

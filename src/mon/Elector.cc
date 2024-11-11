@@ -467,7 +467,7 @@ void Elector::begin_peer_ping(int peer)
   peer_tracker.report_live_connection(peer, 0); // init this peer as existing
   live_pinging.insert(peer);
   dead_pinging.erase(peer);
-  peer_acked_ping[peer] = ceph_clock_now();
+  //peer_acked_ping[peer] = ceph_clock_now();
   if (!send_peer_ping(peer)) return;
   mon->timer.add_event_after(ping_timeout / PING_DIVISOR,
 			     new C_MonContext{mon, [this, peer](int) {
@@ -512,7 +512,13 @@ void Elector::ping_check(int peer)
   utime_t now = ceph_clock_now();
   utime_t& acked_ping = peer_acked_ping[peer];
   utime_t& newest_ping = peer_sent_ping[peer];
-  if (!acked_ping.is_zero() && acked_ping < now - ping_timeout) {
+  utime_t timeout_adjusted;
+  timeout_adjusted.set_from_double(ping_timeout);  // Convert seconds to utime_t
+  dout(20) << __func__ << " peer: " << peer << " now: " << now << " acked_ping: " << acked_ping
+     << " newest_ping: " << newest_ping << " ping_timeout: " << ping_timeout << " now - ping_timeout: " << now - timeout_adjusted << dendl;
+  if (!acked_ping.is_zero() && acked_ping < now - timeout_adjusted) {
+    dout(20) << __func__ << " peer " << peer << " is dead" << dendl;
+    mon->check_quorum_subs();
     peer_tracker.report_dead_connection(peer, now - acked_ping);
     acked_ping = now;
     begin_dead_ping(peer);
@@ -531,13 +537,14 @@ void Elector::ping_check(int peer)
 
 void Elector::begin_dead_ping(int peer)
 {
-  dout(20) << __func__ << " to peer " << peer << dendl;  
+  dout(20) << __func__ << " to peer " << peer << " current dead_pinging: " << dead_pinging << dendl;
   if (dead_pinging.count(peer)) {
     return;
   }
   
   live_pinging.erase(peer);
   dead_pinging.insert(peer);
+  dout(20) << __func__ << " to peer " << peer << " current dead_pinging: " << dead_pinging << " live_pinging: " << live_pinging << dendl;
   mon->timer.add_event_after(ping_timeout,
 			     new C_MonContext{mon, [this, peer](int) {
 				 dead_ping(peer);
@@ -556,6 +563,7 @@ void Elector::dead_ping(int peer)
   utime_t now = ceph_clock_now();
   utime_t& acked_ping = peer_acked_ping[peer];
 
+  //mon->check_quorum_subs();
   peer_tracker.report_dead_connection(peer, now - acked_ping);
   acked_ping = now;
   mon->timer.add_event_after(ping_timeout,
@@ -574,6 +582,7 @@ void Elector::handle_ping(MonOpRequestRef op)
   switch(m->op) {
   case MMonPing::PING:
     {
+      dout(20) << "nitzan PING from " << prank << " stamp " << m->stamp << dendl;
       MMonPing *reply = new MMonPing(MMonPing::PING_REPLY, m->stamp, peer_tracker.get_encoded_bl());
       m->get_connection()->send_message(reply);
     }
@@ -589,13 +598,15 @@ void Elector::handle_ping(MonOpRequestRef op)
 	   << " as it is newer than newest sent " << newest << dendl;
       return;
     }
-
-    if (m->stamp > previous_acked) {
+    dout(20) << "nitzan PING_REPLY from " << prank << " stamp " << m->stamp
+       << " previous_acked " << previous_acked << dendl;
+    if (m->stamp > previous_acked && !previous_acked.is_zero()) {
       dout(20) << "m->stamp > previous_acked" << dendl;
       peer_tracker.report_live_connection(prank, m->stamp - previous_acked);
       peer_acked_ping[prank] = m->stamp;
     } else{
       dout(20) << "m->stamp <= previous_acked .. we don't report_live_connection" << dendl;
+      peer_acked_ping[prank] = ceph_clock_now();
     }
     utime_t now = ceph_clock_now();
     dout(30) << "now: " << now << " m->stamp: " << m->stamp << " ping_timeout: "

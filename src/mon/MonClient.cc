@@ -29,9 +29,9 @@
 
 #include "messages/MMonGetMap.h"
 #include "messages/MMonGetVersion.h"
-#include "messages/MMonGetMap.h"
 #include "messages/MMonGetVersionReply.h"
 #include "messages/MMonMap.h"
+#include "messages/MMonQuorum.h"
 #include "messages/MConfig.h"
 #include "messages/MAuth.h"
 #include "messages/MLogAck.h"
@@ -69,6 +69,7 @@ using namespace std::literals;
 MonClient::MonClient(CephContext *cct_, boost::asio::io_context& service) :
   Dispatcher(cct_),
   AuthServer(cct_),
+  quorum(cct_),
   messenger(NULL),
   timer(cct_, monc_lock),
   service(service),
@@ -103,6 +104,7 @@ int MonClient::get_monmap()
   std::unique_lock l(monc_lock);
 
   sub.want("monmap", 0, 0);
+  sub.want("quorum_change", 0, 0);
   if (!_opened())
     _reopen_session();
   map_cond.wait(l, [this] { return !want_monmap; });
@@ -293,12 +295,47 @@ int MonClient::ping_monitor(const string &mon_id, string *result_reply)
   return ret;
 }
 
+int MonClient::quorum_send_subscribe()
+{
+  /*
+  ldout(cct, 10) << __func__ << dendl;
+  auth_registry.refresh_config();
+  
+  //KeyRing keyring;
+  //keyring.from_ceph_context(cct);
+  //RotatingKeyRing rkeyring(cct, cct->get_module_type(), &keyring);
+
+  Messenger *smsgr = Messenger::create_client_messenger(cct, "temp_quorum_client");
+  
+
+  for (auto& [addrs, aux] : aux_conns) {
+    auto conn = smsgr->connect_to_mon(addrs);
+    //smsgr->add_dispatcher_head(aux, Dispatcher::PRIORITY_HIGH);
+    //smsgr->set_auth_client(aux.get());
+    smsgr->start();
+
+    ldout(cct, 10) << __func__ << " sub quorum mon." << addrs
+                   << " " << conn->get_peer_addr() << dendl;
+    aux.start_conn(monmap.get_epoch(), entity_name);
+    aux.send_subscribe();
+  }
+  
+  //con->mark_down();
+  smsgr->shutdown();
+  smsgr->wait();
+  delete smsgr;
+*/
+  return 0;
+  
+}
+
 bool MonClient::ms_dispatch(Message *m)
 {
   ldout(cct, 25) << __func__ << " processing " << m << dendl;
   // we only care about these message types
   switch (m->get_type()) {
   case CEPH_MSG_MON_MAP:
+  case CEPH_MSG_MON_QUORUM:
   case CEPH_MSG_AUTH_REPLY:
   case CEPH_MSG_MON_SUBSCRIBE_ACK:
   case CEPH_MSG_MON_GET_VERSION_REPLY:
@@ -342,6 +379,9 @@ bool MonClient::ms_dispatch(Message *m)
     } else {
       m->put();
     }
+    break;
+  case CEPH_MSG_MON_QUORUM:
+    handle_mon_quorum(static_cast<MMonQuorum*>(m));
     break;
   case CEPH_MSG_AUTH_REPLY:
     handle_auth(static_cast<MAuthReply*>(m));
@@ -452,6 +492,17 @@ void MonClient::handle_monmap(MMonMap *m)
   if (authenticate_err == 1) {
     _finish_auth(0);
   }
+}
+
+void MonClient::handle_mon_quorum(MMonQuorum *m)
+{
+  ldout(cct, 20) << __func__ << " quorum " << m->quorum << " from "
+     << m->peer_addrs << ", e:" << m->epoch
+     << " active rank:" << monmap.get_rank(active_con->get_con()->get_peer_addrs())
+     << " monmap e:" << monmap.get_epoch()
+     << dendl;
+  quorum.add_quorum(m->peer_addrs, m->epoch, m->quorum);
+  sub.got("quorum_change", 0);
 }
 
 void MonClient::handle_config(MConfig *m)
@@ -578,18 +629,17 @@ int MonClient::authenticate(double timeout)
   }
   sub.want("monmap", monmap.get_epoch() ? monmap.get_epoch() + 1 : 0, 0);
   sub.want("config", 0, 0);
+  sub.want("quorum_change", 0, 0);
   if (!_opened())
     _reopen_session();
-
   auto until = ceph::mono_clock::now();
   until += ceph::make_timespan(timeout);
   if (timeout > 0.0)
-    ldout(cct, 10) << "authenticate will time out at " << until << dendl;
+    ldout(cct, 10) << __func__ << "authenticate will time out at " << until << dendl;
   while (!active_con && authenticate_err >= 0) {
     if (timeout > 0.0) {
       auto r = auth_cond.wait_until(lock, until);
       if (r == std::cv_status::timeout && !active_con) {
-	ldout(cct, 0) << "authenticate timed out after " << timeout << dendl;
 	authenticate_err = -ETIMEDOUT;
       }
     } else {
@@ -686,6 +736,8 @@ void MonClient::handle_auth(MAuthReply *m)
     return;
   }
   if (auth_err) {
+    ldout(cct, 0) << __func__ << " hunting auth failed, removing mon." << monmap.get_name(found->second.get_con()->get_peer_addr())
+       << " addr " << found->first << dendl;
     pending_cons.erase(found);
     if (!pending_cons.empty()) {
       // keep trying with pending connections
@@ -798,23 +850,39 @@ void MonClient::_add_conn(unsigned rank)
     mc.get_auth().reset(auth->clone());
   }
   pending_cons.insert(std::make_pair(peer, std::move(mc)));
+  /*
+  ldout(cct, 0) << __func__ << " creating aux conn to mon." << monmap.get_name(rank)
+                << " con " << conn
+                << " addr " << peer
+                << dendl;
+  auto m_aux = std::make_shared<MonConnection>(cct, conn, global_id, &auth_registry);
+  aux_conns.insert(std::make_pair(peer, std::move(m_aux)));
+  ldout(cct, 0) << __func__ << " end aux conn to mon." << monmap.get_name(rank)
+                << " con " << conn
+                << " addr " << peer
+                << dendl;
+  */
   ldout(cct, 10) << "picked mon." << monmap.get_name(rank)
                  << " con " << conn
                  << " addr " << peer
                  << dendl;
+  ldout(cct, 20) << __func__ << " nitzan aux_conns size: " << aux_conns.size() << dendl;
 }
 
 void MonClient::_add_conns()
 {
   // collect the next batch of candidates who are listed right next to the ones
-  // already tried
+  // already tried and are in the quorum.
+  ldout(cct, 20) << __func__ << " quorum agreed:" << quorum.agreed_quorum
+     << " tried:" << tried << "quorums:" << quorum.quorums << dendl;
   auto get_next_batch = [this]() -> std::vector<unsigned> {
     std::multimap<uint16_t, unsigned> ranks_by_priority;
     boost::copy(
       monmap.mon_info | boost::adaptors::filtered(
         [this](auto& info) {
           auto rank = monmap.get_rank(info.first);
-          return tried.count(rank) == 0;
+          ldout(cct, 20) << __func__ << " 1 rank " << rank << " in_quorum " << quorum.in_quorum(rank) << " tried " << tried.count(rank) << dendl;
+          return tried.count(rank) == 0 && quorum.in_quorum(rank);
         }) | boost::adaptors::transformed(
           [this](auto& info) {
             auto rank = monmap.get_rank(info.first);
@@ -851,14 +919,19 @@ void MonClient::_add_conns()
 		       std::mt19937{rd()});
     }
   }
-  ldout(cct, 10) << __func__ << " ranks=" << ranks << dendl;
-  unsigned n = cct->_conf->mon_client_hunt_parallel;
+  ldout(cct, 20) << __func__ << " ranks=" << ranks << dendl;
+  unsigned n = 0; //cct->_conf->mon_client_hunt_parallel;
   if (n == 0 || n > ranks.size()) {
     n = ranks.size();
   }
   for (unsigned i = 0; i < n; i++) {
     _add_conn(ranks[i]);
     tried.insert(ranks[i]);
+  }
+  ldout(cct, 10) << __func__ << " pending_cons size " << pending_cons.size() << dendl;
+  for (auto& c : pending_cons) {
+    ldout(cct, 10) << __func__ << " pending mon." << monmap.get_name(c.second.get_con()->get_peer_addr())
+       << " addr " << c.first << dendl;
   }
 }
 
@@ -993,6 +1066,10 @@ void MonClient::tick()
       if (maybe_renew) {
 	_renew_subs();
       }
+    }
+    if (!quorum.in_quorum(monmap.get_rank(cur_con->get_peer_addr()))) {
+      ldout(cct, 0) << "mon out of quorum, reopening session" << dendl;
+      //return _reopen_session();
     }
 
     if (now > last_keepalive + cct->_conf->mon_client_ping_interval) {
@@ -1522,6 +1599,7 @@ int MonClient::handle_auth_done(
 	  auth_meta, global_id, bl,
 	  session_key, connection_secret);
 	if (r) {
+    ldout(cct, 0) << __func__ << " " << i.first << " failed r=" << r << dendl;
 	  pending_cons.erase(i.first);
 	  if (!pending_cons.empty()) {
 	    return r;
@@ -1590,6 +1668,7 @@ int MonClient::handle_auth_bad_method(
 	if (r == 0) {
 	  return r; // try another method on this con
 	}
+  ldout(cct, 0) << __func__ << " " << i.first << " failed" << dendl;
 	pending_cons.erase(i.first);
 	if (!pending_cons.empty()) {
 	  return r;  // fail this con, maybe another con will succeed
@@ -1721,6 +1800,15 @@ void MonConnection::start(epoch_t epoch,
     ldout(cct, 10) << __func__ << " opening mon connection" << dendl;
     state = State::AUTHENTICATING;
     con->send_message(new MMonGetMap());
+
+    MonSub pending_sub;
+    ldout(cct, 10) << __func__ << " subscribe to quorum change mon." << con->get_peer_addr() << dendl;
+    pending_sub.want("quorum_change", 0, 0);
+    auto m = ceph::make_message<MMonSubscribe>();
+    m->what = pending_sub.get_subs();
+    m->hostname = ceph_get_short_hostname();
+    con->send_message2(std::move(m));
+
     return;
   }
 
@@ -1970,6 +2058,54 @@ int MonConnection::authenticate(MAuthReply *m)
   }
 
   return ret;
+}
+
+#undef dout_prefix
+#define dout_prefix *_dout << "monclient MonClientQuorum: "
+
+void MonClientQuorum::recalc_agreed_quorum() {
+  std::lock_guard l{quorum_l};
+  ldout(cct, 20) << __func__ << dendl;
+  if (quorums.empty()) {
+    agreed_quorum.clear();
+    return;
+  }
+  auto it = quorums.begin();
+  const std::set<int>& initial_ranks = it->second.second;
+  bool all_agree = std::all_of(
+    std::next(it), quorums.end(),
+    [&initial_ranks](const auto& entry) {
+      return entry.second.second == initial_ranks;
+    });
+
+  if (all_agree) {
+    agreed_quorum = initial_ranks;
+  } else {
+    std::set<int> intersection = initial_ranks;
+    for (const auto& entry : quorums) {
+      std::set<int> tmp;
+      std::set_intersection(
+        intersection.begin(), intersection.end(),
+        entry.second.second.begin(), entry.second.second.end(),
+        std::inserter(tmp, tmp.begin()));
+      intersection.swap(tmp);
+      if (intersection.empty()) break;
+    }
+    agreed_quorum = intersection;
+  }
+
+  ldout(cct, 20) << __func__ << " all quorums agree - " << agreed_quorum << dendl;
+  for (const auto& entry : quorums) {
+    ldout(cct, 20) << __func__ << " quorum " << entry.first << " - " << entry.second.second << dendl;
+  }
+}
+
+
+void AuxConnections::send_subscribe() {
+  auto m = ceph::make_message<MMonSubscribe>();
+  m->what = sub.get_subs();
+  m->hostname = ceph_get_short_hostname();
+  conn->get_con()->send_message2(std::move(m));
 }
 
 void MonClient::register_config_callback(md_config_t::config_callback fn) {

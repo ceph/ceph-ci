@@ -102,6 +102,7 @@ void MonmapMonitor::update_from_paxos(bool *need_bootstrap)
 
   dout(10) << __func__ << " got " << version << dendl;
   mon.monmap->decode(monmap_bl);
+  dout(10) << __func__ << " new monmap:::" << *mon.monmap << dendl;
 
   if (mon.store->exists("mkfs", "monmap")) {
     auto t(std::make_shared<MonitorDBStore::Transaction>());
@@ -1433,6 +1434,17 @@ int MonmapMonitor::get_monmap(bufferlist &bl)
 
 void MonmapMonitor::check_subs()
 {
+  dout(20) << __func__ << " checking subscriptions - dump substrisbers" << dendl;
+  for (auto sub : mon.session_map.subs) {
+    dout(20) << __func__ << " type " << sub.first << dendl;
+    for (auto s : *sub.second) {
+      dout(20) << __func__ << " session " << s->session->name
+         << " type " << sub.first << " next " << s->next
+         << " onetime " << s->onetime << dendl;
+    }
+  }
+
+  dout(20) << __func__ << " checking subscriptions - monmap" << dendl;
   const string type = "monmap";
   mon.with_session_map([this, &type](const MonSessionMap& session_map) {
       auto subs = session_map.subs.find(type);
@@ -1449,7 +1461,7 @@ void MonmapMonitor::check_sub(Subscription *sub)
   const auto epoch = mon.monmap->get_epoch();
   dout(10) << __func__
 	   << " monmap next " << sub->next
-	   << " have " << epoch << dendl;
+	   << " have " << epoch << " sending to: " << sub->session->name << dendl;
   if (sub->next <= epoch) {
     mon.send_latest_monmap(sub->session->con.get());
     if (sub->onetime) {
@@ -1458,6 +1470,27 @@ void MonmapMonitor::check_sub(Subscription *sub)
 	});
     } else {
       sub->next = epoch + 1;
+    }
+  }
+}
+
+void MonmapMonitor::send_quorum_to_sub(Subscription *sub)
+{
+  dout(10) << __func__ << " " << sub->session->con << " mon epoch " << mon.monmap->get_epoch() << " sub epoch " << sub->next << dendl;
+  const auto epoch = mon.get_epoch();
+  dout(10) << __func__
+	   << " monmap next " << sub->next
+	   << " have " << epoch << " sending to: " << sub->session->name << dendl;
+  if (sub->next <= epoch) {
+    //mon.send_quorum_changed(sub->session->con.get()); 
+    if (sub->onetime) {
+      dout(10) << __func__ << " onetime removing sub " << sub << dendl;
+      mon.with_session_map([sub](MonSessionMap& session_map) {
+        session_map.remove_sub(sub);
+      });
+    } else {
+      sub->next = epoch + 1;
+      dout(10) << __func__ << " onetime next " << sub->next << " quorum change: " << dendl;
     }
   }
 }

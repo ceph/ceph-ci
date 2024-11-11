@@ -42,6 +42,7 @@
 #include "auth/AuthClientHandler.h"
 
 class MMonMap;
+class MMonQuorum;
 class MConfig;
 class MMonGetVersionReply;
 class MMonCommandAck;
@@ -147,6 +148,60 @@ private:
   std::string mon_name;
 };
 
+struct MonClientQuorum {
+private:
+  CephContext *cct;
+public:
+  std::map<entity_addrvec_t, std::pair<version_t, std::set<int>>> quorums;
+  std::set<int> agreed_quorum;
+  bool active_con_out_quorum = false;
+  mutable ceph::mutex quorum_l = ceph::make_mutex("MonClientQuorum");
+
+  MonClientQuorum(CephContext *cct_ = nullptr) : cct(cct_) {}
+  void set_cct(CephContext *cct_) {
+    cct = cct_;
+  }
+  bool in_quorum(const int rank) const {
+    std::lock_guard l{quorum_l};
+    if (quorums.empty() && agreed_quorum.empty()) {
+      return true; // first time connection
+    }
+    return agreed_quorum.count(rank) > 0;
+  }
+  void recalc_agreed_quorum();
+  void add_quorum(const entity_addrvec_t& addrs,
+      const version_t epoch,
+      const std::set<int>& quorum) {
+    {
+      std::lock_guard l{quorum_l};
+      quorums[addrs] = std::make_pair(epoch, quorum);
+    }
+    recalc_agreed_quorum();
+  }
+};
+
+class AuxConnections {
+public:
+  AuxConnections(std::shared_ptr<MonConnection> conn_)
+    : conn(std::move(conn_))
+      
+  { sub.want("quorum_change", 0, 0);}
+
+  std::shared_ptr<MonConnection> get_con() {
+    return conn;
+  }
+
+  void start_conn(epoch_t epoch, const EntityName& entity_name) {
+    sub.got("quorum", 0);
+    conn->start(epoch, entity_name);
+  }
+
+  void send_subscribe();
+
+private:
+  std::shared_ptr<MonConnection> conn;
+  MonSub sub;
+};
 
 struct MonClientPinger : public Dispatcher,
 			 public AuthClient {
@@ -380,13 +435,16 @@ public:
   using CommandCompletion = ceph::async::Completion<CommandSig>;
 
   MonMap monmap;
+  
   std::map<std::string,std::string> config_mgr;
 
 private:
+  MonClientQuorum quorum;
   Messenger *messenger;
 
   std::unique_ptr<MonConnection> active_con;
   std::map<entity_addrvec_t, MonConnection> pending_cons;
+  std::map<entity_addrvec_t, AuxConnections> aux_conns;
   std::set<unsigned> tried;
   AuxConnectionManager aux_list;
 
@@ -412,6 +470,7 @@ private:
   bool ms_handle_refused(Connection *con) override { return false; }
 
   void handle_monmap(MMonMap *m);
+  void handle_mon_quorum(MMonQuorum *m);
   void handle_config(MConfig *m);
 
   void handle_auth(MAuthReply *m);
@@ -607,6 +666,7 @@ public:
    *             expired (default: conf->client_mount_timeout).
    */
   int ping_monitor(const std::string &mon_id, std::string *result_reply);
+  int quorum_send_subscribe();
 
   void send_mon_message(Message *m) {
     send_mon_message(MessageRef{m, false});
