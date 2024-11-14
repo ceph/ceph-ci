@@ -17459,6 +17459,9 @@ void Client::handle_conf_change(const ConfigProxy& conf,
   if (changed.count("client_permissions")) {
     client_permissions = cct->_conf.get_val<bool>("client_permissions");
   }
+  if (changed.count("fuse_default_permissions")) {
+    fuse_default_permissions = cct->_conf.get_val<bool>("fuse_default_permissions");
+  }
   if (changed.count("client_cache_mid")) {
     lru.lru_set_midpoint(cct->_conf->client_cache_mid);
   }
