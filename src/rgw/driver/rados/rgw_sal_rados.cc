@@ -2497,7 +2497,8 @@ RadosObject::~RadosObject()
 }
 
 bool RadosObject::is_sync_completed(const DoutPrefixProvider* dpp,
-   const ceph::real_time& obj_mtime)
+                                    optional_yield y,
+                                    const ceph::real_time& obj_mtime)
 {
   const auto& bucket_info = get_bucket()->get_info();
   if (bucket_info.is_indexless()) {
