@@ -12,7 +12,8 @@
     NVMeoFMaxGatewaysPerGroup: 8,
     NVMeoFMaxGatewaysPerCluster: 32,
     NVMeoFHighGatewayCPU: 80,
-    NVMeoFMaxSubsystemsPerGateway: 16,
+    NVMeoFMaxSubsystemsPerGateway: 128,
+    NVMeoFMaxNamespaces: 1024,
     NVMeoFHighClientCount: 32,
     NVMeoFHighHostCPU: 80,
     //
