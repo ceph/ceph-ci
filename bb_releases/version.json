@@ -1,5 +1,5 @@
 {
     "ceph-base-version": "19.2.0",
-    "bb-version": "2",
-    "bb-patch": "notification_log_subsystem"
+    "bb-version": "3",
+    "bb-patch": "replication_status_header"
 }
