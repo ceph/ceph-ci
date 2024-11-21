@@ -734,6 +734,11 @@ bool FilterDriver::valid_placement(const rgw_placement_rule& rule)
   return next->valid_placement(rule);
 }
 
+void FilterDriver::shutdown(void)
+{
+  next->shutdown();
+}
+
 void FilterDriver::finalize(void)
 {
   next->finalize();

@@ -488,6 +488,7 @@ public:
   virtual const std::string& get_compression_type(const rgw_placement_rule& rule) override;
   virtual bool valid_placement(const rgw_placement_rule& rule) override;
 
+  virtual void shutdown(void) override;
   virtual void finalize(void) override;
 
   virtual CephContext* ctx(void) override;
