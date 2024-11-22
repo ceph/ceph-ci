@@ -132,6 +132,9 @@ int group_snap_rollback_by_record(librados::IoCtx& group_ioctx,
 
   std::vector<librbd::ImageCtx*> ictxs;
 
+  cls::rbd::ImageSnapshotNamespaceGroup ne{group_ioctx.get_id(), group_id,
+                                           group_snap.id};
+
   ldout(cct, 20) << "Rolling back snapshots" << dendl;
   int snap_count = group_snap.snaps.size();
 
