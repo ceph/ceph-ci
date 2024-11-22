@@ -1,5 +1,5 @@
 {
     "ceph-base-version": "19.2.0",
-    "bb-version": "3",
-    "bb-patch": "replication_status_header"
+    "bb-version": "4",
+    "bb-patch": "topic_attrs_sasl_auth"
 }
