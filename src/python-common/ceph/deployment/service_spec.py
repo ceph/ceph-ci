@@ -1468,7 +1468,7 @@ class NvmeofServiceSpec(ServiceSpec):
         self.enable_monitor_client = enable_monitor_client
 
     def get_port_start(self) -> List[int]:
-        return [5500, 4420, 8009]
+        return [self.port, 4420, self.discovery_port]
 
     def validate(self) -> None:
         #  TODO: what other parameters should be validated as part of this function?
