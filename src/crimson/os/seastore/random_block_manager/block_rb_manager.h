@@ -38,12 +38,12 @@ public:
    * Ondisk layout (TODO)
    *
    * ---------------------------------------------------------------------------
-   * | rbm_metadata_header_t | metadatas |        ...      |    data blocks    |
+   * | rbm_superblock_t | metadatas |        ...      |    data blocks    |
    * ---------------------------------------------------------------------------
    */
 
   read_ertr::future<> read(paddr_t addr, bufferptr &buffer) final;
-  write_ertr::future<> write(paddr_t addr, bufferptr &buf) final;
+  write_ertr::future<> write(paddr_t addr, bufferptr buf) final;
   open_ertr::future<> open() final;
   close_ertr::future<> close() final;
 
@@ -54,10 +54,10 @@ public:
    * To do so, alloc_extent() looks into both in-memory allocator
    * and freebitmap blocks.
    *
-   * TODO: multiple allocation
-   *
    */
   paddr_t alloc_extent(size_t size) final; // allocator, return blocks
+
+  allocate_ret_bare alloc_extents(size_t size) final; // allocator, return blocks
 
   void complete_allocation(paddr_t addr, size_t size) final;
 
@@ -126,6 +126,12 @@ public:
   size_t get_journal_size() const final {
     return device->get_journal_size();
   }
+
+  bool check_valid_range(rbm_abs_addr paddr, bufferptr &bptr);
+
+#ifdef UNIT_TESTS_BUILT
+  void prefill_fragmented_device() final;
+#endif
 
 private:
   /*

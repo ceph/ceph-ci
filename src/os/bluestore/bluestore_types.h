@@ -16,6 +16,7 @@
 #define CEPH_OSD_BLUESTORE_BLUESTORE_TYPES_H
 
 #include <bit>
+#include <limits>
 #include <ostream>
 #include <type_traits>
 #include <vector>
@@ -158,6 +159,14 @@ struct bluestore_extent_ref_map_t {
       denc_varint_lowz(v.length, p);
       denc_varint(v.refs, p);
     }
+    void dump(ceph::Formatter *f) const {
+      f->dump_unsigned("length", length);
+      f->dump_unsigned("refs", refs);
+    }
+    static void generate_test_instances(std::list<record_t*>& o) {
+      o.push_back(new record_t);
+      o.push_back(new record_t(123, 456));
+    }
   };
 
   typedef mempool::bluestore_cache_other::map<uint64_t,record_t> map_t;
@@ -229,7 +238,7 @@ struct bluestore_extent_ref_map_t {
   static void generate_test_instances(std::list<bluestore_extent_ref_map_t*>& o);
 };
 WRITE_CLASS_DENC(bluestore_extent_ref_map_t)
-
+WRITE_CLASS_DENC(bluestore_extent_ref_map_t::record_t)
 
 std::ostream& operator<<(std::ostream& out, const bluestore_extent_ref_map_t& rm);
 static inline bool operator==(const bluestore_extent_ref_map_t::record_t& l,
@@ -380,6 +389,10 @@ struct bluestore_blob_use_tracker_t {
     uint32_t full_length,
     uint32_t _au_size);
 
+  inline void init_and_ref(
+    uint32_t full_length,
+    uint32_t tracked_chunk);
+
   void get(
     uint32_t offset,
     uint32_t len);
@@ -394,6 +407,15 @@ struct bluestore_blob_use_tracker_t {
     uint32_t offset,
     uint32_t len,
     PExtentVector *release);
+
+  /// Puts back references in region [offset~length].
+  /// It is different, simpler version of put,
+  /// as it does not allow for overprovisioning.
+  /// Releasing off=0x500 len=0x2000 from {0x1000,0x1004,0x1000} will fail,
+  /// while the other one behaves properly
+  std::pair<uint32_t, uint32_t> put_simple(
+    uint32_t offset,
+    uint32_t length);
 
   bool can_split() const;
   bool can_split_at(uint32_t blob_offset) const;
@@ -604,7 +626,9 @@ public:
   bool is_shared() const {
     return has_flag(FLAG_SHARED);
   }
-
+  bool has_disk() const {
+    return extents.size() > 1 || extents.begin()->is_valid();
+  }
   /// return chunk (i.e. min readable block) size for the blob
   uint64_t get_chunk_size(uint64_t dev_block_size) const {
     return has_csum() ?
@@ -722,7 +746,14 @@ public:
       }
     }
   }
-
+  /// todo implement me!
+  unused_t get_unused_mask(uint32_t offset, uint32_t length, uint32_t chunk_size) {
+    if (has_unused()) {
+      return 0;
+    } else {
+      return 0;
+    }
+  }
   // map_f_invoke templates intended to mask parameters which are not expected
   // by the provided callback
   template<class F, typename std::enable_if<std::is_invocable_r_v<
@@ -901,6 +932,8 @@ public:
 
   bool can_prune_tail() const {
     return
+      !is_shared() &&
+      !is_compressed() &&
       extents.size() > 1 &&  // if it's all invalid it's not pruning.
       !extents.back().is_valid() &&
       !has_unused();
@@ -949,7 +982,24 @@ public:
 
   void split(uint32_t blob_offset, bluestore_blob_t& rb);
   void allocated(uint32_t b_off, uint32_t length, const PExtentVector& allocs);
+  void allocated_full(uint32_t length, PExtentVector&& allocs);
   void allocated_test(const bluestore_pextent_t& alloc); // intended for UT only
+  static constexpr uint64_t NO_ALLOCATION = std::numeric_limits<uint64_t>::max();
+  uint64_t get_allocation_at(uint32_t in_blob_offset) {
+    uint32_t loc = in_blob_offset;
+    for (auto e : extents) {
+      if (loc < e.length) {
+        //ceph_assert(e.is_valid());
+        if (e.is_valid()) {
+          return e.offset + loc;
+        } else {
+          return NO_ALLOCATION;
+        }
+      }
+      loc -= e.length;
+    }
+    ceph_assert(false);
+  };
 
   /// updates blob's pextents container and return unused pextents eligible
   /// for release.
@@ -961,6 +1011,18 @@ public:
     bool all,
     const PExtentVector& logical,
     PExtentVector* r);
+
+  /// Remove blob's pextents.
+  /// [offset~length] - range to remove, in local blob space
+  /// released_disk   - a vector of disk allocation units that are no longer in use;
+  ///                   appends to it
+  /// returns:
+  ///   size of released disk
+  uint32_t release_extents(
+    uint32_t offset,
+    uint32_t length,
+    PExtentVector* released_disk
+  );
 };
 WRITE_CLASS_DENC_FEATURED(bluestore_blob_t)
 
@@ -973,6 +1035,7 @@ struct bluestore_shared_blob_t {
   uint64_t sbid;                       ///> shared blob id
   bluestore_extent_ref_map_t ref_map;  ///< shared blob extents
 
+  bluestore_shared_blob_t() : sbid(0) {}
   bluestore_shared_blob_t(uint64_t _sbid) : sbid(_sbid) {}
   bluestore_shared_blob_t(uint64_t _sbid,
 			  bluestore_extent_ref_map_t&& _ref_map ) 
@@ -1011,6 +1074,7 @@ struct bluestore_onode_t {
       denc_varint(v.bytes, p);
     }
     void dump(ceph::Formatter *f) const;
+    static void generate_test_instances(std::list<shard_info*>& ls);
   };
   std::vector<shard_info> extent_map_shards; ///< extent std::map shards (if any)
 
@@ -1367,12 +1431,12 @@ struct sb_info_space_efficient_map_t {
       if (aux_items.size() != 0) {
 	auto it = std::lower_bound(
 	  aux_items.begin(),
-	  aux_items.end(),
+	  aux_items.end() - 1,
 	  id,
 	  [](const sb_info_t& a, const uint64_t& b) {
 	    return a < b;
 	  });
-	if (it->get_sbid() == id) {
+        if (it->get_sbid() == id) {
 	  return it;
 	}
       }

@@ -57,7 +57,11 @@ static int usage()
 
 /*
  * start up the RADOS connection and then handle HTTP messages as they come in
+ *
+ * This has an uncaught exception. Even if the exception is caught, the program
+ * would need to be terminated, so the warning is simply suppressed.
  */
+// coverity[root_function:SUPPRESS]
 int main(int argc, char *argv[])
 { 
   int r{0};
@@ -130,6 +134,7 @@ int main(int argc, char *argv[])
   register_async_signal_handler(SIGTERM, rgw::signal::handle_sigterm);
   register_async_signal_handler(SIGINT, rgw::signal::handle_sigterm);
   register_async_signal_handler(SIGUSR1, rgw::signal::handle_sigterm);
+  register_async_signal_handler(SIGXFSZ, rgw::signal::sig_handler_noop);
   sighandler_alrm = signal(SIGALRM, godown_alarm);
 
   main.init_perfcounters();
@@ -157,8 +162,12 @@ int main(int argc, char *argv[])
   main.init_opslog();
   main.init_tracepoints();
   main.init_lua();
-  main.init_frontends2(nullptr /* RGWLib */);
-  main.init_notification_endpoints();
+  r = main.init_frontends2(nullptr /* RGWLib */);
+  if (r != 0) {
+    derr << "ERROR:  initialize frontend fail, r = " << r << dendl;
+    main.shutdown();
+    return r;
+  }
 
 #if defined(HAVE_SYS_PRCTL_H)
   if (prctl(PR_SET_DUMPABLE, 1) == -1) {
@@ -175,6 +184,7 @@ int main(int argc, char *argv[])
     unregister_async_signal_handler(SIGTERM, rgw::signal::handle_sigterm);
     unregister_async_signal_handler(SIGINT, rgw::signal::handle_sigterm);
     unregister_async_signal_handler(SIGUSR1, rgw::signal::handle_sigterm);
+    unregister_async_signal_handler(SIGXFSZ, rgw::signal::sig_handler_noop);
     shutdown_async_signal_handler();
   };
 

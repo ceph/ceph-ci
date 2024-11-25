@@ -11,13 +11,7 @@
 #include "services/svc_cls.h"
 #include "services/svc_config_key_rados.h"
 #include "services/svc_mdlog.h"
-#include "services/svc_meta.h"
-#include "services/svc_meta_be.h"
-#include "services/svc_meta_be_sobj.h"
-#include "services/svc_meta_be_otp.h"
 #include "services/svc_notify.h"
-#include "services/svc_otp.h"
-#include "services/svc_rados.h"
 #include "services/svc_zone.h"
 #include "services/svc_zone_utils.h"
 #include "services/svc_quota.h"
@@ -26,16 +20,21 @@
 #include "services/svc_sys_obj_cache.h"
 #include "services/svc_sys_obj_core.h"
 #include "services/svc_user_rados.h"
-#include "services/svc_role_rados.h"
 
 #include "common/errno.h"
 
+#include "account.h"
+#include "group.h"
 #include "rgw_bucket.h"
+#include "rgw_cr_rados.h"
 #include "rgw_datalog.h"
 #include "rgw_metadata.h"
 #include "rgw_otp.h"
+#include "rgw_sal_rados.h"
 #include "rgw_user.h"
-#include "rgw_role.h"
+#include "role.h"
+#include "rgw_pubsub.h"
+#include "topic.h"
 
 #define dout_subsys ceph_subsys_rgw
 
@@ -48,6 +47,7 @@ RGWServices_Def::~RGWServices_Def()
 }
 
 int RGWServices_Def::init(CephContext *cct,
+			  rgw::sal::RadosStore* driver,
 			  bool have_cache,
                           bool raw,
 			  bool run_sync,
@@ -63,12 +63,7 @@ int RGWServices_Def::init(CephContext *cct,
   config_key_rados = std::make_unique<RGWSI_ConfigKey_RADOS>(cct);
   datalog_rados = std::make_unique<RGWDataChangesLog>(cct);
   mdlog = std::make_unique<RGWSI_MDLog>(cct, run_sync);
-  meta = std::make_unique<RGWSI_Meta>(cct);
-  meta_be_sobj = std::make_unique<RGWSI_MetaBackend_SObj>(cct);
-  meta_be_otp = std::make_unique<RGWSI_MetaBackend_OTP>(cct);
   notify = std::make_unique<RGWSI_Notify>(cct);
-  otp = std::make_unique<RGWSI_OTP>(cct);
-  rados = std::make_unique<RGWSI_RADOS>(cct);
   zone = std::make_unique<RGWSI_Zone>(cct);
   zone_utils = std::make_unique<RGWSI_ZoneUtils>(cct);
   quota = std::make_unique<RGWSI_Quota>(cct);
@@ -76,47 +71,45 @@ int RGWServices_Def::init(CephContext *cct,
   sysobj = std::make_unique<RGWSI_SysObj>(cct);
   sysobj_core = std::make_unique<RGWSI_SysObj_Core>(cct);
   user_rados = std::make_unique<RGWSI_User_RADOS>(cct);
-  role_rados = std::make_unique<RGWSI_Role_RADOS>(cct);
+  async_processor = std::make_unique<RGWAsyncRadosProcessor>(
+    cct, cct->_conf->rgw_num_async_rados_threads);
 
   if (have_cache) {
     sysobj_cache = std::make_unique<RGWSI_SysObj_Cache>(dpp, cct);
   }
 
-  vector<RGWSI_MetaBackend *> meta_bes{meta_be_sobj.get(), meta_be_otp.get()};
-
+  async_processor->start();
   finisher->init();
-  bi_rados->init(zone.get(), rados.get(), bilog_rados.get(), datalog_rados.get());
+  bi_rados->init(zone.get(), driver->getRados()->get_rados_handle(),
+		 bilog_rados.get(), datalog_rados.get());
   bilog_rados->init(bi_rados.get());
   bucket_sobj->init(zone.get(), sysobj.get(), sysobj_cache.get(),
-                    bi_rados.get(), meta.get(), meta_be_sobj.get(),
+                    bi_rados.get(), mdlog.get(),
                     sync_modules.get(), bucket_sync_sobj.get());
   bucket_sync_sobj->init(zone.get(),
                          sysobj.get(),
                          sysobj_cache.get(),
                          bucket_sobj.get());
-  cls->init(zone.get(), rados.get());
-  config_key_rados->init(rados.get());
-  mdlog->init(rados.get(), zone.get(), sysobj.get(), cls.get());
-  meta->init(sysobj.get(), mdlog.get(), meta_bes);
-  meta_be_sobj->init(sysobj.get(), mdlog.get());
-  meta_be_otp->init(sysobj.get(), mdlog.get(), cls.get());
-  notify->init(zone.get(), rados.get(), finisher.get());
-  otp->init(zone.get(), meta.get(), meta_be_otp.get());
-  rados->init();
-  zone->init(sysobj.get(), rados.get(), sync_modules.get(), bucket_sync_sobj.get());
-  zone_utils->init(rados.get(), zone.get());
+  cls->init(zone.get(), driver->getRados()->get_rados_handle());
+  config_key_rados->init(driver->getRados()->get_rados_handle());
+  mdlog->init(driver->getRados()->get_rados_handle(), zone.get(), sysobj.get(),
+	      cls.get(), async_processor.get());
+  notify->init(zone.get(), driver->getRados()->get_rados_handle(),
+	       finisher.get());
+  zone->init(sysobj.get(), driver->getRados()->get_rados_handle(),
+	     sync_modules.get(), bucket_sync_sobj.get());
+  zone_utils->init(driver->getRados()->get_rados_handle(), zone.get());
   quota->init(zone.get());
   sync_modules->init(zone.get());
-  sysobj_core->core_init(rados.get(), zone.get());
+  sysobj_core->core_init(driver->getRados()->get_rados_handle(), zone.get());
   if (have_cache) {
-    sysobj_cache->init(rados.get(), zone.get(), notify.get());
-    sysobj->init(rados.get(), sysobj_cache.get());
+    sysobj_cache->init(driver->getRados()->get_rados_handle(), zone.get(), notify.get());
+    sysobj->init(driver->getRados()->get_rados_handle(), sysobj_cache.get());
   } else {
-    sysobj->init(rados.get(), sysobj_core.get());
+    sysobj->init(driver->getRados()->get_rados_handle(), sysobj_core.get());
   }
-  user_rados->init(rados.get(), zone.get(), sysobj.get(), sysobj_cache.get(),
-                   meta.get(), meta_be_sobj.get(), sync_modules.get());
-  role_rados->init(zone.get(), meta.get(), meta_be_sobj.get(), sysobj.get());
+  user_rados->init(driver->getRados()->get_rados_handle(), zone.get(),
+                   mdlog.get(), sysobj.get(), sysobj_cache.get());
 
   can_shutdown = true;
 
@@ -134,12 +127,6 @@ int RGWServices_Def::init(CephContext *cct,
     }
   }
 
-  r = rados->start(y, dpp);
-  if (r < 0) {
-    ldpp_dout(dpp, 0) << "ERROR: failed to start rados service (" << cpp_strerror(-r) << dendl;
-    return r;
-  }
-
   if (!raw) {
     r = zone->start(y, dpp);
     if (r < 0) {
@@ -149,7 +136,7 @@ int RGWServices_Def::init(CephContext *cct,
 
     r = datalog_rados->start(dpp, &zone->get_zone(),
 			     zone->get_zone_params(),
-			     rados->get_rados_handle());
+			     driver->getRados()->get_rados_handle());
     if (r < 0) {
       ldpp_dout(dpp, 0) << "ERROR: failed to start datalog_rados service (" << cpp_strerror(-r) << dendl;
       return r;
@@ -213,18 +200,6 @@ int RGWServices_Def::init(CephContext *cct,
   }
 
   if (!raw) {
-    r = meta_be_sobj->start(y, dpp);
-    if (r < 0) {
-      ldpp_dout(dpp, 0) << "ERROR: failed to start meta_be_sobj service (" << cpp_strerror(-r) << dendl;
-      return r;
-    }
-
-    r = meta->start(y, dpp);
-    if (r < 0) {
-      ldpp_dout(dpp, 0) << "ERROR: failed to start meta service (" << cpp_strerror(-r) << dendl;
-      return r;
-    }
-
     r = bucket_sobj->start(y, dpp);
     if (r < 0) {
       ldpp_dout(dpp, 0) << "ERROR: failed to start bucket service (" << cpp_strerror(-r) << dendl;
@@ -242,19 +217,6 @@ int RGWServices_Def::init(CephContext *cct,
       ldpp_dout(dpp, 0) << "ERROR: failed to start user_rados service (" << cpp_strerror(-r) << dendl;
       return r;
     }
-
-    r = otp->start(y, dpp);
-    if (r < 0) {
-      ldpp_dout(dpp, 0) << "ERROR: failed to start otp service (" << cpp_strerror(-r) << dendl;
-      return r;
-    }
-
-    r = role_rados->start(y, dpp);
-    if (r < 0) {
-      ldout(cct, 0) << "ERROR: failed to start role_rados service (" << cpp_strerror(-r) << dendl;
-      return r;
-    }
-
   }
 
   /* cache or core services will be started by sysobj */
@@ -272,15 +234,10 @@ void RGWServices_Def::shutdown()
     return;
   }
 
-  role_rados->shutdown();
   datalog_rados.reset();
   user_rados->shutdown();
   sync_modules->shutdown();
-  otp->shutdown();
   notify->shutdown();
-  meta_be_otp->shutdown();
-  meta_be_sobj->shutdown();
-  meta->shutdown();
   mdlog->shutdown();
   config_key_rados->shutdown();
   cls->shutdown();
@@ -299,18 +256,17 @@ void RGWServices_Def::shutdown()
   quota->shutdown();
   zone_utils->shutdown();
   zone->shutdown();
-  rados->shutdown();
+  async_processor->stop();
 
   has_shutdown = true;
-
 }
 
-
-int RGWServices::do_init(CephContext *_cct, bool have_cache, bool raw, bool run_sync, optional_yield y, const DoutPrefixProvider *dpp)
+int RGWServices::do_init(CephContext *_cct, rgw::sal::RadosStore* driver, bool have_cache, bool raw, bool run_sync, optional_yield y, const DoutPrefixProvider *dpp, const rgw::SiteConfig& _site)
 {
   cct = _cct;
+  site = &_site;
 
-  int r = _svc.init(cct, have_cache, raw, run_sync, y, dpp);
+  int r = _svc.init(cct, driver, have_cache, raw, run_sync, y, dpp);
   if (r < 0) {
     return r;
   }
@@ -328,12 +284,7 @@ int RGWServices::do_init(CephContext *_cct, bool have_cache, bool raw, bool run_
   config_key = config_key_rados;
   datalog_rados = _svc.datalog_rados.get();
   mdlog = _svc.mdlog.get();
-  meta = _svc.meta.get();
-  meta_be_sobj = _svc.meta_be_sobj.get();
-  meta_be_otp = _svc.meta_be_otp.get();
   notify = _svc.notify.get();
-  otp = _svc.otp.get();
-  rados = _svc.rados.get();
   zone = _svc.zone.get();
   zone_utils = _svc.zone_utils.get();
   quota = _svc.quota.get();
@@ -342,7 +293,7 @@ int RGWServices::do_init(CephContext *_cct, bool have_cache, bool raw, bool run_
   cache = _svc.sysobj_cache.get();
   core = _svc.sysobj_core.get();
   user = _svc.user_rados.get();
-  role = _svc.role_rados.get();
+  async_processor = _svc.async_processor.get();
 
   return 0;
 }
@@ -374,58 +325,60 @@ RGWCtlDef::_meta::_meta() {}
 RGWCtlDef::_meta::~_meta() {}
 
 
-int RGWCtlDef::init(RGWServices& svc, rgw::sal::Driver* driver, const DoutPrefixProvider *dpp)
+int RGWCtlDef::init(RGWServices& svc, rgw::sal::Driver* driver,
+                    librados::Rados& rados, const DoutPrefixProvider *dpp)
 {
-  meta.mgr.reset(new RGWMetadataManager(svc.meta));
+  meta.mgr.reset(new RGWMetadataManager());
 
-  meta.user.reset(RGWUserMetaHandlerAllocator::alloc(svc.user));
+  meta.user = create_user_metadata_handler(svc.user);
 
-  auto sync_module = svc.sync_modules->get_sync_module();
-  if (sync_module) {
-    meta.bucket.reset(sync_module->alloc_bucket_meta_handler());
-    meta.bucket_instance.reset(sync_module->alloc_bucket_instance_meta_handler(driver));
-  } else {
-    meta.bucket.reset(RGWBucketMetaHandlerAllocator::alloc());
-    meta.bucket_instance.reset(RGWBucketInstanceMetaHandlerAllocator::alloc(driver));
-  }
-
-  meta.otp.reset(RGWOTPMetaHandlerAllocator::alloc());
-  meta.role = std::make_unique<rgw::sal::RGWRoleMetadataHandler>(driver, svc.role);
-
-  user.reset(new RGWUserCtl(svc.zone, svc.user, (RGWUserMetadataHandler *)meta.user.get()));
   bucket.reset(new RGWBucketCtl(svc.zone,
                                 svc.bucket,
                                 svc.bucket_sync,
                                 svc.bi, svc.user));
-  otp.reset(new RGWOTPCtl(svc.zone, svc.otp));
 
-  RGWBucketMetadataHandlerBase *bucket_meta_handler = static_cast<RGWBucketMetadataHandlerBase *>(meta.bucket.get());
-  RGWBucketInstanceMetadataHandlerBase *bi_meta_handler = static_cast<RGWBucketInstanceMetadataHandlerBase *>(meta.bucket_instance.get());
+  auto sync_module = svc.sync_modules->get_sync_module();
+  if (sync_module) {
+    meta.bucket = sync_module->alloc_bucket_meta_handler(rados, svc.bucket, bucket.get());
+    meta.bucket_instance = sync_module->alloc_bucket_instance_meta_handler(
+        driver, svc.zone, svc.bucket, svc.bi);
+  } else {
+    meta.bucket = create_bucket_metadata_handler(rados, svc.bucket, bucket.get());
+    meta.bucket_instance = create_bucket_instance_metadata_handler(
+        driver, svc.zone, svc.bucket, svc.bi);
+  }
 
-  bucket_meta_handler->init(svc.bucket, bucket.get());
-  bi_meta_handler->init(svc.zone, svc.bucket, svc.bi);
+  meta.otp = rgwrados::otp::create_metadata_handler(
+      *svc.sysobj, *svc.cls, *svc.mdlog, svc.zone->get_zone_params());
+  meta.role = rgwrados::role::create_metadata_handler(
+      rados, *svc.sysobj, *svc.mdlog, svc.zone->get_zone_params());
+  meta.account = rgwrados::account::create_metadata_handler(
+      *svc.sysobj, svc.zone->get_zone_params());
+  meta.group = rgwrados::group::create_metadata_handler(
+      *svc.sysobj, rados, svc.zone->get_zone_params());
 
-  RGWOTPMetadataHandlerBase *otp_handler = static_cast<RGWOTPMetadataHandlerBase *>(meta.otp.get());
-  otp_handler->init(svc.zone, svc.meta_be_otp, svc.otp);
+  user = std::make_unique<RGWUserCtl>(svc.zone, svc.user);
+
+  meta.topic_cache = std::make_unique<RGWChainedCacheImpl<rgwrados::topic::cache_entry>>();
+  meta.topic_cache->init(svc.cache);
+
+  meta.topic = rgwrados::topic::create_metadata_handler(
+      *svc.sysobj, svc.cache, *svc.mdlog, rados,
+      svc.zone->get_zone_params(), *meta.topic_cache);
 
   user->init(bucket.get());
-  bucket->init(user.get(),
-               (RGWBucketMetadataHandler *)bucket_meta_handler,
-               (RGWBucketInstanceMetadataHandler *)bi_meta_handler,
-	       svc.datalog_rados,
-               dpp);
-
-  otp->init((RGWOTPMetadataHandler *)meta.otp.get());
+  bucket->init(user.get(), svc.datalog_rados, dpp);
 
   return 0;
 }
 
-int RGWCtl::init(RGWServices *_svc, rgw::sal::Driver* driver, const DoutPrefixProvider *dpp)
+int RGWCtl::init(RGWServices *_svc, rgw::sal::Driver* driver,
+                 librados::Rados& rados, const DoutPrefixProvider *dpp)
 {
   svc = _svc;
   cct = svc->cct;
 
-  int r = _ctl.init(*svc, driver, dpp);
+  int r = _ctl.init(*svc, driver, rados, dpp);
   if (r < 0) {
     ldpp_dout(dpp, 0) << "ERROR: failed to start init ctls (" << cpp_strerror(-r) << dendl;
     return r;
@@ -437,10 +390,11 @@ int RGWCtl::init(RGWServices *_svc, rgw::sal::Driver* driver, const DoutPrefixPr
   meta.bucket_instance = _ctl.meta.bucket_instance.get();
   meta.otp = _ctl.meta.otp.get();
   meta.role = _ctl.meta.role.get();
+  meta.topic = _ctl.meta.topic.get();
+  meta.topic_cache = _ctl.meta.topic_cache.get();
 
   user = _ctl.user.get();
   bucket = _ctl.bucket.get();
-  otp = _ctl.otp.get();
 
   r = meta.user->attach(meta.mgr);
   if (r < 0) {
@@ -468,7 +422,26 @@ int RGWCtl::init(RGWServices *_svc, rgw::sal::Driver* driver, const DoutPrefixPr
 
   r = meta.role->attach(meta.mgr);
   if (r < 0) {
-    ldout(cct, 0) << "ERROR: failed to start init otp ctl (" << cpp_strerror(-r) << dendl;
+    ldout(cct, 0) << "ERROR: failed to start init meta.role ctl (" << cpp_strerror(-r) << dendl;
+    return r;
+  }
+
+  r = _ctl.meta.account->attach(meta.mgr);
+  if (r < 0) {
+    ldout(cct, 0) << "ERROR: failed to start init meta.account ctl (" << cpp_strerror(-r) << dendl;
+    return r;
+  }
+
+  r = meta.topic->attach(meta.mgr);
+  if (r < 0) {
+    ldout(cct, 0) << "ERROR: failed to start init topic ctl ("
+                  << cpp_strerror(-r) << dendl;
+    return r;
+  }
+
+  r = _ctl.meta.group->attach(meta.mgr);
+  if (r < 0) {
+    ldout(cct, 0) << "ERROR: failed to start init meta.group ctl (" << cpp_strerror(-r) << dendl;
     return r;
   }
   return 0;

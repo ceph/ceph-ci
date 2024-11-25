@@ -7,6 +7,10 @@
 #include "common/Formatter.h"
 #include "common/StackStringStream.h"
 
+#include <iostream>
+#include <sstream>
+#include <string>
+
 const mds_gid_t MDS_GID_NONE = mds_gid_t(0);
 
 using std::list;
@@ -284,6 +288,21 @@ void inline_data_t::decode(bufferlist::const_iterator &p)
     free_data();
 }
 
+void inline_data_t::dump(Formatter *f) const
+{
+  f->dump_unsigned("version", version);
+  f->dump_unsigned("length", length());
+}
+
+void inline_data_t::generate_test_instances(std::list<inline_data_t*>& ls)
+{
+  ls.push_back(new inline_data_t);
+  ls.push_back(new inline_data_t);
+  bufferlist bl;
+  bl.append("inline data");
+  ls.back()->set_data(bl);
+}
+
 
 /*
  * fnode_t
@@ -429,7 +448,7 @@ feature_bitset_t::feature_bitset_t(unsigned long value)
   }
 }
 
-feature_bitset_t::feature_bitset_t(const vector<size_t>& array)
+void feature_bitset_t::init_array(const vector<size_t>& array)
 {
   if (!array.empty()) {
     size_t n = array.back();
@@ -446,6 +465,26 @@ feature_bitset_t::feature_bitset_t(const vector<size_t>& array)
       _vec[bit / bits_per_block] |= (block_type)1 << (bit % bits_per_block);
     }
   }
+}
+
+feature_bitset_t::feature_bitset_t(std::string_view str)
+{
+  std::stringstream ss;
+  std::vector<size_t> v;
+  std::string atom;
+
+  ss << str;
+  while (std::getline(ss, atom, ',')) {
+    v.push_back(std::stoul(atom));
+  }
+  std::sort(v.begin(), v.end());
+
+  init_array(v);
+}
+
+feature_bitset_t::feature_bitset_t(const vector<size_t>& array)
+{
+  init_array(array);
 }
 
 feature_bitset_t& feature_bitset_t::operator-=(const feature_bitset_t& other)
@@ -489,6 +528,15 @@ void feature_bitset_t::dump(Formatter *f) const {
   f->dump_string("feature_bits", css->strv());
 }
 
+void feature_bitset_t::generate_test_instances(std::list<feature_bitset_t*>& ls)
+{
+  ls.push_back(new feature_bitset_t());
+  ls.push_back(new feature_bitset_t());
+  ls.back()->_vec.push_back(1);
+  ls.back()->_vec.push_back(2);
+  ls.back()->_vec.push_back(3);
+}
+
 void feature_bitset_t::print(ostream& out) const
 {
   std::ios_base::fmtflags f(out.flags());
@@ -523,6 +571,13 @@ void metric_spec_t::decode(bufferlist::const_iterator &p) {
 
 void metric_spec_t::dump(Formatter *f) const {
   f->dump_object("metric_flags", metric_flags);
+}
+
+void metric_spec_t::generate_test_instances(std::list<metric_spec_t*>& ls)
+{
+  ls.push_back(new metric_spec_t());
+  ls.push_back(new metric_spec_t());
+  ls.back()->metric_flags = 1;
 }
 
 void metric_spec_t::print(ostream& out) const
@@ -560,6 +615,16 @@ void client_metadata_t::dump(Formatter *f) const
   f->dump_object("metric_spec", metric_spec);
   for (const auto& [name, val] : kv_map)
     f->dump_string(name.c_str(), val);
+}
+
+void client_metadata_t::generate_test_instances(std::list<client_metadata_t*>& ls)
+{
+  ls.push_back(new client_metadata_t());
+  ls.push_back(new client_metadata_t());
+  ls.back()->kv_map["key1"] = "val1";
+  ls.back()->kv_map["key2"] = "val2";
+  ls.back()->features = 0x12345678;
+  ls.back()->metric_spec.metric_flags = 0x12345678;
 }
 
 /*

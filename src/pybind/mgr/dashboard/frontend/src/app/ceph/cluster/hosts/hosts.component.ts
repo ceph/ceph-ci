@@ -29,11 +29,11 @@ import { Permissions } from '~/app/shared/models/permissions';
 import { EmptyPipe } from '~/app/shared/pipes/empty.pipe';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
 import { CdTableServerSideService } from '~/app/shared/services/cd-table-server-side.service';
-import { ModalService } from '~/app/shared/services/modal.service';
 import { NotificationService } from '~/app/shared/services/notification.service';
 import { TaskWrapperService } from '~/app/shared/services/task-wrapper.service';
 import { URLBuilderService } from '~/app/shared/services/url-builder.service';
 import { HostFormComponent } from './host-form/host-form.component';
+import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
 
 const BASE_URL = 'hosts';
 
@@ -78,12 +78,19 @@ export class HostsComponent extends ListWithDetails implements OnDestroy, OnInit
   @Input()
   showGeneralActionsOnly = false;
 
+  @Input()
+  showExpandClusterBtn = true;
+
+  @Input()
+  showInlineActions = true;
+
   permissions: Permissions;
   columns: Array<CdTableColumn> = [];
   hosts: Array<object> = [];
   isLoadingHosts = false;
   cdParams = { fromLink: '/hosts' };
   tableActions: CdTableAction[];
+  expandClusterActions: CdTableAction[];
   selection = new CdTableSelection();
   modalRef: NgbModalRef;
   isExecuting = false;
@@ -117,14 +124,25 @@ export class HostsComponent extends ListWithDetails implements OnDestroy, OnInit
     private emptyPipe: EmptyPipe,
     private hostService: HostService,
     private actionLabels: ActionLabelsI18n,
-    private modalService: ModalService,
     private taskWrapper: TaskWrapperService,
     private router: Router,
     private notificationService: NotificationService,
-    private orchService: OrchestratorService
+    private orchService: OrchestratorService,
+    private cdsModalService: ModalCdsService
   ) {
     super();
     this.permissions = this.authStorageService.getPermissions();
+    this.expandClusterActions = [
+      {
+        name: this.actionLabels.EXPAND_CLUSTER,
+        permission: 'create',
+        buttonKind: 'secondary',
+        icon: Icons.expand,
+        routerLink: '/expand-cluster',
+        disable: (selection: CdTableSelection) => this.getDisable('add', selection),
+        visible: () => this.showExpandClusterBtn
+      }
+    ];
     this.tableActions = [
       {
         name: this.actionLabels.ADD,
@@ -133,7 +151,7 @@ export class HostsComponent extends ListWithDetails implements OnDestroy, OnInit
         click: () =>
           this.router.url.includes('/hosts')
             ? this.router.navigate([BASE_URL, { outlets: { modal: [URLVerbs.ADD] } }])
-            : (this.bsModalRef = this.modalService.show(HostFormComponent, {
+            : (this.bsModalRef = this.cdsModalService.show(HostFormComponent, {
                 hideMaintenance: this.hideMaintenance
               })),
         disable: (selection: CdTableSelection) => this.getDisable('add', selection)
@@ -309,9 +327,9 @@ export class HostsComponent extends ListWithDetails implements OnDestroy, OnInit
       const host = this.selection.first();
       const labels = new Set(resp.concat(this.hostService.predefinedLabels));
       const allLabels = Array.from(labels).map((label) => {
-        return { enabled: true, name: label };
+        return { content: label };
       });
-      this.modalService.show(FormModalComponent, {
+      this.cdsModalService.show(FormModalComponent, {
         titleText: $localize`Edit Host: ${host.hostname}`,
         fields: [
           {
@@ -376,14 +394,12 @@ export class HostsComponent extends ListWithDetails implements OnDestroy, OnInit
               showSubmit: true,
               onSubmit: () => {
                 this.hostService.update(host['hostname'], false, [], true, true).subscribe(
-                  () => {
-                    this.modalRef.close();
-                  },
-                  () => this.modalRef.close()
+                  () => this.cdsModalService.dismissAll(),
+                  () => this.cdsModalService.dismissAll()
                 );
               }
             };
-            this.modalRef = this.modalService.show(ConfirmationModalComponent, modalVariables);
+            this.modalRef = this.cdsModalService.show(ConfirmationModalComponent, modalVariables);
           } else {
             this.notificationService.show(
               NotificationType.error,
@@ -453,7 +469,7 @@ export class HostsComponent extends ListWithDetails implements OnDestroy, OnInit
 
   deleteAction() {
     const hostname = this.selection.first().hostname;
-    this.modalRef = this.modalService.show(CriticalConfirmationModalComponent, {
+    this.modalRef = this.cdsModalService.show(CriticalConfirmationModalComponent, {
       itemDescription: 'Host',
       itemNames: [hostname],
       actionDescription: 'remove',

@@ -276,7 +276,11 @@ void generate_crash_dump(char *base,
 	::close(fd);
       }
       snprintf(fn, sizeof(fn)-1, "%s/done", base);
+      #ifdef _WIN32
+      ::creat(fn, _S_IREAD);
+      #else
       ::creat(fn, 0444);
+      #endif
     }
   }
 }
@@ -303,7 +307,7 @@ static void handle_oneshot_fatal_signal(int signum)
 
   char buf[1024];
   char pthread_name[16] = {0}; //limited by 16B include terminating null byte.
-  int r = ceph_pthread_getname(pthread_self(), pthread_name, sizeof(pthread_name));
+  int r = ceph_pthread_getname(pthread_name, sizeof(pthread_name));
   (void)r;
 #if defined(__sun)
   char message[SIG2STR_MAX];

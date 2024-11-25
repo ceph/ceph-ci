@@ -177,7 +177,7 @@ class Sig:
 
     @staticmethod
     def parse_args(args):
-        return [Sig._parse_arg_desc(arg) for arg in args.split()]
+        return [Sig._parse_arg_desc(arg) for arg in args]
 
 
 TEMPLATE = '''
@@ -285,12 +285,6 @@ class CephMgrCommands(Directive):
         # make diskprediction_local happy
         mock_imports += ['numpy',
                          'scipy']
-        # make restful happy
-        mock_imports += ['pecan',
-                         'pecan.rest',
-                         'pecan.hooks',
-                         'werkzeug',
-                         'werkzeug.serving']
 
         for m in mock_imports:
             args = {}
@@ -358,8 +352,9 @@ class CephMgrCommands(Directive):
         cmds = sorted(cmds, key=lambda cmd: cmd.prefix)
         self._render_cmds(cmds)
 
-        orig_rgw_mod = sys.modules['pybind_rgw_mod']
-        sys.modules['rgw'] = orig_rgw_mod
+        if 'pybind_rgw_mod' in sys.modules:
+            orig_rgw_mod = sys.modules['pybind_rgw_mod']
+            sys.modules['rgw'] = orig_rgw_mod
 
         return []
 

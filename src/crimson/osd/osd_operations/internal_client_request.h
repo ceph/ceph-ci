@@ -6,7 +6,6 @@
 #include "crimson/common/type_helpers.h"
 #include "crimson/osd/osd_operation.h"
 #include "crimson/osd/osd_operations/client_request_common.h"
-#include "crimson/osd/osd_operations/common/pg_pipeline.h"
 #include "crimson/osd/pg.h"
 #include "crimson/osd/pg_activation_blocker.h"
 
@@ -41,9 +40,15 @@ private:
 
   CommonPGPipeline& client_pp();
 
+  InternalClientRequest::interruptible_future<> with_interruption();
+  InternalClientRequest::interruptible_future<> do_process(
+    crimson::osd::ObjectContextRef obc,
+    std::vector<OSDOp> &osd_ops);
+
   seastar::future<> do_process();
 
   Ref<PG> pg;
+  epoch_t start_epoch;
   OpInfo op_info;
   PipelineHandle handle;
 
@@ -55,7 +60,8 @@ public:
     CommonPGPipeline::WaitForActive::BlockingEvent,
     PGActivationBlocker::BlockingEvent,
     CommonPGPipeline::RecoverMissing::BlockingEvent,
-    CommonPGPipeline::GetOBC::BlockingEvent,
+    CommonPGPipeline::CheckAlreadyCompleteGetObc::BlockingEvent,
+    CommonPGPipeline::LockOBC::BlockingEvent,
     CommonPGPipeline::Process::BlockingEvent,
     CompletionEvent
   > tracking_events;

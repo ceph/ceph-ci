@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import Mock, patch
 
+from dashboard.services.auth import AuthType
+
 from .. import mgr
 from ..controllers.auth import Auth
 from ..services.auth import JwtManager
@@ -10,6 +12,7 @@ mgr.get_module_option.return_value = JwtManager.JWT_TOKEN_TTL
 mgr.get_store.return_value = 'jwt_secret'
 mgr.ACCESS_CTRL_DB = Mock()
 mgr.ACCESS_CTRL_DB.get_attempt.return_value = 1
+mgr.SSO_DB.protocol = AuthType.LOCAL
 
 
 class JwtManagerTest(unittest.TestCase):
@@ -40,6 +43,11 @@ class AuthTest(ControllerTestCase):
         self.assertStatus(401)
 
     @patch('dashboard.controllers.auth.JwtManager.gen_token', Mock(return_value='my-token'))
+    @patch('dashboard.mgr.get', Mock(return_value={
+        'config': {
+            'fsid': '943949f0-ce37-47ca-a33c-3413d46ee9ec'
+        }
+    }))
     @patch('dashboard.controllers.auth.AuthManager.authenticate', Mock(return_value={
         'permissions': {'rgw': ['read']},
         'pwdExpirationDate': 1000000,
@@ -62,5 +70,6 @@ class AuthTest(ControllerTestCase):
         self._post('/api/auth/logout')
         self.assertStatus(200)
         self.assertJsonBody({
-            'redirect_url': '#/login'
+            'redirect_url': '#/login',
+            'protocol': 'local'
         })

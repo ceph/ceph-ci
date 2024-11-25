@@ -10,7 +10,7 @@
              [class.fa-spin]="loadingIndicator"></i>
         </button>
       </div>
-      <div class="card-body">
+      <div class="card-body card-tree">
         <tree-root *ngIf="nodes"
                    [nodes]="nodes"
                    [options]="treeOptions">
@@ -68,8 +68,8 @@
 </div>
 
 <ng-template #origin
-             let-row="row"
-             let-value="value">
+             let-row="data.row"
+             let-value="data.value">
   <span class="quota-origin"
         (click)="selectOrigin(value)">{{value}}</span>
 </ng-template>

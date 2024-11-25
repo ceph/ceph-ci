@@ -18,6 +18,8 @@ from ...exception import MetadataMgrException, VolumeException
 from .auth_metadata import AuthMetadataManager
 from .subvolume_attrs import SubvolumeStates
 
+from ceph.fs.earmarking import CephFSVolumeEarmarking, EarmarkException
+
 log = logging.getLogger(__name__)
 
 
@@ -144,7 +146,7 @@ class SubvolumeBase(object):
         try:
             self.fs.stat(self.legacy_config_path)
             self.legacy_mode = True
-        except cephfs.Error as e:
+        except cephfs.Error:
             pass
 
         log.debug("loading config "
@@ -160,7 +162,7 @@ class SubvolumeBase(object):
 
     def get_attrs(self, pathname):
         # get subvolume attributes
-        attrs = {}  # type: Dict[str, Union[int, str, None]]
+        attrs: Dict[str, Union[int, str, None]] = {}
         stx = self.fs.statx(pathname,
                             cephfs.CEPH_STATX_UID | cephfs.CEPH_STATX_GID
                             | cephfs.CEPH_STATX_MODE,
@@ -191,6 +193,14 @@ class SubvolumeBase(object):
                                                   ).decode('utf-8'))
         except cephfs.NoData:
             attrs["quota"] = None
+
+        try:
+            fs_earmark = CephFSVolumeEarmarking(self.fs, pathname)
+            attrs["earmark"] = fs_earmark.get_earmark()
+        except cephfs.NoData:
+            attrs["earmark"] = ''
+        except EarmarkException:
+            attrs["earmark"] = ''
 
         return attrs
 
@@ -276,6 +286,12 @@ class SubvolumeBase(object):
         mode = attrs.get("mode", None)
         if mode is not None:
             self.fs.lchmod(path, mode)
+
+        # set earmark
+        earmark = attrs.get("earmark")
+        if earmark is not None:
+            fs_earmark = CephFSVolumeEarmarking(self.fs, path)
+            fs_earmark.set_earmark(earmark)
 
     def _resize(self, path, newsize, noshrink):
         try:
@@ -418,6 +434,14 @@ class SubvolumeBase(object):
         except cephfs.Error as e:
             raise VolumeException(-e.args[0], e.args[1])
 
+        try:
+            fs_earmark = CephFSVolumeEarmarking(self.fs, subvolpath)
+            earmark = fs_earmark.get_earmark()
+        except cephfs.NoData:
+            earmark = ''
+        except EarmarkException:
+            earmark = ''
+
         return {'path': subvolpath,
                 'type': etype.value,
                 'uid': int(st["uid"]),
@@ -434,7 +458,9 @@ class SubvolumeBase(object):
                 if nsize == 0
                 else '{0:.2f}'.format((float(usedbytes) / nsize) * 100.0),
                 'pool_namespace': pool_namespace,
-                'features': self.features, 'state': self.state.value}
+                'features': self.features,
+                'state': self.state.value,
+                'earmark': earmark}
 
     def set_user_metadata(self, keyname, value):
         try:

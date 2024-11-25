@@ -21,6 +21,7 @@
 #include "os/Transaction.h"
 #include "osd/osd_types.h"
 
+#include "crimson/common/coroutine.h"
 #include "crimson/common/errorator.h"
 #include "crimson/common/interruptible_future.h"
 #include "crimson/common/type_helpers.h"
@@ -39,7 +40,7 @@ namespace crimson::osd {
 class PG;
 
 // OpsExecuter -- a class for executing ops targeting a certain object.
-class OpsExecuter : public seastar::enable_lw_shared_from_this<OpsExecuter> {
+class OpsExecuter {
   friend class SnapTrimObjSubEvent;
 
   using call_errorator = crimson::errorator<
@@ -107,16 +108,17 @@ public:
     virtual uint64_t get_features() const = 0;
     virtual bool has_flag(uint32_t flag) const = 0;
     virtual entity_name_t get_source() const = 0;
+    virtual snapid_t get_snapid() const = 0;
   };
 
   template <class ImplT>
   class ExecutableMessagePimpl final : ExecutableMessage {
     const ImplT* pimpl;
     // In crimson, conn is independently maintained outside Message.
-    const crimson::net::ConnectionRef conn;
+    const crimson::net::ConnectionXcoreRef conn;
   public:
     ExecutableMessagePimpl(const ImplT* pimpl,
-                           const crimson::net::ConnectionRef conn)
+                           const crimson::net::ConnectionXcoreRef conn)
       : pimpl(pimpl), conn(conn) {
     }
 
@@ -144,6 +146,9 @@ public:
     uint64_t get_features() const final {
       return pimpl->get_features();
     }
+    snapid_t get_snapid() const final {
+      return pimpl->get_snapid();
+    }
   };
 
   // because OpsExecuter is pretty heavy-weight object we want to ensure
@@ -165,16 +170,12 @@ public:
 
   object_stat_sum_t delta_stats;
 private:
-  // an operation can be divided into two stages: main and effect-exposing
-  // one. The former is performed immediately on call to `do_osd_op()` while
-  // the later on `submit_changes()` – after successfully processing main
-  // stages of all involved operations. When any stage fails, none of all
-  // scheduled effect-exposing stages will be executed.
-  // when operation requires this division, some variant of `with_effect()`
-  // should be used.
+  // with_effect can be used to schedule operations to be performed
+  // at commit time.  effects will be discarded if the operation does
+  // not commit.
   struct effect_t {
     // an effect can affect PG, i.e. create a watch timeout
-    virtual osd_op_errorator::future<> execute(Ref<PG> pg) = 0;
+    virtual seastar::future<> execute(Ref<PG> pg) = 0;
     virtual ~effect_t() = default;
   };
 
@@ -185,9 +186,8 @@ private:
     ceph::static_ptr<ExecutableMessage,
                      sizeof(ExecutableMessagePimpl<void>)>;
   abstracted_msg_t msg;
-  crimson::net::ConnectionRef conn;
+  crimson::net::ConnectionXcoreRef conn;
   std::optional<osd_op_params_t> osd_op_params;
-  bool user_modify = false;
   ceph::os::Transaction txn;
 
   size_t num_read = 0;    ///< count read ops
@@ -197,10 +197,11 @@ private:
   struct CloningContext {
     SnapSet new_snapset;
     pg_log_entry_t log_entry;
+    ObjectContextRef clone_obc;
 
     void apply_to(
       std::vector<pg_log_entry_t>& log_entries,
-      ObjectContext& processed_obc) &&;
+      ObjectContext& processed_obc);
   };
   std::unique_ptr<CloningContext> cloning_ctx;
 
@@ -209,10 +210,10 @@ private:
    * execute_clone
    *
    * If snapc contains a snap which occurred logically after the last write
-   * seen by this object (see OpsExecutor::should_clone()), we first need
+   * seen by this object (see OpsExecuter::should_clone()), we first need
    * make a clone of the object at its current state.  execute_clone primes
    * txn with that clone operation and returns an
-   * OpsExecutor::CloningContext which will allow us to fill in the corresponding
+   * OpsExecuter::CloningContext which will allow us to fill in the corresponding
    * metadata and log_entries once the operations have been processed.
    *
    * Note that this strategy differs from classic, which instead performs this
@@ -255,30 +256,21 @@ private:
       && snapc.snaps[0] > initial_obc.ssc->snapset.seq; // existing obj is old
   }
 
-  interruptible_future<std::vector<pg_log_entry_t>> flush_clone_metadata(
+  /**
+  * update_clone_overlap
+  *
+  * We need to update the most recent snapshot and the overlapping
+  * part of the head object for each write operation.
+  */
+  void update_clone_overlap();
+
+  std::vector<pg_log_entry_t> flush_clone_metadata(
     std::vector<pg_log_entry_t>&& log_entries,
     SnapMapper& snap_mapper,
     OSDriver& osdriver,
     ceph::os::Transaction& txn);
 
-  static interruptible_future<> snap_map_remove(
-    const hobject_t& soid,
-    SnapMapper& snap_mapper,
-    OSDriver& osdriver,
-    ceph::os::Transaction& txn);
-  static interruptible_future<> snap_map_modify(
-    const hobject_t& soid,
-    const std::set<snapid_t>& snaps,
-    SnapMapper& snap_mapper,
-    OSDriver& osdriver,
-    ceph::os::Transaction& txn);
-  static interruptible_future<> snap_map_clone(
-    const hobject_t& soid,
-    const std::set<snapid_t>& snaps,
-    SnapMapper& snap_mapper,
-    OSDriver& osdriver,
-    ceph::os::Transaction& txn);
-
+private:
   // this gizmo could be wrapped in std::optional for the sake of lazy
   // initialization. we don't need it for ops that doesn't have effect
   // TODO: verify the init overhead of chunked_fifo
@@ -372,7 +364,7 @@ private:
               ObjectContextRef obc,
               const OpInfo& op_info,
               abstracted_msg_t&& msg,
-              crimson::net::ConnectionRef conn,
+              crimson::net::ConnectionXcoreRef conn,
               const SnapContext& snapc);
 
 public:
@@ -381,7 +373,7 @@ public:
               ObjectContextRef obc,
               const OpInfo& op_info,
               const MsgT& msg,
-              crimson::net::ConnectionRef conn,
+              crimson::net::ConnectionXcoreRef conn,
               const SnapContext& snapc)
     : OpsExecuter(
         std::move(pg),
@@ -405,7 +397,7 @@ public:
   execute_op(OSDOp& osd_op);
 
   using rep_op_fut_tuple =
-    std::tuple<interruptible_future<>, osd_op_ierrorator::future<>>;
+    std::tuple<interruptible_future<>, interruptible_future<>>;
   using rep_op_fut_t =
     interruptible_future<rep_op_fut_tuple>;
   template <typename MutFunc>
@@ -413,10 +405,10 @@ public:
     const std::vector<OSDOp>& ops,
     SnapMapper& snap_mapper,
     OSDriver& osdriver,
-    MutFunc&& mut_func) &&;
+    MutFunc mut_func) &&;
   std::vector<pg_log_entry_t> prepare_transaction(
     const std::vector<OSDOp>& ops);
-  void fill_op_params_bump_pg_version();
+  void fill_op_params(modified_by m);
 
   ObjectContextRef get_obc() const {
     return obc;
@@ -449,8 +441,9 @@ public:
 
   version_t get_last_user_version() const;
 
-  std::pair<object_info_t, ObjectContextRef> prepare_clone(
-    const hobject_t& coid);
+  ObjectContextRef prepare_clone(
+    const hobject_t& coid,
+    eversion_t version);
 
   void apply_stats();
 };
@@ -479,7 +472,7 @@ auto OpsExecuter::with_effect_on_obc(
          effect_func(std::move(effect_func)),
          obc(std::move(obc)) {
     }
-    osd_op_errorator::future<> execute(Ref<PG> pg) final {
+    seastar::future<> execute(Ref<PG> pg) final {
       return std::move(effect_func)(std::move(ctx),
                                     std::move(obc),
                                     std::move(pg));
@@ -498,84 +491,78 @@ OpsExecuter::flush_changes_n_do_ops_effects(
   const std::vector<OSDOp>& ops,
   SnapMapper& snap_mapper,
   OSDriver& osdriver,
-  MutFunc&& mut_func) &&
+  MutFunc mut_func) &&
 {
   const bool want_mutate = !txn.empty();
   // osd_op_params are instantiated by every wr-like operation.
   assert(osd_op_params || !want_mutate);
   assert(obc);
-  rep_op_fut_t maybe_mutated =
-    interruptor::make_ready_future<rep_op_fut_tuple>(
-	seastar::now(),
-	interruptor::make_interruptible(osd_op_errorator::now()));
+
+  auto submitted = interruptor::now();
+  auto all_completed = interruptor::now();
+
   if (cloning_ctx) {
     ceph_assert(want_mutate);
   }
+
+  apply_stats();
   if (want_mutate) {
-    if (user_modify) {
-      osd_op_params->user_at_version = osd_op_params->at_version.version;
-    }
-    maybe_mutated = flush_clone_metadata(
+    auto log_entries = flush_clone_metadata(
       prepare_transaction(ops),
       snap_mapper,
       osdriver,
-      txn
-    ).then_interruptible([mut_func=std::move(mut_func),
-                          this](auto&& log_entries) mutable {
-      auto [submitted, all_completed] =
-        std::forward<MutFunc>(mut_func)(std::move(txn),
-                                        std::move(obc),
-                                        std::move(*osd_op_params),
-                                        std::move(log_entries));
-      return interruptor::make_ready_future<rep_op_fut_tuple>(
-	std::move(submitted),
-	osd_op_ierrorator::future<>(std::move(all_completed)));
-    });
-  }
-  apply_stats();
+      txn);
 
-  if (__builtin_expect(op_effects.empty(), true)) {
-    return maybe_mutated;
-  } else {
-    return maybe_mutated.then_unpack_interruptible(
-      // need extra ref pg due to apply_stats() which can be executed after
-      // informing snap mapper
-      [this, pg=this->pg](auto&& submitted, auto&& all_completed) mutable {
-      return interruptor::make_ready_future<rep_op_fut_tuple>(
-	  std::move(submitted),
-	  all_completed.safe_then_interruptible([this, pg=std::move(pg)] {
-	    // let's do the cleaning of `op_effects` in destructor
-	    return interruptor::do_for_each(op_effects,
-	      [pg=std::move(pg)](auto& op_effect) {
-	      return op_effect->execute(pg);
-	    });
-	  }));
+    if (auto log_rit = log_entries.rbegin(); log_rit != log_entries.rend()) {
+      ceph_assert(log_rit->version == osd_op_params->at_version);
+    }
+
+    auto [_submitted, _all_completed] = co_await mut_func(
+      std::move(txn),
+      std::move(obc),
+      std::move(*osd_op_params),
+      std::move(log_entries),
+      cloning_ctx
+	? std::move(cloning_ctx->clone_obc)
+	: nullptr);
+
+    submitted = std::move(_submitted);
+    all_completed = std::move(_all_completed);
+  }
+
+  if (op_effects.size()) [[unlikely]] {
+    // need extra ref pg due to apply_stats() which can be executed after
+    // informing snap mapper
+    all_completed =
+      std::move(all_completed).then_interruptible([this, pg=this->pg] {
+      // let's do the cleaning of `op_effects` in destructor
+      return interruptor::do_for_each(op_effects,
+        [pg=std::move(pg)](auto& op_effect) {
+        return op_effect->execute(pg);
+      });
     });
   }
+
+  co_return std::make_tuple(
+    std::move(submitted),
+    std::move(all_completed));
 }
 
 template <class Func>
 struct OpsExecuter::RollbackHelper {
-  interruptible_future<> rollback_obc_if_modified(const std::error_code& e);
-  ObjectContextRef get_obc() const {
-    assert(ox);
-    return ox->obc;
-  }
-  seastar::lw_shared_ptr<OpsExecuter> ox;
+  void rollback_obc_if_modified();
+  OpsExecuter *ox;
   Func func;
 };
 
 template <class Func>
 inline OpsExecuter::RollbackHelper<Func>
 OpsExecuter::create_rollbacker(Func&& func) {
-  return {shared_from_this(), std::forward<Func>(func)};
+  return {this, std::forward<Func>(func)};
 }
 
-
 template <class Func>
-OpsExecuter::interruptible_future<>
-OpsExecuter::RollbackHelper<Func>::rollback_obc_if_modified(
-  const std::error_code& e)
+void OpsExecuter::RollbackHelper<Func>::rollback_obc_if_modified()
 {
   // Oops, an operation had failed. do_osd_ops() altogether with
   // OpsExecuter already dropped the ObjectStore::Transaction if
@@ -583,12 +570,6 @@ OpsExecuter::RollbackHelper<Func>::rollback_obc_if_modified(
   // rollback as we gave OpsExecuter the very single copy of `obc`
   // we maintain and we did it for both reading and writing.
   // Now all modifications must be reverted.
-  //
-  // Let's just reload from the store. Evicting from the shared
-  // LRU would be tricky as next MOSDOp (the one at `get_obc`
-  // phase) could actually already finished the lookup. Fortunately,
-  // this is supposed to live on cold  paths, so performance is not
-  // a concern -- simplicity wins.
   //
   // The conditional's purpose is to efficiently handle hot errors
   // which may appear as a result of e.g. CEPH_OSD_OP_CMPXATTR or
@@ -599,12 +580,13 @@ OpsExecuter::RollbackHelper<Func>::rollback_obc_if_modified(
   assert(ox);
   const auto need_rollback = ox->has_seen_write();
   crimson::get_logger(ceph_subsys_osd).debug(
-    "{}: object {} got error {}, need_rollback={}",
+    "{}: object {} got error, need_rollback={}",
     __func__,
     ox->obc->get_oid(),
-    e,
     need_rollback);
-  return need_rollback ? func(*ox->obc) : interruptor::now();
+  if (need_rollback) {
+    func(ox->obc);
+  }
 }
 
 // PgOpsExecuter -- a class for executing ops targeting a certain PG.

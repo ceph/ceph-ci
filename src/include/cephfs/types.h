@@ -48,6 +48,25 @@
 BOOST_STRONG_TYPEDEF(uint64_t, mds_gid_t)
 extern const mds_gid_t MDS_GID_NONE;
 
+template <>
+struct std::hash<mds_gid_t> {
+  size_t operator()(const mds_gid_t& gid) const
+  {
+    return hash<uint64_t> {}(gid);
+  }
+};
+
+inline void encode(const mds_gid_t &v, bufferlist& bl, uint64_t features = 0) {
+  uint64_t vv = v;
+  encode_raw(vv, bl);
+}
+
+inline void decode(mds_gid_t &v, bufferlist::const_iterator& p) {
+  uint64_t vv;
+  decode_raw(vv, p);
+  v = vv;
+}
+
 typedef int32_t fs_cluster_id_t;
 constexpr fs_cluster_id_t FS_CLUSTER_ID_NONE = -1;
 
@@ -199,7 +218,14 @@ struct vinodeno_t {
     decode(ino, p);
     decode(snapid, p);
   }
-
+  void dump(ceph::Formatter *f) const {
+    f->dump_unsigned("ino", ino);
+    f->dump_unsigned("snapid", snapid);
+  }
+  static void generate_test_instances(std::list<vinodeno_t*>& ls) {
+    ls.push_back(new vinodeno_t);
+    ls.push_back(new vinodeno_t(1, 2));
+  }
   inodeno_t ino;
   snapid_t snapid;
 };
@@ -342,7 +368,8 @@ public:
   }
   void encode(ceph::buffer::list &bl) const;
   void decode(ceph::buffer::list::const_iterator& bl);
-
+  void dump(ceph::Formatter *f) const;
+  static void generate_test_instances(std::list<inline_data_t*>& ls);
   version_t version = 1;
 
 private:
@@ -365,6 +392,9 @@ struct inode_t {
    */
   using client_range_map = std::map<client_t,client_writeable_range_t,std::less<client_t>,Allocator<std::pair<const client_t,client_writeable_range_t>>>;
 
+  static const uint8_t F_EPHEMERAL_DISTRIBUTED_PIN = (1<<0);
+  static const uint8_t F_QUIESCE_BLOCK             = (1<<1);
+
   inode_t()
   {
     clear_layout();
@@ -376,9 +406,9 @@ struct inode_t {
   bool is_file()    const { return (mode & S_IFMT) == S_IFREG; }
 
   bool is_truncating() const { return (truncate_pending > 0); }
-  void truncate(uint64_t old_size, uint64_t new_size, const bufferlist &fbl) {
+  void truncate(uint64_t old_size, uint64_t new_size, ::ceph::buffer::list::const_iterator fblp) {
     truncate(old_size, new_size);
-    fscrypt_last_block = fbl;
+    fblp.copy(fblp.get_remaining(), fscrypt_last_block);
   }
   void truncate(uint64_t old_size, uint64_t new_size) {
     ceph_assert(new_size <= old_size);
@@ -453,6 +483,29 @@ struct inode_t {
     old_pools.insert(l);
   }
 
+  void set_flag(bool v, uint8_t flag) {
+    if (v) {
+      flags |= flag;
+    } else {
+      flags &= ~(flag);
+    }
+  }
+  bool get_flag(uint8_t flag) const {
+    return flags&flag;
+  }
+  void set_ephemeral_distributed_pin(bool v) {
+    set_flag(v, F_EPHEMERAL_DISTRIBUTED_PIN);
+  }
+  bool get_ephemeral_distributed_pin() const {
+    return get_flag(F_EPHEMERAL_DISTRIBUTED_PIN);
+  }
+  void set_quiesce_block(bool v) {
+    set_flag(v, F_QUIESCE_BLOCK);
+  }
+  bool get_quiesce_block() const {
+    return get_flag(F_QUIESCE_BLOCK);
+  }
+
   void encode(ceph::buffer::list &bl, uint64_t features) const;
   void decode(ceph::buffer::list::const_iterator& bl);
   void dump(ceph::Formatter *f) const;
@@ -519,7 +572,23 @@ struct inode_t {
   mds_rank_t export_pin = MDS_RANK_NONE;
 
   double export_ephemeral_random_pin = 0;
-  bool export_ephemeral_distributed_pin = false;
+  /**
+   * N.B. previously this was a bool for distributed_ephemeral_pin which is
+   * encoded as a __u8. We take advantage of that to harness the remaining 7
+   * bits to avoid adding yet another field to this struct. This is safe also
+   * because the integral conversion of a bool to int (__u8) is well-defined
+   * per the standard as 0 (false) and 1 (true):
+   *
+   *     [conv.integral]
+   *     If the destination type is bool, see [conv.bool]. If the source type is
+   *     bool, the value false is converted to zero and the value true is converted
+   *     to one.
+   *
+   * So we can be certain the other bits have not be set during
+   * encoding/decoding due to implementation defined compiler behavior.
+   *
+   */
+  uint8_t flags = 0;
 
   // special stuff
   version_t version = 0;           // auth only
@@ -535,10 +604,9 @@ struct inode_t {
 
   std::basic_string<char,std::char_traits<char>,Allocator<char>> stray_prior_path; //stores path before unlink
 
-  std::vector<uint8_t> fscrypt_auth;
-  std::vector<uint8_t> fscrypt_file;
-
-  bufferlist fscrypt_last_block;
+  std::vector<uint8_t,Allocator<uint8_t>> fscrypt_auth;
+  std::vector<uint8_t,Allocator<uint8_t>> fscrypt_file;
+  std::vector<uint8_t,Allocator<uint8_t>> fscrypt_last_block;
 
 private:
   bool older_is_consistent(const inode_t &other) const;
@@ -601,12 +669,13 @@ void inode_t<Allocator>::encode(ceph::buffer::list &bl, uint64_t features) const
   encode(export_pin, bl);
 
   encode(export_ephemeral_random_pin, bl);
-  encode(export_ephemeral_distributed_pin, bl);
+  encode(flags, bl);
 
   encode(!fscrypt_auth.empty(), bl);
   encode(fscrypt_auth, bl);
   encode(fscrypt_file, bl);
   encode(fscrypt_last_block, bl);
+
   ENCODE_FINISH(bl);
 }
 
@@ -705,10 +774,10 @@ void inode_t<Allocator>::decode(ceph::buffer::list::const_iterator &p)
 
   if (struct_v >= 16) {
     decode(export_ephemeral_random_pin, p);
-    decode(export_ephemeral_distributed_pin, p);
+    decode(flags, p);
   } else {
     export_ephemeral_random_pin = 0;
-    export_ephemeral_distributed_pin = false;
+    flags = 0;
   }
 
   if (struct_v >= 17) {
@@ -762,7 +831,8 @@ void inode_t<Allocator>::dump(ceph::Formatter *f) const
   f->dump_unsigned("change_attr", change_attr);
   f->dump_int("export_pin", export_pin);
   f->dump_int("export_ephemeral_random_pin", export_ephemeral_random_pin);
-  f->dump_bool("export_ephemeral_distributed_pin", export_ephemeral_distributed_pin);
+  f->dump_bool("export_ephemeral_distributed_pin", get_ephemeral_distributed_pin());
+  f->dump_bool("quiesce_block", get_quiesce_block());
 
   f->open_array_section("client_ranges");
   for (const auto &p : client_ranges) {
@@ -789,6 +859,8 @@ void inode_t<Allocator>::dump(ceph::Formatter *f) const
   f->dump_unsigned("file_data_version", file_data_version);
   f->dump_unsigned("xattr_version", xattr_version);
   f->dump_unsigned("backtrace_version", backtrace_version);
+  f->dump_unsigned("inline_data_version", inline_data.version);
+  f->dump_unsigned("inline_data_length", inline_data.length());
 
   f->dump_string("stray_prior_path", stray_prior_path);
   f->dump_unsigned("max_size_ever", max_size_ever);

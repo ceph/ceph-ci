@@ -28,7 +28,6 @@ function clean_up_after_myself() {
 }
 
 function detect_ceph_dev_pkgs() {
-    local cmake_opts="-DWITH_FMT_VERSION=9.0.0"
     local boost_root=/opt/ceph
     if test -f $boost_root/include/boost/config.hpp; then
         cmake_opts+=" -DWITH_SYSTEM_BOOST=ON -DBOOST_ROOT=$boost_root"
@@ -56,7 +55,7 @@ function prepare() {
 
     if test -f ./install-deps.sh ; then
         ci_debug "Running install-deps.sh"
-        INSTALL_EXTRA_PACKAGES="ccache git $which_pkg clang"
+        INSTALL_EXTRA_PACKAGES="ccache git $which_pkg clang lvm2"
         $DRY_RUN source ./install-deps.sh || return 1
         trap clean_up_after_myself EXIT
     fi
@@ -110,9 +109,6 @@ EOM
     cmake_opts+=" -DWITH_RBD_MIRROR=ON"
     if [ $WITH_SEASTAR ]; then
         cmake_opts+=" -DWITH_SEASTAR=ON"
-    fi
-    if [ $WITH_ZBD ]; then
-        cmake_opts+=" -DWITH_ZBD=ON"
     fi
     if [ $WITH_RBD_RWL ]; then
         cmake_opts+=" -DWITH_RBD_RWL=ON"

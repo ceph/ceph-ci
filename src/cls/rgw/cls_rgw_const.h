@@ -6,13 +6,13 @@
 #define RGW_CLASS "rgw"
 
 /* Special error code returned by cls bucket list operation if it was
- * unable to skip past enough not visibile entries to return any
+ * unable to skip past enough not visible entries to return any
  * entries in the call. */
 constexpr int RGWBIAdvanceAndRetryError = -EFBIG;
 
 /* bucket index */
 #define RGW_BUCKET_INIT_INDEX "bucket_init_index"
-
+#define RGW_BUCKET_INIT_INDEX2 "bucket_init_index2"
 
 #define RGW_BUCKET_SET_TAG_TIMEOUT "bucket_set_tag_timeout"
 #define RGW_BUCKET_LIST "bucket_list"
@@ -34,7 +34,10 @@ constexpr int RGWBIAdvanceAndRetryError = -EFBIG;
 
 #define RGW_BI_GET "bi_get"
 #define RGW_BI_PUT "bi_put"
+#define RGW_BI_PUT_ENTRIES "bi_put_entries"
 #define RGW_BI_LIST "bi_list"
+
+#define RGW_RESHARD_LOG_TRIM "reshard_log_trim"
 
 #define RGW_BI_LOG_LIST "bi_log_list"
 #define RGW_BI_LOG_TRIM "bi_log_trim"
@@ -75,6 +78,7 @@ constexpr int RGWBIAdvanceAndRetryError = -EFBIG;
 
 /* resharding attribute  */
 #define RGW_SET_BUCKET_RESHARDING "set_bucket_resharding"
+#define RGW_SET_BUCKET_RESHARDING2 "set_bucket_resharding2"
 #define RGW_CLEAR_BUCKET_RESHARDING "clear_bucket_resharding"
 #define RGW_GUARD_BUCKET_RESHARDING "guard_bucket_resharding"
 #define RGW_GET_BUCKET_RESHARDING "get_bucket_resharding"

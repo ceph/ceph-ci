@@ -17,6 +17,7 @@
 #include "common/likely.h"
 #include "common/HeartbeatMap.h"
 
+#include "include/compat.h" // for ceph_pthread_setname()
 #include "include/stringify.h"
 #include "include/util.h"
 
@@ -60,6 +61,7 @@ void Beacon::shutdown()
   std::unique_lock<std::mutex> lock(mutex);
   if (!finished) {
     finished = true;
+    cvar.notify_all();
     lock.unlock();
     if (sender.joinable())
       sender.join();
@@ -73,6 +75,7 @@ void Beacon::init(const MDSMap &mdsmap)
   _notify_mdsmap(mdsmap);
 
   sender = std::thread([this]() {
+    ceph_pthread_setname("mds-beacon");
     std::unique_lock<std::mutex> lock(mutex);
     bool sent;
     while (!finished) {
@@ -102,19 +105,9 @@ void Beacon::init(const MDSMap &mdsmap)
   });
 }
 
-bool Beacon::ms_can_fast_dispatch2(const cref_t<Message>& m) const
-{
-  return m->get_type() == MSG_MDS_BEACON;
-}
-
-void Beacon::ms_fast_dispatch2(const ref_t<Message>& m)
-{
-  bool handled = ms_dispatch2(m);
-  ceph_assert(handled);
-}
-
 bool Beacon::ms_dispatch2(const ref_t<Message>& m)
 {
+  dout(25) << __func__ << ": processing " << m << dendl;
   if (m->get_type() == MSG_MDS_BEACON) {
     if (m->get_connection()->get_peer_type() == CEPH_ENTITY_TYPE_MON) {
       handle_mds_beacon(ref_cast<MMDSBeacon>(m));
@@ -328,16 +321,15 @@ void Beacon::notify_health(MDSRank const *mds)
   // Detect MDS_HEALTH_TRIM condition
   // Indicates MDS is not trimming promptly
   {
-    const auto log_max_segments = mds->mdlog->get_max_segments();
-    const auto log_warn_factor = g_conf().get_val<double>("mds_log_warn_factor");
-    if (mds->mdlog->get_num_segments() > (size_t)(log_max_segments * log_warn_factor)) {
+    if (mds->mdlog->is_trim_slow()) {
+      auto num_segments = mds->mdlog->get_num_segments();
+      auto max_segments = mds->mdlog->get_max_segments();
       CachedStackStringStream css;
-      *css << "Behind on trimming (" << mds->mdlog->get_num_segments()
-        << "/" << log_max_segments << ")";
+      *css << "Behind on trimming (" << num_segments << "/" << max_segments << ")";
 
       MDSHealthMetric m(MDS_HEALTH_TRIM, HEALTH_WARN, css->strv());
-      m.metadata["num_segments"] = stringify(mds->mdlog->get_num_segments());
-      m.metadata["max_segments"] = stringify(log_max_segments);
+      m.metadata["num_segments"] = stringify(num_segments);
+      m.metadata["max_segments"] = stringify(max_segments);
       health.metrics.push_back(m);
     }
   }
@@ -486,13 +478,43 @@ void Beacon::notify_health(MDSRank const *mds)
     health.metrics.push_back(m);
   }
 
+  // Report a health warning if clients have broken root_squash
+  if (auto c = mds->sessionmap.num_broken_root_squash_clients(); c > 0) {
+    std::vector<MDSHealthMetric> metrics;
+
+    for (auto&& session : mds->sessionmap.get_broken_root_squash_clients()) {
+      CachedStackStringStream css;
+      *css << "Client " << session->get_human_name() << " has broken root_squash implementation";
+      MDSHealthMetric m(MDS_HEALTH_CLIENTS_BROKEN_ROOTSQUASH, HEALTH_ERR, css->strv());
+      m.metadata["client_id"] = stringify(session->get_client());
+      metrics.emplace_back(std::move(m));
+    }
+
+    if (metrics.size() <= (size_t)g_conf()->mds_health_summarize_threshold) {
+      health.metrics.insert(std::end(health.metrics), std::make_move_iterator(std::begin(metrics)), std::make_move_iterator(std::end(metrics)));
+    } else {
+      CachedStackStringStream css;
+      *css << "There are " << c << " clients with broken root_squash implementations";
+      dout(20) << css->strv() << dendl;
+      MDSHealthMetric m(MDS_HEALTH_CLIENTS_BROKEN_ROOTSQUASH, HEALTH_ERR, css->strv());
+      m.metadata["client_count"] = stringify(c);
+      health.metrics.push_back(std::move(m));
+    }
+  }
+
   // Report if we have significantly exceeded our cache size limit
   if (mds->mdcache->cache_overfull()) {
     CachedStackStringStream css;
     *css << "MDS cache is too large (" << bytes2str(mds->mdcache->cache_size())
-        << "/" << bytes2str(mds->mdcache->cache_limit_memory()) << "); "
-        << mds->mdcache->num_inodes_with_caps << " inodes in use by clients, "
-        << mds->mdcache->get_num_strays() << " stray files";
+        << "/" << bytes2str(mds->mdcache->cache_limit_memory()) << ")";
+    // Don't include inode and stray counters in the report for standby-replay
+    // MDSs. Since it is standby-replay, both will be zero, which might
+    // confuse users.
+    if (!mds->is_standby_replay()) {
+	*css << "; " << mds->mdcache->num_inodes_with_caps << " inodes in "
+	     << "use by clients, " << mds->mdcache->get_num_strays()
+	     << " stray files";
+    }
 
     MDSHealthMetric m(MDS_HEALTH_CACHE_OVERSIZED, HEALTH_WARN, css->strv());
     health.metrics.push_back(m);
@@ -500,19 +522,32 @@ void Beacon::notify_health(MDSRank const *mds)
 
   // Report laggy client(s) due to laggy OSDs
   {
+    bool defer_client_eviction =
+    g_conf().get_val<bool>("defer_client_eviction_on_laggy_osds")
+    && mds->objecter->with_osdmap([](const OSDMap &map) {
+      return map.any_osd_laggy(); });
     auto&& laggy_clients = mds->server->get_laggy_clients();
-    if (!laggy_clients.empty()) {
-      std::vector<MDSHealthMetric> laggy_clients_metrics;
-      for (const auto& laggy_client: laggy_clients) {
-        CachedStackStringStream css;
-        *css << "Client " << laggy_client << " is laggy; not evicted"
-            << " because some OSD(s) is/are laggy";
-        MDSHealthMetric m(MDS_HEALTH_CLIENTS_LAGGY, HEALTH_WARN, css->strv());
-        laggy_clients_metrics.emplace_back(std::move(m));
+    if (defer_client_eviction && !laggy_clients.empty()) {
+      if (laggy_clients.size() <= (size_t)g_conf()->mds_health_summarize_threshold) {
+	std::vector<MDSHealthMetric> laggy_clients_metrics;
+	for (const auto& laggy_client: laggy_clients) {
+	  CachedStackStringStream css;
+	  *css << "Client " << laggy_client << " is laggy; not evicted"
+	       << " because some OSD(s) is/are laggy";
+	  MDSHealthMetric m(MDS_HEALTH_CLIENTS_LAGGY, HEALTH_WARN, css->strv());
+	  laggy_clients_metrics.emplace_back(std::move(m));
+	}
+	auto&& m = laggy_clients_metrics;
+	health.metrics.insert(std::end(health.metrics), std::cbegin(m),
+			      std::cend(m));
+      } else {
+	CachedStackStringStream css;
+	*css << "Many client (" << laggy_clients.size()
+	     << ") are laggy; not evicting since some OSD(s) are laggy";
+	MDSHealthMetric m(MDS_HEALTH_CLIENTS_LAGGY_MANY, HEALTH_WARN, css->strv());
+	m.metadata["client_count"] = stringify(laggy_clients.size());
+	health.metrics.push_back(std::move(m));
       }
-      auto&& m = laggy_clients_metrics;
-      health.metrics.insert(std::end(health.metrics), std::cbegin(m),
-                            std::cend(m));
     }
   }
 }

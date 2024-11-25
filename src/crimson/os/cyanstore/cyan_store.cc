@@ -71,6 +71,11 @@ seastar::future<store_statfs_t> CyanStore::stat() const
   });
 }
 
+seastar::future<store_statfs_t> CyanStore::pool_statfs(int64_t pool_id) const
+{
+  return stat();
+}
+
 
 CyanStore::mkfs_ertr::future<> CyanStore::mkfs(uuid_d new_osd_fsid)
 {
@@ -240,6 +245,32 @@ CyanStore::Shard::list_collections()
     collections.push_back(std::make_pair(coll.first, seastar::this_shard_id()));
   }
   return seastar::make_ready_future<std::vector<coll_core_t>>(std::move(collections));
+}
+
+CyanStore::Shard::base_errorator::future<bool>
+CyanStore::Shard::exists(
+  CollectionRef ch,
+  const ghobject_t &oid)
+{
+  auto c = static_cast<Collection*>(ch.get());
+  if (!c->exists) {
+    return base_errorator::make_ready_future<bool>(false);
+  }
+  auto o = c->get_object(oid);
+  if (!o) {
+    return base_errorator::make_ready_future<bool>(false);
+  }
+  return base_errorator::make_ready_future<bool>(true);
+}
+
+seastar::future<>
+CyanStore::Shard::set_collection_opts(CollectionRef ch,
+                                      const pool_opts_t& opts)
+{
+  auto c = static_cast<Collection*>(ch.get());
+  logger().debug("{} {}", __func__, c->get_cid());
+  c->pool_opts = opts;
+  return seastar::now();
 }
 
 CyanStore::Shard::read_errorator::future<ceph::bufferlist>
@@ -492,6 +523,12 @@ seastar::future<> CyanStore::Shard::do_transaction_no_callbacks(
       {
         coll_t cid = i.get_cid(op->cid);
         r = _create_collection(cid, op->split_bits);
+      }
+      break;
+      case Transaction::OP_RMCOLL:
+      {
+        coll_t cid = i.get_cid(op->cid);
+        r = _remove_collection(cid);
       }
       break;
       case Transaction::OP_SETALLOCHINT:
@@ -860,6 +897,17 @@ int CyanStore::Shard::_create_collection(const coll_t& cid, int bits)
   result.first->second = p->second;
   result.first->second->bits = bits;
   new_coll_map.erase(p);
+  return 0;
+}
+
+int CyanStore::Shard::_remove_collection(const coll_t& cid)
+{
+  logger().debug("{} cid={}", __func__, cid);
+  auto c = _get_collection(cid);
+  if (!c) {
+    return -ENOENT;
+  }
+  coll_map.erase(cid);
   return 0;
 }
 

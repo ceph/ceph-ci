@@ -141,7 +141,8 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
                    'name=uid,type=CephInt,req=false '
                    'name=gid,type=CephInt,req=false '
                    'name=mode,type=CephString,req=false '
-                   'name=namespace_isolated,type=CephBool,req=false ',
+                   'name=namespace_isolated,type=CephBool,req=false '
+                   'name=earmark,type=CephString,req=false ',
             'desc': "Create a CephFS subvolume in a volume, and optionally, "
                     "with a specific size (in bytes), a specific data pool layout, "
                     "a specific mode, in a specific subvolume group and in separate "
@@ -270,6 +271,55 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
                    'name=force,type=CephBool,req=false ',
             'desc': "Remove custom metadata (key-value) associated with the key of a CephFS subvolume in a volume, "
                     "and optionally, in a specific subvolume group",
+            'perm': 'rw'
+        },
+        {
+            'cmd': 'fs subvolume earmark get '
+                   'name=vol_name,type=CephString '
+                   'name=sub_name,type=CephString '
+                   'name=group_name,type=CephString,req=false ',
+            'desc': "Get earmark for a subvolume",
+            'perm': 'r'
+        },
+        {
+            'cmd': 'fs subvolume earmark set '
+                   'name=vol_name,type=CephString '
+                   'name=sub_name,type=CephString '
+                   'name=group_name,type=CephString,req=false '
+                   'name=earmark,type=CephString ',
+            'desc': "Set earmark for a subvolume",
+            'perm': 'rw'
+        },
+        {
+            'cmd': 'fs subvolume earmark rm '
+                   'name=vol_name,type=CephString '
+                   'name=sub_name,type=CephString '
+                   'name=group_name,type=CephString,req=false ',
+            'desc': "Remove earmark from a subvolume",
+            'perm': 'rw'
+        },
+        {
+            'cmd': 'fs quiesce '
+                   'name=vol_name,type=CephString '
+                   'name=members,type=CephString,n=N,req=false '
+                   '-- '
+                   'name=set_id,type=CephString,req=false '
+                   'name=timeout,type=CephFloat,range=0,req=false '
+                   'name=expiration,type=CephFloat,range=0,req=false '
+                   'name=await_for,type=CephFloat,range=0,req=false '
+                   'name=await,type=CephBool,req=false '
+                   'name=if_version,type=CephInt,range=0,req=false '
+                   'name=include,type=CephBool,req=false '
+                   'name=exclude,type=CephBool,req=false '
+                   'name=reset,type=CephBool,req=false '
+                   'name=release,type=CephBool,req=false '
+                   'name=query,type=CephBool,req=false '
+                   'name=all,type=CephBool,req=false '
+                   'name=cancel,type=CephBool,req=false '
+                   'name=group_name,type=CephString,req=false '
+                   'name=leader,type=CephBool,req=false '
+                   'name=with_leader,type=CephInt,range=0,req=false ',
+            'desc': "Manage quiesce sets of subvolumes",
             'perm': 'rw'
         },
         {
@@ -489,7 +539,12 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
             'periodic_async_work',
             type='bool',
             default=False,
-            desc='Periodically check for async work')
+            desc='Periodically check for async work'),
+        Option(
+            'snapshot_clone_no_wait',
+            type='bool',
+            default=True,
+            desc='Reject subvolume clone request when cloner threads are busy')
     ]
 
     def __init__(self, *args, **kwargs):
@@ -498,6 +553,7 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
         self.max_concurrent_clones = None
         self.snapshot_clone_delay = None
         self.periodic_async_work = False
+        self.snapshot_clone_no_wait = None
         self.lock = threading.Lock()
         super(Module, self).__init__(*args, **kwargs)
         # Initialize config option members
@@ -505,9 +561,6 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
         with self.lock:
             self.vc = VolumeClient(self)
             self.inited = True
-
-    def __del__(self):
-        self.vc.shutdown()
 
     def shutdown(self):
         self.vc.shutdown()
@@ -535,6 +588,8 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
                         else:
                             self.vc.cloner.unset_wakeup_timeout()
                             self.vc.purge_queue.unset_wakeup_timeout()
+                    elif opt['name'] == "snapshot_clone_no_wait":
+                        self.vc.cloner.reconfigure_reject_clones(self.snapshot_clone_no_wait)
 
     def handle_command(self, inbuf, cmd):
         handler_name = "_cmd_" + cmd['prefix'].replace(" ", "_")
@@ -602,6 +657,7 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
                                               group_name=cmd['group_name'],
                                               new_size=cmd['new_size'],
                                               no_shrink=cmd.get('no_shrink', False))
+
     @mgr_cmd_wrap
     def _cmd_fs_subvolumegroup_ls(self, inbuf, cmd):
         return self.vc.list_subvolume_groups(vol_name=cmd['vol_name'])
@@ -623,7 +679,8 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
                                         uid=cmd.get('uid', None),
                                         gid=cmd.get('gid', None),
                                         mode=cmd.get('mode', '755'),
-                                        namespace_isolated=cmd.get('namespace_isolated', False))
+                                        namespace_isolated=cmd.get('namespace_isolated', False),
+                                        earmark=cmd.get('earmark', None))
 
     @mgr_cmd_wrap
     def _cmd_fs_subvolume_rm(self, inbuf, cmd):
@@ -704,7 +761,7 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
     def _cmd_fs_subvolume_exist(self, inbuf, cmd):
         return self.vc.subvolume_exists(vol_name=cmd['vol_name'],
                                         group_name=cmd.get('group_name', None))
-    
+
     @mgr_cmd_wrap
     def _cmd_fs_subvolume_metadata_set(self, inbuf, cmd):
         return self.vc.set_user_metadata(vol_name=cmd['vol_name'],
@@ -733,6 +790,29 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
                                       key_name=cmd['key_name'],
                                       group_name=cmd.get('group_name', None),
                                       force=cmd.get('force', False))
+
+    @mgr_cmd_wrap
+    def _cmd_fs_subvolume_earmark_get(self, inbuf, cmd):
+        return self.vc.get_earmark(vol_name=cmd['vol_name'],
+                                   sub_name=cmd['sub_name'],
+                                   group_name=cmd.get('group_name', None))
+
+    @mgr_cmd_wrap
+    def _cmd_fs_subvolume_earmark_set(self, inbuf, cmd):
+        return self.vc.set_earmark(vol_name=cmd['vol_name'],
+                                      sub_name=cmd['sub_name'],
+                                      group_name=cmd.get('group_name', None),
+                                      earmark=cmd['earmark'])
+
+    @mgr_cmd_wrap
+    def _cmd_fs_subvolume_earmark_rm(self, inbuf, cmd):
+        return self.vc.clear_earmark(vol_name=cmd['vol_name'],
+                                      sub_name=cmd['sub_name'],
+                                      group_name=cmd.get('group_name', None))
+
+    @mgr_cmd_wrap
+    def _cmd_fs_quiesce(self, inbuf, cmd):
+        return self.vc.quiesce(cmd)
 
     @mgr_cmd_wrap
     def _cmd_fs_subvolumegroup_pin(self, inbuf, cmd):
@@ -858,3 +938,19 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
     def _cmd_fs_clone_cancel(self, inbuf, cmd):
         return self.vc.clone_cancel(
             vol_name=cmd['vol_name'], clone_name=cmd['clone_name'], group_name=cmd.get('group_name', None))
+
+    # remote method
+    def subvolume_getpath(self, vol_name, subvol, group_name):
+        return self.vc.subvolume_getpath(vol_name=vol_name,
+                                         sub_name=subvol,
+                                         group_name=group_name)
+
+    # remote method
+    def subvolume_ls(self, vol_name, group_name):
+        return self.vc.list_subvolumes(vol_name=vol_name, group_name=group_name)
+
+    # remote method
+    def subvolume_info(self, vol_name, subvol, group_name):
+        return self.vc.subvolume_info(vol_name=vol_name,
+                                      sub_name=subvol,
+                                      group_name=group_name)

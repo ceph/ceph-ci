@@ -32,7 +32,7 @@ extern "C" {
 #include "features.h"
 
 #define LIBRBD_VER_MAJOR 1
-#define LIBRBD_VER_MINOR 18
+#define LIBRBD_VER_MINOR 19
 #define LIBRBD_VER_EXTRA 0
 
 #define LIBRBD_VERSION(maj, min, extra) ((maj << 16) + (min << 8) + extra)
@@ -51,6 +51,7 @@ extern "C" {
 #define LIBRBD_SUPPORTS_WRITE_ZEROES 1
 #define LIBRBD_SUPPORTS_ENCRYPTION 1
 #define LIBRBD_SUPPORTS_ENCRYPTION_LOAD2 1
+#define LIBRBD_SUPPORTS_GROUP_SNAP_GET_INFO 1
 
 #if __GNUC__ >= 4
   #define CEPH_RBD_API          __attribute__ ((visibility ("default")))
@@ -249,16 +250,41 @@ typedef enum {
   RBD_GROUP_SNAP_STATE_COMPLETE
 } rbd_group_snap_state_t;
 
+typedef enum {
+  RBD_GROUP_SNAP_NAMESPACE_TYPE_USER = 0
+} rbd_group_snap_namespace_type_t;
+
+typedef struct {
+  char *image_name;
+  int64_t pool_id;
+  uint64_t snap_id;
+} rbd_group_image_snap_info_t;
+
 typedef struct {
   char *name;
   rbd_group_snap_state_t state;
 } rbd_group_snap_info_t;
 
 typedef struct {
+  char *id;
+  char *name;
+  char *image_snap_name;
+  rbd_group_snap_state_t state;
+  rbd_group_snap_namespace_type_t namespace_type;
+  size_t image_snaps_count;
+  rbd_group_image_snap_info_t *image_snaps;
+} rbd_group_snap_info2_t;
+
+typedef struct {
   int64_t group_pool;
   char *group_name;
   char *group_snap_name;
 } rbd_snap_group_namespace_t;
+
+typedef struct {
+  rbd_snap_namespace_type_t original_namespace_type;
+  char *original_name;
+} rbd_snap_trash_namespace_t;
 
 typedef enum {
   RBD_SNAP_MIRROR_STATE_PRIMARY,
@@ -479,6 +505,9 @@ CEPH_RBD_API int rbd_clone2(rados_ioctx_t p_ioctx, const char *p_name,
 CEPH_RBD_API int rbd_clone3(rados_ioctx_t p_ioctx, const char *p_name,
 	                    const char *p_snapname, rados_ioctx_t c_ioctx,
 	                    const char *c_name, rbd_image_options_t c_opts);
+CEPH_RBD_API int rbd_clone4(rados_ioctx_t p_ioctx, const char *p_name,
+                            uint64_t p_snap_id, rados_ioctx_t c_ioctx,
+                            const char *c_name, rbd_image_options_t c_opts);
 CEPH_RBD_API int rbd_remove(rados_ioctx_t io, const char *name);
 CEPH_RBD_API int rbd_remove_with_progress(rados_ioctx_t io, const char *name,
 			                  librbd_progress_fn_t cb,
@@ -553,6 +582,16 @@ CEPH_RBD_API int rbd_mirror_mode_get(rados_ioctx_t io_ctx,
                                      rbd_mirror_mode_t *mirror_mode);
 CEPH_RBD_API int rbd_mirror_mode_set(rados_ioctx_t io_ctx,
                                      rbd_mirror_mode_t mirror_mode);
+CEPH_RBD_API int rbd_mirror_remote_namespace_get(rados_ioctx_t io_ctx,
+                                                 char *remote_namespace,
+				                 size_t *max_len);
+/**
+ * The value can be set only if mirroring on io_ctx is disabled. The previously
+ * set value will be automatically reset to io_ctx's namespace when mirroring on
+ * io_ctx is disabled.
+ */
+CEPH_RBD_API int rbd_mirror_remote_namespace_set(rados_ioctx_t io_ctx,
+                                                 const char *remote_namespace);
 
 CEPH_RBD_API int rbd_mirror_uuid_get(rados_ioctx_t io_ctx,
                                      char *uuid, size_t *max_len);
@@ -965,6 +1004,11 @@ CEPH_RBD_API int rbd_snap_get_trash_namespace(rbd_image_t image,
                                               uint64_t snap_id,
                                               char* original_name,
                                               size_t max_length);
+CEPH_RBD_API int rbd_snap_get_trash_namespace2(
+    rbd_image_t image, uint64_t snap_id,
+    rbd_snap_trash_namespace_t *trash_snap, size_t trash_snap_size);
+CEPH_RBD_API int rbd_snap_trash_namespace_cleanup(
+    rbd_snap_trash_namespace_t *trash_snap, size_t trash_snap_size);
 CEPH_RBD_API int rbd_snap_get_mirror_namespace(
     rbd_image_t image, uint64_t snap_id,
     rbd_snap_mirror_namespace_t *mirror_snap, size_t mirror_snap_size);
@@ -1377,6 +1421,8 @@ CEPH_RBD_API int rbd_aio_mirror_image_create_snapshot(rbd_image_t image,
 CEPH_RBD_API int rbd_group_create(rados_ioctx_t p, const char *name);
 CEPH_RBD_API int rbd_group_remove(rados_ioctx_t p, const char *name);
 CEPH_RBD_API int rbd_group_list(rados_ioctx_t p, char *names, size_t *size);
+CEPH_RBD_API int rbd_group_get_id(rados_ioctx_t p, const char *group_name,
+                                  char *group_id, size_t *size);
 CEPH_RBD_API int rbd_group_rename(rados_ioctx_t p, const char *src_name,
                                   const char *dest_name);
 CEPH_RBD_API int rbd_group_info_cleanup(rbd_group_info_t *group_info,
@@ -1476,6 +1522,18 @@ CEPH_RBD_API int rbd_group_snap_list(rados_ioctx_t group_p,
 CEPH_RBD_API int rbd_group_snap_list_cleanup(rbd_group_snap_info_t *snaps,
                                              size_t group_snap_info_size,
                                              size_t num_entries);
+CEPH_RBD_API int rbd_group_snap_list2(rados_ioctx_t group_p,
+                                      const char *group_name,
+                                      rbd_group_snap_info2_t *snaps,
+                                      size_t *num_entries);
+CEPH_RBD_API void rbd_group_snap_list2_cleanup(rbd_group_snap_info2_t *snaps,
+                                               size_t num_entries);
+CEPH_RBD_API int rbd_group_snap_get_info(rados_ioctx_t group_p,
+                                         const char *group_name,
+                                         const char *snap_name,
+                                         rbd_group_snap_info2_t *group_snap);
+CEPH_RBD_API void rbd_group_snap_get_info_cleanup(
+    rbd_group_snap_info2_t *group_snap);
 CEPH_RBD_API int rbd_group_snap_rollback(rados_ioctx_t group_p,
                                          const char *group_name,
                                          const char *snap_name);

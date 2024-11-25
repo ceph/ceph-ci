@@ -8,7 +8,6 @@
 #include "include/intarith.h"
 #include "librbd/AsioEngine.h"
 #include "librbd/ImageCtx.h"
-#include "librbd/ImageState.h"
 #include "librbd/Utils.h"
 #include "librbd/io/AioCompletion.h"
 #include "librbd/io/ReadResult.h"
@@ -125,7 +124,8 @@ class QCOWFormat<I>::ClusterCache {
 public:
   ClusterCache(QCOWFormat* qcow_format)
     : qcow_format(qcow_format),
-      m_strand(*qcow_format->m_image_ctx->asio_engine) {
+      m_strand(boost::asio::make_strand(
+        *qcow_format->m_image_ctx->asio_engine)) {
   }
 
   void get_cluster(uint64_t cluster_offset, uint64_t cluster_length,
@@ -149,7 +149,7 @@ private:
   typedef std::list<Completion> Completions;
 
   QCOWFormat* qcow_format;
-  boost::asio::io_context::strand m_strand;
+  boost::asio::strand<boost::asio::io_context::executor_type> m_strand;
 
   std::shared_ptr<Cluster> cluster;
   std::unordered_map<uint64_t, Completions> cluster_completions;
@@ -256,7 +256,8 @@ class QCOWFormat<I>::L2TableCache {
 public:
   L2TableCache(QCOWFormat* qcow_format)
     : qcow_format(qcow_format),
-      m_strand(*qcow_format->m_image_ctx->asio_engine),
+      m_strand(boost::asio::make_strand(
+        *qcow_format->m_image_ctx->asio_engine)),
       l2_cache_entries(QCOW_L2_CACHE_SIZE) {
   }
 
@@ -316,7 +317,7 @@ public:
 private:
   QCOWFormat* qcow_format;
 
-  boost::asio::io_context::strand m_strand;
+  boost::asio::strand<boost::asio::io_context::executor_type> m_strand;
 
   struct Request {
     const LookupTable* l1_table;
@@ -832,7 +833,7 @@ QCOWFormat<I>::QCOWFormat(
     const SourceSpecBuilder<I>* source_spec_builder)
   : m_image_ctx(image_ctx), m_json_object(json_object),
     m_source_spec_builder(source_spec_builder),
-    m_strand(*image_ctx->asio_engine) {
+    m_strand(boost::asio::make_strand(*image_ctx->asio_engine)) {
 }
 
 template <typename I>
@@ -842,8 +843,8 @@ void QCOWFormat<I>::open(Context* on_finish) {
 
   int r = m_source_spec_builder->build_stream(m_json_object, &m_stream);
   if (r < 0) {
-    lderr(cct) << "failed to build migration stream handler" << cpp_strerror(r)
-               << dendl;
+    lderr(cct) << "failed to build migration stream handler: "
+               << cpp_strerror(r) << dendl;
     on_finish->complete(r);
     return;
   }
@@ -1436,7 +1437,7 @@ void QCOWFormat<I>::get_image_size(uint64_t snap_id, uint64_t* size,
 }
 
 template <typename I>
-bool QCOWFormat<I>::read(
+void QCOWFormat<I>::read(
     io::AioCompletion* aio_comp, uint64_t snap_id, io::Extents&& image_extents,
     io::ReadResult&& read_result, int op_flags, int read_flags,
     const ZTracer::Trace &parent_trace) {
@@ -1451,7 +1452,7 @@ bool QCOWFormat<I>::read(
     auto snapshot_it = m_snapshots.find(snap_id);
     if (snapshot_it == m_snapshots.end()) {
       aio_comp->fail(-ENOENT);
-      return true;
+      return;
     }
 
     auto& snapshot = snapshot_it->second;
@@ -1464,8 +1465,6 @@ bool QCOWFormat<I>::read(
   auto read_request = new ReadRequest(this, aio_comp, l1_table,
                                       std::move(image_extents));
   read_request->send();
-
-  return true;
 }
 
 template <typename I>

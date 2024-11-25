@@ -169,9 +169,9 @@ class IngressService(CephService):
         if spec.enable_haproxy_protocol:
             server_opts.append("send-proxy-v2")
         logger.debug("enabled default server opts: %r", server_opts)
-        ip = '*' if spec.virtual_ips_list else str(spec.virtual_ip).split('/')[0] or daemon_spec.ip or '*'
+        ip = '[::]' if spec.virtual_ips_list else str(spec.virtual_ip).split('/')[0] or daemon_spec.ip or '[::]'
         frontend_port = daemon_spec.ports[0] if daemon_spec.ports else spec.frontend_port
-        if ip != '*' and frontend_port:
+        if ip != '[::]' and frontend_port:
             daemon_spec.port_ips = {str(frontend_port): ip}
         haproxy_conf = self.mgr.template.render(
             'services/ingress/haproxy.cfg.j2',
@@ -187,6 +187,7 @@ class IngressService(CephService):
                 'monitor_port': daemon_spec.ports[1] if daemon_spec.ports else spec.monitor_port,
                 'local_host_ip': host_ip,
                 'default_server_opts': server_opts,
+                'health_check_interval': spec.health_check_interval or '2s',
             }
         )
         config_files = {
@@ -240,7 +241,12 @@ class IngressService(CephService):
         if spec.keepalived_password:
             password = spec.keepalived_password
 
-        daemons = self.mgr.cache.get_daemons_by_service(spec.service_name())
+        if spec.keepalive_only:
+            # when keepalive_only instead of haproxy, we have to monitor the backend service daemons
+            if spec.backend_service is not None:
+                daemons = self.mgr.cache.get_daemons_by_service(spec.backend_service)
+        else:
+            daemons = self.mgr.cache.get_daemons_by_service(spec.service_name())
 
         if not daemons and not spec.keepalive_only:
             raise OrchestratorError(
@@ -259,7 +265,10 @@ class IngressService(CephService):
             for subnet, ifaces in self.mgr.cache.networks.get(host, {}).items():
                 if ifaces and ipaddress.ip_address(bare_ip) in ipaddress.ip_network(subnet):
                     interface = list(ifaces.keys())[0]
-                    host_ip = ifaces[interface][0]
+                    for ip_addr in ifaces[interface]:
+                        if ip_addr != str(bare_ip):
+                            host_ip = ip_addr
+                            break
                     logger.info(
                         f'{bare_ip} is in {subnet} on {host} interface {interface}'
                     )
@@ -269,7 +278,10 @@ class IngressService(CephService):
                 for subnet, ifaces in self.mgr.cache.networks.get(host, {}).items():
                     if subnet in spec.virtual_interface_networks:
                         interface = list(ifaces.keys())[0]
-                        host_ip = ifaces[interface][0]
+                        for ip_addr in ifaces[interface]:
+                            if ip_addr != str(bare_ip):
+                                host_ip = ip_addr
+                                break
                         logger.info(
                             f'{spec.virtual_ip} will be configured on {host} interface '
                             f'{interface} (which is in subnet {subnet})'
@@ -290,6 +302,10 @@ class IngressService(CephService):
                     port = d.ports[1]   # monitoring port
                     host_ip = d.ip or self.mgr.inventory.get_addr(d.hostname)
                     script = f'/usr/bin/curl {build_url(scheme="http", host=host_ip, port=port)}/health'
+                elif d.daemon_type == 'mgmt-gateway':
+                    mgmt_gw_port = d.ports[0] if d.ports else None
+                    host_ip = d.ip or self.mgr.inventory.get_addr(d.hostname)
+                    script = f'/usr/bin/curl -k {build_url(scheme="https", host=host_ip, port=mgmt_gw_port)}/health'
         assert script
 
         states = []

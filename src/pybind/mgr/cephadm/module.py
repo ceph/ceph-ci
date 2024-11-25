@@ -1,4 +1,5 @@
 import asyncio
+import concurrent
 import json
 import errno
 import ipaddress
@@ -10,9 +11,12 @@ from configparser import ConfigParser
 from contextlib import contextmanager
 from functools import wraps
 from tempfile import TemporaryDirectory, NamedTemporaryFile
+from urllib.error import HTTPError
+from urllib.parse import urlparse
 from threading import Event
 
-from cephadm.service_discovery import ServiceDiscovery
+from ceph.deployment.service_spec import PrometheusSpec
+from cephadm.cert_mgr import CertMgr
 
 import string
 from typing import List, Dict, Optional, Callable, Tuple, TypeVar, \
@@ -26,12 +30,14 @@ import multiprocessing.pool
 import subprocess
 from prettytable import PrettyTable
 
+import ceph.cephadm.images as default_images
 from ceph.deployment import inventory
 from ceph.deployment.drive_group import DriveGroupSpec
 from ceph.deployment.service_spec import \
     ServiceSpec, PlacementSpec, \
     HostPlacementSpec, IngressSpec, \
-    TunedProfileSpec, IscsiServiceSpec
+    TunedProfileSpec, IscsiServiceSpec, \
+    MgmtGatewaySpec
 from ceph.utils import str_to_datetime, datetime_to_str, datetime_now
 from cephadm.serve import CephadmServe
 from cephadm.services.cephadmservice import CephadmDaemonDeploySpec
@@ -39,7 +45,14 @@ from cephadm.http_server import CephadmHttpServer
 from cephadm.agent import CephadmAgentHelpers
 
 
-from mgr_module import MgrModule, HandleCommandResult, Option, NotifyType
+from mgr_module import (
+    MgrModule,
+    HandleCommandResult,
+    Option,
+    NotifyType,
+    MonCommandFailed,
+)
+from mgr_util import build_url
 import orchestrator
 from orchestrator.module import to_format, Format
 
@@ -59,14 +72,29 @@ from .services.ingress import IngressService
 from .services.container import CustomContainerService
 from .services.iscsi import IscsiService
 from .services.nvmeof import NvmeofService
+from .services.mgmt_gateway import MgmtGatewayService
+from .services.oauth2_proxy import OAuth2ProxyService
 from .services.nfs import NFSService
 from .services.osd import OSDRemovalQueue, OSDService, OSD, NotFoundError
 from .services.monitoring import GrafanaService, AlertmanagerService, PrometheusService, \
     NodeExporterService, SNMPGatewayService, LokiService, PromtailService
 from .services.jaeger import ElasticSearchService, JaegerAgentService, JaegerCollectorService, JaegerQueryService
+from .services.node_proxy import NodeProxy
+from .services.smb import SMBService
 from .schedule import HostAssignment
-from .inventory import Inventory, SpecStore, HostCache, AgentCache, EventStore, \
-    ClientKeyringStore, ClientKeyringSpec, TunedProfileStore
+from .inventory import (
+    Inventory,
+    SpecStore,
+    HostCache,
+    AgentCache,
+    EventStore,
+    ClientKeyringStore,
+    ClientKeyringSpec,
+    TunedProfileStore,
+    NodeProxyCache,
+    CertKeyStore,
+    OrchSecretNotFound,
+)
 from .upgrade import CephadmUpgrade
 from .template import TemplateMgr
 from .utils import CEPH_IMAGE_TYPES, RESCHEDULE_FROM_OFFLINE_HOSTS_TYPES, forall_hosts, \
@@ -74,6 +102,7 @@ from .utils import CEPH_IMAGE_TYPES, RESCHEDULE_FROM_OFFLINE_HOSTS_TYPES, forall
 from .configchecks import CephadmConfigChecks
 from .offline_watcher import OfflineHostWatcher
 from .tuned_profiles import TunedProfileUtils
+from .ceph_volume import CephVolume
 
 try:
     import asyncssh
@@ -102,24 +131,7 @@ def os_exit_noop(status: int) -> None:
 
 os._exit = os_exit_noop   # type: ignore
 
-
-# Default container images -----------------------------------------------------
 DEFAULT_IMAGE = 'quay.io/ceph/ceph'
-DEFAULT_PROMETHEUS_IMAGE = 'quay.io/prometheus/prometheus:v2.43.0'
-DEFAULT_NODE_EXPORTER_IMAGE = 'quay.io/prometheus/node-exporter:v1.5.0'
-DEFAULT_NVMEOF_IMAGE = 'quay.io/ceph/nvmeof:0.0.3'
-DEFAULT_LOKI_IMAGE = 'docker.io/grafana/loki:2.4.0'
-DEFAULT_PROMTAIL_IMAGE = 'docker.io/grafana/promtail:2.4.0'
-DEFAULT_ALERT_MANAGER_IMAGE = 'quay.io/prometheus/alertmanager:v0.25.0'
-DEFAULT_GRAFANA_IMAGE = 'quay.io/ceph/ceph-grafana:9.4.7'
-DEFAULT_HAPROXY_IMAGE = 'quay.io/ceph/haproxy:2.3'
-DEFAULT_KEEPALIVED_IMAGE = 'quay.io/ceph/keepalived:2.2.4'
-DEFAULT_SNMP_GATEWAY_IMAGE = 'docker.io/maxwo/snmp-notifier:v1.2.1'
-DEFAULT_ELASTICSEARCH_IMAGE = 'quay.io/omrizeneva/elasticsearch:6.8.23'
-DEFAULT_JAEGER_COLLECTOR_IMAGE = 'quay.io/jaegertracing/jaeger-collector:1.29'
-DEFAULT_JAEGER_AGENT_IMAGE = 'quay.io/jaegertracing/jaeger-agent:1.29'
-DEFAULT_JAEGER_QUERY_IMAGE = 'quay.io/jaegertracing/jaeger-query:1.29'
-# ------------------------------------------------------------------------------
 
 
 def host_exists(hostname_position: int = 1) -> Callable:
@@ -207,73 +219,93 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         ),
         Option(
             'container_image_prometheus',
-            default=DEFAULT_PROMETHEUS_IMAGE,
+            default=default_images.DEFAULT_PROMETHEUS_IMAGE,
             desc='Prometheus container image',
         ),
         Option(
             'container_image_nvmeof',
-            default=DEFAULT_NVMEOF_IMAGE,
+            default=default_images.DEFAULT_NVMEOF_IMAGE,
             desc='Nvme-of container image',
         ),
         Option(
             'container_image_grafana',
-            default=DEFAULT_GRAFANA_IMAGE,
+            default=default_images.DEFAULT_GRAFANA_IMAGE,
             desc='Prometheus container image',
         ),
         Option(
             'container_image_alertmanager',
-            default=DEFAULT_ALERT_MANAGER_IMAGE,
+            default=default_images.DEFAULT_ALERTMANAGER_IMAGE,
             desc='Prometheus container image',
         ),
         Option(
             'container_image_node_exporter',
-            default=DEFAULT_NODE_EXPORTER_IMAGE,
+            default=default_images.DEFAULT_NODE_EXPORTER_IMAGE,
             desc='Prometheus container image',
         ),
         Option(
             'container_image_loki',
-            default=DEFAULT_LOKI_IMAGE,
+            default=default_images.DEFAULT_LOKI_IMAGE,
             desc='Loki container image',
         ),
         Option(
             'container_image_promtail',
-            default=DEFAULT_PROMTAIL_IMAGE,
+            default=default_images.DEFAULT_PROMTAIL_IMAGE,
             desc='Promtail container image',
         ),
         Option(
             'container_image_haproxy',
-            default=DEFAULT_HAPROXY_IMAGE,
+            default=default_images.DEFAULT_HAPROXY_IMAGE,
             desc='HAproxy container image',
         ),
         Option(
             'container_image_keepalived',
-            default=DEFAULT_KEEPALIVED_IMAGE,
+            default=default_images.DEFAULT_KEEPALIVED_IMAGE,
             desc='Keepalived container image',
         ),
         Option(
             'container_image_snmp_gateway',
-            default=DEFAULT_SNMP_GATEWAY_IMAGE,
+            default=default_images.DEFAULT_SNMP_GATEWAY_IMAGE,
             desc='SNMP Gateway container image',
         ),
         Option(
+            'container_image_nginx',
+            default=default_images.DEFAULT_NGINX_IMAGE,
+            desc='Nginx container image',
+        ),
+        Option(
+            'container_image_oauth2_proxy',
+            default=default_images.DEFAULT_OAUTH2_PROXY_IMAGE,
+            desc='oauth2-proxy container image',
+        ),
+        Option(
             'container_image_elasticsearch',
-            default=DEFAULT_ELASTICSEARCH_IMAGE,
+            default=default_images.DEFAULT_ELASTICSEARCH_IMAGE,
             desc='elasticsearch container image',
         ),
         Option(
             'container_image_jaeger_agent',
-            default=DEFAULT_JAEGER_AGENT_IMAGE,
+            default=default_images.DEFAULT_JAEGER_AGENT_IMAGE,
             desc='Jaeger agent container image',
         ),
         Option(
             'container_image_jaeger_collector',
-            default=DEFAULT_JAEGER_COLLECTOR_IMAGE,
+            default=default_images.DEFAULT_JAEGER_COLLECTOR_IMAGE,
             desc='Jaeger collector container image',
         ),
         Option(
             'container_image_jaeger_query',
-            default=DEFAULT_JAEGER_QUERY_IMAGE,
+            default=default_images.DEFAULT_JAEGER_QUERY_IMAGE,
             desc='Jaeger query container image',
+        ),
+        Option(
+            'container_image_samba',
+            default=default_images.DEFAULT_SAMBA_IMAGE,
+            desc='Samba/SMB container image',
+        ),
+        Option(
+            'container_image_samba_metrics',
+            default=default_images.DEFAULT_SAMBA_METRICS_IMAGE,
+            desc='Samba/SMB metrics exporter container image',
         ),
         Option(
             'warn_on_stray_hosts',
@@ -322,6 +354,12 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             type='str',
             default='/etc/prometheus/ceph/ceph_default_alerts.yml',
             desc='location of alerts to include in prometheus deployments',
+        ),
+        Option(
+            'grafana_dashboards_path',
+            type='str',
+            default='/etc/grafana/dashboards/ceph-dashboard/',
+            desc='location of dashboards to include in grafana deployments',
         ),
         Option(
             'migration_current',
@@ -389,7 +427,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         Option(
             'default_registry',
             type='str',
-            default='docker.io',
+            default='quay.io',
             desc='Search-registry to which we should normalize unqualified image names. '
                  'This is not the default registry',
         ),
@@ -436,6 +474,12 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             desc='Multiplied by agent refresh rate to calculate how long agent must not report before being marked down'
         ),
         Option(
+            'hw_monitoring',
+            type='bool',
+            default=False,
+            desc='Deploy hw monitoring daemon on every host.'
+        ),
+        Option(
             'max_osd_draining_count',
             type='int',
             default=10,
@@ -467,10 +511,23 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         ),
         Option(
             'default_cephadm_command_timeout',
-            type='secs',
+            type='int',
             default=15 * 60,
             desc='Default timeout applied to cephadm commands run directly on '
             'the host (in seconds)'
+        ),
+        Option(
+            'ssh_keepalive_interval',
+            type='int',
+            default=7,
+            desc='How often ssh connections are checked for liveness'
+        ),
+        Option(
+            'ssh_keepalive_count_max',
+            type='int',
+            default=3,
+            desc='How many times ssh connections can fail liveness checks '
+            'before the host is marked offline'
         ),
         Option(
             'cephadm_log_destination',
@@ -478,6 +535,12 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             default='',
             desc="Destination for cephadm command's persistent logging",
             enum_allowed=['file', 'syslog', 'file,syslog'],
+        ),
+        Option(
+            'oob_default_addr',
+            type='str',
+            default='169.254.1.1',
+            desc="Default address for RedFish API (oob management)."
         ),
     ]
 
@@ -489,7 +552,6 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         # for serve()
         self.run = True
         self.event = Event()
-
         self.ssh = ssh.SSHManager(self)
 
         if self.get_store('pause'):
@@ -517,16 +579,21 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             self.container_image_haproxy = ''
             self.container_image_keepalived = ''
             self.container_image_snmp_gateway = ''
+            self.container_image_nginx = ''
+            self.container_image_oauth2_proxy = ''
             self.container_image_elasticsearch = ''
             self.container_image_jaeger_agent = ''
             self.container_image_jaeger_collector = ''
             self.container_image_jaeger_query = ''
+            self.container_image_samba = ''
+            self.container_image_samba_metrics = ''
             self.warn_on_stray_hosts = True
             self.warn_on_stray_daemons = True
             self.warn_on_failed_host_check = True
             self.allow_ptrace = False
             self.container_init = True
             self.prometheus_alerts_path = ''
+            self.grafana_dashboards_path = ''
             self.migration_current: Optional[int] = None
             self.config_dashboard = True
             self.manage_etc_ceph_ceph_conf = True
@@ -536,6 +603,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             self.registry_password: Optional[str] = None
             self.registry_insecure: bool = False
             self.use_repo_digest = True
+            self.config_checks_enabled = False
             self.default_registry = ''
             self.autotune_memory_target_ratio = 0.0
             self.autotune_interval = 0
@@ -552,6 +620,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             self.agent_refresh_rate = 0
             self.agent_down_multiplier = 0.0
             self.agent_starting_port = 0
+            self.hw_monitoring = False
             self.service_discovery_port = 0
             self.secure_monitoring_stack = False
             self.apply_spec_fails: List[Tuple[str, str]] = []
@@ -562,6 +631,9 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             self.log_refresh_metadata = False
             self.default_cephadm_command_timeout = 0
             self.cephadm_log_destination = ''
+            self.oob_default_addr = ''
+            self.ssh_keepalive_interval = 0
+            self.ssh_keepalive_count_max = 0
 
         self.notify(NotifyType.mon_map, None)
         self.config_notify()
@@ -592,6 +664,9 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         self.cache = HostCache(self)
         self.cache.load()
 
+        self.node_proxy_cache = NodeProxyCache(self)
+        self.node_proxy_cache.load()
+
         self.agent_cache = AgentCache(self)
         self.agent_cache.load()
 
@@ -609,6 +684,11 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
 
         self.tuned_profile_utils = TunedProfileUtils(self)
 
+        self.cert_key_store = CertKeyStore(self)
+        self.cert_key_store.load()
+
+        self.cert_mgr = CertMgr(self, self.get_mgr_ip())
+
         # ensure the host lists are in sync
         for h in self.inventory.keys():
             if h not in self.cache.daemons:
@@ -624,12 +704,36 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         self.migration = Migrations(self)
 
         _service_classes: Sequence[Type[CephadmService]] = [
-            OSDService, NFSService, MonService, MgrService, MdsService,
-            RgwService, RbdMirrorService, GrafanaService, AlertmanagerService,
-            PrometheusService, NodeExporterService, LokiService, PromtailService, CrashService, IscsiService,
-            IngressService, CustomContainerService, CephfsMirrorService, NvmeofService,
-            CephadmAgent, CephExporterService, SNMPGatewayService, ElasticSearchService,
-            JaegerQueryService, JaegerAgentService, JaegerCollectorService
+            AlertmanagerService,
+            CephExporterService,
+            CephadmAgent,
+            CephfsMirrorService,
+            CrashService,
+            CustomContainerService,
+            ElasticSearchService,
+            GrafanaService,
+            IngressService,
+            IscsiService,
+            JaegerAgentService,
+            JaegerCollectorService,
+            JaegerQueryService,
+            LokiService,
+            MdsService,
+            MgrService,
+            MonService,
+            NFSService,
+            NodeExporterService,
+            NodeProxy,
+            NvmeofService,
+            OSDService,
+            PrometheusService,
+            PromtailService,
+            RbdMirrorService,
+            RgwService,
+            SMBService,
+            SNMPGatewayService,
+            MgmtGatewayService,
+            OAuth2ProxyService,
         ]
 
         # https://github.com/python/mypy/issues/8993
@@ -640,6 +744,8 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         self.osd_service: OSDService = cast(OSDService, self.cephadm_services['osd'])
         self.iscsi_service: IscsiService = cast(IscsiService, self.cephadm_services['iscsi'])
         self.nvmeof_service: NvmeofService = cast(NvmeofService, self.cephadm_services['nvmeof'])
+        self.node_proxy_service: NodeProxy = cast(NodeProxy, self.cephadm_services['node-proxy'])
+        self.rgw_service: RgwService = cast(RgwService, self.cephadm_services['rgw'])
 
         self.scheduled_async_actions: List[Callable] = []
 
@@ -652,12 +758,22 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
 
         self.http_server = CephadmHttpServer(self)
         self.http_server.start()
+
+        self.node_proxy = NodeProxy(self)
+
         self.agent_helpers = CephadmAgentHelpers(self)
         if self.use_agent:
             self.agent_helpers._apply_agent()
 
         self.offline_watcher = OfflineHostWatcher(self)
         self.offline_watcher.start()
+
+        # Maps daemon names to timestamps (creation/removal time) for recently created or
+        # removed daemons. Daemons are added to the dict upon creation or removal and cleared
+        # as part of the handling of stray daemons
+        self.recently_altered_daemons: Dict[str, datetime.datetime] = {}
+
+        self.ceph_volume: CephVolume = CephVolume(self)
 
     def shutdown(self) -> None:
         self.log.debug('shutdown')
@@ -671,6 +787,48 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
     def _get_cephadm_service(self, service_type: str) -> CephadmService:
         assert service_type in ServiceSpec.KNOWN_SERVICE_TYPES
         return self.cephadm_services[service_type]
+
+    def get_fqdn(self, hostname: str) -> str:
+        """Get a host's FQDN with its hostname.
+
+           If the FQDN can't be resolved, the address from the inventory will
+           be returned instead.
+        """
+        return self.inventory.get_fqdn(hostname) or self.inventory.get_addr(hostname)
+
+    def _get_security_config(self) -> Tuple[bool, bool, bool]:
+        oauth2_proxy_enabled = len(self.cache.get_daemons_by_service('oauth2-proxy')) > 0
+        mgmt_gw_enabled = len(self.cache.get_daemons_by_service('mgmt-gateway')) > 0
+        security_enabled = self.secure_monitoring_stack or mgmt_gw_enabled
+        return security_enabled, mgmt_gw_enabled, oauth2_proxy_enabled
+
+    def _get_mgmt_gw_endpoint(self, is_internal: bool) -> Optional[str]:
+        mgmt_gw_daemons = self.cache.get_daemons_by_service('mgmt-gateway')
+        if not mgmt_gw_daemons:
+            return None
+
+        dd = mgmt_gw_daemons[0]
+        assert dd.hostname is not None
+        mgmt_gw_spec = cast(MgmtGatewaySpec, self.spec_store['mgmt-gateway'].spec)
+        mgmt_gw_addr = mgmt_gw_spec.virtual_ip if mgmt_gw_spec.virtual_ip is not None else self.get_fqdn(dd.hostname)
+
+        if is_internal:
+            mgmt_gw_port: Optional[int] = MgmtGatewayService.INTERNAL_SERVICE_PORT
+            protocol = 'https'
+            endpoint_suffix = '/internal'
+        else:
+            mgmt_gw_port = dd.ports[0] if dd.ports else None
+            protocol = 'http' if mgmt_gw_spec.disable_https else 'https'
+            endpoint_suffix = ''
+
+        mgmt_gw_endpoint = build_url(scheme=protocol, host=mgmt_gw_addr, port=mgmt_gw_port)
+        return f'{mgmt_gw_endpoint}{endpoint_suffix}'
+
+    def get_mgmt_gw_internal_endpoint(self) -> Optional[str]:
+        return self._get_mgmt_gw_endpoint(is_internal=True)
+
+    def get_mgmt_gw_external_endpoint(self) -> Optional[str]:
+        return self._get_mgmt_gw_endpoint(is_internal=False)
 
     def _get_cephadm_binary_path(self) -> str:
         import hashlib
@@ -717,7 +875,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         # are provided, that will be included in the OrchestratorError's message
         try:
             yield
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, concurrent.futures.TimeoutError):
             err_str: str = ''
             if cmd:
                 err_str = f'Command "{cmd}" timed out '
@@ -729,6 +887,16 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
                 err_str += f'(non-default {timeout} second timeout)'
             else:
                 err_str += (f'(default {self.default_cephadm_command_timeout} second timeout)')
+            raise OrchestratorError(err_str)
+        except concurrent.futures.CancelledError as e:
+            err_str = ''
+            if cmd:
+                err_str = f'Command "{cmd}" failed '
+            else:
+                err_str = 'Command failed '
+            if host:
+                err_str += f'on host {host} '
+            err_str += f' - {str(e)}'
             raise OrchestratorError(err_str)
 
     def set_container_image(self, entity: str, image: str) -> None:
@@ -818,10 +986,10 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         Generate a unique random service name
         """
         suffix = daemon_type not in [
-            'mon', 'crash', 'ceph-exporter',
+            'mon', 'crash', 'ceph-exporter', 'node-proxy',
             'prometheus', 'node-exporter', 'grafana', 'alertmanager',
             'container', 'agent', 'snmp-gateway', 'loki', 'promtail',
-            'elasticsearch', 'jaeger-collector', 'jaeger-agent', 'jaeger-query'
+            'elasticsearch', 'jaeger-collector', 'jaeger-agent', 'jaeger-query', 'mgmt-gateway', 'oauth2-proxy'
         ]
         if forcename:
             if len([d for d in existing if d.daemon_id == forcename]):
@@ -923,6 +1091,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
                 ports=d.get('ports'),
                 ip=d.get('ip'),
                 deployed_by=d.get('deployed_by'),
+                systemd_unit=d.get('systemd_unit'),
                 rank=rank,
                 rank_generation=rank_generation,
                 extra_container_args=d.get('extra_container_args'),
@@ -955,6 +1124,17 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         if failed_daemons:
             self.set_health_warning('CEPHADM_FAILED_DAEMON', f'{len(failed_daemons)} failed cephadm daemon(s)', len(
                 failed_daemons), failed_daemons)
+
+    def get_first_matching_network_ip(self, host: str, sspec: ServiceSpec) -> Optional[str]:
+        sspec_networks = sspec.networks
+        for subnet, ifaces in self.cache.networks.get(host, {}).items():
+            host_network = ipaddress.ip_network(subnet)
+            for spec_network_str in sspec_networks:
+                spec_network = ipaddress.ip_network(spec_network_str)
+                if host_network.overlaps(spec_network):
+                    return list(ifaces.values())[0][0]
+                logger.error(f'{spec_network} from {sspec.service_name()} spec does not overlap with {host_network} on {host}')
+        return None
 
     @staticmethod
     def can_run() -> Tuple[bool, str]:
@@ -1328,7 +1508,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
     @orchestrator._cli_read_command('cephadm config-check status')
     def _config_check_status(self) -> HandleCommandResult:
         """Show whether the configuration checker feature is enabled/disabled"""
-        status = self.get_module_option('config_checks_enabled')
+        status = self.config_checks_enabled
         return HandleCommandResult(stdout="Enabled" if status else "Disabled")
 
     @orchestrator._cli_write_command('cephadm config-check enable')
@@ -1420,6 +1600,58 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
 
         return HandleCommandResult(stdout='\n'.join(run(host)))
 
+    @orchestrator._cli_read_command('cephadm systemd-unit ls')
+    def _systemd_unit_ls(
+        self,
+        hostname: Optional[str] = None,
+        daemon_type: Optional[str] = None,
+        daemon_id: Optional[str] = None
+    ) -> HandleCommandResult:
+        daemons = self.systemd_unit_ls(hostname, daemon_type, daemon_id)
+        return HandleCommandResult(stdout=json.dumps(daemons, indent=4))
+
+    @orchestrator._cli_read_command('cephadm systemd-unit ls')
+    def systemd_unit_ls(
+        self,
+        hostname: Optional[str] = None,
+        daemon_type: Optional[str] = None,
+        daemon_id: Optional[str] = None
+    ) -> HandleCommandResult:
+        # First, some filtering
+        if hostname and daemon_type:
+            daemons = self.cache.get_daemons_by_type(daemon_type, hostname)
+        elif hostname:
+            daemons = self.cache.get_daemons_by_host(hostname)
+        elif daemon_type:
+            daemons = self.cache.get_daemons_by_type(daemon_type)
+        else:
+            daemons = self.cache.get_daemons()
+        if daemon_id:
+            daemons = [d for d in daemons if d.daemon_id == daemon_id]
+        # intended structure for the dict is
+        # {
+        #     <host>: {
+        #         <daemon_type>: {
+        #             <daemon_name>: systemd unit
+        #         }
+        #     }
+        # }
+        systemd_unit_dict: Dict[str, Dict[str, Dict[str, str]]] = {}
+        for d in daemons:
+            # for mypy
+            host = d.hostname
+            d_type = d.daemon_type
+            systemd_unit = d.systemd_unit
+            assert host is not None
+            assert d_type is not None
+            assert systemd_unit is not None
+            if host not in systemd_unit_dict:
+                systemd_unit_dict[host] = {}
+            if d_type not in systemd_unit_dict[host]:
+                systemd_unit_dict[host][d_type] = {}
+            systemd_unit_dict[host][d_type][d.name()] = systemd_unit
+        return HandleCommandResult(stdout=json.dumps(systemd_unit_dict, indent=4))
+
     @orchestrator._cli_read_command('orch client-keyring ls')
     def _client_keyring_ls(self, format: Format = Format.plain) -> HandleCommandResult:
         """
@@ -1429,7 +1661,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             output = to_format(self.keys.keys.values(), format, many=True, cls=ClientKeyringSpec)
         else:
             table = PrettyTable(
-                ['ENTITY', 'PLACEMENT', 'MODE', 'OWNER', 'PATH'],
+                ['ENTITY', 'PLACEMENT', 'MODE', 'OWNER', 'PATH', 'INCLUDE_CEPH_CONF'],
                 border=False)
             table.align = 'l'
             table.left_padding_width = 0
@@ -1440,6 +1672,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
                     utils.file_mode_to_str(ks.mode),
                     f'{ks.uid}:{ks.gid}',
                     ks.path,
+                    ks.include_ceph_conf
                 ))
             output = table.get_string()
         return HandleCommandResult(stdout=output)
@@ -1451,6 +1684,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             placement: str,
             owner: Optional[str] = None,
             mode: Optional[str] = None,
+            no_ceph_conf: bool = False,
     ) -> HandleCommandResult:
         """
         Add or update client keyring under cephadm management
@@ -1473,7 +1707,14 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         else:
             imode = 0o600
         pspec = PlacementSpec.from_string(placement)
-        ks = ClientKeyringSpec(entity, pspec, mode=imode, uid=uid, gid=gid)
+        ks = ClientKeyringSpec(
+            entity,
+            pspec,
+            mode=imode,
+            uid=uid,
+            gid=gid,
+            include_ceph_conf=(not no_ceph_conf)
+        )
         self.keys.update(ks)
         self._kick_serve_loop()
         return HandleCommandResult()
@@ -1490,50 +1731,61 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         self._kick_serve_loop()
         return HandleCommandResult()
 
-    def _get_container_image(self, daemon_name: str) -> Optional[str]:
+    def _get_container_image(self, daemon_name: str, use_current_daemon_image: bool = False) -> Optional[str]:
         daemon_type = daemon_name.split('.', 1)[0]  # type: ignore
         image: Optional[str] = None
+        # Try to use current image if specified. This is necessary
+        # because, if we're reconfiguring the daemon, we can
+        # run into issues during upgrade. For example if the default grafana
+        # image is changing and we pass the new image name when doing
+        # the reconfig, we could end up using the UID required by the
+        # new image as owner for the config files we write, while the
+        # unit.run will still reference the old image that requires those
+        # config files to be owned by a different UID
+        # Note that "current image" just means the one we picked up
+        # when we last ran "cephadm ls" on the host
+        if use_current_daemon_image:
+            try:
+                dd = self.cache.get_daemon(daemon_name=daemon_name)
+                if dd.container_image_name:
+                    return dd.container_image_name
+            except OrchestratorError:
+                self.log.debug(f'Could not find daemon {daemon_name} in cache '
+                               'while searching for its image')
         if daemon_type in CEPH_IMAGE_TYPES:
             # get container image
             image = str(self.get_foreign_ceph_option(
                 utils.name_to_config_section(daemon_name),
                 'container_image'
             )).strip()
-        elif daemon_type == 'prometheus':
-            image = self.container_image_prometheus
-        elif daemon_type == 'nvmeof':
-            image = self.container_image_nvmeof
-        elif daemon_type == 'grafana':
-            image = self.container_image_grafana
-        elif daemon_type == 'alertmanager':
-            image = self.container_image_alertmanager
-        elif daemon_type == 'node-exporter':
-            image = self.container_image_node_exporter
-        elif daemon_type == 'loki':
-            image = self.container_image_loki
-        elif daemon_type == 'promtail':
-            image = self.container_image_promtail
-        elif daemon_type == 'haproxy':
-            image = self.container_image_haproxy
-        elif daemon_type == 'keepalived':
-            image = self.container_image_keepalived
-        elif daemon_type == 'elasticsearch':
-            image = self.container_image_elasticsearch
-        elif daemon_type == 'jaeger-agent':
-            image = self.container_image_jaeger_agent
-        elif daemon_type == 'jaeger-collector':
-            image = self.container_image_jaeger_collector
-        elif daemon_type == 'jaeger-query':
-            image = self.container_image_jaeger_query
-        elif daemon_type == CustomContainerService.TYPE:
-            # The image can't be resolved, the necessary information
-            # is only available when a container is deployed (given
-            # via spec).
-            image = None
-        elif daemon_type == 'snmp-gateway':
-            image = self.container_image_snmp_gateway
         else:
-            assert False, daemon_type
+            images = {
+                'alertmanager': self.container_image_alertmanager,
+                'elasticsearch': self.container_image_elasticsearch,
+                'grafana': self.container_image_grafana,
+                'haproxy': self.container_image_haproxy,
+                'jaeger-agent': self.container_image_jaeger_agent,
+                'jaeger-collector': self.container_image_jaeger_collector,
+                'jaeger-query': self.container_image_jaeger_query,
+                'keepalived': self.container_image_keepalived,
+                'loki': self.container_image_loki,
+                'node-exporter': self.container_image_node_exporter,
+                'nvmeof': self.container_image_nvmeof,
+                'prometheus': self.container_image_prometheus,
+                'promtail': self.container_image_promtail,
+                'snmp-gateway': self.container_image_snmp_gateway,
+                'mgmt-gateway': self.container_image_nginx,
+                'oauth2-proxy': self.container_image_oauth2_proxy,
+                # The image can't be resolved here, the necessary information
+                # is only available when a container is deployed (given
+                # via spec).
+                CustomContainerService.TYPE: None,
+                SMBService.TYPE: self.container_image_samba,
+            }
+            try:
+                image = images[daemon_type]
+            except KeyError:
+                raise ValueError(f'no image for {daemon_type}')
 
         self.log.debug('%s container image %s' % (daemon_name, image))
 
@@ -1605,6 +1857,18 @@ Then run the following:
         if spec.hostname in self.inventory and self.inventory.get_addr(spec.hostname) != spec.addr:
             self.cache.refresh_all_host_info(spec.hostname)
 
+        if spec.oob:
+            if not spec.oob.get('addr'):
+                spec.oob['addr'] = self.oob_default_addr
+            if not spec.oob.get('port'):
+                spec.oob['port'] = '443'
+            host_oob_info = dict()
+            host_oob_info['addr'] = spec.oob['addr']
+            host_oob_info['port'] = spec.oob['port']
+            host_oob_info['username'] = spec.oob['username']
+            host_oob_info['password'] = spec.oob['password']
+            self.node_proxy_cache.update_oob(spec.hostname, host_oob_info)
+
         # prime crush map?
         if spec.location:
             self.check_mon_command({
@@ -1619,7 +1883,7 @@ Then run the following:
         self.inventory.add_host(spec)
         self.offline_hosts_remove(spec.hostname)
         if spec.status == 'maintenance':
-            self._set_maintenance_healthcheck()
+            self.set_maintenance_healthcheck()
         self.event.set()  # refresh stray health check
         self.log.info('Added host %s' % spec.hostname)
         return "Added host '{}' with addr '{}'".format(spec.hostname, spec.addr)
@@ -1629,7 +1893,72 @@ Then run the following:
         return self._add_host(spec)
 
     @handle_orch_error
-    def remove_host(self, host: str, force: bool = False, offline: bool = False) -> str:
+    def hardware_light(self, light_type: str, action: str, hostname: str, device: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            result = self.node_proxy.led(light_type=light_type,
+                                         action=action,
+                                         hostname=hostname,
+                                         device=device)
+        except RuntimeError as e:
+            self.log.error(e)
+            raise OrchestratorValidationError(f'Make sure the node-proxy agent is deployed and running on {hostname}')
+        except HTTPError as e:
+            self.log.error(e)
+            raise OrchestratorValidationError(f"http error while querying node-proxy API: {e}")
+        return result
+
+    @handle_orch_error
+    def hardware_shutdown(self, hostname: str, force: Optional[bool] = False, yes_i_really_mean_it: bool = False) -> str:
+        if not yes_i_really_mean_it:
+            raise OrchestratorError("you must pass --yes-i-really-mean-it")
+
+        try:
+            self.node_proxy.shutdown(hostname, force)
+        except RuntimeError as e:
+            self.log.error(e)
+            raise OrchestratorValidationError(f'Make sure the node-proxy agent is deployed and running on {hostname}')
+        except HTTPError as e:
+            self.log.error(e)
+            raise OrchestratorValidationError(f"Can't shutdown node {hostname}: {e}")
+        return f'Shutdown scheduled on {hostname}'
+
+    @handle_orch_error
+    def hardware_powercycle(self, hostname: str, yes_i_really_mean_it: bool = False) -> str:
+        if not yes_i_really_mean_it:
+            raise OrchestratorError("you must pass --yes-i-really-mean-it")
+
+        try:
+            self.node_proxy.powercycle(hostname)
+        except RuntimeError as e:
+            self.log.error(e)
+            raise OrchestratorValidationError(f'Make sure the node-proxy agent is deployed and running on {hostname}')
+        except HTTPError as e:
+            self.log.error(e)
+            raise OrchestratorValidationError(f"Can't perform powercycle on node {hostname}: {e}")
+        return f'Powercycle scheduled on {hostname}'
+
+    @handle_orch_error
+    def node_proxy_fullreport(self, hostname: Optional[str] = None) -> Dict[str, Any]:
+        return self.node_proxy_cache.fullreport(hostname=hostname)
+
+    @handle_orch_error
+    def node_proxy_summary(self, hostname: Optional[str] = None) -> Dict[str, Any]:
+        return self.node_proxy_cache.summary(hostname=hostname)
+
+    @handle_orch_error
+    def node_proxy_firmwares(self, hostname: Optional[str] = None) -> Dict[str, Any]:
+        return self.node_proxy_cache.firmwares(hostname=hostname)
+
+    @handle_orch_error
+    def node_proxy_criticals(self, hostname: Optional[str] = None) -> Dict[str, Any]:
+        return self.node_proxy_cache.criticals(hostname=hostname)
+
+    @handle_orch_error
+    def node_proxy_common(self, category: str, hostname: Optional[str] = None) -> Dict[str, Any]:
+        return self.node_proxy_cache.common(category, hostname=hostname)
+
+    @handle_orch_error
+    def remove_host(self, host: str, force: bool = False, offline: bool = False, rm_crush_entry: bool = False) -> str:
         """
         Remove a host from orchestrator management.
 
@@ -1709,11 +2038,23 @@ Then run the following:
             }
             run_cmd(cmd_args)
 
+        if rm_crush_entry:
+            try:
+                self.check_mon_command({
+                    'prefix': 'osd crush remove',
+                    'name': host,
+                })
+            except MonCommandFailed as e:
+                self.log.error(f'Couldn\'t remove host {host} from CRUSH map: {str(e)}')
+                return (f'Cephadm failed removing host {host}\n'
+                        f'Failed to remove host {host} from the CRUSH map: {str(e)}')
+
         self.inventory.rm_host(host)
         self.cache.rm_host(host)
         self.ssh.reset_con(host)
         # if host was in offline host list, we should remove it now.
         self.offline_hosts_remove(host)
+        self.set_maintenance_healthcheck()
         self.event.set()  # refresh stray health check
         self.log.info('Removed host %s' % host)
         return "Removed {} host '{}'".format('offline' if offline else '', host)
@@ -1828,7 +2169,7 @@ Then run the following:
         self.log.info(msg)
         return msg
 
-    def _set_maintenance_healthcheck(self) -> None:
+    def set_maintenance_healthcheck(self) -> None:
         """Raise/update or clear the maintenance health check as needed"""
 
         in_maintenance = self.inventory.get_host_with_state("maintenance")
@@ -1912,12 +2253,12 @@ Then run the following:
         self.inventory._inventory[hostname] = tgt_host
         self.inventory.save()
 
-        self._set_maintenance_healthcheck()
+        self.set_maintenance_healthcheck()
         return f'Daemons for Ceph cluster {self._cluster_fsid} stopped on host {hostname}. Host {hostname} moved to maintenance mode'
 
     @handle_orch_error
     @host_exists()
-    def exit_host_maintenance(self, hostname: str) -> str:
+    def exit_host_maintenance(self, hostname: str, force: bool = False, offline: bool = False) -> str:
         """Exit maintenance mode and return a host to an operational state
 
         Returning from maintenance will enable the clusters systemd target and
@@ -1925,6 +2266,8 @@ Then run the following:
         host has osd daemons
 
         :param hostname: (str) host name
+        :param force: (bool) force removal of the host from maintenance mode
+        :param offline: (bool) to remove hosts that are offline from maintenance mode
 
         :raises OrchestratorError: Unable to return from maintenance, or unset the
                                    noout flag
@@ -1933,37 +2276,74 @@ Then run the following:
         if tgt_host['status'] != "maintenance":
             raise OrchestratorError(f"Host {hostname} is not in maintenance mode")
 
-        with self.async_timeout_handler(hostname, 'cephadm host-maintenance exit'):
-            outs, errs, _code = self.wait_async(
-                CephadmServe(self)._run_cephadm(hostname, cephadmNoImage,
-                                                'host-maintenance', ['exit'], error_ok=True))
-        returned_msg = errs[0].split('\n')[-1]
-        if returned_msg.startswith('failed') or returned_msg.startswith('ERROR'):
-            raise OrchestratorError(
-                f"Failed to exit maintenance state for host {hostname}, cluster {self._cluster_fsid}")
+        # Given we do not regularly check maintenance mode hosts for being offline,
+        # we have no idea at this point whether the host is online or not.
+        # Keep in mind this goes both ways, as users could have run
+        # "ceph cephadm check-host <hostname>" when the host was in maintenance
+        # mode and offline and the host could have since come online. This following
+        # "cephadm check-host" command is being run purely so we know if the host
+        # is online or offline, as those should be handled differently
+        try:
+            with self.async_timeout_handler(hostname, 'cephadm check-host'):
+                outs, errs, _code = self.wait_async(
+                    CephadmServe(self)._run_cephadm(
+                        hostname, cephadmNoImage,
+                        'check-host', [], error_ok=False
+                    )
+                )
+        except OrchestratorError:
+            pass
 
-        if "osd" in self.cache.get_daemon_types(hostname):
-            crush_node = hostname if '.' not in hostname else hostname.split('.')[0]
-            rc, _out, _err = self.mon_command({
-                'prefix': 'osd unset-group',
-                'flags': 'noout',
-                'who': [crush_node],
-                'format': 'json'
-            })
-            if rc:
+        host_offline = hostname in self.offline_hosts
+
+        if host_offline and not offline:
+            raise OrchestratorValidationError(
+                f'{hostname} is offline, please use --offline and --force to take this host out of maintenance mode')
+
+        if not host_offline and offline:
+            raise OrchestratorValidationError(
+                f'{hostname} is online, please take host out of maintenance mode without --offline.')
+
+        if offline and not force:
+            raise OrchestratorValidationError("Taking an offline host out of maintenance mode requires --force")
+
+        # no point trying these parts if we know the host is offline
+        if not host_offline:
+            with self.async_timeout_handler(hostname, 'cephadm host-maintenance exit'):
+                outs, errs, _code = self.wait_async(
+                    CephadmServe(self)._run_cephadm(hostname, cephadmNoImage,
+                                                    'host-maintenance', ['exit'], error_ok=True))
+            returned_msg = errs[0].split('\n')[-1]
+            if (returned_msg.startswith('failed') or returned_msg.startswith('ERROR')):
                 self.log.warning(
-                    f"exit maintenance request failed to UNSET the noout group for {hostname}, (rc={rc})")
-                raise OrchestratorError(f"Unable to set the osds on {hostname} to noout (rc={rc})")
-            else:
-                self.log.info(
-                    f"exit maintenance request has UNSET for the noout group on host {hostname}")
+                    f"Failed to exit maintenance state for host {hostname}, cluster {self._cluster_fsid}")
+                if not force:
+                    raise OrchestratorError(
+                        f"Failed to exit maintenance state for host {hostname}, cluster {self._cluster_fsid}")
+
+            if "osd" in self.cache.get_daemon_types(hostname):
+                crush_node = hostname if '.' not in hostname else hostname.split('.')[0]
+                rc, _out, _err = self.mon_command({
+                    'prefix': 'osd unset-group',
+                    'flags': 'noout',
+                    'who': [crush_node],
+                    'format': 'json'
+                })
+                if rc:
+                    self.log.warning(
+                        f"exit maintenance request failed to UNSET the noout group for {hostname}, (rc={rc})")
+                    if not force:
+                        raise OrchestratorError(f"Unable to set the osds on {hostname} to noout (rc={rc})")
+                else:
+                    self.log.info(
+                        f"exit maintenance request has UNSET for the noout group on host {hostname}")
 
         # update the host record status
         tgt_host['status'] = ""
         self.inventory._inventory[hostname] = tgt_host
         self.inventory.save()
 
-        self._set_maintenance_healthcheck()
+        self.set_maintenance_healthcheck()
 
         return f"Ceph cluster {self._cluster_fsid} on {hostname} has exited maintenance mode"
 
@@ -2061,11 +2441,17 @@ Then run the following:
             if service_name is not None and service_name != nm:
                 continue
 
-            if spec.service_type != 'osd':
-                size = spec.placement.get_target_count(self.cache.get_schedulable_hosts())
-            else:
+            if spec.service_type == 'osd':
                 # osd counting is special
                 size = 0
+            elif spec.service_type == 'node-proxy':
+                # we only deploy node-proxy daemons on hosts we have oob info for
+                # Let's make the expected daemon count `orch ls` displays reflect that
+                schedulable_hosts = self.cache.get_schedulable_hosts()
+                oob_info_hosts = [h for h in schedulable_hosts if h.hostname in self.node_proxy_cache.oob.keys()]
+                size = spec.placement.get_target_count(oob_info_hosts)
+            else:
+                size = spec.placement.get_target_count(self.cache.get_schedulable_hosts())
 
             sm[nm] = orchestrator.ServiceDescription(
                 spec=spec,
@@ -2641,8 +3027,16 @@ Then run the following:
                     daemon_names.append(dd.name())
             return daemon_names
 
-        alertmanager_user, alertmanager_password = self._get_alertmanager_credentials()
-        prometheus_user, prometheus_password = self._get_prometheus_credentials()
+        prom_cred_hash = None
+        alertmgr_cred_hash = None
+        security_enabled, mgmt_gw_enabled, _ = self._get_security_config()
+        if security_enabled:
+            alertmanager_user, alertmanager_password = self._get_alertmanager_credentials()
+            prometheus_user, prometheus_password = self._get_prometheus_credentials()
+            if prometheus_user and prometheus_password:
+                prom_cred_hash = f'{utils.md5_hash(prometheus_user + prometheus_password)}'
+            if alertmanager_user and alertmanager_password:
+                alertmgr_cred_hash = f'{utils.md5_hash(alertmanager_user + alertmanager_password)}'
 
         deps = []
         if daemon_type == 'haproxy':
@@ -2668,11 +3062,20 @@ Then run the following:
             server_port = ''
             try:
                 server_port = str(self.http_server.agent.server_port)
-                root_cert = self.http_server.agent.ssl_certs.get_root_cert()
+                root_cert = self.cert_mgr.get_root_ca()
             except Exception:
                 pass
             deps = sorted([self.get_mgr_ip(), server_port, root_cert,
                            str(self.device_enhanced_scan)])
+        elif daemon_type == 'node-proxy':
+            root_cert = ''
+            server_port = ''
+            try:
+                server_port = str(self.http_server.agent.server_port)
+                root_cert = self.cert_mgr.get_root_ca()
+            except Exception:
+                pass
+            deps = sorted([self.get_mgr_ip(), server_port, root_cert])
         elif daemon_type == 'iscsi':
             if spec:
                 iscsi_spec = cast(IscsiServiceSpec, spec)
@@ -2680,9 +3083,10 @@ Then run the following:
             else:
                 deps = [self.get_mgr_ip()]
         elif daemon_type == 'prometheus':
-            # for prometheus we add the active mgr as an explicit dependency,
-            # this way we force a redeploy after a mgr failover
-            deps.append(self.get_active_mgr().name())
+            if not mgmt_gw_enabled:
+                # for prometheus we add the active mgr as an explicit dependency,
+                # this way we force a redeploy after a mgr failover
+                deps.append(self.get_active_mgr().name())
             deps.append(str(self.get_module_option_ex('prometheus', 'server_port', 9283)))
             deps.append(str(self.service_discovery_port))
             # prometheus yaml configuration file (generated by prometheus.yml.j2) contains
@@ -2697,26 +3101,40 @@ Then run the following:
                 deps.append('ingress')
             # add dependency on ceph-exporter daemons
             deps += [d.name() for d in self.cache.get_daemons_by_service('ceph-exporter')]
-            if self.secure_monitoring_stack:
-                if prometheus_user and prometheus_password:
-                    deps.append(f'{hash(prometheus_user + prometheus_password)}')
-                if alertmanager_user and alertmanager_password:
-                    deps.append(f'{hash(alertmanager_user + alertmanager_password)}')
+            deps += [d.name() for d in self.cache.get_daemons_by_service('mgmt-gateway')]
+            deps += [d.name() for d in self.cache.get_daemons_by_service('oauth2-proxy')]
+            if prom_cred_hash is not None:
+                deps.append(prom_cred_hash)
+            if alertmgr_cred_hash is not None:
+                deps.append(alertmgr_cred_hash)
         elif daemon_type == 'grafana':
-            deps += get_daemon_names(['prometheus', 'loki'])
-            if self.secure_monitoring_stack and prometheus_user and prometheus_password:
-                deps.append(f'{hash(prometheus_user + prometheus_password)}')
+            deps += get_daemon_names(['prometheus', 'loki', 'mgmt-gateway', 'oauth2-proxy'])
+            if prom_cred_hash is not None:
+                deps.append(prom_cred_hash)
         elif daemon_type == 'alertmanager':
-            deps += get_daemon_names(['mgr', 'alertmanager', 'snmp-gateway'])
-            if self.secure_monitoring_stack and alertmanager_user and alertmanager_password:
-                deps.append(f'{hash(alertmanager_user + alertmanager_password)}')
+            deps += get_daemon_names(['alertmanager', 'snmp-gateway', 'mgmt-gateway', 'oauth2-proxy'])
+            if not mgmt_gw_enabled:
+                deps += get_daemon_names(['mgr'])
+            if alertmgr_cred_hash is not None:
+                deps.append(alertmgr_cred_hash)
         elif daemon_type == 'promtail':
             deps += get_daemon_names(['loki'])
+        elif daemon_type in ['ceph-exporter', 'node-exporter']:
+            deps += get_daemon_names(['mgmt-gateway'])
+        elif daemon_type == JaegerAgentService.TYPE:
+            for dd in self.cache.get_daemons_by_type(JaegerCollectorService.TYPE):
+                assert dd.hostname is not None
+                port = dd.ports[0] if dd.ports else JaegerCollectorService.DEFAULT_SERVICE_PORT
+                deps.append(build_url(host=dd.hostname, port=port).lstrip('/'))
+            deps = sorted(deps)
+        elif daemon_type == 'mgmt-gateway':
+            deps = MgmtGatewayService.get_dependencies(self)
         else:
-            # TODO(redo): some error message!
+            # this daemon type doesn't need deps mgmt
             pass
 
-        if daemon_type in ['prometheus', 'node-exporter', 'alertmanager', 'grafana']:
+        if daemon_type in ['prometheus', 'node-exporter', 'alertmanager', 'grafana',
+                           'ceph-exporter']:
             deps.append(f'secure_monitoring_stack:{self.secure_monitoring_stack}')
 
         return sorted(deps)
@@ -2790,7 +3208,7 @@ Then run the following:
             )
             daemons.append(sd)
 
-        @ forall_hosts
+        @forall_hosts
         def create_func_map(*args: Any) -> str:
             daemon_spec = self.cephadm_services[daemon_type].prepare_create(*args)
             with self.async_timeout_handler(daemon_spec.host, f'cephadm deploy ({daemon_spec.daemon_type} daemon)'):
@@ -2831,10 +3249,79 @@ Then run the following:
         return (user, password)
 
     @handle_orch_error
+    def generate_certificates(self, module_name: str) -> Optional[Dict[str, str]]:
+        supported_moduels = ['dashboard', 'prometheus']
+        if module_name not in supported_moduels:
+            raise OrchestratorError(f'Unsupported modlue {module_name}. Supported moduels are: {supported_moduels}')
+
+        host_fqdns = []
+        fdqn = self.inventory.get_fqdn(self.get_hostname())
+        if fdqn:
+            host_fqdns.append(fdqn)
+
+        if module_name == 'dashboard':
+            host_fqdns.append('dashboard_servers')
+
+        cert, key = self.cert_mgr.generate_cert(host_fqdns, self.get_mgr_ip())
+        return {'cert': cert, 'key': key}
+
+    @handle_orch_error
     def set_prometheus_access_info(self, user: str, password: str) -> str:
         self.set_store(PrometheusService.USER_CFG_KEY, user)
         self.set_store(PrometheusService.PASS_CFG_KEY, password)
         return 'prometheus credentials updated correctly'
+
+    @handle_orch_error
+    def set_custom_prometheus_alerts(self, alerts_file: str) -> str:
+        self.set_store('services/prometheus/alerting/custom_alerts.yml', alerts_file)
+        # need to reconfig prometheus daemon(s) to pick up new alerts file
+        for prometheus_daemon in self.cache.get_daemons_by_type('prometheus'):
+            self._schedule_daemon_action(prometheus_daemon.name(), 'reconfig')
+        return 'Updated alerts file and scheduled reconfig of prometheus daemon(s)'
+
+    @handle_orch_error
+    def set_prometheus_target(self, url: str) -> str:
+        try:
+            parsed_url = urlparse(url)
+            host = parsed_url.hostname
+            port = parsed_url.port
+            if not host:
+                return 'Invalid URL. Hostname is missing.'
+            ipaddress.ip_address(host)
+            url = f"{host}:{port}" if port else host
+        except ValueError as e:
+            return f'Invalid url. {str(e)}'
+        prometheus_spec = cast(PrometheusSpec, self.spec_store['prometheus'].spec)
+        if not prometheus_spec:
+            return "Service prometheus not found\n"
+        # Add the target URL if it does not already exist
+        if url not in prometheus_spec.targets:
+            prometheus_spec.targets.append(url)
+        else:
+            return f"Target '{url}' already exists.\n"
+        # Redeploy daemons after applying the configuration
+        daemons: List[orchestrator.DaemonDescription] = self.cache.get_daemons_by_type('prometheus')
+        spec = ServiceSpec.from_json(prometheus_spec.to_json())
+        self.apply([spec], no_overwrite=False)
+        for daemon in daemons:
+            self.daemon_action(action='redeploy', daemon_name=daemon.daemon_name)
+        return 'prometheus multi-cluster targets updated'
+
+    @handle_orch_error
+    def remove_prometheus_target(self, url: str) -> str:
+        prometheus_spec = cast(PrometheusSpec, self.spec_store['prometheus'].spec)
+        if url in prometheus_spec.targets:
+            prometheus_spec.targets.remove(url)
+        else:
+            return f"Target '{url}' does not exist.\n"
+        if not prometheus_spec:
+            return "Service prometheus not found\n"
+        daemons: List[orchestrator.DaemonDescription] = self.cache.get_daemons_by_type('prometheus')
+        spec = ServiceSpec.from_json(prometheus_spec.to_json())
+        self.apply([spec], no_overwrite=False)
+        for daemon in daemons:
+            self.daemon_action(action='redeploy', daemon_name=daemon.daemon_name)
+        return 'prometheus multi-cluster targets updated'
 
     @handle_orch_error
     def set_alertmanager_access_info(self, user: str, password: str) -> str:
@@ -2844,17 +3331,67 @@ Then run the following:
 
     @handle_orch_error
     def get_prometheus_access_info(self) -> Dict[str, str]:
+        security_enabled, _, _ = self._get_security_config()
+        if not security_enabled:
+            return {}
         user, password = self._get_prometheus_credentials()
         return {'user': user,
                 'password': password,
-                'certificate': self.http_server.service_discovery.ssl_certs.get_root_cert()}
+                'certificate': self.cert_mgr.get_root_ca()}
+
+    @handle_orch_error
+    def get_security_config(self) -> Dict[str, bool]:
+        security_enabled, mgmt_gw_enabled, _ = self._get_security_config()
+        return {'security_enabled': security_enabled,
+                'mgmt_gw_enabled': mgmt_gw_enabled}
 
     @handle_orch_error
     def get_alertmanager_access_info(self) -> Dict[str, str]:
+        security_enabled, _, _ = self._get_security_config()
+        if not security_enabled:
+            return {}
         user, password = self._get_alertmanager_credentials()
         return {'user': user,
                 'password': password,
-                'certificate': self.http_server.service_discovery.ssl_certs.get_root_cert()}
+                'certificate': self.cert_mgr.get_root_ca()}
+
+    @handle_orch_error
+    def cert_store_cert_ls(self) -> Dict[str, Any]:
+        return self.cert_key_store.cert_ls()
+
+    @handle_orch_error
+    def cert_store_key_ls(self) -> Dict[str, Any]:
+        return self.cert_key_store.key_ls()
+
+    @handle_orch_error
+    def cert_store_get_cert(
+        self,
+        entity: str,
+        service_name: Optional[str] = None,
+        hostname: Optional[str] = None,
+        no_exception_when_missing: bool = False
+    ) -> str:
+        cert = self.cert_key_store.get_cert(entity, service_name or '', hostname or '')
+        if not cert:
+            if no_exception_when_missing:
+                return ''
+            raise OrchSecretNotFound(entity=entity, service_name=service_name, hostname=hostname)
+        return cert
+
+    @handle_orch_error
+    def cert_store_get_key(
+        self,
+        entity: str,
+        service_name: Optional[str] = None,
+        hostname: Optional[str] = None,
+        no_exception_when_missing: bool = False
+    ) -> str:
+        key = self.cert_key_store.get_key(entity, service_name or '', hostname or '')
+        if not key:
+            if no_exception_when_missing:
+                return ''
+            raise OrchSecretNotFound(entity=entity, service_name=service_name, hostname=hostname)
+        return key
 
     @handle_orch_error
     def apply_mon(self, spec: ServiceSpec) -> str:
@@ -2962,6 +3499,33 @@ Then run the following:
         return f'Added setting {setting} with value {value} to tuned profile {profile_name}'
 
     @handle_orch_error
+    def tuned_profile_add_settings(self, profile_name: str, settings: dict) -> str:
+        if profile_name not in self.tuned_profiles:
+            raise OrchestratorError(
+                f"Tuned profile {profile_name} does not exist. Cannot add setting."
+            )
+        self.tuned_profiles.add_settings(profile_name, settings)
+        results = [
+            f"Added setting {key} with value {value} to tuned profile {profile_name}"
+            for key, value in settings.items()
+        ]
+        self._kick_serve_loop()
+        return "\n".join(results)
+
+    @handle_orch_error
+    def tuned_profile_rm_settings(self, profile_name: str, settings: List[str]) -> str:
+        if profile_name not in self.tuned_profiles:
+            raise OrchestratorError(
+                f"Tuned profile {profile_name} does not exist. Cannot remove setting."
+            )
+        self.tuned_profiles.rm_settings(profile_name, settings)
+        results = [
+            f'Removed setting {settings} from tuned profile {profile_name}'
+        ]
+        self._kick_serve_loop()
+        return "\n".join(results)
+
+    @handle_orch_error
     def tuned_profile_rm_setting(self, profile_name: str, setting: str) -> str:
         if profile_name not in self.tuned_profiles:
             raise OrchestratorError(
@@ -2969,13 +3533,6 @@ Then run the following:
         self.tuned_profiles.rm_setting(profile_name, setting)
         self._kick_serve_loop()
         return f'Removed setting {setting} from tuned profile {profile_name}'
-
-    @handle_orch_error
-    def service_discovery_dump_cert(self) -> str:
-        root_cert = self.get_store(ServiceDiscovery.KV_STORE_SD_ROOT_CERT)
-        if not root_cert:
-            raise OrchestratorError('No certificate found for service discovery')
-        return root_cert
 
     def set_health_warning(self, name: str, summary: str, count: int, detail: List[str]) -> None:
         self.health_checks[name] = {
@@ -2998,6 +3555,9 @@ Then run the following:
                     'data': self._preview_osdspecs(osdspecs=[cast(DriveGroupSpec, spec)])}
 
         svc = self.cephadm_services[spec.service_type]
+        rank_map = None
+        if svc.ranked(spec):
+            rank_map = self.spec_store[spec.service_name()].rank_map
         ha = HostAssignment(
             spec=spec,
             hosts=self.cache.get_schedulable_hosts(),
@@ -3006,7 +3566,7 @@ Then run the following:
             networks=self.cache.networks,
             daemons=self.cache.get_daemons_by_service(spec.service_name()),
             allow_colo=svc.allow_colo(),
-            rank_map=self.spec_store[spec.service_name()].rank_map if svc.ranked() else None
+            rank_map=rank_map
         )
         ha.validate()
         hosts, to_add, to_remove = ha.place()
@@ -3054,10 +3614,13 @@ Then run the following:
                 'crash': PlacementSpec(host_pattern='*'),
                 'container': PlacementSpec(count=1),
                 'snmp-gateway': PlacementSpec(count=1),
+                'mgmt-gateway': PlacementSpec(count=1),
+                'oauth2-proxy': PlacementSpec(count=1),
                 'elasticsearch': PlacementSpec(count=1),
                 'jaeger-agent': PlacementSpec(host_pattern='*'),
                 'jaeger-collector': PlacementSpec(count=1),
-                'jaeger-query': PlacementSpec(count=1)
+                'jaeger-query': PlacementSpec(count=1),
+                SMBService.TYPE: PlacementSpec(count=1),
             }
             spec.placement = defaults[spec.service_type]
         elif spec.service_type in ['mon', 'mgr'] and \
@@ -3069,6 +3632,11 @@ Then run the following:
         host_count = len(self.inventory.keys())
         max_count = self.max_count_per_host
 
+        if spec.service_type == 'oauth2-proxy':
+            mgmt_gw_daemons = self.cache.get_daemons_by_service('mgmt-gateway')
+            if not mgmt_gw_daemons:
+                raise OrchestratorError("The 'oauth2-proxy' service depends on the 'mgmt-gateway' service, but it is not configured.")
+
         if spec.placement.count is not None:
             if spec.service_type in ['mon', 'mgr']:
                 if spec.placement.count > max(5, host_count):
@@ -3076,7 +3644,7 @@ Then run the following:
                         (f'The maximum number of {spec.service_type} daemons allowed with {host_count} hosts is {max(5, host_count)}.'))
             elif spec.service_type != 'osd':
                 if spec.placement.count > (max_count * host_count):
-                    raise OrchestratorError((f'The maximum number of {spec.service_type} daemons allowed with {host_count} hosts is {host_count*max_count} ({host_count}x{max_count}).'
+                    raise OrchestratorError((f'The maximum number of {spec.service_type} daemons allowed with {host_count} hosts is {host_count * max_count} ({host_count}x{max_count}).'
                                              + ' This limit can be adjusted by changing the mgr/cephadm/max_count_per_host config option'))
 
         if spec.placement.count_per_host is not None and spec.placement.count_per_host > max_count and spec.service_type != 'osd':
@@ -3100,7 +3668,12 @@ Then run the following:
         return "Scheduled %s update..." % spec.service_name()
 
     @handle_orch_error
-    def apply(self, specs: Sequence[GenericSpec], no_overwrite: bool = False) -> List[str]:
+    def apply(
+        self,
+        specs: Sequence[GenericSpec],
+        no_overwrite: bool = False,
+        continue_on_error: bool = True
+    ) -> List[str]:
         results = []
         for spec in specs:
             if no_overwrite:
@@ -3112,7 +3685,14 @@ Then run the following:
                     results.append('Skipped %s service spec. To change %s spec omit --no-overwrite flag'
                                    % (cast(ServiceSpec, spec).service_name(), cast(ServiceSpec, spec).service_name()))
                     continue
-            results.append(self._apply(spec))
+            try:
+                res = self._apply(spec)
+                results.append(res)
+            except Exception as e:
+                if continue_on_error:
+                    results.append(f'Failed to apply spec for {spec}: {str(e)}')
+                else:
+                    raise e
         return results
 
     @handle_orch_error
@@ -3185,6 +3765,18 @@ Then run the following:
 
     @handle_orch_error
     def apply_snmp_gateway(self, spec: ServiceSpec) -> str:
+        return self._apply(spec)
+
+    @handle_orch_error
+    def apply_smb(self, spec: ServiceSpec) -> str:
+        return self._apply(spec)
+
+    @handle_orch_error
+    def apply_mgmt_gateway(self, spec: ServiceSpec) -> str:
+        return self._apply(spec)
+
+    @handle_orch_error
+    def apply_oauth2_proxy(self, spec: ServiceSpec) -> str:
         return self._apply(spec)
 
     @handle_orch_error
@@ -3307,8 +3899,55 @@ Then run the following:
         return self.upgrade.upgrade_stop()
 
     @handle_orch_error
+    def replace_device(self,
+                       hostname: str,
+                       device: str,
+                       clear: bool = False,
+                       yes_i_really_mean_it: bool = False) -> Any:
+        output: str = ''
+
+        self.ceph_volume.lvm_list.get_data(hostname=hostname)
+
+        if clear:
+            output = self.ceph_volume.clear_replace_header(hostname, device)
+        else:
+            osds_to_zap: List[str] = []
+            if hostname not in list(self.inventory.keys()):
+                raise OrchestratorError(f'{hostname} invalid host.')
+
+            if device not in self.ceph_volume.lvm_list.all_devices():
+                raise OrchestratorError(f"{device} doesn't appear to be used for an OSD, not a valid device in {hostname}.")
+
+            device_osd_mapping = self.ceph_volume.lvm_list.device_osd_mapping()
+            osds_to_zap = device_osd_mapping[device]['osd_ids']
+
+            if self.ceph_volume.lvm_list.is_shared_device(device):
+                if not yes_i_really_mean_it:
+                    raise OrchestratorError(f'{device} is a shared device.\n'
+                                            f'Replacing {device} implies destroying OSD(s): {osds_to_zap}.\n'
+                                            'Please, *be very careful*, this can be a very dangerous operation.\n'
+                                            'If you know what you are doing, pass --yes-i-really-mean-it')
+            if not self.to_remove_osds.rm_util.safe_to_destroy([int(osd_id) for osd_id in osds_to_zap]):
+                raise OrchestratorError(f"Destroying OSD(s) {osds_to_zap} would cause some PGs to be undersized/degraded.\n"
+                                        'Refusing to proceed.')
+            replace_block: bool = self.ceph_volume.lvm_list.is_block_device(device)
+            replace_db: bool = self.ceph_volume.lvm_list.is_db_device(device)
+            replace_wal: bool = self.ceph_volume.lvm_list.is_wal_device(device)
+
+            self.remove_osds(list(osds_to_zap),
+                             replace_block=replace_block,
+                             replace_db=replace_db,
+                             replace_wal=replace_wal)
+
+            output = f'Scheduled to destroy osds: {osds_to_zap} and mark {device} as being replaced.'
+        return output
+
+    @handle_orch_error
     def remove_osds(self, osd_ids: List[str],
                     replace: bool = False,
+                    replace_block: bool = False,
+                    replace_db: bool = False,
+                    replace_wal: bool = False,
                     force: bool = False,
                     zap: bool = False,
                     no_destroy: bool = False) -> str:
@@ -3331,6 +3970,9 @@ Then run the following:
             try:
                 self.to_remove_osds.enqueue(OSD(osd_id=int(daemon.daemon_id),
                                                 replace=replace,
+                                                replace_block=replace_block,
+                                                replace_db=replace_db,
+                                                replace_wal=replace_wal,
                                                 force=force,
                                                 zap=zap,
                                                 no_destroy=no_destroy,
@@ -3355,8 +3997,7 @@ Then run the following:
         """
         for osd_id in osd_ids:
             try:
-                self.to_remove_osds.rm(OSD(osd_id=int(osd_id),
-                                           remove_util=self.to_remove_osds.rm_util))
+                self.to_remove_osds.rm_by_osd_id(int(osd_id))
             except (NotFoundError, KeyError, ValueError):
                 return f'Unable to find OSD in the queue: {osd_id}'
 
@@ -3372,6 +4013,7 @@ Then run the following:
         return self.to_remove_osds.all_osds()
 
     @handle_orch_error
+    @host_exists()
     def drain_host(self, hostname: str, force: bool = False, keep_conf_keyring: bool = False, zap_osd_devices: bool = False) -> str:
         """
         Drain all daemons from a host.
@@ -3390,6 +4032,18 @@ Then run the following:
                                                   f"It is recommended to add the {SpecialHostLabels.ADMIN} label to another host"
                                                   " before completing this operation.\nIf you're certain this is"
                                                   " what you want rerun this command with --force.")
+            # if the user has specified the host we are going to drain
+            # explicitly in any service spec, warn the user. Having a
+            # drained host listed in a placement provides no value, so
+            # they may want to fix it.
+            services_matching_drain_host: List[str] = []
+            for sname, sspec in self.spec_store.all_specs.items():
+                if sspec.placement.hosts and hostname in [h.hostname for h in sspec.placement.hosts]:
+                    services_matching_drain_host.append(sname)
+            if services_matching_drain_host:
+                raise OrchestratorValidationError(f'Host {hostname} was found explicitly listed in the placements '
+                                                  f'of services:\n  {services_matching_drain_host}.\nPlease update those '
+                                                  'specs to not list this host.\nThis warning can be bypassed with --force')
 
         self.add_host_label(hostname, '_no_schedule')
         if not keep_conf_keyring:

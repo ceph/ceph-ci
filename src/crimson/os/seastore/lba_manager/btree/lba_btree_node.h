@@ -26,6 +26,8 @@ namespace crimson::os::seastore::lba_manager::btree {
 using base_iertr = LBAManager::base_iertr;
 using LBANode = FixedKVNode<laddr_t>;
 
+class BtreeLBAMapping;
+
 /**
  * lba_map_val_t
  *
@@ -35,14 +37,14 @@ struct lba_map_val_t {
   extent_len_t len = 0;  ///< length of mapping
   pladdr_t pladdr;         ///< physical addr of mapping or
 			   //	laddr of a physical lba mapping(see btree_lba_manager.h)
-  uint32_t refcount = 0; ///< refcount
+  extent_ref_count_t refcount = 0; ///< refcount
   uint32_t checksum = 0; ///< checksum of original block written at paddr (TODO)
 
   lba_map_val_t() = default;
   lba_map_val_t(
     extent_len_t len,
     pladdr_t pladdr,
-    uint32_t refcount,
+    extent_ref_count_t refcount,
     uint32_t checksum)
     : len(len), pladdr(pladdr), refcount(refcount), checksum(checksum) {}
   bool operator==(const lba_map_val_t&) const = default;
@@ -62,13 +64,13 @@ using lba_node_meta_le_t = fixed_kv_node_meta_le_t<laddr_le_t>;
  * Abstracts operations on and layout of internal nodes for the
  * LBA Tree.
  *
- * Layout (4k):
- *   size       : uint32_t[1]                4b
- *   (padding)  :                            4b
- *   meta       : lba_node_meta_le_t[3]      (1*24)b
- *   keys       : laddr_t[255]               (254*8)b
- *   values     : paddr_t[255]               (254*8)b
- *                                           = 4096
+ * Layout (4KiB):
+ *   checksum   : ceph_le32[1]               4B
+ *   size       : ceph_le32[1]               4B
+ *   meta       : lba_node_meta_le_t[1]      20B
+ *   keys       : laddr_le_t[CAPACITY]       (254*8)B
+ *   values     : paddr_le_t[CAPACITY]       (254*8)B
+ *                                           = 4092B
 
  * TODO: make the above capacity calculation part of FixedKVNodeLayout
  * TODO: the above alignment probably isn't portable without further work
@@ -80,6 +82,9 @@ struct LBAInternalNode
       laddr_t, laddr_le_t,
       LBA_BLOCK_SIZE,
       LBAInternalNode> {
+  static_assert(
+    check_capacity(LBA_BLOCK_SIZE),
+    "INTERNAL_NODE_CAPACITY doesn't fit in LBA_BLOCK_SIZE");
   using Ref = TCachedExtentRef<LBAInternalNode>;
   using internal_iterator_t = const_iterator;
   template <typename... T>
@@ -100,13 +105,13 @@ using LBAInternalNodeRef = LBAInternalNode::Ref;
  * Abstracts operations on and layout of leaf nodes for the
  * LBA Tree.
  *
- * Layout (4k):
- *   size       : uint32_t[1]                4b
- *   (padding)  :                            4b
- *   meta       : lba_node_meta_le_t[3]      (1*24)b
- *   keys       : laddr_t[170]               (140*8)b
- *   values     : lba_map_val_t[170]         (140*21)b
- *                                           = 4092
+ * Layout (4KiB):
+ *   checksum   : ceph_le32[1]                4B
+ *   size       : ceph_le32[1]                4B
+ *   meta       : lba_node_meta_le_t[1]       20B
+ *   keys       : laddr_le_t[CAPACITY]        (140*8)B
+ *   values     : lba_map_val_le_t[CAPACITY]  (140*21)B
+ *                                            = 4088B
  *
  * TODO: update FixedKVNodeLayout to handle the above calculation
  * TODO: the above alignment probably isn't portable without further work
@@ -118,10 +123,10 @@ constexpr size_t LEAF_NODE_CAPACITY = 140;
  *
  * On disk layout for lba_map_val_t.
  */
-struct lba_map_val_le_t {
+struct __attribute__((packed)) lba_map_val_le_t {
   extent_len_le_t len = init_extent_len_le(0);
   pladdr_le_t pladdr;
-  ceph_le32 refcount{0};
+  extent_ref_count_le_t refcount{0};
   ceph_le32 checksum{0};
 
   lba_map_val_le_t() = default;
@@ -145,6 +150,9 @@ struct LBALeafNode
       LBA_BLOCK_SIZE,
       LBALeafNode,
       true> {
+  static_assert(
+    check_capacity(LBA_BLOCK_SIZE),
+    "LEAF_NODE_CAPACITY doesn't fit in LBA_BLOCK_SIZE");
   using Ref = TCachedExtentRef<LBALeafNode>;
   using parent_type_t = FixedKVLeafNode<
 			  LEAF_NODE_CAPACITY,
@@ -171,6 +179,8 @@ struct LBALeafNode
 
     for (auto i : *this) {
       auto child = (LogicalCachedExtent*)this->children[i.get_offset()];
+      // Children may not be marked as stable yet,
+      // the specific order is undefined in the transaction prepare record phase.
       if (is_valid_child_ptr(child) && child->get_laddr() != i.get_key()) {
 	SUBERROR(seastore_fixedkv_tree,
 	  "stable child not valid: child {}, key {}",
@@ -194,8 +204,13 @@ struct LBALeafNode
 	iter.get_offset(),
 	*nextent);
       // child-ptr may already be correct, see LBAManager::update_mappings()
-      this->update_child_ptr(iter, nextent);
+      if (!nextent->has_parent_tracker()) {
+	this->update_child_ptr(iter, nextent);
+      }
+      assert(nextent->has_parent_tracker()
+	&& nextent->get_parent_node<LBALeafNode>().get() == this);
     }
+    this->on_modify();
     if (val.pladdr.is_paddr()) {
       val.pladdr = maybe_generate_relative(val.pladdr.get_paddr());
     }
@@ -216,6 +231,7 @@ struct LBALeafNode
       iter.get_offset(),
       addr,
       (void*)nextent);
+    this->on_modify();
     this->insert_child_ptr(iter, nextent);
     if (val.pladdr.is_paddr()) {
       val.pladdr = maybe_generate_relative(val.pladdr.get_paddr());
@@ -235,6 +251,7 @@ struct LBALeafNode
       iter.get_offset(),
       iter.get_key());
     assert(iter != this->end());
+    this->on_modify();
     this->remove_child_ptr(iter);
     return this->journal_remove(
       iter,
@@ -281,6 +298,9 @@ struct LBALeafNode
   }
 
   std::ostream &_print_detail(std::ostream &out) const final;
+
+  void maybe_fix_mapping_pos(BtreeLBAMapping &mapping);
+  std::unique_ptr<BtreeLBAMapping> get_mapping(op_context_t<laddr_t> c, laddr_t laddr);
 };
 using LBALeafNodeRef = TCachedExtentRef<LBALeafNode>;
 

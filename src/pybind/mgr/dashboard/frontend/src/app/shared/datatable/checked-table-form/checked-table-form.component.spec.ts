@@ -4,7 +4,6 @@ import { CheckedTableFormComponent } from './checked-table-form.component';
 import { TableComponent } from '../table/table.component';
 import { TableKeyValueComponent } from '../table-key-value/table-key-value.component';
 import { TablePaginationComponent } from '../table-pagination/table-pagination.component';
-import { NgxDatatableModule } from '@swimlane/ngx-datatable';
 import { FormHelper, configureTestBed } from '~/testing/unit-test-helper';
 import { CdFormGroup } from '../../forms/cd-form-group';
 import { FormControl } from '@angular/forms';
@@ -45,7 +44,7 @@ describe('CheckedTableFormComponent', () => {
       TableKeyValueComponent,
       TablePaginationComponent
     ],
-    imports: [NgxDatatableModule]
+    imports: []
   });
 
   beforeEach(() => {
@@ -107,7 +106,7 @@ describe('CheckedTableFormComponent', () => {
       owner: ['read', 'write'],
       group: ['execute']
     });
-    component.onClickHeaderCheckbox('scope', ({ target: { checked: true } } as unknown) as Event);
+    component.onClickHeaderCheckbox('scope', true);
     const scopes_permissions = form.getValue('scopes_permissions');
     const keys = Object.keys(scopes_permissions);
     expect(keys).toEqual(['owner', 'group']);

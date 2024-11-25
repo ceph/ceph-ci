@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "osd/osd_types_fmt.h"
+#include "osd/osd_perf_counters.h"
 #include "osd/scrubber/osd_scrub_sched.h"
 #include "osd/scrubber/scrub_resources.h"
 #include "osd/scrubber_common.h"
@@ -26,7 +27,7 @@ class OsdScrub {
       Scrub::ScrubSchedListener& osd_svc,
       const ceph::common::ConfigProxy& config);
 
-  ~OsdScrub() = default;
+  ~OsdScrub();
 
   // note: public, as accessed by the dout macros
   std::ostream& gen_prefix(std::ostream& out, std::string_view fn) const;
@@ -50,6 +51,8 @@ class OsdScrub {
 
   void dump_scrubs(ceph::Formatter* f) const;  ///< fwd to the queue
 
+  void dump_scrub_reservations(ceph::Formatter* f) const;
+
   /**
    * on_config_change() (the refactored "OSD::sched_all_scrubs()")
    *
@@ -65,64 +68,36 @@ class OsdScrub {
   // ---------------------------------------------------------------
 
   // updating the resource counters
-  bool inc_scrubs_local();
+  std::unique_ptr<Scrub::LocalResourceWrapper> inc_scrubs_local(
+      bool is_high_priority);
   void dec_scrubs_local();
-  bool inc_scrubs_remote();
-  void dec_scrubs_remote();
 
   // counting the number of PGs stuck while scrubbing, waiting for objects
   void mark_pg_scrub_blocked(spg_t blocked_pg);
   void clear_pg_scrub_blocked(spg_t blocked_pg);
 
-  // updating scheduling information for a specific PG
-  Scrub::sched_params_t determine_scrub_time(
-      const requested_scrub_t& request_flags,
-      const pg_info_t& pg_info,
-      const pool_opts_t& pool_conf) const;
-
-  /**
-   * modify a scrub-job's scheduled time and deadline
-   *
-   * There are 3 argument combinations to consider:
-   * - 'must' is asserted, and the suggested time is 'scrub_must_stamp':
-   *   the registration will be with "beginning of time" target, making the
-   *   scrub-job eligible to immediate scrub (given that external conditions
-   *   do not prevent scrubbing)
-   *
-   * - 'must' is asserted, and the suggested time is 'now':
-   *   This happens if our stats are unknown. The results are similar to the
-   *   previous scenario.
-   *
-   * - not a 'must': we take the suggested time as a basis, and add to it some
-   *   configuration / random delays.
-   *
-   *  ('must' is Scrub::sched_params_t.is_must)
-   *
-   *  locking: not using the jobs_lock
-   */
-  void update_job(
-      Scrub::ScrubJobRef sjob,
-      const Scrub::sched_params_t& suggested);
-
   /**
    * Add the scrub job to the list of jobs (i.e. list of PGs) to be periodically
    * scrubbed by the OSD.
-   * The registration is active as long as the PG exists and the OSD is its
-   * primary.
-   *
-   * See update_job() for the handling of the 'suggested' parameter.
-   *
-   * locking: might lock jobs_lock
    */
-  void register_with_osd(
-      Scrub::ScrubJobRef sjob,
-      const Scrub::sched_params_t& suggested);
+  void enqueue_scrub_job(const Scrub::ScrubJob& sjob);
+
+  /**
+   * copy the scheduling element (the SchedEntry sub-object) part of
+   * the SchedTarget to the queue.
+   */
+  void enqueue_target(const Scrub::SchedTarget& trgt);
+
+  /**
+   * remove the specified scheduling target from the OSD scrub queue
+   */
+  void dequeue_target(spg_t pgid, scrub_level_t s_or_d);
 
   /**
    * remove the pg from set of PGs to be scanned for scrubbing.
    * To be used if we are no longer the PG's primary, or if the PG is removed.
    */
-  void remove_from_osd_queue(Scrub::ScrubJobRef sjob);
+  void remove_from_osd_queue(spg_t pgid);
 
   /**
    * \returns std::chrono::milliseconds indicating how long to wait between
@@ -136,14 +111,6 @@ class OsdScrub {
       utime_t t,
       bool high_priority_scrub) const;
 
-  /**
-   * No new scrub session will start while a scrub was initiated on a PG,
-   * and that PG is trying to acquire replica resources.
-   * \retval false if the flag was already set (due to a race)
-   */
-  bool set_reserving_now();
-
-  void clear_reserving_now();
 
   /**
    * \returns true if the current time is within the scrub time window
@@ -161,6 +128,10 @@ class OsdScrub {
    */
   std::optional<double> update_load_average();
 
+   // the scrub performance counters collections
+   // ---------------------------------------------------------------
+  PerfCounters* get_perf_counters(int pool_type, scrub_level_t level);
+
  private:
   CephContext* cct;
   Scrub::ScrubSchedListener& m_osd_svc;
@@ -168,22 +139,24 @@ class OsdScrub {
 
   /**
    * check the OSD-wide environment conditions (scrub resources, time, etc.).
-   * These may restrict the type of scrubs we are allowed to start, or just
-   * prevent us from starting any scrub at all.
+   * These may restrict the type of scrubs we are allowed to start, maybe
+   * down to allowing only high-priority scrubs
    *
    * Specifically:
-   * a nullopt is returned if we are not allowed to scrub at all, for either of
+   * 'only high priority' flag is set for either of
    * the following reasons: no local resources (too many scrubs on this OSD);
    * a dice roll says we will not scrub in this tick;
    * a recovery is in progress, and we are not allowed to scrub while recovery;
    * a PG is trying to acquire replica resources.
-   *
-   * If we are allowed to scrub, the returned value specifies whether the only
-   * high priority scrubs or only overdue ones are allowed to go on.
    */
-  std::optional<Scrub::OSDRestrictions> restrictions_on_scrubbing(
+  Scrub::OSDRestrictions restrictions_on_scrubbing(
       bool is_recovery_active,
       utime_t scrub_clock_now) const;
+
+  static bool is_sched_target_eligible(
+      const Scrub::SchedEntry& e,
+      const Scrub::OSDRestrictions& r,
+      utime_t time_now);
 
   /**
    * initiate a scrub on a specific PG
@@ -195,8 +168,8 @@ class OsdScrub {
    *          initiated, and if not - why.
    */
   Scrub::schedule_result_t initiate_a_scrub(
-      spg_t pgid,
-      bool allow_requested_repair_only);
+      const Scrub::SchedEntry& candidate,
+      Scrub::OSDRestrictions restrictions);
 
   /// resource reservation management
   Scrub::ScrubResources m_resource_bookkeeper;
@@ -205,6 +178,9 @@ class OsdScrub {
   ScrubQueue m_queue;
 
   const std::string m_log_prefix{};
+
+  /// list all scrub queue entries
+  void debug_log_all_jobs() const;
 
   /// number of PGs stuck while scrubbing, waiting for objects
   int get_blocked_pgs_count() const;
@@ -240,4 +216,45 @@ class OsdScrub {
     std::ostream& gen_prefix(std::ostream& out, std::string_view fn) const;
   };
   LoadTracker m_load_tracker;
+
+  // the scrub performance counters collections
+  // ---------------------------------------------------------------
+
+  // indexed by scrub level & pool type
+
+  using pc_index_t = std::pair<scrub_level_t, int /*pool type*/>;
+  // easy way to loop over the counter sets. Order must match the
+  // perf_labels vector
+  static inline std::array<pc_index_t, 4> perf_counters_indices = {
+      pc_index_t{scrub_level_t::shallow, pg_pool_t::TYPE_REPLICATED},
+      pc_index_t{scrub_level_t::deep, pg_pool_t::TYPE_REPLICATED},
+      pc_index_t{scrub_level_t::shallow, pg_pool_t::TYPE_ERASURE},
+      pc_index_t{scrub_level_t::deep, pg_pool_t::TYPE_ERASURE}};
+
+  std::map<pc_index_t, ceph::common::PerfCounters*> m_perf_counters;
+
+  // the labels matrix is: <shallow/deep>  X  <replicated/EC>
+  static inline std::vector<std::string> perf_labels = {
+      ceph::perf_counters::key_create(
+	  "osd_scrub_sh_repl",
+	  {{"level", "shallow"}, {"pooltype", "replicated"}}),
+      ceph::perf_counters::key_create(
+	  "osd_scrub_dp_repl",
+	  {{"level", "deep"}, {"pooltype", "replicated"}}),
+      ceph::perf_counters::key_create(
+	  "osd_scrub_sh_ec",
+	  {{"level", "shallow"}, {"pooltype", "ec"}}),
+      ceph::perf_counters::key_create(
+	  "osd_scrub_dp_ec",
+	  {{"level", "deep"}, {"pooltype", "ec"}})};
+
+  /**
+   * create 4 sets of performance counters (for shallow vs. deep,
+   * replicated vs. erasure pools). Add them to the cct, but also maintain
+   * a separate map of the counters, indexed by the pool type and scrub level.
+   */
+  void create_scrub_perf_counters();
+
+  // 'remove' the counters from the cct, and delete them
+  void destroy_scrub_perf_counters();
 };

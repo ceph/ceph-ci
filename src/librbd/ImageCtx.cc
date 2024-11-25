@@ -112,7 +112,7 @@ librados::IoCtx duplicate_io_ctx(librados::IoCtx& io_ctx) {
       old_format(false),
       order(0), size(0), features(0),
       format_string(NULL),
-      id(image_id), parent(NULL),
+      id(image_id),
       stripe_unit(0), stripe_count(0), flags(0),
       readahead(),
       total_bytes_read(0),
@@ -157,6 +157,8 @@ librados::IoCtx duplicate_io_ctx(librados::IoCtx& io_ctx) {
   ImageCtx::~ImageCtx() {
     ldout(cct, 10) << this << " " << __func__ << dendl;
 
+    ceph_assert(parent == nullptr);
+    ceph_assert(parent_rados == nullptr);
     ceph_assert(config_watcher == nullptr);
     ceph_assert(image_watcher == NULL);
     ceph_assert(exclusive_lock == NULL);
@@ -734,18 +736,7 @@ librados::IoCtx duplicate_io_ctx(librados::IoCtx& io_ctx) {
 
     auto overlap = reduce_parent_overlap(raw_overlap, migration_write);
     if (area == overlap.second) {
-      // drop extents completely beyond the overlap
-      while (!image_extents.empty() &&
-             image_extents.back().first >= overlap.first) {
-        image_extents.pop_back();
-      }
-      if (!image_extents.empty()) {
-        // trim final overlapping extent
-        auto& last_extent = image_extents.back();
-        if (last_extent.first + last_extent.second > overlap.first) {
-          last_extent.second = overlap.first - last_extent.first;
-        }
-      }
+      io::util::prune_extents(image_extents, overlap.first);
     } else if (area == io::ImageArea::DATA &&
                overlap.second == io::ImageArea::CRYPTO_HEADER) {
       // all extents completely beyond the overlap
@@ -1003,14 +994,14 @@ librados::IoCtx duplicate_io_ctx(librados::IoCtx& io_ctx) {
     auto ctx = std::make_shared<neorados::IOContext>(
       data_ctx.get_id(), data_ctx.get_namespace());
     if (snap_id != CEPH_NOSNAP) {
-      ctx->read_snap(snap_id);
+      ctx->set_read_snap(snap_id);
     }
     if (!snapc.snaps.empty()) {
-      ctx->write_snap_context(
+      ctx->set_write_snap_context(
         {{snapc.seq, {snapc.snaps.begin(), snapc.snaps.end()}}});
     }
     if (data_ctx.get_pool_full_try()) {
-      ctx->full_try(true);
+      ctx->set_full_try(true);
     }
 
     // atomically reset the data IOContext to new version

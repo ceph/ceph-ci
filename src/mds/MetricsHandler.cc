@@ -51,6 +51,7 @@ void MetricsHandler::init() {
   dout(10) << dendl;
 
   updater = std::thread([this]() {
+      ceph_pthread_setname("mds-metrics");
       std::unique_lock locker(lock);
       while (!stopping) {
         double after = g_conf().get_val<std::chrono::seconds>("mds_metrics_update_interval").count();
@@ -331,6 +332,11 @@ void MetricsHandler::handle_payload(Session *session, const UnknownPayload &payl
 }
 
 void MetricsHandler::handle_client_metrics(const cref_t<MClientMetrics> &m) {
+  if (!mds->is_active_lockless()) {
+    dout(20) << ": dropping metrics message during recovery" << dendl;
+    return;
+  }
+
   std::scoped_lock locker(lock);
 
   Session *session = mds->get_session(m);

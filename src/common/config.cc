@@ -24,6 +24,8 @@
 #include "common/hostname.h"
 #include "common/dout.h"
 
+#include <fmt/core.h>
+
 /* Don't use standard Ceph logging in this file.
  * We can't use logging until it's initialized, and a lot of the necessary
  * initialization happens here.
@@ -55,7 +57,7 @@ using ceph::decode;
 using ceph::encode;
 using ceph::Formatter;
 
-static const char *CEPH_CONF_FILE_DEFAULT = "$data_dir/config,/etc/ceph/$cluster.conf,$home/.ceph/$cluster.conf,$cluster.conf"
+const char *CEPH_CONF_FILE_DEFAULT = "$data_dir/config,/etc/ceph/$cluster.conf,$home/.ceph/$cluster.conf,$cluster.conf"
 #if defined(__FreeBSD__)
     ",/usr/local/etc/ceph/$cluster.conf"
 #elif defined(_WIN32)
@@ -131,14 +133,11 @@ md_config_t::md_config_t(ConfigValues& values,
   // Define the debug_* options as well.
   subsys_options.reserve(values.subsys.get_num());
   for (unsigned i = 0; i < values.subsys.get_num(); ++i) {
-    string name = string("debug_") + values.subsys.get_name(i);
-    subsys_options.push_back(
-      Option(name, Option::TYPE_STR, Option::LEVEL_ADVANCED));
+    subsys_options.emplace_back(
+      fmt::format("debug_{}", values.subsys.get_name(i)), Option::TYPE_STR, Option::LEVEL_ADVANCED);
     Option& opt = subsys_options.back();
-    opt.set_default(stringify(values.subsys.get_log_level(i)) + "/" +
-		    stringify(values.subsys.get_gather_level(i)));
-    string desc = string("Debug level for ") + values.subsys.get_name(i);
-    opt.set_description(desc.c_str());
+    opt.set_default(fmt::format("{}/{}", values.subsys.get_log_level(i), values.subsys.get_gather_level(i)));
+    opt.set_description(fmt::format("Debug level for {}", values.subsys.get_name(i)).c_str());
     opt.set_flag(Option::FLAG_RUNTIME);
     opt.set_long_description("The value takes the form 'N' or 'N/M' where N and M are values between 0 and 99.  N is the debug level to log (all values below this are included), and M is the level to gather and buffer in memory.  In the event of a crash, the most recent items <= M are dumped to the log file.");
     opt.set_subsys(i);
@@ -158,7 +157,7 @@ md_config_t::md_config_t(ConfigValues& values,
 	  } else {
 	    // normalize to M/N
 	    n = m;
-	    *value = stringify(m) + "/" + stringify(n);
+	    *value = fmt::format("{}/{}", m, n);
 	  }
 	} else {
 	  *error_message = "value must take the form N or N/M, where N and M are integers";
@@ -493,6 +492,11 @@ void md_config_t::parse_env(unsigned entity_type,
     }
   }
 
+  if (auto s = getenv("TMPDIR"); s) {
+    string err;
+    _set_val(values, tracker, s, *find_option("tmp_dir"), CONF_ENV, &err);
+  }
+
   // Apply pod memory limits:
   //
   // There are two types of resource requests: `limits` and `requests`.
@@ -770,7 +774,7 @@ int md_config_t::parse_option(ConfigValues& values,
     option_name = opt.name;
     if (ceph_argparse_witharg(
 	  args, i, &val, err,
-	  string(string("--default-") + opt.name).c_str(), (char*)NULL)) {
+	  fmt::format("--default-{}", opt.name).c_str(), (char*)NULL)) {
       if (!err.str().empty()) {
         error_message = err.str();
 	ret = -EINVAL;
@@ -1263,7 +1267,7 @@ Option::value_t md_config_t::_expand_meta(
 		     << Option::to_str(*i->second) << "\n";
 	      }
 	    }
-	    return Option::value_t(std::string("$") + o->name);
+	    return Option::value_t(fmt::format("${}", o->name));
 	  } else {
 	    // recursively evaluate!
 	    string n;

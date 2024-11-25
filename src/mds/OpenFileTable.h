@@ -50,6 +50,9 @@ public:
     ceph_assert(!load_done);
     waiting_for_load.push_back(c);
   }
+  void wait_for_commit(uint64_t seq, Context* c) {
+    waiting_for_commit[seq].push_back(c);
+  }
 
   bool prefetch_inodes();
   bool is_prefetched() const { return prefetch_state == DONE; }
@@ -113,7 +116,7 @@ protected:
 
   version_t omap_version = 0;
 
-  unsigned omap_num_objs = 0;
+  uint32_t omap_num_objs = 0;
   std::vector<unsigned> omap_num_items;
 
   std::map<inodeno_t, OpenedAnchor> anchor_map;
@@ -149,6 +152,8 @@ protected:
   std::set<inodeno_t> destroyed_inos_set;
 
   std::unique_ptr<PerfCounters> logger;
+
+  std::map<uint64_t, std::vector<Context*>> waiting_for_commit;
 };
 
 #endif

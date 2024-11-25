@@ -46,6 +46,7 @@ enum {
 
 #include "MDSContext.h"
 #include "common/Cond.h"
+#include "common/DecayCounter.h"
 #include "common/Finisher.h"
 #include "common/Thread.h"
 
@@ -65,6 +66,7 @@ class ESubtreeMap;
 
 class MDLog {
 public:
+
   MDLog(MDSRank *m);
   ~MDLog();
 
@@ -131,6 +133,8 @@ public:
   void kick_submitter();
   void shutdown();
 
+  void finish_head_waiters();
+
   void submit_entry(LogEvent *e, MDSLogContextBase* c = 0) {
     std::lock_guard l(submit_mutex);
     _submit_entry(e, c);
@@ -144,9 +148,14 @@ public:
     return unflushed == 0;
   }
 
-  void trim_expired_segments();
-  void trim(int max=-1);
-  int trim_all();
+  void trim_expired_segments(MDSContext* ctx=nullptr) {
+    std::unique_lock locker(submit_mutex);
+    _trim_expired_segments(locker, ctx);
+  }
+  int trim_all() {
+    return trim_to(0);
+  }
+  int trim_to(SegmentBoundary::seq_t);
 
   void create(MDSContext *onfinish);  // fresh, empty log! 
   void open(MDSContext *onopen);      // append() or replay() to follow!
@@ -163,6 +172,9 @@ public:
   MDSRank *mds;
   // replay state
   std::map<inodeno_t, std::set<inodeno_t>> pending_exports;
+
+  // beacon needs me too
+  bool is_trim_slow() const;
 
 protected:
   struct PendingEvent {
@@ -284,15 +296,18 @@ private:
   void try_expire(LogSegment *ls, int op_prio);
   void _maybe_expired(LogSegment *ls, int op_prio);
   void _expired(LogSegment *ls);
-  void _trim_expired_segments();
+  void _trim_expired_segments(auto& locker, MDSContext* ctx=nullptr);
   void write_head(MDSContext *onfinish);
+
+  void trim();
+  void log_trim_upkeep(void);
 
   bool debug_subtrees;
   std::atomic_uint64_t event_large_threshold; // accessed by submit thread
   uint64_t events_per_segment;
-  uint64_t major_segment_event_ratio;
   int64_t max_events;
   uint64_t max_segments;
+  uint64_t minor_segments_per_major_segment;
   bool pause;
   bool skip_corrupt_events;
   bool skip_unbounded_events;
@@ -300,6 +315,18 @@ private:
   std::set<uint64_t> major_segments;
   std::set<LogSegment*> expired_segments;
   std::set<LogSegment*> expiring_segments;
-  uint64_t events_since_last_major_segment = 0;
+  uint64_t minor_segments_since_last_major_segment = 0;
+  double log_warn_factor;
+
+  // log trimming decay counter
+  DecayCounter log_trim_counter;
+
+  // log trimming upkeeper thread
+  std::thread upkeep_thread;
+  // guarded by mds_lock
+  std::condition_variable_any cond;
+  std::atomic<bool> upkeep_log_trim_shutdown{false};
+
+  std::map<uint64_t, std::vector<Context*>> waiting_for_expire; // protected by mds_lock
 };
 #endif

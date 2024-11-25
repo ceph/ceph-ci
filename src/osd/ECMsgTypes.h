@@ -15,6 +15,8 @@
 #ifndef ECBMSGTYPES_H
 #define ECBMSGTYPES_H
 
+#include <fmt/format.h>
+
 #include "osd_types.h"
 #include "include/buffer.h"
 #include "os/ObjectStore.h"
@@ -29,7 +31,7 @@ struct ECSubWrite {
   ObjectStore::Transaction t;
   eversion_t at_version;
   eversion_t trim_to;
-  eversion_t roll_forward_to;
+  eversion_t pg_committed_to;
   std::vector<pg_log_entry_t> log_entries;
   std::set<hobject_t> temp_added;
   std::set<hobject_t> temp_removed;
@@ -45,7 +47,7 @@ struct ECSubWrite {
     const ObjectStore::Transaction &t,
     eversion_t at_version,
     eversion_t trim_to,
-    eversion_t roll_forward_to,
+    eversion_t pg_committed_to,
     std::vector<pg_log_entry_t> log_entries,
     std::optional<pg_hit_set_history_t> updated_hit_set_history,
     const std::set<hobject_t> &temp_added,
@@ -54,7 +56,7 @@ struct ECSubWrite {
     : from(from), tid(tid), reqid(reqid),
       soid(soid), stats(stats), t(t),
       at_version(at_version),
-      trim_to(trim_to), roll_forward_to(roll_forward_to),
+      trim_to(trim_to), pg_committed_to(pg_committed_to),
       log_entries(log_entries),
       temp_added(temp_added),
       temp_removed(temp_removed),
@@ -70,7 +72,7 @@ struct ECSubWrite {
     t.swap(other.t);
     at_version = other.at_version;
     trim_to = other.trim_to;
-    roll_forward_to = other.roll_forward_to;
+    pg_committed_to = other.pg_committed_to;
     log_entries.swap(other.log_entries);
     temp_added.swap(other.temp_added);
     temp_removed.swap(other.temp_removed);
@@ -136,5 +138,10 @@ std::ostream &operator<<(
   std::ostream &lhs, const ECSubRead &rhs);
 std::ostream &operator<<(
   std::ostream &lhs, const ECSubReadReply &rhs);
+
+template <> struct fmt::formatter<ECSubWrite> : fmt::ostream_formatter {};
+template <> struct fmt::formatter<ECSubWriteReply> : fmt::ostream_formatter {};
+template <> struct fmt::formatter<ECSubRead> : fmt::ostream_formatter {};
+template <> struct fmt::formatter<ECSubReadReply> : fmt::ostream_formatter {};
 
 #endif

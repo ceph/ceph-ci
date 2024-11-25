@@ -1,7 +1,15 @@
-import { Component, OnDestroy, OnInit } from '@angular/core';
+import {
+  AfterViewInit,
+  ChangeDetectorRef,
+  Component,
+  Inject,
+  OnDestroy,
+  OnInit,
+  Optional
+} from '@angular/core';
 import { UntypedFormControl, UntypedFormGroup, ValidatorFn, Validators } from '@angular/forms';
 
-import { NgbActiveModal } from '@ng-bootstrap/ng-bootstrap';
+import { BaseModal } from 'carbon-components-angular';
 import _ from 'lodash';
 import { concat, forkJoin, Subscription } from 'rxjs';
 import { last, tap } from 'rxjs/operators';
@@ -17,8 +25,9 @@ import { TaskWrapperService } from '~/app/shared/services/task-wrapper.service';
   templateUrl: './bootstrap-create-modal.component.html',
   styleUrls: ['./bootstrap-create-modal.component.scss']
 })
-export class BootstrapCreateModalComponent implements OnDestroy, OnInit {
-  siteName: string;
+export class BootstrapCreateModalComponent
+  extends BaseModal
+  implements OnDestroy, OnInit, AfterViewInit {
   pools: any[] = [];
   token: string;
 
@@ -27,11 +36,18 @@ export class BootstrapCreateModalComponent implements OnDestroy, OnInit {
   createBootstrapForm: CdFormGroup;
 
   constructor(
-    public activeModal: NgbActiveModal,
     private rbdMirroringService: RbdMirroringService,
-    private taskWrapper: TaskWrapperService
+    private taskWrapper: TaskWrapperService,
+    private changeDetectorRef: ChangeDetectorRef,
+
+    @Inject('siteName') @Optional() public siteName?: string
   ) {
+    super();
     this.createForm();
+  }
+
+  ngAfterViewInit(): void {
+    this.changeDetectorRef.detectChanges();
   }
 
   createForm() {

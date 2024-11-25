@@ -417,6 +417,10 @@ public:
   session_info_t info;                         ///< durable bits
   MDSAuthCaps auth_caps;
 
+  // True if the session is opened by the client.
+  // False if the session is forced to open, until it is opened again by the client.
+  bool client_opened = false;
+
   xlist<Session*>::item item_session_list;
 
   std::list<ceph::ref_t<Message>> preopen_out_queue;  ///< messages for client, queued before they connect
@@ -574,7 +578,6 @@ public:
   }
 
   static void generate_test_instances(std::list<SessionMapStore*>& ls);
-
   void reset_state()
   {
     session_map.clear();
@@ -681,6 +684,16 @@ public:
   void add_session(Session *s);
   void remove_session(Session *s);
   void touch_session(Session *session);
+
+  void add_to_broken_root_squash_clients(Session* s) {
+    broken_root_squash_clients.insert(s);
+  }
+  uint64_t num_broken_root_squash_clients() const {
+    return broken_root_squash_clients.size();
+  }
+  auto const& get_broken_root_squash_clients() const {
+    return broken_root_squash_clients;
+  }
 
   Session *get_oldest_session(int state) {
     auto by_state_entry = by_state.find(state);
@@ -849,6 +862,8 @@ private:
 
   bool validate_and_encode_session(MDSRank *mds, Session *session, bufferlist& bl);
   void apply_blocklist(const std::set<entity_name_t>& victims);
+
+  std::set<Session*> broken_root_squash_clients;
 };
 
 std::ostream& operator<<(std::ostream &out, const Session &s);

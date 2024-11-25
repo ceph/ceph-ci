@@ -6,33 +6,25 @@ export class NavigationPageHelper extends PageHelper {
   };
 
   navigations = [
-    { menu: 'NFS', component: 'cd-error' },
+    { menu: 'Dashboard', component: 'cd-dashboard' },
     {
-      menu: 'Object Gateway',
+      menu: 'Multi-Cluster',
       submenus: [
-        { menu: 'Gateways', component: 'cd-rgw-daemon-list' },
-        { menu: 'Users', component: 'cd-rgw-user-list' },
-        { menu: 'Buckets', component: 'cd-rgw-bucket-list' }
+        { menu: 'Overview', component: 'cd-multi-cluster' },
+        { menu: 'Manage Clusters', component: 'cd-multi-cluster-list' }
       ]
     },
-    { menu: 'Dashboard', component: 'cd-dashboard' },
     {
       menu: 'Cluster',
       submenus: [
+        { menu: 'Pools', component: 'cd-pool-list' },
         { menu: 'Hosts', component: 'cd-hosts' },
-        { menu: 'Physical Disks', component: 'cd-error' },
-        { menu: 'Monitors', component: 'cd-monitor' },
-        { menu: 'Services', component: 'cd-error' },
         { menu: 'OSDs', component: 'cd-osd-list' },
-        { menu: 'Configuration', component: 'cd-configuration' },
+        { menu: 'Physical Disks', component: 'cd-error' },
         { menu: 'CRUSH map', component: 'cd-crushmap' },
-        { menu: 'Manager Modules', component: 'cd-mgr-module-list' },
-        { menu: 'Ceph Users', component: 'cd-crud-table' },
-        { menu: 'Logs', component: 'cd-logs' },
-        { menu: 'Alerts', component: 'cd-prometheus-tabs' }
+        { menu: 'Monitors', component: 'cd-monitor' }
       ]
     },
-    { menu: 'Pools', component: 'cd-pool-list' },
     {
       menu: 'Block',
       submenus: [
@@ -41,7 +33,41 @@ export class NavigationPageHelper extends PageHelper {
         { menu: 'iSCSI', component: 'cd-iscsi' }
       ]
     },
-    { menu: 'File Systems', component: 'cd-cephfs-list' }
+    {
+      menu: 'Object',
+      submenus: [
+        { menu: 'Overview', component: 'cd-rgw-overview-dashboard' },
+        { menu: 'Buckets', component: 'cd-rgw-bucket-list' },
+        { menu: 'Users', component: 'cd-rgw-user-list' },
+        { menu: 'Multi-site', component: 'cd-rgw-multisite-details' },
+        { menu: 'Gateways', component: 'cd-rgw-daemon-list' },
+        { menu: 'NFS', component: 'cd-error' }
+      ]
+    },
+    {
+      menu: 'File',
+      submenus: [
+        { menu: 'File Systems', component: 'cd-cephfs-list' },
+        { menu: 'NFS', component: 'cd-error' }
+      ]
+    },
+    {
+      menu: 'Observability',
+      submenus: [
+        { menu: 'Logs', component: 'cd-logs' },
+        { menu: 'Alerts', component: 'cd-prometheus-tabs' }
+      ]
+    },
+    {
+      menu: 'Administration',
+      submenus: [
+        { menu: 'Services', component: 'cd-error' },
+        { menu: 'Upgrade', component: 'cd-error' },
+        { menu: 'Ceph Users', component: 'cd-crud-table' },
+        { menu: 'Manager Modules', component: 'cd-mgr-module-list' },
+        { menu: 'Configuration', component: 'cd-configuration' }
+      ]
+    }
   ];
 
   getVerticalMenu() {
@@ -49,7 +75,7 @@ export class NavigationPageHelper extends PageHelper {
   }
 
   getMenuToggler() {
-    return cy.get('[aria-label="toggle sidebar visibility"]');
+    return cy.get('[data-testid="main-menu-toggler"]');
   }
 
   checkNavigations(navs: any) {
@@ -59,7 +85,11 @@ export class NavigationPageHelper extends PageHelper {
     cy.intercept('/ui-api/block/rbd/status', { fixture: 'block-rbd-status.json' });
 
     navs.forEach((nav: any) => {
-      cy.contains('.simplebar-content li.nav-item a', nav.menu).click();
+      cy.get('cds-sidenav-item').each(($link) => {
+        if ($link.text().trim() === nav.menu.trim()) {
+          cy.wrap($link).click();
+        }
+      });
       if (nav.submenus) {
         this.checkNavSubMenu(nav.menu, nav.submenus);
       } else {
@@ -70,8 +100,10 @@ export class NavigationPageHelper extends PageHelper {
 
   checkNavSubMenu(menu: any, submenu: any) {
     submenu.forEach((nav: any) => {
-      cy.contains('.simplebar-content li.nav-item', menu).within(() => {
-        cy.contains(`ul.list-unstyled li a`, nav.menu).click();
+      cy.get('cds-sidenav-item').each(($link) => {
+        if ($link.text().trim() === menu.trim()) {
+          cy.contains(`cds-sidenav-menu`, nav.menu).click();
+        }
       });
     });
   }

@@ -6,6 +6,9 @@ set(rados_srcs
   ${PROJECT_SOURCE_DIR}/src/common/util.cc
   ${PROJECT_SOURCE_DIR}/src/common/obj_bencher.cc
   ${PROJECT_SOURCE_DIR}/src/osd/ECUtil.cc)
+if(WIN32)
+  list(APPEND rados_srcs ../common/win32/code_page.rc)
+endif()
 add_executable(rados ${rados_srcs})
 
 target_link_libraries(rados librados global ${BLKID_LIBRARIES} ${CMAKE_DL_LIBS})
@@ -20,7 +23,8 @@ if(NOT WIN32)
   set(neorados_srcs
       neorados.cc)
   add_executable(neorados ${neorados_srcs})
-  target_link_libraries(neorados libneorados spawn fmt::fmt ${CMAKE_DL_LIBS})
+  target_link_libraries(neorados libneorados ${FMT_LIB} ${CMAKE_DL_LIBS})
+  add_dependencies(tests neorados)
   #install(TARGETS neorados DESTINATION bin)
 endif()
 
@@ -74,7 +78,9 @@ endif(WITH_LIBCEPHFS)
 add_executable(ceph-kvstore-tool
   kvstore_tool.cc
   ceph_kvstore_tool.cc)
-target_link_libraries(ceph-kvstore-tool os global)
+target_link_libraries(ceph-kvstore-tool
+  legacy-option-headers
+  os global)
 install(TARGETS ceph-kvstore-tool DESTINATION bin)
 
 set(ceph_conf_srcs ceph_conf.cc)
@@ -84,7 +90,9 @@ install(TARGETS ceph-conf DESTINATION bin)
 
 set(crushtool_srcs crushtool.cc)
 add_executable(crushtool ${crushtool_srcs})
-target_link_libraries(crushtool global)
+target_link_libraries(crushtool
+  legacy-option-headers
+  global)
 install(TARGETS crushtool DESTINATION bin)
 
 set(monmaptool_srcs monmaptool.cc)
@@ -118,17 +126,6 @@ add_executable(ceph-authtool ${ceph_authtool_srcs})
 target_link_libraries(ceph-authtool global ${EXTRALIBS} ${CRYPTO_LIBS})
 install(TARGETS ceph-authtool DESTINATION bin)
 
-if(WITH_TESTS)
-set(ceph_dedup_tool_srcs ceph_dedup_tool.cc)
-add_executable(ceph-dedup-tool ${ceph_dedup_tool_srcs})
-target_link_libraries(ceph-dedup-tool
-  librados
-  global
-  cls_cas_client
-  cls_cas_internal)
-install(TARGETS ceph-dedup-tool DESTINATION bin)
-endif(WITH_TESTS)
-
 if(WITH_CEPHFS)
   add_subdirectory(cephfs)
   add_subdirectory(cephfs_mirror)
@@ -151,3 +148,4 @@ endif(WITH_RBD)
 add_subdirectory(immutable_object_cache)
 add_subdirectory(ceph-dencoder)
 add_subdirectory(erasure-code)
+add_subdirectory(ceph_dedup)

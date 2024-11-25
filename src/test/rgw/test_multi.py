@@ -246,12 +246,12 @@ def init(parse_args):
     admin_user = multisite.User('zone.user')
 
     user_creds = gen_credentials()
-    user = multisite.User('tester', tenant=args.tenant)
+    user = multisite.User('tester', tenant=args.tenant, account='RGW11111111111111111')
 
     realm = multisite.Realm('r')
     if bootstrap:
         # create the realm on c1
-        realm.create(c1)
+        realm.create(c1, ['--default'])
     else:
         realm.get(c1)
     period = multisite.Period(realm=realm)
@@ -305,7 +305,7 @@ def init(parse_args):
                     cluster.start()
                     # pull realm configuration from the master's gateway
                     gateway = realm.meta_master_zone().gateways[0]
-                    realm.pull(cluster, gateway, admin_creds)
+                    realm.pull(cluster, gateway, admin_creds, ['--default'])
 
             endpoints = zone_endpoints(zg, z, args.gateways_per_zone)
             if is_master:
@@ -381,8 +381,11 @@ def init(parse_args):
                     arg = ['--display-name', '"Zone User"', '--system']
                     arg += admin_creds.credential_args()
                     admin_user.create(zone, arg)
-                    # create test user
-                    arg = ['--display-name', '"Test User"', '--caps', 'roles=*']
+                    # create test account/user
+                    arg = ['--account-id', user.account]
+                    arg += zone.zone_args()
+                    cluster.admin(['account', 'create'] + arg)
+                    arg = ['--display-name', 'TestUser']
                     arg += user_creds.credential_args()
                     user.create(zone, arg)
                 else:

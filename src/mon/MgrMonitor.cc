@@ -70,63 +70,31 @@ static ostream& _prefix(std::ostream *_dout, Monitor &mon,
 
 // the system treats always_on_modules as if they provide built-in functionality
 // by ensuring that they are always enabled.
-const static std::map<uint32_t, std::set<std::string>> always_on_modules = {
-  {
-    CEPH_RELEASE_OCTOPUS, {
-      "crash",
-      "status",
-      "progress",
-      "balancer",
-      "devicehealth",
-      "orchestrator",
-      "rbd_support",
-      "volumes",
-      "pg_autoscaler",
-      "telemetry",
-    }
-  },
-  {
-    CEPH_RELEASE_PACIFIC, {
-      "crash",
-      "status",
-      "progress",
-      "balancer",
-      "devicehealth",
-      "orchestrator",
-      "rbd_support",
-      "volumes",
-      "pg_autoscaler",
-      "telemetry",
-    }
-  },
-  {
-    CEPH_RELEASE_QUINCY, {
-      "crash",
-      "status",
-      "progress",
-      "balancer",
-      "devicehealth",
-      "orchestrator",
-      "rbd_support",
-      "volumes",
-      "pg_autoscaler",
-      "telemetry",
-    }
-  },
-  {
-    CEPH_RELEASE_REEF, {
-      "crash",
-      "status",
-      "progress",
-      "balancer",
-      "devicehealth",
-      "orchestrator",
-      "rbd_support",
-      "volumes",
-      "pg_autoscaler",
-      "telemetry",
-    }
-  },
+static const std::map<uint32_t, std::set<std::string>>& always_on_modules() {
+  static const std::set<std::string> octopus_modules = {
+    "crash",
+    "status",
+    "progress",
+    "balancer",
+    "devicehealth",
+    "orchestrator",
+#ifdef WITH_RBD
+    "rbd_support",
+#endif
+#ifdef WITH_CEPHFS
+    "volumes",
+#endif
+    "pg_autoscaler",
+    "telemetry",
+  };
+  static const std::map<uint32_t, std::set<std::string>> always_on_modules_map = {
+    { CEPH_RELEASE_OCTOPUS, octopus_modules },
+    { CEPH_RELEASE_PACIFIC, octopus_modules },
+    { CEPH_RELEASE_QUINCY, octopus_modules },
+    { CEPH_RELEASE_REEF, octopus_modules },
+    { CEPH_RELEASE_SQUID, octopus_modules },
+  };
+  return always_on_modules_map;
 };
 
 // Prefix for mon store of active mgr's command descriptions
@@ -176,12 +144,14 @@ void MgrMonitor::create_initial()
   for (auto& m : tok) {
     pending_map.modules.insert(m);
   }
-  pending_map.always_on_modules = always_on_modules;
+  pending_map.always_on_modules = always_on_modules();
   pending_command_descs = mgr_commands;
-  dout(10) << __func__ << " initial modules " << pending_map.modules
-	   << ", always on modules " << pending_map.get_always_on_modules()
-           << ", " << pending_command_descs.size() << " commands"
+  dout(10) << __func__ << " initial enabled modules: " << pending_map.modules
 	   << dendl;
+  dout(10) << __func__ << "always on modules: " <<
+	     pending_map.get_always_on_modules() << dendl;
+  dout(10) << __func__ << "total " << pending_command_descs.size() <<
+	      " commands" << dendl;
 }
 
 void MgrMonitor::get_store_prefixes(std::set<string>& s) const
@@ -247,7 +217,7 @@ void MgrMonitor::update_from_paxos(bool *need_bootstrap)
       string name = string("mgr/") + i.name + "/" + j.second.name;
       auto p = mgr_module_options.emplace(
 	name,
-	Option(name, static_cast<Option::type_t>(j.second.type),
+	Option(std::string{name}, static_cast<Option::type_t>(j.second.type),
 	       static_cast<Option::level_t>(j.second.level)));
       Option& opt = p.first->second;
       opt.set_flags(static_cast<Option::flag_t>(j.second.flags));
@@ -601,22 +571,23 @@ bool MgrMonitor::prepare_beacon(MonOpRequestRef op)
     if (pending_map.standbys.count(m->get_gid())) {
       drop_standby(m->get_gid(), false);
     }
-    dout(4) << "selecting new active " << m->get_gid()
-	    << " " << m->get_name()
-	    << " (was " << pending_map.active_gid << " "
-	    << pending_map.active_name << ")" << dendl;
-    pending_map.active_gid = m->get_gid();
-    pending_map.active_name = m->get_name();
-    pending_map.active_change = ceph_clock_now();
-    pending_map.active_mgr_features = m->get_mgr_features();
-    pending_map.available_modules = m->get_available_modules();
-    encode(m->get_metadata(), pending_metadata[m->get_name()]);
-    pending_metadata_rm.erase(m->get_name());
+    if (!(pending_map.flags & MgrMap::FLAG_DOWN)) {
+      dout(4) << "selecting new active " << m->get_gid()
+	      << " " << m->get_name()
+	      << " (was " << pending_map.active_gid << " "
+	      << pending_map.active_name << ")" << dendl;
+      pending_map.active_gid = m->get_gid();
+      pending_map.active_name = m->get_name();
+      pending_map.active_change = ceph_clock_now();
+      pending_map.active_mgr_features = m->get_mgr_features();
+      pending_map.available_modules = m->get_available_modules();
+      encode(m->get_metadata(), pending_metadata[m->get_name()]);
+      pending_metadata_rm.erase(m->get_name());
 
-    mon.clog->info() << "Activating manager daemon "
-                      << pending_map.active_name;
-
-    updated = true;
+      mon.clog->info() << "Activating manager daemon "
+                       << pending_map.active_name;
+      updated = true;
+    }
   } else {
     if (pending_map.standbys.count(m->get_gid()) > 0) {
       dout(10) << "from existing standby " << m->get_gid() << dendl;
@@ -754,13 +725,13 @@ void MgrMonitor::on_active()
   }
   mon.clog->debug() << "mgrmap e" << map.epoch << ": " << map;
   assert(HAVE_FEATURE(mon.get_quorum_con_features(), SERVER_NAUTILUS));
-  if (pending_map.always_on_modules == always_on_modules) {
+  if (pending_map.always_on_modules == always_on_modules()) {
     return;
   }
   dout(4) << "always on modules changed, pending "
           << pending_map.always_on_modules << " != wanted "
-          << always_on_modules << dendl;
-  pending_map.always_on_modules = always_on_modules;
+          << always_on_modules() << dendl;
+  pending_map.always_on_modules = always_on_modules();
   propose_pending();
 }
 
@@ -891,6 +862,9 @@ void MgrMonitor::on_restart()
 bool MgrMonitor::promote_standby()
 {
   ceph_assert(pending_map.active_gid == 0);
+  if (pending_map.flags & MgrMap::FLAG_DOWN) {
+    return false;
+  }
   if (pending_map.standbys.size()) {
     // Promote a replacement (arbitrary choice of standby)
     auto replacement_gid = pending_map.standbys.begin()->first;
@@ -903,6 +877,9 @@ bool MgrMonitor::promote_standby()
     pending_map.available = false;
     pending_map.active_addrs = entity_addrvec_t();
     pending_map.active_change = ceph_clock_now();
+
+    mon.clog->info() << "Activating manager daemon "
+                     << pending_map.active_name;
 
     drop_standby(replacement_gid, false);
 
@@ -1044,6 +1021,13 @@ bool MgrMonitor::preprocess_command(MonOpRequestRef op)
           f->dump_string("module", p);
         }
         f->close_section();
+
+        f->open_array_section("force_disabled_modules");
+        for (auto& p : map.force_disabled_modules) {
+          f->dump_string("module", p);
+        }
+        f->close_section();
+
         f->open_array_section("enabled_modules");
         for (auto& p : map.modules) {
           if (map.get_always_on_modules().count(p) > 0)
@@ -1073,7 +1057,11 @@ bool MgrMonitor::preprocess_command(MonOpRequestRef op)
 
       for (auto& p : map.get_always_on_modules()) {
         tbl << p;
-        tbl << "on (always on)";
+	if (map.force_disabled_modules.find(p) == map.force_disabled_modules.end()) {
+	  tbl << "on (always on)";
+	} else  {
+	  tbl << "off (always on but force-disabled)";
+	}
         tbl << TextTable::endrow;
       }
       for (auto& p : map.modules) {
@@ -1195,7 +1183,43 @@ bool MgrMonitor::prepare_command(MonOpRequestRef op)
   int r = 0;
   bool plugged = false;
 
-  if (prefix == "mgr fail") {
+  if (prefix == "mgr set") {
+    std::string var;
+    if (!cmd_getval(cmdmap, "var", var) || var.empty()) {
+      ss << "Invalid variable";
+      return -EINVAL;
+    }
+    string val;
+    if (!cmd_getval(cmdmap, "val", val)) {
+      return -EINVAL;
+    }
+
+    if (var == "down") {
+      bool enable_down = false;
+      int r = parse_bool(val, &enable_down, ss);
+      if (r != 0) {
+        return r;
+      }
+      if (enable_down) {
+        bool has_active = !!pending_map.active_gid;
+        if (has_active && !mon.osdmon()->is_writeable()) {
+          mon.osdmon()->wait_for_writeable(op, new C_RetryMessage(this, op));
+          return false;
+        }
+        pending_map.flags |= MgrMap::FLAG_DOWN;
+        if (has_active) {
+          plugged |= drop_active();
+        }
+      } else {
+        pending_map.flags &= ~(MgrMap::FLAG_DOWN);
+        if (pending_map.active_gid == 0) {
+          promote_standby();
+        }
+      }
+    } else {
+      return -EINVAL;
+    }
+  } else if (prefix == "mgr fail") {
     string who;
     if (!cmd_getval(cmdmap, "who", who)) {
       if (!map.active_gid) {
@@ -1258,10 +1282,13 @@ bool MgrMonitor::prepare_command(MonOpRequestRef op)
       r = -EINVAL;
       goto out;
     }
-    if (pending_map.get_always_on_modules().count(module) > 0) {
+
+    if (pending_map.get_always_on_modules().count(module) > 0 &&
+        !pending_map.force_disabled_modules.contains(module)) {
       ss << "module '" << module << "' is already enabled (always-on)";
       goto out;
     }
+
     bool force = false;
     cmd_getval_compat_cephbool(cmdmap, "force", force);
     if (!pending_map.all_support_module(module) &&
@@ -1285,7 +1312,12 @@ bool MgrMonitor::prepare_command(MonOpRequestRef op)
       ss << "module '" << module << "' is already enabled";
       r = 0;
       goto out;
+    } else if (pending_map.force_disabled_modules.contains(module)) {
+      pending_map.force_disabled_modules.erase(module);
+      r = 0;
+      goto out;
     }
+
     pending_map.modules.insert(module);
   } else if (prefix == "mgr module disable") {
     string module;
@@ -1295,8 +1327,9 @@ bool MgrMonitor::prepare_command(MonOpRequestRef op)
       goto out;
     }
     if (pending_map.get_always_on_modules().count(module) > 0) {
-      ss << "module '" << module << "' cannot be disabled (always-on)";
-      r = -EINVAL;
+      ss << "module '" << module << "' cannot be disabled (always-on), use " <<
+	 "'ceph mgr module force disable' command to disable an always-on module";
+      r = -EPERM;
       goto out;
     }
     if (!pending_map.module_enabled(module)) {
@@ -1307,7 +1340,52 @@ bool MgrMonitor::prepare_command(MonOpRequestRef op)
     if (!pending_map.modules.count(module)) {
       ss << "module '" << module << "' is not enabled";
     }
+    dout(8) << __func__ << " disabling module " << module << " from new " << dendl;
     pending_map.modules.erase(module);
+  } else if (prefix == "mgr module force disable") {
+    string mod;
+    cmd_getval(cmdmap, "module", mod);
+
+    bool confirmation_flag = false;
+    cmd_getval(cmdmap, "yes_i_really_mean_it", confirmation_flag);
+
+    if (mod.empty()) {
+      ss << "Module name wasn't passed!";
+      r = -EINVAL;
+      goto out;
+    }
+
+    if (!pending_map.get_always_on_modules().contains(mod)) {
+      ss << "Always-on module named \"" << mod << "\" does not exist";
+      r = -EINVAL;
+      goto out;
+    } else if (pending_map.modules.contains(mod)) {
+      ss << "Module '" << mod << "' is not an always-on module, only always-on " <<
+	 "modules can be disabled through this command.";
+      r = -EINVAL;
+      goto out;
+    }
+
+    if (pending_map.force_disabled_modules.contains(mod)) {
+      ss << "Module \"" << mod << "\"is already disabled";
+      r = 0;
+      goto out;
+    }
+
+    if (!confirmation_flag) {
+      ss << "This command will disable operations and remove commands that "
+	 << "other Ceph utilities expect to be available. Do not continue "
+	 << "unless your cluster is already experiencing an event due to "
+	 << "which it is advised to disable this module as part of "
+	 << "troubleshooting. If you are sure that you wish to continue, "
+	 << "run again with --yes-i-really-mean-it";
+      r = -EPERM;
+      goto out;
+    }
+
+    dout(8) << __func__ << " force-disabling module '" << mod << "'" << dendl;
+    pending_map.force_disabled_modules.insert(mod);
+    pending_map.modules.erase(mod);
   } else {
     ss << "Command '" << prefix << "' not implemented!";
     r = -ENOSYS;

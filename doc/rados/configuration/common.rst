@@ -44,6 +44,27 @@ For more about configuring a network for use with Ceph, see the `Network
 Configuration Reference`_ .
 
 
+Temporary Directory
+===================
+
+Some operations will cause a daemon to write to a temporary file. These files
+are located according to the ``tmp_dir`` config.
+
+.. confval:: tmp_dir
+
+The ``$TMPDIR`` environment variable is used to initialize the config, if
+present, but may be overriden on the command-line. A default may also
+be set for the cluster using the usual ``ceph config`` API.
+
+The template for the temporary files created by daemons is controlled
+by the ``tmp_file_template`` config.
+
+.. confval:: tmp_file_template
+
+One example where temporary files are created by daemons is the use of the
+``--daemon-output-file=:tmp:`` argument to the ``ceph tell`` command.
+
+
 Monitors
 ========
 
@@ -123,11 +144,10 @@ OSD host, run the following commands:
     ssh {osd-host}
     sudo mkdir /var/lib/ceph/osd/ceph-{osd-number}
 
-The ``osd_data`` path ought to lead to a mount point that has mounted on it a
-device that is distinct from the device that contains the operating system and
-the daemons. To use a device distinct from the device that contains the
+The ``osd_data`` path must lead to a device that is not shared with the
+operating system. To use a device other than the device that contains the
 operating system and the daemons, prepare it for use with Ceph and mount it on
-the directory you just created by running the following commands:
+the directory you just created by running commands of the following form:
 
 .. prompt:: bash $
 
@@ -180,7 +200,7 @@ Naming Clusters (deprecated)
 
 Each Ceph cluster has an internal name. This internal name is used as part of
 configuration, and as part of "log file" names as well as part of directory
-names and as part of mountpoint names. This name defaults to "ceph". Previous
+names and as part of mount point names. This name defaults to "ceph". Previous
 releases of Ceph allowed one to specify a custom name instead, for example
 "ceph2". This option was intended to facilitate the running of multiple logical
 clusters on the same physical hardware, but in practice it was rarely

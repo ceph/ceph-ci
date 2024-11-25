@@ -430,7 +430,7 @@ struct rgw_cls_list_ret {
   // if is_truncated is true, starting marker for next iteration; this
   // is necessary as it's possible after maximum number of tries we
   // still might have zero entries to return, in which case we have to
-  // at least move the ball foward
+  // at least move the ball forward
   cls_rgw_obj_key marker;
 
   // cls_filtered is not transmitted; it is assumed true for versions
@@ -493,19 +493,23 @@ struct rgw_cls_bucket_update_stats_op
 {
   bool absolute{false};
   std::map<RGWObjCategory, rgw_bucket_category_stats> stats;
+  std::map<RGWObjCategory, rgw_bucket_category_stats> dec_stats;
 
   rgw_cls_bucket_update_stats_op() {}
 
   void encode(ceph::buffer::list &bl) const {
-    ENCODE_START(1, 1, bl);
+    ENCODE_START(2, 1, bl);
     encode(absolute, bl);
     encode(stats, bl);
+    encode(dec_stats, bl);
     ENCODE_FINISH(bl);
   }
   void decode(ceph::buffer::list::const_iterator &bl) {
-    DECODE_START(1, bl);
+    DECODE_START(2, bl);
     decode(absolute, bl);
     decode(stats, bl);
+    if (struct_v >= 2)
+      decode(dec_stats, bl);
     DECODE_FINISH(bl);
   }
   void dump(ceph::Formatter *f) const;
@@ -756,26 +760,60 @@ struct rgw_cls_bi_put_op {
 };
 WRITE_CLASS_ENCODER(rgw_cls_bi_put_op)
 
-struct rgw_cls_bi_list_op {
-  uint32_t max;
-  std::string name_filter; // limit resultto one object and its instances
-  std::string marker;
-
-  rgw_cls_bi_list_op() : max(0) {}
+struct rgw_cls_bi_put_entries_op {
+  std::vector<rgw_cls_bi_entry> entries;
+  bool check_existing = false;
 
   void encode(ceph::buffer::list& bl) const {
     ENCODE_START(1, 1, bl);
-    encode(max, bl);
-    encode(name_filter, bl);
-    encode(marker, bl);
+    encode(entries, bl);
+    encode(check_existing, bl);
     ENCODE_FINISH(bl);
   }
 
   void decode(ceph::buffer::list::const_iterator& bl) {
     DECODE_START(1, bl);
+    decode(entries, bl);
+    decode(check_existing, bl);
+    DECODE_FINISH(bl);
+  }
+
+  void dump(ceph::Formatter *f) const;
+
+  static void generate_test_instances(std::list<rgw_cls_bi_put_entries_op*>& o) {
+    o.push_back(new rgw_cls_bi_put_entries_op);
+    o.push_back(new rgw_cls_bi_put_entries_op);
+    o.back()->entries.push_back({.idx = "entry"});
+    o.back()->check_existing = true;
+  }
+};
+WRITE_CLASS_ENCODER(rgw_cls_bi_put_entries_op)
+
+struct rgw_cls_bi_list_op {
+  uint32_t max;
+  std::string name_filter; // limit result to one object and its instances
+  std::string marker;
+  bool reshardlog;
+
+  rgw_cls_bi_list_op() : max(0), reshardlog(false) {}
+
+  void encode(ceph::buffer::list& bl) const {
+    ENCODE_START(2, 1, bl);
+    encode(max, bl);
+    encode(name_filter, bl);
+    encode(marker, bl);
+    encode(reshardlog, bl);
+    ENCODE_FINISH(bl);
+  }
+
+  void decode(ceph::buffer::list::const_iterator& bl) {
+    DECODE_START(2, bl);
     decode(max, bl);
     decode(name_filter, bl);
     decode(marker, bl);
+    if (struct_v >= 2) {
+      decode(reshardlog, bl);
+    }
     DECODE_FINISH(bl);
   }
 
@@ -783,6 +821,7 @@ struct rgw_cls_bi_list_op {
     f->dump_unsigned("max", max);
     f->dump_string("name_filter", name_filter);
     f->dump_string("marker", marker);
+    f->dump_bool("reshardlog", reshardlog);
   }
 
   static void generate_test_instances(std::list<rgw_cls_bi_list_op*>& o) {
@@ -791,6 +830,7 @@ struct rgw_cls_bi_list_op {
     o.back()->max = 100;
     o.back()->name_filter = "name_filter";
     o.back()->marker = "marker";
+    o.back()->reshardlog = true;
   }
 };
 WRITE_CLASS_ENCODER(rgw_cls_bi_list_op)
@@ -1480,19 +1520,27 @@ struct cls_rgw_mp_upload_part_info_update_op {
 WRITE_CLASS_ENCODER(cls_rgw_mp_upload_part_info_update_op)
 
 struct cls_rgw_reshard_add_op {
- cls_rgw_reshard_entry entry;
+  cls_rgw_reshard_entry entry;
+
+  // true -> will not overwrite existing entry
+  bool create_only {false};
 
   cls_rgw_reshard_add_op() {}
 
   void encode(ceph::buffer::list& bl) const {
-    ENCODE_START(1, 1, bl);
+    ENCODE_START(2, 1, bl);
     encode(entry, bl);
+    encode(create_only, bl);
     ENCODE_FINISH(bl);
   }
 
   void decode(ceph::buffer::list::const_iterator& bl) {
-    DECODE_START(1, bl);
+    DECODE_START(2, bl);
     decode(entry, bl);
+    create_only = false;
+    if (struct_v >= 2) {
+      decode(create_only, bl);
+    }
     DECODE_FINISH(bl);
   }
   static void generate_test_instances(std::list<cls_rgw_reshard_add_op*>& o);

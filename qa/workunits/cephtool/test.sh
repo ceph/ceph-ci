@@ -63,7 +63,7 @@ function retry_eagain()
     for count in $(seq 1 $max) ; do
         status=0
         "$@" > $tmpfile 2>&1 || status=$?
-        if test $status = 0 || 
+        if test $status = 0 ||
             ! grep --quiet EAGAIN $tmpfile ; then
             break
         fi
@@ -108,7 +108,7 @@ function check_response()
 		exit 1
 	fi
 
-	if ! grep --quiet -- "$expected_string" $TMPFILE ; then 
+	if ! grep --quiet -- "$expected_string" $TMPFILE ; then
 		echo "Didn't find $expected_string in output" >&2
 		cat $TMPFILE >&2
 		exit 1
@@ -609,6 +609,26 @@ function test_auth()
   ceph auth del client.xx
   expect_false ceph auth get client.xx
 
+  # test rotation
+  ceph auth get-or-create client.admin2 mon 'allow *'
+  ceph auth get client.admin2 >> keyring1
+  env CEPH_KEYRING=keyring1 ceph -n client.admin2 auth get client.admin2 >> keyring2
+  # they are the same:
+  expect_true diff -au keyring1 keyring2
+  # rotate itself
+  env CEPH_KEYRING=keyring1 ceph -n client.admin2 auth rotate client.admin2 >> keyring3
+  # only the key has changed:
+  diff -au keyring1 keyring3 | grep -E '^[-+][^-+]' | expect_false grep -v key
+  # the key in keyring1 no longer works:
+  expect_false env CEPH_KEYRING=keyring1 ceph -n client.admin2 auth get client.admin2
+  # the key in keyring3 should work:
+  expect_true env CEPH_KEYRING=keyring3 ceph -n client.admin2 auth get client.admin2
+  # now verify the key from `auth get` matches what rotate produced:
+  expect_true ceph auth get client.admin2 >> keyring4
+  expect_true diff -au keyring3 keyring4
+  expect_true ceph auth rm client.admin2
+  rm keyring[1234]
+
   # (almost) interactive mode
   echo -e 'auth add client.xx mon "allow *" osd "allow *"\n' | ceph
   ceph auth get client.xx
@@ -676,7 +696,7 @@ function test_auth_profiles()
 
   ceph -n client.xx-profile-rd -k client.xx.keyring auth del client.xx-profile-ro
   ceph -n client.xx-profile-rd -k client.xx.keyring auth del client.xx-profile-rw
-  
+
   # add a new role-definer with the existing role-definer
   ceph -n client.xx-profile-rd -k client.xx.keyring \
     auth add client.xx-profile-rd2 mon 'allow profile role-definer'
@@ -710,7 +730,7 @@ function test_mon_caps()
   ceph-authtool -n client.bug --cap mon '' $TEMP_DIR/ceph.client.bug.keyring
   ceph auth add client.bug -i  $TEMP_DIR/ceph.client.bug.keyring
   rados lspools --no-mon-config --keyring $TEMP_DIR/ceph.client.bug.keyring -n client.bug >& $TMPFILE || true
-  check_response "Permission denied"  
+  check_response "Permission denied"
 }
 
 function test_mon_misc()
@@ -760,7 +780,6 @@ function test_mon_misc()
   ceph mgr dump
   ceph mgr dump | jq -e '.active_clients[0].name'
   ceph mgr module ls
-  ceph mgr module enable restful
   expect_false ceph mgr module enable foodne
   ceph mgr module enable foodne --force
   ceph mgr module disable foodne
@@ -855,6 +874,47 @@ function without_test_dup_command()
   fi
 }
 
+function test_tell_output_file()
+{
+  name="$1"
+  shift
+
+  # Test --daemon-output-file
+  # N.B.: note this only works if $name is on the same node as this script!
+  J=$(ceph tell --format=json --daemon-output-file=/tmp/foo "$name" version)
+  expect_true jq -e '.path == "/tmp/foo"' <<<"$J"
+  expect_true test -e /tmp/foo
+  # only one line of json
+  expect_true sed '2q1' < /tmp/foo > /dev/null
+  expect_true jq -e '.version | length > 0' < /tmp/foo
+  sudo rm -f /tmp/foo
+
+  J=$(ceph tell --format=json-pretty --daemon-output-file=/tmp/foo "$name" version)
+  expect_true jq -e '.path == "/tmp/foo"' <<<"$J"
+  expect_true test -e /tmp/foo
+  # more than one line of json
+  expect_false sed '2q1' < /tmp/foo > /dev/null
+  expect_true jq -e '.version | length > 0' < /tmp/foo
+  sudo rm -f /tmp/foo
+
+  # Test --daemon-output-file=:tmp:
+  J=$(ceph tell --format=json --daemon-output-file=":tmp:" "$name" version)
+  path=$(jq -r .path <<<"$J")
+  expect_true test -e "$path"
+  # only one line of json
+  expect_true sudo sh -c "sed '2q1' < \"$path\" > /dev/null"
+  expect_true sudo sudo sh -c "jq -e '.version | length > 0' < \"$path\""
+  sudo rm -f "$path"
+
+  J=$(ceph tell --format=json-pretty --daemon-output-file=":tmp:" "$name" version)
+  path=$(jq -r .path <<<"$J")
+  expect_true test -e "$path"
+  # only one line of json
+  expect_false sudo sh -c "sed '2q1' < \"$path\" > /dev/null"
+  expect_true sudo sh -c "jq -e '.version | length > 0' < \"$path\""
+  sudo rm -f "$path"
+}
+
 function test_mds_tell()
 {
   local FS_NAME=cephfs
@@ -896,6 +956,8 @@ function test_mds_tell()
   done
   echo New GIDs: $new_mds_gids
 
+  test_tell_output_file mds."$FS_NAME":0
+
   remove_all_fs
   ceph osd pool delete fs_data fs_data --yes-i-really-really-mean-it
   ceph osd pool delete fs_metadata fs_metadata --yes-i-really-really-mean-it
@@ -912,6 +974,11 @@ function test_mon_mds()
 
   ceph fs set $FS_NAME cluster_down true
   ceph fs set $FS_NAME cluster_down false
+
+  ceph fs set $FS_NAME max_mds 2
+  ceph fs get $FS_NAME | expect_true grep -P -q 'max_mds\t2'
+  ceph fs set $FS_NAME down false
+  ceph fs get $FS_NAME | expect_true grep -P -q 'max_mds\t2'
 
   ceph mds compat rm_incompat 4
   ceph mds compat rm_incompat 4
@@ -1521,10 +1588,10 @@ function test_mon_osd()
 	expect_false ceph osd set $f
 	expect_false ceph osd unset $f
   done
-  ceph osd require-osd-release reef
+  ceph osd require-osd-release squid
   # can't lower
+  expect_false ceph osd require-osd-release reef
   expect_false ceph osd require-osd-release quincy
-  expect_false ceph osd require-osd-release pacific
   # these are no-ops but should succeed.
 
   ceph osd set noup
@@ -1582,7 +1649,7 @@ function test_mon_osd()
   dump_json=$(ceph osd dump --format=json | \
 	  jq -cM '.osds[] | select(.osd == 0)')
   [[ "${info_json}" == "${dump_json}" ]]
-  
+
   info_plain="$(ceph osd info)"
   dump_plain="$(ceph osd dump | grep '^osd')"
   [[ "${info_plain}" == "${dump_plain}" ]]
@@ -2176,7 +2243,7 @@ function test_mon_pg()
   # tell osd version
   #
   ceph tell osd.0 version
-  expect_false ceph tell osd.9999 version 
+  expect_false ceph tell osd.9999 version
   expect_false ceph tell osd.foo version
 
   # back to pg stuff
@@ -2268,7 +2335,7 @@ function test_mon_osd_pool_set()
   ceph osd pool get $TEST_POOL_GETSET deep_scrub_interval | expect_false grep '.'
 
   ceph osd pool get $TEST_POOL_GETSET recovery_priority | expect_false grep '.'
-  ceph osd pool set $TEST_POOL_GETSET recovery_priority 5 
+  ceph osd pool set $TEST_POOL_GETSET recovery_priority 5
   ceph osd pool get $TEST_POOL_GETSET recovery_priority | grep 'recovery_priority: 5'
   ceph osd pool set $TEST_POOL_GETSET recovery_priority -5
   ceph osd pool get $TEST_POOL_GETSET recovery_priority | grep 'recovery_priority: -5'
@@ -2278,13 +2345,13 @@ function test_mon_osd_pool_set()
   expect_false ceph osd pool set $TEST_POOL_GETSET recovery_priority 11
 
   ceph osd pool get $TEST_POOL_GETSET recovery_op_priority | expect_false grep '.'
-  ceph osd pool set $TEST_POOL_GETSET recovery_op_priority 5 
+  ceph osd pool set $TEST_POOL_GETSET recovery_op_priority 5
   ceph osd pool get $TEST_POOL_GETSET recovery_op_priority | grep 'recovery_op_priority: 5'
   ceph osd pool set $TEST_POOL_GETSET recovery_op_priority 0
   ceph osd pool get $TEST_POOL_GETSET recovery_op_priority | expect_false grep '.'
 
   ceph osd pool get $TEST_POOL_GETSET scrub_priority | expect_false grep '.'
-  ceph osd pool set $TEST_POOL_GETSET scrub_priority 5 
+  ceph osd pool set $TEST_POOL_GETSET scrub_priority 5
   ceph osd pool get $TEST_POOL_GETSET scrub_priority | grep 'scrub_priority: 5'
   ceph osd pool set $TEST_POOL_GETSET scrub_priority 0
   ceph osd pool get $TEST_POOL_GETSET scrub_priority | expect_false grep '.'
@@ -2318,10 +2385,10 @@ function test_mon_osd_pool_set()
   ceph osd pool set $TEST_POOL_GETSET size 2
   wait_for_clean
   ceph osd pool set $TEST_POOL_GETSET min_size 2
-  
+
   expect_false ceph osd pool set $TEST_POOL_GETSET hashpspool 0
   ceph osd pool set $TEST_POOL_GETSET hashpspool 0 --yes-i-really-mean-it
-  
+
   expect_false ceph osd pool set $TEST_POOL_GETSET hashpspool 1
   ceph osd pool set $TEST_POOL_GETSET hashpspool 1 --yes-i-really-mean-it
 
@@ -2490,7 +2557,7 @@ function test_mon_osd_erasure_code()
   ceph osd erasure-code-profile set fooprofile a=b c=d
   ceph osd erasure-code-profile set fooprofile a=b c=d
   expect_false ceph osd erasure-code-profile set fooprofile a=b c=d e=f
-  ceph osd erasure-code-profile set fooprofile a=b c=d e=f --force
+  ceph osd erasure-code-profile set fooprofile a=b c=d e=f --force --yes-i-really-mean-it
   ceph osd erasure-code-profile set fooprofile a=b c=d e=f
   expect_false ceph osd erasure-code-profile set fooprofile a=b c=d e=f g=h
   # make sure rule-foo doesn't work anymore
@@ -2519,7 +2586,7 @@ function test_mon_osd_misc()
   ceph osd map 2>$TMPFILE; check_response 'pool' $? 22
 
   # expect error about unused argument foo
-  ceph osd ls foo 2>$TMPFILE; check_response 'unused' $? 22 
+  ceph osd ls foo 2>$TMPFILE; check_response 'unused' $? 22
 
   # expect "not in range" for invalid overload percentage
   ceph osd reweight-by-utilization 80 2>$TMPFILE; check_response 'higher than 100' $? 22
@@ -2628,6 +2695,8 @@ function test_mon_tell()
     ceph_watch_wait "${m} \[DBG\] from.*cmd='sessions' args=\[\]: dispatch"
   done
   expect_false ceph tell mon.foo version
+
+  test_tell_output_file mon.0
 }
 
 function test_mon_ping()

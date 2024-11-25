@@ -18,7 +18,7 @@ describe('RGW buckets page', () => {
   describe('create, edit & delete bucket tests', () => {
     it('should create bucket', () => {
       buckets.navigateTo('create');
-      buckets.create(bucket_name, BucketsPageHelper.USERS[0], 'default-placement');
+      buckets.create(bucket_name, BucketsPageHelper.USERS[0]);
       buckets.getFirstTableCell(bucket_name).should('exist');
     });
 
@@ -28,17 +28,12 @@ describe('RGW buckets page', () => {
     });
 
     it('should delete bucket', () => {
-      buckets.delete(bucket_name);
-    });
-
-    it('should check default encryption is SSE-S3', () => {
-      buckets.navigateTo('create');
-      buckets.checkForDefaultEncryption();
+      buckets.delete(bucket_name, null, null, true, true);
     });
 
     it('should create bucket with object locking enabled', () => {
       buckets.navigateTo('create');
-      buckets.create(bucket_name, BucketsPageHelper.USERS[0], 'default-placement', true);
+      buckets.create(bucket_name, BucketsPageHelper.USERS[0], true);
       buckets.getFirstTableCell(bucket_name).should('exist');
     });
 
@@ -46,7 +41,7 @@ describe('RGW buckets page', () => {
       buckets.edit(bucket_name, BucketsPageHelper.USERS[1], true);
       buckets.getDataTables().should('contain.text', BucketsPageHelper.USERS[1]);
 
-      buckets.delete(bucket_name);
+      buckets.delete(bucket_name, null, null, true, true);
     });
   });
 
@@ -57,10 +52,10 @@ describe('RGW buckets page', () => {
 
     it('should test invalid input in edit owner field', () => {
       buckets.navigateTo('create');
-      buckets.create(bucket_name, BucketsPageHelper.USERS[0], 'default-placement');
+      buckets.create(bucket_name, BucketsPageHelper.USERS[0]);
       buckets.testInvalidEdit(bucket_name);
       buckets.navigateTo();
-      buckets.delete(bucket_name);
+      buckets.delete(bucket_name, null, null, true, true);
     });
   });
 });

@@ -2,10 +2,14 @@
  Ceph Internals
 ================
 
-.. note:: If you're looking for how to use Ceph as a library from your
-   own software, please see :doc:`/api/index`.
+.. note:: For information on how to use Ceph as a library (from your own
+   software), see :doc:`/api/index`.
 
-You can start a development mode Ceph cluster, after compiling the source, with::
+Starting a Development-mode Ceph Cluster
+----------------------------------------
+
+Compile the source and then run the following commands to start a
+development-mode Ceph cluster::
 
 	cd build
 	OSD=3 MON=3 MGR=3 ../src/vstart.sh -n -x
@@ -16,12 +20,10 @@ You can start a development mode Ceph cluster, after compiling the source, with:
 
 The ``dev@ceph.io`` list is for discussion about the development of Ceph,
 its interoperability with other technology, and the operations of the
-project itself.  Subscribe by sending a message to ``dev-request@ceph.io``
-with the line::
+project itself.  Subscribe by sending a message to ``dev-join@ceph.io``
+with the word `subscribe` in the subject.
 
- subscribe ceph-devel
-
-in the body of the message.
+Alternatively you can visit https://lists.ceph.io and register.
 
 The ceph-devel@vger.kernel.org list is for discussion
 and patch review for the Linux kernel Ceph client component.

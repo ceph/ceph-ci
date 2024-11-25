@@ -36,9 +36,10 @@ public:
 
   virtual segment_nonce_t get_nonce() const  = 0;
 
+  virtual journal_seq_t get_written_to() const = 0;
+
   using write_ertr = base_ertr;
-  using write_ret = write_ertr::future<write_result_t>;
-  virtual write_ret write(ceph::bufferlist&& to_write) = 0;
+  virtual write_ertr::future<> write(ceph::bufferlist&& to_write) = 0;
 
   virtual bool can_write() const = 0;
   
@@ -101,6 +102,10 @@ public:
     return pending.size;
   }
 
+  std::optional<journal_seq_t> get_write_base() const {
+    return write_base;
+  }
+
   bool needs_flush() const {
     assert(state != state_t::SUBMITTING);
     assert(pending.get_size() <= batch_capacity);
@@ -111,6 +116,10 @@ public:
       return (pending.get_size() >= batch_capacity ||
               pending.size.get_encoded_length() > batch_flush_size);
     }
+  }
+
+  const record_group_t& get_record_group() const {
+    return pending;
   }
 
   struct evaluation_t {
@@ -140,23 +149,33 @@ public:
   // Add to the batch, the future will be resolved after the batch is
   // written.
   //
-  // Set write_result_t::write_length to 0 if the record is not the first one
-  // in the batch.
+  // write_base must be assigned when the state is empty
   using add_pending_ertr = JournalAllocator::write_ertr;
-  using add_pending_ret = add_pending_ertr::future<record_locator_t>;
-  add_pending_ret add_pending(
+  using add_pending_fut = add_pending_ertr::future<record_locator_t>;
+  struct add_pending_ret_t {
+    // The supposed record base if no metadata,
+    // only useful in case of ool.
+    journal_seq_t record_base_regardless_md;
+    add_pending_fut future;
+  };
+  add_pending_ret_t add_pending(
       const std::string& name,
       record_t&&,
-      extent_len_t block_size);
+      extent_len_t block_size,
+      std::optional<journal_seq_t> maybe_write_base);
 
   // Encode the batched records for write.
-  std::pair<ceph::bufferlist, record_group_size_t> encode_batch(
+  struct encode_ret_t {
+    journal_seq_t write_base;
+    ceph::bufferlist bl;
+  };
+  encode_ret_t encode_batch(
       const journal_seq_t& committed_to,
       segment_nonce_t segment_nonce);
 
   // Set the write result and reset for reuse
-  using maybe_result_t = std::optional<write_result_t>;
-  void set_result(maybe_result_t maybe_write_end_seq);
+  using maybe_result_t = std::optional<extent_len_t>;
+  void set_result(maybe_result_t maybe_write_length);
 
   // The fast path that is equivalent to submit a single record as a batch.
   //
@@ -165,8 +184,8 @@ public:
   // the intervention of the shared io_promise.
   //
   // Note the current RecordBatch can be reused afterwards.
-  std::pair<ceph::bufferlist, record_group_size_t> submit_pending_fast(
-      record_t&&,
+  ceph::bufferlist submit_pending_fast(
+      record_group_t&&,
       extent_len_t block_size,
       const journal_seq_t& committed_to,
       segment_nonce_t segment_nonce);
@@ -183,6 +202,8 @@ private:
   std::size_t index = 0;
   std::size_t batch_capacity = 0;
   std::size_t batch_flush_size = 0;
+  // Valid at state_t::PENDING
+  std::optional<journal_seq_t> write_base;
 
   record_group_t pending;
   std::size_t submitting_size = 0;
@@ -190,7 +211,7 @@ private:
   extent_len_t submitting_mdlength = 0;
 
   struct promise_result_t {
-    write_result_t write_result;
+    extent_len_t write_length;
     extent_len_t mdlength;
   };
   using maybe_promise_result_t = std::optional<promise_result_t>;
@@ -217,16 +238,6 @@ class RecordSubmitter {
     // OVERFLOW: outstanding_io >  io_depth_limit is impossible
   };
 
-  struct grouped_io_stats {
-    uint64_t num_io = 0;
-    uint64_t num_io_grouped = 0;
-
-    void increment(uint64_t num_grouped_io) {
-      ++num_io;
-      num_io_grouped += num_grouped_io;
-    }
-  };
-
   using base_ertr = crimson::errorator<
       crimson::ct_error::input_output_error>;
 
@@ -248,6 +259,9 @@ public:
   // whether is available to submit a record
   bool is_available() const;
 
+  // get the stats since last_stats
+  writer_stats_t get_stats() const;
+
   // wait for available if cannot submit, should check is_available() again
   // when the future is resolved.
   using wa_ertr = base_ertr;
@@ -267,8 +281,7 @@ public:
   roll_segment_ertr::future<> roll_segment();
 
   // when available, submit the record if possible
-  using submit_ertr = base_ertr;
-  using submit_ret = submit_ertr::future<record_locator_t>;
+  using submit_ret = RecordBatch::add_pending_ret_t;
   submit_ret submit(record_t&&, bool with_atomic_roll_segment=false);
 
   void update_committed_to(const journal_seq_t& new_committed_to) {
@@ -306,7 +319,7 @@ private:
     free_batch_ptrs.pop_front();
   }
 
-  void account_submission(std::size_t, const record_group_size_t&);
+  void account_submission(const record_group_t&);
 
   using maybe_result_t = RecordBatch::maybe_result_t;
   void finish_submit_batch(RecordBatch*, maybe_result_t);
@@ -334,13 +347,9 @@ private:
   // wait for decrement_io_with_flush()
   std::optional<seastar::promise<> > wait_unfull_flush_promise;
 
-  struct {
-    grouped_io_stats record_batch_stats;
-    grouped_io_stats io_depth_stats;
-    uint64_t record_group_padding_bytes = 0;
-    uint64_t record_group_metadata_bytes = 0;
-    uint64_t record_group_data_bytes = 0;
-  } stats;
+  writer_stats_t stats;
+  mutable writer_stats_t last_stats;
+
   seastar::metrics::metric_group metrics;
 };
 

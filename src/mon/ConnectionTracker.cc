@@ -62,7 +62,9 @@ void ConnectionTracker::receive_peer_report(const ConnectionTracker& o)
   ldout(cct, 30) << __func__ << dendl;
   for (auto& i : o.peer_reports) {
     const ConnectionReport& report = i.second;
-    if (i.first == rank) continue;
+    if (i.first == rank || i.first < 0) {
+      continue;
+    }
     ConnectionReport& existing = *reports(i.first);
     if (report.epoch > existing.epoch ||
 	(report.epoch == existing.epoch &&
@@ -79,26 +81,32 @@ void ConnectionTracker::receive_peer_report(const ConnectionTracker& o)
 bool ConnectionTracker::increase_epoch(epoch_t e)
 {
   ldout(cct, 30) << __func__ << " to " << e << dendl;
-  if (e > epoch) {
+  if (e > epoch && rank >= 0) {
     my_reports.epoch_version = version = 0;
     my_reports.epoch = epoch = e;
     peer_reports[rank] = my_reports;
     encoding.clear();
     return true;
   }
+  ldout(cct, 10) << "Either got a report from a rank -1 or our epoch is >= to "
+    << e << " not increasing our epoch!" << dendl;
   return false;
 }
 
 void ConnectionTracker::increase_version()
 {
   ldout(cct, 30) << __func__ << " to " << version+1 << dendl;
-  encoding.clear();
-  ++version;
-  my_reports.epoch_version = version;
-  peer_reports[rank] = my_reports;
-  if ((version % persist_interval) == 0 ) {
-    ldout(cct, 30) << version << " % " << persist_interval << " == 0" << dendl;
-    owner->persist_connectivity_scores();
+  if (rank >= 0) {
+    encoding.clear();
+    ++version;
+    my_reports.epoch_version = version;
+    peer_reports[rank] = my_reports;
+    if ((version % persist_interval) == 0 ) {
+      ldout(cct, 30) << version << " % " << persist_interval << " == 0" << dendl;
+      owner->persist_connectivity_scores();
+    }
+  } else {
+      ldout(cct, 10) << "Got a report from a rank -1, not increasing our version!" << dendl;
   }
 }
 
@@ -110,6 +118,10 @@ void ConnectionTracker::report_live_connection(int peer_rank, double units_alive
     lderr(cct) << "Got a report from my own rank, hopefully this is startup weirdness, dropping" << dendl;
     return;
   }
+  if (peer_rank < 0) {
+    ldout(cct, 10) << "Got a report from a rank -1, not adding that to our report!" << dendl;
+    return;
+  }  
   // we need to "auto-initialize" to 1, do shenanigans
   auto i = my_reports.history.find(peer_rank);
   if (i == my_reports.history.end()) {
@@ -136,6 +148,10 @@ void ConnectionTracker::report_dead_connection(int peer_rank, double units_dead)
   ldout(cct, 30) << "my_reports before: " << my_reports << dendl;
   if (peer_rank == rank) {
     lderr(cct) << "Got a report from my own rank, hopefully this is startup weirdness, dropping" << dendl;
+    return;
+  }
+  if (peer_rank < 0) {
+    ldout(cct, 10) << "Got a report from a rank -1, not adding that to our report!" << dendl;
     return;
   }
   // we need to "auto-initialize" to 1, do shenanigans
@@ -309,13 +325,13 @@ void ConnectionReport::dump(ceph::Formatter *f) const
   f->dump_int("rank", rank);
   f->dump_int("epoch", epoch);
   f->dump_int("version", epoch_version);
-  f->open_object_section("peer_scores");
+  f->open_array_section("peer_scores");
   for (auto i : history) {
     f->open_object_section("peer");
     f->dump_int("peer_rank", i.first);
     f->dump_float("peer_score", i.second);
     f->dump_bool("peer_alive", current.find(i.first)->second);
-    f->close_section();
+    f->close_section(); // peer
   }
   f->close_section(); // peer scores
 }
@@ -338,11 +354,11 @@ void ConnectionTracker::dump(ceph::Formatter *f) const
   f->dump_int("version", version);
   f->dump_float("half_life", half_life);
   f->dump_int("persist_interval", persist_interval);
-  f->open_object_section("reports");
+  f->open_array_section("reports");
   for (const auto& i : peer_reports) {
     f->open_object_section("report");
     i.second.dump(f);
-    f->close_section();
+    f->close_section(); // report
   }
   f->close_section(); // reports
 }

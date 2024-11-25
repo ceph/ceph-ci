@@ -5,6 +5,7 @@
 
 #include "rgw_op.h"
 #include "rgw_user.h"
+#include "rgw_process_env.h"
 #include "rgw_rest_user.h"
 #include "rgw_sal.h"
 
@@ -19,19 +20,25 @@
 
 using namespace std;
 
-int fetch_access_keys_from_master(const DoutPrefixProvider *dpp, rgw::sal::Driver* driver, RGWUserAdminOpState &op_state, req_state *s, optional_yield y) {
-    bufferlist data;
-    JSONParser jp;
-    RGWUserInfo ui;
-    int op_ret = driver->forward_request_to_master(s, s->user.get(), nullptr, data, &jp, s->info, y);
-    if (op_ret < 0) {
-      ldpp_dout(dpp, 0) << "forward_request_to_master returned ret=" << op_ret << dendl;
-      return op_ret;
-    }
-    ui.decode_json(&jp);
-    op_state.op_access_keys = std::move(ui.access_keys);
+int fetch_access_keys_from_master(const DoutPrefixProvider* dpp, req_state* s,
+                                  std::map<std::string, RGWAccessKey>& keys,
+                                  ceph::real_time& create_date,
+                                  optional_yield y)
+{
+  bufferlist data;
+  JSONParser jp;
+  int ret = rgw_forward_request_to_master(dpp, *s->penv.site, s->user->get_id(),
+                                          &data, &jp, s->info, y);
+  if (ret < 0) {
+    ldpp_dout(dpp, 0) << "forward_request_to_master returned ret=" << ret << dendl;
+    return ret;
+  }
 
-    return 0;
+  RGWUserInfo ui;
+  ui.decode_json(&jp);
+  keys = std::move(ui.access_keys);
+  create_date = ui.create_date;
+  return 0;
 }
 
 class RGWOp_User_List : public RGWRESTOp {
@@ -68,6 +75,10 @@ public:
   RGWOp_User_Info() {}
 
   int check_caps(const RGWUserCaps& caps) override {
+    int r = caps.check_cap("user-info-without-keys", RGW_CAP_READ);
+    if (r == 0) {
+      return r;
+    }
     return caps.check_cap("users", RGW_CAP_READ);
   }
 
@@ -79,10 +90,12 @@ public:
 void RGWOp_User_Info::execute(optional_yield y)
 {
   RGWUserAdminOpState op_state(driver);
+  op_state.set_system(s->system_request);
 
   std::string uid_str, access_key_str;
   bool fetch_stats;
   bool sync_stats;
+  bool dump_keys = false;
 
   RESTArgs::get_string(s, "uid", uid_str, &uid_str);
   RESTArgs::get_string(s, "access-key", access_key_str, &access_key_str);
@@ -106,7 +119,15 @@ void RGWOp_User_Info::execute(optional_yield y)
   op_state.set_fetch_stats(fetch_stats);
   op_state.set_sync_stats(sync_stats);
 
-  op_ret = RGWUserAdminOp_User::info(s, driver, op_state, flusher, y);
+  // dump_keys is false if user-info-without-keys is 'read' and
+  // the user is not the system user or an admin user
+  int keys_perm = s->user->get_info().caps.check_cap("users", RGW_CAP_READ);
+  if (keys_perm == 0 || op_state.system || s->auth.identity->is_admin_of(uid)) {
+    dump_keys = true;
+    ldpp_dout(s, 20) << "dump_keys is set to true" << dendl;
+  }
+
+  op_ret = RGWUserAdminOp_User::info(s, driver, op_state, flusher, dump_keys, y);
 }
 
 class RGWOp_User_Create : public RGWRESTOp {
@@ -136,10 +157,12 @@ void RGWOp_User_Create::execute(optional_yield y)
   std::string op_mask_str;
   std::string default_placement_str;
   std::string placement_tags_str;
+  std::string default_storage_class_str;
 
   bool gen_key;
   bool suspended;
   bool system;
+  bool account_root = false;
   bool exclusive;
 
   int32_t max_buckets;
@@ -162,10 +185,14 @@ void RGWOp_User_Create::execute(optional_yield y)
   RESTArgs::get_bool(s, "suspended", false, &suspended);
   RESTArgs::get_int32(s, "max-buckets", default_max_buckets, &max_buckets);
   RESTArgs::get_bool(s, "system", false, &system);
+  RESTArgs::get_bool(s, "account-root", false, &account_root);
   RESTArgs::get_bool(s, "exclusive", false, &exclusive);
   RESTArgs::get_string(s, "op-mask", op_mask_str, &op_mask_str);
   RESTArgs::get_string(s, "default-placement", default_placement_str, &default_placement_str);
+  RESTArgs::get_string(s, "default-storage-class", default_storage_class_str, &default_storage_class_str);
   RESTArgs::get_string(s, "placement-tags", placement_tags_str, &placement_tags_str);
+  RESTArgs::get_string(s, "account-id", "", &op_state.account_id);
+  RESTArgs::get_string(s, "path", "", &op_state.path);
 
   if (!s->user->get_info().system && system) {
     ldpp_dout(this, 0) << "cannot set system flag by non-system user" << dendl;
@@ -218,12 +245,18 @@ void RGWOp_User_Create::execute(optional_yield y)
   if (s->info.args.exists("system"))
     op_state.set_system(system);
 
+  if (s->info.args.exists("account-root"))
+    op_state.set_account_root(account_root);
+
   if (s->info.args.exists("exclusive"))
     op_state.set_exclusive(exclusive);
 
   if (!default_placement_str.empty()) {
     rgw_placement_rule target_rule;
-    target_rule.from_str(default_placement_str);
+    target_rule.name = default_placement_str;
+    if (!default_storage_class_str.empty()){
+      target_rule.storage_class = default_storage_class_str;
+    }
     if (!driver->valid_placement(target_rule)) {
       ldpp_dout(this, 0) << "NOTICE: invalid dest placement: " << target_rule.to_str() << dendl;
       op_ret = -EINVAL;
@@ -238,15 +271,15 @@ void RGWOp_User_Create::execute(optional_yield y)
     op_state.set_placement_tags(placement_tags_list);
   }
 
-  if(!(driver->is_meta_master())) {
-    op_ret = fetch_access_keys_from_master(this, driver, op_state, s, y);
-
-    if(op_ret < 0) {
+  if (!s->penv.site->is_meta_master()) {
+    op_state.create_date.emplace();
+    op_ret = fetch_access_keys_from_master(this, s, op_state.op_access_keys,
+                                           *op_state.create_date, y);
+    if (op_ret < 0) {
       return;
-    } else {
-      // set_generate_key() is not set if keys have already been fetched from master zone
-      gen_key = false;
     }
+    // set_generate_key() is not set if keys have already been fetched from master zone
+    gen_key = false;
   }
 
   if (gen_key) {
@@ -281,10 +314,12 @@ void RGWOp_User_Modify::execute(optional_yield y)
   std::string op_mask_str;
   std::string default_placement_str;
   std::string placement_tags_str;
+  std::string default_storage_class_str;
 
   bool gen_key;
   bool suspended;
   bool system;
+  bool account_root = false;
   bool email_set;
   bool quota_set;
   int32_t max_buckets;
@@ -304,9 +339,13 @@ void RGWOp_User_Modify::execute(optional_yield y)
   RESTArgs::get_string(s, "key-type", key_type_str, &key_type_str);
 
   RESTArgs::get_bool(s, "system", false, &system);
+  RESTArgs::get_bool(s, "account-root", false, &account_root);
   RESTArgs::get_string(s, "op-mask", op_mask_str, &op_mask_str);
   RESTArgs::get_string(s, "default-placement", default_placement_str, &default_placement_str);
+  RESTArgs::get_string(s, "default-storage-class", default_storage_class_str, &default_storage_class_str);
   RESTArgs::get_string(s, "placement-tags", placement_tags_str, &placement_tags_str);
+  RESTArgs::get_string(s, "account-id", "", &op_state.account_id);
+  RESTArgs::get_string(s, "path", "", &op_state.path);
 
   if (!s->user->get_info().system && system) {
     ldpp_dout(this, 0) << "cannot set system flag by non-system user" << dendl;
@@ -356,6 +395,9 @@ void RGWOp_User_Modify::execute(optional_yield y)
   if (s->info.args.exists("system"))
     op_state.set_system(system);
 
+  if (s->info.args.exists("account-root"))
+    op_state.set_account_root(account_root);
+
   if (!op_mask_str.empty()) {
     uint32_t op_mask;
     int ret = rgw_parse_op_type_list(op_mask_str, &op_mask);
@@ -369,7 +411,10 @@ void RGWOp_User_Modify::execute(optional_yield y)
 
   if (!default_placement_str.empty()) {
     rgw_placement_rule target_rule;
-    target_rule.from_str(default_placement_str);
+    target_rule.name = default_placement_str;
+    if (!default_storage_class_str.empty()){
+      target_rule.storage_class = default_storage_class_str;
+    }
     if (!driver->valid_placement(target_rule)) {
       ldpp_dout(this, 0) << "NOTICE: invalid dest placement: " << target_rule.to_str() << dendl;
       op_ret = -EINVAL;
@@ -384,15 +429,15 @@ void RGWOp_User_Modify::execute(optional_yield y)
     op_state.set_placement_tags(placement_tags_list);
   }
   
-  if(!(driver->is_meta_master())) {
-    op_ret = fetch_access_keys_from_master(this, driver, op_state, s, y);
-
-    if(op_ret < 0) {
+  if (!s->penv.site->is_meta_master()) {
+    op_state.create_date.emplace();
+    op_ret = fetch_access_keys_from_master(this, s, op_state.op_access_keys,
+                                           *op_state.create_date, y);
+    if (op_ret < 0) {
       return;
-    } else {
-      // set_generate_key() is not set if keys have already been fetched from master zone
-      gen_key = false;
     }
+    // set_generate_key() is not set if keys have already been fetched from master zone
+    gen_key = false;
   }
 
   if (gen_key) {
@@ -434,8 +479,8 @@ void RGWOp_User_Remove::execute(optional_yield y)
 
   op_state.set_purge_data(purge_data);
 
-  bufferlist data;
-  op_ret = driver->forward_request_to_master(s, s->user.get(), nullptr, data, nullptr, s->info, y);
+  op_ret = rgw_forward_request_to_master(this, *s->penv.site, s->user->get_id(),
+                                         nullptr, nullptr, s->info, y);
   if (op_ret < 0) {
     ldpp_dout(this, 0) << "forward_request_to_master returned ret=" << op_ret << dendl;
     return;
@@ -509,8 +554,8 @@ void RGWOp_Subuser_Create::execute(optional_yield y)
   }
   op_state.set_key_type(key_type);
 
-  bufferlist data;
-  op_ret = driver->forward_request_to_master(s, s->user.get(), nullptr, data, nullptr, s->info, y);
+  op_ret = rgw_forward_request_to_master(this, *s->penv.site, s->user->get_id(),
+                                         nullptr, nullptr, s->info, y);
   if (op_ret < 0) {
     ldpp_dout(this, 0) << "forward_request_to_master returned ret=" << op_ret << dendl;
     return;
@@ -576,8 +621,8 @@ void RGWOp_Subuser_Modify::execute(optional_yield y)
   }
   op_state.set_key_type(key_type);
 
-  bufferlist data;
-  op_ret = driver->forward_request_to_master(s, s->user.get(), nullptr, data, nullptr, s->info, y);
+  op_ret = rgw_forward_request_to_master(this, *s->penv.site, s->user->get_id(),
+                                         nullptr, nullptr, s->info, y);
   if (op_ret < 0) {
     ldpp_dout(this, 0) << "forward_request_to_master returned ret=" << op_ret << dendl;
     return;
@@ -619,8 +664,8 @@ void RGWOp_Subuser_Remove::execute(optional_yield y)
   if (purge_keys)
     op_state.set_purge_keys();
 
-  bufferlist data;
-  op_ret = driver->forward_request_to_master(s, s->user.get(), nullptr, data, nullptr, s->info, y);
+  op_ret = rgw_forward_request_to_master(this, *s->penv.site, s->user->get_id(),
+                                         nullptr, nullptr, s->info, y);
   if (op_ret < 0) {
     ldpp_dout(this, 0) << "forward_request_to_master returned ret=" << op_ret << dendl;
     return;
@@ -650,7 +695,9 @@ void RGWOp_Key_Create::execute(optional_yield y)
   std::string secret_key;
   std::string key_type_str;
 
-  bool gen_key;
+  bool gen_key = true;
+  bool active = true;
+  bool active_specified = false;
 
   RGWUserAdminOpState op_state(driver);
 
@@ -661,12 +708,16 @@ void RGWOp_Key_Create::execute(optional_yield y)
   RESTArgs::get_string(s, "access-key", access_key, &access_key);
   RESTArgs::get_string(s, "secret-key", secret_key, &secret_key);
   RESTArgs::get_string(s, "key-type", key_type_str, &key_type_str);
-  RESTArgs::get_bool(s, "generate-key", true, &gen_key);
+  RESTArgs::get_bool(s, "generate-key", gen_key, &gen_key);
+  RESTArgs::get_bool(s, "active", active, &active, &active_specified);
 
   op_state.set_user_id(uid);
   op_state.set_subuser(subuser);
   op_state.set_access_key(access_key);
   op_state.set_secret_key(secret_key);
+  if (active_specified) {
+    op_state.access_key_active = active;
+  }
 
   if (gen_key)
     op_state.set_generate_key();
@@ -760,8 +811,8 @@ void RGWOp_Caps_Add::execute(optional_yield y)
   op_state.set_user_id(uid);
   op_state.set_caps(caps);
 
-  bufferlist data;
-  op_ret = driver->forward_request_to_master(s, s->user.get(), nullptr, data, nullptr, s->info, y);
+  op_ret = rgw_forward_request_to_master(this, *s->penv.site, s->user->get_id(),
+                                         nullptr, nullptr, s->info, y);
   if (op_ret < 0) {
     ldpp_dout(this, 0) << "forward_request_to_master returned ret=" << op_ret << dendl;
     return;
@@ -798,8 +849,8 @@ void RGWOp_Caps_Remove::execute(optional_yield y)
   op_state.set_user_id(uid);
   op_state.set_caps(caps);
 
-  bufferlist data;
-  op_ret = driver->forward_request_to_master(s, s->user.get(), nullptr, data, nullptr, s->info, y);
+  op_ret = rgw_forward_request_to_master(this, *s->penv.site, s->user->get_id(),
+                                         nullptr, nullptr, s->info, y);
   if (op_ret < 0) {
     ldpp_dout(this, 0) << "forward_request_to_master returned ret=" << op_ret << dendl;
     return;

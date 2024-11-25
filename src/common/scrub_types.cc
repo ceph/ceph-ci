@@ -55,10 +55,12 @@ static void encode(const osd_shard_t& shard, bufferlist& bl) {
 
 void shard_info_wrapper::set_object(const ScrubMap::object& object)
 {
-  for (auto attr : object.attrs) {
-    bufferlist bl;
-    bl.push_back(attr.second);
-    attrs.insert(std::make_pair(attr.first, std::move(bl)));
+  // logically no-op, changes the comparator from std::less<void>
+  // while avoiding `reinterpret_cast<const std::map<std::string,
+  // ceph::bufferlist>&>(object.attrs)`
+  attrs.clear();
+  for (const auto& kv : object.attrs) {
+    attrs.insert(kv);
   }
   size = object.size;
   if (object.omap_digest_present) {
@@ -159,6 +161,13 @@ void inconsistent_obj_wrapper::encode(bufferlist& bl) const
   ENCODE_FINISH(bl);
 }
 
+bufferlist inconsistent_obj_wrapper::encode() const
+{
+  bufferlist bl;
+  encode(bl);
+  return bl;
+}
+
 void inconsistent_obj_wrapper::decode(bufferlist::const_iterator& bp)
 {
   DECODE_START(2, bp);
@@ -236,6 +245,13 @@ void inconsistent_snapset_wrapper::encode(bufferlist& bl) const
   encode(missing, bl);
   encode(ss_bl, bl);
   ENCODE_FINISH(bl);
+}
+
+bufferlist inconsistent_snapset_wrapper::encode() const
+{
+  bufferlist bl;
+  encode(bl);
+  return bl;
 }
 
 void inconsistent_snapset_wrapper::decode(bufferlist::const_iterator& bp)

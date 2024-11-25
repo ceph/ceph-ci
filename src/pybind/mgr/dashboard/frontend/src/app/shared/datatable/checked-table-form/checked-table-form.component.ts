@@ -36,6 +36,7 @@ export class CheckedTableFormComponent implements OnInit {
         column.cellTemplate = this.cellPermissionCheckboxTpl;
         column.headerTemplate = this.headerPermissionCheckboxTpl;
       }
+      column.sortable = false;
     });
     this.listenToChanges();
     this.form.get(this.inputField).setValue(this.initialValue);
@@ -125,7 +126,8 @@ export class CheckedTableFormComponent implements OnInit {
     // Add or remove the given permission(s) depending on the click event or if no
     // click event is given then add/remove them if they are absent/exist.
     if (
-      (event && event.target['checked']) ||
+      event ||
+      event === true ||
       !_.isEqual(permissions.sort(), _.intersection(scopes_permissions[scope], permissions).sort())
     ) {
       scopes_permissions[scope] = _.union(scopes_permissions[scope], permissions);
@@ -150,7 +152,7 @@ export class CheckedTableFormComponent implements OnInit {
     }
     _.each(permissions, (permission) => {
       _.each(this.scopes, (scope) => {
-        if (event.target['checked']) {
+        if (event === true) {
           scopes_permissions[scope] = _.union(scopes_permissions[scope], [permission]);
         } else {
           scopes_permissions[scope] = _.difference(scopes_permissions[scope], [permission]);

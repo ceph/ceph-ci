@@ -722,6 +722,22 @@ bool Elector::peer_tracker_is_clean()
   return peer_tracker.is_clean(mon->rank, paxos_size());
 }
 
+bool Elector::is_tiebreaker(int rank) const
+{
+  return mon->monmap->tiebreaker_mon == mon->monmap->get_name(rank);
+}
+
+bool Elector::is_stretch_marked_down_mons(int rank) const
+{
+  std::string mon_name = mon->monmap->get_name(rank);
+  for (auto& i : mon->monmap->stretch_marked_down_mons) {
+    if (i == mon_name) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void Elector::notify_clear_peer_state()
 {
   dout(10) << __func__ << dendl;
@@ -762,7 +778,7 @@ void Elector::notify_rank_removed(unsigned rank_removed, unsigned new_rank)
      In the case where we are removing the highest rank,
      we erase the removed rank from all sets.
    */
-  if (rank_removed < paxos_size()) {
+  if (std::cmp_less(rank_removed, paxos_size())) {
     for (unsigned i = rank_removed + 1; i <= paxos_size() ; ++i) {
       if (live_pinging.count(i)) {
         dead_pinging.erase(i-1);

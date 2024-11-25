@@ -86,6 +86,8 @@ void D3nDataCache::init(CephContext *_cct) {
       // create the cache storage directory
       lsubdout(g_ceph_context, rgw, 5) << "D3nDataCache: init: creating the persistent storage directory on start" << dendl;
       efs::create_directories(cache_location);
+      efs::permissions(cache_location, 
+        efs::perms::owner_all | efs::perms::group_all | efs::perms::others_read);
     }
   } catch (const efs::filesystem_error& e) {
     lderr(g_ceph_context) << "D3nDataCache: init: ERROR initializing the cache storage directory '" << cache_location <<
@@ -104,7 +106,7 @@ void D3nDataCache::init(CephContext *_cct) {
   struct aioinit ainit{0};
   ainit.aio_threads = cct->_conf.get_val<int64_t>("rgw_d3n_libaio_aio_threads");
   ainit.aio_num = cct->_conf.get_val<int64_t>("rgw_d3n_libaio_aio_num");
-  ainit.aio_idle_time = 10;
+  ainit.aio_idle_time = 5;
   aio_init(&ainit);
 #endif
 }
@@ -143,11 +145,11 @@ int D3nDataCache::d3n_io_write(bufferlist& bl, unsigned int len, std::string oid
 
   // Check whether fclose returned an error
   if (r != 0) {
-    ldout(cct, 0) << "ERROR: D3nDataCache::fclsoe file has return error, errno=" << errno << dendl;
+    ldout(cct, 0) << "ERROR: D3nDataCache::fclose file has return error, errno=" << errno << dendl;
     return -errno;
   }
 
-  { // update cahce_map entries for new chunk in cache
+  { // update cache_map entries for new chunk in cache
     const std::lock_guard l(d3n_cache_lock);
     chunk_info = new D3nChunkDataInfo;
     chunk_info->oid = oid;
@@ -294,7 +296,7 @@ bool D3nDataCache::get(const string& oid, const off_t len)
     struct D3nChunkDataInfo* chdo = iter->second;
     struct stat st;
     int r = stat(location.c_str(), &st);
-    if ( r != -1 && st.st_size == len) { // file exists and containes required data range length
+    if ( r != -1 && st.st_size == len) { // file exists and contains required data range length
       exist = true;
       /*LRU*/
       /*get D3nChunkDataInfo*/

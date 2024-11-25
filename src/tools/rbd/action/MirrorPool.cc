@@ -41,6 +41,7 @@ namespace po = boost::program_options;
 
 static const std::string ALL_NAME("all");
 static const std::string SITE_NAME("site-name");
+static const std::string REMOTE_NAMESPACE_NAME("remote-namespace");
 
 namespace {
 
@@ -1242,6 +1243,10 @@ void get_enable_arguments(po::options_description *positional,
   positional->add_options()
     ("mode", "mirror mode [image or pool]");
   add_site_name_optional(options);
+
+  options->add_options()
+    (REMOTE_NAMESPACE_NAME.c_str(), po::value<std::string>(),
+     "remote namespace name");
 }
 
 int execute_enable_disable(librados::IoCtx& io_ctx,
@@ -1310,6 +1315,7 @@ int execute_enable(const po::variables_map &vm,
                    const std::vector<std::string> &ceph_global_init_args) {
   std::string pool_name;
   std::string namespace_name;
+  std::string remote_namespace;
   size_t arg_index = 0;
   int r = utils::get_pool_and_namespace_names(vm, true, &pool_name,
                                               &namespace_name, &arg_index);
@@ -1336,15 +1342,36 @@ int execute_enable(const po::variables_map &vm,
     return r;
   }
 
+  if (vm.count(REMOTE_NAMESPACE_NAME)) {
+    remote_namespace = vm[REMOTE_NAMESPACE_NAME].as<std::string>();
+  } else {
+    remote_namespace = namespace_name;
+  }
+
+  std::string original_remote_namespace;
+  librbd::RBD rbd;
+  r = rbd.mirror_remote_namespace_get(io_ctx, &original_remote_namespace);
+  if (r < 0) {
+    std::cerr << "rbd: failed to get the current remote namespace."
+              << std::endl;
+    return r;
+  }
+
+  if (original_remote_namespace != remote_namespace) {
+    r = rbd.mirror_remote_namespace_set(io_ctx, remote_namespace);
+    if (r < 0) {
+      std::cerr << "rbd: failed to set the remote namespace."
+                << std::endl;
+      return r;
+    }
+  }
+
   bool updated = false;
   if (vm.count(SITE_NAME)) {
-    librbd::RBD rbd;
-
     auto site_name = vm[SITE_NAME].as<std::string>();
     std::string original_site_name;
     r = rbd.mirror_site_name_get(rados, &original_site_name);
     updated = (r >= 0 && site_name != original_site_name);
-
     r = set_site_name(rados, site_name);
     if (r < 0) {
       return r;
@@ -1366,6 +1393,8 @@ int execute_info(const po::variables_map &vm,
                  const std::vector<std::string> &ceph_global_init_args) {
   std::string pool_name;
   std::string namespace_name;
+  std::string remote_namespace;
+  std::string mirror_uuid;
   size_t arg_index = 0;
   int r = utils::get_pool_and_namespace_names(vm, false, &pool_name,
                                               &namespace_name, &arg_index);
@@ -1407,6 +1436,17 @@ int execute_info(const po::variables_map &vm,
     }
   }
 
+  if (mirror_mode != RBD_MIRROR_MODE_DISABLED) {
+    r = rbd.mirror_uuid_get(io_ctx, &mirror_uuid);
+    if (r < 0) {
+      return r;
+    }
+    r = rbd.mirror_remote_namespace_get(io_ctx, &remote_namespace);
+    if (r < 0) {
+      return r;
+    }
+  }
+
   std::string mirror_mode_desc;
   switch (mirror_mode) {
   case RBD_MIRROR_MODE_DISABLED:
@@ -1430,18 +1470,28 @@ int execute_info(const po::variables_map &vm,
     std::cout << "Mode: " << mirror_mode_desc << std::endl;
   }
 
-  if (mirror_mode != RBD_MIRROR_MODE_DISABLED && namespace_name.empty()) {
-    if (formatter != nullptr) {
-      formatter->dump_string("site_name", site_name);
-    } else {
-      std::cout << "Site Name: " << site_name << std::endl
-                << std::endl;
+  if (mirror_mode != RBD_MIRROR_MODE_DISABLED) {
+    if (namespace_name.empty()) {
+      if (formatter != nullptr) {
+        formatter->dump_string("site_name", site_name);
+      } else {
+	std::cout << "Site Name: " << site_name << std::endl;
+      }
     }
-
-    r = format_mirror_peers(io_ctx, formatter, mirror_peers,
-                            vm[ALL_NAME].as<bool>());
-    if (r < 0) {
-      return r;
+    if (formatter != nullptr) {
+      formatter->dump_string("mirror_uuid", mirror_uuid);
+      formatter->dump_string("remote_namespace", remote_namespace);
+    } else {
+      std::cout << "Mirror UUID: " << mirror_uuid << std::endl;
+      std::cout << "Remote Namespace: " << remote_namespace << std::endl
+		<< std::endl;
+    }
+    if (namespace_name.empty()) {
+      r = format_mirror_peers(io_ctx, formatter, mirror_peers,
+                              vm[ALL_NAME].as<bool>());
+      if (r < 0) {
+	return r;
+      }
     }
   }
   if (formatter != nullptr) {
@@ -1744,27 +1794,27 @@ Shell::Action action_set(
 
 Shell::Action action_disable(
   {"mirror", "pool", "disable"}, {},
-  "Disable RBD mirroring by default within a pool.", "",
+  "Disable RBD mirroring in a pool or namespace.", "",
   &get_disable_arguments, &execute_disable);
 Shell::Action action_enable(
   {"mirror", "pool", "enable"}, {},
-  "Enable RBD mirroring by default within a pool.", "",
+  "Enable RBD mirroring in a pool or namespace.", "",
   &get_enable_arguments, &execute_enable);
 Shell::Action action_info(
   {"mirror", "pool", "info"}, {},
-  "Show information about the pool mirroring configuration.", {},
+  "Show mirroring configuration for a pool or namespace.", {},
   &get_info_arguments, &execute_info);
 Shell::Action action_status(
   {"mirror", "pool", "status"}, {},
-  "Show status for all mirrored images in the pool.", {},
+  "Show status for all mirrored images in a pool or namespace.", {},
   &get_status_arguments, &execute_status);
 Shell::Action action_promote(
   {"mirror", "pool", "promote"}, {},
-  "Promote all non-primary images in the pool.", {},
+  "Promote all non-primary images in a pool or namespace.", {},
   &get_promote_arguments, &execute_promote);
 Shell::Action action_demote(
   {"mirror", "pool", "demote"}, {},
-  "Demote all primary images in the pool.", {},
+  "Demote all primary images in a pool or namespace.", {},
   &get_demote_arguments, &execute_demote);
 
 } // namespace mirror_pool

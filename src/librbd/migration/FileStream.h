@@ -8,7 +8,7 @@
 #include "librbd/migration/StreamInterface.h"
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/strand.hpp>
-#include <boost/asio/posix/basic_stream_descriptor.hpp>
+#include <boost/asio/posix/stream_descriptor.hpp>
 #include <json_spirit/json_spirit.h>
 #include <memory>
 #include <string>
@@ -43,6 +43,10 @@ public:
 
   void read(io::Extents&& byte_extents, bufferlist* data,
             Context* on_finish) override;
+
+  void list_sparse_extents(io::Extents&& byte_extents,
+                           io::SparseExtents* sparse_extents,
+                           Context* on_finish) override;
 
 private:
   CephContext* m_cct;

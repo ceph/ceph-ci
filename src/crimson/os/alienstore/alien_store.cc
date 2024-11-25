@@ -57,10 +57,11 @@ public:
   }
 
   void finish(int) final {
-    return seastar::alien::submit_to(alien, cpuid, [this] {
-      alien_done.set_value();
+    std::ignore = seastar::alien::submit_to(alien, cpuid,
+        [&_alien_done=this->alien_done] {
+      _alien_done.set_value();
       return seastar::make_ready_future<>();
-    }).wait();
+    });
   }
 };
 }
@@ -74,7 +75,8 @@ AlienStore::AlienStore(const std::string& type,
                        const ConfigValues& values)
   : type(type),
     path{path},
-    values(values)
+    values(values),
+    op_gates()
 {
 }
 
@@ -100,26 +102,23 @@ seastar::future<> AlienStore::start()
   if (!store) {
     ceph_abort_msgf("unsupported objectstore type: %s", type.c_str());
   }
-  auto cpu_cores = seastar::resource::parse_cpuset(
-    get_conf<std::string>("crimson_alien_thread_cpu_cores"));
-  // cores except the first "N_CORES_FOR_SEASTAR" ones will
-  // be used for alien threads scheduling:
-  // 	[0, N_CORES_FOR_SEASTAR) are reserved for seastar reactors
-  // 	[N_CORES_FOR_SEASTAR, ..] are assigned to alien threads.
-  if (!cpu_cores.has_value()) {
-    seastar::resource::cpuset cpuset;
-    std::copy(boost::counting_iterator<unsigned>(N_CORES_FOR_SEASTAR),
-	      boost::counting_iterator<unsigned>(sysconf(_SC_NPROCESSORS_ONLN)),
-	      std::inserter(cpuset, cpuset.end()));
-    if (cpuset.empty()) {
-      logger().error("{}: unable to get nproc: {}", __func__, errno);
-    } else {
-      cpu_cores = cpuset;
-    }
+  /*
+   * crimson_alien_thread_cpu_cores must be set for optimal performance.
+   * Otherwise, no CPU pinning will take place.
+  */
+  std::optional<seastar::resource::cpuset> alien_thread_cpu_cores;
+
+  if (std::string conf_cpu_cores =
+        get_conf<std::string>("crimson_alien_thread_cpu_cores");
+      !conf_cpu_cores.empty()) {
+    logger().debug("{} using crimson_alien_thread_cpu_cores", __func__);
+    alien_thread_cpu_cores =
+      seastar::resource::parse_cpuset(conf_cpu_cores);
   }
+
   const auto num_threads =
     get_conf<uint64_t>("crimson_alien_op_num_threads");
-  tp = std::make_unique<crimson::os::ThreadPool>(num_threads, 128, cpu_cores);
+  tp = std::make_unique<crimson::os::ThreadPool>(num_threads, 128, alien_thread_cpu_cores);
   return tp->start();
 }
 
@@ -130,9 +129,6 @@ seastar::future<> AlienStore::stop()
     return seastar::now();
   }
   return tp->submit([this] {
-    for (auto [cid, ch]: coll_map) {
-      static_cast<AlienCollection*>(ch.get())->collection.reset();
-    }
     store.reset();
     cct.reset();
     g_ceph_context = nullptr;
@@ -140,6 +136,19 @@ seastar::future<> AlienStore::stop()
   }).then([this] {
     return tp->stop();
   });
+}
+
+AlienStore::base_errorator::future<bool>
+AlienStore::exists(
+  CollectionRef ch,
+  const ghobject_t& oid)
+{
+    return op_gates.simple_dispatch("exists", [=, this] {
+        return tp->submit(ch->get_cid().hash_to_shard(tp->size()), [=, this] {
+            auto c = static_cast<AlienCollection*>(ch.get());
+            return store->exists(c->collection, oid);
+        });
+    });
 }
 
 AlienStore::mount_ertr::future<> AlienStore::mount()
@@ -165,13 +174,20 @@ seastar::future<> AlienStore::umount()
     // not really started yet
     return seastar::now();
   }
-  return op_gate.close().then([this] {
+  return op_gates.close_all().then([this] {
     return tp->submit([this] {
+      {
+	std::lock_guard l(coll_map_lock);
+	for (auto [cid, ch]: coll_map) {
+	  static_cast<AlienCollection*>(ch.get())->collection.reset();
+	}
+	coll_map.clear();
+      }
       return store->umount();
+    }).then([] (int r) {
+      assert(r == 0);
+      return seastar::now();
     });
-  }).then([] (int r) {
-    assert(r == 0);
-    return seastar::now();
   });
 }
 
@@ -202,7 +218,6 @@ AlienStore::list_objects(CollectionRef ch,
   assert(tp);
   return do_with_op_gate(std::vector<ghobject_t>(), ghobject_t(),
                          [=, this] (auto &objects, auto &next) {
-    objects.reserve(limit);
     return tp->submit(ch->get_cid().hash_to_shard(tp->size()),
       [=, this, &objects, &next] {
       auto c = static_cast<AlienCollection*>(ch.get());
@@ -223,23 +238,9 @@ seastar::future<CollectionRef> AlienStore::create_new_collection(const coll_t& c
   logger().debug("{}", __func__);
   assert(tp);
   return tp->submit([this, cid] {
-    return store->create_new_collection(cid);
-  }).then([this, cid] (ObjectStore::CollectionHandle c) {
-    CollectionRef ch;
-    auto cp = coll_map.find(c->cid);
-    if (cp == coll_map.end()) {
-      ch = new AlienCollection(c);
-      coll_map[c->cid] = ch;
-    } else {
-      ch = cp->second;
-      auto ach = static_cast<AlienCollection*>(ch.get());
-      if (ach->collection != c) {
-        ach->collection = c;
-      }
-    }
-    return seastar::make_ready_future<CollectionRef>(ch);
+    ObjectStore::CollectionHandle c = store->create_new_collection(cid);
+    return get_alien_coll_ref(std::move(c));
   });
-
 }
 
 seastar::future<CollectionRef> AlienStore::open_collection(const coll_t& cid)
@@ -247,24 +248,12 @@ seastar::future<CollectionRef> AlienStore::open_collection(const coll_t& cid)
   logger().debug("{}", __func__);
   assert(tp);
   return tp->submit([this, cid] {
-    return store->open_collection(cid);
-  }).then([this] (ObjectStore::CollectionHandle c) {
+    ObjectStore::CollectionHandle c = store->open_collection(cid);
     if (!c) {
-      return seastar::make_ready_future<CollectionRef>();
-    }
-    CollectionRef ch;
-    auto cp = coll_map.find(c->cid);
-    if (cp == coll_map.end()){
-      ch = new AlienCollection(c);
-      coll_map[c->cid] = ch;
+      return CollectionRef{};
     } else {
-      ch = cp->second;
-      auto ach = static_cast<AlienCollection*>(ch.get());
-      if (ach->collection != c){
-        ach->collection = c;
-      }
+      return get_alien_coll_ref(std::move(c));
     }
-    return seastar::make_ready_future<CollectionRef>(ch);
   });
 }
 
@@ -285,6 +274,21 @@ seastar::future<std::vector<coll_core_t>> AlienStore::list_collections()
         [](auto p) { return std::make_pair(p, NULL_CORE); });
       return seastar::make_ready_future<std::vector<coll_core_t>>(std::move(ret));
     });
+  });
+}
+
+seastar::future<> AlienStore::set_collection_opts(CollectionRef ch,
+                                      const pool_opts_t& opts)
+{
+  logger().debug("{}", __func__);
+  assert(tp);
+
+  return tp->submit(ch->get_cid().hash_to_shard(tp->size()), [=, this] {
+    auto c = static_cast<AlienCollection*>(ch.get());
+    return store->set_collection_opts(c->collection, opts);
+  }).then([] (int r) {
+    assert(r==0);
+    return seastar::now();
   });
 }
 
@@ -474,7 +478,7 @@ seastar::future<> AlienStore::inject_data_error(const ghobject_t& o)
 {
   logger().debug("{}", __func__);
   assert(tp);
-  return seastar::with_gate(op_gate, [=, this] {
+  return op_gates.simple_dispatch("inject_data_error", [=, this] {
     return tp->submit([o, this] {
       return store->inject_data_error(o);
     });
@@ -485,8 +489,8 @@ seastar::future<> AlienStore::inject_mdata_error(const ghobject_t& o)
 {
   logger().debug("{}", __func__);
   assert(tp);
-  return seastar::with_gate(op_gate, [=, this] {
-    return tp->submit([=, this] {
+  return op_gates.simple_dispatch("inject_mdata_error", [=, this] {
+    return tp->submit([o, this] {
       return store->inject_mdata_error(o);
     });
   });
@@ -497,7 +501,7 @@ seastar::future<> AlienStore::write_meta(const std::string& key,
 {
   logger().debug("{}", __func__);
   assert(tp);
-  return seastar::with_gate(op_gate, [=, this] {
+  return op_gates.simple_dispatch("write_meta", [=, this] {
     return tp->submit([=, this] {
       return store->write_meta(key, value);
     }).then([] (int r) {
@@ -512,8 +516,8 @@ AlienStore::read_meta(const std::string& key)
 {
   logger().debug("{}", __func__);
   assert(tp);
-  return seastar::with_gate(op_gate, [this, key] {
-    return tp->submit([this, key] {
+  return op_gates.simple_dispatch("read_meta", [this, key] {
+    return tp->submit([key, this] {
       std::string value;
       int r = store->read_meta(key, &value);
       if (r > 0) {
@@ -546,6 +550,21 @@ seastar::future<store_statfs_t> AlienStore::stat() const
       return store->statfs(&st, nullptr);
     }).then([&st] (int r) {
       assert(r == 0);
+      return seastar::make_ready_future<store_statfs_t>(std::move(st));
+    });
+  });
+}
+
+seastar::future<store_statfs_t> AlienStore::pool_statfs(int64_t pool_id) const
+{
+  logger().info("{}", __func__);
+  assert(tp);
+  return do_with_op_gate(store_statfs_t{}, [this, pool_id] (store_statfs_t &st) {
+    return tp->submit([this, pool_id, &st]{
+      bool per_pool_omap_stats = false;
+      return store->pool_statfs(pool_id, &st, &per_pool_omap_stats);
+    }).then([&st] (int r) {
+      assert(r==0);
       return seastar::make_ready_future<store_statfs_t>(std::move(st));
     });
   });
@@ -615,6 +634,23 @@ AlienStore::read_errorator::future<std::map<uint64_t, uint64_t>> AlienStore::fie
       }
     });
   });
+}
+
+CollectionRef AlienStore::get_alien_coll_ref(ObjectStore::CollectionHandle c) {
+  std::lock_guard l(coll_map_lock);
+  CollectionRef ch;
+  auto cp = coll_map.find(c->cid);
+  if (cp == coll_map.end()) {
+    ch = new AlienCollection(c);
+    coll_map[c->cid] = ch;
+  } else {
+    ch = cp->second;
+    auto ach = static_cast<AlienCollection*>(ch.get());
+    if (ach->collection != c) {
+      ach->collection = c;
+    }
+  }
+  return ch;
 }
 
 }

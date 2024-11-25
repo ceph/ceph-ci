@@ -137,7 +137,7 @@ LogicalCachedExtent::~LogicalCachedExtent() {
   }
 }
 
-void LogicalCachedExtent::on_replace_prior(Transaction &t) {
+void LogicalCachedExtent::on_replace_prior() {
   assert(is_mutation_pending());
   take_prior_parent_tracker();
   assert(get_parent_node());
@@ -158,8 +158,17 @@ parent_tracker_t::~parent_tracker_t() {
 
 std::ostream &operator<<(std::ostream &out, const LBAMapping &rhs)
 {
-  return out << "LBAMapping(" << rhs.get_key() << "~" << rhs.get_length()
-	     << "->" << rhs.get_val();
+  out << "LBAMapping(" << rhs.get_key()
+      << "~0x" << std::hex << rhs.get_length() << std::dec
+      << "->" << rhs.get_val();
+  if (rhs.is_indirect()) {
+    out << ",indirect(" << rhs.get_intermediate_base()
+        << "~0x" << std::hex << rhs.get_intermediate_length()
+        << "@0x" << rhs.get_intermediate_offset() << std::dec
+        << ")";
+  }
+  out << ")";
+  return out;
 }
 
 std::ostream &operator<<(std::ostream &out, const lba_pin_list_t &rhs)

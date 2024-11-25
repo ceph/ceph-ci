@@ -292,6 +292,7 @@ struct ceph_mon_subscribe_ack {
                                                             request */
 #define CEPH_MDSMAP_REFUSE_STANDBY_FOR_ANOTHER_FS (1<<7) /* fs is forbidden to use standby
                                                             for another fs */
+#define CEPH_MDSMAP_BALANCE_AUTOMATE             (1<<8)  /* automate metadata balancing */
 #define CEPH_MDSMAP_DEFAULTS (CEPH_MDSMAP_ALLOW_SNAPS | \
 			      CEPH_MDSMAP_ALLOW_MULTIMDS_SNAPS)
 
@@ -332,18 +333,24 @@ extern const char *ceph_mds_state_name(int s);
  */
 #define CEPH_LOCK_DN          (1 << 0)
 #define CEPH_LOCK_DVERSION    (1 << 1)
-#define CEPH_LOCK_ISNAP       (1 << 4)  /* snapshot lock. MDS internal */
-#define CEPH_LOCK_IPOLICY     (1 << 5)  /* policy lock on dirs. MDS internal */
-#define CEPH_LOCK_IFILE       (1 << 6)
-#define CEPH_LOCK_INEST       (1 << 7)  /* mds internal */
-#define CEPH_LOCK_IDFT        (1 << 8)  /* dir frag tree */
-#define CEPH_LOCK_IAUTH       (1 << 9)
-#define CEPH_LOCK_ILINK       (1 << 10)
-#define CEPH_LOCK_IXATTR      (1 << 11)
-#define CEPH_LOCK_IFLOCK      (1 << 12)  /* advisory file locks */
-#define CEPH_LOCK_IVERSION    (1 << 13)  /* mds internal */
+#define CEPH_LOCK_IQUIESCE    (1 << 4)  /* mds internal */
+#define CEPH_LOCK_ISNAP       (1 << 5)  /* snapshot lock. MDS internal */
+#define CEPH_LOCK_IPOLICY     (1 << 6)  /* policy lock on dirs. MDS internal */
+#define CEPH_LOCK_IFILE       (1 << 7)
+#define CEPH_LOCK_INEST       (1 << 8)  /* mds internal */
+#define CEPH_LOCK_IDFT        (1 << 9)  /* dir frag tree */
+#define CEPH_LOCK_IAUTH       (1 << 10)
+#define CEPH_LOCK_ILINK       (1 << 11)
+#define CEPH_LOCK_IXATTR      (1 << 12)
+#define CEPH_LOCK_IFLOCK      (1 << 13)  /* advisory file locks */
+#define CEPH_LOCK_IVERSION    (1 << 14)  /* mds internal */
 
-#define CEPH_LOCK_IFIRST      CEPH_LOCK_ISNAP
+#define CEPH_LOCK_IFIRST      CEPH_LOCK_IQUIESCE
+#define CEPH_LOCK_ILAST       CEPH_LOCK_IVERSION
+
+static inline bool is_inode_lock(int l) {
+  return (CEPH_LOCK_IFIRST <= l && l <= CEPH_LOCK_ILAST);
+}
 
 
 /* client_session ops */
@@ -429,7 +436,11 @@ enum {
 	CEPH_MDS_OP_ENQUEUE_SCRUB  = 0x01503,
 	CEPH_MDS_OP_REPAIR_FRAGSTATS = 0x01504,
 	CEPH_MDS_OP_REPAIR_INODESTATS = 0x01505,
-	CEPH_MDS_OP_RDLOCK_FRAGSSTATS = 0x01507
+	CEPH_MDS_OP_RDLOCK_FRAGSSTATS = 0x01507,
+	CEPH_MDS_OP_QUIESCE_PATH = 0x01508,
+	CEPH_MDS_OP_QUIESCE_INODE = 0x01509,
+	CEPH_MDS_OP_LOCK_PATH = 0x0150a,
+	CEPH_MDS_OP_UNINLINE_DATA = 0x0150b
 };
 
 #define IS_CEPH_MDS_OP_NEWINODE(op) (op == CEPH_MDS_OP_CREATE     || \
@@ -478,6 +489,7 @@ int ceph_flags_sys2wire(int flags);
  */
 #define CEPH_XATTR_CREATE  (1 << 0)
 #define CEPH_XATTR_REPLACE (1 << 1)
+#define CEPH_XATTR_REMOVE2 (1 << 30)
 #define CEPH_XATTR_REMOVE  (1 << 31)
 
 /*
@@ -993,7 +1005,7 @@ extern const char *ceph_cap_op_name(int op);
 /* extra info for cap import/export */
 struct ceph_mds_cap_peer {
 	__le64 cap_id;
-	__le32 seq;
+	__le32 issue_seq;
 	__le32 mseq;
 	__le32 mds;
 	__u8   flags;
@@ -1046,7 +1058,7 @@ struct ceph_mds_cap_release {
 struct ceph_mds_cap_item {
 	__le64 ino;
 	__le64 cap_id;
-	__le32 migrate_seq, seq;
+	__le32 migrate_seq, issue_seq;
 } __attribute__ ((packed));
 
 #define CEPH_MDS_LEASE_REVOKE           1  /*    mds  -> client */

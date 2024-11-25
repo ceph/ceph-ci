@@ -753,6 +753,15 @@ static void fuse_ll_rename(fuse_req_t req, fuse_ino_t parent, const char *name,
 #endif
                            )
 {
+#if FUSE_VERSION >= FUSE_MAKE_VERSION(3, 0)
+  // cephfs does not support renameat2 flavors; follow same logic as done in
+  // kclient's ceph_rename()
+  if (flags) {
+    fuse_reply_err(req, get_sys_errno(CEPHFS_EINVAL));
+    return;
+  }
+#endif
+
   CephFuse::Handle *cfuse = fuse_ll_req_prepare(req);
   const struct fuse_ctx *ctx = fuse_req_ctx(req);
   UserPerm perm(ctx->uid, ctx->gid);
@@ -1257,7 +1266,7 @@ static int remount_cb(void *handle)
   // trims all unused dentries in the file system
   char cmd[128+PATH_MAX];
   CephFuse::Handle *cfuse = (CephFuse::Handle *)handle;
-  snprintf(cmd, sizeof(cmd), "LIBMOUNT_FSTAB=/dev/null mount -i -o remount %s",
+  snprintf(cmd, sizeof(cmd), "LIBMOUNT_FSTAB=/dev/null LIBMOUNT_FORCE_MOUNT2=always mount -i -o remount %s",
 #if FUSE_VERSION >= FUSE_MAKE_VERSION(3, 0)
                   cfuse->opts.mountpoint);
 #else

@@ -33,6 +33,8 @@ import { RbdFormCreateRequestModel } from './rbd-form-create-request.model';
 import { RbdFormEditRequestModel } from './rbd-form-edit-request.model';
 import { RbdFormMode } from './rbd-form-mode.enum';
 import { RbdFormResponseModel } from './rbd-form-response.model';
+import { CdValidators } from '~/app/shared/forms/cd-validators';
+import { RBDActionHelpers } from '../rbd-contants';
 
 class ExternalData {
   rbd: RbdFormResponseModel;
@@ -68,22 +70,28 @@ export class RbdFormComponent extends CdForm implements OnInit {
 
   pool: string;
   peerConfigured = false;
-
   advancedEnabled = false;
-
   public rbdFormMode = RbdFormMode;
   mode: RbdFormMode;
-
   response: RbdFormResponseModel;
   snapName: string;
-
   defaultObjectSize = '4 MiB';
 
-  mirroringOptions = ['journal', 'snapshot'];
+  mirroringOptions = [
+    {
+      value: 'journal',
+      text: RBDActionHelpers.journalTooltipText
+    },
+    {
+      value: 'snapshot',
+      text: RBDActionHelpers.snapshotTooltipText
+    }
+  ];
   poolMirrorMode: string;
   mirroring = false;
   currentPoolName = '';
-
+  currentPoolMirrorMode = '';
+  copyMessage: string = RBDActionHelpers.copy;
   objectSizes: Array<string> = [
     '4 KiB',
     '8 KiB',
@@ -111,6 +119,8 @@ export class RbdFormComponent extends CdForm implements OnInit {
   private routerUrl: string;
 
   icons = Icons;
+  currentImageMirrorMode = '';
+  showMirrorDisableMessage = false;
 
   constructor(
     private authStorageService: AuthStorageService,
@@ -127,34 +137,38 @@ export class RbdFormComponent extends CdForm implements OnInit {
     super();
     this.routerUrl = this.router.url;
     this.poolPermission = this.authStorageService.getPermissions().pool;
-    this.resource = $localize`RBD`;
+    this.resource = $localize`Image`;
     this.features = {
       'deep-flatten': {
         desc: $localize`Deep flatten`,
         requires: null,
         allowEnable: false,
         allowDisable: true,
-        helperHtml: $localize`Feature can be disabled but can't be re-enabled later`
+        helperHtml: $localize`Feature can be disabled but can't be re-enabled later`,
+        helperText: $localize`Speeds up the process of deleting a clone by removing the dependency on the parent image.`
       },
       layering: {
         desc: $localize`Layering`,
         requires: null,
         allowEnable: false,
         allowDisable: false,
-        helperHtml: $localize`Feature flag can't be manipulated after the image is created. Disabling this option will also disable the Protect and Clone actions on Snapshot`
+        helperHtml: $localize`Feature flag can't be manipulated after the image is created. Disabling this option will also disable the Protect and Clone actions on Snapshot`,
+        helperText: $localize`Allows the creation of snapshots and clones of an image.`
       },
       'exclusive-lock': {
         desc: $localize`Exclusive lock`,
         requires: null,
         allowEnable: true,
-        allowDisable: true
+        allowDisable: true,
+        helperText: $localize`Ensures that only one client can write to the image at a time.`
       },
       'object-map': {
         desc: $localize`Object map (requires exclusive-lock)`,
         requires: 'exclusive-lock',
         allowEnable: true,
         allowDisable: true,
-        initDisabled: true
+        initDisabled: true,
+        helperText: $localize`Tracks which objects actually exist (have data stored on a device). Enabling object map support speeds up I/O operations for cloning, importing and exporting a sparsely populated image, and deleting.`
       },
       'fast-diff': {
         desc: $localize`Fast diff (interlocked with object-map)`,
@@ -162,7 +176,8 @@ export class RbdFormComponent extends CdForm implements OnInit {
         allowEnable: true,
         allowDisable: true,
         interlockedWith: 'object-map',
-        initDisabled: true
+        initDisabled: true,
+        helperText: $localize`Speeds up the process of comparing two images.`
       }
     };
     this.featuresList = this.objToArray(this.features);
@@ -196,9 +211,15 @@ export class RbdFormComponent extends CdForm implements OnInit {
             return acc;
           }, {})
         ),
-        mirroring: new UntypedFormControl(''),
+        mirroring: new UntypedFormControl(false),
         schedule: new UntypedFormControl('', {
-          validators: [Validators.pattern(/^([0-9]+)d|([0-9]+)h|([0-9]+)m$/)] // check schedule interval to be in format - 1d or 1h or 1m
+          validators: [
+            Validators.pattern(/^([0-9]+)d|([0-9]+)h|([0-9]+)m$/),
+            CdValidators.requiredIf({
+              mirroringMode: 'snapshot',
+              mirroring: true
+            })
+          ] // check schedule interval to be in format - 1d or 1h or 1m
         }),
         mirroringMode: new UntypedFormControl(''),
         stripingUnit: new UntypedFormControl(this.defaultStripingUnit),
@@ -256,14 +277,14 @@ export class RbdFormComponent extends CdForm implements OnInit {
       this.rbdForm.get('exclusive-lock').disable();
     } else {
       this.rbdForm.get('exclusive-lock').enable();
-      if (this.poolMirrorMode === 'pool') {
-        this.rbdForm.get('mirroringMode').setValue(this.mirroringOptions[0]);
-      }
     }
   }
 
   setMirrorMode() {
     this.mirroring = !this.mirroring;
+    if (this.mirroring) {
+      this.rbdForm.get('mirroringMode').setValue(this.mirroringOptions[0].value);
+    }
     this.setExclusiveLock();
     this.checkPeersConfigured();
   }
@@ -286,14 +307,34 @@ export class RbdFormComponent extends CdForm implements OnInit {
       this.rbdMirroringService.refresh();
       this.rbdMirroringService.subscribeSummary((data) => {
         const pool = data.content_data.pools.find((o: any) => o.name === this.currentPoolName);
-        this.poolMirrorMode = pool.mirror_mode;
-
-        if (pool.mirror_mode === 'disabled') {
-          this.mirroring = false;
-          this.rbdForm.get('mirroring').setValue(this.mirroring);
-          this.rbdForm.get('mirroring').disable();
+        this.currentPoolMirrorMode = pool.mirror_mode;
+        if (this.mode === this.rbdFormMode.editing) {
+          if (this.currentPoolMirrorMode === 'pool') {
+            this.showMirrorDisableMessage = true;
+          } else {
+            this.showMirrorDisableMessage = false;
+          }
+          if (this.currentPoolMirrorMode !== 'image') {
+            this.rbdForm.get('mirroring').disable();
+            this.rbdForm.get('mirroringMode').disable();
+          }
+        } else {
+          if (pool.mirror_mode === 'disabled') {
+            this.mirroring = false;
+            this.rbdForm.get('mirroring').setValue(this.mirroring);
+            this.rbdForm.get('mirroring').disable();
+          } else {
+            this.mirroring = true;
+            this.rbdForm.get('mirroring').enable();
+            this.rbdForm.get('mirroring').setValue(this.mirroring);
+            this.rbdForm.get('mirroringMode').setValue(this.mirroringOptions[0].value);
+          }
         }
       });
+    } else {
+      if (this.mode !== this.rbdFormMode.editing) {
+        this.rbdForm.get('mirroring').disable();
+      }
     }
     this.setExclusiveLock();
   }
@@ -390,8 +431,9 @@ export class RbdFormComponent extends CdForm implements OnInit {
     this.allPools = pools;
     this.dataPools = dataPools;
     this.allDataPools = dataPools;
-    if (this.pools.length === 1) {
-      const poolName = this.pools[0].pool_name;
+    if (this.pools.length >= 1) {
+      const allPoolNames = this.pools.map((pool) => pool.pool_name);
+      const poolName = allPoolNames.includes('rbd') ? 'rbd' : this.pools[0].pool_name;
       this.rbdForm.get('pool').setValue(poolName);
       this.onPoolChange(poolName);
     }
@@ -464,7 +506,7 @@ export class RbdFormComponent extends CdForm implements OnInit {
         sizeControlErrors = { required: true };
       } else {
         const sizeInBytes = formatter.toBytes(sizeControl.value);
-        if (stripingCount * objectSizeInBytes > sizeInBytes) {
+        if (stripingCount * objectSizeInBytes >= sizeInBytes) {
           sizeControlErrors = { invalidSizeObject: true };
         }
       }
@@ -616,6 +658,7 @@ export class RbdFormComponent extends CdForm implements OnInit {
         this.mirroring = true;
         this.rbdForm.get('mirroring').setValue(this.mirroring);
         this.rbdForm.get('mirroringMode').setValue(response?.mirror_mode);
+        this.currentImageMirrorMode = response?.mirror_mode;
         this.rbdForm.get('schedule').setValue(response?.schedule_interval);
       } else {
         this.mirroring = false;
@@ -651,12 +694,11 @@ export class RbdFormComponent extends CdForm implements OnInit {
     request.name = this.rbdForm.getValue('name');
     request.schedule_interval = this.rbdForm.getValue('schedule');
     request.size = this.formatter.toBytes(this.rbdForm.getValue('size'));
-
-    if (this.poolMirrorMode === 'image') {
-      request.mirror_mode = this.rbdForm.getValue('mirroringMode');
-    }
     this.addObjectSizeAndStripingToRequest(request);
     request.configuration = this.getDirtyConfigurationValues();
+    if (this.mirroring && this.currentPoolMirrorMode === 'image') {
+      request.mirror_mode = this.rbdForm.getValue('mirroringMode');
+    }
     return request;
   }
 
@@ -688,7 +730,8 @@ export class RbdFormComponent extends CdForm implements OnInit {
         namespace: request.namespace,
         image_name: request.name,
         schedule_interval: request.schedule_interval,
-        start_time: request.start_time
+        start_time: request.start_time,
+        mirror_mode: request.mirror_mode
       }),
       call: this.rbdService.create(request)
     });
@@ -698,19 +741,20 @@ export class RbdFormComponent extends CdForm implements OnInit {
     const request = new RbdFormEditRequestModel();
     request.name = this.rbdForm.getValue('name');
     request.schedule_interval = this.rbdForm.getValue('schedule');
-    request.name = this.rbdForm.getValue('name');
+    request.enable_mirror = this.mirroring;
     request.size = this.formatter.toBytes(this.rbdForm.getValue('size'));
     _.forIn(this.features, (feature) => {
       if (this.rbdForm.getValue(feature.key)) {
         request.features.push(feature.key);
       }
     });
-    request.enable_mirror = this.rbdForm.getValue('mirroring');
     if (request.enable_mirror) {
+      request.image_mirror_mode = this.currentImageMirrorMode;
       if (this.rbdForm.getValue('mirroringMode') === 'journal') {
+        request.mirror_mode = 'journal';
         request.features.push('journaling');
       }
-      if (this.poolMirrorMode === 'image') {
+      if (this.currentPoolMirrorMode === 'image') {
         request.mirror_mode = this.rbdForm.getValue('mirroringMode');
       }
     } else {
@@ -803,6 +847,10 @@ export class RbdFormComponent extends CdForm implements OnInit {
     });
   }
 
+  shouldDisable(option: string): boolean {
+    return this.currentPoolMirrorMode === 'pool' && option === 'snapshot' ? true : null;
+  }
+
   submit() {
     if (!this.mode) {
       this.rbdImage.next('create');
@@ -827,5 +875,12 @@ export class RbdFormComponent extends CdForm implements OnInit {
         () => this.rbdForm.setErrors({ cdSubmitButton: true }),
         () => this.router.navigate(['/block/rbd'])
       );
+  }
+
+  onAlertAction() {
+    this.router.navigate([
+      '/block/mirroring',
+      { outlets: { modal: ['edit', this.rbdForm.getValue('pool')] } }
+    ]);
   }
 }

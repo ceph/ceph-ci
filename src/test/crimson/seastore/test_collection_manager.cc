@@ -35,7 +35,7 @@ namespace {
         std::forward<decltype(args)>(args)...);				\
       },								\
       root,								\
-      std::forward<Args>(args)...).unsafe_get0();			\
+      std::forward<Args>(args)...).unsafe_get();			\
   }
 
 struct collection_manager_test_t :
@@ -74,7 +74,7 @@ struct collection_manager_test_t :
       *tref,
       [this](auto &t) {
 	return collection_manager->mkfs(t);
-      }).unsafe_get0();
+      }).unsafe_get();
     submit_transaction(std::move(tref));
     return coll_root;
   }
@@ -188,8 +188,12 @@ TEST_P(collection_manager_test_t, update)
 INSTANTIATE_TEST_SUITE_P(
   collection_manager_test,
   collection_manager_test_t,
-  ::testing::Values (
-    "segmented",
-    "circularbounded"
+  ::testing::Combine(
+    ::testing::Values (
+      "segmented",
+      "circularbounded"
+    ),
+    ::testing::Values(
+      integrity_check_t::FULL_CHECK)
   )
 );

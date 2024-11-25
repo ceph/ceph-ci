@@ -45,24 +45,34 @@ struct RGWAccessKey {
   std::string id; // AccessKey
   std::string key; // SecretKey
   std::string subuser;
+  bool active = true;
+  ceph::real_time create_date;
 
   RGWAccessKey() {}
   RGWAccessKey(std::string _id, std::string _key)
     : id(std::move(_id)), key(std::move(_key)) {}
 
   void encode(bufferlist& bl) const {
-    ENCODE_START(2, 2, bl);
+    ENCODE_START(4, 2, bl);
     encode(id, bl);
     encode(key, bl);
     encode(subuser, bl);
+    encode(active, bl);
+    encode(create_date, bl);
     ENCODE_FINISH(bl);
   }
 
   void decode(bufferlist::const_iterator& bl) {
-     DECODE_START_LEGACY_COMPAT_LEN_32(2, 2, 2, bl);
+     DECODE_START_LEGACY_COMPAT_LEN_32(4, 2, 2, bl);
      decode(id, bl);
      decode(key, bl);
      decode(subuser, bl);
+     if (struct_v >= 3) {
+       decode(active, bl);
+     }
+     if (struct_v >= 4) {
+       decode(create_date, bl);
+     }
      DECODE_FINISH(bl);
   }
   void dump(Formatter *f) const;
@@ -181,12 +191,14 @@ class ACLGranteeType
 protected:
   __u32 type;
 public:
-  ACLGranteeType() : type(ACL_TYPE_UNKNOWN) {}
-  virtual ~ACLGranteeType() {}
-//  virtual const char *to_string() = 0;
+  ACLGranteeType(ACLGranteeTypeEnum t = ACL_TYPE_UNKNOWN) : type(t) {}
+
   ACLGranteeTypeEnum get_type() const { return (ACLGranteeTypeEnum)type; }
+  operator ACLGranteeTypeEnum() const { return get_type(); }
+
   void set(ACLGranteeTypeEnum t) { type = t; }
-//  virtual void set(const char *s) = 0;
+  ACLGranteeType& operator=(ACLGranteeTypeEnum t) { set(t); return *this; }
+
   void encode(bufferlist& bl) const {
     ENCODE_START(2, 2, bl);
     encode(type, bl);
@@ -204,10 +216,3 @@ public:
   friend bool operator!=(const ACLGranteeType& lhs, const ACLGranteeType& rhs);
 };
 WRITE_CLASS_ENCODER(ACLGranteeType)
-
-class ACLGrantee
-{
-public:
-  ACLGrantee() {}
-  ~ACLGrantee() {}
-};

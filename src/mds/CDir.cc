@@ -510,7 +510,7 @@ void CDir::remove_dentry(CDentry *dn)
   dout(12) << __func__ << " " << *dn << dendl;
 
   // there should be no client leases at this point!
-  ceph_assert(dn->client_lease_map.empty());
+  ceph_assert(dn->client_leases.empty());
 
   if (state_test(CDir::STATE_DNPINNEDFRAG)) {
     dn->put(CDentry::PIN_FRAGMENTING);
@@ -639,6 +639,11 @@ void CDir::link_inode_work( CDentry *dn, CInode *in)
     in->snaprealm->adjust_parent();
   else if (in->is_any_caps())
     in->move_to_realm(inode->find_snaprealm());
+
+  bool is_quiesced = inode->is_quiesced();
+  if (is_quiesced) {
+    mdcache->add_quiesce(inode, in);
+  }
 }
 
 void CDir::unlink_inode(CDentry *dn, bool adjust_lru)
@@ -1013,6 +1018,12 @@ void CDir::init_fragment_pins()
     get(PIN_SUBTREE);
 }
 
+bool CDir::should_split() const {
+  uint64_t split_size = mdcache->mds->balancer->get_bal_split_size();
+  uint64_t items = get_frag_size() + get_num_snap_items();
+  return split_size > 0 && items > split_size;
+}
+
 void CDir::split(int bits, std::vector<CDir*>* subs, MDSContext::vec& waiters, bool replay)
 {
   dout(10) << "split by " << bits << " bits on " << *this << dendl;
@@ -1308,7 +1319,7 @@ void CDir::take_dentry_waiting(std::string_view dname, snapid_t first, snapid_t 
 	     << it->first.snapid
 	     << " on " << *this << dendl;
     std::copy(it->second.begin(), it->second.end(), std::back_inserter(ls));
-    waiting_on_dentry.erase(it++);
+    it = waiting_on_dentry.erase(it);
   }
 
   if (waiting_on_dentry.empty())
@@ -2322,18 +2333,18 @@ public:
 
 class C_IO_Dir_Commit_Ops : public Context {
 public:
-  C_IO_Dir_Commit_Ops(CDir *d, int pr,
-		      vector<CDir::dentry_commit_item> &&s, bufferlist &&bl,
-		      vector<string> &&r,
-		      mempool::mds_co::compact_set<mempool::mds_co::string> &&stales) :
-    dir(d), op_prio(pr) {
+  C_IO_Dir_Commit_Ops(CDir* d, int pr, auto&& s, auto&& bl, auto&& r, auto&& stales)
+  :
+    dir(d),
+    op_prio(pr),
+    to_set(std::forward<decltype(s)>(s)),
+    dfts(std::forward<decltype(bl)>(bl)),
+    to_remove(std::forward<decltype(r)>(r)),
+    stale_items(std::forward<decltype(stales)>(stales))
+  {
     metapool = dir->mdcache->mds->get_metadata_pool();
     version = dir->get_version();
     is_new = dir->is_new();
-    to_set.swap(s);
-    dfts.swap(bl);
-    to_remove.swap(r);
-    stale_items.swap(stales);
   }
 
   void finish(int r) override {
@@ -2483,9 +2494,13 @@ void CDir::_omap_commit_ops(int r, int op_prio, int64_t metapool, version_t vers
       mdcache->mds->heartbeat_reset();
   }
 
-  bufferlist bl;
+  // the last omap commit includes the omap header, so account for
+  // that size early on so that when we reach `commit_one(true)`,
+  // there is enough space for the header.
+  write_size += sizeof(fnode_t);
   using ceph::encode;
   for (auto &item : to_set) {
+    bufferlist bl;
     encode(item.first, bl);
     if (item.is_remote) {
       // remote link
@@ -2495,6 +2510,7 @@ void CDir::_omap_commit_ops(int r, int op_prio, int64_t metapool, version_t vers
       bl.append('i');         // inode
 
       ENCODE_START(2, 1, bl);
+      // WARNING: always put new fields at the end of bl
       encode(item.alternate_name, bl);
       _encode_primary_inode_base(item, dfts, bl);
       ENCODE_FINISH(bl);
@@ -2505,7 +2521,7 @@ void CDir::_omap_commit_ops(int r, int op_prio, int64_t metapool, version_t vers
       commit_one();
 
     write_size += size;
-    _set[std::move(item.key)].swap(bl);
+    _set[std::move(item.key)] = std::move(bl);
 
     if (!(++count % mdcache->mds->heartbeat_reset_grace()))
       mdcache->mds->heartbeat_reset();
@@ -2616,7 +2632,7 @@ void CDir::_omap_commit(int op_prio)
 
   auto c = new C_IO_Dir_Commit_Ops(this, op_prio, std::move(to_set), std::move(dfts),
                                    std::move(to_remove), std::move(stale_items));
-  stale_items.clear();
+  stale_items.clear(); /* in CDir */
   mdcache->mds->finisher->queue(c);
 }
 
@@ -2811,8 +2827,6 @@ void CDir::_committed(int r, version_t v)
 
   auto it = waiting_for_commit.begin();
   while (it != waiting_for_commit.end()) {
-    auto _it = it;
-    ++_it;
     if (it->first > committed_version) {
       dout(10) << " there are waiters for " << it->first << ", committing again" << dendl;
       _commit(it->first, -1);
@@ -2822,8 +2836,7 @@ void CDir::_committed(int r, version_t v)
     for (const auto &waiter : it->second)
       t.push_back(waiter);
     mdcache->mds->queue_waiters(t);
-    waiting_for_commit.erase(it);
-    it = _it;
+    it = waiting_for_commit.erase(it);
 
     if (!(++count % mdcache->mds->heartbeat_reset_grace()))
       mdcache->mds->heartbeat_reset();
@@ -3449,14 +3462,23 @@ bool CDir::can_auth_pin(int *err_ret) const
 {
   int err;
   if (!is_auth()) {
+    dout(20) << __func__ << ": error - no auth" << dendl;
     err = ERR_NOT_AUTH;
   } else if (is_freezing_dir() || is_frozen_dir()) {
+    dout(20) << __func__ << ": error - fragmenting dir ("
+	     << (is_freezing_dir() ? "freezing" : "frozen")
+	     << ")" << dendl;
     err = ERR_FRAGMENTING_DIR;
   } else {
     auto p = is_freezing_or_frozen_tree();
-    if (p.first || p.second) {
+    if (p.first) {
+      dout(20) << __func__ << ": error - exporting tree" << dendl;
+      err = ERR_EXPORTING_TREE;
+    } else if (p.second) {
+      dout(20) << __func__ << ": error - exporting tree" << dendl;
       err = ERR_EXPORTING_TREE;
     } else {
+      dout(20) << __func__ << ": auth!" << dendl;
       err = 0;
     }
   }
@@ -3752,6 +3774,7 @@ bool CDir::scrub_local()
     mdcache->repair_dirfrag_stats(this);
     scrub_infop->header->set_repaired();
     good = true;
+    mdcache->mds->damage_table.remove_dentry_damage_entry(this);
   }
   return good;
 }
@@ -3766,7 +3789,10 @@ std::string CDir::get_path() const
 bool CDir::should_split_fast() const
 {
   // Max size a fragment can be before trigger fast splitting
-  int fast_limit = g_conf()->mds_bal_split_size * g_conf()->mds_bal_fragment_fast_factor;
+  auto&& balancer = mdcache->mds->balancer;
+  auto split_size = balancer->get_bal_split_size();
+  auto fragment_fast_factor = balancer->get_bal_fragment_fast_factor();
+  int64_t fast_limit = split_size * fragment_fast_factor;
 
   // Fast path: the sum of accounted size and null dentries does not
   // exceed threshold: we definitely are not over it.
@@ -3786,10 +3812,13 @@ bool CDir::should_split_fast() const
     const CDentry *dn = p.second;
     if (!dn->get_projected_linkage()->is_null()) {
       effective_size++;
+
+      if (effective_size > fast_limit) [[unlikely]]
+	return true;
     }
   }
 
-  return effective_size > fast_limit;
+  return false;
 }
 
 bool CDir::should_merge() const
@@ -3803,7 +3832,9 @@ bool CDir::should_merge() const
       return false;
   }
 
-  return ((int)get_frag_size() + (int)get_num_snap_items()) < g_conf()->mds_bal_merge_size;
+  uint64_t merge_size = mdcache->mds->balancer->get_bal_merge_size();
+  uint64_t items = get_frag_size() + get_num_snap_items();
+  return items < merge_size;
 }
 
 MEMPOOL_DEFINE_OBJECT_FACTORY(CDir, co_dir, mds_co);

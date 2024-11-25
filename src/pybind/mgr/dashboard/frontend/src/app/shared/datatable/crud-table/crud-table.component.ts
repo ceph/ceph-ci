@@ -1,6 +1,5 @@
 import { Component, OnInit, TemplateRef, ViewChild } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
-import { NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
 
 import _ from 'lodash';
 import { Observable } from 'rxjs';
@@ -15,8 +14,9 @@ import { FinishedTask } from '../../models/finished-task';
 import { Permission, Permissions } from '../../models/permissions';
 import { AuthStorageService } from '../../services/auth-storage.service';
 import { TaskWrapperService } from '../../services/task-wrapper.service';
-import { ModalService } from '../../services/modal.service';
 import { CriticalConfirmationModalComponent } from '../../components/critical-confirmation-modal/critical-confirmation-modal.component';
+import { ModalCdsService } from '../../services/modal-cds.service';
+import { BaseModal } from 'carbon-components-angular';
 
 @Component({
   selector: 'cd-crud-table',
@@ -39,8 +39,8 @@ export class CRUDTableComponent implements OnInit {
   permissions: Permissions;
   permission: Permission;
   selection = new CdTableSelection();
-  expandedRow: any = null;
-  modalRef: NgbModalRef;
+  expandedRow: { [key: string]: any } = {};
+  modalRef: BaseModal;
   tabs = {};
   resource: string;
   modalState = {};
@@ -52,7 +52,7 @@ export class CRUDTableComponent implements OnInit {
     private taskWrapper: TaskWrapperService,
     private cephUserService: CephUserService,
     private activatedRoute: ActivatedRoute,
-    private modalService: ModalService,
+    private modalService: ModalCdsService,
     private router: Router
   ) {
     this.permissions = this.authStorageService.getPermissions();
@@ -120,7 +120,7 @@ export class CRUDTableComponent implements OnInit {
   delete() {
     const selectedKey = this.selection.first()[this.meta.columnKey];
     this.modalRef = this.modalService.show(CriticalConfirmationModalComponent, {
-      itemDescription: $localize`${this.meta.columnKey}`,
+      itemDescription: $localize`${this.meta.resource}`,
       itemNames: [selectedKey],
       submitAction: () => {
         this.taskWrapper
@@ -130,10 +130,10 @@ export class CRUDTableComponent implements OnInit {
           })
           .subscribe({
             error: () => {
-              this.modalRef.close();
+              this.modalRef.closeModal();
             },
             complete: () => {
-              this.modalRef.close();
+              this.modalRef.closeModal();
             }
           });
       }
@@ -145,7 +145,11 @@ export class CRUDTableComponent implements OnInit {
   }
 
   setExpandedRow(event: any) {
-    this.expandedRow = event;
+    for (let i = 0; i < this.meta.detail_columns.length; i++) {
+      let column = this.meta.detail_columns[i];
+      let columnDetail = event?.[column];
+      this.expandedRow[column] = this.formatColumnDetails(columnDetail);
+    }
   }
 
   edit() {
@@ -153,7 +157,9 @@ export class CRUDTableComponent implements OnInit {
     if (this.selection.hasSelection) {
       key = this.selection.first()[this.meta.columnKey];
     }
-    this.router.navigate(['/cluster/user/edit'], { queryParams: { key: key } });
+
+    const editAction = this.meta.actions.find((action) => action.name === 'Edit');
+    this.router.navigate([editAction.routerLink], { queryParams: { key: key } });
   }
 
   authExport() {
@@ -167,11 +173,37 @@ export class CRUDTableComponent implements OnInit {
         showSubmit: true,
         showCancel: false,
         onSubmit: () => {
-          this.modalRef.close();
+          this.modalRef.closeModal();
         }
       };
       this.modalState['authExportData'] = data.trim();
       this.modalRef = this.modalService.show(ConfirmationModalComponent, modalVariables);
     });
+  }
+
+  /**
+   * Custom string replacer function for JSON.stringify
+   *
+   * This is specifically for objects inside an array.
+   * The custom replacer recursively stringifies deep nested objects
+   **/
+  stringReplacer(_key: string, value: any) {
+    try {
+      const parsedValue = JSON.parse(value);
+      return parsedValue;
+    } catch (e) {
+      return value;
+    }
+  }
+
+  /**
+   * returns a json string for arrays and string
+   * returns the same value for the rest
+   **/
+  formatColumnDetails(details: any) {
+    if (Array.isArray(details) || typeof details === 'string') {
+      return JSON.stringify(details, this.stringReplacer, 2);
+    }
+    return details;
   }
 }

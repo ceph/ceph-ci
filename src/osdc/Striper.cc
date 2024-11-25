@@ -407,7 +407,7 @@ void Striper::StripedReadResult::add_partial_result(
 		 << " to " << buffer_extents << dendl;
   for (auto& be : buffer_extents) {
     auto& r = partial[be.first];
-    size_t actual = std::min<uint64_t>(bl.length(), be.second);
+    size_t actual = std::min<uint64_t>(bl.length(), be.second); //NOLINT(bugprone-use-after-move)
     if (buffer_extents.size() == 1) {
       r.first = std::move(bl);
     } else {
@@ -485,12 +485,13 @@ void Striper::StripedReadResult::assemble_result(CephContext *cct,
 
 void Striper::StripedReadResult::assemble_result(CephContext *cct, char *buffer, size_t length)
 {
-
-  ceph_assert(buffer && length == total_intended_len);
+  ceph_assert(length == total_intended_len);
 
   map<uint64_t,pair<bufferlist,uint64_t> >::reverse_iterator p = partial.rbegin();
   if (p == partial.rend())
     return;
+
+  ceph_assert(buffer);
 
   uint64_t curr = length;
   uint64_t end = p->first + p->second.second;

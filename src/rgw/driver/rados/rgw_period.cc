@@ -154,7 +154,7 @@ static int read_sync_status(const DoutPrefixProvider *dpp, rgw::sal::Driver* dri
 {
   rgw::sal::RadosStore* rados_store = static_cast<rgw::sal::RadosStore*>(driver);
   // initialize a sync status manager to read the status
-  RGWMetaSyncStatusManager mgr(rados_store, rados_store->svc()->rados->get_async_processor());
+  RGWMetaSyncStatusManager mgr(rados_store, rados_store->svc()->async_processor);
   int r = mgr.init(dpp);
   if (r < 0) {
     return r;
@@ -271,7 +271,6 @@ int RGWPeriod::commit(const DoutPrefixProvider *dpp,
     }
     ldpp_dout(dpp, 4) << "Promoted to master zone and committed new period "
         << id << dendl;
-    realm.notify_new_period(dpp, *this, y);
     return 0;
   }
   // period must be based on current epoch
@@ -295,10 +294,6 @@ int RGWPeriod::commit(const DoutPrefixProvider *dpp,
   }
   // set as latest epoch
   r = update_latest_epoch(dpp, epoch, y);
-  if (r == -EEXIST) {
-    // already have this epoch (or a more recent one)
-    return 0;
-  }
   if (r < 0) {
     ldpp_dout(dpp, 0) << "failed to set latest epoch: " << cpp_strerror(-r) << dendl;
     return r;
@@ -310,7 +305,6 @@ int RGWPeriod::commit(const DoutPrefixProvider *dpp,
   }
   ldpp_dout(dpp, 4) << "Committed new epoch " << epoch
       << " for period " << id << dendl;
-  realm.notify_new_period(dpp, *this, y);
   return 0;
 }
 

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include "bluefs_types.h"
+#include "BlueFS.h"
 #include "common/Formatter.h"
 #include "include/denc.h"
 #include "include/uuid.h"
@@ -64,23 +65,36 @@ void bluefs_layout_t::dump(Formatter *f) const
   f->dump_stream("dedicated_wal") << dedicated_wal;
 }
 
+void bluefs_layout_t::generate_test_instances(list<bluefs_layout_t*>& ls)
+{
+  ls.push_back(new bluefs_layout_t);
+  ls.push_back(new bluefs_layout_t);
+  ls.back()->shared_bdev = 1;
+  ls.back()->dedicated_db = true;
+  ls.back()->dedicated_wal = true;
+}
+
 // bluefs_super_t
+bluefs_super_t::bluefs_super_t() : version(0), block_size(4096) {
+  bluefs_max_alloc_size.resize(BlueFS::MAX_BDEV, 0);
+}
 
 void bluefs_super_t::encode(bufferlist& bl) const
 {
-  ENCODE_START(2, 1, bl);
+  ENCODE_START(3, 1, bl);
   encode(uuid, bl);
   encode(osd_uuid, bl);
   encode(version, bl);
   encode(block_size, bl);
   encode(log_fnode, bl);
   encode(memorized_layout, bl);
+  encode(bluefs_max_alloc_size, bl);
   ENCODE_FINISH(bl);
 }
 
 void bluefs_super_t::decode(bufferlist::const_iterator& p)
 {
-  DECODE_START(2, p);
+  DECODE_START(3, p);
   decode(uuid, p);
   decode(osd_uuid, p);
   decode(version, p);
@@ -88,6 +102,11 @@ void bluefs_super_t::decode(bufferlist::const_iterator& p)
   decode(log_fnode, p);
   if (struct_v >= 2) {
     decode(memorized_layout, p);
+  }
+  if (struct_v >= 3) {
+    decode(bluefs_max_alloc_size, p);
+  } else {
+    std::fill(bluefs_max_alloc_size.begin(), bluefs_max_alloc_size.end(), 0);
   }
   DECODE_FINISH(p);
 }
@@ -99,6 +118,8 @@ void bluefs_super_t::dump(Formatter *f) const
   f->dump_unsigned("version", version);
   f->dump_unsigned("block_size", block_size);
   f->dump_object("log_fnode", log_fnode);
+  for (auto& p : bluefs_max_alloc_size)
+    f->dump_unsigned("max_alloc_size", p);
 }
 
 void bluefs_super_t::generate_test_instances(list<bluefs_super_t*>& ls)
@@ -116,6 +137,7 @@ ostream& operator<<(ostream& out, const bluefs_super_t& s)
 	     << " v " << s.version
 	     << " block_size 0x" << std::hex << s.block_size
 	     << " log_fnode 0x" << s.log_fnode
+	     << " max_alloc_size " << s.bluefs_max_alloc_size
 	     << std::dec << ")";
 }
 
@@ -219,21 +241,15 @@ std::ostream& operator<<(std::ostream& out, const bluefs_fnode_delta_t& delta)
 
 // bluefs_transaction_t
 
-DENC_HELPERS
 void bluefs_transaction_t::bound_encode(size_t &s) const {
-  uint32_t crc = op_bl.crc32c(-1);
-  DENC_START(1, 1, s);
+  uint32_t crc = -1;
+  s += 1; // version
+  s += 1; // compat
+  s += 4; // size
   denc(uuid, s);
-  denc_varint(seq, s);
-  // not using bufferlist encode method, as it merely copies the bufferptr and not
-  // contents, meaning we're left with fragmented target bl
-  __u32 len = op_bl.length();
-  denc(len, s);
-  for (auto& it : op_bl.buffers()) {
-    s += it.length();
-  }
+  denc(seq, s);
+  denc(op_bl, s);
   denc(crc, s);
-  DENC_FINISH(s);
 }
 
 void bluefs_transaction_t::encode(bufferlist& bl) const

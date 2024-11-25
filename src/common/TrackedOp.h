@@ -53,9 +53,9 @@ public:
 };
 
 enum {
-  l_osd_slow_op_first = 1000,
-  l_osd_slow_op_count,
-  l_osd_slow_op_last,
+  l_trackedop_slow_op_first = 1000,
+  l_trackedop_slow_op_count,
+  l_trackedop_slow_op_last,
 };
 
 class OpHistory {
@@ -68,7 +68,7 @@ class OpHistory {
   std::atomic_size_t history_size{0};
   std::atomic_uint32_t history_duration{0};
   std::atomic_size_t history_slow_op_size{0};
-  std::atomic_uint32_t history_slow_op_threshold{0};
+  std::atomic<float> history_slow_op_threshold{0};
   std::atomic_bool shutdown{false};
   OpHistoryServiceThread opsvc;
   friend class OpHistoryServiceThread;
@@ -76,9 +76,11 @@ class OpHistory {
 
 public:
   OpHistory(CephContext *c) : cct(c), opsvc(this) {
-    PerfCountersBuilder b(cct, "osd-slow-ops",
-                         l_osd_slow_op_first, l_osd_slow_op_last);
-    b.add_u64_counter(l_osd_slow_op_count, "slow_ops_count",
+    PerfCountersBuilder b(cct, "trackedop",
+                         l_trackedop_slow_op_first, l_trackedop_slow_op_last);
+    b.set_prio_default(PerfCountersBuilder::PRIO_USEFUL);
+
+    b.add_u64_counter(l_trackedop_slow_op_count, "slow_ops_count",
                       "Number of operations taking over ten second");
 
     logger.reset(b.create_perf_counters());
@@ -111,7 +113,7 @@ public:
     history_size = new_size;
     history_duration = new_duration;
   }
-  void set_slow_op_size_and_threshold(size_t new_size, uint32_t new_threshold) {
+  void set_slow_op_size_and_threshold(size_t new_size, float new_threshold) {
     history_slow_op_size = new_size;
     history_slow_op_threshold = new_threshold;
   }
@@ -142,7 +144,7 @@ public:
   void set_history_size_and_duration(uint32_t new_size, uint32_t new_duration) {
     history.set_size_and_duration(new_size, new_duration);
   }
-  void set_history_slow_op_size_and_threshold(uint32_t new_size, uint32_t new_threshold) {
+  void set_history_slow_op_size_and_threshold(uint32_t new_size, float new_threshold) {
     history.set_slow_op_size_and_threshold(new_size, new_threshold);
   }
   bool is_tracking() const {
@@ -204,10 +206,15 @@ public:
   }
   ~OpTracker();
 
-  template <typename T, typename U>
-  typename T::Ref create_request(U params)
+  // NB: P is ref-like, i.e. `params` should be dereferenced for members
+  template <typename R, typename P>
+  typename R::Ref create_request(P params)
   {
-    typename T::Ref retval(new T(params, this));
+    constexpr bool enable_mark_continuous = requires(typename R::Ref r, P p) {
+      { p->is_continuous() } -> std::same_as<bool>;
+      r->mark_continuous();
+    };
+    typename R::Ref retval(new R(params, this));
     retval->tracking_start();
     if (is_tracking()) {
       retval->mark_event("header_read", params->get_recv_stamp());
@@ -215,21 +222,28 @@ public:
       retval->mark_event("all_read", params->get_recv_complete_stamp());
       retval->mark_event("dispatched", params->get_dispatch_stamp());
     }
-
+    if constexpr (enable_mark_continuous) {
+      if (params->is_continuous()) {
+        retval->mark_continuous();
+      }
+    }
     return retval;
   }
 };
 
 class TrackedOp : public boost::intrusive::list_base_hook<> {
-private:
+public:
   friend class OpHistory;
   friend class OpTracker;
 
-  boost::intrusive::list_member_hook<> tracker_item;
+  static const uint64_t FLAG_CONTINUOUS = (1<<1);
 
+private:
+  boost::intrusive::list_member_hook<> tracker_item;
 public:
   typedef boost::intrusive::list<
   TrackedOp,
+  boost::intrusive::constant_time_size<false>,
   boost::intrusive::member_hook<
     TrackedOp,
     boost::intrusive::list_member_hook<>,
@@ -242,6 +256,7 @@ public:
       op->put();
     }
   };
+
 
 protected:
   OpTracker *tracker;          ///< the tracker we are associated with
@@ -281,6 +296,14 @@ protected:
     STATE_HISTORY
   };
   std::atomic<int> state = {STATE_UNTRACKED};
+  uint64_t flags = 0;
+
+  void mark_continuous() {
+    flags |= FLAG_CONTINUOUS;
+  }
+  bool is_continuous() const {
+    return flags & FLAG_CONTINUOUS;
+  }
 
   TrackedOp(OpTracker *_tracker, const utime_t& initiated) :
     tracker(_tracker),

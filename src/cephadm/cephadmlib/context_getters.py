@@ -6,7 +6,6 @@ import os
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from .constants import CGROUPS_SPLIT_PODMAN_VERSION
 from .container_engines import Podman
 from .context import CephadmContext
 from .exceptions import Error
@@ -137,6 +136,24 @@ def fetch_endpoints(ctx: CephadmContext) -> List[EndPoint]:
     return endpoints
 
 
+def fetch_rank_info(ctx: CephadmContext) -> Optional[Tuple[int, int]]:
+    """Return the daemon's rank and rank generation values as a tuple of ints
+    if available. Return None if rank information is not available.
+    """
+    meta = getattr(ctx, 'meta_properties', None)
+    if meta is None:
+        return None
+    # We must either return both rank *and* rank_generation together or
+    # nothing at all.
+    try:
+        rank, gen = meta['rank'], meta['rank_generation']
+    except KeyError:
+        return None
+    if rank is None or gen is None:
+        return None
+    return int(rank), int(gen)
+
+
 def get_config_and_keyring(ctx):
     # type: (CephadmContext) -> Tuple[Optional[str], Optional[str]]
     config = None
@@ -186,5 +203,5 @@ def should_log_to_journald(ctx: CephadmContext) -> bool:
         return ctx.log_to_journald
     return (
         isinstance(ctx.container_engine, Podman)
-        and ctx.container_engine.version >= CGROUPS_SPLIT_PODMAN_VERSION
+        and ctx.container_engine.supports_split_cgroups
     )

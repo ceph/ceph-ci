@@ -69,11 +69,14 @@ class RGWMultisiteTests(Task):
 
         from rgw_multi import multisite, tests
 
-        # create the test user
+        # create test account/user
         log.info('creating test user..')
-        user = multisite.User('rgw-multisite-test-user')
-        user.create(master_zone, ['--display-name', 'Multisite Test User',
-                                  '--gen-access-key', '--gen-secret', '--caps', 'roles=*'])
+        user = multisite.User('rgw-multisite-test-user', account='RGW11111111111111111')
+        arg = ['--account-id', user.account]
+        arg += master_zone.zone_args()
+        master_zone.cluster.admin(['account', 'create'] + arg)
+        user.create(master_zone, ['--display-name', 'TestUser',
+                                  '--gen-access-key', '--gen-secret'])
 
         config = self.config.get('config', {})
         tests.init_multi(realm, user, tests.Config(**config))

@@ -89,7 +89,7 @@ run_expect_nosignal "$RADOS_TOOL" --object-locator "asdf" ls
 run_expect_nosignal "$RADOS_TOOL" --namespace "asdf" ls
 
 run_expect_succ "$CEPH_TOOL" osd pool create "$POOL" 8
-run_expect_succ "$CEPH_TOOL" osd erasure-code-profile set myprofile k=2 m=1 stripe_unit=2K crush-failure-domain=osd --force
+run_expect_succ "$CEPH_TOOL" osd erasure-code-profile set myprofile k=2 m=1 stripe_unit=2K crush-failure-domain=osd --force --yes-i-really-mean-it
 run_expect_succ "$CEPH_TOOL" osd pool create "$POOL_EC" 100 100 erasure myprofile
 
 
@@ -329,10 +329,10 @@ test_xattr() {
     expect_false $RADOS_TOOL -p $POOL setxattr $OBJ 2>/dev/null
     expect_false $RADOS_TOOL -p $POOL setxattr $OBJ foo fooval extraarg 2>/dev/null
     $RADOS_TOOL -p $POOL setxattr $OBJ foo fooval
-    $RADOS_TOOL -p $POOL getxattr $OBJ foo > $V2
+    $RADOS_TOOL -p $POOL getxattr $OBJ foo > $V2 | tr -d '\n' > $V2
     cmp $V1 $V2
     cat $V1 | $RADOS_TOOL -p $POOL setxattr $OBJ bar
-    $RADOS_TOOL -p $POOL getxattr $OBJ bar > $V2
+    $RADOS_TOOL -p $POOL getxattr $OBJ bar > $V2 | tr -d '\n' > $V2
     cmp $V1 $V2
     $RADOS_TOOL -p $POOL listxattr $OBJ > $V1
     grep -q foo $V1
@@ -779,7 +779,7 @@ function test_stat()
   ############ rados df test (EC pool): ##############
   $RADOS_TOOL purge $POOL_EC --yes-i-really-really-mean-it
   $CEPH_TOOL osd pool rm $POOL_EC $POOL_EC --yes-i-really-really-mean-it
-  $CEPH_TOOL osd erasure-code-profile set myprofile k=2 m=1 stripe_unit=2K crush-failure-domain=osd --force
+  $CEPH_TOOL osd erasure-code-profile set myprofile k=2 m=1 stripe_unit=2K crush-failure-domain=osd --force --yes-i-really-mean-it
   $CEPH_TOOL osd pool create $POOL_EC 8 8 erasure
 
   # put object

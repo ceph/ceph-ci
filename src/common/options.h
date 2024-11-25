@@ -4,6 +4,7 @@
 #pragma once
 
 #include <chrono>
+#include <iostream> // for std::cerr
 #include <string>
 #include <variant>
 #include <vector>
@@ -116,6 +117,18 @@ struct Option {
     }
   }
 
+  static level_t str_to_level(std::string_view s) {
+    if (s == "basic") {
+      return LEVEL_BASIC;
+    } else if (s == "advanced") {
+      return LEVEL_ADVANCED;
+    } else if (s == "dev") {
+      return LEVEL_DEV;
+    } else {
+      return LEVEL_UNKNOWN;
+    }
+  }
+
   enum flag_t {
     FLAG_RUNTIME = 0x1,         ///< option can be changed at runtime
     FLAG_NO_MON_UPDATE = 0x2,   ///< option cannot be changed via mon config
@@ -195,8 +208,8 @@ struct Option {
   typedef std::function<int(std::string *, std::string *)> validator_fn_t;
   validator_fn_t validator;
 
-  Option(std::string const &name, type_t t, level_t l)
-    : name(name), type(t), level(l)
+  Option(std::string &&name, type_t t, level_t l)
+    : name(std::move(name)), type(t), level(l)
   {
     // While value_t is nullable (via std::monostate), we don't ever
     // want it set that way in an Option instance: within an instance,

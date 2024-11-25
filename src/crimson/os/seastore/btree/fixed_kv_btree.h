@@ -15,8 +15,6 @@
 #include "crimson/os/seastore/btree/btree_range_pin.h"
 #include "crimson/os/seastore/root_block.h"
 
-#define RESERVATION_PTR reinterpret_cast<ChildableCachedExtent*>(0x1)
-
 namespace crimson::os::seastore::lba_manager::btree {
 struct lba_map_val_t;
 }
@@ -24,6 +22,12 @@ struct lba_map_val_t;
 namespace crimson::os::seastore {
 
 bool is_valid_child_ptr(ChildableCachedExtent* child);
+
+bool is_reserved_ptr(ChildableCachedExtent* child);
+
+inline ChildableCachedExtent* get_reserved_ptr() {
+  return (ChildableCachedExtent*)0x1;
+}
 
 template <typename T>
 phy_tree_root_t& get_phy_tree_root(root_t& r);
@@ -222,12 +226,18 @@ public:
       assert(!is_end());
       auto val = get_val();
       auto key = get_key();
+      node_key_t end{};
+      if constexpr (std::is_same_v<node_key_t, laddr_t>) {
+        end = (key + val.len).checked_to_laddr();
+      } else {
+        end = key + val.len;
+      }
       return std::make_unique<pin_t>(
         ctx,
 	leaf.node,
         leaf.pos,
 	val,
-	fixed_kv_node_meta_t<node_key_t>{ key, key + val.len, 0 });
+	fixed_kv_node_meta_t<node_key_t>{ key, end, 0 });
     }
 
     typename leaf_node_t::Ref get_leaf_node() {
@@ -356,7 +366,7 @@ public:
   using mkfs_ret = phy_tree_root_t;
   static mkfs_ret mkfs(RootBlockRef &root_block, op_context_t<node_key_t> c) {
     assert(root_block->is_mutation_pending());
-    auto root_leaf = c.cache.template alloc_new_extent<leaf_node_t>(
+    auto root_leaf = c.cache.template alloc_new_non_data_extent<leaf_node_t>(
       c.trans,
       node_size,
       placement_hint_t::HOT,
@@ -501,17 +511,25 @@ public:
       Transaction::get_extent_ret ret;
 
       if constexpr (std::is_base_of_v<typename internal_node_t::base_t, child_node_t>) {
+        assert(i->get_val() != P_ADDR_ZERO);
         ret = c.trans.get_extent(
           i->get_val().maybe_relative_to(node->get_paddr()),
           &child_node);
       } else {
-        assert(i->get_val().pladdr.is_paddr());
+        if (i->get_val().pladdr.is_laddr()) {
+          assert(!node->children[i->get_offset()] ||
+                  is_reserved_ptr(node->children[i->get_offset()]));
+          continue;
+        }
         ret = c.trans.get_extent(
           i->get_val().pladdr.get_paddr().maybe_relative_to(node->get_paddr()),
           &child_node);
+        if (i->get_val().pladdr.get_paddr() == P_ADDR_ZERO) {
+          assert(ret == Transaction::get_extent_ret::ABSENT);
+        }
       }
       if (ret == Transaction::get_extent_ret::PRESENT) {
-        if (child_node->is_stable()) {
+        if (child_node->is_stable_written()) {
           assert(child_node->is_valid());
           auto cnode = child_node->template cast<child_node_t>();
           assert(cnode->has_parent_tracker());
@@ -527,7 +545,7 @@ public:
           }
         } else if (child_node->is_pending()) {
           if (child_node->is_mutation_pending()) {
-            auto &prior = (child_node_t &)*child_node->prior_instance;
+            auto &prior = (child_node_t &)*child_node->get_prior_instance();
             assert(prior.is_valid());
             assert(prior.is_parent_valid());
             if (node->is_mutation_pending()) {
@@ -559,33 +577,40 @@ public:
           auto pos = n.lower_bound_offset(i->get_key());
           assert(pos < n.get_node_size());
           child = n.children[pos];
-          if (is_valid_child_ptr(child)) {
-            auto c = (child_node_t*)child;
-            assert(c->has_parent_tracker());
-            assert(c->get_parent_node().get() == &n);
-          }
         } else {
           child = node->children[i->get_offset()];
-          if (is_valid_child_ptr(child)) {
-            auto c = (child_node_t*)child;
-            assert(c->has_parent_tracker());
-            assert(c->get_parent_node().get() == node.get());
-          }
         }
 
         if (!is_valid_child_ptr(child)) {
           if constexpr (
             std::is_base_of_v<typename internal_node_t::base_t, child_node_t>)
           {
-            assert(!c.cache.query_cache(i->get_val(), nullptr));
+            assert(!c.cache.test_query_cache(i->get_val()));
           } else {
             if constexpr (leaf_has_children) {
               assert(i->get_val().pladdr.is_paddr()
-                ? (bool)!c.cache.query_cache(
-                    i->get_val().pladdr.get_paddr(), nullptr)
+                ? (bool)!c.cache.test_query_cache(
+                    i->get_val().pladdr.get_paddr())
                 : true);
             }
           }
+          if (is_reserved_ptr(child)) {
+            if constexpr(
+              !std::is_base_of_v<typename internal_node_t::base_t,
+                                 child_node_t>) {
+              assert(i->get_val().pladdr.is_paddr());
+              assert(i->get_val().pladdr.get_paddr() == P_ADDR_ZERO);
+            } else {
+              ceph_abort();
+            }
+          }
+        } else {
+          auto c = (child_node_t*)child;
+          assert(c->has_parent_tracker());
+          assert(c->get_parent_node().get() == node.get()
+            || (node->is_pending() && c->is_stable()
+                && c->get_parent_node().get() == &node->get_stable_for_key(
+                  i->get_key())));
         }
       } else {
         ceph_abort("impossible");
@@ -1020,7 +1045,7 @@ public:
     assert(is_lba_backref_node(e->get_type()));
     
     auto do_rewrite = [&](auto &fixed_kv_extent) {
-      auto n_fixed_kv_extent = c.cache.template alloc_new_extent<
+      auto n_fixed_kv_extent = c.cache.template alloc_new_non_data_extent<
         std::remove_reference_t<decltype(fixed_kv_extent)>
         >(
         c.trans,
@@ -1028,45 +1053,7 @@ public:
         fixed_kv_extent.get_user_hint(),
         // get target rewrite generation
         fixed_kv_extent.get_rewrite_generation());
-      fixed_kv_extent.get_bptr().copy_out(
-        0,
-        fixed_kv_extent.get_length(),
-        n_fixed_kv_extent->get_bptr().c_str());
-      n_fixed_kv_extent->set_modify_time(fixed_kv_extent.get_modify_time());
-      n_fixed_kv_extent->range = n_fixed_kv_extent->get_node_meta();
-
-      if (fixed_kv_extent.get_type() == internal_node_t::TYPE ||
-          leaf_node_t::do_has_children) {
-        if (!fixed_kv_extent.is_pending()) {
-          n_fixed_kv_extent->copy_sources.emplace(&fixed_kv_extent);
-          n_fixed_kv_extent->prior_instance = &fixed_kv_extent;
-        } else {
-          ceph_assert(fixed_kv_extent.is_mutation_pending());
-          n_fixed_kv_extent->copy_sources.emplace(
-            (typename internal_node_t::base_t*
-             )fixed_kv_extent.get_prior_instance().get());
-          n_fixed_kv_extent->children = std::move(fixed_kv_extent.children);
-          n_fixed_kv_extent->prior_instance = fixed_kv_extent.get_prior_instance();
-          n_fixed_kv_extent->adjust_ptracker_for_children();
-        }
-      }
-      
-      /* This is a bit underhanded.  Any relative addrs here must necessarily
-       * be record relative as we are rewriting a dirty extent.  Thus, we
-       * are using resolve_relative_addrs with a (likely negative) block
-       * relative offset to correct them to block-relative offsets adjusted
-       * for our new transaction location.
-       *
-       * Upon commit, these now block relative addresses will be interpretted
-       * against the real final address.
-       */
-      if (!n_fixed_kv_extent->get_paddr().is_absolute()) {
-	// backend_type_t::SEGMENTED
-	assert(n_fixed_kv_extent->get_paddr().is_record_relative());
-	n_fixed_kv_extent->resolve_relative_addrs(
-	  make_record_relative_paddr(0).block_relative_to(
-	    n_fixed_kv_extent->get_paddr()));
-      } // else: backend_type_t::RANDOM_BLOCK
+      n_fixed_kv_extent->rewrite(c.trans, fixed_kv_extent, 0);
       
       SUBTRACET(
         seastore_fixedkv_tree,
@@ -1087,7 +1074,6 @@ public:
       });
     };
     
-    CachedExtentRef n_fixed_kv_extent;
     if (e->get_type() == internal_node_t::TYPE) {
       auto lint = e->cast<internal_node_t>();
       return do_rewrite(*lint);
@@ -1269,6 +1255,17 @@ private:
       init_internal
     ).si_then([FNAME, c, offset, init_internal, depth, begin, end](
               typename internal_node_t::Ref ret) {
+      if (unlikely(ret->get_in_extent_checksum()
+          != ret->get_last_committed_crc())) {
+        SUBERRORT(
+          seastore_fixedkv_tree,
+          "internal fixedkv extent checksum inconsistent, "
+          "recorded: {}, actually: {}",
+          c.trans,
+          ret->get_in_extent_checksum(),
+          ret->get_last_committed_crc());
+        ceph_abort();
+      }
       SUBTRACET(
         seastore_fixedkv_tree,
         "read internal at offset {} {}",
@@ -1343,6 +1340,16 @@ private:
       init_leaf
     ).si_then([FNAME, c, offset, init_leaf, begin, end]
       (typename leaf_node_t::Ref ret) {
+      if (unlikely(ret->get_in_extent_checksum()
+          != ret->get_last_committed_crc())) {
+        SUBERRORT(
+          seastore_fixedkv_tree,
+          "leaf fixedkv extent checksum inconsistent, recorded: {}, actually: {}",
+          c.trans,
+          ret->get_in_extent_checksum(),
+          ret->get_last_committed_crc());
+        ceph_abort();
+      }
       SUBTRACET(
         seastore_fixedkv_tree,
         "read leaf at offset {} {}",
@@ -1382,6 +1389,9 @@ private:
       "looking up root on {}",
       c.trans,
       *root_block);
+
+    // checking the lba root node must be atomic with creating
+    // and linking the absent root node
     auto [found, fut] = get_root_node(c);
 
     auto on_found_internal =
@@ -1488,10 +1498,12 @@ private:
     };
 
     auto v = parent->template get_child<internal_node_t>(c, node_iter);
+    // checking the lba child must be atomic with creating
+    // and linking the absent child
     if (v.has_child()) {
-      return v.get_child_fut().safe_then(
-        [on_found=std::move(on_found), node_iter, c,
-        parent_entry](auto child) mutable {
+      return trans_intr::make_interruptible(std::move(v.get_child_fut())
+      ).si_then([on_found=std::move(on_found), node_iter, c,
+                parent_entry](auto child) {
         LOG_PREFIX(FixedKVBtree::lookup_internal_level);
         SUBTRACET(seastore_fixedkv_tree,
           "got child on {}, pos: {}, res: {}",
@@ -1556,10 +1568,12 @@ private:
     };
 
     auto v = parent->template get_child<leaf_node_t>(c, node_iter);
+    // checking the lba child must be atomic with creating
+    // and linking the absent child
     if (v.has_child()) {
-      return v.get_child_fut().safe_then(
-        [on_found=std::move(on_found), node_iter, c,
-        parent_entry](auto child) mutable {
+      return trans_intr::make_interruptible(std::move(v.get_child_fut())
+      ).si_then([on_found=std::move(on_found), node_iter, c,
+                parent_entry](auto child) {
         LOG_PREFIX(FixedKVBtree::lookup_leaf);
         SUBTRACET(seastore_fixedkv_tree,
           "got child on {}, pos: {}, res: {}",
@@ -1779,7 +1793,7 @@ private:
     SUBTRACET(seastore_fixedkv_tree, "split_from {}, depth {}", c.trans, split_from, iter.get_depth());
 
     if (split_from == iter.get_depth()) {
-      auto nroot = c.cache.template alloc_new_extent<internal_node_t>(
+      auto nroot = c.cache.template alloc_new_non_data_extent<internal_node_t>(
         c.trans, node_size, placement_hint_t::HOT, INIT_GENERATION);
       fixed_kv_node_meta_t<node_key_t> meta{
         min_max_t<node_key_t>::min, min_max_t<node_key_t>::max, iter.get_depth() + 1};
@@ -2109,10 +2123,12 @@ private:
     };
 
     auto v = parent_pos.node->template get_child<NodeType>(c, donor_iter);
+    // checking the lba child must be atomic with creating
+    // and linking the absent child
     if (v.has_child()) {
-      return v.get_child_fut().safe_then(
-        [do_merge=std::move(do_merge), &pos,
-        donor_iter, donor_is_left, c, parent_pos](auto child) mutable {
+      return trans_intr::make_interruptible(std::move(v.get_child_fut())
+      ).si_then([do_merge=std::move(do_merge), &pos,
+                donor_iter, donor_is_left, c, parent_pos](auto child) {
         LOG_PREFIX(FixedKVBtree::merge_level);
         SUBTRACET(seastore_fixedkv_tree,
           "got child on {}, pos: {}, res: {}",

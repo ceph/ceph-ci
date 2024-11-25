@@ -28,6 +28,7 @@ import { ActivatedRouteSnapshot, NavigationEnd, NavigationStart, Router } from '
 
 import { concat, from, Observable, of, Subscription } from 'rxjs';
 import { distinct, filter, first, mergeMap, toArray } from 'rxjs/operators';
+import { AppConstants } from '~/app/shared/constants/app.constants';
 
 import { BreadcrumbsResolver, IBreadcrumb } from '~/app/shared/models/breadcrumbs';
 
@@ -115,7 +116,7 @@ export class BreadcrumbsComponent implements OnDestroy {
     const result: IBreadcrumb[] = [];
     breadcrumbs.forEach((element) => {
       const split = element.text.split('/');
-      if (split.length > 1) {
+      if (!element.disableSplit && split.length > 1) {
         element.text = split[split.length - 1];
         for (let i = 0; i < split.length - 1; i++) {
           result.push({ text: split[i], path: null });
@@ -149,9 +150,9 @@ export class BreadcrumbsComponent implements OnDestroy {
       })
       .join(' > ');
     if (currentLocation.length > 0) {
-      return `Ceph: ${currentLocation}`;
+      return `${AppConstants.projectName}: ${currentLocation}`;
     } else {
-      return 'Ceph';
+      return AppConstants.projectName;
     }
   }
 }

@@ -217,6 +217,14 @@ class CLIContext:
     def components_selected(self):
         return bool(self._cli.components)
 
+    @property
+    def cephadm_build_args(self):
+        return list(self._cli.cephadm_build_arg or [])
+
+    @property
+    def run_before_commands(self):
+        return list(self._cli.run_before or [])
+
     def build_components(self):
         if self._cli.components:
             return self._cli.components
@@ -304,6 +312,17 @@ class CLIContext:
             dest="log_level",
             const=logging.WARNING,
             help="Only print errors and warnings",
+        )
+        parser.add_argument(
+            "--cephadm-build-arg",
+            "-A",
+            action="append",
+            help="Pass additional arguments to cephadm build script.",
+        )
+        parser.add_argument(
+            "--run-before",
+            action="append",
+            help="Add a RUN command before other actions"
         )
         # selectors
         component_selections = [
@@ -431,12 +450,30 @@ class Builder:
     def build(self):
         """Build the container image."""
         dlines = [f"FROM {self._ctx.base_image}"]
+        for cmd in self._ctx.run_before_commands:
+            dlines.append(f'RUN {cmd}')
         jcount = len(self._jobs)
         for idx, (component, job) in enumerate(self._jobs):
             num = idx + 1
             log.info(f"Executing job {num}/{jcount} for {component}")
             dresult = job(component)
             dlines.extend(dresult)
+
+        if os.path.isdir(self._workdir / "tmp_bin"):
+            # For every binary file that was copied to the tmp_bin directory by the jobs above, search for the existing file in the container and replace it.
+            dlines.append("ADD tmp_bin /tmpbin")
+            dlines.append("RUN for i in tmpbin/*; do find /usr/bin /usr/sbin -name $(basename $i) -exec mv -f $i '{}' \;; echo $(basename $i); done && rm -rf tmpbin")
+
+        if os.path.isdir(self._workdir / "tmp_lib"):
+            # For every library file that was copied to the tmp_lib directory by the jobs above, search for the existing file in the container and replace it.
+            dlines.append("ADD tmp_lib /tmplib")
+            dlines.append("RUN for i in tmplib/*; do find /usr/lib64 -name $(basename $i) -exec mv -f $i '{}' \;; echo $(basename $i); done && rm -rf tmplib")
+
+        if os.path.isdir(self._workdir / "tmp_bin"):
+            # by default locally built binaries assume /usr/local
+            dlines.append("RUN rm -rf /usr/local/lib64 && ln -sf /usr/lib64 /usr/local && ln -sf /usr/share/ceph /usr/local/share")
+            # locally built binaries assume libceph-common.so.2 is in /usr/lib64 - create link to library that was just copied
+            dlines.append("RUN ln -sf /usr/lib64/ceph/libceph-common.so.2 /usr/lib64/libceph-common.so.2")
 
         with open(self._workdir / "Dockerfile", "w") as fout:
             for line in dlines:
@@ -446,8 +483,10 @@ class Builder:
     def _container_build(self):
         log.info("Building container image")
         cmd = [self._ctx.engine, "build", "--tag", self._ctx.target, "."]
+        cmd.append('--net=host')
         if self._ctx.root_build:
             cmd.insert(0, "sudo")
+        log.debug("Container build command: %r", cmd)
         _run(cmd, cwd=self._workdir).check_returncode()
 
     def _build_tar(
@@ -479,7 +518,9 @@ class Builder:
         if self._ctx.strip_binaries:
             log.debug("copy and strip: %s", dst_path)
             shutil.copy2(src_path, dst_path)
-            _run(["strip", str(dst_path)]).check_returncode()
+            output = _run(["file", str(dst_path)], capture_output=True, text=True)
+            if "ELF" in output.stdout:
+                _run(["strip", str(dst_path)]).check_returncode()
             return
         log.debug("hard linking: %s", dst_path)
         try:
@@ -488,7 +529,7 @@ class Builder:
             pass
         os.link(src_path, dst_path)
 
-    def _bins_and_libs(self, prefix, bin_patterns, lib_patterns):
+    def _bins_and_libs(self, prefix, bin_patterns, lib_patterns, exclude_prefixes=[]):
         out = []
 
         bin_src = self._ctx.build_dir / "bin"
@@ -496,39 +537,29 @@ class Builder:
         bin_dst.mkdir(parents=True, exist_ok=True)
         for path in bin_src.iterdir():
             if any(path.match(m) for m in bin_patterns):
+                if any(path.match(f"{m}*") for m in exclude_prefixes):
+                    continue
                 self._copy_binary(path, bin_dst / path.name)
-        out.append(f"ADD {prefix}_bin /usr/bin")
 
         lib_src = self._ctx.build_dir / "lib"
         lib_dst = self._workdir / f"{prefix}_lib"
         lib_dst.mkdir(parents=True, exist_ok=True)
         for path in lib_src.iterdir():
             if any(path.match(m) for m in lib_patterns):
+                if any(path.match(f"{m}*") for m in exclude_prefixes):
+                    continue
                 self._copy_binary(path, lib_dst / path.name)
-        out.append(f"ADD {prefix}_lib /usr/lib64")
 
         return out
-
-    def _conditional_libs(self, src_dir, name, destination, lib_patterns):
-        lib_src = self._ctx.build_dir / src_dir
-        lib_dst = self._workdir / name
-        lib_dst.mkdir(parents=True, exist_ok=True)
-        try:
-            for path in lib_src.iterdir():
-                if any(path.match(m) for m in lib_patterns):
-                    self._copy_binary(path, lib_dst / path.name)
-        except FileNotFoundError as err:
-            log.warning("skipping lib %s: %s", name, err)
-        return f"ADD {name} {destination}"
 
     def _py_site_packages(self):
         """Return the correct python site packages dir for the image."""
         if self._cached_py_site_packages is not None:
             return self._cached_py_site_packages
         # use the container image to probe for the correct python site-packages dir
+        py_vers = ['3.12', '3.11', '3.10', '3.9', '3.8', '3.6']
         valid_site_packages = [
-            "/usr/lib/python3.8/site-packages",
-            "/usr/lib/python3.6/site-packages",
+            f'/usr/lib/python{v}/site-packages' for v in py_vers
         ]
         cmd = [
             self._ctx.engine,
@@ -560,7 +591,7 @@ class Builder:
             exclude_dirs = ("tests",)
         else:
             log.debug("Excluding dashboard from mgr")
-            exclude_dirs = ("tests", "node_modules")
+            exclude_dirs = ("tests", "node_modules", ".tox", ".angular" )
         exclude_file_suffixes = (".pyc", ".pyo", ".tmp", "~")
         with tarfile.open(self._workdir / name, mode="w") as tar:
             with ChangeDir(self._ctx.source_dir / "src/pybind/mgr"):
@@ -573,7 +604,7 @@ class Builder:
 
     def _py_common_job(self, component):
         name = "python_common.tar"
-        exclude_dirs = ("tests", "node_modules")
+        exclude_dirs = ("tests", "node_modules", ".tox" )
         exclude_file_suffixes = (".pyc", ".pyo", ".tmp", "~")
         with tarfile.open(self._workdir / name, mode="w") as tar:
             with ChangeDir(self._ctx.source_dir / "src/python-common"):
@@ -596,7 +627,9 @@ class Builder:
             if not build_cephadm_path.is_file():
                 raise ValueError("no cephadm build script found")
             log.debug("found cephadm compilation script: compiling cephadm")
-            _run([build_cephadm_path, dst_path]).check_returncode()
+            build_cmd = [build_cephadm_path] + self._ctx.cephadm_build_args
+            build_cmd += [dst_path]
+            _run(build_cmd).check_returncode()
         return ["ADD cephadm /usr/sbin/cephadm"]
 
     def _pybind_job(self, component):
@@ -612,52 +645,31 @@ class Builder:
         # [Quoth the original script]:
         # binaries are annoying because the ceph version is embedded all over
         # the place, so we have to include everything but the kitchen sink.
-        out = []
+        if not self._ctx.components_selected:
+            log.warning("Copying ALL locally built binaries over those that already exist in the image.")
+            bins=['*']
+        else:
+            bins=["ceph-mgr", "ceph-mon", "ceph-osd", "rados"]           
 
-        out.extend(
-            self._bins_and_libs(
-                prefix="core",
-                bin_patterns=["ceph-mgr", "ceph-mon", "ceph-osd", "rados"],
-                lib_patterns=["libceph-common.so*", "librados.so*"],
-            )
+        return self._bins_and_libs(
+            prefix="tmp",
+            bin_patterns=bins,
+            lib_patterns=["*.so","*.so.*"],
+            exclude_prefixes=["ceph_test","test_","unittest_"],
         )
-
-        out.append(
-            self._conditional_libs(
-                src_dir="lib",
-                name="eclib",
-                destination="/usr/lib64/ceph/erasure-code",
-                lib_patterns=["libec_*.so*"],
-            )
-        )
-        out.append(
-            self._conditional_libs(
-                src_dir="lib",
-                name="clslib",
-                destination="/usr/lib64/rados-classes",
-                lib_patterns=["libcls_*.so*"],
-            )
-        )
-
-        # [Quoth the original script]:
-        # by default locally built binaries assume /usr/local
-        out.append(
-            "RUN rm -rf /usr/local/lib64 && ln -s /usr/lib64 /usr/local && ln -s /usr/share/ceph /usr/local/share"
-        )
-
         return out
 
     def _rgw_job(self, component):
         return self._bins_and_libs(
-            prefix="rgw",
+            prefix="tmp",
             bin_patterns=["radosgw", "radosgw-admin"],
-            lib_patterns=["libradosgw.so*"],
+            lib_patterns=["librados.so*", "libceph-common.so*"],
         )
         return out
 
     def _cephfs_job(self, component):
         return self._bins_and_libs(
-            prefix="cephfs",
+            prefix="tmp",
             bin_patterns=["ceph-mds"],
             lib_patterns=["libcephfs.so*"],
         )
@@ -665,7 +677,7 @@ class Builder:
 
     def _rbd_job(self, component):
         return self._bins_and_libs(
-            prefix="rbd",
+            prefix="tmp",
             bin_patterns=["rbd", "rbd-mirror"],
             lib_patterns=["librbd.so*"],
         )

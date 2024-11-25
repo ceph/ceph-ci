@@ -3,7 +3,7 @@ import { NgModule } from '@angular/core';
 import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { RouterModule, Routes } from '@angular/router';
 
-import { NgbNavModule, NgbPopoverModule } from '@ng-bootstrap/ng-bootstrap';
+import { NgbModule, NgbNavModule, NgbPopoverModule } from '@ng-bootstrap/ng-bootstrap';
 import { NgxPipeFunctionModule } from 'ngx-pipe-function';
 
 import { ActionLabels, URLVerbs } from '~/app/shared/constants/app.constants';
@@ -17,7 +17,7 @@ import { UserFormComponent } from './user-form/user-form.component';
 import { UserListComponent } from './user-list/user-list.component';
 import { UserPasswordFormComponent } from './user-password-form/user-password-form.component';
 import { UserTabsComponent } from './user-tabs/user-tabs.component';
-
+import { ButtonModule, GridModule, IconModule, InputModule } from 'carbon-components-angular';
 @NgModule({
   imports: [
     CommonModule,
@@ -27,7 +27,12 @@ import { UserTabsComponent } from './user-tabs/user-tabs.component';
     NgbNavModule,
     NgbPopoverModule,
     NgxPipeFunctionModule,
-    RouterModule
+    RouterModule,
+    NgbModule,
+    IconModule,
+    GridModule,
+    ButtonModule,
+    InputModule
   ],
   declarations: [
     LoginComponent,

@@ -27,6 +27,8 @@ export class TableActionsComponent implements OnChanges, OnInit {
   // This disables the main action button.
   @Input()
   dropDownOnly?: string;
+  @Input()
+  primaryDropDown = false;
 
   currentAction?: CdTableAction;
   // Array with all visible actions
@@ -91,24 +93,15 @@ export class TableActionsComponent implements OnChanges, OnInit {
       this.currentAction = undefined;
       return;
     }
-    let buttonAction = this.dropDownActions.find((tableAction) => this.showableAction(tableAction));
-    if (!buttonAction && this.dropDownActions.length > 0) {
-      buttonAction = this.dropDownActions[0];
+    /**
+     * current action will always be the first action if that has a create permission
+     * otherwise if there's only a single actions that will be the current action
+     */
+    if (this.dropDownActions?.[0]?.permission === 'create') {
+      this.currentAction = this.dropDownActions[0];
+    } else if (this.dropDownActions.length === 1) {
+      this.currentAction = this.dropDownActions[0];
     }
-    this.currentAction = buttonAction;
-  }
-
-  /**
-   * Determines if action can be used for the button
-   *
-   * @param {CdTableAction} action
-   * @returns {boolean}
-   */
-  private showableAction(action: CdTableAction): boolean {
-    const condition = action.canBePrimary;
-    const singleSelection = this.selection.hasSingleSelection;
-    const defaultCase = action.permission === 'create' ? !singleSelection : singleSelection;
-    return (condition && condition(this.selection)) || (!condition && defaultCase);
   }
 
   useRouterLink(action: CdTableAction): string {
@@ -154,7 +147,9 @@ export class TableActionsComponent implements OnChanges, OnInit {
   useDisableDesc(action: CdTableAction) {
     if (action.disable) {
       const result = action.disable(this.selection);
-      return _.isString(result) ? result : undefined;
+      return _.isString(result) ? result : action.title ? action.title : undefined;
+    } else if (action.title) {
+      return action.title;
     }
     return undefined;
   }

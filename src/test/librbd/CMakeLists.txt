@@ -19,7 +19,8 @@ set(librbd_test
   test_Operations.cc
   test_Trash.cc
   journal/test_Entries.cc
-  journal/test_Replay.cc)
+  journal/test_Replay.cc
+  journal/test_Stress.cc)
 add_library(rbd_test STATIC ${librbd_test})
 target_link_libraries(rbd_test PRIVATE
   rbd_test_support
@@ -150,6 +151,11 @@ if(LINUX AND HAVE_LIBCRYPTSETUP)
           crypto/luks/test_mock_FlattenRequest.cc
           crypto/luks/test_mock_FormatRequest.cc
           crypto/luks/test_mock_LoadRequest.cc)
+endif()
+
+if(HAVE_LIBNBD)
+  list(APPEND unittest_librbd_srcs
+          migration/test_mock_NBDStream.cc)
 endif()
 
 # On Windows, we'll skip librbd unit tests for the time being, running just the

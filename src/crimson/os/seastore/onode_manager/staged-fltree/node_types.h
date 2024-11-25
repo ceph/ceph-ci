@@ -44,10 +44,10 @@ inline std::ostream& operator<<(std::ostream &os, const node_type_t& type) {
 }
 
 struct laddr_packed_t {
-  laddr_t value;
+  laddr_le_t value;
 } __attribute__((packed));
 inline std::ostream& operator<<(std::ostream& os, const laddr_packed_t& laddr) {
-  return os << "laddr_packed(0x" << std::hex << laddr.value << std::dec << ")";
+  return os << "laddr_packed(" << laddr_t(laddr.value) << ")";
 }
 
 using match_stat_t = int8_t;
@@ -115,7 +115,7 @@ template <> struct fmt::formatter<crimson::os::seastore::onode::node_delta_op_t>
   using node_delta_op_t =  crimson::os::seastore::onode::node_delta_op_t;
   // parse is inherited from formatter<string_view>.
   template <typename FormatContext>
-  auto format(node_delta_op_t op, FormatContext& ctx) {
+  auto format(node_delta_op_t op, FormatContext& ctx) const {
     std::string_view name = "unknown";
     switch (op) {
     case node_delta_op_t::INSERT:

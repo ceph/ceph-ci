@@ -129,7 +129,8 @@ struct NamespaceReplayer<librbd::MockTestImageCtx> {
   static std::map<std::string, NamespaceReplayer *> s_instances;
 
   static NamespaceReplayer *create(
-      const std::string &name,
+      const std::string &local_name,
+      const std::string &remote_name,
       librados::IoCtx &local_ioctx,
       librados::IoCtx &remote_ioctx,
       const std::string &local_mirror_uuid,
@@ -141,14 +142,15 @@ struct NamespaceReplayer<librbd::MockTestImageCtx> {
       ServiceDaemon<librbd::MockTestImageCtx> *service_daemon,
       journal::CacheManagerHandler *cache_manager_handler,
       PoolMetaCache* pool_meta_cache) {
-    ceph_assert(s_instances.count(name));
-    auto namespace_replayer = s_instances[name];
-    s_instances.erase(name);
+    ceph_assert(s_instances.count(local_name));
+    auto namespace_replayer = s_instances[local_name];
+    s_instances.erase(local_name);
     return namespace_replayer;
   }
 
   MOCK_METHOD0(is_blocklisted, bool());
   MOCK_METHOD0(get_instance_id, std::string());
+  MOCK_METHOD0(get_remote_namespace, std::string());
 
   MOCK_METHOD1(init, void(Context*));
   MOCK_METHOD1(shut_down, void(Context*));
@@ -363,6 +365,26 @@ public:
           Return(0)));
   }
 
+  void expect_mirror_remote_namespace_get(
+      librados::MockTestMemIoCtxImpl *io_ctx_impl,
+      const std::string &remote_namespace, int r) {
+    EXPECT_CALL(*io_ctx_impl,
+                exec(RBD_MIRRORING, _, StrEq("rbd"),
+                     StrEq("mirror_remote_namespace_get"), _, _, _, _))
+      .WillRepeatedly(DoAll(WithArg<5>(Invoke([remote_namespace](bufferlist *bl) {
+                encode(remote_namespace, *bl);
+              })),
+          Return(r)));
+  }
+
+  void expect_clone(librados::MockTestMemIoCtxImpl* mock_io_ctx) {
+    EXPECT_CALL(*mock_io_ctx, clone())
+      .WillRepeatedly(Invoke([mock_io_ctx]() {
+          mock_io_ctx->get();
+          return mock_io_ctx;
+        }));
+  }
+
   void expect_leader_watcher_init(MockLeaderWatcher& mock_leader_watcher,
                                   int r) {
     EXPECT_CALL(mock_leader_watcher, init())
@@ -502,6 +524,13 @@ public:
     EXPECT_CALL(mock_namespace_replayer, handle_instances_removed(_));
   }
 
+  void expect_namespace_replayer_get_remote_namespace(
+      MockNamespaceReplayer &mock_namespace_replayer,
+      const std::string& remote_namespace) {
+    EXPECT_CALL(mock_namespace_replayer, get_remote_namespace())
+      .WillRepeatedly(Return(remote_namespace));
+  }
+
   void expect_service_daemon_add_namespace(
       MockServiceDaemon &mock_service_daemon,
       const std::string& namespace_name) {
@@ -531,6 +560,22 @@ public:
       MockServiceDaemon &mock_service_daemon, const std::string &instance_id) {
     expect_service_daemon_add_or_update_attribute(
         mock_service_daemon, "instance_id", {instance_id});
+  }
+
+  void expect_service_daemon_add_or_update_callout(
+      MockServiceDaemon& mock_service_daemon,
+      uint64_t callout_id, uint64_t out_callout_id,
+      service_daemon::CalloutLevel callout_level, const std::string& text) {
+    EXPECT_CALL(mock_service_daemon,
+                add_or_update_callout(m_local_io_ctx.get_id(), callout_id,
+                                      callout_level, text))
+      .WillOnce(Return(out_callout_id));
+  }
+
+  void expect_service_daemon_remove_callout(
+      MockServiceDaemon& mock_service_daemon, uint64_t callout_id) {
+    EXPECT_CALL(mock_service_daemon,
+                remove_callout(m_local_io_ctx.get_id(), callout_id));
   }
 
   PoolMetaCache m_pool_meta_cache{g_ceph_context};
@@ -690,10 +735,14 @@ TEST_F(TestMockPoolReplayer, Namespaces) {
   auto mock_ns1_namespace_replayer = new MockNamespaceReplayer("ns1");
   expect_namespace_replayer_is_blocklisted(*mock_ns1_namespace_replayer,
                                            false);
+  expect_namespace_replayer_get_remote_namespace(*mock_ns1_namespace_replayer,
+                                                 "ns1");
 
   auto mock_ns2_namespace_replayer = new MockNamespaceReplayer("ns2");
   expect_namespace_replayer_is_blocklisted(*mock_ns2_namespace_replayer,
                                            false);
+  expect_namespace_replayer_get_remote_namespace(*mock_ns2_namespace_replayer,
+                                                 "ns2");
 
   MockThreads mock_threads(m_threads);
   expect_work_queue(mock_threads);
@@ -711,7 +760,9 @@ TEST_F(TestMockPoolReplayer, Namespaces) {
   auto mock_remote_rados_client = mock_cluster.do_create_rados_client(
       g_ceph_context);
 
+  expect_clone(mock_local_io_ctx);
   expect_mirror_mode_get(mock_local_io_ctx);
+  expect_mirror_remote_namespace_get(mock_local_io_ctx, "", -ENOENT);
 
   InSequence seq;
 
@@ -829,7 +880,9 @@ TEST_F(TestMockPoolReplayer, NamespacesError) {
   auto mock_remote_rados_client = mock_cluster.do_create_rados_client(
       g_ceph_context);
 
+  expect_clone(mock_local_io_ctx);
   expect_mirror_mode_get(mock_local_io_ctx);
+  expect_mirror_remote_namespace_get(mock_local_io_ctx, "", -ENOENT);
 
   InSequence seq;
 
@@ -928,6 +981,144 @@ TEST_F(TestMockPoolReplayer, NamespacesError) {
   expect_remote_pool_poller_shut_down(*mock_remote_pool_poller, 0);
 
   pool_replayer.shut_down();
+}
+
+TEST_F(TestMockPoolReplayer, RemoveCalloutOnInit) {
+  PeerSpec peer_spec{"uuid", "cluster name", "client.name"};
+
+  auto mock_default_namespace_replayer = new MockNamespaceReplayer();
+  expect_namespace_replayer_is_blocklisted(*mock_default_namespace_replayer,
+                                           false);
+
+  auto mock_leader_watcher = new MockLeaderWatcher();
+  expect_leader_watcher_get_leader_instance_id(*mock_leader_watcher);
+  expect_leader_watcher_is_blocklisted(*mock_leader_watcher, false);
+
+  MockThreads mock_threads(m_threads);
+  expect_work_queue(mock_threads);
+
+  InSequence seq;
+
+  auto& mock_cluster = get_mock_cluster();
+  auto mock_local_rados_client = mock_cluster.do_create_rados_client(
+    g_ceph_context);
+  expect_connect(mock_cluster, mock_local_rados_client, "ceph", nullptr);
+
+  auto mock_remote_rados_client = mock_cluster.do_create_rados_client(
+    g_ceph_context);
+  expect_connect(mock_cluster, mock_remote_rados_client, "cluster name",
+                 nullptr);
+
+  auto mock_local_io_ctx = mock_local_rados_client->do_create_ioctx(
+    m_local_io_ctx.get_id(), m_local_io_ctx.get_pool_name());
+  expect_create_ioctx(mock_local_rados_client, mock_local_io_ctx);
+
+  expect_mirror_uuid_get(mock_local_io_ctx, "", -EPERM);
+
+  MockServiceDaemon mock_service_daemon;
+  expect_service_daemon_add_or_update_callout(
+    mock_service_daemon, service_daemon::CALLOUT_ID_NONE, 123,
+    service_daemon::CALLOUT_LEVEL_ERROR, "unable to query local mirror uuid");
+
+  MockPoolReplayer pool_replayer(&mock_threads, &mock_service_daemon, nullptr,
+                                 &m_pool_meta_cache,
+                                 m_local_io_ctx.get_id(), peer_spec, {});
+  pool_replayer.init("siteA");
+  pool_replayer.shut_down();
+
+  mock_local_rados_client = mock_cluster.do_create_rados_client(
+    g_ceph_context);
+  expect_connect(mock_cluster, mock_local_rados_client, "ceph", nullptr);
+
+  mock_remote_rados_client = mock_cluster.do_create_rados_client(
+    g_ceph_context);
+  expect_connect(mock_cluster, mock_remote_rados_client, "cluster name",
+                 nullptr);
+
+  mock_local_io_ctx = mock_local_rados_client->do_create_ioctx(
+    m_local_io_ctx.get_id(), m_local_io_ctx.get_pool_name());
+  expect_create_ioctx(mock_local_rados_client, mock_local_io_ctx);
+
+  expect_mirror_uuid_get(mock_local_io_ctx, "uuid", 0);
+
+  auto mock_remote_pool_poller = new MockRemotePoolPoller();
+  expect_remote_pool_poller_init(*mock_remote_pool_poller,
+                                 {"remote mirror uuid", ""}, 0);
+
+  expect_namespace_replayer_init(*mock_default_namespace_replayer, 0);
+  expect_leader_watcher_init(*mock_leader_watcher, 0);
+
+  expect_service_daemon_remove_callout(mock_service_daemon, 123);
+  std::string instance_id = stringify(mock_local_io_ctx->get_instance_id());
+  expect_service_daemon_add_or_update_instance_id_attribute(
+    mock_service_daemon, instance_id);
+
+  pool_replayer.init("siteA");
+
+  expect_leader_watcher_shut_down(*mock_leader_watcher);
+  expect_namespace_replayer_shut_down(*mock_default_namespace_replayer);
+  expect_remote_pool_poller_shut_down(*mock_remote_pool_poller, 0);
+
+  pool_replayer.shut_down();
+}
+
+TEST_F(TestMockPoolReplayer, RemoveCalloutOnDestruction) {
+  PeerSpec peer_spec{"uuid", "cluster name", "client.name"};
+
+  MockThreads mock_threads(m_threads);
+  expect_work_queue(mock_threads);
+
+  InSequence seq;
+
+  auto& mock_cluster = get_mock_cluster();
+  auto mock_local_rados_client = mock_cluster.do_create_rados_client(
+    g_ceph_context);
+  expect_connect(mock_cluster, mock_local_rados_client, "ceph", nullptr);
+
+  auto mock_remote_rados_client = mock_cluster.do_create_rados_client(
+    g_ceph_context);
+  expect_connect(mock_cluster, mock_remote_rados_client, "cluster name",
+                 nullptr);
+
+  auto mock_local_io_ctx = mock_local_rados_client->do_create_ioctx(
+    m_local_io_ctx.get_id(), m_local_io_ctx.get_pool_name());
+  expect_create_ioctx(mock_local_rados_client, mock_local_io_ctx);
+
+  expect_mirror_uuid_get(mock_local_io_ctx, "", -EPERM);
+
+  MockServiceDaemon mock_service_daemon;
+  expect_service_daemon_add_or_update_callout(
+    mock_service_daemon, service_daemon::CALLOUT_ID_NONE, 123,
+    service_daemon::CALLOUT_LEVEL_ERROR, "unable to query local mirror uuid");
+
+  MockPoolReplayer pool_replayer(&mock_threads, &mock_service_daemon, nullptr,
+                                 &m_pool_meta_cache,
+                                 m_local_io_ctx.get_id(), peer_spec, {});
+  pool_replayer.init("siteA");
+  pool_replayer.shut_down();
+
+  mock_local_rados_client = mock_cluster.do_create_rados_client(
+    g_ceph_context);
+  expect_connect(mock_cluster, mock_local_rados_client, "ceph", nullptr);
+
+  mock_remote_rados_client = mock_cluster.do_create_rados_client(
+    g_ceph_context);
+  expect_connect(mock_cluster, mock_remote_rados_client, "cluster name",
+                 nullptr);
+
+  mock_local_io_ctx = mock_local_rados_client->do_create_ioctx(
+    m_local_io_ctx.get_id(), m_local_io_ctx.get_pool_name());
+  expect_create_ioctx(mock_local_rados_client, mock_local_io_ctx);
+
+  expect_mirror_uuid_get(mock_local_io_ctx, "", -EPERM);
+  expect_service_daemon_add_or_update_callout(
+    mock_service_daemon, 123, 123, service_daemon::CALLOUT_LEVEL_ERROR,
+    "unable to query local mirror uuid");
+
+  pool_replayer.init("siteA");
+  pool_replayer.shut_down();
+
+  expect_service_daemon_remove_callout(mock_service_daemon, 123);
 }
 
 } // namespace mirror

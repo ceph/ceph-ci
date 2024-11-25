@@ -113,7 +113,7 @@ Consistency
 When you add monitor settings to your Ceph configuration file, you need to be
 aware of some of the architectural aspects of Ceph Monitors. **Ceph imposes
 strict consistency requirements** for a Ceph monitor when discovering another
-Ceph Monitor within the cluster. Whereas, Ceph Clients and other Ceph daemons
+Ceph Monitor within the cluster. Although Ceph Clients and other Ceph daemons
 use the Ceph configuration file to discover monitors, monitors discover each
 other using the monitor map (monmap), not the Ceph configuration file.
 
@@ -287,7 +287,6 @@ by setting it in the ``[mon]`` section of the configuration file.
 .. confval:: mon_data_size_warn
 .. confval:: mon_data_avail_warn
 .. confval:: mon_data_avail_crit
-.. confval:: mon_warn_on_cache_pools_without_hit_sets
 .. confval:: mon_warn_on_crush_straw_calc_version_zero
 .. confval:: mon_warn_on_legacy_crush_tunables
 .. confval:: mon_crush_min_required_version
@@ -537,6 +536,8 @@ Trimming requires that the placement groups are ``active+clean``.
 
 
 .. index:: Ceph Monitor; clock
+
+.. _mon-config-ref-clock:
 
 Clock
 -----

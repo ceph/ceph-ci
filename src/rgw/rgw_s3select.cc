@@ -27,6 +27,7 @@ uint64_t aws_response_handler::get_processed_size()
 void aws_response_handler::update_processed_size(uint64_t value)
 {
   processed_size += value;
+  s->s3select_usage.bytes_processed = processed_size;
 }
 
 uint64_t aws_response_handler::get_total_bytes_returned()
@@ -37,6 +38,7 @@ uint64_t aws_response_handler::get_total_bytes_returned()
 void aws_response_handler::update_total_bytes_returned(uint64_t value)
 {
   total_bytes_returned = value;
+  s->s3select_usage.bytes_returned = total_bytes_returned;
 }
 
 void aws_response_handler::push_header(const char* header_name, const char* header_value)
@@ -44,13 +46,13 @@ void aws_response_handler::push_header(const char* header_name, const char* head
   char x;
   short s;
   x = char(strlen(header_name));
-  m_buff_header.append(&x, sizeof(x));
-  m_buff_header.append(header_name);
+  get_buffer()->append(&x, sizeof(x));
+  get_buffer()->append(header_name);
   x = char(7);
-  m_buff_header.append(&x, sizeof(x));
+  get_buffer()->append(&x, sizeof(x));
   s = htons(uint16_t(strlen(header_value)));
-  m_buff_header.append(reinterpret_cast<char*>(&s), sizeof(s));
-  m_buff_header.append(header_value);
+  get_buffer()->append(reinterpret_cast<char*>(&s), sizeof(s));
+  get_buffer()->append(header_value);
 }
 
 #define IDX( x ) static_cast<int>( x )
@@ -65,7 +67,7 @@ int aws_response_handler::create_header_records()
   push_header(header_name_str[IDX(header_name_En::CONTENT_TYPE)], header_value_str[IDX(header_value_En::OCTET_STREAM)]);
   //3
   push_header(header_name_str[IDX(header_name_En::MESSAGE_TYPE)], header_value_str[IDX(header_value_En::EVENT)]);
-  return m_buff_header.size();
+  return get_buffer()->size();
 }
 
 int aws_response_handler::create_header_continuation()
@@ -75,7 +77,7 @@ int aws_response_handler::create_header_continuation()
   push_header(header_name_str[IDX(header_name_En::EVENT_TYPE)], header_value_str[IDX(header_value_En::CONT)]);
   //2
   push_header(header_name_str[IDX(header_name_En::MESSAGE_TYPE)], header_value_str[IDX(header_value_En::EVENT)]);
-  return m_buff_header.size();
+  return get_buffer()->size();
 }
 
 int aws_response_handler::create_header_progress()
@@ -87,7 +89,7 @@ int aws_response_handler::create_header_progress()
   push_header(header_name_str[IDX(header_name_En::CONTENT_TYPE)], header_value_str[IDX(header_value_En::XML)]);
   //3
   push_header(header_name_str[IDX(header_name_En::MESSAGE_TYPE)], header_value_str[IDX(header_value_En::EVENT)]);
-  return m_buff_header.size();
+  return get_buffer()->size();
 }
 
 int aws_response_handler::create_header_stats()
@@ -99,7 +101,7 @@ int aws_response_handler::create_header_stats()
   push_header(header_name_str[IDX(header_name_En::CONTENT_TYPE)], header_value_str[IDX(header_value_En::XML)]);
   //3
   push_header(header_name_str[IDX(header_name_En::MESSAGE_TYPE)], header_value_str[IDX(header_value_En::EVENT)]);
-  return m_buff_header.size();
+  return get_buffer()->size();
 }
 
 int aws_response_handler::create_header_end()
@@ -109,7 +111,7 @@ int aws_response_handler::create_header_end()
   push_header(header_name_str[IDX(header_name_En::EVENT_TYPE)], header_value_str[IDX(header_value_En::END)]);
   //2
   push_header(header_name_str[IDX(header_name_En::MESSAGE_TYPE)], header_value_str[IDX(header_value_En::EVENT)]);
-  return m_buff_header.size();
+  return get_buffer()->size();
 }
 
 int aws_response_handler::create_error_header_records(const char* error_message)
@@ -122,10 +124,10 @@ int aws_response_handler::create_error_header_records(const char* error_message)
   push_header(header_name_str[IDX(header_name_En::ERROR_MESSAGE)], error_message);
   //3
   push_header(header_name_str[IDX(header_name_En::MESSAGE_TYPE)], header_value_str[IDX(header_value_En::ERROR_TYPE)]);
-  return m_buff_header.size();
+  return get_buffer()->size();
 }
 
-int aws_response_handler::create_message(u_int32_t header_len)
+int aws_response_handler::create_message(u_int32_t header_len,std::string *msg_string = nullptr)
 {
   //message description(AWS):
   //[total-byte-length:4][header-byte-length:4][crc:4][headers:variable-length][payload:variable-length][crc:4]
@@ -133,24 +135,27 @@ int aws_response_handler::create_message(u_int32_t header_len)
   //are created later to the produced SQL result, and actually wrapping the payload.
   auto push_encode_int = [&](u_int32_t s, int pos) {
     u_int32_t x = htonl(s);
-    sql_result.replace(pos, sizeof(x), reinterpret_cast<char*>(&x), sizeof(x));
+    msg_string->replace(pos, sizeof(x), reinterpret_cast<char*>(&x), sizeof(x));
   };
+  
+  msg_string = (msg_string == nullptr) ? &sql_result : msg_string;
+
   u_int32_t total_byte_len = 0;
   u_int32_t preload_crc = 0;
   u_int32_t message_crc = 0;
-  total_byte_len = sql_result.size() + 4; //the total is greater in 4 bytes than current size
+  total_byte_len = msg_string->size() + 4; //the total is greater in 4 bytes than current size
   push_encode_int(total_byte_len, 0);
   push_encode_int(header_len, 4);
   crc32.reset();
-  crc32 = std::for_each(sql_result.data(), sql_result.data() + 8, crc32); //crc for starting 8 bytes
+  crc32 = std::for_each(msg_string->data(), msg_string->data() + 8, crc32); //crc for starting 8 bytes
   preload_crc = crc32();
   push_encode_int(preload_crc, 8);
   crc32.reset();
-  crc32 = std::for_each(sql_result.begin(), sql_result.end(), crc32); //crc for payload + checksum
+  crc32 = std::for_each(msg_string->begin(), msg_string->end(), crc32); //crc for payload + checksum
   message_crc = crc32();
   u_int32_t x = htonl(message_crc);
-  sql_result.append(reinterpret_cast<char*>(&x), sizeof(x));
-  return sql_result.size();
+  msg_string->append(reinterpret_cast<char*>(&x), sizeof(x));
+  return msg_string->size();
 }
 
 void aws_response_handler::init_response()
@@ -161,58 +166,66 @@ void aws_response_handler::init_response()
 
 void aws_response_handler::init_success_response()
 {
-  m_buff_header.clear();
-  header_size = create_header_records();
-  sql_result.append(m_buff_header.c_str(), header_size);
-#ifdef PAYLOAD_TAG
-  sql_result.append(PAYLOAD_LINE);
-#endif
+  get_buffer()->clear();
+  m_success_header_size = create_header_records();
+  sql_result.append(get_buffer()->c_str(), m_success_header_size);
 }
 
 void aws_response_handler::send_continuation_response()
 {
-  sql_result.resize(header_crc_size, '\0');
-  m_buff_header.clear();
+  m_fp_chunk_encoding();
+  set_continue_buffer();
+  continue_result.resize(header_crc_size, '\0');
+  get_buffer()->clear();
   header_size = create_header_continuation();
-  sql_result.append(m_buff_header.c_str(), header_size);
-  int buff_len = create_message(header_size);
-  s->formatter->write_bin_data(sql_result.data(), buff_len);
+  continue_result.append(get_buffer()->c_str(), header_size);
+  int buff_len = create_message(header_size,&continue_result);
+  s->formatter->write_bin_data(continue_result.data(), buff_len);
   rgw_flush_formatter_and_reset(s, s->formatter);
+  get_buffer()->clear();
+  set_main_buffer();
 }
 
 void aws_response_handler::init_progress_response()
 {
   sql_result.resize(header_crc_size, '\0');
-  m_buff_header.clear();
+  get_buffer()->clear();
   header_size = create_header_progress();
-  sql_result.append(m_buff_header.c_str(), header_size);
+  sql_result.append(get_buffer()->c_str(), header_size);
 }
 
 void aws_response_handler::init_stats_response()
 {
   sql_result.resize(header_crc_size, '\0');
-  m_buff_header.clear();
+  get_buffer()->clear();
   header_size = create_header_stats();
-  sql_result.append(m_buff_header.c_str(), header_size);
+  sql_result.append(get_buffer()->c_str(), header_size);
 }
 
 void aws_response_handler::init_end_response()
 {
+  m_fp_chunk_encoding();
   sql_result.resize(header_crc_size, '\0');
-  m_buff_header.clear();
+  get_buffer()->clear();
   header_size = create_header_end();
-  sql_result.append(m_buff_header.c_str(), header_size);
+  sql_result.append(get_buffer()->c_str(), header_size);
   int buff_len = create_message(header_size);
   s->formatter->write_bin_data(sql_result.data(), buff_len);
   rgw_flush_formatter_and_reset(s, s->formatter);
 }
 
-void aws_response_handler::init_error_response(const char* error_message)
+void aws_response_handler::send_error_response(const char* error_code, const char* error_message)
 {
-  //currently not in use. the headers in the case of error, are not extracted by AWS-cli.
-  m_buff_header.clear();
-  header_size = create_error_header_records(error_message);
-  sql_result.append(m_buff_header.c_str(), header_size);
+  m_fp_chunk_encoding();
+  std::string out_error_msg = std::string(error_code) + " :" + std::string(error_message) + " :" + s->trans_id;
+  error_result.resize(header_crc_size, '\0');
+  get_buffer()->clear();
+  header_size = create_error_header_records(out_error_msg.data());
+  error_result.append(get_buffer()->c_str(), header_size);
+
+  int buff_len = create_message(header_size,&error_result);
+  s->formatter->write_bin_data(error_result.data(), buff_len);
+  rgw_flush_formatter_and_reset(s, s->formatter);
 }
 
 void aws_response_handler::send_success_response()
@@ -220,14 +233,16 @@ void aws_response_handler::send_success_response()
 #ifdef PAYLOAD_TAG
   sql_result.append(END_PAYLOAD_LINE);
 #endif
-  int buff_len = create_message(header_size);
+  m_fp_chunk_encoding();
+  int buff_len = create_message(m_success_header_size);
   s->formatter->write_bin_data(sql_result.data(), buff_len);
   rgw_flush_formatter_and_reset(s, s->formatter);
 }
 
-void aws_response_handler::send_error_response(const char* error_code,
-    const char* error_message,
-    const char* resource_id)
+static constexpr const char* empty_error="--";
+
+void aws_response_handler::send_error_response_rgw_formatter(const char* error_code = empty_error,
+    const char* error_message = empty_error)
 {
   set_req_state_err(s, 0);
   dump_errno(s, 400);
@@ -236,14 +251,16 @@ void aws_response_handler::send_error_response(const char* error_code,
   s->formatter->open_object_section("Error");
   s->formatter->dump_string("Code", error_code);
   s->formatter->dump_string("Message", error_message);
-  s->formatter->dump_string("Resource", "#Resource#");
-  s->formatter->dump_string("RequestId", resource_id);
+  if (!s->trans_id.empty())
+    s->formatter->dump_string("RequestId", s->trans_id);
+  s->formatter->dump_string("HostId", s->host_id);
   s->formatter->close_section();
   rgw_flush_formatter_and_reset(s, s->formatter);
 }
 
 void aws_response_handler::send_progress_response()
 {
+  m_fp_chunk_encoding();
   std::string progress_payload = fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Progress><BytesScanned>{}</BytesScanned><BytesProcessed>{}</BytesProcessed><BytesReturned>{}</BytesReturned></Progress>"
                                  , get_processed_size(), get_processed_size(), get_total_bytes_returned());
   sql_result.append(progress_payload);
@@ -254,6 +271,7 @@ void aws_response_handler::send_progress_response()
 
 void aws_response_handler::send_stats_response()
 {
+  m_fp_chunk_encoding();
   std::string stats_payload = fmt::format("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Stats><BytesScanned>{}</BytesScanned><BytesProcessed>{}</BytesProcessed><BytesReturned>{}</BytesReturned></Stats>"
                                           , get_processed_size(), get_processed_size(), get_total_bytes_returned());
   sql_result.append(stats_payload);
@@ -263,7 +281,6 @@ void aws_response_handler::send_stats_response()
 }
 
 RGWSelectObj_ObjStore_S3::RGWSelectObj_ObjStore_S3():
-  m_buff_header(std::make_unique<char[]>(1000)),
   m_scan_range_ind(false),
   m_start_scan_sz(0),
   m_end_scan_sz(0),
@@ -295,8 +312,11 @@ RGWSelectObj_ObjStore_S3::RGWSelectObj_ObjStore_S3():
     return 0;
   };
   fp_s3select_result_format = [this](std::string& result) {
-    fp_chunked_transfer_encoding();
     m_aws_response_handler.send_success_response();
+    return 0;
+  };
+  fp_s3select_continue = [this](std::string& result) {
+    m_aws_response_handler.send_continuation_response();
     return 0;
   };
 
@@ -316,6 +336,7 @@ RGWSelectObj_ObjStore_S3::RGWSelectObj_ObjStore_S3():
     } 
     chunk_number++; 
   };
+
 }
 
 RGWSelectObj_ObjStore_S3::~RGWSelectObj_ObjStore_S3()
@@ -323,7 +344,7 @@ RGWSelectObj_ObjStore_S3::~RGWSelectObj_ObjStore_S3()
 
 int RGWSelectObj_ObjStore_S3::get_params(optional_yield y)
 {
-  if(m_s3select_query.empty() == false) {
+  if (m_s3select_query.empty() == false) {
     return 0;
   }
 #ifndef _ARROW_EXIST
@@ -369,9 +390,6 @@ int RGWSelectObj_ObjStore_S3::run_s3select_on_csv(const char* query, const char*
   int status = 0;
   uint32_t length_before_processing, length_post_processing;
   csv_object::csv_defintions csv;
-  const char* s3select_syntax_error = "s3select-Syntax-Error";
-  const char* s3select_resource_id = "resourcse-id";
-  const char* s3select_processTime_error = "s3select-ProcessingTime-Error";
 
   s3select_syntax.parse_query(query);
   if (m_row_delimiter.size()) {
@@ -398,24 +416,27 @@ int RGWSelectObj_ObjStore_S3::run_s3select_on_csv(const char* query, const char*
   if (output_escape_char.size()) {
     csv.output_escape_char = *output_escape_char.c_str();
   }
-  if(output_quote_fields.compare("ALWAYS") == 0) {
+  if (output_quote_fields.compare("ALWAYS") == 0) {
     csv.quote_fields_always = true;
-  } else if(output_quote_fields.compare("ASNEEDED") == 0) {
+  } else if (output_quote_fields.compare("ASNEEDED") == 0) {
     csv.quote_fields_asneeded = true;
   }
-  if(m_header_info.compare("IGNORE")==0) {
+  if (m_header_info.compare("IGNORE")==0) {
     csv.ignore_header_info=true;
-  } else if(m_header_info.compare("USE")==0) {
+  } else if (m_header_info.compare("USE")==0) {
     csv.use_header_info=true;
   }
-  //m_s3_csv_object.set_external_debug_system(fp_debug_mesg);
-  m_s3_csv_object.set_result_formatters(fp_s3select_result_format,fp_result_header_format);
+
   m_s3_csv_object.set_csv_query(&s3select_syntax, csv);
+
+  m_s3_csv_object.set_external_system_functions(fp_s3select_continue,
+						fp_s3select_result_format,
+						fp_result_header_format,
+						fp_debug_mesg);
+
   if (s3select_syntax.get_error_description().empty() == false) {
     //error-flow (syntax-error)
-    m_aws_response_handler.send_error_response(s3select_syntax_error,
-        s3select_syntax.get_error_description().c_str(),
-        s3select_resource_id);
+    m_aws_response_handler.send_error_response(s3select_syntax_error,s3select_syntax.get_error_description().c_str());
     ldpp_dout(this, 10) << "s3-select query: failed to prase the following query {" << query << "}" << dendl;
     ldpp_dout(this, 10) << "s3-select query: syntax-error {" << s3select_syntax.get_error_description() << "}" << dendl;
     return -1;
@@ -432,9 +453,8 @@ int RGWSelectObj_ObjStore_S3::run_s3select_on_csv(const char* query, const char*
 
     if (status < 0) {
       //error flow(processing-time)
-      m_aws_response_handler.send_error_response(s3select_processTime_error,
-          m_s3_csv_object.get_error_description().c_str(),
-          s3select_resource_id);
+      m_aws_response_handler.send_error_response(s3select_processTime_error,m_s3_csv_object.get_error_description().data());
+      
       ldpp_dout(this, 10) << "s3-select query: failed to process query; {" << m_s3_csv_object.get_error_description() << "}" << dendl;
       return -1;
     }
@@ -442,12 +462,9 @@ int RGWSelectObj_ObjStore_S3::run_s3select_on_csv(const char* query, const char*
   }
   if ((length_post_processing-length_before_processing) != 0) {
     ldpp_dout(this, 10) << "s3-select: sql-result-size = " << m_aws_response_handler.get_sql_result().size() << dendl;
-  } else {
-    m_aws_response_handler.send_continuation_response();
   }
   ldpp_dout(this, 10) << "s3-select: complete chunk processing : chunk length = " << input_length << dendl;
   if (enable_progress == true) {
-    fp_chunked_transfer_encoding();
     m_aws_response_handler.init_progress_response();
     m_aws_response_handler.send_progress_response();
   }
@@ -461,10 +478,18 @@ int RGWSelectObj_ObjStore_S3::run_s3select_on_parquet(const char* query)
   if (!m_s3_parquet_object.is_set()) {
     //parsing the SQL statement.
     s3select_syntax.parse_query(m_sql_query.c_str());
-    //m_s3_parquet_object.set_external_debug_system(fp_debug_mesg);
+    parquet_object::csv_definitions parquet;
+
+  m_s3_parquet_object.set_external_system_functions(fp_s3select_continue,
+						fp_s3select_result_format,
+						fp_result_header_format,
+						fp_debug_mesg);
+
     try {
+      //setting the Parquet-reader properties. i.e. the buffer-size for the Parquet-reader
+      parquet::ceph::S3select_Config::getInstance().set_s3select_reader_properties(s->cct->_conf->rgw_parquet_buffer_size);
       //at this stage the Parquet-processing requires for the meta-data that reside on Parquet object 
-      m_s3_parquet_object.set_parquet_object(std::string("s3object"), &s3select_syntax, &m_rgw_api);
+      m_s3_parquet_object.set_parquet_object(std::string("s3object"), &s3select_syntax, &m_rgw_api, parquet);
     } catch(base_s3select_exception& e) {
       ldpp_dout(this, 10) << "S3select: failed upon parquet-reader construction: " << e.what() << dendl;
       fp_result_header_format(m_aws_response_handler.get_sql_result());
@@ -475,19 +500,19 @@ int RGWSelectObj_ObjStore_S3::run_s3select_on_parquet(const char* query)
   }
   if (s3select_syntax.get_error_description().empty() == false) {
     //the SQL statement failed the syntax parser
-    fp_result_header_format(m_aws_response_handler.get_sql_result());
-    m_aws_response_handler.get_sql_result().append(s3select_syntax.get_error_description().data());
-    fp_s3select_result_format(m_aws_response_handler.get_sql_result());
+    m_aws_response_handler.send_error_response(s3select_syntax_error, m_s3_parquet_object.get_error_description().c_str());
+
     ldpp_dout(this, 10) << "s3-select query: failed to prase query; {" << s3select_syntax.get_error_description() << "}" << dendl;
     status = -1;
   } else {
     fp_result_header_format(m_aws_response_handler.get_sql_result());
     //at this stage the Parquet-processing "takes control", it keep calling to s3-range-request according to the SQL statement.
-    status = m_s3_parquet_object.run_s3select_on_object(m_aws_response_handler.get_sql_result(), fp_s3select_result_format, fp_result_header_format);
+    status = m_s3_parquet_object.run_s3select_on_object(m_aws_response_handler.get_sql_result());
     if (status < 0) {
-      m_aws_response_handler.get_sql_result().append(m_s3_parquet_object.get_error_description());
-      fp_s3select_result_format(m_aws_response_handler.get_sql_result());
-      ldout(s->cct, 10) << "S3select: failure while execution" << m_s3_parquet_object.get_error_description() << dendl;
+
+      m_aws_response_handler.send_error_response(s3select_processTime_error, m_s3_parquet_object.get_error_description().c_str());
+
+      return -1;
     }
   }
 #endif
@@ -498,19 +523,19 @@ int RGWSelectObj_ObjStore_S3::run_s3select_on_json(const char* query, const char
 {
   int status = 0;
   
-  const char* s3select_processTime_error = "s3select-ProcessingTime-Error";
-  const char* s3select_syntax_error = "s3select-Syntax-Error";
-  const char* s3select_resource_id = "resourcse-id";
-  const char* s3select_json_error = "json-Format-Error";
+  m_s3_json_object.set_external_system_functions(fp_s3select_continue,
+						fp_s3select_result_format,
+						fp_result_header_format,
+						fp_debug_mesg);
+  json_object::csv_definitions json;
 
   m_aws_response_handler.init_response();
 
   //the JSON data-type should be(currently) only DOCUMENT
   if (m_json_datatype.compare("DOCUMENT") != 0) {
     const char* s3select_json_error_msg = "s3-select query: wrong json dataType should use DOCUMENT; ";
-    m_aws_response_handler.send_error_response(s3select_json_error,
-      s3select_json_error_msg,
-      s3select_resource_id);
+    m_aws_response_handler.send_error_response_rgw_formatter(s3select_json_error,
+      s3select_json_error_msg);
     ldpp_dout(this, 10) << s3select_json_error_msg << dendl;
     return -EINVAL;
   } 
@@ -520,14 +545,13 @@ int RGWSelectObj_ObjStore_S3::run_s3select_on_json(const char* query, const char
   if (s3select_syntax.get_error_description().empty() == false) {
   //SQL statement is wrong(syntax).
     m_aws_response_handler.send_error_response(s3select_syntax_error,
-      s3select_syntax.get_error_description().c_str(),
-      s3select_resource_id);
+      s3select_syntax.get_error_description().c_str());
     ldpp_dout(this, 10) << "s3-select query: failed to prase query; {" << s3select_syntax.get_error_description() << "}" << dendl;
     return -EINVAL;
   }
     
   //initializing json processor
-  m_s3_json_object.set_json_query(&s3select_syntax);
+  m_s3_json_object.set_json_query(&s3select_syntax, json);
 
   if (input == nullptr) {
     input = "";
@@ -541,8 +565,7 @@ int RGWSelectObj_ObjStore_S3::run_s3select_on_json(const char* query, const char
     ldpp_dout(this, 10) << "S3select: failed to process JSON object: " << e.what() << dendl;
     m_aws_response_handler.get_sql_result().append(e.what());
     m_aws_response_handler.send_error_response(s3select_processTime_error,
-	e.what(),
-     	s3select_resource_id);
+	e.what());
     return -EINVAL;
   }
   uint32_t length_post_processing = m_aws_response_handler.get_sql_result().size();
@@ -550,17 +573,13 @@ int RGWSelectObj_ObjStore_S3::run_s3select_on_json(const char* query, const char
   if (status < 0) {
     //error flow(processing-time)
     m_aws_response_handler.send_error_response(s3select_processTime_error,
-	m_s3_json_object.get_error_description().c_str(),
-     	s3select_resource_id);
+	m_s3_json_object.get_error_description().c_str());
     ldpp_dout(this, 10) << "s3-select query: failed to process query; {" << m_s3_json_object.get_error_description() << "}" << dendl;
     return -EINVAL;
   }
-  fp_chunked_transfer_encoding();
 
   if (length_post_processing-length_before_processing != 0) {
     m_aws_response_handler.send_success_response();
-  } else {
-    m_aws_response_handler.send_continuation_response();
   }
   if (enable_progress == true) {
     m_aws_response_handler.init_progress_response();
@@ -690,6 +709,7 @@ int RGWSelectObj_ObjStore_S3::range_request(int64_t ofs, int64_t len, void* buff
   RGWGetObj::parse_range();
   requested_buffer.clear();
   m_request_range = len;
+  m_aws_response_handler.update_processed_size(len);
   ldout(s->cct, 10) << "S3select: calling execute(async):" << " request-offset :" << ofs << " request-length :" << len << " buffer size : " << requested_buffer.size() << dendl;
   RGWGetObj::execute(y);
   if (buff) {
@@ -709,6 +729,21 @@ void RGWSelectObj_ObjStore_S3::execute(optional_yield y)
 #ifdef _ARROW_EXIST
   m_rgw_api.m_y = &y;
 #endif
+
+  if (!m_aws_response_handler.is_set()) {
+    m_aws_response_handler.set(s, this, fp_chunked_transfer_encoding);
+  }
+
+  if (s->cct->_conf->rgw_disable_s3select == true)
+  {
+      std::string error_msg="s3select : is disabled by rgw_disable_s3select configuration parameter";
+      ldpp_dout(this, 10) << error_msg << dendl;
+      m_aws_response_handler.send_error_response_rgw_formatter(error_msg.data());
+      
+      op_ret = -ERR_INVALID_REQUEST;
+      return;
+  }
+
   if (m_parquet_type) {
     //parquet processing
     range_request(0, 4, parquet_magic, y);
@@ -718,12 +753,26 @@ void RGWSelectObj_ObjStore_S3::execute(optional_yield y)
       return;
     }
     s3select_syntax.parse_query(m_sql_query.c_str());
+    //the run_s3select_on_parquet() calling the s3select-query-engine, that read and process the parquet object with RGW::range_request, 
+    //upon query-engine finish the processing, the control is back to execute()
+    //the parquet-reader indicates the end of the parquet object.
     status = run_s3select_on_parquet(m_sql_query.c_str());
     if (status) {
       ldout(s->cct, 10) << "S3select: failed to process query <" << m_sql_query << "> on object " << s->object->get_name() << dendl;
       op_ret = -ERR_INVALID_REQUEST;
     } else {
-      ldout(s->cct, 10) << "S3select: complete query with success " << dendl;
+      //status per amount of processed data
+#ifdef _ARROW_EXIST
+      m_aws_response_handler.update_total_bytes_returned(m_s3_parquet_object.get_return_result_size());
+#endif
+      m_aws_response_handler.init_stats_response();
+      m_aws_response_handler.send_stats_response();
+      m_aws_response_handler.init_end_response();
+      ldpp_dout(this, 10) << "s3select : reached the end of parquet query request : aws_response_handler.get_processed_size() " 
+      << m_aws_response_handler.get_processed_size()
+      << "m_object_size_for_processing : " << m_object_size_for_processing << dendl;
+       
+      ldout(s->cct, 10) << "S3select: complete parquet query with success " << dendl;
     }
     } else { 
 	//CSV or JSON processing
@@ -731,7 +780,7 @@ void RGWSelectObj_ObjStore_S3::execute(optional_yield y)
 
 	  m_requested_range = (m_end_scan_sz - m_start_scan_sz);
 	    
-	  if(m_is_trino_request){
+	  if (m_is_trino_request){
 	  // fetch more than requested(m_scan_offset), that additional bytes are scanned for end of row, 
 	  // thus the additional length will be processed, and no broken row for Trino.
 	  // assumption: row is smaller than m_scan_offset. (a different approach is to request for additional range)
@@ -747,7 +796,8 @@ void RGWSelectObj_ObjStore_S3::execute(optional_yield y)
 }
 
 int RGWSelectObj_ObjStore_S3::parquet_processing(bufferlist& bl, off_t ofs, off_t len)
-{
+{//purpose: to process the returned buffer from range-request, and to send it to the Parquet-reader.
+ //range_request() is called by arrow::ReadAt, and upon request completion the control is back to RGWSelectObj_ObjStore_S3::execute()
     fp_chunked_transfer_encoding();
     size_t append_in_callback = 0;
     int part_no = 1;
@@ -778,7 +828,7 @@ void RGWSelectObj_ObjStore_S3::shape_chunk_per_trino_requests(const char* it_cp,
 //the purpose is to return "perfect" results, with no broken or missing lines.
 
   off_t new_offset = 0;
-  if(m_scan_range_ind){//only upon range-scan
+  if (m_scan_range_ind){//only upon range-scan
   int64_t sc=0;
   int64_t start =0;
   const char* row_delimiter = m_row_delimiter.c_str();
@@ -786,10 +836,10 @@ void RGWSelectObj_ObjStore_S3::shape_chunk_per_trino_requests(const char* it_cp,
     ldpp_dout(this, 10) << "s3select query: per Trino request the first and last chunk should modified." << dendl;
 
     //chop the head of the first chunk and only upon the slice does not include the head of the object.
-    if(m_start_scan_sz && (m_aws_response_handler.get_processed_size()==0)){
+    if (m_start_scan_sz && (m_aws_response_handler.get_processed_size()==0)){
       char* p = const_cast<char*>(it_cp+ofs);
       while(strncmp(row_delimiter,p,1) && (p - (it_cp+ofs)) < len)p++;
-      if(!strncmp(row_delimiter,p,1)){
+      if (!strncmp(row_delimiter,p,1)){
 	new_offset += (p - (it_cp+ofs))+1;
       } 
     }
@@ -800,14 +850,14 @@ void RGWSelectObj_ObjStore_S3::shape_chunk_per_trino_requests(const char* it_cp,
 
     //chop the end of the last chunk for this request
     //if it's the last chunk, search for first row-delimiter for the following different use-cases
-    if((m_aws_response_handler.get_processed_size()+len) >= m_requested_range){ 
+    if ((m_aws_response_handler.get_processed_size()+len) >= m_requested_range){ 
     //had pass the requested range, start to search for first delimiter
-      if(m_aws_response_handler.get_processed_size()>m_requested_range){
+      if (m_aws_response_handler.get_processed_size()>m_requested_range){
 	//the previous chunk contain the complete request(all data) and an extra bytes.
 	//thus, search for the first row-delimiter
 	//[:previous (RR) ... ][:current (RD) ]
 	start = 0;
-      } else if(m_aws_response_handler.get_processed_size()){
+      } else if (m_aws_response_handler.get_processed_size()){
 	//the *current* chunk contain the complete request in the middle of the chunk. 
 	//thus, search for the first row-delimiter after the complete request position
 	//[:current (RR) .... (RD) ]
@@ -821,7 +871,7 @@ void RGWSelectObj_ObjStore_S3::shape_chunk_per_trino_requests(const char* it_cp,
       for(sc=start;sc<len;sc++)//assumption : row-delimiter must exist or its end ebject
       {
 	char* p = const_cast<char*>(it_cp) + ofs + sc;
-	if(!strncmp(row_delimiter,p,1)){
+	if (!strncmp(row_delimiter,p,1)){
 	      ldout(s->cct, 10) << "S3select: found row-delimiter on " << sc << " get_processed_size = " << m_aws_response_handler.get_processed_size() <<  dendl;
 	      len = sc + 1;//+1 is for delimiter.  TODO what about m_object_size_for_processing (to update according to len)
 	      //the end of row exist in current chunk.
@@ -841,7 +891,7 @@ void RGWSelectObj_ObjStore_S3::shape_chunk_per_trino_requests(const char* it_cp,
 int RGWSelectObj_ObjStore_S3::csv_processing(bufferlist& bl, off_t ofs, off_t len)
 {
   int status = 0;
-  if(m_skip_next_chunk == true){
+  if (m_skip_next_chunk == true){
     return status;
   } 
 
@@ -862,20 +912,23 @@ int RGWSelectObj_ObjStore_S3::csv_processing(bufferlist& bl, off_t ofs, off_t le
         continue;
       }
 
-      if((ofs + len) > it.length()){
+
+      if (ofs > it.length()){
+      //safety check
 	ldpp_dout(this, 10) << "offset and length may cause invalid read: ofs = " << ofs << " len = " << len << " it.length() = " << it.length() << dendl;
 	ofs = 0;
-	len = it.length();
       }
 
-    if(m_is_trino_request){
+    if (m_is_trino_request){
+      //TODO replace len with it.length() ? ; test Trino flow with compressed objects.
+      //is it possible to send get-by-ranges? in parallel?
       shape_chunk_per_trino_requests(&(it)[0], ofs, len); 
     }
 
     ldpp_dout(this, 10) << "s3select: chunk:  ofs = " << ofs << " len = " << len << " it.length() = " << it.length() << " m_object_size_for_processing = " << m_object_size_for_processing << dendl;
     
     m_aws_response_handler.update_processed_size(it.length());//NOTE : to run analysis to validate len is aligned with m_processed_bytes
-    status = run_s3select_on_csv(m_sql_query.c_str(), &(it)[0] + ofs, len);
+    status = run_s3select_on_csv(m_sql_query.c_str(), &(it)[0] + ofs, it.length());
     if (status<0) {
 	  return -EINVAL;
     }
@@ -930,7 +983,7 @@ int RGWSelectObj_ObjStore_S3::json_processing(bufferlist& bl, off_t ofs, off_t l
         continue;
       }
 
-      if((ofs + len) > it.length()){
+      if ((ofs + len) > it.length()){
 	ldpp_dout(this, 10) << "s3select: offset and length may cause invalid read: ofs = " << ofs << " len = " << len << " it.length() = " << it.length() << dendl;
 	ofs = 0;
 	len = it.length();
@@ -971,6 +1024,7 @@ int RGWSelectObj_ObjStore_S3::json_processing(bufferlist& bl, off_t ofs, off_t l
 
 int RGWSelectObj_ObjStore_S3::send_response_data(bufferlist& bl, off_t ofs, off_t len)
 {
+
   if (m_scan_range_ind == false){
     m_object_size_for_processing = s->obj_size;
   }
@@ -985,12 +1039,12 @@ int RGWSelectObj_ObjStore_S3::send_response_data(bufferlist& bl, off_t ofs, off_
       }
   }
   if (!m_aws_response_handler.is_set()) {
-    m_aws_response_handler.set(s, this);
+    m_aws_response_handler.set(s, this, fp_chunked_transfer_encoding);
   }
   if (len == 0 && s->obj_size != 0) {
     return 0;
   }
-  if (m_parquet_type) {
+  if (m_parquet_type) {//bufferlist sendback upon range-request
     return parquet_processing(bl,ofs,len);
   }
   if (m_json_type) {

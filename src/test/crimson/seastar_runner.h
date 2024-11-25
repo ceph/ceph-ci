@@ -13,6 +13,8 @@
 #include <seastar/core/alien.hh>
 #include <seastar/core/thread.hh>
 
+#include "test/crimson/ctest_utils.h"
+
 struct SeastarRunner {
   static constexpr eventfd_t APP_RUNNING = 1;
   static constexpr eventfd_t APP_NOT_RUN = 2;
@@ -26,7 +28,7 @@ struct SeastarRunner {
   bool begin_signaled = false;
 
   SeastarRunner() :
-    begin_fd{seastar::file_desc::eventfd(0, 0)} {}
+    app{get_smp_opts_from_ctest()}, begin_fd{seastar::file_desc::eventfd(0, 0)} {}
 
   ~SeastarRunner() {}
 
@@ -69,6 +71,19 @@ struct SeastarRunner {
     auto ret = app.run(argc, argv, [this] {
       on_end.reset(new seastar::readable_eventfd);
       return seastar::now().then([this] {
+// FIXME: The stall detector uses glibc backtrace function to
+// collect backtraces, this causes ASAN failures on ARM.
+// For now we just extend timeout duration to 10000h in order to
+// get the same effect as disabling the stall detector which is not provided by seastar.
+// the ticket about migrating to libunwind: https://github.com/scylladb/seastar/issues/1878
+// Will remove once the ticket fixed.
+// Ceph ticket see: https://tracker.ceph.com/issues/65635
+#ifdef __aarch64__
+	seastar::smp::invoke_on_all([] {
+	  using namespace std::chrono;
+	  seastar::engine().update_blocked_reactor_notify_ms(duration_cast<milliseconds>(10000h));
+	}).get();
+#endif
 	begin_signaled = true;
 	[[maybe_unused]] auto r = ::eventfd_write(begin_fd.get(), APP_RUNNING);
 	assert(r == 0);

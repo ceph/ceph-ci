@@ -10,7 +10,6 @@ from .metadata_manager import MetadataManager
 from .subvolume_attrs import SubvolumeTypes, SubvolumeStates, SubvolumeFeatures
 from .op_sm import SubvolumeOpSm
 from .subvolume_v1 import SubvolumeV1
-from ..template import SubvolumeTemplate
 from ...exception import OpSmException, VolumeException, MetadataMgrException
 from ...fs_util import listdir, create_base_dir
 from ..template import SubvolumeOpType
@@ -99,7 +98,7 @@ class SubvolumeV2(SubvolumeV1):
         try:
             # MDS treats this as a noop for already marked subvolume
             self.fs.setxattr(self.base_path, 'ceph.dir.subvolume', b'1', 0)
-        except cephfs.InvalidValue as e:
+        except cephfs.InvalidValue:
             raise VolumeException(-errno.EINVAL, "invalid value specified for ceph.dir.subvolume")
         except cephfs.Error as e:
             raise VolumeException(-e.args[0], e.args[1])
@@ -155,11 +154,11 @@ class SubvolumeV2(SubvolumeV1):
         self.metadata_mgr.update_global_section(MetadataManager.GLOBAL_META_KEY_PATH, qpath)
         self.metadata_mgr.update_global_section(MetadataManager.GLOBAL_META_KEY_STATE, initial_state.value)
 
-    def create(self, size, isolate_nspace, pool, mode, uid, gid):
+    def create(self, size, isolate_nspace, pool, mode, uid, gid, earmark):
         subvolume_type = SubvolumeTypes.TYPE_NORMAL
         try:
             initial_state = SubvolumeOpSm.get_init_state(subvolume_type)
-        except OpSmException as oe:
+        except OpSmException:
             raise VolumeException(-errno.EINVAL, "subvolume creation failed: internal error")
 
         retained = self.retained
@@ -176,7 +175,8 @@ class SubvolumeV2(SubvolumeV1):
                 'gid': gid,
                 'data_pool': pool,
                 'pool_namespace': self.namespace if isolate_nspace else None,
-                'quota': size
+                'quota': size,
+                'earmark': earmark
             }
             self.set_attrs(subvol_path, attrs)
 
@@ -207,7 +207,7 @@ class SubvolumeV2(SubvolumeV1):
         subvolume_type = SubvolumeTypes.TYPE_CLONE
         try:
             initial_state = SubvolumeOpSm.get_init_state(subvolume_type)
-        except OpSmException as oe:
+        except OpSmException:
             raise VolumeException(-errno.EINVAL, "clone failed: internal error")
 
         retained = self.retained
@@ -308,13 +308,17 @@ class SubvolumeV2(SubvolumeV1):
                                       op_type.value, self.subvolname, etype.value))
 
             estate = self.state
-            if op_type not in self.allowed_ops_by_state(estate) and estate == SubvolumeStates.STATE_RETAINED:
-                raise VolumeException(-errno.ENOENT, "subvolume '{0}' is removed and has only snapshots retained".format(
-                                      self.subvolname))
-
-            if op_type not in self.allowed_ops_by_state(estate) and estate != SubvolumeStates.STATE_RETAINED:
-                raise VolumeException(-errno.EAGAIN, "subvolume '{0}' is not ready for operation {1}".format(
-                                      self.subvolname, op_type.value))
+            if op_type not in self.allowed_ops_by_state(estate):
+                if estate == SubvolumeStates.STATE_RETAINED:
+                    raise VolumeException(
+                        -errno.ENOENT,
+                        f'subvolume "{self.subvolname}" is removed and has '
+                        'only snapshots retained')
+                else:
+                    raise VolumeException(
+                        -errno.EAGAIN,
+                        f'subvolume "{self.subvolname}" is not ready for '
+                        f'operation "{op_type.value}"')
 
             if estate != SubvolumeStates.STATE_RETAINED:
                 subvol_path = self.path

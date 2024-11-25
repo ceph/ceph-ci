@@ -38,22 +38,22 @@ export class ImagesPageHelper extends PageHelper {
     cy.get('[data-cy=submitBtn]').click();
 
     this.getExpandCollapseElement(newName).click();
-    cy.get('.table.table-striped.table-bordered').contains('td', newSize);
+    cy.get('[data-testid=rbd-details-table]').contains('td', newSize);
   }
 
   // Selects RBD image and moves it to the trash,
   // checks that it is present in the trash table
   moveToTrash(name: string) {
     // wait for image to be created
-    cy.get('.datatable-body').first().should('not.contain.text', '(Creating...)');
+    cy.get('table[cdstable] tbody').first().should('not.contain.text', '(Creating...)');
 
     this.getFirstTableCell(name).click();
 
     // click on the drop down and selects the move to trash option
-    cy.get('.table-actions button.dropdown-toggle').first().click();
-    cy.get('button.move-to-trash').click();
+    cy.get('[data-testid="table-action-btn"]').click({ multiple: true });
+    cy.get('button.move-to-trash').click({ force: true });
 
-    cy.get('[data-cy=submitBtn]').should('be.visible').click();
+    cy.get('[data-cy=submitBtn] button').should('be.visible').click({ force: true });
 
     // Clicks trash tab
     cy.contains('.nav-link', 'Trash').click();
@@ -68,15 +68,16 @@ export class ImagesPageHelper extends PageHelper {
 
     // wait for table to load
     this.getFirstTableCell(name).click();
-    cy.contains('button', 'Restore').click();
+    cy.get('[data-testid="table-action-btn"]').click({ multiple: true });
+    cy.get('button.restore').click({ force: true });
 
     // wait for pop-up to be visible (checks for title of pop-up)
-    cy.get('cd-modal #name').should('be.visible');
+    cy.get('cds-modal #name').should('be.visible');
 
     // If a new name for the image is passed, it changes the name of the image
     if (newName !== undefined) {
       // click name box and send new name
-      cy.get('cd-modal #name').clear().type(newName);
+      cy.get('cds-modal #name').clear().type(newName);
     }
 
     cy.get('[data-cy=submitBtn]').click();
@@ -95,7 +96,7 @@ export class ImagesPageHelper extends PageHelper {
     cy.contains('button', 'Purge Trash').click();
 
     // Check for visibility of modal container
-    cy.get('.modal-header').should('be.visible');
+    cy.get('cds-modal').should('be.visible');
 
     // If purging a specific pool, selects that pool if given
     if (pool !== undefined) {

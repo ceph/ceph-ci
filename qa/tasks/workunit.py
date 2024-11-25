@@ -421,18 +421,30 @@ def _run_tests(ctx, refspec, role, tests, env, basedir,
                         workunit=workunit,
                     ),
                 ])
-                remote.run(
-                    logger=log.getChild(role),
-                    args=args + optional_args,
-                    label="workunit test {workunit}".format(workunit=workunit)
-                )
+                if 'unit_test_scan' in optional_args:
+                    optional_args.remove('unit_test_scan')
+                    remote.run_unit_test(
+                        logger=log.getChild(role),
+                        args=args + optional_args,
+                        label="workunit test {workunit}".format(workunit=workunit),
+                        xml_path_regex=f'{testdir}/archive/unit_test_xml_report/*.xml',
+                        output_yaml=os.path.join(ctx.archive, 'unit_test_summary.yaml'),
+                    )
+                else:
+                    remote.run(
+                        logger=log.getChild(role),
+                        args=args + optional_args,
+                        label="workunit test {workunit}".format(workunit=workunit)
+                    )
                 if cleanup:
                     args=['sudo', 'rm', '-rf', '--', scratch_tmp]
                     remote.run(logger=log.getChild(role), args=args, timeout=(60*60))
     finally:
         log.info('Stopping %s on %s...', tests, role)
+        # N.B. unlike before, don't cleanup path under variable "scratch_tmp"
+        # here! If the mount is broken then rm will hang. For context, see
+        # commit d4b8f94cf8d95ebb277b550fc6ebc3468052a39c.
         args=['sudo', 'rm', '-rf', '--', workunits_file, clonedir]
-        # N.B. don't cleanup scratch_tmp! If the mount is broken then rm will hang.
         remote.run(
             logger=log.getChild(role),
             args=args,

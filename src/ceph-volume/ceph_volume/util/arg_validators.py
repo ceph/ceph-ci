@@ -4,10 +4,22 @@ import math
 from ceph_volume import terminal, decorators, process
 from ceph_volume.util.device import Device
 from ceph_volume.util import disk
+from ceph_volume.util.encryption import set_dmcrypt_no_workqueue
+
+
+mlogger = terminal.MultiLogger(__name__)
 
 
 def valid_osd_id(val):
     return str(int(val))
+
+class DmcryptAction(argparse._StoreTrueAction):
+    def __init__(self, *args, **kwargs):
+        super(DmcryptAction, self).__init__(*args, **kwargs)
+
+    def __call__(self, *args, **kwargs):
+        set_dmcrypt_no_workqueue()
+        super(DmcryptAction, self).__call__(*args, **kwargs)
 
 class ValidDevice(object):
 
@@ -61,6 +73,17 @@ class ValidZapDevice(ValidDevice):
         return self._device
 
 
+class ValidClearReplaceHeaderDevice(ValidDevice):
+    def __call__(self, dev_path: str) -> str:
+        super().get_device(dev_path)
+        return self._format_device(self._is_valid_device())
+
+    def _is_valid_device(self) -> Device:
+        if not self._device.is_being_replaced:
+            mlogger.info(f'{self.dev_path} has no replacement header.')
+        return self._device
+
+
 class ValidDataDevice(ValidDevice):
     def __call__(self, dev_path):
         super().get_device(dev_path)
@@ -82,6 +105,9 @@ class ValidRawDevice(ValidDevice):
     def __call__(self, dev_path):
         super().get_device(dev_path)
         return self._format_device(self._is_valid_device())
+
+    def _format_device(self, device: Device) -> str:
+        return device.path
 
     def _is_valid_device(self, raise_sys_exit=True):
         out, err, rc = process.call([

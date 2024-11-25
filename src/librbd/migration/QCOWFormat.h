@@ -10,7 +10,8 @@
 #include "librbd/migration/QCOW.h"
 #include "acconfig.h"
 #include "json_spirit/json_spirit.h"
-#include <boost/asio/io_context_strand.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/strand.hpp>
 #include <boost/iostreams/filter/zlib.hpp>
 #include <deque>
 #include <vector>
@@ -66,7 +67,7 @@ public:
   void get_image_size(uint64_t snap_id, uint64_t* size,
                       Context* on_finish) override;
 
-  bool read(io::AioCompletion* aio_comp, uint64_t snap_id,
+  void read(io::AioCompletion* aio_comp, uint64_t snap_id,
             io::Extents&& image_extents, io::ReadResult&& read_result,
             int op_flags, int read_flags,
             const ZTracer::Trace &parent_trace) override;
@@ -142,7 +143,7 @@ private:
   json_spirit::mObject m_json_object;
   const SourceSpecBuilder<ImageCtxT>* m_source_spec_builder;
 
-  boost::asio::io_context::strand m_strand;
+  boost::asio::strand<boost::asio::io_context::executor_type> m_strand;
   std::shared_ptr<StreamInterface> m_stream;
 
   bufferlist m_bl;

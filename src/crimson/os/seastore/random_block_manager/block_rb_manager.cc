@@ -51,6 +51,9 @@ paddr_t BlockRBManager::alloc_extent(size_t size)
   LOG_PREFIX(BlockRBManager::alloc_extent);
   assert(allocator);
   auto alloc = allocator->alloc_extent(size);
+  if (!alloc) {
+    return P_ADDR_NULL;
+  }
   ceph_assert((*alloc).num_intervals() == 1);
   auto extent = (*alloc).begin();
   ceph_assert(size == extent.get_len());
@@ -60,6 +63,34 @@ paddr_t BlockRBManager::alloc_extent(size_t size)
   DEBUG("allocated addr: {}, size: {}, requested size: {}",
 	paddr, extent.get_len(), size);
   return paddr;
+}
+
+BlockRBManager::allocate_ret_bare
+BlockRBManager::alloc_extents(size_t size)
+{
+  LOG_PREFIX(BlockRBManager::alloc_extents);
+  assert(allocator);
+  auto alloc = allocator->alloc_extents(size);
+  if (!alloc) {
+    return {};
+  }
+  allocate_ret_bare ret;
+  size_t len = 0;
+  for (auto extent = (*alloc).begin();
+       extent != (*alloc).end();
+       extent++) {
+    len += extent.get_len();
+    paddr_t paddr = convert_abs_addr_to_paddr(
+      extent.get_start(),
+      device->get_device_id());
+    DEBUG("allocated addr: {}, size: {}, requested size: {}",
+         paddr, extent.get_len(), size);
+    ret.push_back(
+      {std::move(paddr),
+      static_cast<extent_len_t>(extent.get_len())});
+  }
+  ceph_assert(size == len);
+  return ret;
 }
 
 void BlockRBManager::complete_allocation(
@@ -84,39 +115,41 @@ BlockRBManager::open_ertr::future<> BlockRBManager::open()
   return open_ertr::now();
 }
 
-BlockRBManager::write_ertr::future<> BlockRBManager::write(
-  paddr_t paddr,
-  bufferptr &bptr)
-{
-  LOG_PREFIX(BlockRBManager::write);
-  ceph_assert(device);
-  rbm_abs_addr addr = convert_paddr_to_abs_addr(paddr);
+bool BlockRBManager::check_valid_range(rbm_abs_addr addr, bufferptr &bptr) {
+  LOG_PREFIX(BlockRBManager::check_valid_range);
   rbm_abs_addr start = device->get_shard_start();
   rbm_abs_addr end = device->get_shard_end();
   if (addr < start || addr + bptr.length() > end) {
     ERROR("out of range: start {}, end {}, addr {}, length {}",
       start, end, addr, bptr.length());
+    return false;
+  }
+  return true;
+}
+
+BlockRBManager::write_ertr::future<> BlockRBManager::write(
+  paddr_t paddr,
+  bufferptr bptr)
+{
+  ceph_assert(device);
+  ceph_assert(bptr.is_page_aligned());
+  rbm_abs_addr addr = convert_paddr_to_abs_addr(paddr);
+  if (!check_valid_range(addr, bptr)) {
     return crimson::ct_error::erange::make();
   }
-  bufferptr bp = bufferptr(ceph::buffer::create_page_aligned(bptr.length()));
-  bp.copy_in(0, bptr.length(), bptr.c_str());
   return device->write(
     addr,
-    std::move(bp));
+    bptr);
 }
 
 BlockRBManager::read_ertr::future<> BlockRBManager::read(
   paddr_t paddr,
   bufferptr &bptr)
 {
-  LOG_PREFIX(BlockRBManager::read);
   ceph_assert(device);
+  ceph_assert(bptr.is_page_aligned());
   rbm_abs_addr addr = convert_paddr_to_abs_addr(paddr);
-  rbm_abs_addr start = device->get_shard_start();
-  rbm_abs_addr end = device->get_shard_end();
-  if (addr < start || addr + bptr.length() > end) {
-    ERROR("out of range: start {}, end {}, addr {}, length {}",
-      start, end, addr, bptr.length());
+  if (!check_valid_range(addr, bptr)) {
     return crimson::ct_error::erange::make();
   }
   return device->read(
@@ -151,15 +184,36 @@ BlockRBManager::write_ertr::future<> BlockRBManager::write(
     std::move(bptr));
 }
 
-std::ostream &operator<<(std::ostream &out, const rbm_metadata_header_t &header)
+#ifdef UNIT_TESTS_BUILT
+void BlockRBManager::prefill_fragmented_device()
 {
-  out << " rbm_metadata_header_t(size=" << header.size
+  LOG_PREFIX(BlockRBManager::prefill_fragmented_device);
+  // the first 3 blocks must be allocated to lba root
+  // and backref root during mkfs
+  for (size_t block = get_block_size() * 3;
+      block <= get_size() - get_block_size() * 3;
+      block += get_block_size() * 2) {
+    DEBUG("marking {}~{} used",
+      get_start_rbm_addr() + block,
+      get_block_size());
+    allocator->mark_extent_used(
+      get_start_rbm_addr() + block,
+      get_block_size());
+  }
+}
+#endif
+
+std::ostream &operator<<(std::ostream &out, const rbm_superblock_t &header)
+{
+  out << " rbm_superblock_t(size=" << header.size
        << ", block_size=" << header.block_size
        << ", feature=" << header.feature
        << ", journal_size=" << header.journal_size
        << ", crc=" << header.crc
        << ", config=" << header.config
-       << ", shard_num=" << header.shard_num;
+       << ", shard_num=" << header.shard_num
+       << ", end_to_end_data_protection=" << header.is_end_to_end_data_protection()
+       << ", device_block_size=" << header.nvme_block_size;
   for (auto p : header.shard_infos) {
     out << p;
   }

@@ -258,13 +258,13 @@ function cherry_pick_phase {
     fi
 
     set -x
-    git fetch "$upstream_remote"
+    git fetch "$upstream_remote" "refs/heads/${milestone}"
 
     if git show-ref --verify --quiet "refs/heads/$local_branch" ; then
         if [ "$FORCE" ] ; then
             if [ "$non_interactive" ] ; then
                 git checkout "$local_branch"
-                git reset --hard "${upstream_remote}/${milestone}"
+                git reset --hard FETCH_HEAD
             else
                 echo
                 echo "A local branch $local_branch already exists and the --force option was given."
@@ -276,7 +276,7 @@ function cherry_pick_phase {
                 [ "$yes_or_no_answer" ] && yes_or_no_answer="${yes_or_no_answer:0:1}"
                 if [ "$yes_or_no_answer" = "y" ] ; then
                     git checkout "$local_branch"
-                    git reset --hard "${upstream_remote}/${milestone}"
+                    git reset --hard FETCH_HEAD
                 else
                     info "OK, bailing out!"
                     false
@@ -289,10 +289,10 @@ function cherry_pick_phase {
             false
         fi
     else
-        git checkout "${upstream_remote}/${milestone}" -b "$local_branch"
+        git checkout -b "$local_branch" FETCH_HEAD
     fi
 
-    git fetch "$upstream_remote" "pull/$original_pr/head:pr-$original_pr"
+    git fetch "$upstream_remote" "$merge_commit_sha"
 
     set +x
     maybe_restore_set_x
@@ -1570,6 +1570,7 @@ redmine_url="$(number_to_url "redmine" "${issue}")"
 debug "Considering Redmine issue: $redmine_url - is it in the Backport tracker?"
 
 remote_api_output="$(curl --silent "${redmine_url}.json")"
+debug $remote_api_output
 tracker="$(echo "$remote_api_output" | jq -r '.issue.tracker.name')"
 if [ "$tracker" = "Backport" ]; then
     debug "Yes, $redmine_url is a Backport issue"
@@ -1580,7 +1581,7 @@ else
 fi
 
 debug "Looking up release/milestone of $redmine_url"
-milestone="$(echo "$remote_api_output" | jq -r '.issue.custom_fields[0].value')"
+milestone="$(echo "$remote_api_output" | jq -r '.issue.custom_fields[] | select(.id == 16) | .value')"
 if [ "$milestone" ] ; then
     debug "Release/milestone: $milestone"
 else
@@ -1749,9 +1750,9 @@ if [ "$TRACKER_PHASE" ] ; then
     desc_should_be="${backport_pr_url}"
     assignee_should_be="${redmine_user_id}"
     if [ "$EXISTING_PR" ] ; then
-        data_binary="{\"issue\":{\"description\":\"${desc_should_be}\",\"status_id\":${status_should_be}}}"
+        data_binary="{\"issue\":{\"description\":\"${desc_should_be}\",\"status_id\":${status_should_be},\"custom_fields\":[{\"id\":21,\"value\":\"${backport_pr_number}\"}]}}"
     else
-        data_binary="{\"issue\":{\"description\":\"${desc_should_be}\",\"status_id\":${status_should_be},\"assigned_to_id\":${assignee_should_be}}}"
+        data_binary="{\"issue\":{\"description\":\"${desc_should_be}\",\"status_id\":${status_should_be},\"assigned_to_id\":${assignee_should_be},\"custom_fields\":[{\"id\":21,\"value\":\"${backport_pr_number}\"}]}}"
     fi
     remote_api_status_code="$(curl --write-out '%{http_code}' --output /dev/null --silent -X PUT --header "Content-type: application/json" --data-binary "${data_binary}" "${redmine_url}.json?key=$redmine_key")"
     if [ "$FORCE" ] || [ "$EXISTING_PR" ] ; then 

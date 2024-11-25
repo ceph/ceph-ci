@@ -3,7 +3,7 @@
 <cd-alert-panel *ngIf="!isAlertmanagerConfigured"
                 type="info"
                 i18n>To enable Silences, please provide the URL to
-  the API of the Prometheus' Alertmanager as described in the
+  the API of the Prometheus' Alertmanager as described in the&nbsp;
   <cd-doc section="prometheus"></cd-doc>.</cd-alert-panel>
 
 <cd-table *ngIf="isAlertmanagerConfigured"
@@ -22,13 +22,14 @@
                     [selection]="selection"
                     [tableActions]="tableActions">
   </cd-table-actions>
-  <cd-table-key-value cdTableDetail
-                      *ngIf="expandedRow"
-                      [renderObjects]="true"
-                      [hideEmpty]="true"
-                      [appendParentKey]="false"
-                      [data]="expandedRow"
-                      [customCss]="customCss"
-                      [autoReload]="false">
-  </cd-table-key-value>
+  <ng-container *ngIf="expandedRow">
+    <cd-table-key-value *cdTableDetail
+                        [renderObjects]="true"
+                        [hideEmpty]="true"
+                        [appendParentKey]="false"
+                        [data]="expandedRow"
+                        [customCss]="customCss"
+                        [autoReload]="false">
+    </cd-table-key-value>
+  </ng-container>
 </cd-table>

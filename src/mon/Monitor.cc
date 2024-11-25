@@ -84,6 +84,7 @@
 #include "MgrStatMonitor.h"
 #include "ConfigMonitor.h"
 #include "KVMonitor.h"
+#include "NVMeofGwMon.h"
 #include "mon/HealthMonitor.h"
 #include "common/config.h"
 #include "common/cmdparse.h"
@@ -247,6 +248,7 @@ Monitor::Monitor(CephContext* cct_, string nm, MonitorDBStore *s,
   paxos_service[PAXOS_HEALTH].reset(new HealthMonitor(*this, *paxos, "health"));
   paxos_service[PAXOS_CONFIG].reset(new ConfigMonitor(*this, *paxos, "config"));
   paxos_service[PAXOS_KV].reset(new KVMonitor(*this, *paxos, "kv"));
+  paxos_service[PAXOS_NVMEGW].reset(new NVMeofGwMon(*this, *paxos, "nvmeofgw"));
 
   bool r = mon_caps.parse("allow *", NULL);
   ceph_assert(r);
@@ -534,6 +536,7 @@ CompatSet Monitor::get_supported_features()
   compat.incompat.insert(CEPH_MON_FEATURE_INCOMPAT_PACIFIC);
   compat.incompat.insert(CEPH_MON_FEATURE_INCOMPAT_QUINCY);
   compat.incompat.insert(CEPH_MON_FEATURE_INCOMPAT_REEF);
+  compat.incompat.insert(CEPH_MON_FEATURE_INCOMPAT_SQUID);
   return compat;
 }
 
@@ -2001,6 +2004,7 @@ void Monitor::handle_probe_reply(MonOpRequestRef op)
       dout(10) << " got newer/committed monmap epoch " << newmap->get_epoch()
 	       << ", mine was " << monmap->get_epoch() << dendl;
       int epoch_diff = newmap->get_epoch() - monmap->get_epoch();
+      dout(20) << " new monmap is " << *newmap  << dendl;
       delete newmap;
       monmap->decode(m->monmap_bl);
       dout(20) << "has_ever_joined: " << has_ever_joined << dendl;
@@ -2375,6 +2379,19 @@ void Monitor::collect_metadata(Metadata *m)
   for (auto& i : errs) {
     dout(1) << __func__ << " " << i.first << ": " << i.second << dendl;
   }
+
+  string ceph_version_when_created;
+  int r = store->read_meta("ceph_version_when_created", &ceph_version_when_created);
+  if (r < 0 || ceph_version_when_created.empty()) {
+    ceph_version_when_created = "";
+  }
+  (*m)["ceph_version_when_created"] = ceph_version_when_created;
+  string created_at;
+  r = store->read_meta("created_at", &created_at);
+  if (r < 0 || created_at.empty()) {
+    created_at = "";
+  }
+  (*m)["created_at"] = created_at;
 }
 
 void Monitor::finish_election()
@@ -2511,6 +2528,13 @@ void Monitor::apply_monmap_to_compatset_features()
     ceph_assert(HAVE_FEATURE(quorum_con_features, SERVER_REEF));
     new_features.incompat.insert(CEPH_MON_FEATURE_INCOMPAT_REEF);
   }
+  if (monmap_features.contains_all(ceph::features::mon::FEATURE_SQUID)) {
+    ceph_assert(ceph::features::mon::get_persistent().contains_all(
+           ceph::features::mon::FEATURE_SQUID));
+    // this feature should only ever be set if the quorum supports it.
+    ceph_assert(HAVE_FEATURE(quorum_con_features, SERVER_SQUID));
+    new_features.incompat.insert(CEPH_MON_FEATURE_INCOMPAT_SQUID);
+  }
 
   dout(5) << __func__ << dendl;
   _apply_compatset_features(new_features);
@@ -2548,6 +2572,9 @@ void Monitor::calc_quorum_requirements()
   }
   if (features.incompat.contains(CEPH_MON_FEATURE_INCOMPAT_REEF)) {
     required_features |= CEPH_FEATUREMASK_SERVER_REEF;
+  }
+  if (features.incompat.contains(CEPH_MON_FEATURE_INCOMPAT_SQUID)) {
+    required_features |= CEPH_FEATUREMASK_SERVER_SQUID;
   }
 
   // monmap
@@ -2647,6 +2674,7 @@ void Monitor::get_mon_status(Formatter *f)
   f->dump_int("rank", rank);
   f->dump_string("state", get_state_name());
   f->dump_int("election_epoch", get_epoch());
+  f->dump_int("uptime", get_uptime().count());
 
   f->open_array_section("quorum");
   for (set<int>::iterator p = quorum.begin(); p != quorum.end(); ++p) {
@@ -3591,7 +3619,10 @@ void Monitor::handle_command(MonOpRequestRef op)
     mgrmon()->dispatch(op);
     return;
   }
-
+  if (module == "nvme-gw"){
+      nvmegwmon()->dispatch(op);
+      return;
+  }
   if (prefix == "fsid") {
     if (f) {
       f->open_object_section("fsid");
@@ -4525,6 +4556,7 @@ void Monitor::_ms_dispatch(Message *m)
 void Monitor::dispatch_op(MonOpRequestRef op)
 {
   op->mark_event("mon:dispatch_op");
+
   MonSession *s = op->get_session();
   ceph_assert(s);
   if (s->closed) {
@@ -4637,6 +4669,11 @@ void Monitor::dispatch_op(MonOpRequestRef op)
     case MSG_MGR_BEACON:
       paxos_service[PAXOS_MGR]->dispatch(op);
       return;
+
+    case MSG_MNVMEOF_GW_BEACON:
+       paxos_service[PAXOS_NVMEGW]->dispatch(op);
+       return;
+
 
     // MgrStat
     case MSG_MON_MGR_REPORT:
@@ -5325,6 +5362,9 @@ void Monitor::handle_subscribe(MonOpRequestRef op)
     } else if (p->first.find("kv:") == 0) {
       kvmon()->check_sub(s->sub_map[p->first]);
     }
+    else if (p->first == "NVMeofGw") {
+        nvmegwmon()->check_sub(s->sub_map[p->first]);
+    }
   }
 
   if (reply) {
@@ -5682,7 +5722,12 @@ bool Monitor::_scrub(ScrubResult *r,
 
     bufferlist bl;
     int err = store->get(k.first, k.second, bl);
-    ceph_assert(err == 0);
+    if (err != 0) {
+      derr << __func__ << " store got: " << cpp_strerror(err)
+                       << " prefix: " << k.first << " key: " << k.second
+                       << dendl;
+      ceph_abort();
+    }
     
     uint32_t key_crc = bl.crc32c(0);
     dout(30) << __func__ << " " << k << " bl " << bl.length() << " bytes"
@@ -6376,7 +6421,9 @@ int Monitor::handle_auth_request(
       &auth_meta->connection_secret,
       &auth_meta->authorizer_challenge);
     if (isvalid) {
-      ms_handle_fast_authentication(con);
+      if (!ms_handle_fast_authentication(con)) {
+        return -EACCES;
+      }
       return 1;
     }
     if (!more && !was_challenge && auth_meta->authorizer_challenge) {
@@ -6497,7 +6544,9 @@ int Monitor::handle_auth_request(
   }
   if (r > 0 &&
       !s->authenticated) {
-    ms_handle_fast_authentication(con);
+    if (!ms_handle_fast_authentication(con)) {
+      return -EACCES;
+    }
   }
 
   dout(30) << " r " << r << " reply:\n";
@@ -6535,12 +6584,12 @@ void Monitor::ms_handle_accept(Connection *con)
   }
 }
 
-int Monitor::ms_handle_fast_authentication(Connection *con)
+bool Monitor::ms_handle_fast_authentication(Connection *con)
 {
   if (con->get_peer_type() == CEPH_ENTITY_TYPE_MON) {
     // mon <-> mon connections need no Session, and setting one up
     // creates an awkward ref cycle between Session and Connection.
-    return 1;
+    return true;
   }
 
   auto priv = con->get_priv();
@@ -6550,7 +6599,7 @@ int Monitor::ms_handle_fast_authentication(Connection *con)
     if (state == STATE_SHUTDOWN) {
       dout(10) << __func__ << " ignoring new con " << con << " (shutdown)" << dendl;
       con->mark_down();
-      return -EACCES;
+      return false;
     }
     s = session_map.new_session(
       entity_name_t(con->get_peer_type(), -1),  // we don't know yet
@@ -6568,11 +6617,10 @@ int Monitor::ms_handle_fast_authentication(Connection *con)
 	   << " " << *s << dendl;
 
   AuthCapsInfo &caps_info = con->get_peer_caps_info();
-  int ret = 0;
   if (caps_info.allow_all) {
     s->caps.set_allow_all();
     s->authenticated = true;
-    ret = 1;
+    return true;
   } else if (caps_info.caps.length()) {
     bufferlist::const_iterator p = caps_info.caps.cbegin();
     string str;
@@ -6581,22 +6629,19 @@ int Monitor::ms_handle_fast_authentication(Connection *con)
     } catch (const ceph::buffer::error &err) {
       derr << __func__ << " corrupt cap data for " << con->get_peer_entity_name()
 	   << " in auth db" << dendl;
-      str.clear();
-      ret = -EACCES;
+      return false;
     }
-    if (ret >= 0) {
-      if (s->caps.parse(str, NULL)) {
-	s->authenticated = true;
-	ret = 1;
-      } else {
-	derr << __func__ << " unparseable caps '" << str << "' for "
-	     << con->get_peer_entity_name() << dendl;
-	ret = -EACCES;
-      }
+    if (s->caps.parse(str, NULL)) {
+      s->authenticated = true;
+      return true;
+    } else {
+      derr << __func__ << " unparseable caps '" << str << "' for "
+           << con->get_peer_entity_name() << dendl;
+      return false;
     }
+  } else {
+    return false;
   }
-
-  return ret;
 }
 
 void Monitor::set_mon_crush_location(const string& loc)
@@ -6643,6 +6688,8 @@ void Monitor::notify_new_monmap(bool can_change_external_state, bool remove_rank
 
   if (monmap->stretch_mode_enabled) {
     try_engage_stretch_mode();
+  } else {
+    try_disable_stretch_mode();
   }
 
   if (is_stretch_mode()) {
@@ -6657,14 +6704,16 @@ void Monitor::notify_new_monmap(bool can_change_external_state, bool remove_rank
 void Monitor::set_elector_disallowed_leaders(bool allow_election)
 {
   set<int> dl;
+  // inherit dl from monmap
   for (auto name : monmap->disallowed_leaders) {
     dl.insert(monmap->get_rank(name));
-  }
-  if (is_stretch_mode()) {
-    for (auto name : monmap->stretch_marked_down_mons) {
-      dl.insert(monmap->get_rank(name));
-    }
-    dl.insert(monmap->get_rank(monmap->tiebreaker_mon));
+  } // unconditionally add stretch_marked_down_mons to the new dl copy
+  for (auto name : monmap->stretch_marked_down_mons) {
+    dl.insert(monmap->get_rank(name));
+  } // add the tiebreaker_mon incase it is not in monmap->disallowed_leaders
+  if (!monmap->tiebreaker_mon.empty() &&
+      monmap->contains(monmap->tiebreaker_mon)) {
+      dl.insert(monmap->get_rank(monmap->tiebreaker_mon));
   }
 
   bool disallowed_changed = elector.set_disallowed_leaders(dl);
@@ -6698,6 +6747,32 @@ void Monitor::try_engage_stretch_mode()
       crush->get_type_name(stretch_divider_id);
     disconnect_disallowed_stretch_sessions();
   }
+}
+struct CMonDisableStretchMode : public Context {
+  Monitor *m;
+  CMonDisableStretchMode(Monitor *mon) : m(mon) {}
+  void finish(int r) {
+    m->try_disable_stretch_mode();
+  }
+};
+void Monitor::try_disable_stretch_mode()
+{
+  dout(20) << __func__ << dendl;
+  if (!stretch_mode_engaged) return;
+  if (!osdmon()->is_readable()) {
+    dout(20) << "osdmon is not readable" << dendl;
+    osdmon()->wait_for_readable_ctx(new CMonDisableStretchMode(this));
+    return;
+  }
+  if (!osdmon()->osdmap.stretch_mode_enabled &&
+      !monmap->stretch_mode_enabled) {
+    dout(10) << "Disabling stretch mode!" << dendl;
+    stretch_mode_engaged = false;
+    stretch_bucket_divider.clear();
+    degraded_stretch_mode = false;
+    recovering_stretch_mode = false;
+  }
+
 }
 
 void Monitor::do_stretch_mode_election_work()
@@ -6755,6 +6830,7 @@ struct CMonGoRecovery : public Context {
 void Monitor::go_recovery_stretch_mode()
 {
   dout(20) << __func__ << dendl;
+  if (!is_stretch_mode()) return;
   dout(20) << "is_leader(): " << is_leader() << dendl;
   if (!is_leader()) return;
   dout(20) << "is_degraded_stretch_mode(): " << is_degraded_stretch_mode() << dendl;
@@ -6785,6 +6861,7 @@ void Monitor::go_recovery_stretch_mode()
 
 void Monitor::set_recovery_stretch_mode()
 {
+  if (!is_stretch_mode()) return;
   degraded_stretch_mode = true;
   recovering_stretch_mode = true;
   osdmon()->set_recovery_stretch_mode();
@@ -6793,6 +6870,7 @@ void Monitor::set_recovery_stretch_mode()
 void Monitor::maybe_go_degraded_stretch_mode()
 {
   dout(20) << __func__ << dendl;
+  if (!is_stretch_mode()) return;
   if (is_degraded_stretch_mode()) return;
   if (!is_leader()) return;
   if (dead_mon_buckets.empty()) return;
@@ -6831,6 +6909,7 @@ void Monitor::trigger_degraded_stretch_mode(const set<string>& dead_mons,
 					    const set<int>& dead_buckets)
 {
   dout(20) << __func__ << dendl;
+  if (!is_stretch_mode()) return;
   ceph_assert(osdmon()->is_writeable());
   ceph_assert(monmon()->is_writeable());
 
@@ -6851,6 +6930,7 @@ void Monitor::trigger_degraded_stretch_mode(const set<string>& dead_mons,
 void Monitor::set_degraded_stretch_mode()
 {
   dout(20) << __func__ << dendl;
+  if (!is_stretch_mode()) return;
   degraded_stretch_mode = true;
   recovering_stretch_mode = false;
   osdmon()->set_degraded_stretch_mode();
@@ -6868,6 +6948,7 @@ struct CMonGoHealthy : public Context {
 void Monitor::trigger_healthy_stretch_mode()
 {
   dout(20) << __func__ << dendl;
+  if (!is_stretch_mode()) return;
   if (!is_degraded_stretch_mode()) return;
   if (!is_leader()) return;
   if (!osdmon()->is_writeable()) {
@@ -6888,6 +6969,7 @@ void Monitor::trigger_healthy_stretch_mode()
 
 void Monitor::set_healthy_stretch_mode()
 {
+  if (!is_stretch_mode()) return;
   degraded_stretch_mode = false;
   recovering_stretch_mode = false;
   osdmon()->set_healthy_stretch_mode();

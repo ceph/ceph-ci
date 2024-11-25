@@ -52,8 +52,9 @@ def write_new(
     os.rename(tempname, destination)
 
 
-def populate_files(config_dir, config_files, uid, gid):
-    # type: (str, Dict, int, int) -> None
+def populate_files(
+    config_dir: str, config_files: Dict, uid: int, gid: int
+) -> None:
     """create config files for different services"""
     for fname in config_files:
         config_file = os.path.join(config_dir, fname)
@@ -71,8 +72,7 @@ def touch(
         os.chown(file_path, uid, gid)
 
 
-def write_tmp(s, uid, gid):
-    # type: (str, int, int) -> IO[str]
+def write_tmp(s: str, uid: int, gid: int) -> IO[str]:
     tmp_f = tempfile.NamedTemporaryFile(mode='w', prefix='ceph-tmp')
     os.fchown(tmp_f.fileno(), uid, gid)
     tmp_f.write(s)
@@ -81,14 +81,13 @@ def write_tmp(s, uid, gid):
     return tmp_f
 
 
-def makedirs(dir, uid, gid, mode):
-    # type: (str, int, int, int) -> None
-    if not os.path.exists(dir):
-        os.makedirs(dir, mode=mode)
+def makedirs(dest: Union[Path, str], uid: int, gid: int, mode: int) -> None:
+    if not os.path.exists(dest):
+        os.makedirs(dest, mode=mode)
     else:
-        os.chmod(dir, mode)
-    os.chown(dir, uid, gid)
-    os.chmod(dir, mode)  # the above is masked by umask...
+        os.chmod(dest, mode)
+    os.chown(dest, uid, gid)
+    os.chmod(dest, mode)  # the above is masked by umask...
 
 
 def recursive_chown(path: str, uid: int, gid: int) -> None:
@@ -98,8 +97,7 @@ def recursive_chown(path: str, uid: int, gid: int) -> None:
             os.chown(os.path.join(dirpath, filename), uid, gid)
 
 
-def read_file(path_list, file_name=''):
-    # type: (List[str], str) -> str
+def read_file(path_list: List[str], file_name: str = '') -> str:
     """Returns the content of the first file found within the `path_list`
 
     :param path_list: list of file paths to search
@@ -124,14 +122,12 @@ def read_file(path_list, file_name=''):
     return 'Unknown'
 
 
-def pathify(p):
-    # type: (str) -> str
+def pathify(p: str) -> str:
     p = os.path.expanduser(p)
     return os.path.abspath(p)
 
 
-def get_file_timestamp(fn):
-    # type: (str) -> Optional[str]
+def get_file_timestamp(fn: str) -> Optional[str]:
     try:
         mt = os.path.getmtime(fn)
         return datetime.datetime.fromtimestamp(
@@ -139,3 +135,25 @@ def get_file_timestamp(fn):
         ).strftime(DATEFMT)
     except Exception:
         return None
+
+
+def make_run_dir(fsid: str, uid: int, gid: int) -> None:
+    makedirs(f'/var/run/ceph/{fsid}', uid, gid, 0o770)
+
+
+def unlink_file(
+    path: Union[str, Path],
+    missing_ok: bool = False,
+    ignore_errors: bool = False,
+) -> None:
+    """Wrapper around unlink that can either ignore missing files or all
+    errors.
+    """
+    try:
+        Path(path).unlink()
+    except FileNotFoundError:
+        if not missing_ok and not ignore_errors:
+            raise
+    except Exception:
+        if not ignore_errors:
+            raise

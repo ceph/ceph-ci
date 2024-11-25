@@ -27,11 +27,49 @@ struct ConnectionPipeline {
       "ConnectionPipeline::await_map";
   } await_map;
 
-  struct GetPG : OrderedExclusivePhaseT<GetPG> {
+  struct GetPGMapping : OrderedExclusivePhaseT<GetPGMapping> {
     static constexpr auto type_name =
-      "ConnectionPipeline::get_pg";
-  } get_pg;
+      "ConnectionPipeline::get_pg_mapping";
+  } get_pg_mapping;
 };
+
+struct PerShardPipeline {
+  struct CreateOrWaitPG : OrderedExclusivePhaseT<CreateOrWaitPG> {
+    static constexpr auto type_name =
+      "PerShardPipeline::create_or_wait_pg";
+  } create_or_wait_pg;
+};
+
+struct PGPeeringPipeline {
+  struct AwaitMap : OrderedExclusivePhaseT<AwaitMap> {
+    static constexpr auto type_name = "PeeringEvent::PGPipeline::await_map";
+  } await_map;
+  struct Process : OrderedExclusivePhaseT<Process> {
+    static constexpr auto type_name = "PeeringEvent::PGPipeline::process";
+  } process;
+};
+
+struct CommonPGPipeline {
+  struct WaitForActive : OrderedExclusivePhaseT<WaitForActive> {
+    static constexpr auto type_name = "CommonPGPipeline:::wait_for_active";
+  } wait_for_active;
+  struct RecoverMissing : OrderedConcurrentPhaseT<RecoverMissing> {
+    static constexpr auto type_name = "CommonPGPipeline::recover_missing";
+  } recover_missing;
+  struct CheckAlreadyCompleteGetObc : OrderedExclusivePhaseT<CheckAlreadyCompleteGetObc> {
+    static constexpr auto type_name = "CommonPGPipeline::check_already_complete_get_obc";
+  } check_already_complete_get_obc;
+  struct LockOBC : OrderedConcurrentPhaseT<LockOBC> {
+    static constexpr auto type_name = "CommonPGPipeline::lock_obc";
+  } lock_obc;
+  struct Process : OrderedExclusivePhaseT<Process> {
+    static constexpr auto type_name = "CommonPGPipeline::process";
+  } process;
+  struct WaitRepop : OrderedConcurrentPhaseT<WaitRepop> {
+    static constexpr auto type_name = "ClientRequest::PGPipeline::wait_repop";
+  } wait_repop;
+};
+
 
 enum class OperationTypeCode {
   client_request = 0,
@@ -43,10 +81,16 @@ enum class OperationTypeCode {
   background_recovery_sub,
   internal_client_request,
   historic_client_request,
+  historic_slow_client_request,
   logmissing_request,
   logmissing_request_reply,
   snaptrim_event,
   snaptrimobj_subevent,
+  scrub_requested,
+  scrub_message,
+  scrub_find_range,
+  scrub_reserve_range,
+  scrub_scan,
   last_op
 };
 
@@ -60,10 +104,16 @@ static constexpr const char* const OP_NAMES[] = {
   "background_recovery_sub",
   "internal_client_request",
   "historic_client_request",
+  "historic_slow_client_request",
   "logmissing_request",
   "logmissing_request_reply",
   "snaptrim_event",
   "snaptrimobj_subevent",
+  "scrub_requested",
+  "scrub_message",
+  "scrub_find_range",
+  "scrub_reserve_range",
+  "scrub_scan",
 };
 
 // prevent the addition of OperationTypeCode-s with no matching OP_NAMES entry:
@@ -136,11 +186,15 @@ protected:
     get_event<EventT>().trigger(*that(), std::forward<Args>(args)...);
   }
 
+  template <class BlockingEventT>
+  typename BlockingEventT::template Trigger<T>
+  get_trigger() {
+    return {get_event<BlockingEventT>(), *that()};
+  }
+
   template <class BlockingEventT, class InterruptorT=void, class F>
   auto with_blocking_event(F&& f) {
-    auto ret = std::forward<F>(f)(typename BlockingEventT::template Trigger<T>{
-      get_event<BlockingEventT>(), *that()
-    });
+    auto ret = std::forward<F>(f)(get_trigger<BlockingEventT>());
     if constexpr (std::is_same_v<InterruptorT, void>) {
       return ret;
     } else {
@@ -179,6 +233,12 @@ protected:
     });
   }
 
+  template <class StageT>
+  void enter_stage_sync(StageT& stage) {
+    that()->get_handle().template enter_sync<T>(
+        stage, this->template get_trigger<typename StageT::BlockingEvent>());
+  }
+
   template <class OpT>
   friend class crimson::os::seastore::OperationProxyT;
 
@@ -198,12 +258,15 @@ struct OSDOperationRegistry : OperationRegistryT<
   void do_stop() override;
 
   void put_historic(const class ClientRequest& op);
+  void _put_historic(
+    op_list& list,
+    const class ClientRequest& op,
+    uint64_t max);
 
   size_t dump_historic_client_requests(ceph::Formatter* f) const;
   size_t dump_slowest_historic_client_requests(ceph::Formatter* f) const;
 
 private:
-  op_list::const_iterator last_of_recents;
   size_t num_recent_ops = 0;
   size_t num_slow_ops = 0;
 };
@@ -239,7 +302,10 @@ class OperationThrottler : public BlockerT<OperationThrottler>,
     crimson::osd::scheduler::params_t params,
     F &&f) {
     return with_throttle(op, params, f).then([this, params, op, f](bool cont) {
-      return cont ? with_throttle_while(op, params, f) : seastar::now();
+      return cont
+	? seastar::yield().then([params, op, f, this] {
+	  return with_throttle_while(op, params, f); })
+	: seastar::now();
     });
   }
 

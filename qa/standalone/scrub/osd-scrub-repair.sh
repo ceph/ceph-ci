@@ -16,6 +16,7 @@
 #
 set -x
 source $CEPH_ROOT/qa/standalone/ceph-helpers.sh
+source $CEPH_ROOT/qa/standalone/scrub/scrub-helpers.sh
 
 if [ `uname` = FreeBSD ]; then
     # erasure coding overwrites are only tested on Bluestore
@@ -160,7 +161,7 @@ function scrub_and_not_schedule() {
     #
     local pg=$(get_pg $poolname SOMETHING)
     local last_scrub=$(get_last_scrub_stamp $pg)
-    ceph pg scrub $pg
+    ceph tell $pg schedule-scrub
 
     #
     # 2) Assure the scrub is not scheduled
@@ -329,8 +330,7 @@ function initiate_and_fetch_state() {
     date  --rfc-3339=ns
 
     # note: must initiate a "regular" (periodic) deep scrub - not an operator-initiated one
-    env CEPH_ARGS= ceph --format json daemon $(get_asok_path $the_osd) deep_scrub "$pgid"
-    env CEPH_ARGS= ceph --format json daemon $(get_asok_path $the_osd) scrub "$pgid"
+    env CEPH_ARGS= ceph --format json daemon $(get_asok_path $the_osd) schedule-deep-scrub "$pgid"
 
     # wait for 'scrubbing' to appear
     for ((i=0; i < 80; i++)); do
@@ -436,19 +436,16 @@ function TEST_auto_repair_bluestore_tag() {
 
 function TEST_auto_repair_bluestore_basic() {
     local dir=$1
-    local poolname=testpool
+    local -A cluster_conf=(
+        ['osds_num']="3" 
+        ['pgs_in_pool']="1"
+        ['pool_name']="testpool"
+        ['extras']=" --osd_scrub_auto_repair=true"
+    )
+    standard_scrub_cluster $dir cluster_conf
+    local poolid=${cluster_conf['pool_id']}
+    local poolname=${cluster_conf['pool_name']}
 
-    # Launch a cluster with 5 seconds scrub interval
-    run_mon $dir a || return 1
-    run_mgr $dir x || return 1
-    local ceph_osd_args="--osd-scrub-auto-repair=true \
-            --osd_deep_scrub_randomize_ratio=0 \
-            --osd-scrub-interval-randomize-ratio=0"
-    for id in $(seq 0 2) ; do
-        run_osd $dir $id $ceph_osd_args || return 1
-    done
-
-    create_pool $poolname 1 1 || return 1
     ceph osd pool set $poolname size 2
     wait_for_clean || return 1
 
@@ -460,12 +457,14 @@ function TEST_auto_repair_bluestore_basic() {
     # Remove the object from one shard physically
     # Restarted osd get $ceph_osd_args passed
     objectstore_tool $dir $(get_not_primary $poolname SOMETHING) SOMETHING remove || return 1
+    ceph tell osd.* config set osd_scrub_auto_repair true
 
     local pgid=$(get_pg $poolname SOMETHING)
     local primary=$(get_primary $poolname SOMETHING)
     local last_scrub_stamp="$(get_last_scrub_stamp $pgid)"
-    ceph tell $pgid deep_scrub
-    ceph tell $pgid scrub
+    # note: the scrub initiated must be a "regular" (periodic) deep scrub - not an
+    # operator-initiated one (as there's no 'auto-repair' for the latter)
+    ceph tell $pgid schedule-deep-scrub
 
     # Wait for auto repair
     wait_for_scrub $pgid "$last_scrub_stamp" || return 1
@@ -510,12 +509,16 @@ function TEST_auto_repair_bluestore_scrub() {
     local pgid=$(get_pg $poolname SOMETHING)
     local primary=$(get_primary $poolname SOMETHING)
     local last_scrub_stamp="$(get_last_scrub_stamp $pgid)"
-    ceph tell $pgid scrub
+    ceph tell $pgid schedule-scrub
 
     # Wait for scrub -> auto repair
     wait_for_scrub $pgid "$last_scrub_stamp" || return 1
     ceph pg dump pgs
     # Actually this causes 2 scrubs, so we better wait a little longer
+    sleep 2
+    ceph pg dump pgs
+    sleep 2
+    ceph pg dump pgs
     sleep 5
     wait_for_clean || return 1
     ceph pg dump pgs
@@ -567,8 +570,7 @@ function TEST_auto_repair_bluestore_failed() {
     local pgid=$(get_pg $poolname obj1)
     local primary=$(get_primary $poolname obj1)
     local last_scrub_stamp="$(get_last_scrub_stamp $pgid)"
-    ceph tell $pgid deep_scrub
-    ceph tell $pgid scrub
+    ceph tell $pgid schedule-deep-scrub
 
     # Wait for auto repair
     wait_for_scrub $pgid "$last_scrub_stamp" || return 1
@@ -631,12 +633,12 @@ function TEST_auto_repair_bluestore_failed_norecov() {
     # obj2 can't be repaired
     objectstore_tool $dir $(get_not_primary $poolname SOMETHING) obj2 remove || return 1
     objectstore_tool $dir $(get_primary $poolname SOMETHING) obj2 rm-attr _ || return 1
+    ceph tell osd.* config set osd_scrub_auto_repair true
 
     local pgid=$(get_pg $poolname obj1)
     local primary=$(get_primary $poolname obj1)
     local last_scrub_stamp="$(get_last_scrub_stamp $pgid)"
-    ceph tell $pgid deep_scrub
-    ceph tell $pgid scrub
+    ceph tell $pgid schedule-deep-scrub
 
     # Wait for auto repair
     wait_for_scrub $pgid "$last_scrub_stamp" || return 1
@@ -1170,7 +1172,7 @@ function TEST_corrupt_scrub_replicated() {
     err_strings[14]="log_channel[(]cluster[)] log [[]ERR[]] : [0-9]*[.]0 shard 1 soid 3:ffdb2004:::ROBJ9:head : candidate size 1 info size 7 mismatch"
     err_strings[15]="log_channel[(]cluster[)] log [[]ERR[]] : [0-9]*[.]0 shard 1 soid 3:ffdb2004:::ROBJ9:head : object info inconsistent "
     err_strings[16]="log_channel[(]cluster[)] log [[]ERR[]] : scrub [0-9]*[.]0 3:c0c86b1d:::ROBJ14:head : no '_' attr"
-    err_strings[17]="log_channel[(]cluster[)] log [[]ERR[]] : scrub [0-9]*[.]0 3:5c7b2c47:::ROBJ16:head : can't decode 'snapset' attr .* no longer understand old encoding version 3 < 97: Malformed input"
+    err_strings[17]="log_channel[(]cluster[)] log [[]ERR[]] : scrub [0-9]*[.]0 3:5c7b2c47:::ROBJ16:head : can't decode 'snapset' attr .* v=3 cannot decode .* Malformed input"
     err_strings[18]="log_channel[(]cluster[)] log [[]ERR[]] : [0-9]*[.]0 scrub : stat mismatch, got 19/19 objects, 0/0 clones, 18/19 dirty, 18/19 omap, 0/0 pinned, 0/0 hit_set_archive, 0/0 whiteouts, 1049713/1049720 bytes, 0/0 manifest objects, 0/0 hit_set_archive bytes."
     err_strings[19]="log_channel[(]cluster[)] log [[]ERR[]] : [0-9]*[.]0 scrub 1 missing, 8 inconsistent objects"
     err_strings[20]="log_channel[(]cluster[)] log [[]ERR[]] : [0-9]*[.]0 scrub 18 errors"
@@ -2149,7 +2151,7 @@ EOF
     err_strings[32]="log_channel[(]cluster[)] log [[]ERR[]] : [0-9]*[.]0 shard 0 soid 3:ffdb2004:::ROBJ9:head : candidate size 3 info size 7 mismatch"
     err_strings[33]="log_channel[(]cluster[)] log [[]ERR[]] : [0-9]*[.]0 shard 0 soid 3:ffdb2004:::ROBJ9:head : object info inconsistent "
     err_strings[34]="log_channel[(]cluster[)] log [[]ERR[]] : deep-scrub [0-9]*[.]0 3:c0c86b1d:::ROBJ14:head : no '_' attr"
-    err_strings[35]="log_channel[(]cluster[)] log [[]ERR[]] : deep-scrub [0-9]*[.]0 3:5c7b2c47:::ROBJ16:head : can't decode 'snapset' attr .* no longer understand old encoding version 3 < 97: Malformed input"
+    err_strings[35]="log_channel[(]cluster[)] log [[]ERR[]] : deep-scrub [0-9]*[.]0 3:5c7b2c47:::ROBJ16:head : can't decode 'snapset' attr .* v=3 cannot decode .* Malformed input"
     err_strings[36]="log_channel[(]cluster[)] log [[]ERR[]] : [0-9]*[.]0 deep-scrub : stat mismatch, got 19/19 objects, 0/0 clones, 18/19 dirty, 18/19 omap, 0/0 pinned, 0/0 hit_set_archive, 0/0 whiteouts, 1049715/1049716 bytes, 0/0 manifest objects, 0/0 hit_set_archive bytes."
     err_strings[37]="log_channel[(]cluster[)] log [[]ERR[]] : [0-9]*[.]0 deep-scrub 1 missing, 11 inconsistent objects"
     err_strings[38]="log_channel[(]cluster[)] log [[]ERR[]] : [0-9]*[.]0 deep-scrub 35 errors"
@@ -5751,11 +5753,13 @@ function TEST_corrupt_scrub_erasure_overwrites() {
 
 #
 # Test to make sure that a periodic scrub won't cause deep-scrub info to be lost
+# Update 2024: this functionality was removed from the code. The test will be skipped.
 #
 function TEST_periodic_scrub_replicated() {
     local dir=$1
     local poolname=psr_pool
     local objname=POBJ
+    return 0
 
     run_mon $dir a --osd_pool_default_size=2 || return 1
     run_mgr $dir x || return 1
@@ -5792,12 +5796,13 @@ function TEST_periodic_scrub_replicated() {
 
     flush_pg_stats
     local last_scrub=$(get_last_scrub_stamp $pg)
-    # Fake a schedule scrub
-    ceph tell $pg scrub || return 1
+    # Fake a scheduled deep scrub
+    ceph tell $pg schedule-scrub || return 1
     # Wait for schedule regular scrub
     wait_for_scrub $pg "$last_scrub"
 
     # It needed to be upgraded
+    # update 2024: the "upgrade" functionality has been removed
     grep -q "Deep scrub errors, upgrading scrub to deep-scrub" $dir/osd.${primary}.log || return 1
 
     # Bad object still known
@@ -5811,7 +5816,7 @@ function TEST_periodic_scrub_replicated() {
     sleep 5
 
     # Fake a schedule scrub
-    ceph tell $pg scrub || return 1
+    ceph tell $pg schedule-scrub || return 1
     # Wait for schedule regular scrub
     # to notice scrub and skip it
     local found=false
@@ -5828,7 +5833,7 @@ function TEST_periodic_scrub_replicated() {
 
     flush_pg_stats
     # Request a regular scrub and it will be done
-    pg_scrub $pg
+    pg_schedule_scrub $pg
     grep -q "Regular scrub request, deep-scrub details will be lost" $dir/osd.${primary}.log || return 1
 
     # deep-scrub error is no longer present
@@ -5885,7 +5890,7 @@ function TEST_scrub_warning() {
       else
         overdue_seconds=$conf_overdue_seconds
       fi
-      ceph tell ${i}.0 scrub $(expr ${overdue_seconds} + ${i}00) || return 1
+      ceph tell ${i}.0 schedule-scrub $(expr ${overdue_seconds} + ${i}00) || return 1
     done
     # Fake schedule deep scrubs
     for i in $(seq $(expr $scrubs + 1) $(expr $scrubs + $deep_scrubs))
@@ -5896,7 +5901,7 @@ function TEST_scrub_warning() {
       else
         overdue_seconds=$conf_overdue_seconds
       fi
-      ceph tell ${i}.0 deep_scrub $(expr ${overdue_seconds} + ${i}00) || return 1
+      ceph tell ${i}.0 schedule-deep-scrub $(expr ${overdue_seconds} + ${i}00) || return 1
     done
     flush_pg_stats
 
@@ -5905,7 +5910,7 @@ function TEST_scrub_warning() {
     ceph health | grep -q " pgs not deep-scrubbed in time" || return 1
     ceph health | grep -q " pgs not scrubbed in time" || return 1
 
-    # note that the 'ceph tell pg deep_scrub' command now also sets the regular scrub
+    # note that the 'ceph tell pg deep-scrub' command now also sets the regular scrub
     # time-stamp. I.e. - all 'late for deep scrubbing' pgs are also late for
     # regular scrubbing. For now, we'll allow both responses.
     COUNT=$(ceph health detail | grep "not scrubbed since" | wc -l)
@@ -6222,15 +6227,15 @@ function TEST_request_scrub_priority() {
         otherpgs="${otherpgs}${opg} "
         local other_last_scrub=$(get_last_scrub_stamp $pg)
         # Fake a schedule scrub
-        ceph tell $opg scrub $opg || return 1
+        ceph tell $opg schedule-scrub $opg || return 1
     done
 
     sleep 15
     flush_pg_stats
 
-    # Request a regular scrub and it will be done
+    # Force a shallow scrub and it will be done
     local last_scrub=$(get_last_scrub_stamp $pg)
-    ceph pg scrub $pg
+    ceph tell $pg scrub || return 1
 
     ceph osd unset noscrub || return 1
     ceph osd unset nodeep-scrub || return 1
@@ -6244,6 +6249,254 @@ function TEST_request_scrub_priority() {
 
     # Verify that the requested scrub ran first
     grep "log_channel.*scrub ok" $dir/osd.${primary}.log | grep -v purged_snaps | head -1 | sed 's/.*[[]DBG[]]//' | grep -q $pg || return 1
+}
+
+#
+# Testing the "split scrub store" feature: shallow scrubs do not
+# purge deep errors from the store.
+#
+# Corrupt one copy of a replicated pool, creating both shallow and deep errors.
+# Then shallow-scrub the pool and verify that the deep errors are still present.
+#
+function TEST_dual_store_replicated_cluster() {
+    local dir=$1
+    local poolname=csr_pool
+    local total_objs=19
+    local extr_dbg=1 # note: 3 and above leave some temp files around
+
+    run_mon $dir a --osd_pool_default_size=2 || return 1
+    run_mgr $dir x --mgr_stats_period=1 || return 1
+    local ceph_osd_args="--osd-scrub-interval-randomize-ratio=0 --osd-deep-scrub-randomize-ratio=0 "
+    ceph_osd_args+="--osd_scrub_backoff_ratio=0 --osd_stats_update_period_not_scrubbing=3 "
+    ceph_osd_args+="--osd_stats_update_period_scrubbing=2 --osd_op_queue=wpq --osd_scrub_auto_repair=0 "
+    for osd in $(seq 0 1)
+    do
+      run_osd $dir $osd $ceph_osd_args || return 1
+    done
+
+    create_rbd_pool || return 1
+    wait_for_clean || return 1
+
+    create_pool foo 1 || return 1
+    create_pool $poolname 1 1 || return 1
+    wait_for_clean || return 1
+
+    ceph osd pool set $poolname noscrub 1
+    ceph osd pool set $poolname nodeep-scrub 1
+
+    for i in $(seq 1 $total_objs) ; do
+        objname=ROBJ${i}
+        add_something $dir $poolname $objname || return 1
+
+        rados --pool $poolname setomapheader $objname hdr-$objname || return 1
+        rados --pool $poolname setomapval $objname key-$objname val-$objname || return 1
+    done
+
+    # Increase file 1 MB + 1KB
+    dd if=/dev/zero of=$dir/new.ROBJ19 bs=1024 count=1025
+    rados --pool $poolname put $objname $dir/new.ROBJ19 || return 1
+    rm -f $dir/new.ROBJ19
+
+    local pg=$(get_pg $poolname ROBJ0)
+    local primary=$(get_primary $poolname ROBJ0)
+
+    # Compute an old omap digest and save oi
+    CEPH_ARGS='' ceph daemon $(get_asok_path osd.0) \
+        config set osd_deep_scrub_update_digest_min_age 0
+    CEPH_ARGS='' ceph daemon $(get_asok_path osd.1) \
+        config set osd_deep_scrub_update_digest_min_age 0
+    pg_deep_scrub $pg
+
+    for i in $(seq 1 $total_objs) ; do
+        objname=ROBJ${i}
+
+        # Alternate corruption between osd.0 and osd.1
+        local osd=$(expr $i % 2)
+
+        case $i in
+        1)
+            # Size (deep scrub data_digest too)
+            local payload=UVWXYZZZ
+            echo $payload > $dir/CORRUPT
+            objectstore_tool $dir $osd $objname set-bytes $dir/CORRUPT || return 1
+            ;;
+
+        2)
+            # digest (deep scrub only)
+            local payload=UVWXYZ
+            echo $payload > $dir/CORRUPT
+            objectstore_tool $dir $osd $objname set-bytes $dir/CORRUPT || return 1
+            ;;
+
+        3)
+             # missing
+             objectstore_tool $dir $osd $objname remove || return 1
+             ;;
+
+         4)
+             # Modify omap value (deep scrub only)
+             objectstore_tool $dir $osd $objname set-omap key-$objname $dir/CORRUPT || return 1
+             ;;
+
+         5)
+            # Delete omap key (deep scrub only)
+            objectstore_tool $dir $osd $objname rm-omap key-$objname || return 1
+            ;;
+
+         6)
+            # Add extra omap key (deep scrub only)
+            echo extra > $dir/extra-val
+            objectstore_tool $dir $osd $objname set-omap key2-$objname $dir/extra-val || return 1
+            rm $dir/extra-val
+            ;;
+
+         7)
+            # Modify omap header (deep scrub only)
+            echo -n newheader > $dir/hdr
+            objectstore_tool $dir $osd $objname set-omaphdr $dir/hdr || return 1
+            rm $dir/hdr
+            ;;
+
+         8)
+            rados --pool $poolname setxattr $objname key1-$objname val1-$objname || return 1
+            rados --pool $poolname setxattr $objname key2-$objname val2-$objname || return 1
+
+            # Break xattrs
+            echo -n bad-val > $dir/bad-val
+            objectstore_tool $dir $osd $objname set-attr _key1-$objname $dir/bad-val || return 1
+            objectstore_tool $dir $osd $objname rm-attr _key2-$objname || return 1
+            echo -n val3-$objname > $dir/newval
+            objectstore_tool $dir $osd $objname set-attr _key3-$objname $dir/newval || return 1
+            rm $dir/bad-val $dir/newval
+            ;;
+
+        9)
+            objectstore_tool $dir $osd $objname get-attr _ > $dir/robj9-oi
+            echo -n D > $dir/change
+            rados --pool $poolname put $objname $dir/change
+            objectstore_tool $dir $osd $objname set-attr _ $dir/robj9-oi
+            rm $dir/oi $dir/change
+            ;;
+
+          # ROBJ10 must be handled after digests are re-computed by a deep scrub below
+          # ROBJ11 must be handled with config change before deep scrub
+          # ROBJ12 must be handled with config change before scrubs
+          # ROBJ13 must be handled before scrubs
+
+        14)
+            echo -n bad-val > $dir/bad-val
+            objectstore_tool $dir 0 $objname set-attr _ $dir/bad-val || return 1
+            objectstore_tool $dir 1 $objname rm-attr _ || return 1
+            rm $dir/bad-val
+            ;;
+
+        15)
+            objectstore_tool $dir $osd $objname rm-attr _ || return 1
+            ;;
+
+        16)
+            objectstore_tool $dir 0 $objname rm-attr snapset || return 1
+            echo -n bad-val > $dir/bad-val
+            objectstore_tool $dir 1 $objname set-attr snapset $dir/bad-val || return 1
+	    ;;
+
+	17)
+	    # Deep-scrub only (all replicas are diffent than the object info
+           local payload=ROBJ17
+           echo $payload > $dir/new.ROBJ17
+	   objectstore_tool $dir 0 $objname set-bytes $dir/new.ROBJ17 || return 1
+	   objectstore_tool $dir 1 $objname set-bytes $dir/new.ROBJ17 || return 1
+	   ;;
+
+	18)
+	    # Deep-scrub only (all replicas are diffent than the object info
+           local payload=ROBJ18
+           echo $payload > $dir/new.ROBJ18
+	   objectstore_tool $dir 0 $objname set-bytes $dir/new.ROBJ18 || return 1
+	   objectstore_tool $dir 1 $objname set-bytes $dir/new.ROBJ18 || return 1
+	   # Make one replica have a different object info, so a full repair must happen too
+	   objectstore_tool $dir $osd $objname corrupt-info || return 1
+	   ;;
+
+	19)
+	   # Set osd-max-object-size smaller than this object's size
+
+        esac
+    done
+
+    local pg=$(get_pg $poolname ROBJ0)
+
+    ceph tell osd.\* injectargs -- --osd-max-object-size=1048576
+
+    inject_eio rep data $poolname ROBJ11 $dir 0 || return 1 # shard 0 of [1, 0], osd.1
+    inject_eio rep mdata $poolname ROBJ12 $dir 1 || return 1 # shard 1 of [1, 0], osd.0
+    inject_eio rep data $poolname ROBJ13 $dir 0 || return 1 # shard 0 of [1, 0], osd.1
+
+    # first sequence: the final shallow scrub should not override any of the deep errors
+    pg_scrub $pg
+    (( extr_dbg >= 3 )) && rados list-inconsistent-obj $pg | python3 -c "$sortkeys" | jq '.'  > /tmp/WQR_1.json
+    pg_scrub $pg
+    (( extr_dbg >= 3 )) && rados list-inconsistent-obj $pg | python3 -c "$sortkeys" | jq '.'  > /tmp/WQR_1b.json
+    rados list-inconsistent-obj $pg | jq "$jqfilter" | jq '.inconsistents' | python3 -c "$sortkeys" > $dir/sh1_results.json
+    (( extr_dbg >= 3 )) && rados list-inconsistent-obj $pg | jq "$jqfilter" | jq '.inconsistents' | \
+        python3 -c "$sortkeys" > /tmp/WQR_1b_s.json
+
+    pg_deep_scrub $pg
+    (( extr_dbg >= 3 )) && rados list-inconsistent-obj $pg | python3 -c "$sortkeys" | jq '.'  > /tmp/WQR_2.json
+    rados list-inconsistent-obj $pg | jq "$jqfilter" | jq '.inconsistents' | python3 -c "$sortkeys" > $dir/dp_results.json
+    (( extr_dbg >= 3 )) && rados list-inconsistent-obj $pg | jq "$jqfilter" | jq '.inconsistents' | \
+        python3 -c "$sortkeys" > /tmp/WQR_2s.json
+
+    pg_scrub $pg
+    (( extr_dbg >= 3 )) && rados list-inconsistent-obj $pg | python3 -c "$sortkeys" | jq '.'  > /tmp/WQR_3.json
+    rados list-inconsistent-obj $pg | jq "$jqfilter" | jq '.inconsistents' | python3 -c "$sortkeys" > $dir/sh2_results.json
+    (( extr_dbg >= 3 )) && rados list-inconsistent-obj $pg | jq "$jqfilter" | jq '.inconsistents' | \
+        python3 -c "$sortkeys" > /tmp/WQR_3s.json
+
+    diff -u $dir/dp_results.json $dir/sh2_results.json || return 1
+
+    # inject a read error, which is a special case: the scrub encountering the read error
+    # would override the previously collected shard info.
+    inject_eio rep mdata $poolname ROBJ13 $dir 1 || return 1 # shard 1 of [1, 0], osd.0
+
+    pg_deep_scrub $pg
+
+    (( extr_dbg >= 3 )) && rados list-inconsistent-obj $pg | python3 -c "$sortkeys" | jq '.'  > /tmp/WQR_4.json
+    (( extr_dbg >= 3 )) && rados list-inconsistent-obj $pg | jq "$jqfilter" | jq '.inconsistents' | \
+        python3 -c "$sortkeys" > /tmp/WQR_4s_w13.json
+    (( extr_dbg >= 3 )) && rados list-inconsistent-obj $pg | jq "$jqfilter" | \
+        jq 'del(.inconsistents[] | select(.object.name == "ROBJ13"))' | \
+        jq '.inconsistents' | python3 -c "$sortkeys" > /tmp/WQR_4s_wo13.json
+
+    rados list-inconsistent-obj $pg | jq "$jqfilter" | jq '.inconsistents' | \
+        python3 -c "$sortkeys" > $dir/dpPart2_w13_results.json
+    # Remove the entry with "name":"ROBJ13" from the $dir/d*_results.json
+    rados list-inconsistent-obj $pg | jq "$jqfilter" | jq 'del(.inconsistents[] | select(.object.name == "ROBJ13"))' | \
+        jq '.inconsistents' | python3 -c "$sortkeys" > $dir/dpPart2_wo13_results.json
+    (( extr_dbg >= 3 )) && rados list-inconsistent-obj $pg | jq "$jqfilter" | jq '.inconsistents' | \
+        python3 -c "$sortkeys" > /tmp/WQR_4s.json
+
+    pg_scrub $pg
+
+    (( extr_dbg >= 3 )) && rados list-inconsistent-obj $pg | python3 -c "$sortkeys" | jq '.'  > /tmp/WQR_5.json
+    (( extr_dbg >= 3 )) && rados list-inconsistent-obj $pg | jq "$jqfilter" | jq '.inconsistents' | \
+        python3 -c "$sortkeys" > /tmp/WQR_5s_w13.json
+    (( extr_dbg >= 3 )) && rados list-inconsistent-obj $pg | jq "$jqfilter" | \
+        jq 'del(.inconsistents[] | select(.object.name == "ROBJ13"))' |\
+        jq '.inconsistents' | python3 -c "$sortkeys" > /tmp/WQR_5s_wo13.json
+
+    rados list-inconsistent-obj $pg | jq "$jqfilter" | jq '.inconsistents' | python3 -c "$sortkeys" > \
+        $dir/sh2Part2_w13_results.json
+    rados list-inconsistent-obj $pg | jq "$jqfilter" | jq 'del(.inconsistents[] | select(.object.name == "ROBJ13"))' |\
+        jq '.inconsistents' | python3 -c "$sortkeys" > $dir/shPart2_wo13_results.json
+
+    # the shallow scrub results should differ from the results of the deep
+    # scrub preceding it, but the difference should be limited to ROBJ13
+    diff -u $dir/dpPart2_w13_results.json $dir/sh2Part2_w13_results.json && return 1
+    diff -u $dir/dpPart2_wo13_results.json $dir/shPart2_wo13_results.json || return 1
+
+    ceph osd pool rm $poolname $poolname --yes-i-really-really-mean-it
+    return 0
 }
 
 

@@ -17,25 +17,17 @@
 #include "rgw_string.h"
 
 #include "rgw_common.h"
+#include "rgw_metadata.h"
+#include "rgw_metadata_lister.h"
 #include "rgw_tools.h"
 #include "rgw_role.h"
 
 #include "services/svc_zone.h"
 #include "services/svc_sys_obj.h"
-#include "services/svc_meta_be_sobj.h"
-#include "services/svc_meta.h"
-#include "services/svc_role_rados.h"
 
 #define dout_subsys ceph_subsys_rgw
 
 using namespace std;
-
-namespace rgw { namespace sal {
-
-const string RGWRole::role_name_oid_prefix = "role_names.";
-const string RGWRole::role_oid_prefix = "roles.";
-const string RGWRole::role_path_oid_prefix = "role_paths.";
-const string RGWRole::role_arn_prefix = "arn:aws:iam::";
 
 void RGWRoleInfo::dump(Formatter *f) const
 {
@@ -50,8 +42,10 @@ void RGWRoleInfo::dump(Formatter *f) const
   encode_json("Path", path, f);
   encode_json("Arn", arn, f);
   encode_json("CreateDate", creation_date, f);
+  encode_json("Description", description, f);
   encode_json("MaxSessionDuration", max_session_duration, f);
   encode_json("AssumeRolePolicyDocument", trust_policy, f);
+  encode_json("AccountId", account_id, f);
   if (!perm_policy_map.empty()) {
     f->open_array_section("PermissionPolicies");
     for (const auto& it : perm_policy_map) {
@@ -59,6 +53,13 @@ void RGWRoleInfo::dump(Formatter *f) const
       encode_json("PolicyName", it.first, f);
       encode_json("PolicyValue", it.second, f);
       f->close_section();
+    }
+    f->close_section();
+  }
+  if (!managed_policies.arns.empty()) {
+    f->open_array_section("ManagedPermissionPolicies");
+    for (const auto& arn : managed_policies.arns) {
+      encode_json("PolicyArn", arn, f);
     }
     f->close_section();
   }
@@ -81,8 +82,10 @@ void RGWRoleInfo::decode_json(JSONObj *obj)
   JSONDecoder::decode_json("Path", path, obj);
   JSONDecoder::decode_json("Arn", arn, obj);
   JSONDecoder::decode_json("CreateDate", creation_date, obj);
+  JSONDecoder::decode_json("Description", description, obj);
   JSONDecoder::decode_json("MaxSessionDuration", max_session_duration, obj);
   JSONDecoder::decode_json("AssumeRolePolicyDocument", trust_policy, obj);
+  JSONDecoder::decode_json("AccountId", account_id, obj);
 
   auto tags_iter = obj->find_first("Tags");
   if (!tags_iter.end()) {
@@ -97,8 +100,8 @@ void RGWRoleInfo::decode_json(JSONObj *obj)
     }
   }
 
-  auto perm_policy_iter = obj->find_first("PermissionPolicies");
-  if (!perm_policy_iter.end()) {
+  if (auto perm_policy_iter = obj->find_first("PermissionPolicies");
+      !perm_policy_iter.end()) {
     JSONObj* perm_policies = *perm_policy_iter;
     auto iter = perm_policies->find_first();
 
@@ -110,20 +113,34 @@ void RGWRoleInfo::decode_json(JSONObj *obj)
     }
   }
 
+  if (auto p = obj->find_first("ManagedPermissionPolicies"); !p.end()) {
+    for (auto iter = (*p)->find_first(); !iter.end(); ++iter) {
+      std::string arn = (*iter)->get_data();
+      this->managed_policies.arns.insert(std::move(arn));
+    }
+  }
+
   if (auto pos = name.find('$'); pos != std::string::npos) {
     tenant = name.substr(0, pos);
     name = name.substr(pos+1);
   }
 }
 
+namespace rgw::sal {
+
+const string RGWRole::role_arn_prefix = "arn:aws:iam::";
+
 RGWRole::RGWRole(std::string name,
               std::string tenant,
+              rgw_account_id account_id,
               std::string path,
               std::string trust_policy,
+              std::string description,
               std::string max_session_duration_str,
               std::multimap<std::string,std::string> tags)
 {
   info.name = std::move(name);
+  info.account_id = std::move(account_id);
   info.path = std::move(path);
   info.trust_policy = std::move(trust_policy);
   info.tenant = std::move(tenant);
@@ -131,6 +148,7 @@ RGWRole::RGWRole(std::string name,
   if (this->info.path.empty())
     this->info.path = "/";
   extract_name_tenant(this->info.name);
+  info.description = std::move(description);
   if (max_session_duration_str.empty()) {
     info.max_session_duration = SESSION_DURATION_MIN;
   } else {
@@ -142,41 +160,6 @@ RGWRole::RGWRole(std::string name,
 RGWRole::RGWRole(std::string id)
 {
   info.id = std::move(id);
-}
-
-int RGWRole::get(const DoutPrefixProvider *dpp, optional_yield y)
-{
-  int ret = read_name(dpp, y);
-  if (ret < 0) {
-    return ret;
-  }
-
-  ret = read_info(dpp, y);
-  if (ret < 0) {
-    return ret;
-  }
-
-  return 0;
-}
-
-int RGWRole::get_by_id(const DoutPrefixProvider *dpp, optional_yield y)
-{
-  int ret = read_info(dpp, y);
-  if (ret < 0) {
-    return ret;
-  }
-
-  return 0;
-}
-
-void RGWRole::dump(Formatter *f) const
-{
-  info.dump(f);
-}
-
-void RGWRole::decode_json(JSONObj *obj)
-{
-  info.decode_json(obj);
 }
 
 bool RGWRole::validate_max_session_duration(const DoutPrefixProvider* dpp)
@@ -227,16 +210,46 @@ void RGWRole::extract_name_tenant(const std::string& str) {
   }
 }
 
-int RGWRole::update(const DoutPrefixProvider *dpp, optional_yield y)
+int RGWRole::create(const DoutPrefixProvider *dpp, const std::string& role_id, optional_yield y)
 {
-  int ret = store_info(dpp, false, y);
-  if (ret < 0) {
-    ldpp_dout(dpp, 0) << "ERROR:  storing info in Role pool: "
-                  << info.id << ": " << cpp_strerror(-ret) << dendl;
-    return ret;
+  if (! validate_input(dpp)) {
+    return -EINVAL;
   }
 
-  return 0;
+  if (!role_id.empty()) {
+    info.id = role_id;
+  }
+
+  if (info.id.empty()) {
+    /* create unique id */
+    uuid_d new_uuid;
+    char uuid_str[37];
+    new_uuid.generate_random();
+    new_uuid.print(uuid_str);
+    info.id = uuid_str;
+  }
+
+  //arn
+  std::string_view account = !info.account_id.empty() ? info.account_id : info.tenant;
+  info.arn = string_cat_reserve(role_arn_prefix, account, ":role", info.path, info.name);
+
+  if (info.creation_date.empty()) {
+    // Creation time
+    real_clock::time_point t = real_clock::now();
+
+    struct timeval tv;
+    real_clock::to_timeval(t, tv);
+
+    char buf[30];
+    struct tm result;
+    gmtime_r(&tv.tv_sec, &result);
+    strftime(buf,30,"%Y-%m-%dT%H:%M:%S", &result);
+    sprintf(buf + strlen(buf),".%03dZ",(int)tv.tv_usec/1000);
+    info.creation_date.assign(buf, strlen(buf));
+  }
+
+  constexpr bool exclusive = true;
+  return store_info(dpp, exclusive, y);
 }
 
 void RGWRole::set_perm_policy(const string& policy_name, const string& perm_policy)
@@ -320,125 +333,4 @@ void RGWRole::update_max_session_duration(const std::string& max_session_duratio
   }
 }
 
-const string& RGWRole::get_names_oid_prefix()
-{
-  return role_name_oid_prefix;
-}
-
-const string& RGWRole::get_info_oid_prefix()
-{
-  return role_oid_prefix;
-}
-
-const string& RGWRole::get_path_oid_prefix()
-{
-  return role_path_oid_prefix;
-}
-
-RGWRoleMetadataHandler::RGWRoleMetadataHandler(Driver* driver,
-                                              RGWSI_Role_RADOS *role_svc)
-{
-  this->driver = driver;
-  base_init(role_svc->ctx(), role_svc->get_be_handler());
-}
-
-RGWMetadataObject *RGWRoleMetadataHandler::get_meta_obj(JSONObj *jo,
-							const obj_version& objv,
-							const ceph::real_time& mtime)
-{
-  RGWRoleInfo info;
-
-  try {
-    info.decode_json(jo);
-  } catch (JSONDecoder:: err& e) {
-    return nullptr;
-  }
-
-  return new RGWRoleMetadataObject(info, objv, mtime, driver);
-}
-
-int RGWRoleMetadataHandler::do_get(RGWSI_MetaBackend_Handler::Op *op,
-                                   std::string& entry,
-                                   RGWMetadataObject **obj,
-                                   optional_yield y,
-                                   const DoutPrefixProvider *dpp)
-{
-  std::unique_ptr<rgw::sal::RGWRole> role = driver->get_role(entry);
-  int ret = role->read_info(dpp, y);
-  if (ret < 0) {
-    return ret;
-  }
-
-  RGWObjVersionTracker objv_tracker = role->get_objv_tracker();
-  real_time mtime = role->get_mtime();
-
-  RGWRoleInfo info = role->get_info();
-  RGWRoleMetadataObject *rdo = new RGWRoleMetadataObject(info, objv_tracker.read_version,
-                                                         mtime, driver);
-  *obj = rdo;
-
-  return 0;
-}
-
-int RGWRoleMetadataHandler::do_remove(RGWSI_MetaBackend_Handler::Op *op,
-                                      std::string& entry,
-                                      RGWObjVersionTracker& objv_tracker,
-                                      optional_yield y,
-                                      const DoutPrefixProvider *dpp)
-{
-  std::unique_ptr<rgw::sal::RGWRole> role = driver->get_role(entry);
-  int ret = role->read_info(dpp, y);
-  if (ret < 0) {
-    return ret == -ENOENT? 0 : ret;
-  }
-
-  return role->delete_obj(dpp, y);
-}
-
-class RGWMetadataHandlerPut_Role : public RGWMetadataHandlerPut_SObj
-{
-  RGWRoleMetadataHandler *rhandler;
-  RGWRoleMetadataObject *mdo;
-public:
-  RGWMetadataHandlerPut_Role(RGWRoleMetadataHandler *handler,
-                             RGWSI_MetaBackend_Handler::Op *op,
-                             std::string& entry,
-                             RGWMetadataObject *obj,
-                             RGWObjVersionTracker& objv_tracker,
-                             optional_yield y,
-                             RGWMDLogSyncType type,
-                             bool from_remote_zone) :
-    RGWMetadataHandlerPut_SObj(handler, op, entry, obj, objv_tracker, y, type, from_remote_zone),
-    rhandler(handler) {
-    mdo = static_cast<RGWRoleMetadataObject*>(obj);
-  }
-
-  int put_checked(const DoutPrefixProvider *dpp) override {
-    auto& info = mdo->get_role_info();
-    auto mtime = mdo->get_mtime();
-    auto* driver = mdo->get_driver();
-    info.mtime = mtime;
-    std::unique_ptr<rgw::sal::RGWRole> role = driver->get_role(info);
-    int ret = role->create(dpp, true, info.id, y);
-    if (ret == -EEXIST) {
-      ret = role->update(dpp, y);
-    }
-
-    return ret < 0 ? ret : STATUS_APPLIED;
-  }
-};
-
-int RGWRoleMetadataHandler::do_put(RGWSI_MetaBackend_Handler::Op *op,
-                                   std::string& entry,
-                                   RGWMetadataObject *obj,
-                                   RGWObjVersionTracker& objv_tracker,
-                                   optional_yield y,
-                                   const DoutPrefixProvider *dpp,
-                                   RGWMDLogSyncType type,
-                                   bool from_remote_zone)
-{
-  RGWMetadataHandlerPut_Role put_op(this, op , entry, obj, objv_tracker, y, type, from_remote_zone);
-  return do_put_operate(&put_op, dpp);
-}
-
-} } // namespace rgw::sal
+} // namespace rgw::sal

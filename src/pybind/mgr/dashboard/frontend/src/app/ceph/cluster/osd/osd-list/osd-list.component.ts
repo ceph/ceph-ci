@@ -38,6 +38,9 @@ import { OsdPgScrubModalComponent } from '../osd-pg-scrub-modal/osd-pg-scrub-mod
 import { OsdRecvSpeedModalComponent } from '../osd-recv-speed-modal/osd-recv-speed-modal.component';
 import { OsdReweightModalComponent } from '../osd-reweight-modal/osd-reweight-modal.component';
 import { OsdScrubModalComponent } from '../osd-scrub-modal/osd-scrub-modal.component';
+import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
+import { CdTableFetchDataContext } from '~/app/shared/models/cd-table-fetch-data-context';
+import { Osd } from '~/app/shared/models/osd.model';
 
 const BASE_URL = 'osd';
 
@@ -70,6 +73,7 @@ export class OsdListComponent extends ListWithDetails implements OnInit {
   clusterWideActions: CdTableAction[];
   icons = Icons;
   osdSettings = new OsdSettings();
+  count = 0;
 
   selection = new CdTableSelection();
   osds: any[] = [];
@@ -109,7 +113,8 @@ export class OsdListComponent extends ListWithDetails implements OnInit {
     private taskWrapper: TaskWrapperService,
     public actionLabels: ActionLabelsI18n,
     public notificationService: NotificationService,
-    private orchService: OrchestratorService
+    private orchService: OrchestratorService,
+    private cdsModalService: ModalCdsService
   ) {
     super();
     this.permissions = this.authStorageService.getPermissions();
@@ -424,10 +429,13 @@ export class OsdListComponent extends ListWithDetails implements OnInit {
     }
   }
 
-  getOsdList() {
-    const observables = [this.osdService.getList(), this.osdService.getFlags()];
-    observableForkJoin(observables).subscribe((resp: [any[], string[]]) => {
-      this.osds = resp[0].map((osd) => {
+  getOsdList(context?: CdTableFetchDataContext) {
+    if (!context) context = new CdTableFetchDataContext();
+    const pagination_obs = this.osdService.getList(context.toParams());
+    const observables = [pagination_obs.observable, this.osdService.getFlags()];
+    observableForkJoin(observables).subscribe((resp: any) => {
+      this.osds = resp[0].map((osd: Osd) => {
+        this.count = pagination_obs.count;
         osd.collectedStates = OsdListComponent.collectStates(osd);
         osd.stats_history.out_bytes = osd.stats_history.op_out_bytes.map((i: string) => i[1]);
         osd.stats_history.in_bytes = osd.stats_history.op_in_bytes.map((i: string) => i[1]);
@@ -447,7 +455,7 @@ export class OsdListComponent extends ListWithDetails implements OnInit {
   editAction() {
     const selectedOsd = _.filter(this.osds, ['id', this.selection.first().id]).pop();
 
-    this.modalService.show(FormModalComponent, {
+    this.cdsModalService.show(FormModalComponent, {
       titleText: $localize`Edit OSD: ${selectedOsd.id}`,
       fields: [
         {
@@ -497,7 +505,7 @@ export class OsdListComponent extends ListWithDetails implements OnInit {
 
   showConfirmationModal(markAction: string, onSubmit: (id: number) => Observable<any>) {
     const osdIds = this.getSelectedOsdIds();
-    this.bsModalRef = this.modalService.show(ConfirmationModalComponent, {
+    this.bsModalRef = this.cdsModalService.show(ConfirmationModalComponent, {
       titleText: $localize`Mark OSD ${markAction}`,
       buttonText: $localize`Mark ${markAction}`,
       bodyTpl: this.markOsdConfirmationTpl,
@@ -508,7 +516,7 @@ export class OsdListComponent extends ListWithDetails implements OnInit {
       onSubmit: () => {
         observableForkJoin(
           this.getSelectedOsdIds().map((osd: any) => onSubmit.call(this.osdService, osd))
-        ).subscribe(() => this.bsModalRef.close());
+        ).subscribe(() => this.cdsModalService.dismissAll());
       }
     });
   }
@@ -573,7 +581,7 @@ export class OsdListComponent extends ListWithDetails implements OnInit {
     childFormGroupTemplate?: TemplateRef<any>
   ): void {
     check(this.getSelectedOsdIds()).subscribe((result) => {
-      const modalRef = this.modalService.show(CriticalConfirmationModalComponent, {
+      this.cdsModalService.show(CriticalConfirmationModalComponent, {
         actionDescription: actionDescription,
         itemDescription: itemDescription,
         bodyTemplate: this.criticalConfirmationTpl,
@@ -596,17 +604,17 @@ export class OsdListComponent extends ListWithDetails implements OnInit {
             observable.subscribe({
               error: () => {
                 this.getOsdList();
-                modalRef.close();
+                this.cdsModalService.dismissAll();
               },
-              complete: () => modalRef.close()
+              complete: () => this.cdsModalService.dismissAll()
             });
           } else {
             observable.subscribe(
               () => {
                 this.getOsdList();
-                modalRef.close();
+                this.cdsModalService.dismissAll();
               },
-              () => modalRef.close()
+              () => this.cdsModalService.dismissAll()
             );
           }
         }

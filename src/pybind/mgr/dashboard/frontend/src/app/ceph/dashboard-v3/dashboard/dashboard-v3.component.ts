@@ -1,8 +1,8 @@
 import { Component, OnDestroy, OnInit } from '@angular/core';
 
 import _ from 'lodash';
-import { Observable, Subscription } from 'rxjs';
-import { take } from 'rxjs/operators';
+import { BehaviorSubject, Observable, Subscription, of } from 'rxjs';
+import { switchMap, take } from 'rxjs/operators';
 
 import { HealthService } from '~/app/shared/api/health.service';
 import { OsdService } from '~/app/shared/api/osd.service';
@@ -24,6 +24,8 @@ import { PrometheusAlertService } from '~/app/shared/services/prometheus-alert.s
 import { OrchestratorService } from '~/app/shared/api/orchestrator.service';
 import { MgrModuleService } from '~/app/shared/api/mgr-module.service';
 import { AlertClass } from '~/app/shared/enum/health-icon.enum';
+import { HardwareService } from '~/app/shared/api/hardware.service';
+import { SettingsService } from '~/app/shared/api/settings.service';
 
 @Component({
   selector: 'cd-dashboard-v3',
@@ -54,19 +56,29 @@ export class DashboardV3Component extends PrometheusListHelper implements OnInit
   healthData: any;
   categoryPgAmount: Record<string, number> = {};
   totalPgs = 0;
-  queriesResults: any = {
-    USEDCAPACITY: '',
-    IPS: '',
-    OPS: '',
-    READLATENCY: '',
-    WRITELATENCY: '',
-    READCLIENTTHROUGHPUT: '',
-    WRITECLIENTTHROUGHPUT: '',
-    RECOVERYBYTES: ''
+  queriesResults: { [key: string]: [] } = {
+    USEDCAPACITY: [],
+    IPS: [],
+    OPS: [],
+    READLATENCY: [],
+    WRITELATENCY: [],
+    READCLIENTTHROUGHPUT: [],
+    WRITECLIENTTHROUGHPUT: [],
+    RECOVERYBYTES: [],
+    READIOPS: [],
+    WRITEIOPS: []
   };
   telemetryEnabled: boolean;
   telemetryURL = 'https://telemetry-public.ceph.com/';
   origin = window.location.origin;
+  hardwareHealth: any;
+  hardwareEnabled: boolean = false;
+  hasHardwareError: boolean = false;
+  isHardwareEnabled$: Observable<boolean>;
+  hardwareSummary$: Observable<any>;
+  hardwareSubject = new BehaviorSubject<any>([]);
+  managedByConfig$: Observable<any>;
+  private subs = new Subscription();
 
   constructor(
     private summaryService: SummaryService,
@@ -75,10 +87,12 @@ export class DashboardV3Component extends PrometheusListHelper implements OnInit
     private authStorageService: AuthStorageService,
     private featureToggles: FeatureTogglesService,
     private healthService: HealthService,
+    private settingsService: SettingsService,
     public prometheusService: PrometheusService,
     private mgrModuleService: MgrModuleService,
     private refreshIntervalService: RefreshIntervalService,
-    public prometheusAlertService: PrometheusAlertService
+    public prometheusAlertService: PrometheusAlertService,
+    private hardwareService: HardwareService
   ) {
     super(prometheusService);
     this.permissions = this.authStorageService.getPermissions();
@@ -87,13 +101,29 @@ export class DashboardV3Component extends PrometheusListHelper implements OnInit
 
   ngOnInit() {
     super.ngOnInit();
+    if (this.permissions.configOpt.read) {
+      this.isHardwareEnabled$ = this.getHardwareConfig();
+      this.hardwareSummary$ = this.hardwareSubject.pipe(
+        switchMap(() =>
+          this.hardwareService.getSummary().pipe(
+            switchMap((data: any) => {
+              this.hasHardwareError = data.host.flawed;
+              return of(data);
+            })
+          )
+        )
+      );
+      this.managedByConfig$ = this.settingsService.getValues('MANAGED_BY_CLUSTERS');
+    }
     this.interval = this.refreshIntervalService.intervalData$.subscribe(() => {
       this.getHealth();
       this.getCapacityCardData();
+      if (this.hardwareEnabled) this.hardwareSubject.next([]);
     });
     this.getPrometheusData(this.prometheusService.lastHourDateObject);
     this.getDetailsCardData();
     this.getTelemetryReport();
+    this.prometheusAlertService.getAlerts(true);
   }
 
   getTelemetryText(): string {
@@ -106,6 +136,7 @@ export class DashboardV3Component extends PrometheusListHelper implements OnInit
   ngOnDestroy() {
     this.interval.unsubscribe();
     this.prometheusService.unsubscribe();
+    this.subs?.unsubscribe();
   }
 
   getHealth() {
@@ -125,11 +156,13 @@ export class DashboardV3Component extends PrometheusListHelper implements OnInit
     this.orchestratorService.getName().subscribe((data: string) => {
       this.detailsCardData.orchestrator = data;
     });
-    this.summaryService.subscribe((summary) => {
-      const version = summary.version.replace('ceph version ', '').split(' ');
-      this.detailsCardData.cephVersion =
-        version[0] + ' ' + version.slice(2, version.length).join(' ');
-    });
+    this.subs.add(
+      this.summaryService.subscribe((summary) => {
+        const version = summary.version.replace('ceph version ', '').split(' ');
+        this.detailsCardData.cephVersion =
+          version[0] + ' ' + version.slice(2, version.length).join(' ');
+      })
+    );
   }
 
   getCapacityCardData() {
@@ -153,12 +186,21 @@ export class DashboardV3Component extends PrometheusListHelper implements OnInit
   }
 
   private getTelemetryReport() {
-    this.mgrModuleService.getConfig('telemetry').subscribe((resp: any) => {
-      this.telemetryEnabled = resp?.enabled;
+    this.healthService.getTelemetryStatus().subscribe((enabled: boolean) => {
+      this.telemetryEnabled = enabled;
     });
   }
 
   trackByFn(index: any) {
     return index;
+  }
+
+  getHardwareConfig(): Observable<any> {
+    return this.mgrModuleService.getConfig('cephadm').pipe(
+      switchMap((resp: any) => {
+        this.hardwareEnabled = resp?.hw_monitoring;
+        return of(resp?.hw_monitoring);
+      })
+    );
   }
 }

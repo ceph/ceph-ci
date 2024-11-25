@@ -103,6 +103,13 @@ options:
   services:
   - mgr
   with_legacy: true
+- name: mgr_max_pg_creating
+  type: uint
+  level: advanced
+  desc: bound on max creating pgs when acting to create more pgs
+  default: 1024
+  services:
+  - mgr
 - name: mgr_module_path
   type: str
   level: advanced
@@ -145,7 +152,7 @@ options:
     first started after installation, to populate the list of enabled manager modules.  Subsequent
     updates are done using the 'mgr module [enable|disable]' commands.  List may be
     comma or space separated.
-  default: restful iostat nfs
+  default: iostat nfs
   services:
   - mon
   - common
@@ -285,6 +292,15 @@ options:
   default: true
   services:
   - mgr
+- name: mon_warn_on_pool_no_app_grace
+  type: secs
+  level: dev
+  desc: time after which POOL_APP_NOT_ENABLED health warning is issued
+  default: 5_min
+  services:
+  - mgr
+  see_also:
+  - mon_warn_on_pool_no_app
 - name: mon_warn_on_too_few_osds
   type: bool
   level: advanced

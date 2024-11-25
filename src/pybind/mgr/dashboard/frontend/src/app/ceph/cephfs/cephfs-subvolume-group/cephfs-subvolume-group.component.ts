@@ -1,5 +1,5 @@
-import { Component, Input, OnChanges, OnInit, ViewChild } from '@angular/core';
-import { Observable, ReplaySubject, of } from 'rxjs';
+import { Component, Input, OnChanges, OnInit, SimpleChanges, ViewChild } from '@angular/core';
+import { BehaviorSubject, Observable, of } from 'rxjs';
 import { catchError, shareReplay, switchMap } from 'rxjs/operators';
 
 import { CephfsSubvolumeGroupService } from '~/app/shared/api/cephfs-subvolume-group.service';
@@ -9,15 +9,17 @@ import { CdTableAction } from '~/app/shared/models/cd-table-action';
 import { CdTableColumn } from '~/app/shared/models/cd-table-column';
 import { CdTableFetchDataContext } from '~/app/shared/models/cd-table-fetch-data-context';
 import { CdTableSelection } from '~/app/shared/models/cd-table-selection';
-import { CephfsSubvolumeGroup } from '~/app/shared/models/cephfs-subvolumegroup.model';
 import { CephfsSubvolumegroupFormComponent } from '../cephfs-subvolumegroup-form/cephfs-subvolumegroup-form.component';
 import { ActionLabelsI18n } from '~/app/shared/constants/app.constants';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
-import { ModalService } from '~/app/shared/services/modal.service';
 import { Permissions } from '~/app/shared/models/permissions';
 import { CriticalConfirmationModalComponent } from '~/app/shared/components/critical-confirmation-modal/critical-confirmation-modal.component';
 import { FinishedTask } from '~/app/shared/models/finished-task';
 import { TaskWrapperService } from '~/app/shared/services/task-wrapper.service';
+import { CephfsSubvolumeGroup } from '~/app/shared/models/cephfs-subvolume-group.model';
+import { NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
+import _ from 'lodash';
+import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
 
 @Component({
   selector: 'cd-cephfs-subvolume-group',
@@ -52,14 +54,17 @@ export class CephfsSubvolumeGroupComponent implements OnInit, OnChanges {
   permissions: Permissions;
 
   subvolumeGroup$: Observable<CephfsSubvolumeGroup[]>;
-  subject = new ReplaySubject<CephfsSubvolumeGroup[]>();
+  subject = new BehaviorSubject<CephfsSubvolumeGroup[]>([]);
+
+  modalRef: NgbModalRef;
 
   constructor(
     private cephfsSubvolumeGroup: CephfsSubvolumeGroupService,
     private actionLabels: ActionLabelsI18n,
-    private modalService: ModalService,
+    private modalService: ModalCdsService,
     private authStorageService: AuthStorageService,
-    private taskWrapper: TaskWrapperService
+    private taskWrapper: TaskWrapperService,
+    private cdsModalService: ModalCdsService
   ) {
     this.permissions = this.authStorageService.getPermissions();
   }
@@ -117,6 +122,13 @@ export class CephfsSubvolumeGroupComponent implements OnInit, OnChanges {
         click: () => this.openModal(true)
       },
       {
+        name: this.actionLabels.NFS_EXPORT,
+        permission: 'create',
+        icon: Icons.nfsExport,
+        routerLink: () => ['/cephfs/nfs/create', this.fsName, this.selection?.first()?.name],
+        disable: () => !this.selection.hasSingleSelection
+      },
+      {
         name: this.actionLabels.REMOVE,
         permission: 'delete',
         icon: Icons.destroy,
@@ -138,11 +150,13 @@ export class CephfsSubvolumeGroupComponent implements OnInit, OnChanges {
   }
 
   fetchData() {
-    this.subject.next();
+    this.subject.next([]);
   }
 
-  ngOnChanges() {
-    this.subject.next();
+  ngOnChanges(changes: SimpleChanges) {
+    if (changes.fsName) {
+      this.subject.next([]);
+    }
   }
 
   updateSelection(selection: CdTableSelection) {
@@ -150,21 +164,17 @@ export class CephfsSubvolumeGroupComponent implements OnInit, OnChanges {
   }
 
   openModal(edit = false) {
-    this.modalService.show(
-      CephfsSubvolumegroupFormComponent,
-      {
-        fsName: this.fsName,
-        subvolumegroupName: this.selection?.first()?.name,
-        pools: this.pools,
-        isEdit: edit
-      },
-      { size: 'lg' }
-    );
+    this.modalService.show(CephfsSubvolumegroupFormComponent, {
+      fsName: this.fsName,
+      subvolumegroupName: this.selection?.first()?.name,
+      pools: this.pools,
+      isEdit: edit
+    });
   }
 
   removeSubVolumeModal() {
     const name = this.selection.first().name;
-    this.modalService.show(CriticalConfirmationModalComponent, {
+    this.cdsModalService.show(CriticalConfirmationModalComponent, {
       itemDescription: 'subvolume group',
       itemNames: [name],
       actionDescription: 'remove',

@@ -14,7 +14,7 @@ from orchestrator import OrchestratorError, DaemonDescription
 if TYPE_CHECKING:
     from .module import CephadmOrchestrator
 
-LAST_MIGRATION = 6
+LAST_MIGRATION = 7
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,10 @@ class Migrations:
         if self.mgr.migration_current == 5:
             if self.migrate_5_6():
                 self.set(6)
+
+        if self.mgr.migration_current == 6:
+            if self.migrate_6_7():
+                self.set(7)
 
     def migrate_0_1(self) -> bool:
         """
@@ -408,6 +412,34 @@ class Migrations:
             else:
                 logger.info(f"No Migration is needed for rgw spec: {spec}")
         self.rgw_migration_queue = []
+        return True
+
+    def migrate_6_7(self) -> bool:
+        # start by placing certs/keys from rgw, iscsi, and ingress specs into cert store
+        for spec in self.mgr.spec_store.all_specs.values():
+            if spec.service_type in ['rgw', 'ingress', 'iscsi']:
+                logger.info(f'Migrating certs/keys for {spec.service_name()} spec to cert store')
+                self.mgr.spec_store._save_certs_and_keys(spec)
+
+        # grafana certs are stored based on the host they are placed on
+        for grafana_daemon in self.mgr.cache.get_daemons_by_type('grafana'):
+            logger.info(f'Checking for cert/key for {grafana_daemon.name()}')
+            hostname = grafana_daemon.hostname
+            assert hostname is not None  # for mypy
+            grafana_cert_path = f'{hostname}/grafana_crt'
+            grafana_key_path = f'{hostname}/grafana_key'
+            grafana_cert = self.mgr.get_store(grafana_cert_path)
+            if grafana_cert:
+                logger.info(f'Migrating {grafana_daemon.name()} cert to cert store')
+                self.mgr.cert_key_store.save_cert('grafana_cert', grafana_cert, host=hostname)
+            grafana_key = self.mgr.get_store(grafana_key_path)
+            if grafana_key:
+                logger.info(f'Migrating {grafana_daemon.name()} key to cert store')
+                self.mgr.cert_key_store.save_key('grafana_key', grafana_key, host=hostname)
+
+        # NOTE: prometheus, alertmanager, and node-exporter certs were not stored
+        # and appeared to just be generated at daemon deploy time if secure_monitoring_stack
+        # was set to true. Therefore we have nothing to migrate for those daemons
         return True
 
 

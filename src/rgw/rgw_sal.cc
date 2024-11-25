@@ -20,6 +20,7 @@
 #include <sstream>
 
 #include "common/errno.h"
+//#include "common/dout.h"
 
 #include "rgw_sal.h"
 #include "rgw_sal_rados.h"
@@ -44,9 +45,10 @@
 #endif
 
 #define dout_subsys ceph_subsys_rgw
+//#define dout_context g_ceph_context
 
 extern "C" {
-extern rgw::sal::Driver* newRadosStore(void);
+extern rgw::sal::Driver* newRadosStore(boost::asio::io_context* io_context);
 #ifdef WITH_RADOSGW_DBSTORE
 extern rgw::sal::Driver* newDBStore(CephContext *cct);
 #endif
@@ -61,48 +63,15 @@ extern rgw::sal::Driver* newPOSIXDriver(rgw::sal::Driver* next);
 #endif
 extern rgw::sal::Driver* newBaseFilter(rgw::sal::Driver* next);
 #ifdef WITH_RADOSGW_D4N
-extern rgw::sal::Driver* newD4NFilter(rgw::sal::Driver* next);
+extern rgw::sal::Driver* newD4NFilter(rgw::sal::Driver* next, boost::asio::io_context& io_context);
 #endif
-}
-
-RGWObjState::RGWObjState() {
-}
-
-RGWObjState::~RGWObjState() {
-}
-
-RGWObjState::RGWObjState(const RGWObjState& rhs) : obj (rhs.obj) {
-  is_atomic = rhs.is_atomic;
-  has_attrs = rhs.has_attrs;
-  exists = rhs.exists;
-  size = rhs.size;
-  accounted_size = rhs.accounted_size;
-  mtime = rhs.mtime;
-  epoch = rhs.epoch;
-  if (rhs.obj_tag.length()) {
-    obj_tag = rhs.obj_tag;
-  }
-  if (rhs.tail_tag.length()) {
-    tail_tag = rhs.tail_tag;
-  }
-  write_tag = rhs.write_tag;
-  fake_tag = rhs.fake_tag;
-  shadow_obj = rhs.shadow_obj;
-  has_data = rhs.has_data;
-  if (rhs.data.length()) {
-    data = rhs.data;
-  }
-  prefetch_data = rhs.prefetch_data;
-  keep_tail = rhs.keep_tail;
-  is_olh = rhs.is_olh;
-  objv_tracker = rhs.objv_tracker;
-  pg_ver = rhs.pg_ver;
-  compressed = rhs.compressed;
 }
 
 rgw::sal::Driver* DriverManager::init_storage_provider(const DoutPrefixProvider* dpp,
 						     CephContext* cct,
 						     const Config& cfg,
+						     boost::asio::io_context& io_context,
+						     const rgw::SiteConfig& site_config,
 						     bool use_gc_thread,
 						     bool use_lc_thread,
 						     bool quota_threads,
@@ -115,7 +84,7 @@ rgw::sal::Driver* DriverManager::init_storage_provider(const DoutPrefixProvider*
   rgw::sal::Driver* driver{nullptr};
 
   if (cfg.store_name.compare("rados") == 0) {
-    driver = newRadosStore();
+    driver = newRadosStore(&io_context);
     RGWRados* rados = static_cast<rgw::sal::RadosStore* >(driver)->getRados();
 
     if ((*rados).set_use_cache(use_cache)
@@ -127,7 +96,7 @@ rgw::sal::Driver* DriverManager::init_storage_provider(const DoutPrefixProvider*
                 .set_run_sync_thread(run_sync_thread)
                 .set_run_reshard_thread(run_reshard_thread)
                 .set_run_notification_thread(run_notification_thread)
-                .init_begin(cct, dpp) < 0) {
+                .init_begin(cct, dpp, site_config) < 0) {
       delete driver;
       return nullptr;
     }
@@ -141,7 +110,7 @@ rgw::sal::Driver* DriverManager::init_storage_provider(const DoutPrefixProvider*
     }
   }
   else if (cfg.store_name.compare("d3n") == 0) {
-    driver = new rgw::sal::RadosStore();
+    driver = new rgw::sal::RadosStore(io_context);
     RGWRados* rados = new D3nRGWDataCache<RGWRados>;
     dynamic_cast<rgw::sal::RadosStore*>(driver)->setRados(rados);
     rados->set_store(static_cast<rgw::sal::RadosStore* >(driver));
@@ -154,7 +123,7 @@ rgw::sal::Driver* DriverManager::init_storage_provider(const DoutPrefixProvider*
                 .set_run_sync_thread(run_sync_thread)
                 .set_run_reshard_thread(run_reshard_thread)
                 .set_run_notification_thread(run_notification_thread)
-                .init_begin(cct, dpp) < 0) {
+                .init_begin(cct, dpp, site_config) < 0) {
       delete driver;
       return nullptr;
     }
@@ -235,7 +204,7 @@ rgw::sal::Driver* DriverManager::init_storage_provider(const DoutPrefixProvider*
 #ifdef WITH_RADOSGW_D4N 
   else if (cfg.filter_name.compare("d4n") == 0) {
     rgw::sal::Driver* next = driver;
-    driver = newD4NFilter(next);
+    driver = newD4NFilter(next, io_context);
 
     if (driver->initialize(cct, dpp) < 0) {
       delete driver;
@@ -261,26 +230,29 @@ rgw::sal::Driver* DriverManager::init_storage_provider(const DoutPrefixProvider*
   return driver;
 }
 
-rgw::sal::Driver* DriverManager::init_raw_storage_provider(const DoutPrefixProvider* dpp, CephContext* cct, const Config& cfg)
+rgw::sal::Driver* DriverManager::init_raw_storage_provider(const DoutPrefixProvider* dpp, CephContext* cct,
+							   const Config& cfg, boost::asio::io_context& io_context,
+							   const rgw::SiteConfig& site_config)
 {
   rgw::sal::Driver* driver = nullptr;
   if (cfg.store_name.compare("rados") == 0) {
-    driver = newRadosStore();
+    driver = newRadosStore(&io_context);
     RGWRados* rados = static_cast<rgw::sal::RadosStore* >(driver)->getRados();
 
     rados->set_context(cct);
 
-    int ret = rados->init_svc(true, dpp);
+    if (rados->init_rados() < 0) {
+      delete driver;
+      return nullptr;
+    }
+
+    int ret = rados->init_svc(true, dpp, site_config);
     if (ret < 0) {
       ldout(cct, 0) << "ERROR: failed to init services (ret=" << cpp_strerror(-ret) << ")" << dendl;
       delete driver;
       return nullptr;
     }
 
-    if (rados->init_rados() < 0) {
-      delete driver;
-      return nullptr;
-    }
     if (driver->initialize(cct, dpp) < 0) {
       delete driver;
       return nullptr;

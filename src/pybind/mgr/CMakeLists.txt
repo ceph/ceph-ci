@@ -13,7 +13,7 @@ if(WITH_MGR_ROOK_CLIENT)
 endif()
 if(WITH_TESTS)
   include(AddCephTest)
-  add_tox_test(mgr ${CMAKE_CURRENT_SOURCE_DIR} TOX_ENVS py3 py37 mypy flake8 jinjalint nooptional)
+  add_tox_test(mgr ${CMAKE_CURRENT_SOURCE_DIR} TOX_ENVS __tox_defaults__)
 endif()
 
 # Location needs to match default setting for mgr_module_path, currently:
@@ -42,10 +42,10 @@ set(mgr_modules
   progress
   prometheus
   rbd_support
-  restful
   rgw
   # rook (optional)
   selftest
+  smb
   snap_schedule
   stats
   status
@@ -53,8 +53,7 @@ set(mgr_modules
   telemetry
   # tests (for testing purpose only)
   test_orchestrator
-  volumes
-  zabbix)
+  volumes)
 
 install(DIRECTORY ${mgr_modules}
   DESTINATION ${CEPH_INSTALL_DATADIR}/mgr

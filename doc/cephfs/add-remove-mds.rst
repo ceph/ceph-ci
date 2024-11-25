@@ -1,11 +1,13 @@
 .. _cephfs_add_remote_mds:
 
-.. note::
-   It is highly recommended to use :doc:`/cephadm/index` or another Ceph
-   orchestrator for setting up the ceph cluster. Use this approach only if you
-   are setting up the ceph cluster manually. If one still intends to use the
-   manual way for deploying MDS daemons, :doc:`/cephadm/services/mds/` can
-   also be used.
+.. warning:: The material on this page is to be used only for manually setting
+   up a Ceph cluster. If you intend to use an automated tool such as
+   :doc:`/cephadm/index` to set up a Ceph cluster, do not use the
+   instructions on this page.
+
+.. note:: If you are certain that you know what you are doing and you intend to
+   manually deploy MDS daemons, see :doc:`/cephadm/services/mds/` before
+   proceeding.
 
 ============================
  Deploying Metadata Servers
@@ -53,8 +55,7 @@ the MDS server. Even if a single MDS daemon is unable to fully utilize the
 hardware, it may be desirable later on to start more active MDS daemons on the
 same node to fully utilize the available cores and memory. Additionally, it may
 become clear with workloads on the cluster that performance improves with
-multiple active MDS on the same node rather than over-provisioning a single
-MDS.
+multiple active MDS on the same node rather than a single overloaded MDS.
 
 Finally, be aware that CephFS is a highly-available file system by supporting
 standby MDS (see also :ref:`mds-standby`) for rapid failover. To get a real
@@ -114,5 +115,12 @@ the following method.
 #. Remove the ``/var/lib/ceph/mds/ceph-${id}`` directory on the MDS. ::
 
 	$ sudo rm -rf /var/lib/ceph/mds/ceph-${id}
+
+
+.. note:: When an active MDS either has health warning MDS_TRIM or
+   MDS_CACHE_OVERSIZED, confirmation flag (--yes-i-really-mean-it)
+   needs to be passed, else the command will fail. It is not recommended to
+   restart an MDS which has these warnings since slow recovery at restart may
+   lead to more problems.
 
 .. _MDS Config Reference: ../mds-config-ref

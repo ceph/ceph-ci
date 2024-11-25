@@ -29,7 +29,7 @@ Responsibilities
  * Point of contact for the project
  * Representatives for Ceph foundation board meetings
  * Ensure things get done
-
+   
 Membership
 ----------
 
@@ -47,7 +47,7 @@ Membership
 Current Members
 ^^^^^^^^^^^^^^^
 
-* Dan van der Ster <daniel.vanderster@cern.ch>
+* Dan van der Ster <dan.vanderster@clyso.com>
 * Josh Durgin <jdurgin@redhat.com>
 * Neha Ojha <nojha@redhat.com>
 
@@ -60,20 +60,24 @@ Responsibilities
 ----------------
 
  * Elect executive council
- * Amend governance model (by majority vote)
+ * Amend governance model by supermajority vote
  * Meet regularly to discuss and decide on tactical and strategic projects
    and improvements
+ * Hold an annual election
 
 Membership
 ----------
 
  * Developers, users, community members
- * Voting members can be nominated and added/removed by existing
-   members (2/3 majority)
+ * Members can be nominated and added/removed by existing members via a
+   supermajority vote
  * Anyone may attend steering committee meetings as a non-voting participant
  * Existing Ceph Leadership Team members are grandfathered in
  * Membership reflected by an email list and on the Ceph website and
    docs
+
+.. note:: A "supermajority" is a 2/3 majority of votes on a particular item
+          in an election. Abstaining does not bias a vote.
 
 Current Members
 ^^^^^^^^^^^^^^^
@@ -82,28 +86,39 @@ Current Members
  * Casey Bodley <cbodley@redhat.com>
  * Dan van der Ster <dan.vanderster@clyso.com>
  * David Orman <ormandj@1111systems.com>
- * Ernesto Puerta <epuerta@redhat.com>
+ * Ernesto Puerta <epuertat@redhat.com>
  * Gregory Farnum <gfarnum@redhat.com>
  * Haomai Wang <haomai@xsky.com>
  * Ilya Dryomov <idryomov@redhat.com>
  * Igor Fedotov <igor.fedotov@croit.io>
  * Jeff Layton <jlayton@redhat.com>
  * Josh Durgin <jdurgin@redhat.com>
- * João Eduardo Luis <joao@suse.de>
+ * João Eduardo Luis <joao@clyso.com>
  * Ken Dreyer <kdreyer@redhat.com>
- * Mark Nelson <mnelson@redhat.com>
+ * Mark Nelson <mark.nelson@clyso.com>
  * Matt Benjamin <mbenjami@redhat.com>
  * Mike Perez <miperez@redhat.com>
  * Myoungwon Oh <myoungwon.oh@samsung.com>
  * Neha Ojha <nojha@redhat.com>
- * Patrick Donnelly <pdonnell@redhat.com>
+ * Patrick Donnelly <pdonnell@ibm.com>
  * Sam Just <sjust@redhat.com>
  * Vikhyat Umrao <vikhyat@redhat.com>
  * Xie Xingguo <xie.xingguo@zte.com.cn>
  * Yehuda Sadeh <yehuda@redhat.com>
  * Yingxin Cheng <yingxin.cheng@intel.com>
  * Yuri Weinstein <yweinste@redhat.com>
- * Zac Dover <zac.dover@gmail.com>
+ * Zac Dover <zac.dover@proton.me>
+ * Laura Flores <lflores@redhat.com>
+ * Venky Shankar <vshankar@redhat.com>
+ * Guillaume Abrioux <gabrioux@redhat.com>
+ * Anthony D'Atri <anthony.datri@gmail.com>
+ * Joseph Mundackal <jmundackal@bloomberg.net>
+ * Gaurav Sitlani <gsitlani@ibm.com>
+ * Afreen Misbah <afreen@ibm.com>
+ * Radoslaw Zarzynski <rzarzyns@redhat.com>
+ * Matan Breizman <mbreizma@redhat.com>
+ * Yaarit Hatuka <yhatuka@ibm.com>
+ * Adam C. Emerson <aemerson@redhat.com>
 
 .. _ctl:
 

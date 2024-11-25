@@ -193,6 +193,15 @@ class Role(object):
         return Role(r_dict['name'], r_dict['description'],
                     r_dict['scopes_permissions'])
 
+    @classmethod
+    def map_to_system_roles(cls, roles) -> List['Role']:
+        matches = []
+        for rn in SYSTEM_ROLES_NAMES:
+            for role in roles:
+                if role in SYSTEM_ROLES_NAMES[rn]:
+                    matches.append(rn)
+        return matches
+
 
 # static pre-defined system roles
 # this roles cannot be deleted nor updated
@@ -222,6 +231,7 @@ BLOCK_MGR_ROLE = Role(
         Scope.ISCSI: [_P.READ, _P.CREATE, _P.UPDATE, _P.DELETE],
         Scope.RBD_MIRRORING: [_P.READ, _P.CREATE, _P.UPDATE, _P.DELETE],
         Scope.GRAFANA: [_P.READ],
+        Scope.NVME_OF: [_P.READ, _P.CREATE, _P.UPDATE, _P.DELETE],
     })
 
 
@@ -280,6 +290,12 @@ SYSTEM_ROLES = {
     POOL_MGR_ROLE.name: POOL_MGR_ROLE,
     CEPHFS_MGR_ROLE.name: CEPHFS_MGR_ROLE,
     GANESHA_MGR_ROLE.name: GANESHA_MGR_ROLE,
+}
+
+# static name-like roles list for role mapping
+SYSTEM_ROLES_NAMES = {
+    ADMIN_ROLE: [ADMIN_ROLE.name, 'admin'],
+    READ_ONLY_ROLE: [READ_ONLY_ROLE.name, 'read', 'guest', 'monitor']
 }
 
 

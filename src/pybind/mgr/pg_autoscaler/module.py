@@ -231,7 +231,7 @@ class PgAutoscaler(MgrModule):
                     p['pg_num_target'],
 #                    p['pg_num_ideal'],
                     final,
-                    'off' if self.has_noautoscale_flag() else p['pg_autoscale_mode'],
+                    str(p['pg_autoscale_mode']),
                     str(p['bulk'])
                 ])
             return 0, table.get_string(), ''
@@ -256,6 +256,13 @@ class PgAutoscaler(MgrModule):
     def has_noautoscale_flag(self) -> bool:
         flags = self.get_osdmap().dump().get('flags', '')
         if 'noautoscale' in flags:
+            return True
+        else:
+            return False
+
+    def has_norecover_flag(self) -> bool:
+        flags = self.get_osdmap().dump().get('flags', '')
+        if 'norecover' in flags:
             return True
         else:
             return False
@@ -321,7 +328,7 @@ class PgAutoscaler(MgrModule):
     def serve(self) -> None:
         self.config_notify()
         while not self._shutdown.is_set():
-            if not self.has_noautoscale_flag():
+            if not self.has_noautoscale_flag() and not self.has_norecover_flag():
                 osdmap = self.get_osdmap()
                 pools = osdmap.get_pools_by_name()
                 self._maybe_adjust(osdmap, pools)
@@ -662,6 +669,11 @@ class PgAutoscaler(MgrModule):
 
         ret, _, _ = self._get_pool_pg_targets(osdmap, even_pools, crush_map, root_map,
                                          pool_stats, ret, threshold, 'third', overlapped_roots)
+
+        # If noautoscale flag is set, we set pg_autoscale_mode to off
+        if self.has_noautoscale_flag():
+            for p in ret:
+                p['pg_autoscale_mode'] = 'off'
 
         return (ret, root_map)
 

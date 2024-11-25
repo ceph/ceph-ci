@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import math
 import time
 from typing import Any, Dict, Iterable, List, Optional, Union, cast
 
@@ -13,6 +14,7 @@ from ..services.rbd import RbdConfiguration
 from ..tools import TaskManager, str_to_bool
 from . import APIDoc, APIRouter, Endpoint, EndpointDoc, ReadPermission, \
     RESTController, Task, UIRouter
+from .rbd_mirroring import RbdMirroringPoolMode
 
 POOL_SCHEMA = ([{
     "pool": (int, "pool id"),
@@ -101,7 +103,7 @@ class Pool(RESTController):
 
         crush_rules = {r['rule_id']: r["rule_name"] for r in mgr.get('osd_map_crush')['rules']}
 
-        res: Dict[Union[int, str], Union[str, List[Any]]] = {}
+        res: Dict[Union[int, str], Union[str, List[Any], Dict[str, Any]]] = {}
         for attr in attrs:
             if attr not in pool:
                 continue
@@ -111,6 +113,15 @@ class Pool(RESTController):
                 res[attr] = crush_rules[pool[attr]]
             elif attr == 'application_metadata':
                 res[attr] = list(pool[attr].keys())
+            # handle infinity values
+            elif attr == 'read_balance' and isinstance(pool[attr], dict):
+                read_balance: Dict[str, Any] = {}
+                for key, value in pool[attr].items():
+                    if isinstance(value, float) and math.isinf(value):
+                        read_balance[key] = "Infinity"
+                    else:
+                        read_balance[key] = value
+                res[attr] = read_balance
             else:
                 res[attr] = pool[attr]
 
@@ -159,24 +170,37 @@ class Pool(RESTController):
                                         yes_i_really_really_mean_it=True)
 
     @pool_task('edit', ['{pool_name}'])
-    def set(self, pool_name, flags=None, application_metadata=None, configuration=None, **kwargs):
+    def set(self, pool_name, flags=None, application_metadata=None, configuration=None,
+            rbd_mirroring=None, **kwargs):
         self._set_pool_values(pool_name, application_metadata, flags, True, kwargs)
         if kwargs.get('pool'):
             pool_name = kwargs['pool']
         RbdConfiguration(pool_name).set_configuration(configuration)
+        if rbd_mirroring is not None:
+            self._set_mirroring_mode(rbd_mirroring, pool_name)
         self._wait_for_pgs(pool_name)
 
     @pool_task('create', {'pool_name': '{pool}'})
     @handle_send_command_error('pool')
     def create(self, pool, pg_num, pool_type, erasure_code_profile=None, flags=None,
-               application_metadata=None, rule_name=None, configuration=None, **kwargs):
+               application_metadata=None, rule_name=None, configuration=None,
+               rbd_mirroring=None, **kwargs):
         ecp = erasure_code_profile if erasure_code_profile else None
         CephService.send_command('mon', 'osd pool create', pool=pool, pg_num=int(pg_num),
                                  pgp_num=int(pg_num), pool_type=pool_type, erasure_code_profile=ecp,
                                  rule=rule_name)
         self._set_pool_values(pool, application_metadata, flags, False, kwargs)
         RbdConfiguration(pool).set_configuration(configuration)
+        if rbd_mirroring is not None:
+            self._set_mirroring_mode(rbd_mirroring, pool)
         self._wait_for_pgs(pool)
+
+    def _set_mirroring_mode(self, mirroring_enabled, pool):
+        rbd_mirroring = RbdMirroringPoolMode()
+        if str_to_bool(mirroring_enabled):
+            rbd_mirroring.set_pool_mirror_mode(pool, 'pool')
+        else:
+            rbd_mirroring.set_pool_mirror_mode(pool, 'disabled')
 
     def _set_pool_values(self, pool, application_metadata, flags, update_existing, kwargs):
         current_pool = self._get(pool)

@@ -273,7 +273,7 @@ bs::error_code logback_generations::setup(const DoutPrefixProvider *dpp,
 	ldpp_dout(dpp, -1) << __PRETTY_FUNCTION__ << ":" << __LINE__
 		   << ": failed writing oid=" << oid
 		   << ", r=" << r << dendl;
-	bs::system_error(-r, bs::system_category());
+      return bs::error_code(-r, bs::system_category());
       }
       // Did someone race us? Then re-read.
       if (r != 0) {
@@ -444,13 +444,17 @@ bs::error_code logback_generations::write(const DoutPrefixProvider *dpp, entries
     encode(e, bl);
     op.write_full(bl);
     cls_version_inc(op);
+    auto oldv = version;
+    l.unlock();
     auto r = rgw_rados_operate(dpp, ioctx, oid, &op, y);
     if (r == 0) {
+      if (oldv != version) {
+	return { ECANCELED, bs::system_category() };
+      }
       entries_ = std::move(e);
       version.inc();
       return {};
     }
-    l.unlock();
     if (r < 0 && r != -ECANCELED) {
       ldpp_dout(dpp, -1) << __PRETTY_FUNCTION__ << ":" << __LINE__
 		 << ": failed reading oid=" << oid
@@ -609,17 +613,19 @@ bs::error_code logback_generations::remove_empty(const DoutPrefixProvider *dpp, 
     if (ec) return ec;
     auto tries = 0;
     entries_t new_entries;
-    std::unique_lock l(m);
-    ceph_assert(!entries_.empty());
-    {
-      auto i = lowest_nomempty(entries_);
-      if (i == entries_.begin()) {
-	return {};
-      }
-    }
     entries_t es;
     auto now = ceph::real_clock::now();
-    l.unlock();
+    {
+      std::unique_lock l(m);
+      ceph_assert(!entries_.empty());
+      {
+	auto i = lowest_nomempty(entries_);
+	if (i == entries_.begin()) {
+	  return {};
+	}
+      }
+      l.unlock();
+    }
     do {
       std::copy_if(entries_.cbegin(), entries_.cend(),
 		   std::inserter(es, es.end()),
@@ -646,7 +652,7 @@ bs::error_code logback_generations::remove_empty(const DoutPrefixProvider *dpp, 
 	  es2.erase(i);
 	}
       }
-      l.lock();
+      std::unique_lock l(m);
       es.clear();
       ec = write(dpp, std::move(es2), std::move(l), y);
       ++tries;

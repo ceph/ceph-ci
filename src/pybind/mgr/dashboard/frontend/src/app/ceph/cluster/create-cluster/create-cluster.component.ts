@@ -7,7 +7,7 @@ import {
   TemplateRef,
   ViewChild
 } from '@angular/core';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 
 import { NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
 import _ from 'lodash';
@@ -26,11 +26,13 @@ import { DeploymentOptions } from '~/app/shared/models/osd-deployment-options';
 import { Permissions } from '~/app/shared/models/permissions';
 import { WizardStepModel } from '~/app/shared/models/wizard-steps';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
-import { ModalService } from '~/app/shared/services/modal.service';
 import { NotificationService } from '~/app/shared/services/notification.service';
 import { TaskWrapperService } from '~/app/shared/services/task-wrapper.service';
 import { WizardStepsService } from '~/app/shared/services/wizard-steps.service';
 import { DriveGroup } from '../osd/osd-form/drive-group.model';
+import { Location } from '@angular/common';
+import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
+import { Step } from 'carbon-components-angular';
 
 @Component({
   selector: 'cd-create-cluster',
@@ -44,7 +46,23 @@ export class CreateClusterComponent implements OnInit, OnDestroy {
   currentStepSub: Subscription;
   permissions: Permissions;
   projectConstants: typeof AppConstants = AppConstants;
-  stepTitles = ['Add Hosts', 'Create OSDs', 'Create Services', 'Review'];
+  stepTitles: Step[] = [
+    {
+      label: 'Add Hosts'
+    },
+    {
+      label: 'Create OSDs',
+      complete: false
+    },
+    {
+      label: 'Create Services',
+      complete: false
+    },
+    {
+      label: 'Review',
+      complete: false
+    }
+  ];
   startClusterCreation = false;
   observables: any = [];
   modalRef: NgbModalRef;
@@ -66,9 +84,11 @@ export class CreateClusterComponent implements OnInit, OnDestroy {
     private notificationService: NotificationService,
     private actionLabels: ActionLabelsI18n,
     private clusterService: ClusterService,
-    private modalService: ModalService,
+    private modalService: ModalCdsService,
     private taskWrapper: TaskWrapperService,
-    private osdService: OsdService
+    private osdService: OsdService,
+    private route: ActivatedRoute,
+    private location: Location
   ) {
     this.permissions = this.authStorageService.getPermissions();
     this.currentStepSub = this.wizardStepsService
@@ -76,22 +96,37 @@ export class CreateClusterComponent implements OnInit, OnDestroy {
       .subscribe((step: WizardStepModel) => {
         this.currentStep = step;
       });
-    this.currentStep.stepIndex = 1;
+    this.currentStep.stepIndex = 0;
   }
 
   ngOnInit(): void {
+    this.stepTitles.forEach((steps, index) => {
+      steps.onClick = () => (this.currentStep.stepIndex = index);
+    });
+    this.route.queryParams.subscribe((params) => {
+      // reading 'welcome' value true/false to toggle expand-cluster wizand view and welcome view
+      const showWelcomeScreen = params['welcome'];
+      if (showWelcomeScreen) {
+        this.startClusterCreation = showWelcomeScreen;
+      }
+    });
+
     this.osdService.getDeploymentOptions().subscribe((options) => {
       this.deploymentOption = options;
       this.selectedOption = { option: options.recommended_option, encrypted: false };
     });
 
     this.stepTitles.forEach((stepTitle) => {
-      this.stepsToSkip[stepTitle] = false;
+      this.stepsToSkip[stepTitle.label] = false;
     });
   }
 
+  onStepClick(step: WizardStepModel) {
+    this.wizardStepsService.setCurrentStep(step);
+  }
+
   createCluster() {
-    this.startClusterCreation = true;
+    this.startClusterCreation = false;
   }
 
   skipClusterCreation() {
@@ -103,19 +138,19 @@ export class CreateClusterComponent implements OnInit, OnDestroy {
       showSubmit: true,
       onSubmit: () => {
         this.clusterService.updateStatus('POST_INSTALLED').subscribe({
-          error: () => this.modalRef.close(),
+          error: () => this.modalService.dismissAll(),
           complete: () => {
             this.notificationService.show(
               NotificationType.info,
               $localize`Cluster expansion skipped by user`
             );
             this.router.navigate(['/dashboard']);
-            this.modalRef.close();
+            this.modalService.dismissAll();
           }
         });
       }
     };
-    this.modalRef = this.modalService.show(ConfirmationModalComponent, modalVariables);
+    this.modalService.show(ConfirmationModalComponent, modalVariables);
   }
 
   onSubmit() {
@@ -220,13 +255,13 @@ export class CreateClusterComponent implements OnInit, OnDestroy {
     if (!this.wizardStepsService.isFirstStep()) {
       this.wizardStepsService.moveToPreviousStep();
     } else {
-      this.router.navigate(['/dashboard']);
+      this.location.back();
     }
   }
 
   onSkip() {
-    const stepTitle = this.stepTitles[this.currentStep.stepIndex - 1];
-    this.stepsToSkip[stepTitle] = true;
+    const stepTitle = this.stepTitles[this.currentStep.stepIndex];
+    this.stepsToSkip[stepTitle.label] = true;
     this.onNextStep();
   }
 
@@ -244,5 +279,6 @@ export class CreateClusterComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.currentStepSub.unsubscribe();
+    this.osdService.selectedFormValues = null;
   }
 }

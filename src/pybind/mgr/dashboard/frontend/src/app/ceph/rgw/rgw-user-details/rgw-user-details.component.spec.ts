@@ -29,18 +29,18 @@ describe('RgwUserDetailsComponent', () => {
   });
 
   it('should show correct "System" info', () => {
-    component.selection = { uid: '', email: '', system: 'true', keys: [], swift_keys: [] };
+    component.selection = { uid: '', email: '', system: true, keys: [], swift_keys: [] };
 
     component.ngOnChanges();
     fixture.detectChanges();
 
     const detailsTab = fixture.debugElement.nativeElement.querySelectorAll(
-      '.table.table-striped.table-bordered tr td'
+      '.cds--data-table--sort.cds--data-table--no-border tr td'
     );
-    expect(detailsTab[10].textContent).toEqual('System');
+    expect(detailsTab[10].textContent).toEqual('System user');
     expect(detailsTab[11].textContent).toEqual('Yes');
 
-    component.selection.system = 'false';
+    component.selection.system = false;
     component.ngOnChanges();
     fixture.detectChanges();
 
@@ -61,7 +61,7 @@ describe('RgwUserDetailsComponent', () => {
     fixture.detectChanges();
 
     const detailsTab = fixture.debugElement.nativeElement.querySelectorAll(
-      '.table.table-striped.table-bordered tr td'
+      '.cds--data-table--sort.cds--data-table--no-border tr td'
     );
     expect(detailsTab[14].textContent).toEqual('MFAs(Id)');
     expect(detailsTab[15].textContent).toEqual('testMFA1, testMFA2');

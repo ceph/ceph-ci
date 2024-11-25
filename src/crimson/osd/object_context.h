@@ -61,6 +61,9 @@ class ObjectContext : public ceph::common::intrusive_lru_base<
   ceph::common::intrusive_lru_config<
     hobject_t, ObjectContext, obc_to_hoid<ObjectContext>>>
 {
+private:
+  tri_mutex lock;
+
 public:
   ObjectState obs;
   SnapSetContextRef ssc;
@@ -70,7 +73,13 @@ public:
   using watch_key_t = std::pair<uint64_t, entity_name_t>;
   std::map<watch_key_t, seastar::shared_ptr<crimson::osd::Watch>> watchers;
 
-  ObjectContext(hobject_t hoid) : obs(std::move(hoid)) {}
+  ObjectContext(hobject_t hoid) : lock(hoid),
+                                  obs(std::move(hoid)) {}
+
+  void update_from(const ObjectContext &obc) {
+    obs = obc.obs;
+    ssc = obc.ssc;
+  }
 
   const hobject_t &get_oid() const {
     return obs.oi.soid;
@@ -94,39 +103,42 @@ public:
     ceph_assert(is_head());
     obs = std::move(_obs);
     ssc = std::move(_ssc);
+    fully_loaded = true;
   }
 
   void set_clone_state(ObjectState &&_obs) {
     ceph_assert(!is_head());
     obs = std::move(_obs);
+    fully_loaded = true;
+  }
+
+  void set_clone_ssc(SnapSetContextRef head_ssc) {
+    ceph_assert(!is_head());
+    ssc = head_ssc;
   }
 
   /// pass the provided exception to any waiting consumers of this ObjectContext
   template<typename Exception>
   void interrupt(Exception ex) {
     lock.abort(std::move(ex));
-    if (recovery_read_marker) {
-      drop_recovery_read();
-    }
+  }
+
+  bool is_loaded() const {
+    return fully_loaded;
+  }
+
+  bool is_valid() const {
+    return !invalidated_by_interval_change;
   }
 
 private:
-  tri_mutex lock;
-  bool recovery_read_marker = false;
-
-  template <typename Lock, typename Func>
-  auto _with_lock(Lock&& lock, Func&& func) {
-    Ref obc = this;
-    return lock.lock().then([&lock, func = std::forward<Func>(func), obc]() mutable {
-      return seastar::futurize_invoke(func).finally([&lock, obc] {
-	lock.unlock();
-      });
-    });
-  }
-
-  boost::intrusive::list_member_hook<> list_hook;
+  boost::intrusive::list_member_hook<> obc_accessing_hook;
   uint64_t list_link_cnt = 0;
+  bool fully_loaded = false;
+  bool invalidated_by_interval_change = false;
 
+  friend class ObjectContextRegistry;
+  friend class ObjectContextLoader;
 public:
 
   template <typename ListType>
@@ -147,96 +159,13 @@ public:
   using obc_accessing_option_t = boost::intrusive::member_hook<
     ObjectContext,
     boost::intrusive::list_member_hook<>,
-    &ObjectContext::list_hook>;
-
-  template<RWState::State Type, typename InterruptCond = void, typename Func>
-  auto with_lock(Func&& func) {
-    if constexpr (!std::is_void_v<InterruptCond>) {
-      auto wrapper = ::crimson::interruptible::interruptor<InterruptCond>::wrap_function(std::forward<Func>(func));
-      switch (Type) {
-      case RWState::RWWRITE:
-	return _with_lock(lock.for_write(), std::move(wrapper));
-      case RWState::RWREAD:
-	return _with_lock(lock.for_read(), std::move(wrapper));
-      case RWState::RWEXCL:
-	return _with_lock(lock.for_excl(), std::move(wrapper));
-      case RWState::RWNONE:
-	return seastar::futurize_invoke(std::move(wrapper));
-      default:
-	assert(0 == "noop");
-      }
-    } else {
-      switch (Type) {
-      case RWState::RWWRITE:
-	return _with_lock(lock.for_write(), std::forward<Func>(func));
-      case RWState::RWREAD:
-	return _with_lock(lock.for_read(), std::forward<Func>(func));
-      case RWState::RWEXCL:
-	return _with_lock(lock.for_excl(), std::forward<Func>(func));
-      case RWState::RWNONE:
-	return seastar::futurize_invoke(std::forward<Func>(func));
-      default:
-	assert(0 == "noop");
-      }
-    }
-  }
-  template<RWState::State Type, typename InterruptCond = void, typename Func>
-  auto with_promoted_lock(Func&& func) {
-    if constexpr (!std::is_void_v<InterruptCond>) {
-      auto wrapper = ::crimson::interruptible::interruptor<InterruptCond>::wrap_function(std::forward<Func>(func));
-      switch (Type) {
-      case RWState::RWWRITE:
-	return _with_lock(lock.excl_from_write(), std::move(wrapper));
-      case RWState::RWREAD:
-	return _with_lock(lock.excl_from_read(), std::move(wrapper));
-      case RWState::RWEXCL:
-	return _with_lock(lock.excl_from_excl(), std::move(wrapper));
-      case RWState::RWNONE:
-	return _with_lock(lock.for_excl(), std::move(wrapper));
-       default:
-	assert(0 == "noop");
-      }
-    } else {
-      switch (Type) {
-      case RWState::RWWRITE:
-	return _with_lock(lock.excl_from_write(), std::forward<Func>(func));
-      case RWState::RWREAD:
-	return _with_lock(lock.excl_from_read(), std::forward<Func>(func));
-      case RWState::RWEXCL:
-	return _with_lock(lock.excl_from_excl(), std::forward<Func>(func));
-      case RWState::RWNONE:
-	return _with_lock(lock.for_excl(), std::forward<Func>(func));
-       default:
-	assert(0 == "noop");
-      }
-    }
-  }
+    &ObjectContext::obc_accessing_hook>;
 
   bool empty() const {
     return !lock.is_acquired();
   }
   bool is_request_pending() const {
     return lock.is_acquired();
-  }
-
-  bool get_recovery_read() {
-    if (lock.try_lock_for_read()) {
-      recovery_read_marker = true;
-      return true;
-    } else {
-      return false;
-    }
-  }
-  void wait_recovery_read() {
-    assert(lock.get_readers() > 0);
-    recovery_read_marker = true;
-  }
-  void drop_recovery_read() {
-    assert(recovery_read_marker);
-    recovery_read_marker = false;
-  }
-  bool maybe_get_excl() {
-    return lock.try_lock_for_excl();
   }
 };
 using ObjectContextRef = ObjectContext::Ref;
@@ -260,6 +189,12 @@ public:
     obc_lru.clear_range(from, to);
   }
 
+  void invalidate_on_interval_change() {
+    obc_lru.clear([](auto &obc) {
+      obc.invalidated_by_interval_change = true;
+    });
+  }
+
   template <class F>
   void for_each(F&& f) {
     obc_lru.for_each(std::forward<F>(f));
@@ -274,3 +209,6 @@ std::optional<hobject_t> resolve_oid(const SnapSet &ss,
                                      const hobject_t &oid);
 
 } // namespace crimson::osd
+
+template <>
+struct fmt::formatter<RWState::State> : fmt::ostream_formatter {};

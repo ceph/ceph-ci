@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-
+# type: ignore
 import logging
 import os
 from functools import total_ordering
-from ceph_volume import sys_info
+from ceph_volume import sys_info, allow_loop_devices, BEING_REPLACED_HEADER
 from ceph_volume.api import lvm
 from ceph_volume.util import disk, system
 from ceph_volume.util.lsmdisk import LSMDisk
 from ceph_volume.util.constants import ceph_disk_guids
-from ceph_volume.util.disk import allow_loop_devices
+from typing import List, Tuple
 
 
 logger = logging.getLogger(__name__)
@@ -86,13 +86,14 @@ class Device(object):
      {attr:<25} {value}"""
 
     report_fields = [
-        'ceph_device',
+        'ceph_device_lvm',
         'rejected_reasons',
         'available',
         'path',
         'sys_api',
         'device_id',
         'lsm_data',
+        'being_replaced'
     ]
     pretty_report_sys_fields = [
         'actuators',
@@ -119,15 +120,10 @@ class Device(object):
             self.symlink = self.path
             real_path = os.path.realpath(self.path)
             # check if we are not a device mapper
-            if "dm-" not in real_path:
+            if "dm-" not in real_path and not self.is_lv:
                 self.path = real_path
-        if not sys_info.devices:
-            if self.path:
-                sys_info.devices = disk.get_devices(device=self.path)
-            else:
-                sys_info.devices = disk.get_devices()
-        if sys_info.devices.get(self.path, {}):
-            self.device_nodes = sys_info.devices[self.path]['device_nodes']
+        if not sys_info.devices.get(self.path):
+            sys_info.devices = disk.get_devices()
         self.sys_api = sys_info.devices.get(self.path, {})
         self.partitions = self._get_partitions()
         self.lv_api = None
@@ -141,8 +137,11 @@ class Device(object):
         self.blkid_api = None
         self._exists = None
         self._is_lvm_member = None
-        self.ceph_device = False
+        self.ceph_device_lvm = False
+        self.being_replaced: bool = self.is_being_replaced
         self._parse()
+        if self.path in sys_info.devices.keys():
+            self.device_nodes = sys_info.devices[self.path]['device_nodes']
         self.lsm_data = self.fetch_lsm(with_lsm)
 
         self.available_lvm, self.rejected_reasons_lvm = self._check_lvm_reject_reasons()
@@ -215,12 +214,21 @@ class Device(object):
                         lv = _lv
                         break
         else:
+            filters = {}
             if self.path[0] == '/':
-                lv = lvm.get_single_lv(filters={'lv_path': self.path})
+                lv_mapper_path: str = self.path
+                field: str = 'lv_path'
+
+                if self.path.startswith('/dev/mapper') or self.path.startswith('/dev/dm-'):
+                    path = os.path.realpath(self.path) if self.path.startswith('/dev/mapper') else self.path
+                    lv_mapper_path = disk.get_lvm_mapper_path_from_dm(path)
+                    field = 'lv_dm_path'
+
+                filters = {field: lv_mapper_path}
             else:
                 vgname, lvname = self.path.split('/')
-                lv = lvm.get_single_lv(filters={'lv_name': lvname,
-                                                'vg_name': vgname})
+                filters = {'lv_name': lvname, 'vg_name': vgname}
+            lv = lvm.get_single_lv(filters=filters)
 
         if lv:
             self.lv_api = lv
@@ -228,7 +236,7 @@ class Device(object):
             self.path = lv.lv_path
             self.vg_name = lv.vg_name
             self.lv_name = lv.name
-            self.ceph_device = lvm.is_ceph_device(lv)
+            self.ceph_device_lvm = lvm.is_ceph_device(lv)
         else:
             self.lvs = []
             if self.lsblk_all:
@@ -293,7 +301,7 @@ class Device(object):
             rot=self.rotational,
             available=self.available,
             model=self.model,
-            device_nodes=self.device_nodes
+            device_nodes=','.join(self.device_nodes)
         )
 
     def json_report(self):
@@ -358,7 +366,7 @@ class Device(object):
                     self._is_lvm_member = True
                     self.lvs.extend(lvm.get_device_lvs(path))
                 if self.lvs:
-                    self.ceph_device = any([True if lv.tags.get('ceph.osd_id') else False for lv in self.lvs])
+                    self.ceph_device_lvm = any([True if lv.tags.get('ceph.osd_id') else False for lv in self.lvs])
 
     def _get_partitions(self):
         """
@@ -460,27 +468,28 @@ class Device(object):
     def device_type(self):
         self.load_blkid_api()
         if 'type' in self.sys_api:
-            return self.sys_api['type']
+            return self.sys_api.get('type')
         elif self.disk_api:
-            return self.disk_api['TYPE']
+            return self.disk_api.get('TYPE')
         elif self.blkid_api:
-            return self.blkid_api['TYPE']
+            return self.blkid_api.get('TYPE')
 
     @property
     def is_mpath(self):
         return self.device_type == 'mpath'
 
     @property
-    def is_lv(self):
-        return self.lv_api is not None
+    def is_lv(self) -> bool:
+        path = os.path.realpath(self.path)
+        return path in disk.get_lvm_mappers()
 
     @property
     def is_partition(self):
         self.load_blkid_api()
         if self.disk_api:
-            return self.disk_api['TYPE'] == 'part'
+            return self.disk_api.get('TYPE') == 'part'
         elif self.blkid_api:
-            return self.blkid_api['TYPE'] == 'part'
+            return self.blkid_api.get('TYPE') == 'part'
         return False
 
     @property
@@ -584,7 +593,7 @@ class Device(object):
             return [vg_free]
 
     @property
-    def has_partitions(self):
+    def has_partitions(self) -> bool:
         '''
         Boolean to determine if a given device has partitions.
         '''
@@ -592,10 +601,17 @@ class Device(object):
             return True
         return False
 
-    def _check_generic_reject_reasons(self):
+    @property
+    def is_being_replaced(self) -> bool:
+        '''
+        Boolean to indicate if the device is being replaced.
+        '''
+        return disk._dd_read(self.path, 26) == BEING_REPLACED_HEADER
+
+    def _check_generic_reject_reasons(self) -> List[str]:
         reasons = [
-            ('removable', 1, 'removable'),
-            ('ro', 1, 'read-only'),
+            ('id_bus', 'usb', 'id_bus'),
+            ('ro', '1', 'read-only'),
         ]
         rejected = [reason for (k, v, reason) in reasons if
                     self.sys_api.get(k, '') == v]
@@ -633,9 +649,11 @@ class Device(object):
             rejected.append('Has partitions')
         if self.has_fs:
             rejected.append('Has a FileSystem')
+        if self.is_being_replaced:
+            rejected.append('Is being replaced')
         return rejected
 
-    def _check_lvm_reject_reasons(self):
+    def _check_lvm_reject_reasons(self) -> Tuple[bool, List[str]]:
         rejected = []
         if self.vgs:
             available_vgs = [vg for vg in self.vgs if int(vg.vg_free_count) > 10]
@@ -648,7 +666,7 @@ class Device(object):
 
         return len(rejected) == 0, rejected
 
-    def _check_raw_reject_reasons(self):
+    def _check_raw_reject_reasons(self) -> Tuple[bool, List[str]]:
         rejected = self._check_generic_reject_reasons()
         if len(self.vgs) > 0:
             rejected.append('LVM detected')

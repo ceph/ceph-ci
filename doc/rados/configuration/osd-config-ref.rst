@@ -145,17 +145,20 @@ See `Pool & PG Config Reference`_ for details.
 Scrubbing
 =========
 
-In addition to making multiple copies of objects, Ceph ensures data integrity by
-scrubbing placement groups. Ceph scrubbing is analogous to ``fsck`` on the
-object storage layer. For each placement group, Ceph generates a catalog of all
-objects and compares each primary object and its replicas to ensure that no
-objects are missing or mismatched. Light scrubbing (daily) checks the object
-size and attributes.  Deep scrubbing (weekly) reads the data and uses checksums
-to ensure data integrity.
+One way that Ceph ensures data integrity is by "scrubbing" placement groups.
+Ceph scrubbing is analogous to ``fsck`` on the object storage layer. Ceph
+generates a catalog of all objects in each placement group and compares each
+primary object to its replicas, ensuring that no objects are missing or
+mismatched. Light scrubbing checks the object size and attributes, and is
+usually done daily. Deep scrubbing reads the data and uses checksums to ensure
+data integrity, and is usually done weekly. The frequencies of both light
+scrubbing and deep scrubbing are determined by the cluster's configuration,
+which is fully under your control and subject to the settings explained below
+in this section.
 
-Scrubbing is important for maintaining data integrity, but it can reduce
-performance. You can adjust the following settings to increase or decrease
-scrubbing operations.
+Although scrubbing is important for maintaining data integrity, it can reduce
+the performance of the Ceph cluster. You can adjust the following settings to
+increase or decrease the frequency and depth of scrubbing operations.
 
 
 .. confval:: osd_max_scrubs
@@ -168,7 +171,9 @@ scrubbing operations.
 .. confval:: osd_scrub_min_interval
 .. confval:: osd_scrub_max_interval
 .. confval:: osd_scrub_chunk_min
+.. confval:: osd_shallow_scrub_chunk_min
 .. confval:: osd_scrub_chunk_max
+.. confval:: osd_shallow_scrub_chunk_max
 .. confval:: osd_scrub_sleep
 .. confval:: osd_deep_scrub_interval
 .. confval:: osd_scrub_interval_randomize_ratio
@@ -184,6 +189,9 @@ Operations
 .. confval:: osd_op_num_shards
 .. confval:: osd_op_num_shards_hdd
 .. confval:: osd_op_num_shards_ssd
+.. confval:: osd_op_num_threads_per_shard
+.. confval:: osd_op_num_threads_per_shard_hdd
+.. confval:: osd_op_num_threads_per_shard_ssd
 .. confval:: osd_op_queue
 .. confval:: osd_op_queue_cut_off
 .. confval:: osd_client_op_priority
@@ -287,6 +295,9 @@ of the current time. The ultimate lesson is that values for weight
 should not be too large. They should be under the number of requests
 one expects to be serviced each second.
 
+
+.. _dmclock-qos-caveats:
+
 Caveats
 ```````
 
@@ -298,6 +309,11 @@ number of shards can be controlled with the configuration options
 :confval:`osd_op_num_shards`, :confval:`osd_op_num_shards_hdd`, and
 :confval:`osd_op_num_shards_ssd`. A lower number of shards will increase the
 impact of the mClock queues, but may have other deleterious effects.
+This is especially the case if there are insufficient shard worker
+threads. The number of shard worker threads can be controlled with the
+configuration options :confval:`osd_op_num_threads_per_shard`,
+:confval:`osd_op_num_threads_per_shard_hdd` and
+:confval:`osd_op_num_threads_per_shard_ssd`.
 
 Second, requests are transferred from the operation queue to the
 operation sequencer, in which they go through the phases of
@@ -357,6 +373,8 @@ considerably. To maintain operational performance, Ceph performs this migration
 with 'backfilling', which allows Ceph to set backfill operations to a lower
 priority than requests to read or write data.
 
+.. note:: Some of these settings are automatically reset if the `mClock`_
+ 		    scheduler is active, see `mClock backfill`_.
 
 .. confval:: osd_max_backfills
 .. confval:: osd_backfill_scan_min
@@ -399,6 +417,9 @@ To maintain operational performance, Ceph performs recovery with limitations on
 the number recovery requests, threads and object chunk sizes which allows Ceph
 perform well in a degraded state.
 
+.. note:: Some of these settings are automatically reset if the `mClock`_
+          scheduler is active, see `mClock backfill`_.
+
 .. confval:: osd_recovery_delay_start
 .. confval:: osd_recovery_max_active
 .. confval:: osd_recovery_max_active_hdd
@@ -436,6 +457,8 @@ Miscellaneous
 .. _pool: ../../operations/pools
 .. _Configuring Monitor/OSD Interaction: ../mon-osd-interaction
 .. _Monitoring OSDs and PGs: ../../operations/monitoring-osd-pg#peering
+.. _mClock: ../mclock-config-ref.rst
+.. _mClock backfill: ../mclock-config-ref.rst#recovery-backfill-options
 .. _Pool & PG Config Reference: ../pool-pg-config-ref
 .. _Journal Config Reference: ../journal-ref
 .. _cache target dirty high ratio: ../../operations/pools#cache-target-dirty-high-ratio

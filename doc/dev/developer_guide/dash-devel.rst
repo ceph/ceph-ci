@@ -161,8 +161,6 @@ dashboard and its URLs::
 
   dashboard urls: https://192.168.178.84:41259, https://192.168.178.84:43259, https://192.168.178.84:45259
     w/ user/pass: admin / admin
-  restful urls: https://192.168.178.84:42259, https://192.168.178.84:44259, https://192.168.178.84:46259
-    w/ user/pass: admin / 598da51f-8cd1-4161-a970-b2944d5ad200
 
 During development (especially in backend development), you also want to
 check on occasions if the dashboard manager module is still running. To do so
@@ -175,8 +173,7 @@ should look similar to the following output:
 
   $ ./bin/ceph mgr services
   {
-      "dashboard": "https://home:41931/",
-      "restful": "https://home:42931/"
+      "dashboard": "https://home:41931/"
   }
 
 By default, this environment uses a randomly chosen port for Ceph Dashboard
@@ -214,8 +211,8 @@ The build process is based on `Node.js <https://nodejs.org/>`_ and requires the
 Prerequisites
 ~~~~~~~~~~~~~
 
- * Node 18.17.0 or higher
- * NPM 9.6.7 or higher
+ * Node 20.13.1 or higher
+ * NPM 10.5.2 or higher
 
 nodeenv:
   During Ceph's build we create a virtualenv with ``node`` and ``npm``
@@ -2423,8 +2420,10 @@ also manually invoked: ``tox -e openapi-check``.
 If that checker failed, it means that the current Pull Request is modifying the
 Ceph API and therefore:
 
-#. The versioned OpenAPI specification should be updated explicitly: ``tox -e openapi-fix``.
-#. The team @ceph/api will be requested for reviews (this is automated via GitHub CODEOWNERS), in order to asses the impact of changes.
+#. The versioned OpenAPI specification should be updated explicitly: ``tox -e
+   openapi-fix``.
+#. The team @ceph/api will be requested for reviews (this is automated via
+   GitHub CODEOWNERS), in order to assess the impact of changes.
 
 Additionally, Sphinx documentation can be generated from the OpenAPI
 specification with ``tox -e openapi-doc``.

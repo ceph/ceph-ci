@@ -13,9 +13,9 @@
  * COPYING.
  */
 
-#include <exception>
-
 #include "common/error_code.h"
+
+#include <boost/asio/error.hpp>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wnon-virtual-dtor"

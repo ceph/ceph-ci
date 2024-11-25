@@ -12,11 +12,11 @@ struct osd_op_params_t {
   utime_t mtime;
   eversion_t at_version;
   eversion_t pg_trim_to;
-  eversion_t min_last_complete_ondisk;
+  eversion_t pg_committed_to;
   eversion_t last_complete;
-  version_t user_at_version = 0;
   bool user_modify = false;
   ObjectCleanRegions clean_regions;
-
+  interval_set<uint64_t> modified_ranges;
+  //TODO: Move delta_stats to osd_op_params_t
   osd_op_params_t() = default;
 };

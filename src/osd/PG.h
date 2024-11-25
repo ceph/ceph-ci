@@ -20,6 +20,7 @@
 #include "include/mempool.h"
 
 // re-include our assert to clobber boost's
+#include "common/admin_finisher.h"
 #include "include/ceph_assert.h" 
 #include "include/common_fwd.h"
 
@@ -67,7 +68,6 @@ class ScrubBackend;
 namespace Scrub {
   class Store;
   class ReplicaReservations;
-  class LocalReservation;
   class ReservedByRemotePrimary;
   enum class schedule_result_t;
 }
@@ -179,13 +179,6 @@ public:
   /// and be removed only in the PrimaryLogPG destructor.
   std::unique_ptr<ScrubPgIF> m_scrubber;
 
-  /// flags detailing scheduling/operation characteristics of the next scrub 
-  requested_scrub_t m_planned_scrub;
-
-  const requested_scrub_t& get_planned_scrub() const {
-    return m_planned_scrub;
-  }
-
   /// scrubbing state for both Primary & replicas
   bool is_scrub_active() const { return m_scrubber->is_scrub_active(); }
 
@@ -269,7 +262,7 @@ public:
 	set_last_scrub_stamp(t, history, stats);
 	return true;
       });
-    on_scrub_schedule_input_change();
+    on_scrub_schedule_input_change(Scrub::delay_ready_t::delay_ready);
   }
 
   static void set_last_deep_scrub_stamp(
@@ -282,9 +275,10 @@ public:
     recovery_state.update_stats(
       [t](auto &history, auto &stats) {
 	set_last_deep_scrub_stamp(t, history, stats);
+	set_last_scrub_stamp(t, history, stats);
 	return true;
       });
-    on_scrub_schedule_input_change();
+    on_scrub_schedule_input_change(Scrub::delay_ready_t::delay_ready);
   }
 
   static void add_objects_scrubbed_count(
@@ -424,19 +418,6 @@ public:
     forward_scrub_event(&ScrubPgIF::initiate_regular_scrub, queued, "StartScrub");
   }
 
-  /**
-   *  a special version of PG::scrub(), which:
-   *  - is initiated after repair, and
-   * (not true anymore:)
-   *  - is not required to allocate local/remote OSD scrub resources
-   */
-  void recovery_scrub(epoch_t queued, ThreadPool::TPHandle& handle)
-  {
-    // a new scrub
-    forward_scrub_event(&ScrubPgIF::initiate_scrub_after_repair, queued,
-			"AfterRepairScrub");
-  }
-
   void replica_scrub(epoch_t queued,
 		     Scrub::act_token_t act_token,
 		     ThreadPool::TPHandle& handle);
@@ -447,17 +428,6 @@ public:
   {
     forward_scrub_event(&ScrubPgIF::send_sched_replica, queued, act_token,
 			"SchedReplica");
-  }
-
-  void scrub_send_resources_granted(epoch_t queued, ThreadPool::TPHandle& handle)
-  {
-    forward_scrub_event(&ScrubPgIF::send_remotes_reserved, queued, "RemotesReserved");
-  }
-
-  void scrub_send_resources_denied(epoch_t queued, ThreadPool::TPHandle& handle)
-  {
-    forward_scrub_event(&ScrubPgIF::send_reservation_failure, queued,
-			"ReservationFailure");
   }
 
   void scrub_send_scrub_resched(epoch_t queued, ThreadPool::TPHandle& handle)
@@ -485,11 +455,6 @@ public:
   void scrub_send_digest_update(epoch_t queued, ThreadPool::TPHandle& handle)
   {
     forward_scrub_event(&ScrubPgIF::digest_update_notification, queued, "DigestUpdate");
-  }
-
-  void scrub_send_local_map_ready(epoch_t queued, ThreadPool::TPHandle& handle)
-  {
-    forward_scrub_event(&ScrubPgIF::send_local_map_done, queued, "IntLocalMapDone");
   }
 
   void scrub_send_replmaps_ready(epoch_t queued, ThreadPool::TPHandle& handle)
@@ -546,7 +511,7 @@ public:
    * - pg stat scrub timestamps
    * - etc
    */
-  void on_scrub_schedule_input_change();
+  void on_scrub_schedule_input_change(Scrub::delay_ready_t delay_ready);
 
   void scrub_requested(scrub_level_t scrub_level, scrub_type_t scrub_type) override;
 
@@ -625,15 +590,11 @@ public:
 
   void on_active_exit() override;
 
-  Context *on_clean() override {
-    if (is_active()) {
-      kick_snap_trim();
-    }
-    requeue_ops(waiting_for_clean_to_primary_repair);
-    return finish_recovery();
-  }
+  Context *on_clean() override;
 
   void on_activate(interval_set<snapid_t> snaps) override;
+
+  void on_replica_activate() override;
 
   void on_activate_committed() override;
 
@@ -644,6 +605,7 @@ public:
 
   void on_backfill_reserved() override;
   void on_backfill_canceled() override;
+  void on_recovery_cancelled() override {}
   void on_recovery_reserved() override;
 
   bool is_forced_recovery_or_backfill() const {
@@ -717,44 +679,19 @@ public:
   void shutdown();
   virtual void on_shutdown() = 0;
 
-  bool get_must_scrub() const;
-  Scrub::schedule_result_t sched_scrub();
+  Scrub::schedule_result_t start_scrubbing(
+    const Scrub::SchedEntry& candidate,
+    Scrub::OSDRestrictions osd_restrictions);
 
-  unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority, unsigned int suggested_priority) const;
+  unsigned int scrub_requeue_priority(
+      Scrub::scrub_prio_t with_priority,
+      unsigned int suggested_priority) const;
   /// the version that refers to flags_.priority
   unsigned int scrub_requeue_priority(Scrub::scrub_prio_t with_priority) const;
+
 private:
   // auxiliaries used by sched_scrub():
   double next_deepscrub_interval() const;
-
-  /// should we perform deep scrub?
-  bool is_time_for_deep(bool allow_deep_scrub,
-                        bool allow_shallow_scrub,
-                        bool has_deep_errors,
-                        const requested_scrub_t& planned) const;
-
-  /**
-   * Validate the various 'next scrub' flags in m_planned_scrub against configuration
-   * and scrub-related timestamps.
-   *
-   * @returns an updated copy of the m_planned_flags (or nothing if no scrubbing)
-   */
-  std::optional<requested_scrub_t> validate_scrub_mode() const;
-
-  std::optional<requested_scrub_t> validate_periodic_mode(
-    bool allow_deep_scrub,
-    bool try_to_auto_repair,
-    bool allow_shallow_scrub,
-    bool time_for_deep,
-    bool has_deep_errors,
-    const requested_scrub_t& planned) const;
-
-  std::optional<requested_scrub_t> validate_initiated_scrub(
-    bool allow_deep_scrub,
-    bool try_to_auto_repair,
-    bool time_for_deep,
-    bool has_deep_errors,
-    const requested_scrub_t& planned) const;
 
   using ScrubAPI = void (ScrubPgIF::*)(epoch_t epoch_queued);
   void forward_scrub_event(ScrubAPI fn, epoch_t epoch_queued, std::string_view desc);
@@ -776,10 +713,10 @@ public:
 
   virtual void snap_trimmer(epoch_t epoch_queued) = 0;
   virtual void do_command(
-    const std::string_view& prefix,
+    std::string_view prefix,
     const cmdmap_t& cmdmap,
     const ceph::buffer::list& idata,
-    std::function<void(int,const std::string&,ceph::buffer::list&)> on_finish) = 0;
+    asok_finisher on_finish) = 0;
 
   virtual bool agent_work(int max) = 0;
   virtual bool agent_work(int max, int agent_flush_quota) = 0;
@@ -791,7 +728,9 @@ public:
   struct C_DeleteMore : public Context {
     PGRef pg;
     epoch_t epoch;
-    C_DeleteMore(PG *p, epoch_t e) : pg(p), epoch(e) {}
+    int64_t num_objects;
+    C_DeleteMore(PG *p, epoch_t e, int64_t num) : pg(p), epoch(e),
+	                                          num_objects(num){}
     void finish(int r) override {
       ceph_abort();
     }
@@ -1035,6 +974,19 @@ public:
     return num_bytes;
   }
 
+  uint64_t get_average_object_size() {
+    ceph_assert(ceph_mutex_is_locked_by_me(_lock));
+    auto num_bytes = static_cast<uint64_t>(
+      std::max<int64_t>(
+        0, // ensure bytes is non-negative
+        info.stats.stats.sum.num_bytes));
+    auto num_objects = static_cast<uint64_t>(
+      std::max<int64_t>(
+        1, // ensure objects is non-negative and non-zero
+        info.stats.stats.sum.num_objects));
+    return std::max<uint64_t>(num_bytes / num_objects, 1);
+  }
+
 protected:
 
   /*
@@ -1118,6 +1070,7 @@ protected:
 
   std::set<hobject_t> objects_blocked_on_cache_full;
   std::map<hobject_t,snapid_t> objects_blocked_on_degraded_snap;
+  std::map<hobject_t,snapid_t> objects_blocked_on_unreadable_snap;
   std::map<hobject_t,ObjectContextRef> objects_blocked_on_snap_promotion;
 
   // Callbacks should assume pg (and nothing else) is locked
@@ -1245,8 +1198,6 @@ public:
 
   // -- scrub --
 protected:
-  bool scrub_after_recovery;
-
   int active_pushes;
 
   [[nodiscard]] bool ops_blocked_by_scrub() const;
@@ -1380,7 +1331,6 @@ protected:
   virtual void snap_trimmer_scrub_complete() = 0;
 
   void queue_recovery();
-  void queue_scrub_after_repair();
   unsigned int get_scrub_priority();
 
   bool try_flush_or_schedule_async() override;
@@ -1431,11 +1381,6 @@ public:
 
  OSDService* get_pg_osd(ScrubberPasskey) const { return osd; }
 
- requested_scrub_t& get_planned_scrub(ScrubberPasskey)
- {
-   return m_planned_scrub;
- }
-
  void force_object_missing(ScrubberPasskey,
                            const std::set<pg_shard_t>& peer,
                            const hobject_t& oid,
@@ -1457,10 +1402,13 @@ public:
  */
 class PGLockWrapper {
  public:
-  explicit PGLockWrapper(PGRef locked_pg) : m_pg{locked_pg} {}
+  template <typename A_PG_REF>
+  explicit PGLockWrapper(A_PG_REF&& locked_pg)
+      : m_pg{std::forward<A_PG_REF>(locked_pg)}
+  {}
   PGRef pg() { return m_pg; }
   ~PGLockWrapper();
-  PGLockWrapper(PGLockWrapper&& rhs) : m_pg(std::move(rhs.m_pg)) {
+  PGLockWrapper(PGLockWrapper&& rhs) noexcept : m_pg(std::move(rhs.m_pg)) {
     rhs.m_pg = nullptr;
   }
   PGLockWrapper(const PGLockWrapper& rhs) = delete;

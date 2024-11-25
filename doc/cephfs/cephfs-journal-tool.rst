@@ -15,7 +15,8 @@ examining, modifying, and extracting data from journals.
 
     This tool is **dangerous** because it directly modifies internal
     data structures of the file system.  Make backups, be careful, and
-    seek expert advice.  If you are unsure, do not run this tool.
+    seek expert advice.  If you are unsure, do not run this tool. As a
+    precaution, cephfs-journal-tool doesn't work on an active filesystem.
 
 Syntax
 ------
@@ -104,12 +105,12 @@ Example: header get/set
       "write_pos": 4274947,
       "expire_pos": 4194304,
       "trimmed_pos": 4194303,
+      "stream_format": 1,
       "layout": { "stripe_unit": 4194304,
-          "stripe_count": 4194304,
+          "stripe_count": 1,
           "object_size": 4194304,
-          "cas_hash": 4194304,
-          "object_stripe_unit": 4194304,
-          "pg_pool": 4194304}}
+          "pool_id": 2,
+          "pool_ns": ""}}
 
     # cephfs-journal-tool header set trimmed_pos 4194303
     Updating trimmed_pos 0x400000 -> 0x3fffff

@@ -15,6 +15,10 @@
 #ifndef CEPH_ELIST_H
 #define CEPH_ELIST_H
 
+#include <cstddef> // for size_t
+
+#include "include/ceph_assert.h"
+
 /*
  * elist: embedded list.
  *
@@ -45,6 +49,9 @@ public:
     
     bool empty() const { return _prev == this; }
     bool is_on_list() const { return !empty(); }
+    bool is_singular() const {
+      return is_on_list() && _prev == _next;
+    }
 
     bool remove_myself() {
       if (_next == this) {

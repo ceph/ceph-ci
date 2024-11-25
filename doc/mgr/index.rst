@@ -33,8 +33,6 @@ sensible.
     Alerts module <alerts>
     DiskPrediction module <diskprediction>
     Local pool module <localpool>
-    RESTful module <restful>
-    Zabbix module <zabbix>
     Prometheus module <prometheus>
     Influx module <influx>
     Hello module <hello>
@@ -48,5 +46,6 @@ sensible.
     RGW module <rgw>
     MDS Autoscaler module <mds_autoscaler>
     NFS module <nfs>
+    SMB module <smb>
     Progress Module <progress>
     CLI API Commands module <cli_api>

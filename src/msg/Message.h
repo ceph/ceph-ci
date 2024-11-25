@@ -32,6 +32,7 @@
 #include "common/ref.h"
 #include "common/debug.h"
 #include "common/zipkin_trace.h"
+#include "common/tracer.h"
 #include "include/ceph_assert.h" // Because intrusive_ptr clobbers our assert...
 #include "include/buffer.h"
 #include "include/types.h"
@@ -135,6 +136,8 @@
 #define MSG_OSD_PG_UPDATE_LOG_MISSING  114
 #define MSG_OSD_PG_UPDATE_LOG_MISSING_REPLY  115
 
+#define MSG_OSD_PG_PCT 136
+
 #define MSG_OSD_PG_CREATED      116
 #define MSG_OSD_REP_SCRUBMAP    117
 #define MSG_OSD_PG_RECOVERY_DELETE 118
@@ -198,6 +201,8 @@
 #define MSG_MDS_METRICS            0x501  // for mds metric aggregator
 #define MSG_MDS_PING               0x502  // for mds pinger
 #define MSG_MDS_SCRUB_STATS        0x503  // for mds scrub stack
+#define MSG_MDS_QUIESCE_DB_LISTING 0x505  // quiesce db replication
+#define MSG_MDS_QUIESCE_DB_ACK     0x506  // quiesce agent ack back to the db
 
 // *** generic ***
 #define MSG_TIMECHECK             0x600
@@ -239,6 +244,12 @@
 // *** ceph-mgr <-> MON daemons ***
 #define MSG_MGR_UPDATE     0x70b
 
+// *** nvmeof mon -> gw daemons ***
+#define MSG_MNVMEOF_GW_MAP        0x800
+
+// *** gw daemons -> nvmeof mon  ***
+#define MSG_MNVMEOF_GW_BEACON     0x801
+
 // ======================================================
 
 // abstract Message class
@@ -253,8 +264,8 @@ public:
 #endif
 
 protected:
-  ceph_msg_header  header;      // headerelope
-  ceph_msg_footer  footer;
+  ceph_msg_header  header{};      // headerelope
+  ceph_msg_footer  footer{};
   ceph::buffer::list       payload;  // "front" unaligned blob
   ceph::buffer::list       middle;   // "middle" unaligned blob
   ceph::buffer::list       data;     // data payload (page-alignment will be preserved where possible)
@@ -281,6 +292,11 @@ public:
   ZTracer::Trace trace;
   void encode_trace(ceph::buffer::list &bl, uint64_t features) const;
   void decode_trace(ceph::buffer::list::const_iterator &p, bool create = false);
+
+  // otel tracing
+  jspan_context otel_trace{false, false};
+  void encode_otel_trace(ceph::buffer::list &bl, uint64_t features) const;
+  void decode_otel_trace(ceph::buffer::list::const_iterator &p, bool create = false);
 
   class CompletionHook : public Context {
   protected:
@@ -318,16 +334,11 @@ protected:
   friend class Messenger;
 
 public:
-  Message() {
-    memset(&header, 0, sizeof(header));
-    memset(&footer, 0, sizeof(footer));
-  }
+  Message() = default;
   Message(int t, int version=1, int compat_version=0) {
-    memset(&header, 0, sizeof(header));
     header.type = t;
     header.version = version;
     header.compat_version = compat_version;
-    memset(&footer, 0, sizeof(footer));
   }
 
   Message *get() {
@@ -603,7 +614,7 @@ struct formatter<M> {
     std::ostringstream oss;
     m.print(oss);
     if (auto ver = m.get_header().version; ver) {
-      return fmt::format_to(ctx.out(), "{} v{}", oss.str(), ver);
+      return fmt::format_to(ctx.out(), "{} v{}", oss.str(), (uint32_t)ver);
     } else {
       return fmt::format_to(ctx.out(), "{}", oss.str());
     }

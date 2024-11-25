@@ -3,14 +3,15 @@
 
 #pragma once
 
-#include <string>
-#include <unordered_map>
 #include <map>
+#include <optional>
+#include <string>
 #include <typeinfo>
+#include <unordered_map>
 #include <vector>
 
-#include <optional>
 #include <seastar/core/future.hh>
+#include <seastar/core/lowres_clock.hh>
 #include <seastar/core/metrics_types.hh>
 
 #include "include/uuid.h"
@@ -34,14 +35,14 @@ using OnodeRef = boost::intrusive_ptr<Onode>;
 class TransactionManager;
 
 enum class op_type_t : uint8_t {
-    TRANSACTION = 0,
+    DO_TRANSACTION = 0,
     READ,
     WRITE,
     GET_ATTR,
     GET_ATTRS,
     STAT,
     OMAP_GET_VALUES,
-    OMAP_LIST,
+    OMAP_GET_VALUES2,
     MAX
 };
 
@@ -70,20 +71,19 @@ struct col_obj_ranges_t {
 
 class SeaStore final : public FuturizedStore {
 public:
+  using base_ertr = TransactionManager::base_ertr;
+  using base_iertr = TransactionManager::base_iertr;
+
   class MDStore {
   public:
-    using base_iertr = crimson::errorator<
-      crimson::ct_error::input_output_error
-    >;
-
-    using write_meta_ertr = base_iertr;
+    using write_meta_ertr = base_ertr;
     using write_meta_ret = write_meta_ertr::future<>;
     virtual write_meta_ret write_meta(
       const std::string &key,
       const std::string &val
     ) = 0;
 
-    using read_meta_ertr = base_iertr;
+    using read_meta_ertr = base_ertr;
     using read_meta_ret = write_meta_ertr::future<std::optional<std::string>>;
     virtual read_meta_ret read_meta(const std::string &key) = 0;
 
@@ -116,6 +116,10 @@ public:
       interval_set<uint64_t>& m,
       uint32_t op_flags = 0) final;
 
+    base_errorator::future<bool> exists(
+      CollectionRef c,
+      const ghobject_t& oid) final;
+
     get_attr_errorator::future<ceph::bufferlist> get_attr(
       CollectionRef c,
       const ghobject_t& oid,
@@ -131,10 +135,7 @@ public:
       const omap_keys_t& keys) final;
 
     /// Retrieves paged set of values > start (if present)
-    using omap_get_values_ret_bare_t = std::tuple<bool, omap_values_t>;
-    using omap_get_values_ret_t = read_errorator::future<
-      omap_get_values_ret_bare_t>;
-    omap_get_values_ret_t omap_get_values(
+    read_errorator::future<omap_values_paged_t> omap_get_values(
       CollectionRef c,           ///< [in] collection
       const ghobject_t &oid,     ///< [in] oid
       const std::optional<std::string> &start ///< [in] start, empty for begin
@@ -154,6 +155,8 @@ public:
 
     seastar::future<CollectionRef> create_new_collection(const coll_t& cid) final;
     seastar::future<CollectionRef> open_collection(const coll_t& cid) final;
+    seastar::future<> set_collection_opts(CollectionRef c,
+                                        const pool_opts_t& opts) final;
 
     seastar::future<> do_transaction_no_callbacks(
       CollectionRef ch,
@@ -163,7 +166,7 @@ public:
      * stages and locks as do_transaction. */
     seastar::future<> flush(CollectionRef ch) final;
 
-    read_errorator::future<std::map<uint64_t, uint64_t>> fiemap(
+    read_errorator::future<fiemap_ret_t> fiemap(
       CollectionRef ch,
       const ghobject_t& oid,
       uint64_t off,
@@ -183,7 +186,6 @@ public:
       secondaries.emplace_back(&sec_dev);
     }
 
-    using coll_core_t = FuturizedStore::coll_core_t;
     seastar::future<std::vector<coll_core_t>> list_collections();
 
     seastar::future<> write_meta(const std::string& key,
@@ -196,6 +198,14 @@ public:
     seastar::future<> mkfs_managers();
 
     void init_managers();
+
+    double reset_report_interval() const;
+
+    device_stats_t get_device_stats(bool report_detail, double seconds) const;
+
+    shard_stats_t get_io_stats(bool report_detail, double seconds) const;
+
+    cache_stats_t get_cache_stats(bool report_detail, double seconds) const;
 
   private:
     struct internal_context_t {
@@ -234,24 +244,40 @@ public:
       const char* tname,
       op_type_t op_type,
       F &&f) {
+      // The below repeat_io_num requires MUTATE
+      assert(src == Transaction::src_t::MUTATE);
       return seastar::do_with(
         internal_context_t(
           ch, std::move(t),
           transaction_manager->create_transaction(src, tname)),
         std::forward<F>(f),
         [this, op_type](auto &ctx, auto &f) {
+        assert(shard_stats.starting_io_num);
+        --(shard_stats.starting_io_num);
+        ++(shard_stats.waiting_collock_io_num);
+
 	return ctx.transaction->get_handle().take_collection_lock(
 	  static_cast<SeastoreCollection&>(*(ctx.ch)).ordering_lock
 	).then([this] {
+	  assert(shard_stats.waiting_collock_io_num);
+	  --(shard_stats.waiting_collock_io_num);
+	  ++(shard_stats.waiting_throttler_io_num);
+
 	  return throttler.get(1);
 	}).then([&, this] {
+	  assert(shard_stats.waiting_throttler_io_num);
+	  --(shard_stats.waiting_throttler_io_num);
+	  ++(shard_stats.processing_inlock_io_num);
+
 	  return repeat_eagain([&, this] {
+	    ++(shard_stats.repeat_io_num);
+
 	    ctx.reset_preserve_handle(*transaction_manager);
 	    return std::invoke(f, ctx);
 	  }).handle_error(
-	    crimson::ct_error::eagain::pass_further{},
 	    crimson::ct_error::all_same_way([&ctx](auto e) {
 	      on_error(ctx.ext_transaction);
+	      return seastar::now();
 	    })
 	  );
 	}).then([this, op_type, &ctx] {
@@ -274,15 +300,21 @@ public:
       auto begin_time = std::chrono::steady_clock::now();
       return seastar::do_with(
         oid, Ret{}, std::forward<F>(f),
-        [this, src, op_type, begin_time, tname
+        [this, ch, src, op_type, begin_time, tname
         ](auto &oid, auto &ret, auto &f)
       {
-        return repeat_eagain([&, this, src, tname] {
+        return repeat_eagain([&, this, ch, src, tname] {
+          assert(src == Transaction::src_t::READ);
+          ++(shard_stats.repeat_read_num);
+
           return transaction_manager->with_transaction_intr(
             src,
             tname,
-            [&, this](auto& t)
+            [&, this, ch, tname](auto& t)
           {
+            LOG_PREFIX(SeaStoreS::repeat_with_onode);
+            SUBDEBUGT(seastore, "{} cid={} oid={} ...",
+                      t, tname, ch->get_cid(), oid);
             return onode_manager->get_onode(t, oid
             ).si_then([&](auto onode) {
               return seastar::do_with(std::move(onode), [&](auto& onode) {
@@ -300,14 +332,16 @@ public:
       });
     }
 
-    using _fiemap_ret = ObjectDataHandler::fiemap_ret;
-    _fiemap_ret _fiemap(
-      Transaction &t,
-      Onode &onode,
-      uint64_t off,
-      uint64_t len) const;
+    using omap_list_bare_ret = OMapManager::omap_list_bare_ret;
+    using omap_list_ret = OMapManager::omap_list_ret;
+    omap_list_ret omap_list(
+      Onode& onode,
+      const omap_root_le_t& omap_root,
+      Transaction& t,
+      const std::optional<std::string>& start,
+      OMapManager::omap_list_config_t config) const;
 
-    using _omap_get_value_iertr = OMapManager::base_iertr::extend<
+    using _omap_get_value_iertr = base_iertr::extend<
       crimson::ct_error::enodata
       >;
     using _omap_get_value_ret = _omap_get_value_iertr::future<ceph::bufferlist>;
@@ -316,25 +350,51 @@ public:
       omap_root_t &&root,
       std::string_view key) const;
 
-    using _omap_get_values_iertr = OMapManager::base_iertr;
-    using _omap_get_values_ret = _omap_get_values_iertr::future<omap_values_t>;
-    _omap_get_values_ret _omap_get_values(
+    base_iertr::future<omap_values_t> _omap_get_values(
       Transaction &t,
       omap_root_t &&root,
       const omap_keys_t &keys) const;
 
     friend class SeaStoreOmapIterator;
 
-    using omap_list_bare_ret = OMapManager::omap_list_bare_ret;
-    using omap_list_ret = OMapManager::omap_list_ret;
-    omap_list_ret omap_list(
-      Onode &onode,
-      const omap_root_le_t& omap_root,
+    base_iertr::future<ceph::bufferlist> _read( 
       Transaction& t,
-      const std::optional<std::string>& start,
-      OMapManager::omap_list_config_t config) const;
+      Onode& onode,
+      uint64_t offset,
+      std::size_t len,
+      uint32_t op_flags);
 
-    using tm_iertr = TransactionManager::base_iertr;
+    _omap_get_value_ret _get_attr(
+      Transaction& t,
+      Onode& onode,
+      std::string_view name) const;
+
+    base_iertr::future<attrs_t> _get_attrs(
+      Transaction& t,
+      Onode& onode);
+
+    seastar::future<struct stat> _stat(
+      Transaction& t,
+      Onode& onode,
+      const ghobject_t& oid);
+
+    base_iertr::future<omap_values_t> do_omap_get_values(
+      Transaction& t,
+      Onode& onode,
+      const omap_keys_t& keys);
+
+    base_iertr::future<omap_values_paged_t> do_omap_get_values(
+      Transaction& t,
+      Onode& onode,
+      const std::optional<std::string>& start);
+
+    base_iertr::future<fiemap_ret_t> _fiemap(
+      Transaction &t,
+      Onode &onode,
+      uint64_t off,
+      uint64_t len) const;
+
+    using tm_iertr = base_iertr;
     using tm_ret = tm_iertr::future<>;
     tm_ret _do_transaction_step(
       internal_context_t &ctx,
@@ -343,6 +403,10 @@ public:
       std::vector<OnodeRef> &d_onodes,
       ceph::os::Transaction::iterator &i);
 
+    tm_ret _remove_omaps(
+      internal_context_t &ctx,
+      OnodeRef &onode,
+      omap_root_t &&omap_root);
     tm_ret _remove(
       internal_context_t &ctx,
       OnodeRef &onode);
@@ -355,7 +419,21 @@ public:
       uint64_t offset, size_t len,
       ceph::bufferlist &&bl,
       uint32_t fadvise_flags);
+    enum class omap_type_t : uint8_t {
+      XATTR = 0,
+      OMAP,
+      NUM_TYPES
+    };
+    tm_ret _clone_omaps(
+      internal_context_t &ctx,
+      OnodeRef &onode,
+      OnodeRef &d_onode,
+      const omap_type_t otype);
     tm_ret _clone(
+      internal_context_t &ctx,
+      OnodeRef &onode,
+      OnodeRef &d_onode);
+    tm_ret _rename(
       internal_context_t &ctx,
       OnodeRef &onode,
       OnodeRef &d_onode);
@@ -410,12 +488,11 @@ public:
     tm_ret _remove_collection(
       internal_context_t &ctx,
       const coll_t& cid);
-    using omap_set_kvs_ret = tm_iertr::future<>;
+    using omap_set_kvs_ret = tm_iertr::future<omap_root_t>;
     omap_set_kvs_ret _omap_set_kvs(
-      OnodeRef &onode,
+      const OnodeRef &onode,
       const omap_root_le_t& omap_root,
       Transaction& t,
-      omap_root_le_t& mutable_omap_root,
       std::map<std::string, ceph::bufferlist>&& kvs);
 
     boost::intrusive_ptr<SeastoreCollection> _get_collection(const coll_t& cid);
@@ -454,6 +531,11 @@ public:
 
     seastar::metrics::metric_group metrics;
     void register_metrics();
+
+    mutable shard_stats_t shard_stats;
+    mutable seastar::lowres_clock::time_point last_tp =
+      seastar::lowres_clock::time_point::min();
+    mutable shard_stats_t last_shard_stats;
   };
 
 public:
@@ -470,23 +552,16 @@ public:
 
   mkfs_ertr::future<> mkfs(uuid_d new_osd_fsid) final;
   seastar::future<store_statfs_t> stat() const final;
+  seastar::future<store_statfs_t> pool_statfs(int64_t pool_id) const final;
+
+  seastar::future<> report_stats() final;
 
   uuid_d get_fsid() const final {
     ceph_assert(seastar::this_shard_id() == primary_core);
     return shard_stores.local().get_fsid();
   }
 
-  seastar::future<> write_meta(
-    const std::string& key,
-    const std::string& value) final {
-    ceph_assert(seastar::this_shard_id() == primary_core);
-    return shard_stores.local().write_meta(
-      key, value).then([this, key, value] {
-      return mdstore->write_meta(key, value);
-    }).handle_error(
-      crimson::ct_error::assert_all{"Invalid error in SeaStore::write_meta"}
-    );
-  }
+  seastar::future<> write_meta(const std::string& key, const std::string& value) final;
 
   seastar::future<std::tuple<int, std::string>> read_meta(const std::string& key) final;
 
@@ -523,6 +598,12 @@ private:
   DeviceRef device;
   std::vector<DeviceRef> secondaries;
   seastar::sharded<SeaStore::Shard> shard_stores;
+
+  mutable seastar::lowres_clock::time_point last_tp =
+    seastar::lowres_clock::time_point::min();
+  mutable std::vector<device_stats_t> shard_device_stats;
+  mutable std::vector<shard_stats_t> shard_io_stats;
+  mutable std::vector<cache_stats_t> shard_cache_stats;
 };
 
 std::unique_ptr<SeaStore> make_seastore(

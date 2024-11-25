@@ -9,7 +9,7 @@ function(build_uring)
     set(source_dir_args
       SOURCE_DIR ${CMAKE_BINARY_DIR}/src/liburing
       GIT_REPOSITORY https://github.com/axboe/liburing.git
-      GIT_TAG "liburing-0.7"
+      GIT_TAG "liburing-2.5"
       GIT_SHALLOW TRUE
       GIT_CONFIG advice.detachedHead=false)
   endif()
@@ -17,7 +17,7 @@ function(build_uring)
   include(ExternalProject)
   ExternalProject_Add(liburing_ext
     ${source_dir_args}
-    CONFIGURE_COMMAND env CC=${CMAKE_C_COMPILER} CXX=${CMAKE_CXX_COMPILER} <SOURCE_DIR>/configure
+    CONFIGURE_COMMAND env CC=${CMAKE_C_COMPILER} CXX=${CMAKE_CXX_COMPILER} <SOURCE_DIR>/configure --use-libc
     BUILD_COMMAND ${make_cmd} "CFLAGS=${CMAKE_C_FLAGS} -fPIC" -C src -s
     BUILD_IN_SOURCE 1
     BUILD_BYPRODUCTS "<SOURCE_DIR>/src/liburing.a"
@@ -32,6 +32,8 @@ function(build_uring)
   ExternalProject_Get_Property(liburing_ext source_dir)
   set(URING_INCLUDE_DIR "${source_dir}/src/include")
   set(URING_LIBRARY_DIR "${source_dir}/src")
+  set(URING_INCLUDE_DIR ${URING_INCLUDE_DIR} PARENT_SCOPE)
+  set(URING_LIBRARY_DIR ${URING_LIBRARY_DIR} PARENT_SCOPE)
 
   add_library(uring::uring STATIC IMPORTED GLOBAL)
   add_dependencies(uring::uring liburing_ext)

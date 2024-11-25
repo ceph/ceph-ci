@@ -21,6 +21,7 @@
 #include "include/ceph_features.h"
 #include "include/addr_parsing.h"
 #include "common/ceph_argparse.h"
+#include "common/ceph_json.h"
 #include "common/dns_resolve.h"
 #include "common/errno.h"
 #include "common/dout.h"
@@ -110,6 +111,26 @@ void mon_info_t::print(ostream& out) const
       << " crush location " << crush_loc;
 }
 
+void mon_info_t::dump(ceph::Formatter *f) const
+{
+  f->dump_string("name", name);
+  f->dump_stream("addr") << public_addrs;
+  f->dump_int("priority", priority);
+  f->dump_float("weight", weight);
+  encode_json("crush_location", crush_loc, f);
+}
+
+void mon_info_t::generate_test_instances(list<mon_info_t*>& ls)
+{
+  ls.push_back(new mon_info_t);
+  ls.push_back(new mon_info_t);
+  ls.back()->name = "noname";
+  ls.back()->public_addrs.parse("v1:1.2.3.4:567/890");
+  ls.back()->priority = 1;
+  ls.back()->weight = 1.0;
+  ls.back()->crush_loc.emplace("root", "default");
+  ls.back()->crush_loc.emplace("host", "foo");
+}
 namespace {
   struct rank_cmp {
     bool operator()(const mon_info_t &a, const mon_info_t &b) const {
@@ -175,7 +196,12 @@ void MonMap::encode(ceph::buffer::list& blist, uint64_t con_features) const
   if (!HAVE_FEATURE(con_features, MONENC) ||
       !HAVE_FEATURE(con_features, SERVER_NAUTILUS)) {
     for (auto& [name, info] : mon_info) {
-      legacy_mon_addr[name] = info.public_addrs.legacy_addr();
+      // see note in mon_info_t::encode()
+      auto addr = info.public_addrs.legacy_addr();
+      if (addr == entity_addr_t()) {
+        addr = info.public_addrs.as_legacy_addr();
+      }
+      legacy_mon_addr[name] = addr;
     }
   }
 
@@ -369,6 +395,7 @@ void MonMap::print_summary(ostream& out) const
     has_printed = true;
   }
   out << "}" << " removed_ranks: {" << removed_ranks << "}";
+  out << " disallowed_leaders: {" << disallowed_leaders << "}";
 }
  
 void MonMap::print(ostream& out) const
@@ -409,10 +436,10 @@ void MonMap::dump(Formatter *f) const
   f->dump_unsigned("min_mon_release", to_integer<unsigned>(min_mon_release));
   f->dump_string("min_mon_release_name", to_string(min_mon_release));
   f->dump_int ("election_strategy", strategy);
-  f->dump_stream("disallowed_leaders: ") << disallowed_leaders;
+  f->dump_stream("disallowed_leaders") << disallowed_leaders;
   f->dump_bool("stretch_mode", stretch_mode_enabled);
   f->dump_string("tiebreaker_mon", tiebreaker_mon);
-  f->dump_stream("removed_ranks: ") << removed_ranks;
+  f->dump_stream("removed_ranks") << removed_ranks;
   f->open_object_section("features");
   persistent_features.dump(f, "persistent");
   optional_features.dump(f, "optional");

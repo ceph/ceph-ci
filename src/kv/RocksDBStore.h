@@ -35,7 +35,9 @@ enum {
   l_rocksdb_submit_latency,
   l_rocksdb_submit_sync_latency,
   l_rocksdb_compact,
-  l_rocksdb_compact_range,
+  l_rocksdb_compact_running,
+  l_rocksdb_compact_completed,
+  l_rocksdb_compact_lasted,
   l_rocksdb_compact_queue_merge,
   l_rocksdb_compact_queue_len,
   l_rocksdb_write_wal_time,
@@ -297,6 +299,12 @@ public:
       const std::string &k,
       const ceph::bufferlist &to_set_bl);
   public:
+    size_t get_count() const override {
+      return bat.Count();
+    }
+    size_t get_size_bytes() const override {
+      return bat.GetDataSize();
+    }
     void set(
       const std::string &prefix,
       const std::string &k,

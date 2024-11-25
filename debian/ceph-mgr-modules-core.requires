@@ -1,7 +1,5 @@
 natsort
 CherryPy
-pecan
-werkzeug
+packaging
 requests
-pkg-resources
 python-dateutil
