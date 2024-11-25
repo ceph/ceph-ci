@@ -95,6 +95,7 @@ class CephNvmeof(ContainerDaemonForm):
             'client_cert',
             'client_key',
             'root_ca_cert',
+            'encryption_key',
         ]:
             if fn in files:
                 mounts[

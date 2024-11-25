@@ -1321,6 +1321,7 @@ class NvmeofServiceSpec(ServiceSpec):
                  state_update_notify: Optional[bool] = True,
                  state_update_interval_sec: Optional[int] = 5,
                  enable_spdk_discovery_controller: Optional[bool] = False,
+                 encryption_key: Optional[str] = None,
                  rebalance_period_sec: Optional[int] = 7,
                  max_gws_in_grp: Optional[int] = 16,
                  max_ns_to_change_lb_grp: Optional[int] = 8,
@@ -1421,6 +1422,8 @@ class NvmeofServiceSpec(ServiceSpec):
         self.state_update_interval_sec = state_update_interval_sec
         #: ``enable_spdk_discovery_controller`` SPDK or ceph-nvmeof discovery service
         self.enable_spdk_discovery_controller = enable_spdk_discovery_controller
+        #: ``encryption_key`` gateway encryption key
+        self.encryption_key = encryption_key
         #: ``rebalance_period_sec`` number of seconds between cycles of auto namesapce rebalancing
         self.rebalance_period_sec = rebalance_period_sec
         #: ``max_gws_in_grp`` max number of gateways in one group
