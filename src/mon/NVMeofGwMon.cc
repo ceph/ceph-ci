@@ -211,18 +211,28 @@ void NVMeofGwMon::update_from_paxos(bool *need_bootstrap)
 
 void NVMeofGwMon::check_sub(Subscription *sub)
 {
-  dout(10) << "sub->next , map-epoch " << sub->next
-	   << " " << map.epoch << dendl;
-  if (sub->next <= map.epoch)
-  {
-    dout(10) << "Sending map to subscriber " << sub->session->con
-	     << " " << sub->session->con->get_peer_addr() << dendl;
-    sub->session->con->send_message2(make_message<MNVMeofGwMap>(map));
-
-    if (sub->onetime) {
-      mon.session_map.remove_sub(sub);
-    } else {
-      sub->next = map.epoch + 1;
+//  dout(10) << "sub->next , map-epoch " << sub->next   << " " << map.epoch << dendl;
+  for (const auto& created_map_pair: map.created_gws) {
+    const auto& group_key = created_map_pair.first;
+    const NvmeGwMonStates& gw_created_map = created_map_pair.second;
+    for (const auto& gw_created_pair: gw_created_map) {
+      const auto& gw_id = gw_created_pair.first;
+      if ( //(gw_created_pair.second.availability == GW_AVAILABILITY_E::GW_AVAILABLE) &&
+           (gw_created_pair.second.addr_vect == entity_addrvec_t(sub->session->con->get_peer_addr() ) )
+         )
+      {
+        dout(10) << "found gw-vect " << gw_created_pair.second.addr_vect  << " GW " << gw_id << " group-key " << group_key <<  dendl;
+        dout(10) << "sub->next(epoch) " << sub->next << " map.Gw_epoch " << map.Gw_epoch[group_key].epoch << dendl;
+        if (sub->next <= map.Gw_epoch[group_key].epoch){
+          dout(4) << "Send unicast map to GW "<< gw_id << dendl;
+          NVMeofGwMap unicast_map;
+          unicast_map.created_gws[group_key][gw_id] = map.created_gws[group_key][gw_id];
+          // respond with a map slice correspondent to the same GW
+          unicast_map.epoch =  map.epoch;
+          sub->session->con->send_message2(make_message<MNVMeofGwMap>(unicast_map));
+          sub->next = map.Gw_epoch[group_key].epoch + 1;
+        }
+      }
     }
   }
 }
@@ -236,6 +246,7 @@ void NVMeofGwMon::check_subs(bool t)
     return;
   }
   for (auto sub : *(mon.session_map.subs[type])) {
+    dout(10) << " dump subscriber peer_addr : " << sub->session->con->get_peer_addr() <<  dendl;
     check_sub(sub);
   }
 }
@@ -335,6 +346,7 @@ bool NVMeofGwMon::preprocess_command(MonOpRequestRef op)
       }
     }
     f->dump_unsigned("num gws", map.created_gws[group_key].size());
+    f->dump_unsigned("GW-epoch", map.Gw_epoch[group_key].epoch);
     if (map.created_gws[group_key].size() == 0) {
       f->close_section();
       f->flush(rdata);
@@ -526,7 +538,7 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op)
 	   << " GW : " << m->get_gw_id()
 	   << " osdmap_epoch " << m->get_last_osd_epoch()
 	   << " subsystems " << m->get_subsystems() << dendl;
-
+  ConnectionRef con = op->get_connection();
   NvmeGwId gw_id = m->get_gw_id();
   NvmeGroupKey group_key = std::make_pair(m->get_gw_pool(),  m->get_gw_group());
   gw_availability_t  avail = m->get_availability();
@@ -560,12 +572,15 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op)
 	 pending_map.handle_gw_performing_fast_reboot(gw_id, group_key, propose);
 	 LastBeacon lb = {gw_id, group_key};
 	 last_beacon[lb] = now; //Update last beacon
+
       } else if (
 	pending_map.created_gws[group_key][gw_id].performed_full_startup ==
 	false) {
 	pending_map.created_gws[group_key][gw_id].performed_full_startup = true;
-	propose = true;
       }
+      pending_map.gw_performed_startup(gw_id, group_key, propose);
+      pending_map.created_gws[group_key][gw_id].addr_vect =
+              entity_addrvec_t(con->get_peer_addr());
       goto set_propose;
     }
   // gw already created
@@ -590,7 +605,13 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op)
       }
     }
   }
-
+  if ( pending_map.created_gws[group_key][gw_id].addr_vect !=
+               entity_addrvec_t(con->get_peer_addr()) )
+  {
+     dout(4) << "Warning entity addr changed for GW client" << gw_id
+         << " was " <<  pending_map.created_gws[group_key][gw_id].addr_vect
+         << " now " << entity_addrvec_t(con->get_peer_addr()) << dendl;
+  }
   // At this stage the gw has to be in the Created_gws
   if (gw == group_gws.end()) {
     dout(4) << "GW that does not appear in the map sends beacon, ignore "

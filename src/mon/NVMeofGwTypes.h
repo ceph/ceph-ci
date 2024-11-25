@@ -128,6 +128,8 @@ struct NvmeGwMonState {
   // state machine states per ANA group
   SmState sm_state;
   BlocklistData blocklist_data;
+  //ceph entity address allocated for the GW-client that represents this GW-id
+  entity_addrvec_t addr_vect;
 
   NvmeGwMonState(): ana_grp_id(REDUNDANT_GW_ANA_GROUP_ID) {}
 
@@ -225,6 +227,13 @@ struct NvmeGwTimerState {
   TmData data;
   NvmeGwTimerState() {};
 };
+
+typedef struct Gw_Epoch {
+    epoch_t epoch;
+    Gw_Epoch(epoch_t epoch) : epoch(epoch){
+    };
+    Gw_Epoch():Gw_Epoch(0) {};
+}GwEpoch;
 
 using NvmeGwMonClientStates = std::map<NvmeGwId, NvmeGwClientState>;
 using NvmeGwTimers = std::map<NvmeGwId, NvmeGwTimerState>;
