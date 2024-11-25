@@ -393,6 +393,7 @@ enable_auth = False
 state_update_notify = True
 state_update_interval_sec = 5
 enable_spdk_discovery_controller = False
+encryption_key = /encryption.key
 rebalance_period_sec = 7
 max_gws_in_grp = 16
 max_ns_to_change_lb_grp = 8
