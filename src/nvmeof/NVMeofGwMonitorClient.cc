@@ -298,7 +298,6 @@ void NVMeofGwMonitorClient::shutdown()
     std::lock_guard bl(beacon_lock);
     timer.shutdown();
   }
-
   // Stop asio threads, so leftover events won't call into shut down
   // monclient/objecter.
   poolctx.finish();
