@@ -1879,6 +1879,7 @@ int KStore::omap_iterate(
 {
   dout(10) << __func__ << " " << ch->cid << " " << oid << dendl;
   Collection *c = static_cast<Collection*>(ch.get());
+  bool more = false;
   {
     std::shared_lock l{c->lock};
 
@@ -1925,6 +1926,7 @@ int KStore::omap_iterate(
       }
       omap_iter_ret_t ret = f(user_key, it->value_as_sv());
       if (ret == omap_iter_ret_t::STOP) {
+        more = true;
         break;
       } else if (ret == omap_iter_ret_t::NEXT) {
         it->next();
@@ -1933,7 +1935,7 @@ int KStore::omap_iterate(
       }
     }
   }
-  return 0;
+  return more;
 }
 
 
