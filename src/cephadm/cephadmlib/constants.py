@@ -2,7 +2,7 @@
 
 # Default container images -----------------------------------------------------
 DEFAULT_IMAGE = 'registry.redhat.io/rhceph/rhceph-8-rhel9:latest'
-DEFAULT_IMAGE_IS_MAIN = True
+DEFAULT_IMAGE_IS_MAIN = False
 DEFAULT_IMAGE_RELEASE = 'squid'
 DEFAULT_PROMETHEUS_IMAGE = 'registry.redhat.io/openshift4/ose-prometheus:v4.15'
 DEFAULT_LOKI_IMAGE = 'registry.redhat.io/openshift-logging/logging-loki-rhel8:v3.1.0'
