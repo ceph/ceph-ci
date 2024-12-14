@@ -242,6 +242,85 @@ struct MonClientPinger : public Dispatcher,
   }
 };
 
+enum class ConnectionStatus {
+  UNKNOWN,          // Initial state
+  HEALTHY,          // Responding and in quorum
+  OUT_OF_QUORUM,    // Responding but not in quorum
+  UNRESPONSIVE      // Not responding
+};
+
+// Class for individual auxiliary connections
+class AuxConnection {
+public:
+  AuxConnection(const std::string& monitor_id, std::shared_ptr<void> connection_ptr)
+    : monitor_id(monitor_id), conn_ptr(connection_ptr), status(ConnectionStatus::UNKNOWN) {}
+
+  // Getters
+  std::string get_monitor_id() const { return monitor_id; }
+  ConnectionStatus get_status() const { return status; }
+  std::shared_ptr<void> get_connection_ptr() const { return conn_ptr; }
+
+  // Setters
+  void set_status(ConnectionStatus new_status) { status = new_status; }
+
+private:
+  std::string monitor_id;             // Unique monitor ID
+  std::shared_ptr<void> conn_ptr;     // Pointer to the connection object (replace `void` with actual type)
+  ConnectionStatus status;            // Status of the connection
+};
+
+// Manager for auxiliary connections
+class AuxConnectionManager {
+public:
+  // Add a new pending connection to the auxiliary list
+  void add_connection(const std::string& monitor_id, std::shared_ptr<void> connection_ptr) {
+    if (aux_list.find(monitor_id) == aux_list.end()) {
+      aux_list.emplace(monitor_id, AuxConnection(monitor_id, connection_ptr));
+    }
+  }
+
+  // Update the status of an auxiliary connection
+  void update_status(const std::string& monitor_id, ConnectionStatus new_status) {
+    auto it = aux_list.find(monitor_id);
+    if (it != aux_list.end()) {
+      it->second.set_status(new_status);
+    }
+  }
+
+  // Get the best auxiliary connection for failover
+  std::shared_ptr<void> get_best_candidate() {
+    for (const auto& [monitor_id, aux_conn] : aux_list) {
+      if (aux_conn.get_status() == ConnectionStatus::HEALTHY) {
+          return aux_conn.get_connection_ptr();
+      }
+    }
+    return nullptr; // No healthy candidate found
+  }
+
+  // Cleanup unresponsive auxiliary connections
+  void cleanup_unresponsive() {
+    for (auto it = aux_list.begin(); it != aux_list.end();) {
+      if (it->second.get_status() == ConnectionStatus::UNRESPONSIVE) {
+          it = aux_list.erase(it);
+      } else {
+          ++it;
+      }
+    }
+  }
+
+  // Get all connections (for monitoring or debugging)
+  std::vector<AuxConnection> get_all_connections() const {
+      std::vector<AuxConnection> connections;
+      for (const auto& [_, aux_conn] : aux_list) {
+          connections.push_back(aux_conn);
+      }
+      return connections;
+  }
+
+private:
+  std::map<std::string, AuxConnection> aux_list; // Map of monitor ID to AuxConnection
+};
+
 const boost::system::error_category& monc_category() noexcept;
 
 enum class monc_errc {
@@ -295,6 +374,7 @@ private:
   std::unique_ptr<MonConnection> active_con;
   std::map<entity_addrvec_t, MonConnection> pending_cons;
   std::set<unsigned> tried;
+  AuxConnectionManager aux_list;
 
   EntityName entity_name;
 
