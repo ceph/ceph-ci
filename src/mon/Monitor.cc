@@ -4582,7 +4582,7 @@ void Monitor::_ms_dispatch(Message *m)
 void Monitor::dispatch_op(MonOpRequestRef op)
 {
   op->mark_event("mon:dispatch_op");
-
+  dout(20) << "dispatch_op " << op << " " << *op->get_req() << dendl;
   MonSession *s = op->get_session();
   ceph_assert(s);
   if (s->closed) {
@@ -5504,9 +5504,9 @@ void Monitor::send_quorum_changed(Subscription *sub)
     dout(10) << __func__ << " no connection for sub " << sub << dendl;
     return;
   }
-  dout(20) << __func__ << " sending quorum: " << get_quorum() << " to " << sub->session->name <<  dendl;
+  dout(20) << __func__ << " sending quorum: " << get_quorum() << " to " << sub->session->name <<  " from mon." << name << " mon addr " << con_self->get_peer_addrs() << dendl;
   if (sub->next <= get_epoch() && get_quorum().size()) {
-    conn->send_message(new MMonQuorum(conn->get_peer_addrs(), get_epoch(), get_quorum()));
+    conn->send_message(new MMonQuorum(con_self->get_peer_addrs(), get_epoch(), get_quorum()));
 
     if (sub->onetime) {
       with_session_map([sub](MonSessionMap& session_map) {

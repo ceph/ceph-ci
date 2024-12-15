@@ -328,6 +328,23 @@ public:
   ConnectionStatus get_status() const { return status; }
   MonConnection* get_connection_ptr() const { return conn_ptr.get(); }
 
+  bool is_con(Connection *c) const {
+    return conn_ptr->is_con(c);
+  }
+
+  int handle_auth_done(
+    AuthConnectionMeta *auth_meta,
+    uint64_t global_id,
+    const ceph::buffer::list& bl,
+    CryptoKey *session_key,
+    std::string *connection_secret) {
+    return conn_ptr->handle_auth_done(auth_meta, global_id, bl, session_key, connection_secret);
+  }
+
+  bool empty() const {
+    return !conn_ptr;
+  }
+
   // Setters
   void set_status(ConnectionStatus new_status) { status = new_status; }
 
@@ -340,6 +357,12 @@ private:
 // Manager for auxiliary connections
 class AuxConnectionManager {
 public:
+  std::map<entity_addrvec_t, AuxConnection>& get_aux_list() {
+    return aux_list;
+  }
+  const std::map<entity_addrvec_t, AuxConnection>& get_aux_list() const {
+    return aux_list;
+  }
   // Add a new pending connection to the auxiliary list
   void add_connection(const entity_addrvec_t addr, std::unique_ptr<MonConnection> mc) {
     if (aux_list.find(addr) == aux_list.end()) {
@@ -376,6 +399,18 @@ public:
 
   void clear() {
     aux_list.clear();
+  }
+
+  bool empty() const {
+    return aux_list.empty();
+  }
+
+  void erase(const entity_addrvec_t& addr) {
+    aux_list.erase(addr);
+  }
+
+  size_t size() const {
+    return aux_list.size();
   }
   
   void splice(std::map<entity_addrvec_t, MonConnection>& other) {
@@ -444,7 +479,6 @@ private:
 
   std::unique_ptr<MonConnection> active_con;
   std::map<entity_addrvec_t, MonConnection> pending_cons;
-  std::map<entity_addrvec_t, AuxConnections> aux_conns;
   std::set<unsigned> tried;
   AuxConnectionManager aux_list;
 

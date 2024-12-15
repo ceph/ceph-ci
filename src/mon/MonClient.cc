@@ -363,8 +363,9 @@ bool MonClient::ms_dispatch(Message *m)
 	m->put();
 	return true;
       }
-    } else if (!active_con || active_con->get_con() != m->get_connection()) {
-      // ignore any messages outside our session(s)
+    } else if (!active_con ||
+        (active_con->get_con() != m->get_connection() && m->get_type() != CEPH_MSG_MON_QUORUM)) {
+      // ignore any messages outside our session(s) unless it's a quorum message
       ldout(cct, 10) << "discarding stray monitor message " << *m << dendl;
       m->put();
       return true;
@@ -498,8 +499,6 @@ void MonClient::handle_mon_quorum(MMonQuorum *m)
 {
   ldout(cct, 20) << __func__ << " quorum " << m->quorum << " from "
      << m->peer_addrs << ", e:" << m->epoch
-     << " active rank:" << monmap.get_rank(active_con->get_con()->get_peer_addrs())
-     << " monmap e:" << monmap.get_epoch()
      << dendl;
   quorum.add_quorum(m->peer_addrs, m->epoch, m->quorum);
   sub.got("quorum_change", 0);
@@ -711,7 +710,9 @@ void MonClient::handle_auth(MAuthReply *m)
   ldout(cct, 10) << __func__ << " Nitzan - look on that!!!! " << *m << dendl;
   if (!_hunting()) {
     ldout(cct, 10) << __func__ << " not hunting, ignoring stray auth reply "
-       << *m << dendl;
+       << m->get_connection()->get_peer_addr() << " exist active connection: " << active_con->get_con()->get_peer_addr() << dendl;
+    
+
     std::swap(active_con->get_auth(), auth);
     int ret = active_con->authenticate(m);
     m->put();
@@ -723,9 +724,11 @@ void MonClient::handle_auth(MAuthReply *m)
     if (ret != -EAGAIN) {
       _finish_auth(ret);
     }
+    ldout(cct, 10) << __func__ << " done - active connection: " << active_con->get_con()->get_peer_addr() << dendl;
     return;
   }
-
+  ldout(cct, 10) << __func__ << " hunting, handling stray auth reply "
+     << m->get_connection() << dendl;
   // hunting
   auto found = _find_pending_con(m->get_connection());
   ceph_assert(found != pending_cons.end());
@@ -751,8 +754,22 @@ void MonClient::handle_auth(MAuthReply *m)
     // move all pending connections to aux_list
     aux_list.splice(pending_cons);
     pending_cons.clear();
+    ldout(cct, 10) << __func__ << " hunting success, active mon."
+       << monmap.get_name(active_con->get_con()->get_peer_addr())
+       << " addr " << active_con->get_con()->get_peer_addr() << dendl;
+    ldout(cct, 20) << __func__ << " nitzan aux_list size: " << aux_list.size() << dendl;
+    for (auto& c : aux_list.get_aux_list()) {
+      ldout(cct, 10) << __func__ << " aux_list loop - starting new session with mon."
+         << c.second.get_mon_name() << dendl;
+      //c.second.start(monmap.get_epoch(), entity_name);
+    }
   }
-
+  ldout(cct, 10) << __func__ << " done - active connection: " << active_con << dendl;
+  for (auto& c : aux_list.get_aux_list()) {
+    ldout(cct, 10) << __func__ << " aux_list loop - starting new session with mon."
+       << c.second.get_mon_name() << dendl;
+    //c.second.start(monmap.get_epoch(), entity_name);
+  }
   _finish_hunting(auth_err);
   _finish_auth(auth_err);
 }
@@ -850,23 +867,10 @@ void MonClient::_add_conn(unsigned rank)
     mc.get_auth().reset(auth->clone());
   }
   pending_cons.insert(std::make_pair(peer, std::move(mc)));
-  /*
-  ldout(cct, 0) << __func__ << " creating aux conn to mon." << monmap.get_name(rank)
-                << " con " << conn
-                << " addr " << peer
-                << dendl;
-  auto m_aux = std::make_shared<MonConnection>(cct, conn, global_id, &auth_registry);
-  aux_conns.insert(std::make_pair(peer, std::move(m_aux)));
-  ldout(cct, 0) << __func__ << " end aux conn to mon." << monmap.get_name(rank)
-                << " con " << conn
-                << " addr " << peer
-                << dendl;
-  */
   ldout(cct, 10) << "picked mon." << monmap.get_name(rank)
                  << " con " << conn
                  << " addr " << peer
                  << dendl;
-  ldout(cct, 20) << __func__ << " nitzan aux_conns size: " << aux_conns.size() << dendl;
 }
 
 void MonClient::_add_conns()
@@ -1606,8 +1610,19 @@ int MonClient::handle_auth_done(
 	  }
 	} else {
 	  active_con.reset(new MonConnection(std::move(i.second)));
-	  pending_cons.clear();
+	  aux_list.splice(pending_cons);
+          pending_cons.clear();
 	  ceph_assert(active_con->have_session());
+          
+    ldout(cct, 10) << __func__ << " hunting success, active mon."
+       << monmap.get_name(active_con->get_con()->get_peer_addr())
+       << " addr " << active_con->get_con()->get_peer_addr() << dendl;
+    ldout(cct, 20) << __func__ << " nitzan aux_list size: " << aux_list.size() << dendl;
+    for (auto& c : aux_list.get_aux_list()) {
+      ldout(cct, 10) << __func__ << " aux_list loop - starting new session with mon."
+         << c.second.get_mon_name() << dendl;
+      //c.second.start(monmap.get_epoch(), entity_name);
+    }
 	}
 
 	_finish_hunting(r);
@@ -1617,6 +1632,26 @@ int MonClient::handle_auth_done(
 	return r;
       }
     }
+    ldout(cct, 20) << __func__ << " failed to find pending mon con in pending_cons" << dendl;
+    ldout(cct, 20) << __func__ << " loop in aux_list for mon con" << dendl;
+    for (auto& i : aux_list.get_aux_list()) {
+      if (i.second.is_con(con)) {
+        ldout(cct, 10) << __func__ << " aux_list loop - found mon con " << i.first << dendl;
+            int r = i.second.handle_auth_done(
+              auth_meta, global_id, bl,
+              session_key, connection_secret);
+            if (r) {
+              ldout(cct, 0) << __func__ << " " << i.first << " failed r=" << r << " for aux addr " << i.first << dendl;
+              aux_list.erase(i.first);
+              if (!aux_list.empty()) {
+                return r;
+              }
+            }
+            ldout(cct, 10) << __func__ << " auth aux conn done: " << i.first << " returning " << r << dendl;
+            return r;
+      }
+    }
+    ldout(cct, 0) << __func__ << " failed to find mon con in aux_list" << dendl;
     return -ENOENT;
   } else {
     // verify authorizer reply
