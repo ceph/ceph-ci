@@ -273,7 +273,7 @@ int MonClient::ping_monitor(const string &mon_id, string *result_reply)
   ldout(cct, 10) << __func__ << " ping mon." << new_mon_id
                  << " " << con->get_peer_addr() << dendl;
 
-  pinger->mc.reset(new MonConnection(cct, con, 0, &auth_registry));
+  pinger->mc.reset(new MonConnection(cct, con, 0, &auth_registry, new_mon_id));
   pinger->mc->start(monmap.get_epoch(), entity_name);
   con->send_message(new MPing);
 
@@ -550,6 +550,7 @@ void MonClient::shutdown()
 
   active_con.reset();
   pending_cons.clear();
+  aux_list.clear();
 
   auth.reset();
   global_id = 0;
@@ -657,8 +658,10 @@ void MonClient::handle_auth(MAuthReply *m)
     m->put();
     return;
   }
-
+  ldout(cct, 10) << __func__ << " Nitzan - look on that!!!! " << *m << dendl;
   if (!_hunting()) {
+    ldout(cct, 10) << __func__ << " not hunting, ignoring stray auth reply "
+       << *m << dendl;
     std::swap(active_con->get_auth(), auth);
     int ret = active_con->authenticate(m);
     m->put();
@@ -693,6 +696,8 @@ void MonClient::handle_auth(MAuthReply *m)
     auto& mc = found->second;
     ceph_assert(mc.have_session());
     active_con.reset(new MonConnection(std::move(mc)));
+    // move all pending connections to aux_list
+    aux_list.splice(pending_cons);
     pending_cons.clear();
   }
 
@@ -773,6 +778,9 @@ void MonClient::_reopen_session(int rank)
   }
 
   for (auto& c : pending_cons) {
+    ldout(cct, 10) << __func__ << " pending_cons loop - starting new session with mon."
+       << monmap.get_name(c.second.get_con()->get_peer_addr())
+       << dendl;
     c.second.start(monmap.get_epoch(), entity_name);
   }
 
@@ -785,7 +793,7 @@ void MonClient::_add_conn(unsigned rank)
 {
   auto peer = monmap.get_addrs(rank);
   auto conn = messenger->connect_to_mon(peer);
-  MonConnection mc(cct, conn, global_id, &auth_registry);
+  MonConnection mc(cct, conn, global_id, &auth_registry, monmap.get_name(rank));
   if (auth) {
     mc.get_auth().reset(auth->clone());
   }
@@ -1197,7 +1205,7 @@ void MonClient::_send_command(MonCommand *r)
       }
 
       r->target_session.reset(new MonConnection(cct, r->target_con, 0,
-						&auth_registry));
+						&auth_registry, r->target_name));
       r->target_session->start(monmap.get_epoch(), entity_name);
       r->last_send_attempt = ceph_clock_now();
 
@@ -1419,7 +1427,9 @@ int MonClient::get_auth_request(
       }
     }
     for (auto& i : pending_cons) {
+      ldout(cct, 10) << __func__ << " pending_cons loop - pending mon con " << i.first << dendl;
       if (i.second.is_con(con)) {
+        ldout(cct, 10) << __func__ << " pending_cons loop - found mon con " << i.first << dendl;
 	return i.second.get_auth_request(
 	  auth_method, preferred_modes, bl,
 	  entity_name, want_keys, rotating_secrets.get());
@@ -1465,7 +1475,9 @@ int MonClient::handle_auth_reply_more(
       }
     }
     for (auto& i : pending_cons) {
+      ldout(cct, 10) << __func__ << " pending_cons loop - pending mon con " << i.first << dendl;
       if (i.second.is_con(con)) {
+        ldout(cct, 10) << __func__ << " pending_cons loop - found mon con " << i.first << dendl;
 	return i.second.handle_auth_reply_more(auth_meta, bl, reply);
       }
     }
@@ -1503,7 +1515,9 @@ int MonClient::handle_auth_done(
       }
     }
     for (auto& i : pending_cons) {
+      ldout(cct, 10) << __func__ << " pending_cons loop - pending mon con " << i.first << dendl;
       if (i.second.is_con(con)) {
+        ldout(cct, 10) << __func__ << " pending_cons loop - found mon con " << i.first << dendl;
 	int r = i.second.handle_auth_done(
 	  auth_meta, global_id, bl,
 	  session_key, connection_secret);
@@ -1680,8 +1694,8 @@ AuthAuthorizer* MonClient::build_authorizer(int service_id) const {
 
 MonConnection::MonConnection(
   CephContext *cct, ConnectionRef con, uint64_t global_id,
-  AuthRegistry *ar)
-  : cct(cct), con(con), global_id(global_id), auth_registry(ar)
+  AuthRegistry *ar, std::string name)
+  : cct(cct), con(con), global_id(global_id), auth_registry(ar), mon_name(name)
 {}
 
 MonConnection::~MonConnection()

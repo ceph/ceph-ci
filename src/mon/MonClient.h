@@ -39,13 +39,13 @@
 
 #include "auth/AuthClient.h"
 #include "auth/AuthServer.h"
+#include "auth/AuthClientHandler.h"
 
 class MMonMap;
 class MConfig;
 class MMonGetVersionReply;
 class MMonCommandAck;
 class LogClient;
-class AuthClientHandler;
 class AuthRegistry;
 class KeyRing;
 class RotatingKeyRing;
@@ -55,7 +55,8 @@ public:
   MonConnection(CephContext *cct,
 		ConnectionRef conn,
 		uint64_t global_id,
-		AuthRegistry *auth_registry);
+		AuthRegistry *auth_registry,
+    std::string mon_name);
   ~MonConnection();
   MonConnection(MonConnection&& rhs) = default;
   MonConnection& operator=(MonConnection&&) = default;
@@ -77,6 +78,10 @@ public:
   }
   std::unique_ptr<AuthClientHandler>& get_auth() {
     return auth;
+  }
+
+  std::string get_mon_name() const {
+    return mon_name;
   }
 
   int get_auth_request(
@@ -139,6 +144,7 @@ private:
   MessageRef pending_tell_command;
 
   AuthRegistry *auth_registry;
+  std::string mon_name;
 };
 
 
@@ -252,20 +258,27 @@ enum class ConnectionStatus {
 // Class for individual auxiliary connections
 class AuxConnection {
 public:
-  AuxConnection(const std::string& monitor_id, std::shared_ptr<void> connection_ptr)
-    : monitor_id(monitor_id), conn_ptr(connection_ptr), status(ConnectionStatus::UNKNOWN) {}
+  AuxConnection(const std::string& name, std::unique_ptr<MonConnection> connection_ptr)
+    : mon_name(name), conn_ptr(std::move(connection_ptr)), status(ConnectionStatus::UNKNOWN) {}
+  // Move constructor and assignment operator
+  AuxConnection(AuxConnection&&) = default;
+  AuxConnection& operator=(AuxConnection&&) = default;
+
+  // Deleted copy constructor and assignment operator
+  AuxConnection(const AuxConnection&) = delete;
+  AuxConnection& operator=(const AuxConnection&) = delete;
 
   // Getters
-  std::string get_monitor_id() const { return monitor_id; }
+  std::string get_mon_name() const { return mon_name; }
   ConnectionStatus get_status() const { return status; }
-  std::shared_ptr<void> get_connection_ptr() const { return conn_ptr; }
+  MonConnection* get_connection_ptr() const { return conn_ptr.get(); }
 
   // Setters
   void set_status(ConnectionStatus new_status) { status = new_status; }
 
 private:
-  std::string monitor_id;             // Unique monitor ID
-  std::shared_ptr<void> conn_ptr;     // Pointer to the connection object (replace `void` with actual type)
+  std::string mon_name;
+  std::unique_ptr<MonConnection> conn_ptr;
   ConnectionStatus status;            // Status of the connection
 };
 
@@ -273,25 +286,25 @@ private:
 class AuxConnectionManager {
 public:
   // Add a new pending connection to the auxiliary list
-  void add_connection(const std::string& monitor_id, std::shared_ptr<void> connection_ptr) {
-    if (aux_list.find(monitor_id) == aux_list.end()) {
-      aux_list.emplace(monitor_id, AuxConnection(monitor_id, connection_ptr));
+  void add_connection(const entity_addrvec_t addr, std::unique_ptr<MonConnection> mc) {
+    if (aux_list.find(addr) == aux_list.end()) {
+      aux_list.emplace(addr, AuxConnection(mc->get_mon_name(), std::move(mc)));
     }
   }
 
   // Update the status of an auxiliary connection
-  void update_status(const std::string& monitor_id, ConnectionStatus new_status) {
-    auto it = aux_list.find(monitor_id);
+  void update_status(const entity_addrvec_t addr, ConnectionStatus new_status) {
+    auto it = aux_list.find(addr);
     if (it != aux_list.end()) {
       it->second.set_status(new_status);
     }
   }
 
   // Get the best auxiliary connection for failover
-  std::shared_ptr<void> get_best_candidate() {
-    for (const auto& [monitor_id, aux_conn] : aux_list) {
+  MonConnection* get_best_candidate() {
+    for (const auto& [_, aux_conn] : aux_list) {
       if (aux_conn.get_status() == ConnectionStatus::HEALTHY) {
-          return aux_conn.get_connection_ptr();
+        return aux_conn.get_connection_ptr();
       }
     }
     return nullptr; // No healthy candidate found
@@ -301,24 +314,25 @@ public:
   void cleanup_unresponsive() {
     for (auto it = aux_list.begin(); it != aux_list.end();) {
       if (it->second.get_status() == ConnectionStatus::UNRESPONSIVE) {
-          it = aux_list.erase(it);
-      } else {
-          ++it;
-      }
+        it = aux_list.erase(it);
+      } else { ++it; }
     }
   }
 
-  // Get all connections (for monitoring or debugging)
-  std::vector<AuxConnection> get_all_connections() const {
-      std::vector<AuxConnection> connections;
-      for (const auto& [_, aux_conn] : aux_list) {
-          connections.push_back(aux_conn);
-      }
-      return connections;
+  void clear() {
+    aux_list.clear();
+  }
+  
+  void splice(std::map<entity_addrvec_t, MonConnection>& other) {
+    for (auto& [addr, conn] : other) {
+      aux_list.emplace(
+          addr,
+          AuxConnection(conn.get_mon_name(), std::make_unique<MonConnection>(std::move(conn))));
+    }
   }
 
 private:
-  std::map<std::string, AuxConnection> aux_list; // Map of monitor ID to AuxConnection
+  std::map<entity_addrvec_t, AuxConnection> aux_list;
 };
 
 const boost::system::error_category& monc_category() noexcept;
