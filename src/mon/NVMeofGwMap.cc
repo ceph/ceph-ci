@@ -882,6 +882,61 @@ struct CMonRequestProposal : public Context {
   }
 };
 
+void NVMeofGwMap::get_health_checks(health_check_map_t *checks) const 
+{
+  list<string> singleGatewayDetail;
+  list<string> gatewayDownDetail;
+  list<string> gatewayInDeletingDetail;
+  for (const auto& created_map_pair: created_gws) {
+    const auto& group_key = created_map_pair.first;
+    auto& group = group_key.second;
+    const NvmeGwMonStates& gw_created_map = created_map_pair.second;
+    if ( gw_created_map.size() == 1) {
+      ostringstream ss;
+      ss << "NVMeoF Gateway Group '" << group << "' has 1 gateway." ;
+      singleGatewayDetail.push_back(ss.str());
+    }
+    for (const auto& gw_created_pair: gw_created_map) {
+      const auto& gw_id = gw_created_pair.first;
+      const auto& gw_created  = gw_created_pair.second;
+      if (gw_created.availability == gw_availability_t::GW_UNAVAILABLE) {
+        ostringstream ss;
+        ss << "NVMeoF Gateway '" << gw_id << "' is unavailable." ;
+        gatewayDownDetail.push_back(ss.str());
+      } else if (gw_created.availability == gw_availability_t::GW_DELETING) {
+        ostringstream ss;
+        ss << "NVMeoF Gateway '" << gw_id << "' is in deleting state." ;
+        gatewayInDeletingDetail.push_back(ss.str());
+      }
+    }
+  }
+  if (!singleGatewayDetail.empty()) {
+    ostringstream ss;
+    ss << singleGatewayDetail.size() << " group(s) have only 1 nvmeof gateway"
+      << "; HA is not possible with single gateway.";
+    auto& d = checks->add("NVMEOF_SINGLE_GATEWAY", HEALTH_WARN,
+        ss.str(), singleGatewayDetail.size());
+    d.detail.swap(singleGatewayDetail);
+  }
+  if (!gatewayDownDetail.empty()) {
+    ostringstream ss;
+    ss << gatewayDownDetail.size() << " gateway(s) are in unavailable state"
+      << "; gateway might be down, try to redeploy.";
+    auto& d = checks->add("NVMEOF_GATEWAY_DOWN", HEALTH_WARN,
+        ss.str(), gatewayDownDetail.size());
+    d.detail.swap(gatewayDownDetail);
+  }
+  if (!gatewayInDeletingDetail.empty()) {
+    ostringstream ss;
+    ss << gatewayInDeletingDetail.size() << " gateway(s) are in deleting state"
+      << "; namespaces are automatically balanced across remaining gateways, "
+      << "this should take a few minutes.";
+    auto& d = checks->add("NVMEOF_GATEWAY_DELETING", HEALTH_WARN,
+        ss.str(), gatewayInDeletingDetail.size());
+    d.detail.swap(gatewayInDeletingDetail);
+  }
+}
+
 int NVMeofGwMap::blocklist_gw(
   const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
   NvmeAnaGrpId grpid, epoch_t &epoch, bool failover)
