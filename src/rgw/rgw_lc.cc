@@ -1698,6 +1698,11 @@ int RGWLC::bucket_lc_process(string& shard_id, LCWorker* worker,
     return ret;
   }
 
+  if (cct->_conf->rgw_lifecycle_skip_versioned_objects && bucket->versioning_enabled()) {
+    ldpp_dout(this, 0) << "[BLP] RGWLC::bucket_lc_process skip versioning enabled bucket=" << bucket_name << dendl;
+    return 0;
+  }
+
   auto stack_guard = make_scope_guard(
     [&worker]
       {
