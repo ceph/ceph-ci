@@ -1231,6 +1231,12 @@ public:
 		       << newer_noncurrent_p << " "
 		       << oc.wq->thr_name() << dendl;
 
+    if (oc.cct->_conf->rgw_lifecycle_skip_versioned_objects) {
+      ldpp_dout(dpp, 0) << "[BLP] skip LCOpAction_NonCurrentExpiration bucket="
+        << oc.bucket->get_name() << " object="  << o.key << dendl;
+      return false;
+    }
+
     return is_expired &&
       (oc.num_noncurrent > oc.op.newer_noncurrent) && size_check_p &&
       pass_object_lock_check(oc.driver, oc.obj.get(), dpp);
@@ -1273,6 +1279,12 @@ public:
       ldpp_dout(dpp, 20) << __func__ << "(): key=" << o.key
 			<< ": next is same object, skipping "
 			<< oc.wq->thr_name() << dendl;
+      return false;
+    }
+
+    if (oc.cct->_conf->rgw_lifecycle_skip_versioned_objects) {
+      ldpp_dout(dpp, 0) << "[BLP] skip LCOpAction_DMExpiration bucket="
+        << oc.bucket->get_name() << " object="  << o.key << dendl;
       return false;
     }
 
