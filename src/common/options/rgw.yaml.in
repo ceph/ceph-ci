@@ -368,6 +368,17 @@ options:
   services:
   - rgw
   with_legacy: true
+- name: rgw_lifecycle_skip_versioned_objects
+  type: bool
+  level: advanced
+  desc: To have lifecycle processing skip handling versioned objects
+  long_desc: This is a Bloomberg-internal config item to skip handling of versioned objects
+    until OLH fix is made available or we tested Squid LC processing is tested to validate it
+    does not cause the data loss issue we experienced when on Reef version.
+  default: true
+  services:
+  - rgw
+  with_legacy: true
 - name: rgw_lc_lock_max_time
   type: int
   level: dev
