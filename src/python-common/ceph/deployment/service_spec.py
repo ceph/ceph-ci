@@ -1312,6 +1312,7 @@ class NvmeofServiceSpec(ServiceSpec):
                  name: Optional[str] = None,
                  group: Optional[str] = None,
                  addr: Optional[str] = None,
+                 addr_map: Optional[Dict[str, str]] = None,
                  port: Optional[int] = None,
                  pool: Optional[str] = None,
                  enable_auth: bool = False,
@@ -1333,7 +1334,9 @@ class NvmeofServiceSpec(ServiceSpec):
                  client_key: Optional[str] = None,
                  client_cert: Optional[str] = None,
                  root_ca_cert: Optional[str] = None,
+                 # unused and duplicate of tgt_path below, consider removing
                  spdk_path: Optional[str] = None,
+                 spdk_mem_size: Optional[int] = None,
                  tgt_path: Optional[str] = None,
                  spdk_timeout: Optional[float] = 60.0,
                  spdk_log_level: Optional[str] = 'WARNING',
@@ -1345,6 +1348,7 @@ class NvmeofServiceSpec(ServiceSpec):
                  {"in_capsule_data_size": 8192, "max_io_qpairs_per_ctrlr": 7},
                  tgt_cmd_extra_args: Optional[str] = None,
                  discovery_addr: Optional[str] = None,
+                 discovery_addr_map: Optional[Dict[str, str]] = None,
                  discovery_port: Optional[int] = None,
                  log_level: Optional[str] = 'INFO',
                  log_files_enabled: Optional[bool] = True,
@@ -1378,6 +1382,8 @@ class NvmeofServiceSpec(ServiceSpec):
         self.pool = pool
         #: ``addr`` address of the nvmeof gateway
         self.addr = addr
+        #: ``addr_map`` per node address map of the nvmeof gateways
+        self.addr_map = addr_map
         #: ``port`` port of the nvmeof gateway
         self.port = port or 5500
         #: ``name`` name of the nvmeof gateway
@@ -1422,8 +1428,10 @@ class NvmeofServiceSpec(ServiceSpec):
         self.client_cert = client_cert
         #: ``root_ca_cert`` CA cert for server/client certs
         self.root_ca_cert = root_ca_cert
-        #: ``spdk_path`` path to SPDK
+        #: ``spdk_path`` path is unused and duplicate of tgt_path below, consider removing
         self.spdk_path = spdk_path or '/usr/local/bin/nvmf_tgt'
+        #: ``spdk_mem_size`` memory size in MB for DPDK
+        self.spdk_mem_size = spdk_mem_size
         #: ``tgt_path`` nvmeof target path
         self.tgt_path = tgt_path or '/usr/local/bin/nvmf_tgt'
         #: ``spdk_timeout`` SPDK connectivity timeout
@@ -1444,6 +1452,8 @@ class NvmeofServiceSpec(ServiceSpec):
         self.tgt_cmd_extra_args = tgt_cmd_extra_args
         #: ``discovery_addr`` address of the discovery service
         self.discovery_addr = discovery_addr
+        #: ``discovery_addr_map`` per node address map of the discovery service
+        self.discovery_addr_map = discovery_addr_map
         #: ``discovery_port`` port of the discovery service
         self.discovery_port = discovery_port or 8009
         #: ``log_level`` the nvmeof gateway log level
@@ -1468,7 +1478,7 @@ class NvmeofServiceSpec(ServiceSpec):
         self.enable_monitor_client = enable_monitor_client
 
     def get_port_start(self) -> List[int]:
-        return [5500, 4420, 8009]
+        return [self.port, 4420, self.discovery_port]
 
     def validate(self) -> None:
         #  TODO: what other parameters should be validated as part of this function?
