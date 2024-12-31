@@ -63,6 +63,7 @@ case "$OS" in
         # pkgconf needs https://bugzilla.redhat.com/show_bug.cgi?id=1975416
         sudo yum -y --setopt=skip_missing_names_on_install=False install \
             mingw64-gcc-c++ \
+            libicu-devel \
             cmake \
             pkgconf \
             python3-devel \
@@ -83,13 +84,14 @@ case "$OS" in
     ubuntu)
         sudo apt-get update
         sudo env DEBIAN_FRONTEND=noninteractive apt-get -y install \
-            mingw-w64 g++ cmake pkg-config \
+            mingw-w64 g++ libicu-dev cmake pkg-config \
             python3-dev python3-yaml \
                 autoconf libtool ninja-build wget xz-utils zip bzip2 \
                 git
         ;;
     suse)
         for PKG in mingw64-cross-gcc-c++ mingw64-libgcc_s_seh1 mingw64-libstdc++6 \
+                libicu-devel \
                 cmake pkgconf python3-devel autoconf libtool ninja xz zip bzip2 \
                 python3-PyYAML \
                 gcc patch wget git; do
