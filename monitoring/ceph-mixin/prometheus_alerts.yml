@@ -769,18 +769,18 @@ groups:
           type: "ceph_default"
       - alert: "NVMeoFTooManyGateways"
         annotations:
-          description: "You may create many gateways, but 4 is the tested limit"
-          summary: "Max supported gateways exceeded "
-        expr: "count(ceph_nvmeof_gateway_info) > 4.00"
+          description: "You may create many gateways, but 32 is the tested limit"
+          summary: "Max supported gateways exceeded on cluster {{ $labels.cluster }}"
+        expr: "count(ceph_nvmeof_gateway_info) by (cluster) > 32.00"
         for: "1m"
         labels:
           severity: "warning"
           type: "ceph_default"
       - alert: "NVMeoFMaxGatewayGroupSize"
         annotations:
-          description: "You may create many gateways in a gateway group, but 2 is the tested limit"
-          summary: "Max gateways within a gateway group ({{ $labels.group }}) exceeded "
-        expr: "count by(group) (ceph_nvmeof_gateway_info) > 2.00"
+          description: "You may create many gateways in a gateway group, but 8 is the tested limit"
+          summary: "Max gateways within a gateway group ({{ $labels.group }}) exceeded on cluster {{ $labels.cluster }}"
+        expr: "count(ceph_nvmeof_gateway_info) by (cluster,group) > 8.00"
         for: "1m"
         labels:
           severity: "warning"

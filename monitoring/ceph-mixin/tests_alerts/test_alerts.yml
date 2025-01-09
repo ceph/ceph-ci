@@ -2259,52 +2259,122 @@ tests:
  # NVMeoFTooManyGateways
  - interval: 1m
    input_series:
-    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.1"}'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.1",cluster="mycluster"}'
       values: '1+0x20'
-    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.2"}'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.2",cluster="mycluster"}'
       values: '1+0x20'
-    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.3"}'
-      values: '1+0x20'      
-    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.4"}'
-      values: '1+0x20' 
-    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.5"}'
-      values: '1+0x20'             
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.3",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.4",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.5",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.6",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.7",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.8",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.9",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.10",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.11",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.12",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.13",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.14",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.15",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.16",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.17",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.18",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.19",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.20",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.21",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.22",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.23",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.24",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.25",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.26",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.27",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.28",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.29",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.30",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.31",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.32",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{addr="1.1.1.33",cluster="mycluster"}'
+      values: '1+0x20'
+
    promql_expr_test:
-     - expr: count(ceph_nvmeof_gateway_info) > 4.00
+     - expr: count(ceph_nvmeof_gateway_info) by (cluster) > 32.00
        eval_time: 1m
        exp_samples:
-         - labels: '{}'
-           value: 5
+         - labels: '{cluster="mycluster"}'
+           value: 33
    alert_rule_test:
     - eval_time: 5m
       alertname: NVMeoFTooManyGateways
       exp_alerts:
       - exp_labels:
           severity: warning
+          cluster: mycluster
           type: ceph_default
         exp_annotations:
-          summary: "Max supported gateways exceeded "
-          description: "You may create many gateways, but 4 is the tested limit"
+          summary: "Max supported gateways exceeded on cluster mycluster"
+          description: "You may create many gateways, but 32 is the tested limit"
 
  # NVMeoFMaxGatewayGroupSize
  - interval: 1m
    input_series:
-    - series: 'ceph_nvmeof_gateway_info{group="group-1",addr="1.1.1.1"}'
+    - series: 'ceph_nvmeof_gateway_info{group="group-1",addr="1.1.1.1",cluster="mycluster"}'
       values: '1+0x20'
-    - series: 'ceph_nvmeof_gateway_info{group="group-1",addr="1.1.1.2"}'
+    - series: 'ceph_nvmeof_gateway_info{group="group-1",addr="1.1.1.2",cluster="mycluster"}'
       values: '1+0x20'
-    - series: 'ceph_nvmeof_gateway_info{group="group-1",addr="1.1.1.3"}'
-      values: '1+0x20'      
-    - series: 'ceph_nvmeof_gateway_info{group="group-2",addr="1.1.1.4"}'
+    - series: 'ceph_nvmeof_gateway_info{group="group-1",addr="1.1.1.3",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{group="group-1",addr="1.1.1.9",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{group="group-1",addr="1.1.1.12",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{group="group-1",addr="1.1.1.10",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{group="group-1",addr="1.1.1.14",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{group="group-1",addr="1.1.1.11",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{group="group-1",addr="1.1.1.13",cluster="mycluster"}'
       values: '1+0x20' 
-    - series: 'ceph_nvmeof_gateway_info{group="group-2",addr="1.1.1.5"}'
-      values: '1+0x20'             
+    - series: 'ceph_nvmeof_gateway_info{group="group-2",addr="1.1.1.4",cluster="mycluster"}'
+      values: '1+0x20'
+    - series: 'ceph_nvmeof_gateway_info{group="group-2",addr="1.1.1.5",cluster="mycluster"}'
+      values: '1+0x20'
    promql_expr_test:
-     - expr: count by(group) (ceph_nvmeof_gateway_info) > 2.00
+     - expr: count(ceph_nvmeof_gateway_info) by (cluster, group) > 8.00
        eval_time: 1m
        exp_samples:
-         - labels: '{group="group-1"}'
-           value: 3
+         - labels: '{cluster="mycluster",group="group-1"}'
+           value: 9
    alert_rule_test:
     - eval_time: 5m
       alertname: NVMeoFMaxGatewayGroupSize
@@ -2312,10 +2382,11 @@ tests:
       - exp_labels:
           group: group-1
           severity: warning
+          cluster: mycluster
           type: ceph_default
         exp_annotations:
-          summary: "Max gateways within a gateway group (group-1) exceeded "
-          description: "You may create many gateways in a gateway group, but 2 is the tested limit"
+          summary: "Max gateways within a gateway group (group-1) exceeded on cluster mycluster"
+          description: "You may create many gateways in a gateway group, but 8 is the tested limit"
 
  # NVMeoFSingleGatewayGroup
  - interval: 1m
