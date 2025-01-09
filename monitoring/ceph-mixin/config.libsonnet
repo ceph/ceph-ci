@@ -14,8 +14,8 @@
     NVMeoFMaxGatewaysPerCluster: 32,
     NVMeoFHighGatewayCPU: 80,
     NVMeoFMaxSubsystemsPerGateway: 128,
-    NVMeoFMaxNamespaces: 1024,
-    NVMeoFHighClientCount: 32,
+    NVMeoFMaxNamespaces: 2048,
+    NVMeoFHighClientCount: 128,
     NVMeoFHighHostCPU: 80,
     //
     // Read/Write latency is defined in ms
