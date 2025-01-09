@@ -10,4 +10,4 @@ overrides:
 tasks:
   - cephfs_test_runner:
       modules:
-        - tasks.cephfs.test_journal_repair
+        - tasks.cephfs.test_journal_repair.TestJournalRepair.test_journal_import_from_invalid_dump_file
