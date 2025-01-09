@@ -2864,12 +2864,14 @@ tests:
       values: '200+0x10'
     - series: 'ceph_nvmeof_subsystem_namespace_count{instance="node-1:10008",nqn="nqn10",cluster="mycluster"}'
       values: '200+0x10'
+    - series: 'ceph_nvmeof_subsystem_namespace_count{instance="node-1:10008",nqn="nqn11",cluster="mycluster"}'
+      values: '200+0x10'
    promql_expr_test:
-     - expr: sum by(gateway_host, cluster) (label_replace(ceph_nvmeof_subsystem_namespace_count,"gateway_host","$1","instance","(.*):.*")) > 1024
+     - expr: sum by(gateway_host, cluster) (label_replace(ceph_nvmeof_subsystem_namespace_count,"gateway_host","$1","instance","(.*):.*")) > 2048
        eval_time: 1m
        exp_samples:
          - labels: '{gateway_host="node-1", cluster="mycluster"}'
-           value: 2000
+           value: 2200
    alert_rule_test:
     - eval_time: 5m
       alertname: NVMeoFTooManyNamespaces
@@ -2912,15 +2914,15 @@ tests:
  - interval: 1m
    input_series:
     - series: 'ceph_nvmeof_subsystem_host_count{nqn="nqn1",cluster="mycluster"}'
-      values: '2 2 2 4 4 8 8 8 10 10 20 20 32 34 34 38 38 40 44 44'
+      values: '2 4 8 10 20 30 40 50 62 74 80 95 100 110 130 130 130 130 130 130'
     - series: 'ceph_nvmeof_subsystem_host_count{nqn="nqn2",cluster="mycluster"}'
-      values: '2 2 2 8 8 8 16 16 16 16 16 16 16 16 16 16 16 16 16 16'
+      values: '2 8 16 16 16 16 16 16 16 16 20 20 32 34 34 36 37 37 37 37'
    promql_expr_test:
-     - expr: ceph_nvmeof_subsystem_host_count > 32.00
+     - expr: ceph_nvmeof_subsystem_host_count > 128.00
        eval_time: 15m
        exp_samples:
          - labels: '{__name__="ceph_nvmeof_subsystem_host_count",nqn="nqn1",cluster="mycluster"}'
-           value: 38
+           value: 130
    alert_rule_test:
     - eval_time: 20m
       alertname: NVMeoFHighClientCount
@@ -2932,7 +2934,7 @@ tests:
           type: ceph_default
         exp_annotations:
           summary: "The number of clients connected to nqn1 is too high on cluster mycluster"
-          description: "The supported limit for clients connecting to a subsystem is 32"
+          description: "The supported limit for clients connecting to a subsystem is 128"
  
  # NVMeoFMissingListener
  - interval: 1m
