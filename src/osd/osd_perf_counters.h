@@ -61,6 +61,14 @@ enum {
 
   l_osd_rop,
   l_osd_rbytes,
+  l_osd_robjc,
+  l_osd_robjd,
+  l_osd_mclock_robje,
+  l_osd_mclock_robjd,
+  l_osd_mclock_robj_high_enqueue,
+  l_osd_mclock_robj_high_dequeue,
+  l_osd_robjenq,
+  l_osd_robjdeq,
 
   l_osd_recovery_push_queue_lat,
   l_osd_recovery_push_reply_queue_lat,

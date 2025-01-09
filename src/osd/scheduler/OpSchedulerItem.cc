@@ -182,6 +182,24 @@ void PGScrubChunkIsFree::run([[maybe_unused]] OSD* osd,
   pg->unlock();
 }
 
+PGRecovery::PGRecovery(spg_t pg, epoch_t epoch_queued,
+  uint64_t reserved_pushes, int priority, OSDService *osdsvc):
+  PGOpQueueable(pg),
+  time_queued(ceph_clock_now()), epoch_queued(epoch_queued),
+  reserved_pushes(reserved_pushes), priority(priority), osdsvc(osdsvc)
+{
+  if (reserved_pushes > 0) {
+    osdsvc->logger->inc(l_osd_robjc);
+  }
+}
+
+PGRecovery::~PGRecovery()
+{
+  if (reserved_pushes > 0) {
+    osdsvc->logger->inc(l_osd_robjd);
+  }
+}
+
 void PGRecovery::run(
   OSD *osd,
   OSDShard *sdata,

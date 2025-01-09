@@ -30,90 +30,6 @@ using namespace std::placeholders;
 
 namespace ceph::osd::scheduler {
 
-void mClockScheduler::_get_mclock_counter(scheduler_id_t id)
-{
-  if (!logger) {
-    return;
-  }
-
-  /* op enter mclock queue will +1 */
-  logger->inc(l_mclock_all_type_queue_len);
-
-  switch (id.class_id) {
-  case op_scheduler_class::immediate:
-    logger->inc(l_mclock_immediate_queue_len);
-    break;
-  case op_scheduler_class::client:
-    logger->inc(l_mclock_client_queue_len);
-    break;
-  case op_scheduler_class::background_recovery:
-    logger->inc(l_mclock_recovery_queue_len);
-    break;
-  case op_scheduler_class::background_best_effort:
-    logger->inc(l_mclock_best_effort_queue_len);
-    break;
-   default:
-    derr << __func__ << " unknown class_id=" << id.class_id
-         << " unknown id=" << id << dendl;
-    break;
-  }
-}
-
-void mClockScheduler::_put_mclock_counter(scheduler_id_t id)
-{
-  if (!logger) {
-    return;
-  }
-
-  /* op leave mclock queue will -1 */
-  logger->dec(l_mclock_all_type_queue_len);
-
-  switch (id.class_id) {
-  case op_scheduler_class::immediate:
-    logger->dec(l_mclock_immediate_queue_len);
-    break;
-  case op_scheduler_class::client:
-    logger->dec(l_mclock_client_queue_len);
-    break;
-  case op_scheduler_class::background_recovery:
-    logger->dec(l_mclock_recovery_queue_len);
-    break;
-  case op_scheduler_class::background_best_effort:
-    logger->dec(l_mclock_best_effort_queue_len);
-    break;
-   default:
-    derr << __func__ << " unknown class_id=" << id.class_id
-         << " unknown id=" << id << dendl;
-    break;
-  }
-}
-
-void mClockScheduler::_init_logger()
-{
-  PerfCountersBuilder m(cct, "mclock-shard-queue-" + std::to_string(shard_id),
-                        l_mclock_first, l_mclock_last);
-
-  m.add_u64_counter(l_mclock_immediate_queue_len, "mclock_immediate_queue_len",
-                    "high_priority op count in mclock queue");
-  m.add_u64_counter(l_mclock_client_queue_len, "mclock_client_queue_len",
-                    "client type op count in mclock queue");
-  m.add_u64_counter(l_mclock_recovery_queue_len, "mclock_recovery_queue_len",
-                    "background_recovery type op count in mclock queue");
-  m.add_u64_counter(l_mclock_best_effort_queue_len, "mclock_best_effort_queue_len",
-                    "background_best_effort type op count in mclock queue");
-  m.add_u64_counter(l_mclock_all_type_queue_len, "mclock_all_type_queue_len",
-                    "all type op count in mclock queue");
-
-  logger = m.create_perf_counters();
-  cct->get_perfcounters_collection()->add(logger);
-
-  logger->set(l_mclock_immediate_queue_len, 0);
-  logger->set(l_mclock_client_queue_len, 0);
-  logger->set(l_mclock_recovery_queue_len, 0);
-  logger->set(l_mclock_best_effort_queue_len, 0);
-  logger->set(l_mclock_all_type_queue_len, 0);
-}
-
 mClockScheduler::mClockScheduler(CephContext *cct,
   int whoami,
   uint32_t num_shards,
@@ -121,7 +37,7 @@ mClockScheduler::mClockScheduler(CephContext *cct,
   bool is_rotational,
   unsigned cutoff_priority,
   MonClient *monc,
-  bool init_perfcounter)
+  PerfCounters *logger)
   : cct(cct),
     whoami(whoami),
     num_shards(num_shards),
@@ -129,7 +45,7 @@ mClockScheduler::mClockScheduler(CephContext *cct,
     is_rotational(is_rotational),
     cutoff_priority(cutoff_priority),
     monc(monc),
-    logger(nullptr),
+    logger(logger),
     scheduler(
       std::bind(&mClockScheduler::ClientRegistry::get_info,
                 &client_registry,
@@ -143,10 +59,6 @@ mClockScheduler::mClockScheduler(CephContext *cct,
   set_config_defaults_from_profile();
   client_registry.update_from_config(
     cct->_conf, osd_bandwidth_capacity_per_shard);
-
-  if (init_perfcounter) {
-    _init_logger();
-  }
 }
 
 /* ClientRegistry holds the dmclock::ClientInfo configuration parameters
@@ -477,12 +389,18 @@ void mClockScheduler::enqueue(OpSchedulerItem&& item)
 {
   auto id = get_scheduler_id(item);
   unsigned priority = item.get_priority();
-  
+
+  int ret_status = 0;
+  int imm_or_high = 0;
+  uint64_t reserved_pushes = item.get_reserved_pushes();
+
   // TODO: move this check into OpSchedulerItem, handle backwards compat
   if (op_scheduler_class::immediate == id.class_id) {
     enqueue_high(immediate_class_priority, std::move(item));
+    imm_or_high = 1;
   } else if (priority >= cutoff_priority) {
     enqueue_high(priority, std::move(item));
+    imm_or_high = 1;
   } else {
     auto cost = calc_scaled_cost(item.get_cost());
     item.set_qos_cost(cost);
@@ -492,12 +410,30 @@ void mClockScheduler::enqueue(OpSchedulerItem&& item)
              << dendl;
 
     // Add item to scheduler queue
-    scheduler.add_request(
-      std::move(item),
-      id,
-      cost);
-    _get_mclock_counter(id);
+    ret_status = scheduler.add_request(std::move(item), id, cost);
   }
+
+  if (ret_status) // enqueue failed!
+  {
+    dout(3) << __func__ << " client_count: " << scheduler.client_count()
+            << " queue_sizes: [ "
+            << " high_priority_queue: " << high_priority.size()
+            << " sched: " << scheduler.request_count() << " ]"
+            << " Return status " << ret_status
+            << " reserved_pushes " << reserved_pushes
+            << " class_id " << id.class_id
+            << dendl;
+    dout(3) << __func__ << " mClockQueues: { "
+            << display_queues() << " }"
+            << dendl;
+  } else { // enqueue succeeded
+    // If reserved_pushes value > 0 it means object type is PGRecovery
+    // !imm_or_high means item added to mclock queue
+    if((reserved_pushes > 0) && !imm_or_high) {
+      logger->inc(l_osd_mclock_robje);
+    }
+  }
+
 
  dout(20) << __func__ << " client_count: " << scheduler.client_count()
           << " queue_sizes: [ "
@@ -532,23 +468,23 @@ void mClockScheduler::enqueue_high(unsigned priority,
                                    OpSchedulerItem&& item,
 				   bool front)
 {
+  uint64_t reserved_pushes = item.get_reserved_pushes();
+  if (reserved_pushes > 0) {
+    logger->inc(l_osd_mclock_robj_high_enqueue);
+  }
+
   if (front) {
     high_priority[priority].push_back(std::move(item));
   } else {
     high_priority[priority].push_front(std::move(item));
   }
-
-  scheduler_id_t id = scheduler_id_t {
-    op_scheduler_class::immediate,
-    client_profile_id_t()
-  };
-  _get_mclock_counter(id);
 }
 
 WorkItem mClockScheduler::dequeue()
 {
   if (!high_priority.empty()) {
     auto iter = high_priority.begin();
+    priority_t prio = iter->first;
     // invariant: high_priority entries are never empty
     assert(!iter->second.empty());
     WorkItem ret{std::move(iter->second.back())};
@@ -558,12 +494,15 @@ WorkItem mClockScheduler::dequeue()
       high_priority.erase(iter);
     }
     ceph_assert(std::get_if<OpSchedulerItem>(&ret));
-
-    scheduler_id_t id = scheduler_id_t {
-      op_scheduler_class::immediate,
-      client_profile_id_t()
-    };
-    _put_mclock_counter(id);
+    auto item = std::move(std::get<OpSchedulerItem>(ret));
+    if (item.get_reserved_pushes() > 0) {
+      dout(3) << __func__ << " dequeued PGRecovery item from high queue."
+              << " Qpriority " << prio
+              << " PGRecovery Item: " << item
+              << dendl;
+      logger->inc(l_osd_mclock_robj_high_dequeue);
+    }
+    ret = std::move(item);
     return ret;
   } else {
     mclock_queue_t::PullReq result = scheduler.pull_request();
@@ -577,8 +516,13 @@ WorkItem mClockScheduler::dequeue()
       ceph_assert(result.is_retn());
 
       auto &retn = result.get_retn();
-      _put_mclock_counter(retn.client);
-      return std::move(*retn.request);
+      WorkItem work_item(std::move(*retn.request));
+      auto item = std::move(std::get<OpSchedulerItem>(work_item));
+      if (item.get_reserved_pushes() > 0) {
+        logger->inc(l_osd_mclock_robjd);
+      }
+      work_item = std::move(item);
+      return work_item;
     }
   }
 }
@@ -698,11 +642,6 @@ void mClockScheduler::handle_conf_change(
 mClockScheduler::~mClockScheduler()
 {
   cct->_conf.remove_observer(this);
-  if (logger) {
-    cct->get_perfcounters_collection()->remove(logger);
-    delete logger;
-    logger = nullptr;
-  }
 }
 
 }
