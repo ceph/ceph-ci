@@ -640,12 +640,17 @@ class FilesystemBase(MDSClusterBase):
     def set_joinable(self, joinable=True):
         self.set_var("joinable", joinable)
 
-    def set_max_mds(self, max_mds):
-        self.set_var("max_mds", "%d" % max_mds)
+    def set_max_mds(self, max_mds, confirm=True):
+        if confirm:
+            self.set_var('max_mds', f'{max_mds}', '--yes-i-really-mean-it')
+        else:
+            self.set_var("max_mds", f"{max_mds}",)
 
     def set_session_timeout(self, timeout):
         self.set_var("session_timeout", "%d" % timeout)
 
+    def set_session_autoclose(self, autoclose_time):
+        self.set_var("session_autoclose", "%d" % autoclose_time)
     def set_allow_standby_replay(self, yes):
         self.set_var("allow_standby_replay", yes)
 

@@ -783,6 +783,11 @@ seastar::future<> ShardServices::dispatch_context_transaction(
   co_return;
 }
 
+Ref<PG> ShardServices::get_pg(spg_t pgid)
+{
+  return local_state.get_pg(pgid);
+}
+
 seastar::future<> ShardServices::dispatch_context_messages(
   BufferedRecoveryMessages &&ctx)
 {
@@ -802,15 +807,19 @@ seastar::future<> ShardServices::dispatch_context_messages(
 
 seastar::future<> ShardServices::dispatch_context(
   crimson::os::CollectionRef col,
-  PeeringCtx &&ctx)
+  PeeringCtx &&pctx)
 {
-  ceph_assert(col || ctx.transaction.empty());
-  return seastar::when_all_succeed(
-    dispatch_context_messages(
-      BufferedRecoveryMessages{ctx}),
-    col ? dispatch_context_transaction(col, ctx) : seastar::now()
-  ).then_unpack([] {
-    return seastar::now();
+  return seastar::do_with(
+    std::move(pctx),
+    [this, col](auto &ctx) {
+    ceph_assert(col || ctx.transaction.empty());
+    return seastar::when_all_succeed(
+      dispatch_context_messages(
+       BufferedRecoveryMessages{ctx}),
+      col ? dispatch_context_transaction(col, ctx) : seastar::now()
+    ).then_unpack([] {
+      return seastar::now();
+    });
   });
 }
 

@@ -59,6 +59,14 @@ options:
   services:
   - rgw
   with_legacy: true
+- name: rgw_parquet_buffer_size
+  type: size
+  level: advanced
+  desc: the Maximum parquet buffer size, a limit to memory consumption for parquet reading operations.
+  default: 16_M
+  services:
+  - rgw
+  with_legacy: true
 - name: rgw_rados_tracing
   type: bool
   level: advanced
@@ -4241,4 +4249,14 @@ options:
   - rgw
   flags:
   - startup
+  with_legacy: true
+- name: rgw_bucket_logging_obj_roll_time
+  type: uint 
+  level: advanced
+  desc: Default time in seconds for the bucket logging object to roll
+  long_desc: Object roll time can be provided in the bucket logging configuration.
+    If not provided, this value will be used.
+  default: 300
+  services:
+  - rgw
   with_legacy: true

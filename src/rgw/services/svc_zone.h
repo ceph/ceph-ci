@@ -96,7 +96,6 @@ public:
   uint32_t get_zone_short_id() const;
 
   const std::string& get_current_period_id() const;
-  bool has_zonegroup_api(const std::string& api) const;
 
   bool zone_is_writeable();
   bool zone_syncs_from(const RGWZone& target_zone, const RGWZone& source_zone) const;
@@ -146,7 +145,7 @@ public:
   bool need_to_log_data() const;
   bool need_to_log_metadata() const;
   bool can_reshard() const;
-  bool is_syncing_bucket_meta(const rgw_bucket& bucket);
+  bool is_syncing_bucket_meta() const;
 
   int list_zonegroups(const DoutPrefixProvider *dpp, std::list<std::string>& zonegroups);
   int list_regions(const DoutPrefixProvider *dpp, std::list<std::string>& regions);

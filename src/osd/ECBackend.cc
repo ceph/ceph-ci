@@ -945,6 +945,10 @@ void ECBackend::handle_sub_write(
   }
   trace.event("handle_sub_write");
 
+  if (cct->_conf->bluestore_debug_inject_read_err &&
+      ec_inject_test_write_error3(op.soid)) {
+    ceph_abort_msg("Error inject - OSD down");
+  }
   if (!get_parent()->pgb_is_primary())
     get_parent()->update_stats(op.stats);
   ObjectStore::Transaction localt;
@@ -983,8 +987,8 @@ void ECBackend::handle_sub_write(
     std::move(op.log_entries),
     op.updated_hit_set_history,
     op.trim_to,
-    op.roll_forward_to,
-    op.roll_forward_to,
+    op.pg_committed_to,
+    op.pg_committed_to,
     !op.backfill_or_async_recovery,
     localt,
     async);
@@ -1191,6 +1195,15 @@ void ECBackend::handle_sub_write_reply(
     i->second->on_all_commit = 0;
     i->second->trace.event("ec write all committed");
   }
+  if (cct->_conf->bluestore_debug_inject_read_err &&
+      (i->second->pending_commit.size() == 1) &&
+      ec_inject_test_write_error2(i->second->hoid)) {
+    std::string cmd =
+      "{ \"prefix\": \"osd down\", \"ids\": [\"" + std::to_string( get_parent()->whoami() ) + "\"] }";
+    vector<std::string> vcmd{cmd};
+    dout(0) << __func__ << " Error inject - marking OSD down" << dendl;
+    get_parent()->start_mon_command(vcmd, {}, nullptr, nullptr, nullptr);
+  }
   rmw_pipeline.check_ops();
 }
 
@@ -1208,6 +1221,19 @@ void ECBackend::handle_sub_read_reply(
     return;
   }
   ReadOp &rop = iter->second;
+  if (cct->_conf->bluestore_debug_inject_read_err) {
+    for (auto i = op.buffers_read.begin();
+	 i != op.buffers_read.end();
+	 ++i) {
+      if (ec_inject_test_read_error0(ghobject_t(i->first, ghobject_t::NO_GEN, op.from.shard))) {
+	dout(0) << __func__ << " Error inject - EIO error for shard " << op.from.shard << dendl;
+	op.buffers_read.erase(i->first);
+	op.attrs_read.erase(i->first);
+	op.errors[i->first] = -EIO;
+      }
+
+    }
+  }
   for (auto i = op.buffers_read.begin();
        i != op.buffers_read.end();
        ++i) {
@@ -1470,7 +1496,7 @@ void ECBackend::submit_transaction(
   const eversion_t &at_version,
   PGTransactionUPtr &&t,
   const eversion_t &trim_to,
-  const eversion_t &min_last_complete_ondisk,
+  const eversion_t &pg_committed_to,
   vector<pg_log_entry_t>&& log_entries,
   std::optional<pg_hit_set_history_t> &hset_history,
   Context *on_all_commit,
@@ -1485,7 +1511,15 @@ void ECBackend::submit_transaction(
   op->delta_stats = delta_stats;
   op->version = at_version;
   op->trim_to = trim_to;
-  op->roll_forward_to = std::max(min_last_complete_ondisk, rmw_pipeline.committed_to);
+  /* We update PeeringState::pg_committed_to via the callback
+   * invoked from ECBackend::handle_sub_write_reply immediately
+   * before updating rmw_pipeline.commited_to via
+   * rmw_pipeline.check_ops()->try_finish_rmw(), so these will
+   * *usually* match.  However, the PrimaryLogPG::submit_log_entries
+   * pathway can perform an out-of-band log update which updates
+   * PeeringState::pg_committed_to independently.  Thus, the value
+   * passed in is the right one to use. */
+  op->pg_committed_to = pg_committed_to;
   op->log_entries = log_entries;
   std::swap(op->updated_hit_set_history, hset_history);
   op->on_all_commit = on_all_commit;

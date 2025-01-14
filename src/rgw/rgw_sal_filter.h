@@ -108,9 +108,6 @@ public:
   virtual bool get_redirect_endpoint(std::string* endpoint) override {
       return next->get_redirect_endpoint(endpoint);
   }
-  virtual bool has_zonegroup_api(const std::string& api) const override {
-      return next->has_zonegroup_api(api);
-  }
   virtual const std::string& get_current_period_id() override {
       return next->get_current_period_id();
   }
@@ -669,6 +666,27 @@ public:
       optional_yield y, const DoutPrefixProvider *dpp) override {
     return next->remove_topics(objv_tracker, y, dpp);
   }
+  int get_logging_object_name(std::string& obj_name, 
+      const std::string& prefix, 
+      optional_yield y, 
+      const DoutPrefixProvider *dpp,
+      RGWObjVersionTracker* objv_tracker) override {
+    return next->get_logging_object_name(obj_name, prefix, y, dpp, objv_tracker);
+  }
+  int set_logging_object_name(const std::string& obj_name, 
+      const std::string& prefix, 
+      optional_yield y, 
+      const DoutPrefixProvider *dpp, 
+      bool new_obj,
+      RGWObjVersionTracker* objv_track) override {
+    return next->set_logging_object_name(obj_name, prefix, y, dpp, new_obj, objv_track); 
+  }
+  int commit_logging_object(const std::string& obj_name, optional_yield y, const DoutPrefixProvider *dpp)override {
+    return next->commit_logging_object(obj_name, y, dpp);
+  }
+  int write_logging_object(const std::string& obj_name, const std::string& record, optional_yield y, const DoutPrefixProvider *dpp, bool async_completion) override {
+    return next->write_logging_object(obj_name, record, y, dpp, async_completion);
+  }
 
   virtual rgw_bucket& get_key() override { return next->get_key(); }
   virtual RGWBucketInfo& get_info() override { return next->get_info(); }
@@ -759,6 +777,12 @@ public:
   virtual void invalidate() override { return next->invalidate(); }
   virtual bool empty() const override { return next->empty(); }
   virtual const std::string &get_name() const override { return next->get_name(); }
+
+  /** If multipart, enumerate (a range [marker..marker+[min(max_parts, parts_count-1)] of) parts of the object */
+  virtual int list_parts(const DoutPrefixProvider* dpp, CephContext* cct,
+			 int max_parts, int marker, int* next_marker,
+			 bool* truncated, list_parts_each_t each_func,
+			 optional_yield y) override;
 
   virtual int load_obj_state(const DoutPrefixProvider *dpp, optional_yield y,
                              bool follow_olh = true) override;

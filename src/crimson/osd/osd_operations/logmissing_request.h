@@ -36,6 +36,9 @@ public:
   }
   PipelineHandle &get_handle() { return handle; }
   epoch_t get_epoch() const { return req->get_min_epoch(); }
+  epoch_t get_epoch_sent_at() const {
+    return req->get_map_epoch();
+  }
 
   ConnectionPipeline &get_connection_pipeline();
 
@@ -77,14 +80,14 @@ public:
     ConnectionPipeline::AwaitMap::BlockingEvent,
     ConnectionPipeline::GetPGMapping::BlockingEvent,
     PerShardPipeline::CreateOrWaitPG::BlockingEvent,
-    ClientRequest::PGPipeline::AwaitMap::BlockingEvent,
+    PGRepopPipeline::Process::BlockingEvent,
     PG_OSDMapGate::OSDMapBlocker::BlockingEvent,
     PGMap::PGCreationBlockingEvent,
     OSD_OSDMapGate::OSDMapBlocker::BlockingEvent
   > tracking_events;
 
 private:
-  ClientRequest::PGPipeline &client_pp(PG &pg);
+  PGRepopPipeline &repop_pipeline(PG &pg);
 
   crimson::net::ConnectionRef l_conn;
   crimson::net::ConnectionXcoreRef r_conn;

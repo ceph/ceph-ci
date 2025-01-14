@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <limits.h>
 
 #include <array>
@@ -82,6 +83,10 @@ int rgw_op_get_bucket_policy_from_attr(const DoutPrefixProvider *dpp,
                                        std::map<std::string, bufferlist>& bucket_attrs,
                                        RGWAccessControlPolicy& policy,
                                        optional_yield y);
+
+std::tuple<bool, bool> rgw_check_policy_condition(const DoutPrefixProvider *dpp, req_state* s, bool check_obj_exist_tag=true);
+
+int rgw_iam_add_buckettags(const DoutPrefixProvider *dpp, req_state* s);
 
 class RGWHandler {
 protected:
@@ -296,6 +301,7 @@ public:
   }
   virtual const char* name() const = 0;
   virtual RGWOpType get_type() { return RGW_OP_UNKNOWN; }
+  virtual std::string canonical_name() const { return fmt::format("REST.{}.{}", s->info.method, name()); }
 
   virtual uint32_t op_mask() { return 0; }
 
@@ -974,18 +980,6 @@ public:
   virtual bool need_container_stats() { return false; }
 };
 
-class RGWGetBucketLogging : public RGWOp {
-public:
-  RGWGetBucketLogging() {}
-  int verify_permission(optional_yield y) override;
-  void execute(optional_yield) override { }
-
-  void send_response() override = 0;
-  const char* name() const override { return "get_bucket_logging"; }
-  RGWOpType get_type() override { return RGW_OP_GET_BUCKET_LOGGING; }
-  uint32_t op_mask() override { return RGW_OP_TYPE_READ; }
-};
-
 class RGWGetBucketLocation : public RGWOp {
 public:
   RGWGetBucketLocation() {}
@@ -1094,14 +1088,15 @@ public:
 
 class RGWStatBucket : public RGWOp {
 protected:
-  std::unique_ptr<rgw::sal::Bucket> bucket;
   RGWStorageStats stats;
+  bool report_stats{true};
 
 public:
   int verify_permission(optional_yield y) override;
   void pre_exec() override;
   void execute(optional_yield y) override;
 
+  virtual int get_params(optional_yield y) = 0;
   void send_response() override = 0;
   const char* name() const override { return "stat_bucket"; }
   RGWOpType get_type() override { return RGW_OP_STAT_BUCKET; }
@@ -1117,6 +1112,7 @@ class RGWCreateBucket : public RGWOp {
   bool relaxed_region_enforcement = false;
   RGWCORSConfiguration cors_config;
   std::set<std::string> rmattr_names;
+  bufferlist in_data;
 
   virtual bool need_metadata_upload() const { return false; }
 
@@ -1243,6 +1239,7 @@ protected:
   std::string multipart_upload_id;
   std::string multipart_part_str;
   int multipart_part_num = 0;
+  rgw::cksum::Type multipart_cksum_type{rgw::cksum::Type::none};
   jspan_ptr multipart_trace;
 
   boost::optional<ceph::real_time> delete_at;
@@ -1464,6 +1461,7 @@ public:
 class RGWRestoreObj : public RGWOp {
 protected:
   std::optional<uint64_t> expiry_days;
+  int restore_ret;
 public:
   RGWRestoreObj() {}
 
@@ -1648,6 +1646,50 @@ public:
   RGWOpType get_type() override { return RGW_OP_PUT_ACLS; }
   uint32_t op_mask() override { return RGW_OP_TYPE_WRITE; }
 };
+
+class RGWGetObjAttrs : public RGWGetObj {
+protected:
+  std::string version_id;
+  std::string expected_bucket_owner;
+  std::optional<int> marker;
+  std::optional<int> max_parts;
+  uint16_t requested_attributes{0};
+#if 0
+  /* used to decrypt attributes for objects stored with SSE-C */
+  x-amz-server-side-encryption-customer-algorithm
+  x-amz-server-side-encryption-customer-key
+  x-amz-server-side-encryption-customer-key-MD5
+#endif
+public:
+
+  enum class ReqAttributes : uint16_t {
+    None = 0,
+    Etag,
+    Checksum,
+    ObjectParts,
+    StorageClass,
+    ObjectSize
+  };
+
+  static uint16_t as_flag(ReqAttributes attr) {
+    return 1 << (uint16_t(attr) ? uint16_t(attr) - 1 : 0);
+  }
+
+  static uint16_t recognize_attrs(const std::string& hdr, uint16_t deflt = 0);
+
+  RGWGetObjAttrs() : RGWGetObj()
+  {
+    RGWGetObj::get_data = false; // it's extra false
+  }
+
+  int verify_permission(optional_yield y) override;
+  void pre_exec() override;
+  void execute(optional_yield y) override;
+  void send_response() override = 0;
+  const char* name() const override { return "get_obj_attrs"; }
+  RGWOpType get_type() override { return RGW_OP_GET_OBJ_ATTRS; }
+  uint32_t op_mask() override { return RGW_OP_TYPE_READ; }
+}; /* RGWGetObjAttrs */
 
 class RGWGetLC : public RGWOp {
 protected:

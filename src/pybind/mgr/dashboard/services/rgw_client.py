@@ -10,6 +10,7 @@ import re
 import time
 import uuid
 import xml.etree.ElementTree as ET  # noqa: N814
+from collections import defaultdict
 from enum import Enum
 from subprocess import SubprocessError
 from urllib.parse import urlparse
@@ -701,12 +702,28 @@ class RgwClient(RestClient):
             raise DashboardException(msg=str(e), component='rgw')
         return result
 
+    @staticmethod
+    def _handle_rules(pairs):
+        result = defaultdict(list)
+        for key, value in pairs:
+            if key == 'Rule':
+                result['Rules'].append(value)
+            else:
+                result[key] = value
+        return result
+
     @RestClient.api_get('/{bucket_name}?lifecycle')
     def get_lifecycle(self, bucket_name, request=None):
         # pylint: disable=unused-argument
         try:
-            result = request()  # type: ignore
-            result = {'LifecycleConfiguration': result}
+            decoded_request = request(raw_content=True).decode("utf-8")  # type: ignore
+            result = {
+                'LifecycleConfiguration':
+                json.loads(
+                    decoded_request,
+                    object_pairs_hook=RgwClient._handle_rules
+                )
+            }
         except RequestException as e:
             if e.content:
                 content = json_str_to_object(e.content)
@@ -758,15 +775,15 @@ class RgwClient(RestClient):
             lifecycle = RgwClient.dict_to_xml(lifecycle)
         try:
             if lifecycle and '<LifecycleConfiguration>' not in str(lifecycle):
-                lifecycle = f'<LifecycleConfiguration>{lifecycle}</LifecycleConfiguration>'
+                lifecycle = f'<LifecycleConfiguration>\n{lifecycle}\n</LifecycleConfiguration>'
             result = request(data=lifecycle)  # type: ignore
         except RequestException as e:
+            msg = ''
             if e.content:
                 content = json_str_to_object(e.content)
                 if content.get("Code") == "MalformedXML":
                     msg = "Invalid Lifecycle document"
-                    raise DashboardException(msg=msg, component='rgw')
-            raise DashboardException(msg=str(e), component='rgw')
+            raise DashboardException(msg=msg or str(e), component='rgw')
         return result
 
     @RestClient.api_delete('/{bucket_name}?lifecycle')
@@ -1331,8 +1348,7 @@ class RgwMultisiteAutomation:
 
 class RgwMultisite:
     def migrate_to_multisite(self, realm_name: str, zonegroup_name: str, zone_name: str,
-                             zonegroup_endpoints: str, zone_endpoints: str, access_key: str,
-                             secret_key: str):
+                             zonegroup_endpoints: str, zone_endpoints: str, username: str):
         rgw_realm_create_cmd = ['realm', 'create', '--rgw-realm', realm_name, '--default']
         try:
             exit_code, _, err = mgr.send_rgwadmin_command(rgw_realm_create_cmd, False)
@@ -1394,18 +1410,34 @@ class RgwMultisite:
                                          http_status_code=500, component='rgw')
         except SubprocessError as error:
             raise DashboardException(error, http_status_code=500, component='rgw')
-
-        if access_key and secret_key:
-            rgw_zone_modify_cmd = ['zone', 'modify', '--rgw-zone', zone_name,
-                                   '--access-key', access_key, '--secret', secret_key]
-            try:
-                exit_code, _, err = mgr.send_rgwadmin_command(rgw_zone_modify_cmd)
-                if exit_code > 0:
-                    raise DashboardException(e=err, msg='Unable to modify zone',
-                                             http_status_code=500, component='rgw')
-            except SubprocessError as error:
-                raise DashboardException(error, http_status_code=500, component='rgw')
         self.update_period()
+
+        try:
+            user_details = self.create_system_user(username, zone_name)
+            if user_details:
+                keys = user_details['keys'][0]
+                access_key = keys['access_key']
+                secret_key = keys['secret_key']
+                if access_key and secret_key:
+                    self.modify_zone(zone_name=zone_name,
+                                     zonegroup_name=zonegroup_name,
+                                     default='true', master='true',
+                                     endpoints=zone_endpoints,
+                                     access_key=keys['access_key'],
+                                     secret_key=keys['secret_key'])
+                else:
+                    raise DashboardException(msg='Access key or secret key is missing',
+                                             http_status_code=500, component='rgw')
+        except Exception as e:
+            raise DashboardException(msg='Failed to modify zone or create system user: %s' % e,
+                                     http_status_code=500, component='rgw')
+
+        try:
+            rgw_service_manager = RgwServiceManager()
+            rgw_service_manager.restart_rgw_daemons_and_set_credentials()
+        except Exception as e:
+            raise DashboardException(msg='Failed to restart RGW daemon: %s' % e,
+                                     http_status_code=500, component='rgw')
 
     def create_realm(self, realm_name: str, default: bool):
         rgw_realm_create_cmd = ['realm', 'create']

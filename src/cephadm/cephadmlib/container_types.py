@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Any, Union, Tuple, Iterable, cast
 
 from .call_wrappers import call, call_throws, CallVerbosity
 from .constants import DEFAULT_TIMEOUT
+from ceph.cephadm.images import DefaultImages
 from .container_engines import Docker, Podman
 from .context import CephadmContext
 from .daemon_identity import DaemonIdentity, DaemonSubIdentity
@@ -660,3 +661,12 @@ def enable_shared_namespaces(
     cc = f'container:{name}'
     for n in ns:
         _replace_container_arg(args, n.to_option(cc))
+
+
+def get_mgr_images() -> dict:
+    """Return dict of default mgr images"""
+    mgr_prefix = 'mgr/cephadm/'
+    mgr_images = {
+        f'{mgr_prefix}{image.key}': image.image_ref for image in DefaultImages
+    }
+    return mgr_images

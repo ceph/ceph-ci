@@ -9,10 +9,12 @@ import {
   CheckboxModule,
   ButtonModule,
   GridModule,
-  ProgressIndicatorModule
+  ProgressIndicatorModule,
+  InputModule,
+  ModalModule,
+  TreeviewModule
 } from 'carbon-components-angular';
 
-import { TreeModule } from '@circlon/angular-tree-component';
 import {
   NgbActiveModal,
   NgbDatepickerModule,
@@ -89,7 +91,7 @@ import { MultiClusterDetailsComponent } from './multi-cluster/multi-cluster-deta
     MgrModulesModule,
     NgbTypeaheadModule,
     NgbTimepickerModule,
-    TreeModule,
+    TreeviewModule,
     CephSharedModule,
     NgbDatepickerModule,
     NgbPopoverModule,
@@ -102,7 +104,9 @@ import { MultiClusterDetailsComponent } from './multi-cluster/multi-cluster-deta
     CheckboxModule,
     GridModule,
     ProgressIndicatorModule,
-    ButtonModule
+    ButtonModule,
+    InputModule,
+    ModalModule
   ],
   declarations: [
     HostsComponent,

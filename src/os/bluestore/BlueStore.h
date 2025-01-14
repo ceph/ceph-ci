@@ -1457,6 +1457,7 @@ public:
     }
 
     void rewrite_omap_key(const std::string& old, std::string *out);
+    size_t calc_userkey_offset_in_omap_key() const;
     void decode_omap_key(const std::string& key, std::string *user_key);
 
     void finish_write(TransContext* txc, uint32_t offset, uint32_t length);
@@ -1753,6 +1754,7 @@ public:
     int next() override;
     std::string key() override;
     ceph::buffer::list value() override;
+    std::string_view value_as_sv() override;
     std::string tail_key() override {
       return tail;
     }
@@ -2096,6 +2098,20 @@ public:
     Throttle throttle_deferred_bytes;  ///< submit to deferred complete
 
   public:
+    ceph::mutex lock = ceph::make_mutex("BlueStoreThrottle::max_lock");
+
+    std::atomic<uint64_t> transactions = 0;
+
+    int64_t  bytes_observed_max = 0;
+    utime_t  bytes_max_ts;
+    uint64_t transactions_observed_max = 0;
+    utime_t  transactions_max_ts;
+
+    uint64_t get_current() {
+      return throttle_bytes.get_current();
+    }
+
+  public:
     BlueStoreThrottle(CephContext *cct) :
       throttle_bytes(cct, "bluestore_throttle_bytes", 0),
       throttle_deferred_bytes(cct, "bluestore_throttle_deferred_bytes", 0)
@@ -2121,8 +2137,9 @@ public:
       KeyValueDB &db,
       TransContext &txc,
       ceph::mono_clock::time_point);
-    void release_kv_throttle(uint64_t cost) {
+    void release_kv_throttle(uint64_t cost, uint64_t txcs) {
       throttle_bytes.put(cost);
+      transactions -= txcs;
     }
     void release_deferred_throttle(uint64_t cost) {
       throttle_deferred_bytes.put(cost);
@@ -2485,6 +2502,7 @@ private:
 
   uint64_t kv_ios = 0;
   uint64_t kv_throttle_costs = 0;
+  uint64_t kv_throttle_txcs = 0;
 
   // cache trim control
   uint64_t cache_size = 0;       ///< total cache size
@@ -3400,15 +3418,6 @@ public:
     std::map<std::string, ceph::buffer::list> *out ///< [out] Returned keys and values
     ) override;
 
-#ifdef WITH_SEASTAR
-  int omap_get_values(
-    CollectionHandle &c,         ///< [in] Collection containing oid
-    const ghobject_t &oid,       ///< [in] Object containing omap
-    const std::optional<std::string> &start_after,     ///< [in] Keys to get
-    std::map<std::string, ceph::buffer::list> *out ///< [out] Returned keys and values
-    ) override;
-#endif
-
   /// Filters keys into out which are defined on oid
   int omap_check_keys(
     CollectionHandle &c,                ///< [in] Collection containing oid
@@ -3421,6 +3430,13 @@ public:
     CollectionHandle &c,   ///< [in] collection
     const ghobject_t &oid  ///< [in] object
     ) override;
+
+  int omap_iterate(
+    CollectionHandle &c,   ///< [in] collection
+    const ghobject_t &oid, ///< [in] object
+    omap_iter_seek_t start_from, ///< [in] where the iterator should point to at the beginning
+    std::function<omap_iter_ret_t(std::string_view, std::string_view)> f
+  ) override;
 
   void set_fsid(uuid_d u) override {
     fsid = u;

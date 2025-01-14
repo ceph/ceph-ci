@@ -118,7 +118,7 @@ def device_data(device_info):
 class TestInventory(object):
 
     expected_keys = [
-        'ceph_device',
+        'ceph_device_lvm',
         'path',
         'rejected_reasons',
         'sys_api',
@@ -126,6 +126,7 @@ class TestInventory(object):
         'lvs',
         'device_id',
         'lsm_data',
+        'being_replaced'
     ]
 
     expected_sys_api_keys = [

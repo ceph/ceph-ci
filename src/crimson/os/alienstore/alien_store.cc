@@ -141,7 +141,8 @@ seastar::future<> AlienStore::stop()
 AlienStore::base_errorator::future<bool>
 AlienStore::exists(
   CollectionRef ch,
-  const ghobject_t& oid)
+  const ghobject_t& oid,
+  uint32_t op_flags)
 {
     return op_gates.simple_dispatch("exists", [=, this] {
         return tp->submit(ch->get_cid().hash_to_shard(tp->size()), [=, this] {
@@ -212,7 +213,8 @@ seastar::future<std::tuple<std::vector<ghobject_t>, ghobject_t>>
 AlienStore::list_objects(CollectionRef ch,
                         const ghobject_t& start,
                         const ghobject_t& end,
-                        uint64_t limit) const
+                        uint64_t limit,
+			uint32_t op_flags) const
 {
   logger().debug("{}", __func__);
   assert(tp);
@@ -348,7 +350,8 @@ AlienStore::readv(CollectionRef ch,
 AlienStore::get_attr_errorator::future<ceph::bufferlist>
 AlienStore::get_attr(CollectionRef ch,
                      const ghobject_t& oid,
-                     std::string_view name) const
+                     std::string_view name,
+		     uint32_t op_flags) const
 {
   logger().debug("{}", __func__);
   assert(tp);
@@ -376,7 +379,8 @@ AlienStore::get_attr(CollectionRef ch,
 
 AlienStore::get_attrs_ertr::future<AlienStore::attrs_t>
 AlienStore::get_attrs(CollectionRef ch,
-                      const ghobject_t& oid)
+                      const ghobject_t& oid,
+		      uint32_t op_flags)
 {
   logger().debug("{}", __func__);
   assert(tp);
@@ -397,7 +401,8 @@ AlienStore::get_attrs(CollectionRef ch,
 
 auto AlienStore::omap_get_values(CollectionRef ch,
                                  const ghobject_t& oid,
-                                 const set<string>& keys)
+                                 const set<string>& keys,
+				 uint32_t op_flags)
   -> read_errorator::future<omap_values_t>
 {
   logger().debug("{}", __func__);
@@ -421,7 +426,8 @@ auto AlienStore::omap_get_values(CollectionRef ch,
 
 auto AlienStore::omap_get_values(CollectionRef ch,
                                  const ghobject_t &oid,
-                                 const std::optional<string> &start)
+                                 const std::optional<string> &start,
+				 uint32_t op_flags)
   -> read_errorator::future<std::tuple<bool, omap_values_t>>
 {
   logger().debug("{} with_start", __func__);
@@ -429,8 +435,21 @@ auto AlienStore::omap_get_values(CollectionRef ch,
   return do_with_op_gate(omap_values_t{}, [=, this] (auto &values) {
     return tp->submit(ch->get_cid().hash_to_shard(tp->size()), [=, this, &values] {
       auto c = static_cast<AlienCollection*>(ch.get());
-      return store->omap_get_values(c->collection, oid, start,
-		                    reinterpret_cast<map<string, bufferlist>*>(&values));
+      return store->omap_iterate(
+        c->collection, oid,
+        ObjectStore::omap_iter_seek_t{
+          .seek_position = start.value_or(std::string{}),
+          // FIXME: classical OSDs begins iteration from LOWER_BOUND
+          // (or UPPER_BOUND if filter_prefix > start). However, these
+          // bits are not implemented yet
+          .seek_type = ObjectStore::omap_iter_seek_t::UPPER_BOUND
+        },
+        [&values]
+        (std::string_view key, std::string_view value) mutable {
+          values[std::string{key}].append(value);
+          // FIXME: there is limit on number of entries yet
+          return ObjectStore::omap_iter_ret_t::NEXT;
+        });
     }).then([&values] (int r)
       -> read_errorator::future<std::tuple<bool, omap_values_t>> {
       if (r == -ENOENT) {
@@ -578,7 +597,8 @@ unsigned AlienStore::get_max_attr_name_length() const
 
 seastar::future<struct stat> AlienStore::stat(
   CollectionRef ch,
-  const ghobject_t& oid)
+  const ghobject_t& oid,
+  uint32_t op_flags)
 {
   assert(tp);
   return do_with_op_gate((struct stat){}, [this, ch, oid](auto& st) {
@@ -590,8 +610,22 @@ seastar::future<struct stat> AlienStore::stat(
   });
 }
 
+seastar::future<std::string> AlienStore::get_default_device_class()
+{
+  logger().debug("{}", __func__);
+  assert(tp);
+  return op_gates.simple_dispatch("get_default_device_class", [=, this] {
+    return tp->submit([=, this] {
+      return store->get_default_device_class();
+    }).then([] (std::string device_class) {
+      return seastar::make_ready_future<std::string>(device_class);
+    });
+  });
+}
+
 auto AlienStore::omap_get_header(CollectionRef ch,
-                                 const ghobject_t& oid)
+                                 const ghobject_t& oid,
+				 uint32_t op_flags)
   -> get_attr_errorator::future<ceph::bufferlist>
 {
   assert(tp);
@@ -617,7 +651,8 @@ AlienStore::read_errorator::future<std::map<uint64_t, uint64_t>> AlienStore::fie
   CollectionRef ch,
   const ghobject_t& oid,
   uint64_t off,
-  uint64_t len)
+  uint64_t len,
+  uint32_t op_flags)
 {
   assert(tp);
   return do_with_op_gate(std::map<uint64_t, uint64_t>(), [=, this](auto& destmap) {

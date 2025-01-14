@@ -10,6 +10,7 @@
 
 #include "include/common_fwd.h"
 #include "osd_operation.h"
+#include "osd/osd_types_fmt.h"
 #include "msg/MessageRef.h"
 #include "crimson/common/exception.h"
 #include "crimson/common/shared_lru.h"
@@ -482,6 +483,8 @@ public:
     return pg_to_shard_mapping.remove_pg_mapping(pgid);
   }
 
+  Ref<PG> get_pg(spg_t pgid);
+
   crimson::common::CephContext *get_cct() {
     return &(local_state.cct);
   }
@@ -588,6 +591,7 @@ public:
 
   FORWARD_TO_OSD_SINGLETON(get_pool_info)
   FORWARD(with_throttle_while, with_throttle_while, local_state.throttler)
+  FORWARD(try_acquire_throttle_now, try_acquire_throttle_now, local_state.throttler)
 
   FORWARD_TO_OSD_SINGLETON(build_incremental_map_msg)
   FORWARD_TO_OSD_SINGLETON(send_incremental_map)

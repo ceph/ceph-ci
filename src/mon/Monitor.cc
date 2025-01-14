@@ -5675,10 +5675,13 @@ void Monitor::handle_scrub(MonOpRequestRef op)
       if (scrub_result.size() == quorum.size()) {
         scrub_check_results();
         scrub_result.clear();
-        if (scrub_state->finished)
+        if (scrub_state->finished) {
+          const utime_t lat = ceph_clock_now() - scrub_state->start;
+          dout(10) << __func__ << " mon scrub latency: " << lat << dendl;
           scrub_finish();
-        else
+        } else {
           scrub();
+        }
       }
     }
     break;
@@ -6688,6 +6691,8 @@ void Monitor::notify_new_monmap(bool can_change_external_state, bool remove_rank
 
   if (monmap->stretch_mode_enabled) {
     try_engage_stretch_mode();
+  } else {
+    try_disable_stretch_mode();
   }
 
   if (is_stretch_mode()) {
@@ -6746,6 +6751,32 @@ void Monitor::try_engage_stretch_mode()
     disconnect_disallowed_stretch_sessions();
   }
 }
+struct CMonDisableStretchMode : public Context {
+  Monitor *m;
+  CMonDisableStretchMode(Monitor *mon) : m(mon) {}
+  void finish(int r) {
+    m->try_disable_stretch_mode();
+  }
+};
+void Monitor::try_disable_stretch_mode()
+{
+  dout(20) << __func__ << dendl;
+  if (!stretch_mode_engaged) return;
+  if (!osdmon()->is_readable()) {
+    dout(20) << "osdmon is not readable" << dendl;
+    osdmon()->wait_for_readable_ctx(new CMonDisableStretchMode(this));
+    return;
+  }
+  if (!osdmon()->osdmap.stretch_mode_enabled &&
+      !monmap->stretch_mode_enabled) {
+    dout(10) << "Disabling stretch mode!" << dendl;
+    stretch_mode_engaged = false;
+    stretch_bucket_divider.clear();
+    degraded_stretch_mode = false;
+    recovering_stretch_mode = false;
+  }
+
+}
 
 void Monitor::do_stretch_mode_election_work()
 {
@@ -6802,6 +6833,7 @@ struct CMonGoRecovery : public Context {
 void Monitor::go_recovery_stretch_mode()
 {
   dout(20) << __func__ << dendl;
+  if (!is_stretch_mode()) return;
   dout(20) << "is_leader(): " << is_leader() << dendl;
   if (!is_leader()) return;
   dout(20) << "is_degraded_stretch_mode(): " << is_degraded_stretch_mode() << dendl;
@@ -6832,6 +6864,7 @@ void Monitor::go_recovery_stretch_mode()
 
 void Monitor::set_recovery_stretch_mode()
 {
+  if (!is_stretch_mode()) return;
   degraded_stretch_mode = true;
   recovering_stretch_mode = true;
   osdmon()->set_recovery_stretch_mode();
@@ -6840,6 +6873,7 @@ void Monitor::set_recovery_stretch_mode()
 void Monitor::maybe_go_degraded_stretch_mode()
 {
   dout(20) << __func__ << dendl;
+  if (!is_stretch_mode()) return;
   if (is_degraded_stretch_mode()) return;
   if (!is_leader()) return;
   if (dead_mon_buckets.empty()) return;
@@ -6878,6 +6912,7 @@ void Monitor::trigger_degraded_stretch_mode(const set<string>& dead_mons,
 					    const set<int>& dead_buckets)
 {
   dout(20) << __func__ << dendl;
+  if (!is_stretch_mode()) return;
   ceph_assert(osdmon()->is_writeable());
   ceph_assert(monmon()->is_writeable());
 
@@ -6898,6 +6933,7 @@ void Monitor::trigger_degraded_stretch_mode(const set<string>& dead_mons,
 void Monitor::set_degraded_stretch_mode()
 {
   dout(20) << __func__ << dendl;
+  if (!is_stretch_mode()) return;
   degraded_stretch_mode = true;
   recovering_stretch_mode = false;
   osdmon()->set_degraded_stretch_mode();
@@ -6915,6 +6951,7 @@ struct CMonGoHealthy : public Context {
 void Monitor::trigger_healthy_stretch_mode()
 {
   dout(20) << __func__ << dendl;
+  if (!is_stretch_mode()) return;
   if (!is_degraded_stretch_mode()) return;
   if (!is_leader()) return;
   if (!osdmon()->is_writeable()) {
@@ -6935,6 +6972,7 @@ void Monitor::trigger_healthy_stretch_mode()
 
 void Monitor::set_healthy_stretch_mode()
 {
+  if (!is_stretch_mode()) return;
   degraded_stretch_mode = false;
   recovering_stretch_mode = false;
   osdmon()->set_healthy_stretch_mode();

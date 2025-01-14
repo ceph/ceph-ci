@@ -23,15 +23,6 @@ class ShardServices;
 class PG;
 class BackfillRecovery;
 
-  struct PGPeeringPipeline {
-    struct AwaitMap : OrderedExclusivePhaseT<AwaitMap> {
-      static constexpr auto type_name = "PeeringEvent::PGPipeline::await_map";
-    } await_map;
-    struct Process : OrderedExclusivePhaseT<Process> {
-      static constexpr auto type_name = "PeeringEvent::PGPipeline::process";
-    } process;
-  };
-
 template <class T>
 class PeeringEvent : public PhasedOperationT<T> {
   T* that() {
@@ -52,6 +43,10 @@ protected:
   spg_t pgid;
   float delay = 0;
   PGPeeringEvent evt;
+
+  epoch_t get_epoch_sent_at() const {
+    return evt.get_epoch_sent();
+  }
 
   const pg_shard_t get_from() const {
     return from;
@@ -92,6 +87,10 @@ public:
     delay(delay),
     evt(std::forward<Args>(args)...)
   {}
+
+  bool requires_pg() const final {
+    return evt.requires_pg;
+  }
 
   void print(std::ostream &) const final;
   void dump_detail(ceph::Formatter* f) const final;

@@ -94,7 +94,6 @@ Build-Depends: automake,
                python3-all-dev,
                python3-cherrypy3,
                python3-natsort,
-               python3-pecan <pkg.ceph.check>,
                python3-bcrypt <pkg.ceph.check>,
                tox <pkg.ceph.check>,
                python3-coverage <pkg.ceph.check>,
@@ -107,7 +106,6 @@ Build-Depends: automake,
                python3-setuptools,
                python3-sphinx,
                python3-venv,
-               python3-werkzeug <pkg.ceph.check>,
                python3-yaml,
                ragel <pkg.ceph.crimson>,
                socat <pkg.ceph.check>,
@@ -893,6 +891,7 @@ Conflicts: libceph,
 Replaces: libceph,
           libceph1,
           libcephfs,
+Recommends: libcephfs-proxy2 (= ${binary:Version})
 Architecture: linux-any
 Section: libs
 Depends: ${misc:Depends},
@@ -921,10 +920,61 @@ Description: debugging symbols for libcephfs2
  .
  This package contains debugging symbols for libcephfs2.
 
+Package: libcephfs-proxy2
+Architecture: linux-any
+Section: libs
+Depends: ${misc:Depends},
+         ${shlibs:Depends},
+Recommends: libcephfs-daemon (= ${binary:Version})
+Description: Libcephfs proxy library
+ Ceph is a massively scalable, open-source, distributed
+ storage system that runs on commodity hardware and delivers object,
+ block and file system storage.  This allows applications to share
+ libcephfs' CephFS mounts to reduce resource consumption.
+
+Package: libcephfs-proxy2-dbg
+Architecture: linux-any
+Section: debug
+Priority: extra
+Depends: libcephfs-proxy2 (= ${binary:Version}),
+         ${misc:Depends},
+Description: debugging symbols for libcephfs-proxy2
+ Ceph is a massively scalable, open-source, distributed
+ storage system that runs on commodity hardware and delivers object,
+ block and file system storage.  This allows applications to share
+ libcephfs' CephFS mounts to reduce resource consumption.
+ .
+ This package contains debugging symbols for libcephfs-proxy2.
+
+Package: libcephfs-daemon
+Architecture: linux-any
+Depends: libcephfs2 (= ${binary:Version}),
+         ${misc:Depends},
+Description: Libcephfs proxy daemon
+ Ceph is a massively scalable, open-source, distributed
+ storage system that runs on commodity hardware and delivers object,
+ block and file system storage.  This allows applications to share
+ libcephfs' CephFS mounts to reduce resource consumption.
+
+Package: libcephfs-daemon-dbg
+Architecture: linux-any
+Section: debug
+Priority: extra
+Depends: libcephfs-daemon (= ${binary:Version}),
+         ${misc:Depends},
+Description: debugging symbols for libcephfs-daemon
+ Ceph is a massively scalable, open-source, distributed
+ storage system that runs on commodity hardware and delivers object,
+ block and file system storage.  This allows applications to share
+ libcephfs' CephFS mounts to reduce resource consumption.
+ .
+ This package contains debugging symbols for libcephfs-proxy2.
+
 Package: libcephfs-dev
 Architecture: linux-any
 Section: libdevel
 Depends: libcephfs2 (= ${binary:Version}),
+         libcephfs-proxy2 (= ${binary:Version}),
          ${misc:Depends},
 Conflicts: libceph-dev,
            libceph1-dev,
@@ -946,10 +996,10 @@ Package: librgw2
 Architecture: linux-any
 Section: libs
 Depends: librados2 (= ${binary:Version}),
+         liblua5.3-0,
          ${misc:Depends},
          ${shlibs:Depends},
-         liblua5.3-dev,
-         luarocks,
+Suggests: luarocks,
 Description: RADOS Gateway client library
  RADOS is a distributed object store used by the Ceph distributed
  storage system.  This package provides a REST gateway to the

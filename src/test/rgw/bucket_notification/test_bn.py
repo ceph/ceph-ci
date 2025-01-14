@@ -410,17 +410,25 @@ kafka_server = 'localhost'
 
 class KafkaReceiver(object):
     """class for receiving and storing messages on a topic from the kafka broker"""
-    def __init__(self, topic, security_type):
+    def __init__(self, topic, security_type, kafka_server='localhost'):
         from kafka import KafkaConsumer
         remaining_retries = 10
         port = 9092
         if security_type != 'PLAINTEXT':
             security_type = 'SSL'
             port = 9093
+
+        if kafka_server is None:
+            endpoint = "localhost" + ":" + str(port)
+        elif ":" not in kafka_server:
+            endpoint = kafka_server + ":" + str(port)
+        else:
+            endpoint = kafka_server
+
         while remaining_retries > 0:
             try:
                 self.consumer = KafkaConsumer(topic,
-                        bootstrap_servers = kafka_server+':'+str(port),
+                        bootstrap_servers=endpoint,
                         security_protocol=security_type,
                         consumer_timeout_ms=16000,
                         auto_offset_reset='earliest')
@@ -468,9 +476,9 @@ def kafka_receiver_thread_runner(receiver):
         print('Kafka receiver ended unexpectedly: ' + str(error))
 
 
-def create_kafka_receiver_thread(topic, security_type='PLAINTEXT'):
+def create_kafka_receiver_thread(topic, security_type='PLAINTEXT', kafka_brokers=None):
     """create kafka receiver and thread"""
-    receiver = KafkaReceiver(topic, security_type)
+    receiver = KafkaReceiver(topic, security_type, kafka_server=kafka_brokers)
     task = threading.Thread(target=kafka_receiver_thread_runner, args=(receiver,))
     task.daemon = True
     return task, receiver
@@ -711,19 +719,16 @@ def test_ps_s3_topic_on_master():
     assert_equal(status, 404)
 
     # get the remaining 2 topics
-    result, status = topic_conf1.get_list()
-    assert_equal(status, 200)
-    assert_equal(len(result['ListTopicsResponse']['ListTopicsResult']['Topics']['member']), 2)
+    list_topics(2, tenant)
 
     # delete topics
-    result = topic_conf2.del_config()
+    status = topic_conf2.del_config()
     assert_equal(status, 200)
-    result = topic_conf3.del_config()
+    status = topic_conf3.del_config()
     assert_equal(status, 200)
 
     # get topic list, make sure it is empty
-    result, status = topic_conf1.get_list()
-    assert_equal(result['ListTopicsResponse']['ListTopicsResult']['Topics'], None)
+    list_topics(0, tenant)
 
 
 @attr('basic_test')
@@ -1307,7 +1312,7 @@ def test_ps_s3_notification_errors_on_master():
     conn.delete_bucket(bucket_name)
 
 
-def notification_push(endpoint_type, conn, account=None, cloudevents=False):
+def notification_push(endpoint_type, conn, account=None, cloudevents=False, kafka_brokers=None):
     """ test pushinging notification """
     zonegroup = get_config_zonegroup()
     # create bucket
@@ -1362,11 +1367,13 @@ def notification_push(endpoint_type, conn, account=None, cloudevents=False):
         assert_equal(status/100, 2)
     elif endpoint_type == 'kafka':
         # start amqp receiver
-        task, receiver = create_kafka_receiver_thread(topic_name)
+        task, receiver = create_kafka_receiver_thread(topic_name, kafka_brokers=kafka_brokers)
         task.start()
         endpoint_address = 'kafka://' + kafka_server
         # without acks from broker
         endpoint_args = 'push-endpoint='+endpoint_address+'&kafka-ack-level=broker'
+        if kafka_brokers is not None:
+            endpoint_args += '&kafka-brokers=' + kafka_brokers
         # create s3 topic
         topic_conf = PSTopicS3(conn, topic_name, zonegroup, endpoint_args=endpoint_args)
         topic_arn = topic_conf.set_config()
@@ -1582,6 +1589,20 @@ def test_notification_push_kafka():
     """ test pushing kafka s3 notification on master """
     conn = connection()
     notification_push('kafka', conn)
+
+
+@attr('kafka_failover')
+def test_notification_push_kafka_multiple_brokers_override():
+    """ test pushing kafka s3 notification on master """
+    conn = connection()
+    notification_push('kafka', conn, kafka_brokers='localhost:9092,localhost:19092')
+
+
+@attr('kafka_failover')
+def test_notification_push_kafka_multiple_brokers_append():
+    """ test pushing kafka s3 notification on master """
+    conn = connection()
+    notification_push('kafka', conn, kafka_brokers='localhost:19092')
 
 
 @attr('http_test')
@@ -2984,7 +3005,6 @@ def wait_for_queue_to_drain(topic_name, tenant=None, account=None, http_port=Non
     log.info('waited for %ds for queue %s to drain', time_diff, topic_name)
 
 
-@attr('kafka_test')
 def persistent_topic_stats(conn, endpoint_type):
     zonegroup = get_config_zonegroup()
 
@@ -2996,12 +3016,13 @@ def persistent_topic_stats(conn, endpoint_type):
     host = get_ip()
     task = None
     port = None
+    wrong_port = 1234
+    endpoint_address = endpoint_type+'://'+host+':'+str(wrong_port)
     if endpoint_type == 'http':
         # create random port for the http server
         port = random.randint(10000, 20000)
         # start an http server in a separate thread
         receiver = HTTPServerWithEvents((host, port))
-        endpoint_address = 'http://'+host+':'+str(port)
         endpoint_args = 'push-endpoint='+endpoint_address+'&persistent=true'+ \
                         '&retry_sleep_duration=1'
     elif endpoint_type == 'amqp':
@@ -3009,23 +3030,18 @@ def persistent_topic_stats(conn, endpoint_type):
         exchange = 'ex1'
         task, receiver = create_amqp_receiver_thread(exchange, topic_name)
         task.start()
-        endpoint_address = 'amqp://' + host
         endpoint_args = 'push-endpoint='+endpoint_address+'&amqp-exchange='+exchange+'&amqp-ack-level=broker&persistent=true'+ \
                         '&retry_sleep_duration=1'
     elif endpoint_type == 'kafka':
         # start kafka receiver
         task, receiver = create_kafka_receiver_thread(topic_name)
         task.start()
-        endpoint_address = 'kafka://' + host
         endpoint_args = 'push-endpoint='+endpoint_address+'&kafka-ack-level=broker&persistent=true'+ \
                         '&retry_sleep_duration=1'
     else:
         return SkipTest('Unknown endpoint type: ' + endpoint_type)
 
     # create s3 topic
-    endpoint_address = 'kafka://' + host + ':1234' # wrong port
-    endpoint_args = 'push-endpoint='+endpoint_address+'&kafka-ack-level=broker&persistent=true'+ \
-                    '&retry_sleep_duration=1'
     topic_conf = PSTopicS3(conn, topic_name, zonegroup, endpoint_args=endpoint_args)
     topic_arn = topic_conf.set_config()
     # create s3 notification
@@ -3073,9 +3089,19 @@ def persistent_topic_stats(conn, endpoint_type):
     get_stats_persistent_topic(topic_name, 2 * number_of_objects)
 
     # change the endpoint port
-    endpoint_address = 'kafka://' + host
-    endpoint_args = 'push-endpoint='+endpoint_address+'&kafka-ack-level=broker&persistent=true'+ \
-                    '&retry_sleep_duration=1'
+    if endpoint_type == 'http':
+        endpoint_address = endpoint_type+'://'+host+':'+str(port)
+        endpoint_args = 'push-endpoint='+endpoint_address+'&persistent=true'+ \
+                        '&retry_sleep_duration=1'
+    elif endpoint_type == 'amqp':
+        endpoint_address = endpoint_type+'://'+host
+        endpoint_args = 'push-endpoint='+endpoint_address+'&amqp-exchange='+exchange+'&amqp-ack-level=broker&persistent=true'+ \
+                        '&retry_sleep_duration=1'
+    elif endpoint_type == 'kafka':
+        endpoint_address = endpoint_type+'://'+host
+        endpoint_args = 'push-endpoint='+endpoint_address+'&kafka-ack-level=broker&persistent=true'+ \
+                        '&retry_sleep_duration=1'
+    
     topic_conf = PSTopicS3(conn, topic_name, zonegroup, endpoint_args=endpoint_args)
     topic_arn = topic_conf.set_config()
 
@@ -3090,17 +3116,24 @@ def persistent_topic_stats(conn, endpoint_type):
 
 
 @attr('http_test')
-def persistent_topic_stats_http():
+def test_persistent_topic_stats_http():
     """ test persistent topic stats, http endpoint """
     conn = connection()
     persistent_topic_stats(conn, 'http')
 
 
 @attr('kafka_test')
-def persistent_topic_stats_kafka():
+def test_persistent_topic_stats_kafka():
     """ test persistent topic stats, kafka endpoint """
     conn = connection()
     persistent_topic_stats(conn, 'kafka')
+
+
+@attr('amqp_test')
+def test_persistent_topic_stats_amqp():
+    """ test persistent topic stats, amqp endpoint """
+    conn = connection()
+    persistent_topic_stats(conn, 'amqp')
 
 
 @attr('kafka_test')
@@ -4360,6 +4393,242 @@ def test_ps_s3_multiple_topics_notification():
         key.delete()
     conn.delete_bucket(bucket_name)
     http_server.close()
+
+
+@attr('data_path_v2_test')
+def test_ps_s3_list_topics_migration():
+    """ test list topics on migration"""
+    if get_config_cluster() == 'noname':
+        return SkipTest('realm is needed for migration test')
+    
+    # Initialize connections and configurations
+    conn1 = connection()
+    tenant = 'kaboom1'
+    conn2 = connect_random_user(tenant)
+    bucket_name = gen_bucket_name()
+    topics = [f"{bucket_name}{TOPIC_SUFFIX}{i}" for i in range(1, 7)]
+    tenant_topics = [f"{tenant}_{topic}" for topic in topics]
+    
+    # Define topic names with version
+    topic_versions = {
+        "topic1_v2": f"{topics[0]}_v2",
+        "topic2_v2": f"{topics[1]}_v2",
+        "topic3_v1": f"{topics[2]}_v1",
+        "topic4_v1": f"{topics[3]}_v1",
+        "topic5_v1": f"{topics[4]}_v1",
+        "topic6_v1": f"{topics[5]}_v1",
+        "tenant_topic1_v2": f"{tenant_topics[0]}_v2",
+        "tenant_topic2_v1": f"{tenant_topics[1]}_v1",
+        "tenant_topic3_v1": f"{tenant_topics[2]}_v1"
+    }
+    
+    # Get necessary configurations
+    host = get_ip()
+    http_port = random.randint(10000, 20000)
+    endpoint_address = 'http://' + host + ':' + str(http_port)
+    endpoint_args = 'push-endpoint=' + endpoint_address + '&persistent=true'
+    zonegroup = get_config_zonegroup()
+    conf_cluster = get_config_cluster()
+    
+    # Make sure there are no leftover topics on v2
+    zonegroup_modify_feature(enable=True, feature_name=zonegroup_feature_notification_v2)
+    delete_all_topics(conn1, '', conf_cluster)
+    delete_all_topics(conn2, tenant, conf_cluster)
+
+    # Start v1 notification
+    # Make sure there are no leftover topics on v1
+    zonegroup_modify_feature(enable=False, feature_name=zonegroup_feature_notification_v2)
+    delete_all_topics(conn1, '', conf_cluster)
+    delete_all_topics(conn2, tenant, conf_cluster)
+    
+    # Create s3 - v1 topics
+    topic_conf = PSTopicS3(conn1, topic_versions['topic3_v1'], zonegroup, endpoint_args=endpoint_args)
+    topic_arn3 = topic_conf.set_config()
+    topic_conf = PSTopicS3(conn1, topic_versions['topic4_v1'], zonegroup, endpoint_args=endpoint_args)
+    topic_arn4 = topic_conf.set_config()
+    topic_conf = PSTopicS3(conn1, topic_versions['topic5_v1'], zonegroup, endpoint_args=endpoint_args)
+    topic_arn5 = topic_conf.set_config()
+    topic_conf = PSTopicS3(conn1, topic_versions['topic6_v1'], zonegroup, endpoint_args=endpoint_args)
+    topic_arn6 = topic_conf.set_config()
+    tenant_topic_conf = PSTopicS3(conn2, topic_versions['tenant_topic2_v1'], zonegroup, endpoint_args=endpoint_args)
+    tenant_topic_arn2 = tenant_topic_conf.set_config()
+    tenant_topic_conf = PSTopicS3(conn2, topic_versions['tenant_topic3_v1'], zonegroup, endpoint_args=endpoint_args)
+    tenant_topic_arn3 = tenant_topic_conf.set_config()
+    
+    # Start v2 notification
+    zonegroup_modify_feature(enable=True, feature_name=zonegroup_feature_notification_v2) 
+    
+    # Create s3 - v2 topics
+    topic_conf = PSTopicS3(conn1, topic_versions['topic1_v2'], zonegroup, endpoint_args=endpoint_args)
+    topic_arn1 = topic_conf.set_config()
+    topic_conf = PSTopicS3(conn1, topic_versions['topic2_v2'], zonegroup, endpoint_args=endpoint_args)
+    topic_arn2 = topic_conf.set_config()
+    tenant_topic_conf = PSTopicS3(conn2, topic_versions['tenant_topic1_v2'], zonegroup, endpoint_args=endpoint_args)
+    tenant_topic_arn1 = tenant_topic_conf.set_config()
+    
+    # Verify topics list
+    try:
+        # Verify no tenant topics
+        res, status = topic_conf.get_list()
+        assert_equal(status // 100, 2)
+        listTopicsResponse = res.get('ListTopicsResponse', {})
+        listTopicsResult = listTopicsResponse.get('ListTopicsResult', {})
+        topics = listTopicsResult.get('Topics', {})
+        member = topics['member'] if topics else []
+        assert_equal(len(member), 6)
+        
+        # Verify tenant topics
+        res, status = tenant_topic_conf.get_list()
+        assert_equal(status // 100, 2)
+        listTopicsResponse = res.get('ListTopicsResponse', {})
+        listTopicsResult = listTopicsResponse.get('ListTopicsResult', {})
+        topics = listTopicsResult.get('Topics', {})
+        member = topics['member'] if topics else []
+        assert_equal(len(member), 3)
+    finally:
+        # Cleanup created topics
+        topic_conf.del_config(topic_arn1)
+        topic_conf.del_config(topic_arn2)
+        topic_conf.del_config(topic_arn3)
+        topic_conf.del_config(topic_arn4)
+        topic_conf.del_config(topic_arn5)
+        topic_conf.del_config(topic_arn6)
+        tenant_topic_conf.del_config(tenant_topic_arn1)
+        tenant_topic_conf.del_config(tenant_topic_arn2)
+        tenant_topic_conf.del_config(tenant_topic_arn3)
+
+
+@attr('basic_test')
+def test_ps_s3_list_topics():
+    """ test list topics"""
+    
+    # Initialize connections, topic names and configurations
+    conn1 = connection()
+    tenant = 'kaboom1'
+    conn2 = connect_random_user(tenant)
+    bucket_name = gen_bucket_name()
+    topic_name1 = bucket_name + TOPIC_SUFFIX + '1'
+    topic_name2 = bucket_name + TOPIC_SUFFIX + '2'
+    topic_name3 = bucket_name + TOPIC_SUFFIX + '3'
+    tenant_topic_name1 = tenant + "_" + topic_name1
+    tenant_topic_name2 = tenant + "_" + topic_name2
+    host = get_ip()
+    http_port = random.randint(10000, 20000)
+    endpoint_address = 'http://' + host + ':' + str(http_port)
+    endpoint_args = 'push-endpoint=' + endpoint_address + '&persistent=true'
+    zonegroup = get_config_zonegroup()
+    
+    # Make sure there are no leftover topics
+    delete_all_topics(conn1, '', get_config_cluster())
+    delete_all_topics(conn2, tenant, get_config_cluster())
+    
+    # Create s3 - v2 topics
+    topic_conf = PSTopicS3(conn1, topic_name1, zonegroup, endpoint_args=endpoint_args)
+    topic_arn1 = topic_conf.set_config()
+    topic_conf = PSTopicS3(conn1, topic_name2, zonegroup, endpoint_args=endpoint_args)
+    topic_arn2 = topic_conf.set_config()
+    topic_conf = PSTopicS3(conn1, topic_name3, zonegroup, endpoint_args=endpoint_args)
+    topic_arn3 = topic_conf.set_config()
+    tenant_topic_conf = PSTopicS3(conn2, tenant_topic_name1, zonegroup, endpoint_args=endpoint_args)
+    tenant_topic_arn1 = tenant_topic_conf.set_config()
+    tenant_topic_conf = PSTopicS3(conn2, tenant_topic_name2, zonegroup, endpoint_args=endpoint_args)
+    tenant_topic_arn2 = tenant_topic_conf.set_config()
+    
+    # Verify topics list
+    try:
+        # Verify no tenant topics
+        res, status = topic_conf.get_list()
+        assert_equal(status // 100, 2)
+        listTopicsResponse = res.get('ListTopicsResponse', {})
+        listTopicsResult = listTopicsResponse.get('ListTopicsResult', {})
+        topics = listTopicsResult.get('Topics', {})
+        member = topics['member'] if topics else [] # version 2
+        assert_equal(len(member), 3)
+        	
+        # Verify topics for tenant
+        res, status = tenant_topic_conf.get_list()
+        assert_equal(status // 100, 2)
+        listTopicsResponse = res.get('ListTopicsResponse', {})
+        listTopicsResult = listTopicsResponse.get('ListTopicsResult', {})
+        topics = listTopicsResult.get('Topics', {})
+        member = topics['member'] if topics else []
+        assert_equal(len(member), 2)
+    finally:
+        # Cleanup created topics
+        topic_conf.del_config(topic_arn1)
+        topic_conf.del_config(topic_arn2)
+        topic_conf.del_config(topic_arn3)
+        tenant_topic_conf.del_config(tenant_topic_arn1)
+        tenant_topic_conf.del_config(tenant_topic_arn2)
+
+@attr('data_path_v2_test')
+def test_ps_s3_list_topics_v1():
+    """ test list topics on v1"""
+    if get_config_cluster() == 'noname':
+        return SkipTest('realm is needed')
+    
+    # Initialize connections and configurations
+    conn1 = connection()
+    tenant = 'kaboom1'
+    conn2 = connect_random_user(tenant)
+    bucket_name = gen_bucket_name()
+    topic_name1 = bucket_name + TOPIC_SUFFIX + '1'
+    topic_name2 = bucket_name + TOPIC_SUFFIX + '2'
+    topic_name3 = bucket_name + TOPIC_SUFFIX + '3'
+    tenant_topic_name1 = tenant + "_" + topic_name1
+    tenant_topic_name2 = tenant + "_" + topic_name2
+    host = get_ip()
+    http_port = random.randint(10000, 20000)
+    endpoint_address = 'http://' + host + ':' + str(http_port)
+    endpoint_args = 'push-endpoint=' + endpoint_address + '&persistent=true'
+    zonegroup = get_config_zonegroup()
+    conf_cluster = get_config_cluster()
+    
+    # Make sure there are no leftover topics
+    delete_all_topics(conn1, '', conf_cluster)
+    delete_all_topics(conn2, tenant, conf_cluster)
+    
+    # Make sure that we disable v2
+    zonegroup_modify_feature(enable=False, feature_name=zonegroup_feature_notification_v2)
+    
+    # Create s3 - v1 topics
+    topic_conf = PSTopicS3(conn1, topic_name1, zonegroup, endpoint_args=endpoint_args)
+    topic_arn1 = topic_conf.set_config()
+    topic_conf = PSTopicS3(conn1, topic_name2, zonegroup, endpoint_args=endpoint_args)
+    topic_arn2 = topic_conf.set_config()
+    topic_conf = PSTopicS3(conn1, topic_name3, zonegroup, endpoint_args=endpoint_args)
+    topic_arn3 = topic_conf.set_config()
+    tenant_topic_conf = PSTopicS3(conn2, tenant_topic_name1, zonegroup, endpoint_args=endpoint_args)
+    tenant_topic_arn1 = tenant_topic_conf.set_config()
+    tenant_topic_conf = PSTopicS3(conn2, tenant_topic_name2, zonegroup, endpoint_args=endpoint_args)
+    tenant_topic_arn2 = tenant_topic_conf.set_config()
+    
+    # Verify topics list
+    try:
+        # Verify no tenant topics
+        res, status = topic_conf.get_list()
+        assert_equal(status // 100, 2)
+        listTopicsResponse = res.get('ListTopicsResponse', {})
+        listTopicsResult = listTopicsResponse.get('ListTopicsResult', {})
+        topics = listTopicsResult.get('Topics', {})
+        member = topics['member'] if topics else []
+        assert_equal(len(member), 3)
+        
+        # Verify tenant topics
+        res, status = tenant_topic_conf.get_list()
+        assert_equal(status // 100, 2)
+        listTopicsResponse = res.get('ListTopicsResponse', {})
+        listTopicsResult = listTopicsResponse.get('ListTopicsResult', {})
+        topics = listTopicsResult.get('Topics', {})
+        member = topics['member'] if topics else []
+        assert_equal(len(member), 2)
+    finally:
+        # Cleanup created topics
+        topic_conf.del_config(topic_arn1)
+        topic_conf.del_config(topic_arn2)
+        topic_conf.del_config(topic_arn3)
+        tenant_topic_conf.del_config(tenant_topic_arn1)
+        tenant_topic_conf.del_config(tenant_topic_arn2)
 
 
 @attr('basic_test')

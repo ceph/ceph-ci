@@ -976,6 +976,13 @@ TEST(LibCephFS, Symlinks) {
   fd = ceph_open(cmount, test_symlink, O_NOFOLLOW, 0);
   ASSERT_EQ(fd, -CEPHFS_ELOOP);
 
+#if defined(__linux__) && defined(O_PATH)
+  // test the O_NOFOLLOW with O_PATH case
+  fd = ceph_open(cmount, test_symlink, O_PATH|O_NOFOLLOW, 0);
+  ASSERT_GT(fd, 0);
+  ceph_close(cmount, fd);
+#endif /* __linux */
+
   // stat the original file
   struct ceph_statx stx_orig;
   ASSERT_EQ(ceph_statx(cmount, test_file, &stx_orig, CEPH_STATX_ALL_STATS, 0), 0);
@@ -2699,6 +2706,19 @@ TEST(LibCephFS, Statxat) {
   ASSERT_EQ(stx.stx_mode & S_IFMT, S_IFDIR);
   ASSERT_EQ(ceph_statxat(cmount, fd, rel_file_name_2, &stx, 0, 0), 0);
   ASSERT_EQ(stx.stx_mode & S_IFMT, S_IFREG);
+  // test relative to root with empty relpath
+#if defined(__linux__) && defined(AT_EMPTY_PATH)
+  int dir_fd = ceph_openat(cmount, fd, dir_name, O_DIRECTORY | O_RDONLY, 0);
+  ASSERT_LE(0, dir_fd);
+  ASSERT_EQ(ceph_statxat(cmount, dir_fd, "", &stx, 0, AT_EMPTY_PATH), 0);
+  ASSERT_EQ(stx.stx_mode & S_IFMT, S_IFDIR);
+  ASSERT_EQ(0, ceph_close(cmount, dir_fd));
+  int file_fd = ceph_openat(cmount, fd, rel_file_name_2, O_RDONLY, 0);
+  ASSERT_LE(0, file_fd);
+  ASSERT_EQ(ceph_statxat(cmount, file_fd, "", &stx, 0, AT_EMPTY_PATH), 0);
+  ASSERT_EQ(stx.stx_mode & S_IFMT, S_IFREG);
+  ASSERT_EQ(0, ceph_close(cmount, file_fd));
+#endif
   ASSERT_EQ(0, ceph_close(cmount, fd));
 
   // test relative to dir
@@ -2706,6 +2726,14 @@ TEST(LibCephFS, Statxat) {
   ASSERT_LE(0, fd);
   ASSERT_EQ(ceph_statxat(cmount, fd, rel_file_name_1, &stx, 0, 0), 0);
   ASSERT_EQ(stx.stx_mode & S_IFMT, S_IFREG);
+  // test relative to dir with empty relpath
+#if defined(__linux__) && defined(AT_EMPTY_PATH)
+  int rel_file_fd = ceph_openat(cmount, fd, rel_file_name_1, O_RDONLY, 0);
+  ASSERT_LE(0, rel_file_fd);
+  ASSERT_EQ(ceph_statxat(cmount, rel_file_fd, "", &stx, 0, AT_EMPTY_PATH), 0);
+  ASSERT_EQ(stx.stx_mode & S_IFMT, S_IFREG);
+  ASSERT_EQ(0, ceph_close(cmount, rel_file_fd));
+#endif
 
   // delete the dirtree, recreate and verify
   ASSERT_EQ(0, ceph_unlink(cmount, file_path));
@@ -3012,6 +3040,18 @@ TEST(LibCephFS, Readlinkat) {
   ASSERT_EQ(0, memcmp(target, rel_file_path, target_len));
 
   ASSERT_EQ(0, ceph_close(cmount, fd));
+#if defined(__linux__) && defined(O_PATH)
+  // test readlinkat with empty pathname relative to O_PATH|O_NOFOLLOW fd
+  fd = ceph_open(cmount, link_path, O_PATH | O_NOFOLLOW, 0);
+  ASSERT_LE(0, fd);
+  size_t link_target_len = strlen(rel_file_path);
+  char link_target[link_target_len+1];
+  ASSERT_EQ(link_target_len, ceph_readlinkat(cmount, fd, "", link_target, link_target_len));
+  link_target[link_target_len] = '\0';
+  ASSERT_EQ(0, memcmp(link_target, rel_file_path, link_target_len));
+  ASSERT_EQ(0, ceph_close(cmount, fd));
+#endif /* __linux */
+
   ASSERT_EQ(0, ceph_unlink(cmount, link_path));
   ASSERT_EQ(0, ceph_unlink(cmount, file_path));
   ASSERT_EQ(0, ceph_rmdir(cmount, dir_path));
@@ -3246,6 +3286,13 @@ TEST(LibCephFS, Chownat) {
   // change ownership to nobody -- we assume nobody exists and id is always 65534
   ASSERT_EQ(ceph_conf_set(cmount, "client_permissions", "0"), 0);
   ASSERT_EQ(ceph_chownat(cmount, fd, rel_file_path, 65534, 65534, 0), 0);
+  // change relative fd ownership with AT_EMPTY_PATH
+#if defined(__linux__) && defined(AT_EMPTY_PATH)
+  int file_fd = ceph_openat(cmount, fd, rel_file_path, O_RDONLY, 0);
+  ASSERT_LE(0, file_fd);
+  ASSERT_EQ(ceph_chownat(cmount, file_fd, "", 65534, 65534, AT_EMPTY_PATH), 0);
+  ceph_close(cmount, file_fd);
+#endif
   ASSERT_EQ(ceph_conf_set(cmount, "client_permissions", "1"), 0);
   ceph_close(cmount, fd);
 

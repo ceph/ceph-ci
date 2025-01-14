@@ -532,7 +532,7 @@ Commands
   disabled on all images (within the pool or namespace) for which mirroring
   was enabled, whether by default or explicitly.
 
-:command:`mirror pool enable` [*pool-name*] *mode*
+:command:`mirror pool enable` *pool-name* *mode* [--remote-namespace *remote-namespace-name*]
   Enable RBD mirroring within a pool or namespace.
   The mirroring mode can either be ``pool`` or ``image``.
   If configured in ``pool`` mode, all images in the pool or namespace
@@ -540,6 +540,8 @@ Commands
   If configured in ``image`` mode, mirroring needs to be
   explicitly enabled (by ``mirror image enable`` command)
   on each image.
+  A namespace can be mirrored to a different namespace on the remote
+  pool using the ``--remote-namespace`` option.
 
 :command:`mirror pool info` [*pool-name*]
   Show information about the pool or namespace mirroring configuration.
@@ -574,7 +576,11 @@ Commands
   details for every mirror-enabled image in the pool or namespace.
 
 :command:`mirror snapshot schedule add` [-p | --pool *pool*] [--namespace *namespace*] [--image *image*] *interval* [*start-time*]
-  Add mirror snapshot schedule.
+  Add mirror snapshot schedule. The ``interval`` can be specified in
+  days, hours, or minutes using the d, h, m suffix respectively.
+  The ``start-time`` is a time string in ISO 8601 format. Not providing the
+  ``--pool``, ``--namespace`` and ``--image`` options creates a global
+  schedule which applies to all mirror-enabled images in the cluster.
 
 :command:`mirror snapshot schedule list` [-R | --recursive] [--format *format*] [--pretty-format] [-p | --pool *pool*] [--namespace *namespace*] [--image *image*]
   List mirror snapshot schedule.
@@ -1029,6 +1035,9 @@ To restore an image from trash and rename it::
 
        rbd trash restore mypool/myimage-id --image mynewimage
 
+To create a mirror snapshot schedule for an image::
+
+       rbd mirror snapshot schedule add --pool mypool --image myimage 12h 14:00:00-05:00
 
 Availability
 ============

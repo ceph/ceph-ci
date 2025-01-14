@@ -4830,7 +4830,7 @@ void BlueStore::Onode::rewrite_omap_key(const string& old, string *out)
   out->append(old.c_str() + out->length(), old.size() - out->length());
 }
 
-void BlueStore::Onode::decode_omap_key(const string& key, string *user_key)
+size_t BlueStore::Onode::calc_userkey_offset_in_omap_key() const
 {
   size_t pos = sizeof(uint64_t) + 1;
   if (!onode.is_pgmeta_omap()) {
@@ -4840,8 +4840,14 @@ void BlueStore::Onode::decode_omap_key(const string& key, string *user_key)
       pos += sizeof(uint64_t);
     }
   }
-  *user_key = key.substr(pos);
+  return pos;
 }
+
+void BlueStore::Onode::decode_omap_key(const string& key, string *user_key)
+{
+  *user_key = key.substr(calc_userkey_offset_in_omap_key());
+}
+
 
 void BlueStore::Onode::finish_write(TransContext* txc, uint32_t offset, uint32_t length)
 {
@@ -5519,7 +5525,13 @@ BlueStore::OmapIteratorImpl::OmapIteratorImpl(
   if (o->onode.has_omap()) {
     o->get_omap_key(string(), &head);
     o->get_omap_tail(&tail);
+    auto start1 = mono_clock::now();
     it->lower_bound(head);
+    c->store->log_latency(
+    __func__,
+    l_bluestore_omap_seek_to_first_lat,
+    mono_clock::now() - start1,
+    c->store->cct->_conf->bluestore_log_omap_iterator_age);
   }
 }
 BlueStore::OmapIteratorImpl::~OmapIteratorImpl()
@@ -5652,6 +5664,13 @@ bufferlist BlueStore::OmapIteratorImpl::value()
   std::shared_lock l(c->lock);
   ceph_assert(it->valid());
   return it->value();
+}
+
+std::string_view BlueStore::OmapIteratorImpl::value_as_sv()
+{
+  std::shared_lock l(c->lock);
+  ceph_assert(it->valid());
+  return it->value_as_sv();
 }
 
 
@@ -6794,9 +6813,8 @@ void BlueStore::_main_bdev_label_try_reserve()
   vector<uint64_t> candidate_positions;
   vector<uint64_t> accepted_positions;
   uint64_t lsize = std::max(BDEV_LABEL_BLOCK_SIZE, min_alloc_size);
-  for (size_t i = 1; i < bdev_label_positions.size(); i++) {
-    uint64_t location = bdev_label_positions[i];
-    if (location + lsize <= bdev->get_size()) {
+  for (uint64_t location : bdev_label_valid_locations) {
+    if (location != BDEV_FIRST_LABEL_POSITION) {
       candidate_positions.push_back(location);
     }
   }
@@ -11497,9 +11515,7 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
     string p = path + "/block";
     _write_bdev_label(cct, bdev, p, bdev_label, bdev_labels_in_repair);
     for (uint64_t pos : bdev_labels_in_repair) {
-      if (pos != BDEV_FIRST_LABEL_POSITION) {
-        bdev_label_valid_locations.push_back(pos);
-      }
+      bdev_label_valid_locations.push_back(pos);
     }
     repaired += bdev_labels_in_repair.size();
   }
@@ -13604,52 +13620,6 @@ int BlueStore::omap_get_values(
   return r;
 }
 
-#ifdef WITH_SEASTAR
-int BlueStore::omap_get_values(
-  CollectionHandle &c_,        ///< [in] Collection containing oid
-  const ghobject_t &oid,       ///< [in] Object containing omap
-  const std::optional<string> &start_after,     ///< [in] Keys to get
-  map<string, bufferlist> *output ///< [out] Returned keys and values
-  )
-{
-  Collection *c = static_cast<Collection *>(c_.get());
-  dout(15) << __func__ << " " << c->get_cid() << " oid " << oid << dendl;
-  if (!c->exists)
-    return -ENOENT;
-  std::shared_lock l(c->lock);
-  int r = 0;
-  OnodeRef o = c->get_onode(oid, false);
-  if (!o || !o->exists) {
-    r = -ENOENT;
-    goto out;
-  }
-  if (!o->onode.has_omap()) {
-    goto out;
-  }
-  o->flush();
-  {
-    ObjectMap::ObjectMapIterator iter = get_omap_iterator(c_, oid);
-    if (!iter) {
-      r = -ENOENT;
-      goto out;
-    }
-    if (start_after) {
-      iter->upper_bound(*start_after);
-    } else {
-      iter->seek_to_first();
-    }
-    for (; iter->valid(); iter->next()) {
-      output->insert(make_pair(iter->key(), iter->value()));
-    }
-  }
-
-out:
-  dout(10) << __func__ << " " << c->get_cid() << " oid " << oid << " = " << r
-          << dendl;
-  return r;
-}
-#endif
-
 int BlueStore::omap_check_keys(
   CollectionHandle &c_,    ///< [in] Collection containing oid
   const ghobject_t &oid,   ///< [in] Object containing omap
@@ -13725,6 +13695,94 @@ ObjectMap::ObjectMapIterator BlueStore::get_omap_iterator(
   }
   KeyValueDB::Iterator it = db->get_iterator(o->get_omap_prefix(), 0, std::move(bounds));
   return ObjectMap::ObjectMapIterator(new OmapIteratorImpl(logger,c, o, it));
+}
+
+int BlueStore::omap_iterate(
+  CollectionHandle &c_,   ///< [in] collection
+  const ghobject_t &oid, ///< [in] object
+  ObjectStore::omap_iter_seek_t start_from, ///< [in] where the iterator should point to at the beginning
+  std::function<omap_iter_ret_t(std::string_view, std::string_view)> f
+  )
+{
+  Collection *c = static_cast<Collection *>(c_.get());
+  dout(10) << __func__ << " " << c->get_cid() << " " << oid << dendl;
+  if (!c->exists) {
+    return -ENOENT;
+  }
+  std::shared_lock l(c->lock);
+  OnodeRef o = c->get_onode(oid, false);
+  if (!o || !o->exists) {
+    dout(10) << __func__ << " " << oid << "doesn't exist" <<dendl;
+    return -ENOENT;
+  }
+  o->flush();
+  dout(10) << __func__ << " has_omap = " << (int)o->onode.has_omap() <<dendl;
+  if (!o->onode.has_omap()) {
+    // nothing to do
+    return 0;
+  }
+
+  KeyValueDB::Iterator it;
+  {
+    auto bounds = KeyValueDB::IteratorBounds();
+    std::string lower_bound, upper_bound;
+    o->get_omap_key(string(), &lower_bound);
+    o->get_omap_tail(&upper_bound);
+    bounds.lower_bound = std::move(lower_bound);
+    bounds.upper_bound = std::move(upper_bound);
+    it = db->get_iterator(o->get_omap_prefix(), 0, std::move(bounds));
+  }
+
+  // seek the iterator
+  {
+    std::string key;
+    o->get_omap_key(start_from.seek_position, &key);
+    auto start = ceph::mono_clock::now();
+    if (start_from.seek_type == omap_iter_seek_t::LOWER_BOUND) {
+      it->lower_bound(key);
+      c->store->log_latency(
+        __func__,
+        l_bluestore_omap_lower_bound_lat,
+        ceph::mono_clock::now() - start,
+        c->store->cct->_conf->bluestore_log_omap_iterator_age);
+    } else {
+      it->upper_bound(key);
+      c->store->log_latency(
+        __func__,
+        l_bluestore_omap_upper_bound_lat,
+        ceph::mono_clock::now() - start,
+        c->store->cct->_conf->bluestore_log_omap_iterator_age);
+    }
+  }
+
+  // iterate!
+  std::string tail;
+  o->get_omap_tail(&tail);
+  const std::string_view::size_type userkey_offset_in_dbkey =
+    o->calc_userkey_offset_in_omap_key();
+  ceph::timespan next_lat_acc{0};
+  while (it->valid()) {
+    const auto& db_key = it->raw_key_as_sv().second;
+    if (db_key >= tail) {
+      break;
+    }
+    std::string_view user_key = db_key.substr(userkey_offset_in_dbkey);
+    omap_iter_ret_t ret = f(user_key, it->value_as_sv());
+    if (ret == omap_iter_ret_t::STOP) {
+      break;
+    } else if (ret == omap_iter_ret_t::NEXT) {
+      ceph::time_guard<ceph::mono_clock>{next_lat_acc};
+      it->next();
+    } else {
+      ceph_abort();
+    }
+  }
+  c->store->log_latency(
+    __func__,
+    l_bluestore_omap_next_lat,
+    next_lat_acc,
+    c->store->cct->_conf->bluestore_log_omap_iterator_age);
+  return 0;
 }
 
 // -----------------
@@ -14132,6 +14190,7 @@ void BlueStore::_txc_state_proc(TransContext *txc)
 	if (txc->had_ios)
 	  kv_ios++;
 	kv_throttle_costs += txc->cost;
+	++kv_throttle_txcs;
       }
       return;
     case TransContext::STATE_KV_SUBMITTED:
@@ -14378,7 +14437,18 @@ void BlueStore::_txc_committed_kv(TransContext *txc)
     mono_clock::now() - txc->start,
     cct->_conf->bluestore_log_op_age,
     [&](auto lat) {
-      return ", txc = " + stringify(txc);
+      return ", txc = " + stringify(txc) +
+             ", txc bytes = " + stringify(txc->bytes) +
+             ", txc ios = " + stringify(txc->ios) +
+             ", txc cost = " + stringify(txc->cost) +
+             ", txc onodes = " + stringify(txc->onodes.size()) +
+             ", DB updates = " + stringify(txc->t->get_count()) +
+             ", DB bytes = " + stringify(txc->t->get_size_bytes()) +
+             ", cost max = " + stringify(throttle.bytes_observed_max) +
+               " on " + stringify(throttle.bytes_max_ts) +
+             ", txc max = " + stringify(throttle.transactions_observed_max) +
+               " on " + stringify(throttle.transactions_max_ts)
+             ;
     },
     l_bluestore_slow_committed_kv_count
   );
@@ -14728,7 +14798,7 @@ void BlueStore::_kv_sync_thread()
     } else {
       deque<TransContext*> kv_submitting;
       deque<DeferredBatch*> deferred_done, deferred_stable;
-      uint64_t aios = 0, costs = 0;
+      uint64_t aios = 0, costs = 0, txcs = 0;
 
       dout(20) << __func__ << " committing " << kv_queue.size()
 	       << " submitting " << kv_queue_unsubmitted.size()
@@ -14741,8 +14811,10 @@ void BlueStore::_kv_sync_thread()
       deferred_stable.swap(deferred_stable_queue);
       aios = kv_ios;
       costs = kv_throttle_costs;
+      txcs = kv_throttle_txcs;
       kv_ios = 0;
       kv_throttle_costs = 0;
+      kv_throttle_txcs = 0;
       l.unlock();
 
       dout(30) << __func__ << " committing " << kv_committing << dendl;
@@ -14838,7 +14910,7 @@ void BlueStore::_kv_sync_thread()
       // iteration there will already be ops awake.  otherwise, we
       // end up going to sleep, and then wake up when the very first
       // transaction is ready for commit.
-      throttle.release_kv_throttle(costs);
+      throttle.release_kv_throttle(costs, txcs);
 
       // cleanup sync deferred keys
       for (auto b : deferred_stable) {
@@ -18640,6 +18712,20 @@ bool BlueStore::BlueStoreThrottle::try_start_transaction(
   TransContext &txc,
   mono_clock::time_point start_throttle_acquire)
 {
+  {
+    std::lock_guard l(lock);
+    auto cost0 = throttle_bytes.get_current();
+    if (cost0 + txc.cost > bytes_observed_max) {
+      bytes_observed_max = cost0 + txc.cost;
+      bytes_max_ts = ceph_clock_now();
+    }
+    auto txcs = ++transactions;
+    if (txcs > transactions_observed_max) {
+      transactions_observed_max = txcs;
+      transactions_max_ts = ceph_clock_now();
+    }
+  }
+
   throttle_bytes.get(txc.cost);
 
   if (!txc.deferred_txn || throttle_deferred_bytes.get_or_fail(txc.cost)) {
@@ -20571,6 +20657,14 @@ int BlueStore::read_allocation_from_drive_for_bluestore_tool()
     ret = add_existing_bluefs_allocation(allocator.get(), stats);
     if (ret < 0) {
       return ret;
+    }
+    if (bdev_label_multi) {
+      uint64_t lsize = std::max(BDEV_LABEL_BLOCK_SIZE, min_alloc_size);
+      for (uint64_t p : bdev_label_valid_locations) {
+	if (p != BDEV_FIRST_LABEL_POSITION) {
+	  allocator->init_rm_free(p, lsize);
+	}
+      }
     }
 
     duration = ceph_clock_now() - start;

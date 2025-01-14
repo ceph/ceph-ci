@@ -183,14 +183,6 @@ public:
   void send_versioned_response();
 };
 
-class RGWGetBucketLogging_ObjStore_S3 : public RGWGetBucketLogging {
-public:
-  RGWGetBucketLogging_ObjStore_S3() {}
-  ~RGWGetBucketLogging_ObjStore_S3() override {}
-
-  void send_response() override;
-};
-
 class RGWGetBucketLocation_ObjStore_S3 : public RGWGetBucketLocation {
 public:
   RGWGetBucketLocation_ObjStore_S3() {}
@@ -222,6 +214,7 @@ public:
   ~RGWGetBucketWebsite_ObjStore_S3() override {}
 
   void send_response() override;
+  virtual std::string canonical_name() const override { return fmt::format("WEBSITE.{}.BUCKET_WEBSITE", s->info.method); }
 };
 
 class RGWSetBucketWebsite_ObjStore_S3 : public RGWSetBucketWebsite {
@@ -231,6 +224,7 @@ public:
 
   int get_params(optional_yield y) override;
   void send_response() override;
+  virtual std::string canonical_name() const override { return fmt::format("WEBSITE.{}.BUCKET_WEBSITE", s->info.method); }
 };
 
 class RGWDeleteBucketWebsite_ObjStore_S3 : public RGWDeleteBucketWebsite {
@@ -239,6 +233,7 @@ public:
   ~RGWDeleteBucketWebsite_ObjStore_S3() override {}
 
   void send_response() override;
+  virtual std::string canonical_name() const override { return fmt::format("WEBSITE.{}.BUCKET_WEBSITE", s->info.method); }
 };
 
 class RGWStatBucket_ObjStore_S3 : public RGWStatBucket_ObjStore {
@@ -247,6 +242,7 @@ public:
   ~RGWStatBucket_ObjStore_S3() override {}
 
   void send_response() override;
+  int get_params(optional_yield y) override;
 };
 
 class RGWCreateBucket_ObjStore_S3 : public RGWCreateBucket_ObjStore {
@@ -376,6 +372,18 @@ public:
                             RGWAccessControlPolicy& p) override;
   void send_response() override;
   int get_params(optional_yield y) override;
+};
+
+class RGWGetObjAttrs_ObjStore_S3 : public RGWGetObjAttrs_ObjStore {
+public:
+  RGWGetObjAttrs_ObjStore_S3() {}
+  ~RGWGetObjAttrs_ObjStore_S3() override {}
+
+  int get_params(optional_yield y) override;
+  int get_decrypt_filter(std::unique_ptr<RGWGetObj_Filter>* filter,
+                         RGWGetObj_Filter* cb,
+                         bufferlist* manifest_bl) override;
+  void send_response() override;
 };
 
 class RGWGetLC_ObjStore_S3 : public RGWGetLC_ObjStore {
@@ -595,6 +603,7 @@ class RGWConfigBucketMetaSearch_ObjStore_S3 : public RGWConfigBucketMetaSearch {
 public:
   RGWConfigBucketMetaSearch_ObjStore_S3() {}
   ~RGWConfigBucketMetaSearch_ObjStore_S3() {}
+  virtual std::string canonical_name() const override { return fmt::format("REST.{}.BUCKET_MDSEARCH", s->info.method); }
 
   int get_params(optional_yield y) override;
   void send_response() override;
@@ -612,6 +621,7 @@ class RGWDelBucketMetaSearch_ObjStore_S3 : public RGWDelBucketMetaSearch {
 public:
   RGWDelBucketMetaSearch_ObjStore_S3() {}
   ~RGWDelBucketMetaSearch_ObjStore_S3() {}
+  virtual std::string canonical_name() const override { return fmt::format("REST.{}.BUCKET_MDSEARCH", s->info.method); }
 
   void send_response() override;
 };
@@ -703,6 +713,9 @@ protected:
   bool is_acl_op() const {
     return s->info.args.exists("acl");
   }
+  bool is_attributes_op() const {
+    return s->info.args.exists("attributes");
+  }
   bool is_cors_op() const {
       return s->info.args.exists("cors");
   }
@@ -760,6 +773,9 @@ class RGWHandler_REST_Obj_S3 : public RGWHandler_REST_S3 {
 protected:
   bool is_acl_op() const {
     return s->info.args.exists("acl");
+  }
+  bool is_attributes_op() const {
+    return s->info.args.exists("attributes");
   }
   bool is_tagging_op() const {
     return s->info.args.exists("tagging");

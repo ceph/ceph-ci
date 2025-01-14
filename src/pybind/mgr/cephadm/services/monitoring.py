@@ -3,15 +3,17 @@ import logging
 import os
 import socket
 from typing import List, Any, Tuple, Dict, Optional, cast
+import ipaddress
 
 from mgr_module import HandleCommandResult
 
 from orchestrator import DaemonDescription
 from ceph.deployment.service_spec import AlertManagerSpec, GrafanaSpec, ServiceSpec, \
-    SNMPGatewaySpec, PrometheusSpec
+    SNMPGatewaySpec, PrometheusSpec, MgmtGatewaySpec
 from cephadm.services.cephadmservice import CephadmService, CephadmDaemonDeploySpec, get_dashboard_urls
 from mgr_util import verify_tls, ServerConfigException, build_url, get_cert_issuer_info, password_hash
 from ceph.deployment.utils import wrap_ipv6
+from .. import utils
 
 logger = logging.getLogger(__name__)
 
@@ -56,16 +58,20 @@ class GrafanaService(CephadmService):
             if ip_to_bind_to:
                 daemon_spec.port_ips = {str(grafana_port): ip_to_bind_to}
                 grafana_ip = ip_to_bind_to
+                if ipaddress.ip_network(grafana_ip).version == 6:
+                    grafana_ip = f"[{grafana_ip}]"
 
-        mgmt_gw_ip = None
         domain = self.mgr.get_fqdn(daemon_spec.host)
+        mgmt_gw_ips = []
         if mgmt_gw_enabled:
             mgmt_gw_daemons = self.mgr.cache.get_daemons_by_service('mgmt-gateway')
             if mgmt_gw_daemons:
                 dd = mgmt_gw_daemons[0]
                 assert dd.hostname
-                domain = self.mgr.get_fqdn(dd.hostname)
-                mgmt_gw_ip = self.mgr.inventory.get_addr(dd.hostname)
+                mgmt_gw_spec = cast(MgmtGatewaySpec, self.mgr.spec_store['mgmt-gateway'].spec)
+                # TODO(redo): should we resolve the virtual_ip to a name if possible?
+                domain = mgmt_gw_spec.virtual_ip or self.mgr.get_fqdn(dd.hostname)  # give prio to VIP if configured
+                mgmt_gw_ips = [self.mgr.inventory.get_addr(dd.hostname) for dd in mgmt_gw_daemons]  # type: ignore
 
         return self.mgr.template.render('services/grafana/grafana.ini.j2', {
             'anonymous_access': spec.anonymous_access,
@@ -76,7 +82,7 @@ class GrafanaService(CephadmService):
             'domain': domain,
             'mgmt_gw_enabled': mgmt_gw_enabled,
             'oauth2_enabled': oauth2_enabled,
-            'mgmt_gw_ip': mgmt_gw_ip,
+            'mgmt_gw_ips': ','.join(mgmt_gw_ips),
         })
 
     def calculate_grafana_deps(self, security_enabled: bool) -> List[str]:
@@ -87,7 +93,7 @@ class GrafanaService(CephadmService):
         # in case security is enabled we have to reconfig when prom user/pass changes
         prometheus_user, prometheus_password = self.mgr._get_prometheus_credentials()
         if security_enabled and prometheus_user and prometheus_password:
-            deps.append(f'{hash(prometheus_user + prometheus_password)}')
+            deps.append(f'{utils.md5_hash(prometheus_user + prometheus_password)}')
 
         # adding a dependency for mgmt-gateway because the usage of url_prefix relies on its presence.
         # another dependency is added for oauth-proxy as Grafana login is delegated to this service when enabled.
@@ -311,17 +317,18 @@ class AlertmanagerService(CephadmService):
         # add a dependency since enbling basic-auth (or not) depends on the existence of 'oauth2-proxy'
         deps += [d.name() for d in self.mgr.cache.get_daemons_by_service('oauth2-proxy')]
 
-        # scan all mgrs to generate deps and to get standbys too.
-        for dd in self.mgr.cache.get_daemons_by_service('mgr'):
-            # we consider mgr a dep even if the dashboard is disabled
-            # in order to be consistent with _calc_daemon_deps().
-            deps.append(dd.name())
-
         security_enabled, mgmt_gw_enabled, oauth2_enabled = self.mgr._get_security_config()
         if mgmt_gw_enabled:
             dashboard_urls = [f'{self.mgr.get_mgmt_gw_internal_endpoint()}/dashboard']
         else:
             dashboard_urls = get_dashboard_urls(self)
+            # scan all mgrs to generate deps and to get standbys too.
+            for dd in self.mgr.cache.get_daemons_by_service('mgr'):
+                # we consider mgr a dep even if the dashboard is disabled
+                # in order to be consistent with _calc_daemon_deps().
+                # when mgmt_gw is enabled there's no need for mgr dep as
+                # mgmt-gw wil route to the active mgr automatically
+                deps.append(dd.name())
 
         snmp_gateway_urls: List[str] = []
         for dd in self.mgr.cache.get_daemons_by_service('snmp-gateway'):
@@ -350,11 +357,18 @@ class AlertmanagerService(CephadmService):
             addr = self.mgr.get_fqdn(dd.hostname)
             peers.append(build_url(host=addr, port=port).lstrip('/'))
 
+        ip_to_bind_to = ''
+        if spec.only_bind_port_on_networks and spec.networks:
+            assert daemon_spec.host is not None
+            ip_to_bind_to = self.mgr.get_first_matching_network_ip(daemon_spec.host, spec) or ''
+            if ip_to_bind_to:
+                daemon_spec.port_ips = {str(port): ip_to_bind_to}
+
         deps.append(f'secure_monitoring_stack:{self.mgr.secure_monitoring_stack}')
         if security_enabled:
             alertmanager_user, alertmanager_password = self.mgr._get_alertmanager_credentials()
             if alertmanager_user and alertmanager_password:
-                deps.append(f'{hash(alertmanager_user + alertmanager_password)}')
+                deps.append(f'{utils.md5_hash(alertmanager_user + alertmanager_password)}')
             cert, key = self.get_alertmanager_certificates(daemon_spec)
             context = {
                 'enable_mtls': mgmt_gw_enabled,
@@ -372,7 +386,8 @@ class AlertmanagerService(CephadmService):
                 },
                 'peers': peers,
                 'web_config': '/etc/alertmanager/web.yml',
-                'use_url_prefix': mgmt_gw_enabled
+                'use_url_prefix': mgmt_gw_enabled,
+                'ip_to_bind_to': ip_to_bind_to
             }, sorted(deps)
         else:
             return {
@@ -380,7 +395,8 @@ class AlertmanagerService(CephadmService):
                     "alertmanager.yml": yml
                 },
                 "peers": peers,
-                'use_url_prefix': mgmt_gw_enabled
+                'use_url_prefix': mgmt_gw_enabled,
+                'ip_to_bind_to': ip_to_bind_to
             }, sorted(deps)
 
     def get_active_daemon(self, daemon_descrs: List[DaemonDescription]) -> DaemonDescription:
@@ -489,8 +505,14 @@ class PrometheusService(CephadmService):
         security_enabled, mgmt_gw_enabled, oauth2_enabled = self.mgr._get_security_config()
         port = self.mgr.service_discovery_port
         mgr_addr = wrap_ipv6(self.mgr.get_mgr_ip())
+
         protocol = 'https' if security_enabled else 'http'
-        srv_end_point = f'{protocol}://{mgr_addr}:{port}/sd/prometheus/sd-config?'
+        self.mgr.get_mgmt_gw_internal_endpoint()
+        if mgmt_gw_enabled:
+            service_discovery_url_prefix = f'{self.mgr.get_mgmt_gw_internal_endpoint()}'
+        else:
+            service_discovery_url_prefix = f'{protocol}://{mgr_addr}:{port}'
+        srv_end_point = f'{service_discovery_url_prefix}/sd/prometheus/sd-config?'
 
         node_exporter_cnt = len(self.mgr.cache.get_daemons_by_service('node-exporter'))
         alertmgr_cnt = len(self.mgr.cache.get_daemons_by_service('alertmanager'))
@@ -617,18 +639,23 @@ class PrometheusService(CephadmService):
         port = cast(int, self.mgr.get_module_option_ex('prometheus', 'server_port', self.DEFAULT_MGR_PROMETHEUS_PORT))
         deps.append(str(port))
         deps.append(str(self.mgr.service_discovery_port))
-        # add an explicit dependency on the active manager. This will force to
-        # re-deploy prometheus if the mgr has changed (due to a fail-over i.e).
-        deps.append(self.mgr.get_active_mgr().name())
         deps.append(f'secure_monitoring_stack:{self.mgr.secure_monitoring_stack}')
-        security_enabled, _, _ = self.mgr._get_security_config()
+        security_enabled, mgmt_gw_enabled, _ = self.mgr._get_security_config()
+
+        if not mgmt_gw_enabled:
+            # add an explicit dependency on the active manager. This will force to
+            # re-deploy prometheus if the mgr has changed (due to a fail-over i.e).
+            # when mgmt_gw is enabled there's no need for such dep as mgmt-gw wil
+            # route to the active mgr automatically
+            deps.append(self.mgr.get_active_mgr().name())
+
         if security_enabled:
             alertmanager_user, alertmanager_password = self.mgr._get_alertmanager_credentials()
             prometheus_user, prometheus_password = self.mgr._get_prometheus_credentials()
             if prometheus_user and prometheus_password:
-                deps.append(f'{hash(prometheus_user + prometheus_password)}')
+                deps.append(f'{utils.md5_hash(prometheus_user + prometheus_password)}')
             if alertmanager_user and alertmanager_password:
-                deps.append(f'{hash(alertmanager_user + alertmanager_password)}')
+                deps.append(f'{utils.md5_hash(alertmanager_user + alertmanager_password)}')
 
         # add a dependency since url_prefix depends on the existence of mgmt-gateway
         deps += [d.name() for d in self.mgr.cache.get_daemons_by_service('mgmt-gateway')]

@@ -758,6 +758,14 @@ bool MDSMonitor::prepare_beacon(MonOpRequestRef op)
 
     if (state == MDSMap::STATE_DNE) {
       dout(1) << __func__ << ": DNE from " << info << dendl;
+
+      /* send a beacon reply so MDSDaemon::suicide() finishes the
+         Beacon::send_and_wait() call */
+      auto beacon = make_message<MMDSBeacon>(mon.monmap->fsid,
+          m->get_global_id(), m->get_name(), get_fsmap().get_epoch(),
+          m->get_state(), m->get_seq(), CEPH_FEATURES_SUPPORTED_DEFAULT);
+      mon.send_reply(op, beacon.detach());
+
       goto evict;
     }
 
@@ -1555,6 +1563,13 @@ bool MDSMonitor::has_health_warnings(vector<mds_metric_t> warnings)
   }
 
   return false;
+}
+
+bool MDSMonitor::has_any_health_warning()
+{
+  return std::any_of(
+    pending_daemon_health.begin(), pending_daemon_health.end(),
+    [](auto& it) { return !it.second.metrics.empty() ? true : false; });
 }
 
 int MDSMonitor::filesystem_command(

@@ -43,6 +43,7 @@
 #include "messages/MOSDECSubOpReadReply.h"
 #include "messages/MOSDPGUpdateLogMissing.h"
 #include "messages/MOSDPGUpdateLogMissingReply.h"
+#include "messages/MOSDPGPCT.h"
 #include "messages/MOSDBackoff.h"
 #include "messages/MOSDScrubReserve.h"
 #include "messages/MOSDRepOp.h"
@@ -212,6 +213,7 @@ PG::PG(OSDService *o, OSDMapRef curmap,
     p,
     _pool,
     curmap,
+    PG_FEATURE_CLASSIC_ALL,
     this,
     this),
   pool(recovery_state.get_pgpool()),
@@ -1276,7 +1278,6 @@ Scrub::schedule_result_t PG::start_scrubbing(
   pg_cond.allow_deep =
       !(get_osdmap()->test_flag(CEPH_OSDMAP_NODEEP_SCRUB) ||
 	pool.info.has_flag(pg_pool_t::FLAG_NODEEP_SCRUB));
-  pg_cond.has_deep_errors = (info.stats.stats.sum.num_deep_scrub_errors > 0);
   pg_cond.can_autorepair =
       (cct->_conf->osd_scrub_auto_repair &&
        get_pgbackend()->auto_repair_supported());
@@ -2091,6 +2092,9 @@ bool PG::can_discard_request(OpRequestRef& op)
   case MSG_OSD_PG_UPDATE_LOG_MISSING_REPLY:
     return can_discard_replica_op<
       MOSDPGUpdateLogMissingReply, MSG_OSD_PG_UPDATE_LOG_MISSING_REPLY>(op);
+  case MSG_OSD_PG_PCT:
+    return can_discard_replica_op<
+      MOSDPGPCT, MSG_OSD_PG_PCT>(op);
 
   case MSG_OSD_PG_SCAN:
     return can_discard_scan(op);

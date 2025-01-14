@@ -17,6 +17,7 @@
 #include "common/likely.h"
 #include "common/HeartbeatMap.h"
 
+#include "include/compat.h" // for ceph_pthread_setname()
 #include "include/stringify.h"
 #include "include/util.h"
 
@@ -25,6 +26,7 @@
 #include "mds/MDSRank.h"
 #include "mds/MDSMap.h"
 #include "mds/Locker.h"
+#include "mds/mdstypes.h"
 
 #include "Beacon.h"
 
@@ -60,6 +62,7 @@ void Beacon::shutdown()
   std::unique_lock<std::mutex> lock(mutex);
   if (!finished) {
     finished = true;
+    cvar.notify_all();
     lock.unlock();
     if (sender.joinable())
       sender.join();
@@ -73,6 +76,7 @@ void Beacon::init(const MDSMap &mdsmap)
   _notify_mdsmap(mdsmap);
 
   sender = std::thread([this]() {
+    ceph_pthread_setname("mds-beacon");
     std::unique_lock<std::mutex> lock(mutex);
     bool sent;
     while (!finished) {
@@ -318,16 +322,15 @@ void Beacon::notify_health(MDSRank const *mds)
   // Detect MDS_HEALTH_TRIM condition
   // Indicates MDS is not trimming promptly
   {
-    const auto log_max_segments = mds->mdlog->get_max_segments();
-    const auto log_warn_factor = g_conf().get_val<double>("mds_log_warn_factor");
-    if (mds->mdlog->get_num_segments() > (size_t)(log_max_segments * log_warn_factor)) {
+    if (mds->mdlog->is_trim_slow()) {
+      auto num_segments = mds->mdlog->get_num_segments();
+      auto max_segments = mds->mdlog->get_max_segments();
       CachedStackStringStream css;
-      *css << "Behind on trimming (" << mds->mdlog->get_num_segments()
-        << "/" << log_max_segments << ")";
+      *css << "Behind on trimming (" << num_segments << "/" << max_segments << ")";
 
       MDSHealthMetric m(MDS_HEALTH_TRIM, HEALTH_WARN, css->strv());
-      m.metadata["num_segments"] = stringify(mds->mdlog->get_num_segments());
-      m.metadata["max_segments"] = stringify(log_max_segments);
+      m.metadata["num_segments"] = stringify(num_segments);
+      m.metadata["max_segments"] = stringify(max_segments);
       health.metrics.push_back(m);
     }
   }
@@ -546,6 +549,19 @@ void Beacon::notify_health(MDSRank const *mds)
 	m.metadata["client_count"] = stringify(laggy_clients.size());
 	health.metrics.push_back(std::move(m));
       }
+    }
+  }
+  if (mds->is_replay()) {
+    CachedStackStringStream css;
+    auto estimate = mds->mdlog->get_estimated_replay_finish_time();
+    // this probably should be configurable, however, its fine to report
+    // if replay is running for more than 30 seconds.
+    if (estimate.elapsed_time > std::chrono::seconds(30)) {
+      *css << "replay: " << estimate.percent_complete << "% complete - elapsed time: "
+	   << estimate.elapsed_time << ", estimated time remaining: "
+	   << estimate.estimated_time;
+      MDSHealthMetric m(MDS_HEALTH_ESTIMATED_REPLAY_TIME, HEALTH_WARN, css->strv());
+      health.metrics.push_back(m);
     }
   }
 }

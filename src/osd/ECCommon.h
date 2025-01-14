@@ -200,7 +200,7 @@ struct ECListener {
     const std::optional<pg_hit_set_history_t> &hset_history,
     const eversion_t &trim_to,
     const eversion_t &roll_forward_to,
-    const eversion_t &min_last_complete_ondisk,
+    const eversion_t &pg_committed_to,
     bool transaction_applied,
     ceph::os::Transaction &t,
     bool async = false) = 0;
@@ -493,6 +493,7 @@ struct ECCommon {
       ); ///< @return error code, 0 on success
 
     void schedule_recovery_work();
+
   };
 
   /**
@@ -522,7 +523,17 @@ struct ECCommon {
       osd_reqid_t reqid;
       ZTracer::Trace trace;
 
-      eversion_t roll_forward_to; /// Soon to be generated internally
+      /**
+       * pg_commited_to
+       *
+       * Represents a version v such that all v' < v handled by RMWPipeline
+       * have fully committed. This may actually lag
+       * PeeringState::pg_committed_to if PrimaryLogPG::submit_log_entries
+       * submits an out-of-band log update.
+       *
+       * Soon to be generated internally.
+       */
+      eversion_t pg_committed_to;
 
       /// Ancillary also provided from submit_transaction caller
       std::map<hobject_t, ObjectContextRef> obc_map;
@@ -833,3 +844,15 @@ void ECCommon::ReadPipeline::filter_read_op(
     on_schedule_recovery(op);
   }
 }
+
+// Error inject interfaces
+std::string ec_inject_read_error(const ghobject_t& o, const int64_t type, const int64_t when, const int64_t duration);
+std::string ec_inject_write_error(const ghobject_t& o, const int64_t type, const int64_t when, const int64_t duration);
+std::string ec_inject_clear_read_error(const ghobject_t& o, const int64_t type);
+std::string ec_inject_clear_write_error(const ghobject_t& o, const int64_t type);
+bool ec_inject_test_read_error0(const ghobject_t& o);
+bool ec_inject_test_read_error1(const ghobject_t& o);
+bool ec_inject_test_write_error0(const hobject_t& o,const osd_reqid_t& reqid);
+bool ec_inject_test_write_error1(const ghobject_t& o);
+bool ec_inject_test_write_error2(const hobject_t& o);
+bool ec_inject_test_write_error3(const hobject_t& o);

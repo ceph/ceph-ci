@@ -92,10 +92,10 @@ struct OSDRestrictions {
   /// the OSD is performing recovery & osd_repair_during_recovery is 'true'
   bool allow_requested_repair_only:1{false};
 
-  /// the load is high, or the time is not right. For periodic scrubs,
-  /// only the overdue ones are allowed.
-  bool only_deadlined:1{false};
+  /// the CPU load is high. No regular scrubs are allowed.
   bool cpu_overloaded:1{false};
+
+  /// outside of allowed scrubbing hours/days
   bool restricted_time:1{false};
 
   /// the OSD is performing a recovery, osd_scrub_during_recovery is 'false',
@@ -109,7 +109,6 @@ static_assert(sizeof(Scrub::OSDRestrictions) <= sizeof(uint32_t));
 struct ScrubPGPreconds {
   bool allow_shallow{true};
   bool allow_deep{true};
-  bool has_deep_errors{false};
   bool can_autorepair{false};
 };
 static_assert(sizeof(Scrub::ScrubPGPreconds) <= sizeof(uint32_t));
@@ -181,9 +180,8 @@ struct formatter<Scrub::ScrubPGPreconds> {
   auto format(const Scrub::ScrubPGPreconds& conds, FormatContext& ctx) const
   {
     return fmt::format_to(
-	ctx.out(), "allowed(shallow/deep):{:1}/{:1},deep-err:{:1},can-autorepair:{:1}",
-	conds.allow_shallow, conds.allow_deep, conds.has_deep_errors,
-	conds.can_autorepair);
+	ctx.out(), "allowed(shallow/deep):{:1}/{:1},can-autorepair:{:1}",
+	conds.allow_shallow, conds.allow_deep, conds.can_autorepair);
   }
 };
 
@@ -299,12 +297,11 @@ struct ScrubPgIF {
 
   virtual ~ScrubPgIF() = default;
 
-  friend std::ostream& operator<<(std::ostream& out, const ScrubPgIF& s)
-  {
-    return s.show(out);
+  friend std::ostream& operator<<(std::ostream& out, const ScrubPgIF& s) {
+    return s.show_concise(out);
   }
 
-  virtual std::ostream& show(std::ostream& out) const = 0;
+  virtual std::ostream& show_concise(std::ostream& out) const = 0;
 
   // --------------- triggering state-machine events:
 

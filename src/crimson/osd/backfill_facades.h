@@ -36,6 +36,10 @@ struct PeeringFacade final : BackfillState::PeeringFacade {
     return peering_state.get_info().log_tail;
   }
 
+  const PGLog& get_pg_log() const override {
+    return peering_state.get_pg_log();
+  }
+
   void scan_log_after(eversion_t v, scan_log_func_t f) const override {
     peering_state.get_pg_log().get_log().scan_log_after(v, std::move(f));
   }
@@ -73,7 +77,14 @@ struct PGFacade final : BackfillState::PGFacade {
     return pg.projected_last_update;
   }
 
+  const PGLog::IndexedLog& get_projected_log() const override {
+    return pg.projected_log;
+  }
+
   PGFacade(PG& pg) : pg(pg) {}
+  std::ostream &print(std::ostream &out) const override {
+    return out << pg;
+  }
 };
 
 } // namespace crimson::osd

@@ -476,26 +476,19 @@ as follows:
   Cancel resharding a bucket
 
 :command:`topic list`
-  List bucket notifications/pubsub topics                                                   
+  List bucket notifications topics
 
 :command:`topic get`
-  Get a bucket notifications/pubsub topic                                                   
-  
+  Get a bucket notification topic 
+
 :command:`topic rm`
-  Remove a bucket notifications/pubsub topic                                                
+  Remove a bucket notifications topic 
 
-:command:`subscription get`
-  Get a pubsub subscription definition
+:command:`topic stats`
+  Get a bucket notifications persistent topic stats (i.e. reservations, entries & size)
 
-:command:`subscription rm`
-  Remove a pubsub subscription
-
-:command:`subscription pull`
-  Show events in a pubsub subscription
-             
-:command:`subscription ack`
-  Acknowledge (remove) events in a pubsub subscription
-
+:command:`topic dump`
+  Dump (in JSON format) all pending bucket notifications of a persistent topic
 
 Options
 =======
@@ -547,6 +540,13 @@ Options
 .. option:: --gen-secret
 
     Generate random secret key.
+
+.. option:: --generate-key
+
+    create user with or without credentials.
+    If this option set to false, then user cannot set --gen-access-key/--gen-secret/--secret-key/--access-key.
+    If this option set to true, then user cannot set  --secret-key/--access-key and bypass options for --gen-secret/--gen-access-key.
+    Default is true.
 
 .. option:: --key-type=<type>
 

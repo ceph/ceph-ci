@@ -666,8 +666,10 @@ static void build_redirect_url(req_state *s, const string& redirect_base, string
     dest_uri = dest_uri.substr(0, dest_uri.size() - 1);
   }
   dest_uri += s->info.request_uri;
-  dest_uri += "?";
-  dest_uri += s->info.request_params;
+  if (!s->info.request_params.empty()) {
+    dest_uri += "?";
+    dest_uri += s->info.request_params;
+  }
 }
 
 void abort_early(req_state *s, RGWOp* op, int err_no,
@@ -1467,7 +1469,7 @@ int RGWPutACLs_ObjStore::get_params(optional_yield y)
 {
   const auto max_size = s->cct->_conf->rgw_max_put_param_size;
   std::tie(op_ret, data) = read_all_input(s, max_size, false);
-  ldpp_dout(s, 0) << "RGWPutACLs_ObjStore::get_params read data is: " << data.c_str() << dendl;
+  ldpp_dout(s, 20) << "RGWPutACLs_ObjStore::get_params read data is: " << data.c_str() << dendl;
   return op_ret;
 }
 
@@ -1667,7 +1669,6 @@ int RGWDeleteMultiObj_ObjStore::get_params(optional_yield y)
   std::tie(op_ret, data) = read_all_input(s, max_size, false);
   return op_ret;
 }
-
 
 void RGWRESTOp::send_response()
 {

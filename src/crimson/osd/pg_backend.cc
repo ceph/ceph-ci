@@ -1283,22 +1283,6 @@ PGBackend::rm_xattr(
   return rm_xattr_iertr::now();
 }
 
-void PGBackend::clone(
-  /* const */object_info_t& snap_oi,
-  const ObjectState& os,
-  const ObjectState& d_os,
-  ceph::os::Transaction& txn)
-{
-  // See OpsExecutor::execute_clone documentation
-  txn.clone(coll->get_cid(), ghobject_t{os.oi.soid}, ghobject_t{d_os.oi.soid});
-  {
-    ceph::bufferlist bv;
-    snap_oi.encode_no_oid(bv, CEPH_FEATURES_ALL);
-    txn.setattr(coll->get_cid(), ghobject_t{d_os.oi.soid}, OI_ATTR, bv);
-  }
-  txn.rmattr(coll->get_cid(), ghobject_t{d_os.oi.soid}, SS_ATTR);
-}
-
 using get_omap_ertr =
   crimson::os::FuturizedStore::Shard::read_errorator::extend<
     crimson::ct_error::enodata>;
@@ -1341,9 +1325,10 @@ maybe_get_omap_vals(
 PGBackend::ll_read_ierrorator::future<ceph::bufferlist>
 PGBackend::omap_get_header(
   const crimson::os::CollectionRef& c,
-  const ghobject_t& oid) const
+  const ghobject_t& oid,
+  uint32_t op_flags) const
 {
-  return store->omap_get_header(c, oid)
+  return store->omap_get_header(c, oid, op_flags)
     .handle_error(
       crimson::ct_error::enodata::handle([] {
 	return seastar::make_ready_future<bufferlist>();
@@ -1356,10 +1341,13 @@ PGBackend::ll_read_ierrorator::future<>
 PGBackend::omap_get_header(
   const ObjectState& os,
   OSDOp& osd_op,
-  object_stat_sum_t& delta_stats) const
+  object_stat_sum_t& delta_stats,
+  uint32_t op_flags) const
 {
   if (os.oi.is_omap()) {
-    return omap_get_header(coll, ghobject_t{os.oi.soid}).safe_then_interruptible(
+    return omap_get_header(
+      coll, ghobject_t{os.oi.soid}, CEPH_OSD_OP_FLAG_FADVISE_DONTNEED
+    ).safe_then_interruptible(
       [&delta_stats, &osd_op] (ceph::bufferlist&& header) {
         osd_op.outdata = std::move(header);
         delta_stats.num_rd_kb += shift_round_up(osd_op.outdata.length(), 10);
@@ -1723,7 +1711,8 @@ PGBackend::fiemap(
   CollectionRef c,
   const ghobject_t& oid,
   uint64_t off,
-  uint64_t len)
+  uint64_t len,
+  uint32_t op_flags)
 {
   return store->fiemap(c, oid, off, len);
 }
@@ -1833,5 +1822,34 @@ PGBackend::read_ierrorator::future<> PGBackend::tmapget(
       return read_errorator::future<>{crimson::ct_error::object_corrupted::make()};
     }),
     read_errorator::pass_further{});
+}
+
+void PGBackend::set_metadata(
+  const hobject_t &obj,
+  object_info_t &oi,
+  const SnapSet *ss /* non-null iff head */,
+  ceph::os::Transaction& txn)
+{
+  ceph_assert((obj.is_head() && ss) || (!obj.is_head() && !ss));
+  {
+    ceph::bufferlist bv;
+    oi.encode_no_oid(bv, CEPH_FEATURES_ALL);
+    txn.setattr(coll->get_cid(), ghobject_t{obj}, OI_ATTR, bv);
+  }
+  if (ss) {
+    ceph::bufferlist bss;
+    encode(*ss, bss);
+    txn.setattr(coll->get_cid(), ghobject_t{obj}, SS_ATTR, bss);
+  }
+}
+
+void PGBackend::clone_for_write(
+  const hobject_t &from,
+  const hobject_t &to,
+  ceph::os::Transaction &txn)
+{
+  // See OpsExecuter::execute_clone documentation
+  txn.clone(coll->get_cid(), ghobject_t{from}, ghobject_t{to});
+  txn.rmattr(coll->get_cid(), ghobject_t{to}, SS_ATTR);
 }
 

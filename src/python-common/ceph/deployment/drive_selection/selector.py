@@ -3,7 +3,7 @@ import logging
 from typing import List, Optional, Dict, Callable
 
 from ..inventory import Device
-from ..drive_group import DriveGroupSpec, DeviceSelection, DriveGroupValidationError
+from ..drive_group import DriveGroupSpec, DeviceSelection, DriveGroupValidationError  # noqa: F401
 
 from .filter import FilterGenerator
 from .matchers import _MatchInvalid
@@ -130,6 +130,10 @@ class DriveSelection(object):
         devices = list()  # type: List[Device]
         for disk in self.disks:
             logger.debug("Processing disk {}".format(disk.path))
+
+            if disk.being_replaced:
+                logger.debug('Ignoring disk {} as it is being replaced.'.format(disk.path))
+                continue
 
             if not disk.available and not disk.ceph_device:
                 logger.debug(

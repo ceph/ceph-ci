@@ -107,7 +107,6 @@ class RadosZone : public StoreZone {
     virtual const std::string& get_name() const override;
     virtual bool is_writeable() override;
     virtual bool get_redirect_endpoint(std::string* endpoint) override;
-    virtual bool has_zonegroup_api(const std::string& api) const override;
     virtual const std::string& get_current_period_id() override;
     virtual const RGWAccessKey& get_system_key() override;
     virtual const std::string& get_realm_name() override;
@@ -593,12 +592,18 @@ class RadosObject : public StoreObject {
       StoreObject::set_compressed();
     }
 
-
     virtual bool is_sync_completed(const DoutPrefixProvider* dpp,
       const ceph::real_time& obj_mtime) override;
     /* For rgw_admin.cc */
     RGWObjState& get_state() { return state; }
     virtual int load_obj_state(const DoutPrefixProvider* dpp, optional_yield y, bool follow_olh = true) override;
+
+    /** If multipart, enumerate (a range [marker..marker+[min(max_parts, parts_count-1)] of) parts of the object */
+    virtual int list_parts(const DoutPrefixProvider* dpp, CephContext* cct,
+			   int max_parts, int marker, int* next_marker,
+			   bool* truncated, list_parts_each_t each_func,
+			   optional_yield y) override;
+
     virtual int set_obj_attrs(const DoutPrefixProvider* dpp, Attrs* setattrs, Attrs* delattrs, optional_yield y, uint32_t flags) override;
     virtual int get_obj_attrs(optional_yield y, const DoutPrefixProvider* dpp, rgw_obj* target_obj = NULL) override;
     virtual int modify_obj_attrs(const char* attr_name, bufferlist& attr_val, optional_yield y, const DoutPrefixProvider* dpp) override;
@@ -775,6 +780,19 @@ class RadosBucket : public StoreBucket {
         optional_yield y, const DoutPrefixProvider *dpp) override;
     int remove_topics(RGWObjVersionTracker* objv_tracker, 
         optional_yield y, const DoutPrefixProvider *dpp) override;
+    int get_logging_object_name(std::string& obj_name, 
+        const std::string& prefix, 
+        optional_yield y, 
+        const DoutPrefixProvider *dpp, 
+        RGWObjVersionTracker* objv_tracker) override;
+    int set_logging_object_name(const std::string& obj_name, 
+        const std::string& prefix, 
+        optional_yield y, 
+        const DoutPrefixProvider *dpp, 
+        bool new_obj, 
+        RGWObjVersionTracker* objv_tracker) override;
+    int commit_logging_object(const std::string& obj_name, optional_yield y, const DoutPrefixProvider *dpp) override;
+    int write_logging_object(const std::string& obj_name, const std::string& record, optional_yield y, const DoutPrefixProvider *dpp, bool async_completion) override;
 
   private:
     int link(const DoutPrefixProvider* dpp, const rgw_owner& new_owner, optional_yield y, bool update_entrypoint = true, RGWObjVersionTracker* objv = nullptr);

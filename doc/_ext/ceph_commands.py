@@ -94,7 +94,7 @@ class CmdParam(object):
         self.goodchars = goodchars
         self.positional = positional != 'false'
 
-        assert who == None
+        assert who is None
 
     def help(self):
         advanced = []
@@ -285,12 +285,6 @@ class CephMgrCommands(Directive):
         # make diskprediction_local happy
         mock_imports += ['numpy',
                          'scipy']
-        # make restful happy
-        mock_imports += ['pecan',
-                         'pecan.rest',
-                         'pecan.hooks',
-                         'werkzeug',
-                         'werkzeug.serving']
 
         for m in mock_imports:
             args = {}

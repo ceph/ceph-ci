@@ -81,6 +81,7 @@ enum {
   s3PutBucketNotification,
   s3GetBucketLogging,
   s3PutBucketLogging,
+  s3PostBucketLogging,
   s3GetBucketTagging,
   s3PutBucketTagging,
   s3GetBucketWebsite,
@@ -114,6 +115,8 @@ enum {
   s3GetBucketEncryption,
   s3PutBucketEncryption,
   s3DescribeJob,
+  s3GetObjectAttributes,
+  s3GetObjectVersionAttributes,
   s3All,
 
   s3objectlambdaGetObject,
@@ -246,6 +249,8 @@ inline int op_to_perm(std::uint64_t op) {
   case s3GetObjectVersionTagging:
   case s3GetObjectRetention:
   case s3GetObjectLegalHold:
+  case s3GetObjectAttributes:
+  case s3GetObjectVersionAttributes:
   case s3ListAllMyBuckets:
   case s3ListBucket:
   case s3ListBucketMultipartUploads:
@@ -298,6 +303,7 @@ inline int op_to_perm(std::uint64_t op) {
   case s3PutBucketCORS:
   case s3PutBucketEncryption:
   case s3PutBucketLogging:
+  case s3PostBucketLogging:
   case s3PutBucketNotification:
   case s3PutBucketPolicy:
   case s3PutBucketRequestPayment:

@@ -5,6 +5,7 @@ sudo yum -y install sysstat
 
 namespace_range_start=
 namespace_range_end=
+random_devices_count=
 rbd_iostat=false
 
 while [[ $# -gt 0 ]]; do
@@ -15,6 +16,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --end_ns)
             namespace_range_end=$2
+            shift 2
+            ;;
+        --random_devices)
+            random_devices_count=$2
             shift 2
             ;;
         --rbd_iostat)
@@ -29,7 +34,7 @@ done
 
 fio_file=$(mktemp -t nvmeof-fio-XXXX)
 all_drives_list=$(sudo nvme list --output-format=json | 
-    jq -r '.Devices | sort_by(.NameSpace) | .[] | select(.ModelNumber == "Ceph bdev Controller") | .DevicePath')
+    jq -r '.Devices[].Subsystems[] | select(.Controllers | all(.ModelNumber == "Ceph bdev Controller")) | .Namespaces | sort_by(.NSID) | .[] | .NameSpace')
 
 # When the script is passed --start_ns and --end_ns (example: `nvmeof_fio_test.sh --start_ns 1 --end_ns 3`), 
 # then fio runs on namespaces only in the defined range (which is 1 to 3 here). 
@@ -37,6 +42,8 @@ all_drives_list=$(sudo nvme list --output-format=json |
 # run on first 3 namespaces here.
 if [ "$namespace_range_start" ] || [ "$namespace_range_end" ]; then
     selected_drives=$(echo "${all_drives_list[@]}" | sed -n "${namespace_range_start},${namespace_range_end}p")
+elif [ "$random_devices_count" ]; then 
+    selected_drives=$(echo "${all_drives_list[@]}" | shuf -n $random_devices_count)
 else
     selected_drives="${all_drives_list[@]}"
 fi

@@ -14,11 +14,11 @@ abstractions:
 
 * FS volumes, an abstraction for CephFS file systems
 
-* FS subvolumes, an abstraction for independent CephFS directory trees
-
 * FS subvolume groups, an abstraction for a directory level higher than FS
   subvolumes. Used to effect policies (e.g., :doc:`/cephfs/file-layouts`)
   across a set of subvolumes
+
+* FS subvolumes, an abstraction for independent CephFS directory trees
 
 Possible use-cases for the export abstractions:
 
@@ -71,6 +71,14 @@ tries to remove MDS daemons using the enabled Ceph Manager orchestrator module.
    file system is created on the same cluster and the subvolume interface is
    being used. See https://tracker.ceph.com/issues/49605#note-5 for more
    details.
+
+.. note:: If the snap-schedule Ceph Manager module is being used for a volume
+   and the volume is deleted, then the snap-schedule Ceph Manager module will
+   continue to hold references to the old pools. This will lead to the
+   snap-schedule Ceph Manager module faulting and logging errors. To remedy
+   this scenario, we recommend that the snap-schedule Ceph Manager module
+   be restarted after volume deletion. If the faults still persist, then we
+   recommend restarting `ceph-mgr`.
 
 List volumes by running the following command:
 
@@ -1418,6 +1426,29 @@ set with this id was present in the database
 .. prompt:: bash $ auto
 
   $ ceph fs quiesce fs1 sub1 sub2 sub3 --set-id="external-id" --if-version=0
+
+
+.. _disabling-volumes-plugin:
+
+Disabling Volumes Plugin
+------------------------
+By default the volumes plugin is enabled and set to ``always on``. However, in
+certain cases it might be appropriate to disable it. For example, when a CephFS
+is in a degraded state, the volumes plugin commands may accumulate in MGR
+instead of getting served. Which eventually causes policy throttles to kick in
+and the MGR becomes unresponsive.
+
+In this event, volumes plugin can be disabled even though it is an
+``always on`` module in MGR. To do so, run ``ceph mgr module disable volumes
+--yes-i-really-mean-it``. Do note that this command will disable operations
+and remove commands of volumes plugin since it will disable all CephFS
+services on the Ceph cluster accessed through this plugin.
+
+Before resorting to a measure as drastic as this, it is a good idea to try less
+drastic measures and then assess if the file system experience has improved due
+to it. One example of such less drastic measure is to disable asynchronous
+threads launched by volumes plugins for cloning and purging trash.
+
 
 .. _manila: https://github.com/openstack/manila
 .. _CSI: https://github.com/ceph/ceph-csi

@@ -32,6 +32,7 @@ class Nvmeof(Task):
             gateway_config:
                 namespaces_count: 10
                 cli_version: latest
+                create_mtls_secrets: False 
                     
     """
 
@@ -69,6 +70,7 @@ class Nvmeof(Task):
         self.serial = gateway_config.get('serial', 'SPDK00000000000001')
         self.port = gateway_config.get('port', '4420')
         self.srport = gateway_config.get('srport', '5500')
+        self.create_mtls_secrets = gateway_config.get('create_mtls_secrets', False)
 
     def deploy_nvmeof(self):
         """
@@ -126,12 +128,11 @@ class Nvmeof(Task):
 
             total_images = int(self.namespaces_count) * int(self.subsystems_count)
             log.info(f'[nvmeof]: creating {total_images} images')
+            rbd_create_cmd = []
             for i in range(1, total_images + 1):
                 imagename = self.image_name_prefix + str(i)
-                log.info(f'[nvmeof]: rbd create {poolname}/{imagename} --size {self.rbd_size}')
-                _shell(self.ctx, self.cluster_name, self.remote, [
-                    'rbd', 'create', f'{poolname}/{imagename}', '--size', f'{self.rbd_size}'
-                ])
+                rbd_create_cmd += ['rbd', 'create', f'{poolname}/{imagename}', '--size', f'{self.rbd_size}', run.Raw(';')]           
+            _shell(self.ctx, self.cluster_name, self.remote, rbd_create_cmd)     
 
         for role, i in daemons.items():
             remote, id_ = i
@@ -147,7 +148,38 @@ class Nvmeof(Task):
                 started=True,
             )
         log.info("[nvmeof]: executed deploy_nvmeof successfully!")
-        
+
+    def write_mtls_config(self, gateway_ips):
+        log.info("[nvmeof]: writing mtls config...")
+        allowed_ips = ""
+        for ip in gateway_ips:
+            allowed_ips += ("IP:" + ip + ",")
+        self.remote.run(
+            args=[
+                "sudo", "openssl", "req", "-x509", "-newkey", "rsa:4096", "-nodes", "-keyout", "/etc/ceph/server.key",
+                "-out", "/etc/ceph/server.crt", "-days", "3650", "-subj", "/CN=my.server", "-addext", f"subjectAltName={allowed_ips[:-1]}" 
+            ]
+        )
+        self.remote.run(
+            args=[
+                "sudo", "openssl", "req", "-x509", "-newkey", "rsa:4096", "-nodes", "-keyout", "/etc/ceph/client.key",
+                "-out", "/etc/ceph/client.crt", "-days", "3650", "-subj", "/CN=client1"
+            ]
+        )
+        secrets_files = {"/etc/ceph/server.key": None, 
+                 "/etc/ceph/server.crt": None, 
+                 "/etc/ceph/client.key": None, 
+                 "/etc/ceph/client.crt": None, 
+                }
+        for file in secrets_files.keys():
+            secrets_files[file] = self.remote.read_file(path=file, sudo=True)
+
+        for remote in self.ctx.cluster.remotes.keys():
+            for remote_file in secrets_files.keys():
+                data = secrets_files[remote_file]
+                remote.sudo_write_file(path=remote_file, data=data, mode='0644')
+        log.info("[nvmeof]: written mtls config!")
+
     def set_gateway_cfg(self):
         log.info('[nvmeof]: running set_gateway_cfg...')
         ip_address = self.remote.ip_address
@@ -174,6 +206,8 @@ class Nvmeof(Task):
                 data=conf_data,
                 sudo=True
             )
+        if self.create_mtls_secrets: 
+            self.write_mtls_config(gateway_ips)
         log.info("[nvmeof]: executed set_gateway_cfg successfully!")
 
 
@@ -216,9 +250,9 @@ class NvmeofThrasher(Thrasher, Greenlet):
 
     daemon_max_thrash_times: 
                         For now, NVMeoF daemons have limitation that each daemon can 
-                        be thrashed only 3 times in span of 30 mins. This option 
+                        be thrashed only 5 times in span of 30 mins. This option 
                         allows to set the amount of times it could be thrashed in a period
-                        of time. (default: 3)
+                        of time. (default: 5)
     daemon_max_thrash_period: 
                         This option goes with the above option. It sets the period of time
                         over which each daemons can be thrashed for daemon_max_thrash_times
@@ -271,17 +305,17 @@ class NvmeofThrasher(Thrasher, Greenlet):
         self.max_thrash_daemons = int(self.config.get('max_thrash', len(self.daemons) - 1))
 
         # Limits on thrashing each daemon
-        self.daemon_max_thrash_times = int(self.config.get('daemon_max_thrash_times', 3))
+        self.daemon_max_thrash_times = int(self.config.get('daemon_max_thrash_times', 5))
         self.daemon_max_thrash_period = int(self.config.get('daemon_max_thrash_period', 30 * 60)) # seconds
 
         self.min_thrash_delay = int(self.config.get('min_thrash_delay', 60))
         self.max_thrash_delay = int(self.config.get('max_thrash_delay', self.min_thrash_delay + 30))
-        self.min_revive_delay = int(self.config.get('min_revive_delay', 100))
+        self.min_revive_delay = int(self.config.get('min_revive_delay', 60))
         self.max_revive_delay = int(self.config.get('max_revive_delay', self.min_revive_delay + 30))
 
     def _get_devices(self, remote):
         GET_DEVICE_CMD = "sudo nvme list --output-format=json | " \
-            "jq -r '.Devices | sort_by(.NameSpace) | .[] | select(.ModelNumber == \"Ceph bdev Controller\") | .DevicePath'"
+            "jq -r '.Devices[].Subsystems[] | select(.Controllers | all(.ModelNumber == \"Ceph bdev Controller\")) | .Namespaces | sort_by(.NSID) | .[] | .NameSpace'"
         devices = remote.sh(GET_DEVICE_CMD).split()
         return devices
     
@@ -312,6 +346,7 @@ class NvmeofThrasher(Thrasher, Greenlet):
             run.Raw('&&'), 'ceph', 'orch', 'ps', '--daemon-type', 'nvmeof',
             run.Raw('&&'), 'ceph', 'health', 'detail',
             run.Raw('&&'), 'ceph', '-s',
+            run.Raw('&&'), 'sudo', 'nvme', 'list',
         ]
         for dev in self.devices:
             check_cmd += [
@@ -386,13 +421,11 @@ class NvmeofThrasher(Thrasher, Greenlet):
         while not self.stopping.is_set():
             killed_daemons = defaultdict(list)
 
-            weight = 1.0 / len(self.daemons)
-            count = 0
+            thrash_daemon_num = self.rng.randint(1, self.max_thrash_daemons)
+            selected_daemons = self.rng.sample(self.daemons, thrash_daemon_num)
             for daemon in self.daemons:
-                skip = self.rng.uniform(0.0, 1.0)
-                if weight <= skip:
-                    self.log('skipping daemon {label} with skip ({skip}) > weight ({weight})'.format(
-                        label=daemon.id_, skip=skip, weight=weight))
+                if daemon not in selected_daemons:
+                    self.log(f'skipping daemon {daemon.id_} ...')
                     continue
 
                 # For now, nvmeof daemons can only be thrashed 3 times in last 30mins. 
@@ -410,16 +443,10 @@ class NvmeofThrasher(Thrasher, Greenlet):
                         continue
 
                 self.log('kill {label}'.format(label=daemon.id_))
-                # daemon.stop()
                 kill_method = self.kill_daemon(daemon)
 
                 killed_daemons[kill_method].append(daemon)
                 daemons_thrash_history[daemon.id_] += [datetime.now()]
-
-                # only thrash max_thrash_daemons amount of daemons
-                count += 1
-                if count >= self.max_thrash_daemons:
-                    break
 
             if killed_daemons:
                 iteration_summary = "thrashed- "
@@ -433,7 +460,7 @@ class NvmeofThrasher(Thrasher, Greenlet):
 
                 self.log(f'waiting for {revive_delay} secs before reviving')
                 time.sleep(revive_delay) # blocking wait
-                self.log('done waiting before reviving')
+                self.log(f'done waiting before reviving - iteration #{len(summary)}: {iteration_summary}')
 
                 self.do_checks()
                 self.switch_task()
@@ -452,7 +479,7 @@ class NvmeofThrasher(Thrasher, Greenlet):
                 if thrash_delay > 0.0:
                     self.log(f'waiting for {thrash_delay} secs before thrashing')
                     time.sleep(thrash_delay) # blocking
-                    self.log('done waiting before thrashing')
+                    self.log('done waiting before thrashing - everything should be up now')
 
                 self.do_checks()
                 self.switch_task()

@@ -799,11 +799,11 @@ class OrchestratorCli(OrchestratorClientMixin, MgrModule,
         return HandleCommandResult(stdout=completion.result_str())
 
     @_cli_write_command('orch host maintenance exit')
-    def _host_maintenance_exit(self, hostname: str) -> HandleCommandResult:
+    def _host_maintenance_exit(self, hostname: str, force: bool = False, offline: bool = False) -> HandleCommandResult:
         """
         Return a host from maintenance, restarting all Ceph daemons (cephadm only)
         """
-        completion = self.exit_host_maintenance(hostname)
+        completion = self.exit_host_maintenance(hostname, force, offline)
         raise_if_exception(completion)
 
         return HandleCommandResult(stdout=completion.result_str())
@@ -817,6 +817,21 @@ class OrchestratorCli(OrchestratorClientMixin, MgrModule,
         if with_summary:
             return HandleCommandResult(stdout=completion.result_str())
         return HandleCommandResult(stdout=completion.result_str().split('.')[0])
+
+    @_cli_read_command('orch device replace')
+    def _replace_device(self,
+                        hostname: str,
+                        device: str,
+                        clear: bool = False,
+                        yes_i_really_mean_it: bool = False) -> HandleCommandResult:
+        """Perform all required operations in order to replace a device.
+        """
+        completion = self.replace_device(hostname=hostname,
+                                         device=device,
+                                         clear=clear,
+                                         yes_i_really_mean_it=yes_i_really_mean_it)
+        raise_if_exception(completion)
+        return HandleCommandResult(stdout=completion.result_str())
 
     @_cli_read_command('orch device ls')
     def _list_devices(self,
@@ -1415,8 +1430,9 @@ Usage:
                       zap: bool = False,
                       no_destroy: bool = False) -> HandleCommandResult:
         """Remove OSD daemons"""
-        completion = self.remove_osds(osd_id, replace=replace, force=force,
-                                      zap=zap, no_destroy=no_destroy)
+        completion = self.remove_osds(osd_id,
+                                      replace=replace,
+                                      force=force, zap=zap, no_destroy=no_destroy)
         raise_if_exception(completion)
         return HandleCommandResult(stdout=completion.result_str())
 
@@ -1455,6 +1471,14 @@ Usage:
             out = table.get_string()
 
         return HandleCommandResult(stdout=out)
+
+    @_cli_write_command('orch osd set-spec-affinity')
+    def _osd_set_spec(self, service_name: str, osd_id: List[str]) -> HandleCommandResult:
+        """Set service spec affinity for osd"""
+        completion = self.set_osd_spec(service_name, osd_id)
+        res = raise_if_exception(completion)
+
+        return HandleCommandResult(stdout=res)
 
     @_cli_write_command('orch daemon add')
     def daemon_add_misc(self,
@@ -1635,12 +1659,14 @@ Usage:
                    format: Format = Format.plain,
                    unmanaged: bool = False,
                    no_overwrite: bool = False,
+                   continue_on_error: bool = False,
                    inbuf: Optional[str] = None) -> HandleCommandResult:
         """Update the size or placement for a service or apply a large yaml spec"""
         usage = """Usage:
   ceph orch apply -i <yaml spec> [--dry-run]
   ceph orch apply <service_type> [--placement=<placement_string>] [--unmanaged]
         """
+        errs: List[str] = []
         if inbuf:
             if service_type or placement or unmanaged:
                 raise OrchestratorValidationError(usage)
@@ -1648,9 +1674,22 @@ Usage:
             specs: List[Union[ServiceSpec, HostSpec]] = []
             # YAML '---' document separator with no content generates
             # None entries in the output. Let's skip them silently.
-            content = [o for o in yaml_objs if o is not None]
+            try:
+                content = [o for o in yaml_objs if o is not None]
+            except yaml.scanner.ScannerError as e:
+                msg = f"Invalid YAML received : {str(e)}"
+                self.log.exception(msg)
+                return HandleCommandResult(-errno.EINVAL, stderr=msg)
+
             for s in content:
-                spec = json_to_generic_spec(s)
+                try:
+                    spec = json_to_generic_spec(s)
+                except Exception as e:
+                    if continue_on_error:
+                        errs.append(f'Failed to convert {s} from json object: {str(e)}')
+                        continue
+                    else:
+                        raise e
 
                 # validate the config (we need MgrModule for that)
                 if isinstance(spec, ServiceSpec) and spec.config:
@@ -1658,7 +1697,12 @@ Usage:
                         try:
                             self.get_foreign_ceph_option('mon', k)
                         except KeyError:
-                            raise SpecValidationError(f'Invalid config option {k} in spec')
+                            err = SpecValidationError(f'Invalid config option {k} in spec')
+                            if continue_on_error:
+                                errs.append(str(err))
+                                continue
+                            else:
+                                raise err
 
                 # There is a general "osd" service with no service id, but we use
                 # that to dump osds created individually with "ceph orch daemon add osd"
@@ -1673,7 +1717,12 @@ Usage:
                     and spec.service_type == 'osd'
                     and not spec.service_id
                 ):
-                    raise SpecValidationError('Please provide the service_id field in your OSD spec')
+                    err = SpecValidationError('Please provide the service_id field in your OSD spec')
+                    if continue_on_error:
+                        errs.append(str(err))
+                        continue
+                    else:
+                        raise err
 
                 if dry_run and not isinstance(spec, HostSpec):
                     spec.preview_only = dry_run
@@ -1683,15 +1732,30 @@ Usage:
                     continue
                 specs.append(spec)
         else:
+            # Note in this case there is only ever one spec
+            # being applied so there is no need to worry about
+            # handling of continue_on_error
             placementspec = PlacementSpec.from_string(placement)
             if not service_type:
                 raise OrchestratorValidationError(usage)
             specs = [ServiceSpec(service_type.value, placement=placementspec,
                                  unmanaged=unmanaged, preview_only=dry_run)]
-        return self._apply_misc(specs, dry_run, format, no_overwrite)
+        cmd_result = self._apply_misc(specs, dry_run, format, no_overwrite, continue_on_error)
+        if errs:
+            # HandleCommandResult is a named tuple, so use
+            # _replace to modify it.
+            cmd_result = cmd_result._replace(stdout=cmd_result.stdout + '\n' + '\n'.join(errs))
+        return cmd_result
 
-    def _apply_misc(self, specs: Sequence[GenericSpec], dry_run: bool, format: Format, no_overwrite: bool = False) -> HandleCommandResult:
-        completion = self.apply(specs, no_overwrite)
+    def _apply_misc(
+        self,
+        specs: Sequence[GenericSpec],
+        dry_run: bool,
+        format: Format,
+        no_overwrite: bool = False,
+        continue_on_error: bool = False
+    ) -> HandleCommandResult:
+        completion = self.apply(specs, no_overwrite, continue_on_error)
         raise_if_exception(completion)
         out = completion.result_str()
         if dry_run:
@@ -2141,7 +2205,13 @@ Usage:
             specs: List[TunedProfileSpec] = []
             # YAML '---' document separator with no content generates
             # None entries in the output. Let's skip them silently.
-            content = [o for o in yaml_objs if o is not None]
+            try:
+                content = [o for o in yaml_objs if o is not None]
+            except yaml.scanner.ScannerError as e:
+                msg = f"Invalid YAML received : {str(e)}"
+                self.log.exception(msg)
+                return HandleCommandResult(-errno.EINVAL, stderr=msg)
+
             for spec in content:
                 specs.append(TunedProfileSpec.from_json(spec))
         else:
@@ -2199,6 +2269,39 @@ Usage:
         completion = self.tuned_profile_rm_setting(profile_name, setting)
         res = raise_if_exception(completion)
         return HandleCommandResult(stdout=res)
+
+    @_cli_write_command("orch tuned-profile add-settings")
+    def _tuned_profile_add_settings(self, profile_name: str, settings: str) -> HandleCommandResult:
+        try:
+            setting_pairs = settings.split(",")
+            parsed_setting = {}
+            parsed_setting = {key.strip(): value.strip() for key, value in (s.split('=', 1) for s in setting_pairs)}
+            completion = self.tuned_profile_add_settings(profile_name, parsed_setting)
+            res = raise_if_exception(completion)
+            return HandleCommandResult(stdout=res)
+        except ValueError:
+            error_message = (
+                "Error: Invalid format detected. "
+                "The correct format is key=value pairs separated by commas,"
+                "e.g., 'vm.swappiness=11,vm.user_reserve_kbytes=116851'"
+            )
+            return HandleCommandResult(stderr=error_message)
+
+    @_cli_write_command("orch tuned-profile rm-settings")
+    def _tuned_profile_rm_settings(self, profile_name: str, settings: str) -> HandleCommandResult:
+        try:
+            setting = [s.strip() for s in settings.split(",") if s.strip()]
+            if not setting:
+                raise ValueError(
+                    "Error: Invalid format."
+                    "The correct format is key1,key2"
+                    "e.g., vm.swappiness,vm.user_reserve_kbytes"
+                )
+            completion = self.tuned_profile_rm_settings(profile_name, setting)
+            res = raise_if_exception(completion)
+            return HandleCommandResult(stdout=res)
+        except ValueError as e:
+            return HandleCommandResult(stderr=str(e))
 
     def self_test(self) -> None:
         old_orch = self._select_orchestrator()

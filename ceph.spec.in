@@ -137,6 +137,13 @@
 %endif
 %bcond_without cephadm_bundling
 %bcond_without cephadm_pip_deps
+%bcond_without dwz
+%if %{with dwz}
+%else
+# disable dwz for 50% speedup at the cost of ~33% space
+%global _find_debuginfo_dwz_opts %{nil}
+%endif
+%bcond_with sccache
 
 %{!?_udevrulesdir: %global _udevrulesdir /lib/udev/rules.d}
 %{!?tmpfiles_create: %global tmpfiles_create systemd-tmpfiles --create}
@@ -336,7 +343,6 @@ BuildRequires:  hostname
 BuildRequires:  jq
 BuildRequires:	libuuid-devel
 BuildRequires:	python%{python3_pkgversion}-bcrypt
-BuildRequires:	python%{python3_pkgversion}-pecan
 BuildRequires:	python%{python3_pkgversion}-requests
 BuildRequires:	python%{python3_pkgversion}-dateutil
 BuildRequires:	python%{python3_pkgversion}-coverage
@@ -469,7 +475,6 @@ BuildRequires:	xmlsec1-openssl-devel
 BuildRequires:	python%{python3_pkgversion}-cherrypy
 BuildRequires:	python%{python3_pkgversion}-routes
 BuildRequires:	python%{python3_pkgversion}-scipy
-BuildRequires:	python%{python3_pkgversion}-werkzeug
 BuildRequires:	python%{python3_pkgversion}-pyOpenSSL
 %endif
 BuildRequires:	jsonnet
@@ -480,7 +485,6 @@ BuildRequires:	libxmlsec1-nss1
 BuildRequires:	libxmlsec1-openssl1
 BuildRequires:	python%{python3_pkgversion}-CherryPy
 BuildRequires:	python%{python3_pkgversion}-Routes
-BuildRequires:	python%{python3_pkgversion}-Werkzeug
 BuildRequires:	python%{python3_pkgversion}-numpy-devel
 BuildRequires:	xmlsec1-devel
 BuildRequires:	xmlsec1-openssl-devel
@@ -705,7 +709,6 @@ Recommends:     python%{python3_pkgversion}-grpcio-tools
 %if 0%{?suse_version}
 Requires:       python%{python3_pkgversion}-CherryPy
 Requires:       python%{python3_pkgversion}-Routes
-Requires:       python%{python3_pkgversion}-Werkzeug
 Recommends:     python%{python3_pkgversion}-python3-saml
 %endif
 %description mgr-dashboard
@@ -738,7 +741,6 @@ Group:          System/Filesystems
 %endif
 Requires:       python%{python3_pkgversion}-bcrypt
 Requires:       python%{python3_pkgversion}-packaging
-Requires:       python%{python3_pkgversion}-pecan
 Requires:       python%{python3_pkgversion}-pyOpenSSL
 Requires:       python%{python3_pkgversion}-requests
 Requires:       python%{python3_pkgversion}-dateutil
@@ -746,12 +748,10 @@ Requires:       python%{python3_pkgversion}-setuptools
 %if 0%{?fedora} || 0%{?rhel} >= 8 || 0%{?openEuler}
 Requires:       python%{python3_pkgversion}-cherrypy
 Requires:       python%{python3_pkgversion}-pyyaml
-Requires:       python%{python3_pkgversion}-werkzeug
 %endif
 %if 0%{?suse_version}
 Requires:       python%{python3_pkgversion}-CherryPy
 Requires:       python%{python3_pkgversion}-PyYAML
-Requires:       python%{python3_pkgversion}-Werkzeug
 %endif
 # RHEL8 has python 3.6 and that lacks dataclasses in the stdlib, so pull in the
 # backport dataclasses module instead.
@@ -1186,11 +1186,33 @@ Obsoletes:	libcephfs1 < %{_epoch_prefix}%{version}-%{release}
 Obsoletes:	ceph-libs < %{_epoch_prefix}%{version}-%{release}
 Obsoletes:	ceph-libcephfs < %{_epoch_prefix}%{version}-%{release}
 %endif
+Recommends: libcephfs-proxy2 = %{_epoch_prefix}%{version}-%{release}
+Requires:   libcephfs-daemon
 %description -n libcephfs2
 Ceph is a distributed network file system designed to provide excellent
 performance, reliability, and scalability. This is a shared library
 allowing applications to access a Ceph distributed file system via a
 POSIX-like interface.
+
+%package -n libcephfs-proxy2
+Summary:    Proxy for libcephfs
+%if 0%{?suse_version}
+Group:      System/Libraries
+%endif
+Recommends:	libcephfs-daemon = %{_epoch_prefix}%{version}-%{release}
+%description -n libcephfs-proxy2
+This package contains the libcephfs_proxy.so library that allow applications
+to share cephfs mounts to reduce resource consumption.
+
+%package -n libcephfs-daemon
+Summary:    Deamon for the libcephfs proxy
+%if 0%{?suse_version}
+Group:      System/Filesystems
+%endif
+Requires:   libcephfs2 = %{_epoch_prefix}%{version}-%{release}
+%description -n libcephfs-daemon
+This package contains the libcephfsd daemon that allows applications to share
+cephfs mounts to reduce resource consumption.
 
 %package -n libcephfs-devel
 Summary:	Ceph distributed file system headers
@@ -1198,6 +1220,7 @@ Summary:	Ceph distributed file system headers
 Group:		Development/Libraries/C and C++
 %endif
 Requires:	libcephfs2 = %{_epoch_prefix}%{version}-%{release}
+Requires:	libcephfs-proxy2 = %{_epoch_prefix}%{version}-%{release}
 Requires:	librados-devel = %{_epoch_prefix}%{version}-%{release}
 Obsoletes:	ceph-devel < %{_epoch_prefix}%{version}-%{release}
 Provides:	libcephfs2-devel = %{_epoch_prefix}%{version}-%{release}
@@ -1524,6 +1547,9 @@ cmake .. \
     -DWITH_JAEGER:BOOL=OFF \
 %endif
     -DWITH_GRAFANA:BOOL=ON \
+%if %{with sccache}
+    -DWITH_SCCACHE=ON \
+%endif
 %if 0%{with cephadm_bundling}
 %if 0%{with cephadm_pip_deps}
     -DCEPHADM_BUNDLED_DEPENDENCIES=pip
@@ -1996,7 +2022,6 @@ fi
 %{_datadir}/ceph/mgr/progress
 %{_datadir}/ceph/mgr/prometheus
 %{_datadir}/ceph/mgr/rbd_support
-%{_datadir}/ceph/mgr/restful
 %{_datadir}/ceph/mgr/rgw
 %{_datadir}/ceph/mgr/selftest
 %{_datadir}/ceph/mgr/smb
@@ -2007,7 +2032,6 @@ fi
 %{_datadir}/ceph/mgr/telemetry
 %{_datadir}/ceph/mgr/test_orchestrator
 %{_datadir}/ceph/mgr/volumes
-%{_datadir}/ceph/mgr/zabbix
 
 %files mgr-rook
 %{_datadir}/ceph/mgr/rook
@@ -2523,6 +2547,16 @@ fi
 
 %postun -n libcephfs2 -p /sbin/ldconfig
 
+%files -n libcephfs-proxy2
+%{_libdir}/libcephfs_proxy.so.*
+
+%post -n libcephfs-proxy2 -p /sbin/ldconfig
+
+%postun -n libcephfs-proxy2 -p /sbin/ldconfig
+
+%files -n libcephfs-daemon
+%{_sbindir}/libcephfsd
+
 %files -n libcephfs-devel
 %dir %{_includedir}/cephfs
 %{_includedir}/cephfs/libcephfs.h
@@ -2531,6 +2565,8 @@ fi
 %dir %{_includedir}/cephfs/metrics
 %{_includedir}/cephfs/metrics/Types.h
 %{_libdir}/libcephfs.so
+%{_libdir}/libcephfs_proxy.so
+%{_libdir}/pkgconfig/cephfs.pc
 
 %files -n python%{python3_pkgversion}-cephfs
 %{python3_sitearch}/cephfs.cpython*.so

@@ -51,6 +51,7 @@
 #include "librados/ListObjectImpl.h"
 #include "compressor/Compressor.h"
 #include "osd_perf_counters.h"
+#include "pg_features.h"
 
 #define CEPH_OSD_ONDISK_MAGIC "ceph osd volume v026"
 
@@ -1106,6 +1107,21 @@ public:
     DEDUP_CDC_CHUNK_SIZE,
     PG_NUM_MAX, // max pg_num
     READ_RATIO, // read ration for the read balancer work [0-100]
+    /**
+     * PCT_UPDATE_DELAY
+     *
+     * Time to wait (seconds) after there are no in progress writes before
+     * updating pg_committed_to on replicas.  If the period between writes on
+     * a PG is usually longer than this value, most writes will trigger an
+     * extra message.
+     *
+     * The primary reason to enable this feature would be to limit the time
+     * between a write and when that write is available to be read on replicas.
+     *
+     * A value <= 0 will cause the update to be sent immediately upon write
+     * completion if there are no other in progress writes.
+     */
+    PCT_UPDATE_DELAY,
   };
 
   enum type_t {
@@ -1135,9 +1151,8 @@ public:
   bool is_set(key_t key) const;
 
   template<typename T>
-  void set(key_t key, const T &val) {
-    value_t value = val;
-    opts[key] = value;
+  void set(key_t key, T &&val) {
+    opts.insert_or_assign(key, std::forward<T>(val));
   }
 
   template<typename T>
@@ -2207,6 +2222,13 @@ struct pg_scrubbing_status_t {
   bool m_is_active{false};
   scrub_level_t m_is_deep{scrub_level_t::shallow};
   bool m_is_periodic{true};
+  // the following are only relevant when we are reserving replicas:
+  uint16_t m_osd_to_respond{0};
+  /// this is the n'th replica we are reserving (out of m_num_to_reserve)
+  uint8_t m_ordinal_of_requested_replica{0};
+  /// the number of replicas we are reserving for scrubbing. 0 means we are not
+  /// in the process of reserving replicas.
+  uint8_t m_num_to_reserve{0};
 };
 
 bool operator==(const pg_scrubbing_status_t& l, const pg_scrubbing_status_t& r);
@@ -3790,6 +3812,7 @@ struct pg_notify_t {
   shard_id_t to;
   shard_id_t from;
   PastIntervals past_intervals;
+  pg_feature_vec_t pg_features = PG_FEATURE_NONE;
   pg_notify_t() :
     query_epoch(0), epoch_sent(0), to(shard_id_t::NO_SHARD),
     from(shard_id_t::NO_SHARD) {}
@@ -3799,11 +3822,12 @@ struct pg_notify_t {
     epoch_t query_epoch,
     epoch_t epoch_sent,
     const pg_info_t &info,
-    const PastIntervals& pi)
+    const PastIntervals& pi,
+    pg_feature_vec_t pg_features)
     : query_epoch(query_epoch),
       epoch_sent(epoch_sent),
       info(info), to(to), from(from),
-      past_intervals(pi) {
+      past_intervals(pi), pg_features(pg_features) {
     ceph_assert(from == info.pgid.shard);
   }
   void encode(ceph::buffer::list &bl) const;

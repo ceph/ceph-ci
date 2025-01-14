@@ -93,7 +93,12 @@ private:
     bool is_prepared {false};
     Message* m {nullptr};
   };
-  std::map<int, std::list<out_queue_entry_t>> out_queue;
+
+  /**
+   * A queue for each priority value, highest priority first.
+   */
+  std::map<int, std::list<out_queue_entry_t>, std::greater<int>> out_queue;
+
   std::list<Message *> sent;
   std::atomic<uint64_t> out_seq{0};
   std::atomic<uint64_t> in_seq{0};
@@ -130,10 +135,10 @@ private:
   Ct<ProtocolV2> *read(CONTINUATION_RXBPTR_TYPE<ProtocolV2> &next,
                        rx_buffer_t&& buffer);
   template <class F>
-  Ct<ProtocolV2> *write(const std::string &desc,
+  Ct<ProtocolV2> *write(std::string_view desc,
                         CONTINUATION_TYPE<ProtocolV2> &next,
 			F &frame);
-  Ct<ProtocolV2> *write(const std::string &desc,
+  Ct<ProtocolV2> *write(std::string_view desc,
                         CONTINUATION_TYPE<ProtocolV2> &next,
                         ceph::bufferlist &buffer);
 

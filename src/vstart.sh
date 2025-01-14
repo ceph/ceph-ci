@@ -159,6 +159,7 @@ smallmds=0
 short=0
 crimson=0
 ec=0
+cephexporter=0
 cephadm=0
 parallel=true
 restart=1
@@ -192,7 +193,6 @@ if [[ "$(get_cmake_variable WITH_MGR_DASHBOARD_FRONTEND)" != "ON" ]] ||
     debug echo "ceph-mgr dashboard not built - disabling."
     with_mgr_dashboard=false
 fi
-with_mgr_restful=false
 
 kstore_path=
 declare -a block_devs
@@ -205,7 +205,6 @@ VSTART_SEC="client.vstart.sh"
 
 MON_ADDR=""
 DASH_URLS=""
-RESTFUL_URLS=""
 
 conf_fn="$CEPH_CONF_PATH/ceph.conf"
 keyring_fn="$CEPH_CONF_PATH/keyring"
@@ -235,6 +234,7 @@ options:
 	-G disable Kerberos/GSSApi authentication
 	--hitset <pool> <hit_set_type>: enable hitset tracking
 	-e : create an erasure pool
+	--cephexporter: start the ceph-exporter daemon
 	-o config add extra config parameters to all sections
 	--rgw_port specify ceph rgw http listen port
 	--rgw_frontend specify the rgw frontend configuration
@@ -295,7 +295,7 @@ parse_block_devs() {
     IFS=',' read -r -a block_devs <<< "$devs"
     for dev in "${block_devs[@]}"; do
         if [ ! -b $dev ] || [ ! -w $dev ]; then
-            echo "All $opt_name must refer to writable block devices"
+            echo "All $opt_name must refer to writable block devices, check device: $dev"
             exit 1
         fi
     done
@@ -310,7 +310,7 @@ parse_bluestore_db_devs() {
     IFS=',' read -r -a bluestore_db_devs <<< "$devs"
     for dev in "${bluestore_db_devs[@]}"; do
         if [ ! -b $dev ] || [ ! -w $dev ]; then
-            echo "All $opt_name must refer to writable block devices"
+            echo "All $opt_name must refer to writable block devices, check device: $dev"
             exit 1
         fi
     done
@@ -325,7 +325,7 @@ parse_bluestore_wal_devs() {
     IFS=',' read -r -a bluestore_wal_devs <<< "$devs"
     for dev in "${bluestore_wal_devs[@]}"; do
         if [ ! -b $dev ] || [ ! -w $dev ]; then
-            echo "All $opt_name must refer to writable block devices"
+            echo "All $opt_name must refer to writable block devices, check device: $dev"
             exit 1
         fi
     done
@@ -340,7 +340,7 @@ parse_secondary_devs() {
     IFS=',' read -r -a secondary_block_devs <<< "$devs"
     for dev in "${secondary_block_devs[@]}"; do
         if [ ! -b $dev ] || [ ! -w $dev ]; then
-            echo "All $opt_name must refer to writable block devices"
+            echo "All $opt_name must refer to writable block devices, check device: $dev"
             exit 1
         fi
     done
@@ -373,6 +373,9 @@ case $1 in
         ;;
     -e)
         ec=1
+        ;;
+    --cephexporter)
+        cephexporter=1
         ;;
     --new | -n)
         new=1
@@ -557,9 +560,6 @@ case $1 in
         ;;
     --without-dashboard)
         with_mgr_dashboard=false
-        ;;
-    --with-restful)
-        with_mgr_restful=true
         ;;
     --seastore-device-size)
         seastore_size="$2"
@@ -782,9 +782,6 @@ prepare_conf() {
     if $with_mgr_dashboard; then
         mgr_modules+=" dashboard"
     fi
-    if $with_mgr_restful; then
-        mgr_modules+=" restful"
-    fi
 
     local msgr_conf=''
     if [ $msgr -eq 21 ]; then
@@ -971,7 +968,17 @@ $BLUESTORE_OPTS
 
         ; kstore
         kstore fsck on mount = true
+EOF
+    if [ "$crimson" -eq 1 ]; then
+        wconf <<EOF
+        crimson osd objectstore = $objectstore
+EOF
+    else
+        wconf <<EOF
         osd objectstore = $objectstore
+EOF
+    fi
+    wconf <<EOF
 $SEASTORE_OPTS
 $COSDSHORT
         $(format_conf "${extra_conf}")
@@ -1010,7 +1017,7 @@ EOF
         ; see src/vstart.sh for more info
         public bind addr =
 EOF
-    fi   
+    fi
 }
 
 write_logrotate_conf() {
@@ -1138,6 +1145,17 @@ EOF
     fi
 }
 
+start_cephexporter() {
+    debug echo "Starting Ceph exporter daemon..."
+
+    # Define socket directory for the exporter
+    # Start the exporter daemon 
+    prunb ceph-exporter \
+        -c "$conf_fn" \
+        --sock-dir "$CEPH_ASOK_DIR" \
+        --addrs "$IP"
+}
+
 start_osd() {
     if [ $inc_osd_num -gt 0 ]; then
         old_maxosd=$($CEPH_BIN/ceph osd getmaxosd | sed -e 's/max_osd = //' -e 's/ in epoch.*//')
@@ -1254,22 +1272,6 @@ EOF
     fi
 }
 
-create_mgr_restful_secret() {
-    while ! ceph_adm -h | grep -c -q ^restful ; do
-        debug echo 'waiting for mgr restful module to start'
-        sleep 1
-    done
-    local secret_file
-    if ceph_adm restful create-self-signed-cert > /dev/null; then
-        secret_file=`mktemp`
-        ceph_adm restful create-key admin -o $secret_file
-        RESTFUL_SECRET=`cat $secret_file`
-        rm $secret_file
-    else
-        debug echo MGR Restful is not working, perhaps the package is not installed?
-    fi
-}
-
 start_mgr() {
     local mgr=0
     local ssl=${DASHBOARD_SSL:-1}
@@ -1309,15 +1311,7 @@ EOF
 	    MGR_PORT=$(($MGR_PORT + 1000))
 	    ceph_adm config set mgr mgr/prometheus/$name/server_port $PROMETHEUS_PORT --force
 	    PROMETHEUS_PORT=$(($PROMETHEUS_PORT + 1000))
-
-	    ceph_adm config set mgr mgr/restful/$name/server_port $MGR_PORT --force
-            if [ $mgr -eq 1 ]; then
-                RESTFUL_URLS="https://$IP:$MGR_PORT"
-            else
-                RESTFUL_URLS+=", https://$IP:$MGR_PORT"
-            fi
-	    MGR_PORT=$(($MGR_PORT + 1000))
-        fi
+       fi
 
         debug echo "Starting mgr.${name}"
         run 'mgr' $name $CEPH_BIN/ceph-mgr -i $name $ARGS
@@ -1327,7 +1321,7 @@ EOF
         debug echo 'waiting for mgr to become available'
         sleep 1
     done
-    
+
     if [ "$new" -eq 1 ]; then
         # setting login credentials for dashboard
         if $with_mgr_dashboard; then
@@ -1352,9 +1346,6 @@ EOF
                 echo "Adding nvmeof-gateway ${NVMEOF_GW} to dashboard"
                 ceph_adm dashboard nvmeof-gateway-add -i <(echo "${NVMEOF_GW}") "${NVMEOF_GW/:/_}"
             fi
-        fi
-        if $with_mgr_restful; then
-            create_mgr_restful_secret
         fi
     fi
 
@@ -1711,28 +1702,30 @@ if [ "$ceph_osd" == "crimson-osd" ]; then
     if [ "$trace" -ne 0 ]; then
         extra_seastar_args=" --trace"
     fi
-    if [ "$(expr $(nproc) - 1)" -gt "$(($CEPH_NUM_OSD * crimson_smp))" ]; then
-        if [ $crimson_alien_num_cores -gt 0 ]; then
-            alien_bottom_cpu=$(($CEPH_NUM_OSD * crimson_smp))
-            alien_top_cpu=$(( alien_bottom_cpu + crimson_alien_num_cores - 1 ))
-            # Ensure top value within range:
-            if [ "$(($alien_top_cpu))" -gt "$(expr $(nproc) - 1)" ]; then
-                alien_top_cpu=$(expr $(nproc) - 1)
+    if [ "$objectstore" == "bluestore" ]; then
+        if [ "$(expr $(nproc) - 1)" -gt "$(($CEPH_NUM_OSD * crimson_smp))" ]; then
+            if [ $crimson_alien_num_cores -gt 0 ]; then
+                alien_bottom_cpu=$(($CEPH_NUM_OSD * crimson_smp))
+                alien_top_cpu=$(( alien_bottom_cpu + crimson_alien_num_cores - 1 ))
+                # Ensure top value within range:
+                if [ "$(($alien_top_cpu))" -gt "$(expr $(nproc) - 1)" ]; then
+                    alien_top_cpu=$(expr $(nproc) - 1)
+                fi
+                echo "crimson_alien_thread_cpu_cores: $alien_bottom_cpu-$alien_top_cpu"
+                # This is a (logical) processor id range, it could be refined to encompass only physical processor ids
+                # (equivalently, ignore hyperthreading sibling processor ids)
+                $CEPH_BIN/ceph -c $conf_fn config set osd crimson_alien_thread_cpu_cores "$alien_bottom_cpu-$alien_top_cpu"
+            else
+                echo "crimson_alien_thread_cpu_cores:" $(($CEPH_NUM_OSD * crimson_smp))-"$(expr $(nproc) - 1)"
+                $CEPH_BIN/ceph -c $conf_fn config set osd crimson_alien_thread_cpu_cores $(($CEPH_NUM_OSD * crimson_smp))-"$(expr $(nproc) - 1)"
             fi
-            echo "crimson_alien_thread_cpu_cores: $alien_bottom_cpu-$alien_top_cpu"
-            # This is a (logical) processor id range, it could be refined to encompass only physical processor ids
-            # (equivalently, ignore hyperthreading sibling processor ids)
-            $CEPH_BIN/ceph -c $conf_fn config set osd crimson_alien_thread_cpu_cores "$alien_bottom_cpu-$alien_top_cpu"
+            if [ $crimson_alien_num_threads -gt 0 ]; then
+                echo "$CEPH_BIN/ceph -c $conf_fn config set osd crimson_alien_op_num_threads $crimson_alien_num_threads"
+                $CEPH_BIN/ceph -c $conf_fn config set osd crimson_alien_op_num_threads "$crimson_alien_num_threads"
+            fi
         else
-            echo "crimson_alien_thread_cpu_cores:" $(($CEPH_NUM_OSD * crimson_smp))-"$(expr $(nproc) - 1)"
-            $CEPH_BIN/ceph -c $conf_fn config set osd crimson_alien_thread_cpu_cores $(($CEPH_NUM_OSD * crimson_smp))-"$(expr $(nproc) - 1)"
+          echo "No alien thread cpu core isolation"
         fi
-        if [ $crimson_alien_num_threads -gt 0 ]; then
-            echo "$CEPH_BIN/ceph -c $conf_fn config set osd crimson_alien_op_num_threads $crimson_alien_num_threads"
-            $CEPH_BIN/ceph -c $conf_fn config set osd crimson_alien_op_num_threads "$crimson_alien_num_threads"
-        fi
-    else
-      echo "No alien thread cpu core isolation"
     fi
 fi
 
@@ -1759,6 +1752,10 @@ if [ $CEPH_NUM_MDS -gt 0 ]; then
     start_mds
     # key with access to all FS
     ceph_adm fs authorize \* "client.fs" / rwp >> "$keyring_fn"
+fi
+
+if [ "$cephexporter" -eq 1 ]; then
+    start_cephexporter
 fi
 
 # Don't set max_mds until all the daemons are started, otherwise
@@ -2044,12 +2041,6 @@ if [ "$new" -eq 1 ]; then
         cat <<EOF
 dashboard urls: $DASH_URLS
   w/ user/pass: admin / admin
-EOF
-    fi
-    if $with_mgr_restful; then
-        cat <<EOF
-restful urls: $RESTFUL_URLS
-  w/ user/pass: admin / $RESTFUL_SECRET
 EOF
     fi
 fi

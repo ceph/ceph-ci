@@ -37,6 +37,7 @@
 #include "osd/PG.h"
 #include "osd/scrubber/scrub_machine.h"
 #include "osd/scrubber/pg_scrubber.h"
+#include "osd/ECCommon.h"
 
 #include "include/types.h"
 #include "include/compat.h"
@@ -504,6 +505,8 @@ void OSDService::shutdown_reserver()
 
 void OSDService::shutdown()
 {
+  pg_timer.stop();
+
   mono_timer.suspend();
 
   {
@@ -1064,7 +1067,12 @@ void OSDService::inc_osd_stat_repaired()
 {
   std::lock_guard l(stat_lock);
   osd_stat.num_shards_repaired++;
-  return;
+}
+
+void OSDService::set_osd_stat_repaired(int64_t count)
+{
+  std::lock_guard l(stat_lock);
+  osd_stat.num_shards_repaired = count;
 }
 
 float OSDService::compute_adjusted_ratio(osd_stat_t new_stat, float *pratio,
@@ -3219,6 +3227,11 @@ will start to track new ops received afterwards.";
     scrub_purged_snaps();
   }
 
+  else if (prefix == "clear_shards_repaired") {
+    int64_t count = cmd_getval_or<int64_t>(cmdmap, "count", 0);
+    service.set_osd_stat_repaired(count);
+  }
+
   else if (prefix == "reset_purged_snaps_last") {
     lock_guard l(osd_lock);
     superblock.purged_snaps_last = 0;
@@ -4336,6 +4349,46 @@ void OSD::final_init()
     "inject metadata error to an object");
   ceph_assert(r == 0);
   r = admin_socket->register_command(
+    "injectecreaderr " \
+    "name=pool,type=CephString " \
+    "name=objname,type=CephObjectname " \
+    "name=shardid,type=CephInt,req=true,range=0|255 " \
+    "name=type,type=CephInt,req=false " \
+    "name=when,type=CephInt,req=false " \
+    "name=duration,type=CephInt,req=false",
+    test_ops_hook,
+    "inject error for read of object in an EC pool");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command(
+    "injectecclearreaderr " \
+    "name=pool,type=CephString " \
+    "name=objname,type=CephObjectname " \
+    "name=shardid,type=CephInt,req=true,range=0|255 " \
+    "name=type,type=CephInt,req=false",
+    test_ops_hook,
+    "clear read error injects for object in an EC pool");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command(
+    "injectecwriteerr " \
+    "name=pool,type=CephString " \
+    "name=objname,type=CephObjectname " \
+    "name=shardid,type=CephInt,req=true,range=0|255 " \
+    "name=type,type=CephInt,req=false " \
+    "name=when,type=CephInt,req=false " \
+    "name=duration,type=CephInt,req=false",
+    test_ops_hook,
+    "inject error for write of object in an EC pool");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command(
+    "injectecclearwriteerr " \
+    "name=pool,type=CephString " \
+    "name=objname,type=CephObjectname " \
+    "name=shardid,type=CephInt,req=true,range=0|255 " \
+    "name=type,type=CephInt,req=false",
+    test_ops_hook,
+    "clear write error inject for object in an EC pool");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command(
     "set_recovery_delay " \
     "name=utime,type=CephInt,req=false",
     test_ops_hook,
@@ -4439,6 +4492,12 @@ void OSD::final_init()
     "name=value,type=CephString,req=false",
     asok_hook,
     "debug the scrubber");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command(
+    "clear_shards_repaired "
+    "name=count,type=CephInt,req=false,range=0",
+    asok_hook,
+    "clear num_shards_repaired to clear health warning");
   ceph_assert(r == 0);
 
   // -- pg commands --
@@ -6469,8 +6528,10 @@ void TestOpsSocketHook::test_ops(OSDService *service, ObjectStore *store,
   //directly request the osd make a change.
   if (command == "setomapval" || command == "rmomapkey" ||
       command == "setomapheader" || command == "getomap" ||
-      command == "truncobj" || command == "injectmdataerr" ||
-      command == "injectdataerr"
+      command == "truncobj" ||
+      command == "injectmdataerr" || command == "injectdataerr" ||
+      command == "injectecreaderr" || command == "injectecclearreaderr" ||
+      command == "injectecwriteerr" || command == "injectecclearwriteerr"
     ) {
     pg_t rawpg;
     int64_t pool;
@@ -6509,8 +6570,21 @@ void TestOpsSocketHook::test_ops(OSDService *service, ObjectStore *store,
     ghobject_t gobj(obj, ghobject_t::NO_GEN, shard_id_t(uint8_t(shardid)));
     spg_t pgid(curmap->raw_pg_to_pg(rawpg), shard_id_t(shardid));
     if (curmap->pg_is_ec(rawpg)) {
-        if ((command != "injectdataerr") && (command != "injectmdataerr")) {
-            ss << "Must not call on ec pool, except injectdataerr or injectmdataerr";
+        if ((command != "injectdataerr") &&
+	    (command != "injectmdataerr") &&
+	    (command != "injectecreaderr") &&
+	    (command != "injectecclearreaderr") &&
+	    (command != "injectecwriteerr") &&
+	    (command != "injectecclearwriteerr")) {
+            ss << "Must not call on ec pool";
+            return;
+        }
+    } else {
+        if ((command == "injectecreaderr") ||
+	    (command == "injecteclearreaderr") ||
+	    (command == "injectecwriteerr") ||
+	    (command == "injecteclearwriteerr")) {
+            ss << "Only supported on ec pool";
             return;
         }
     }
@@ -6589,6 +6663,38 @@ void TestOpsSocketHook::test_ops(OSDService *service, ObjectStore *store,
     } else if (command == "injectmdataerr") {
       store->inject_mdata_error(gobj);
       ss << "ok";
+    } else if (command == "injectecreaderr") {
+      if (service->cct->_conf->bluestore_debug_inject_read_err) {
+	int64_t type = cmd_getval_or<int64_t>(cmdmap, "type", 0);
+        int64_t when = cmd_getval_or<int64_t>(cmdmap, "when", 0);
+        int64_t duration = cmd_getval_or<int64_t>(cmdmap, "duration", 1);
+	ss << ec_inject_read_error(gobj, type, when, duration);
+      } else {
+	ss << "bluestore_debug_inject_read_err not enabled";
+      }
+    } else if (command == "injectecclearreaderr") {
+      if (service->cct->_conf->bluestore_debug_inject_read_err) {
+	int64_t type = cmd_getval_or<int64_t>(cmdmap, "type", 0);
+	ss << ec_inject_clear_read_error(gobj, type);
+      } else {
+	ss << "bluestore_debug_inject_read_err not enabled";
+      }
+    } else if (command == "injectecwriteerr") {
+      if (service->cct->_conf->bluestore_debug_inject_read_err) {
+	int64_t type = cmd_getval_or<int64_t>(cmdmap, "type", 0);
+	int64_t when = cmd_getval_or<int64_t>(cmdmap, "when", 0);
+        int64_t duration = cmd_getval_or<int64_t>(cmdmap, "duration", 1);
+	ss << ec_inject_write_error(gobj, type, when, duration);
+      } else {
+	ss << "bluestore_debug_inject_read_err not enabled";
+      }
+    } else if (command == "injectecclearwriteerr") {
+      if (service->cct->_conf->bluestore_debug_inject_read_err) {
+	int64_t type = cmd_getval_or<int64_t>(cmdmap, "type", 0);
+	ss << ec_inject_clear_write_error(gobj, type);
+      } else {
+	ss << "bluestore_debug_inject_read_err not enabled";
+      }
     }
     return;
   }
@@ -9485,7 +9591,8 @@ void OSD::handle_pg_query_nopg(const MQuery& q)
 			 q.query.epoch_sent,
 			 osdmap->get_epoch(),
 			 empty,
-			 PastIntervals()};
+			 PastIntervals(),
+			 PG_FEATURE_CLASSIC_ALL};
       m = new MOSDPGNotify2(spg_t{pgid.pgid, q.query.from},
 			    std::move(notify));
     }
@@ -9939,7 +10046,8 @@ const char** OSD::get_tracked_conf_keys() const
     "osd_scrub_max_interval",
     "osd_op_thread_timeout",
     "osd_op_thread_suicide_timeout",
-    NULL
+    "osd_max_scrubs",
+    nullptr
   };
   return KEYS;
 }
@@ -9983,6 +10091,10 @@ void OSD::handle_conf_change(const ConfigProxy& conf,
     service.snap_reserver.set_max(cct->_conf->osd_max_trimming_pgs);
   }
   if (changed.count("osd_max_scrubs")) {
+    dout(0) << fmt::format(
+                   "{}: scrub concurrency max changed to {}",
+                   __func__, cct->_conf->osd_max_scrubs)
+            << dendl;
     service.scrub_reserver.set_max(cct->_conf->osd_max_scrubs);
   }
   if (changed.count("osd_op_complaint_time") ||
@@ -10154,22 +10266,28 @@ void OSD::maybe_override_max_osd_capacity_for_qos()
             << dendl;
 
     // Get the threshold IOPS set for the underlying hdd/ssd.
-    double threshold_iops = 0.0;
+    double hi_threshold_iops = 0.0;
+    double lo_threshold_iops = 0.0;
     if (store_is_rotational) {
-      threshold_iops = cct->_conf.get_val<double>(
+      hi_threshold_iops = cct->_conf.get_val<double>(
         "osd_mclock_iops_capacity_threshold_hdd");
+      lo_threshold_iops = cct->_conf.get_val<double>(
+        "osd_mclock_iops_capacity_low_threshold_hdd");
     } else {
-      threshold_iops = cct->_conf.get_val<double>(
+      hi_threshold_iops = cct->_conf.get_val<double>(
         "osd_mclock_iops_capacity_threshold_ssd");
+      lo_threshold_iops = cct->_conf.get_val<double>(
+        "osd_mclock_iops_capacity_low_threshold_ssd");
     }
 
     // Persist the iops value to the MON store or throw cluster warning
-    // if the measured iops exceeds the set threshold. If the iops exceed
-    // the threshold, the default value is used.
-    if (iops > threshold_iops) {
+    // if the measured iops is not in the threshold range. If the iops is
+    // not within the threshold range, the current/default value is retained.
+    if (iops < lo_threshold_iops || iops > hi_threshold_iops) {
       clog->warn() << "OSD bench result of " << std::to_string(iops)
-                   << " IOPS exceeded the threshold limit of "
-                   << std::to_string(threshold_iops) << " IOPS for osd."
+                   << " IOPS is not within the threshold limit range of "
+                   << std::to_string(lo_threshold_iops) << " IOPS and "
+                   << std::to_string(hi_threshold_iops) << " IOPS for osd."
                    << std::to_string(whoami) << ". IOPS capacity is unchanged"
                    << " at " << std::to_string(cur_iops) << " IOPS. The"
                    << " recommendation is to establish the osd's IOPS capacity"

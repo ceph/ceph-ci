@@ -13,7 +13,7 @@ Synopsis
 |               [--log-dir LOG_DIR] [--logrotate-dir LOGROTATE_DIR]
 |               [--unit-dir UNIT_DIR] [--verbose] [--timeout TIMEOUT]
 |               [--retry RETRY] [--no-container-init]
-|               {version,pull,inspect-image,ls,list-networks,adopt,rm-daemon,rm-cluster,run,shell,enter,ceph-volume,unit,logs,bootstrap,deploy,check-host,prepare-host,add-repo,rm-repo,install}
+|               {version,pull,inspect-image,ls,list-networks,adopt,rm-daemon,rm-cluster,run,shell,enter,ceph-volume,unit,logs,bootstrap,deploy,check-host,prepare-host,add-repo,rm-repo,install,list-images,update-osd-service}
 |               ...
 
 
@@ -104,6 +104,9 @@ Synopsis
 |                                [--registry-password REGISTRY_PASSWORD]
 |                                [--registry-json REGISTRY_JSON] [--fsid FSID]
 
+| **cephadm** **list-images**
+
+| **cephadm** **update-osd-service** [-h] [--fsid FSID] --osd-ids OSD_IDS --service-name SERVICE_NAME
 
 
 Description
@@ -525,6 +528,24 @@ Arguments:
 
 * [--fsid FSID]           cluster FSID
 * [--name NAME, -n NAME]  daemon name (type.id)
+
+
+list-images
+-----------
+
+List the default container images for all services in ini format. The output can be modified with custom images and passed to --config flag during bootstrap.
+
+
+update-osd-service
+------------------
+
+Update the OSD service for specific OSDs
+
+Arguments:
+
+* [--fsid FSID]                 cluster FSID
+* --osd-ids OSD_IDS             Comma-separated OSD IDs
+* --service-name SERVICE_NAME   OSD service name
 
 
 Availability

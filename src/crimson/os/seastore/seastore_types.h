@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <deque>
 #include <limits>
 #include <numeric>
 #include <optional>
@@ -14,12 +15,46 @@
 
 #include "include/byteorder.h"
 #include "include/denc.h"
+#include "include/encoding.h"
 #include "include/buffer.h"
 #include "include/intarith.h"
 #include "include/interval_set.h"
 #include "include/uuid.h"
+#include "include/rados.h"
 
 namespace crimson::os::seastore {
+
+class cache_hint_t {
+  enum hint_t {
+    TOUCH,
+    NOCACHE
+  };
+public:
+  static constexpr cache_hint_t get_touch() {
+    return hint_t::TOUCH;
+  }
+  static constexpr cache_hint_t get_nocache() {
+    return hint_t::NOCACHE;
+  }
+  cache_hint_t(uint32_t flags) {
+    if (unlikely(flags & CEPH_OSD_OP_FLAG_FADVISE_DONTNEED) ||
+	unlikely(flags & CEPH_OSD_OP_FLAG_FADVISE_NOCACHE)) {
+      hint = NOCACHE;
+    }
+  }
+  bool operator==(const cache_hint_t &other) const {
+    return hint == other.hint;
+  }
+  bool operator!=(const cache_hint_t &other) const {
+    return hint != other.hint;
+  }
+private:
+  constexpr cache_hint_t(hint_t hint) : hint(hint) {}
+  hint_t hint = hint_t::TOUCH;
+};
+
+inline constexpr cache_hint_t CACHE_HINT_TOUCH = cache_hint_t::get_touch();
+inline constexpr cache_hint_t CACHE_HINT_NOCACHE = cache_hint_t::get_nocache();
 
 /* using a special xattr key "omap_header" to store omap header */
   const std::string OMAP_HEADER_XATTR_KEY = "omap_header";
@@ -1226,7 +1261,6 @@ constexpr laddr_t L_ADDR_MAX = laddr_t::from_raw_uint(laddr_t::RAW_VALUE_MAX);
 constexpr laddr_t L_ADDR_MIN = laddr_t::from_raw_uint(0);
 constexpr laddr_t L_ADDR_NULL = L_ADDR_MAX;
 constexpr laddr_t L_ADDR_ROOT = laddr_t::from_raw_uint(laddr_t::RAW_VALUE_MAX - 1);
-constexpr laddr_t L_ADDR_LBAT = laddr_t::from_raw_uint(laddr_t::RAW_VALUE_MAX - 2);
 
 struct __attribute__((packed)) laddr_le_t {
   ceph_le64 laddr;
@@ -1378,23 +1412,24 @@ enum class extent_types_t : uint8_t {
   LADDR_INTERNAL = 1,
   LADDR_LEAF = 2,
   DINK_LADDR_LEAF = 3, // should only be used for unitttests
-  OMAP_INNER = 4,
-  OMAP_LEAF = 5,
-  ONODE_BLOCK_STAGED = 6,
-  COLL_BLOCK = 7,
-  OBJECT_DATA_BLOCK = 8,
-  RETIRED_PLACEHOLDER = 9,
+  ROOT_META = 4,
+  OMAP_INNER = 5,
+  OMAP_LEAF = 6,
+  ONODE_BLOCK_STAGED = 7,
+  COLL_BLOCK = 8,
+  OBJECT_DATA_BLOCK = 9,
+  RETIRED_PLACEHOLDER = 10,
   // the following two types are not extent types,
   // they are just used to indicates paddr allocation deltas
-  ALLOC_INFO = 10,
-  JOURNAL_TAIL = 11,
+  ALLOC_INFO = 11,
+  JOURNAL_TAIL = 12,
   // Test Block Types
-  TEST_BLOCK = 12,
-  TEST_BLOCK_PHYSICAL = 13,
-  BACKREF_INTERNAL = 14,
-  BACKREF_LEAF = 15,
+  TEST_BLOCK = 13,
+  TEST_BLOCK_PHYSICAL = 14,
+  BACKREF_INTERNAL = 15,
+  BACKREF_LEAF = 16,
   // None and the number of valid extent_types_t
-  NONE = 16,
+  NONE = 17,
 };
 using extent_types_le_t = uint8_t;
 constexpr auto EXTENT_TYPES_MAX = static_cast<uint8_t>(extent_types_t::NONE);
@@ -1409,12 +1444,12 @@ constexpr bool is_data_type(extent_types_t type) {
 }
 
 constexpr bool is_logical_metadata_type(extent_types_t type) {
-  return type >= extent_types_t::OMAP_INNER &&
+  return type >= extent_types_t::ROOT_META &&
          type <= extent_types_t::COLL_BLOCK;
 }
 
 constexpr bool is_logical_type(extent_types_t type) {
-  if ((type >= extent_types_t::OMAP_INNER &&
+  if ((type >= extent_types_t::ROOT_META &&
        type <= extent_types_t::OBJECT_DATA_BLOCK) ||
       type == extent_types_t::TEST_BLOCK) {
     assert(is_logical_metadata_type(type) ||
@@ -1462,6 +1497,23 @@ constexpr bool is_physical_type(extent_types_t type) {
     assert(!is_root_type(type) &&
            !is_lba_backref_node(type) &&
            type != extent_types_t::TEST_BLOCK_PHYSICAL);
+    return false;
+  }
+}
+
+constexpr bool is_backref_mapped_type(extent_types_t type) {
+  if ((type >= extent_types_t::LADDR_INTERNAL &&
+       type <= extent_types_t::OBJECT_DATA_BLOCK) ||
+      type == extent_types_t::TEST_BLOCK ||
+      type == extent_types_t::TEST_BLOCK_PHYSICAL) {
+    assert(is_logical_type(type) ||
+	   is_lba_node(type) ||
+	   type == extent_types_t::TEST_BLOCK_PHYSICAL);
+    return true;
+  } else {
+    assert(!is_logical_type(type) &&
+	   !is_lba_node(type) &&
+	   type != extent_types_t::TEST_BLOCK_PHYSICAL);
     return false;
   }
 }
@@ -1617,8 +1669,8 @@ struct delta_info_t {
   extent_types_t type = extent_types_t::NONE;  ///< delta type
   paddr_t paddr;                               ///< physical address
   laddr_t laddr = L_ADDR_NULL;                 ///< logical address
-  uint32_t prev_crc = 0;
-  uint32_t final_crc = 0;
+  checksum_t prev_crc = 0;
+  checksum_t final_crc = 0;
   extent_len_t length = 0;                     ///< extent length
   extent_version_t pversion;                   ///< prior version
   segment_seq_t ext_seq;		       ///< seq of the extent's segment
@@ -1926,54 +1978,29 @@ using backref_root_t = phy_tree_root_t;
  * TODO: generalize this to permit more than one lba_manager implementation
  */
 struct __attribute__((packed)) root_t {
-  using meta_t = std::map<std::string, std::string>;
-
-  static constexpr int MAX_META_LENGTH = 1024;
-
   backref_root_t backref_root;
   lba_root_t lba_root;
   laddr_le_t onode_root;
   coll_root_le_t collection_root;
+  laddr_le_t meta;
 
-  char meta[MAX_META_LENGTH];
-
-  root_t() {
-    set_meta(meta_t{});
-  }
+  root_t() = default;
 
   void adjust_addrs_from_base(paddr_t base) {
     lba_root.adjust_addrs_from_base(base);
     backref_root.adjust_addrs_from_base(base);
   }
-
-  meta_t get_meta() {
-    bufferlist bl;
-    bl.append(ceph::buffer::create_static(MAX_META_LENGTH, meta));
-    meta_t ret;
-    auto iter = bl.cbegin();
-    decode(ret, iter);
-    return ret;
-  }
-
-  void set_meta(const meta_t &m) {
-    ceph::bufferlist bl;
-    encode(m, bl);
-    ceph_assert(bl.length() < MAX_META_LENGTH);
-    bl.rebuild();
-    auto &bptr = bl.front();
-    ::memset(meta, 0, MAX_META_LENGTH);
-    ::memcpy(meta, bptr.c_str(), bl.length());
-  }
 };
 
 struct alloc_blk_t {
   alloc_blk_t(
-    paddr_t paddr,
-    laddr_t laddr,
+    const paddr_t& paddr,
+    const laddr_t& laddr,
     extent_len_t len,
     extent_types_t type)
-    : paddr(paddr), laddr(laddr), len(len), type(type)
-  {}
+    : paddr(paddr), laddr(laddr), len(len), type(type) {
+    assert(len > 0);
+  }
 
   explicit alloc_blk_t() = default;
 
@@ -1988,6 +2015,25 @@ struct alloc_blk_t {
     denc(v.len, p);
     denc(v.type, p);
     DENC_FINISH(p);
+  }
+
+  static alloc_blk_t create_alloc(
+      const paddr_t& paddr,
+      const laddr_t& laddr,
+      extent_len_t len,
+      extent_types_t type) {
+    assert(is_backref_mapped_type(type));
+    assert(laddr != L_ADDR_NULL);
+    return alloc_blk_t(paddr, laddr, len, type);
+  }
+
+  static alloc_blk_t create_retire(
+      const paddr_t& paddr,
+      extent_len_t len,
+      extent_types_t type) {
+    assert(is_backref_mapped_type(type) ||
+	   is_retired_placeholder_type(type));
+    return alloc_blk_t(paddr, L_ADDR_NULL, len, type);
   }
 };
 

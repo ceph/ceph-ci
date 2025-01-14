@@ -6,10 +6,10 @@
 #include <iostream>
 #include <seastar/core/future.hh>
 
+#include "crimson/osd/object_context_loader.h"
 #include "crimson/osd/osdmap_gate.h"
 #include "crimson/osd/osd_operation.h"
 #include "crimson/common/subop_blocker.h"
-#include "crimson/osd/osd_operations/common/pg_pipeline.h"
 #include "crimson/osd/pg.h"
 #include "crimson/osd/pg_activation_blocker.h"
 #include "osd/osd_types.h"
@@ -113,10 +113,6 @@ public:
 private:
   object_stat_sum_t delta_stats;
 
-  ObjectContextLoader::load_obc_iertr::future<> process_and_submit(
-    ObjectContextRef head_obc,
-    ObjectContextRef clone_obc);
-
   snap_trim_obj_subevent_ret_t remove_clone(
     ObjectContextRef obc,
     ObjectContextRef head_obc,
@@ -159,6 +155,7 @@ private:
   }
 
   Ref<PG> pg;
+  std::optional<ObjectContextLoader::Orderer> obc_orderer;
   PipelineHandle handle;
   osd_op_params_t osd_op_p;
   const hobject_t coid;
@@ -170,9 +167,8 @@ public:
 
   std::tuple<
     StartEvent,
-    CommonPGPipeline::GetOBC::BlockingEvent,
-    CommonPGPipeline::Process::BlockingEvent,
-    CommonPGPipeline::WaitRepop::BlockingEvent,
+    CommonOBCPipeline::Process::BlockingEvent,
+    CommonOBCPipeline::WaitRepop::BlockingEvent,
     CompletionEvent
   > tracking_events;
 };

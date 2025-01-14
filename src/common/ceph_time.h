@@ -16,7 +16,7 @@
 #define COMMON_CEPH_TIME_H
 
 #include <chrono>
-#include <iostream>
+#include <iosfwd>
 #include <string>
 #include <optional>
 #include <fmt/chrono.h>
@@ -339,6 +339,23 @@ public:
 
   static time_point zero() {
     return time_point();
+  }
+};
+
+// Please note time_guard is not thread safety -- multiple threads
+// updating same diff_accumulator can corrupt it.
+template <class ClockT = mono_clock>
+class time_guard {
+  const typename ClockT::time_point start;
+  timespan& diff_accumulator;
+
+public:
+  time_guard(timespan& diff_accumulator)
+    : start(ClockT::now()),
+      diff_accumulator(diff_accumulator) {
+  }
+  ~time_guard() {
+    diff_accumulator += ClockT::now() - start;
   }
 };
 

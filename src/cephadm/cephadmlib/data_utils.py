@@ -165,17 +165,17 @@ def is_fsid(s):
 def normalize_image_digest(digest: str) -> str:
     """
     Normal case:
-    >>> normalize_image_digest('ceph/ceph', 'docker.io')
-    'docker.io/ceph/ceph'
+    >>> normalize_image_digest('ceph/ceph', 'quay.io')
+    'quay.io/ceph/ceph'
 
     No change:
-    >>> normalize_image_digest('quay.ceph.io/ceph/ceph', 'docker.io')
+    >>> normalize_image_digest('quay.ceph.io/ceph/ceph', 'quay.io')
     'quay.ceph.io/ceph/ceph'
 
-    >>> normalize_image_digest('docker.io/ubuntu', 'docker.io')
-    'docker.io/ubuntu'
+    >>> normalize_image_digest('quay.io/ubuntu', 'quay.io')
+    'quay.io/ubuntu'
 
-    >>> normalize_image_digest('localhost/ceph', 'docker.io')
+    >>> normalize_image_digest('localhost/ceph', 'quay.io')
     'localhost/ceph'
     """
     known_shortnames = [
@@ -189,8 +189,9 @@ def normalize_image_digest(digest: str) -> str:
     return digest
 
 
-def get_legacy_config_fsid(cluster, legacy_dir=None):
-    # type: (str, Optional[str]) -> Optional[str]
+def get_legacy_config_fsid(
+    cluster: str, legacy_dir: Optional[str] = None
+) -> Optional[str]:
     config_file = '/etc/ceph/%s.conf' % cluster
     if legacy_dir is not None:
         config_file = os.path.abspath(legacy_dir + config_file)

@@ -293,6 +293,7 @@ public:
    * updates across the entire cluster.
    */
   void try_engage_stretch_mode();
+  void try_disable_stretch_mode();
   void maybe_go_degraded_stretch_mode();
   void trigger_degraded_stretch_mode(const std::set<std::string>& dead_mons,
 				     const std::set<int>& dead_buckets);
@@ -341,8 +342,10 @@ private:
   struct ScrubState {
     std::pair<std::string,std::string> last_key; ///< last scrubbed key
     bool finished;
+    const utime_t start;
 
-    ScrubState() : finished(false) { }
+    ScrubState() : finished(false),
+                   start(ceph_clock_now()) { }
     virtual ~ScrubState() { }
   };
   std::shared_ptr<ScrubState> scrub_state; ///< keeps track of current scrub

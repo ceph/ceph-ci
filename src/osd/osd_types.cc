@@ -1378,7 +1378,9 @@ static opt_mapping_t opt_mapping = boost::assign::map_list_of
 	   ("pg_num_max", pool_opts_t::opt_desc_t(
              pool_opts_t::PG_NUM_MAX, pool_opts_t::INT))
 	   ("read_ratio", pool_opts_t::opt_desc_t(
-             pool_opts_t::READ_RATIO, pool_opts_t::INT));
+             pool_opts_t::READ_RATIO, pool_opts_t::INT))
+	   ("pct_update_delay", pool_opts_t::opt_desc_t(
+             pool_opts_t::PCT_UPDATE_DELAY, pool_opts_t::INT));
 
 bool pool_opts_t::is_opt_name(const std::string& name)
 {
@@ -2940,6 +2942,14 @@ std::string pg_stat_t::dump_scrub_schedule() const
       return fmt::format(
 	"Blocked! locked objects (for {}s)",
 	scrub_sched_status.m_duration_seconds);
+    } else if (scrub_sched_status.m_num_to_reserve != 0) {
+      // we are waiting for some replicas to respond
+      return fmt::format(
+        "Reserving. Waiting {}s for OSD.{} ({}/{})",
+        scrub_sched_status.m_duration_seconds,
+        scrub_sched_status.m_osd_to_respond,
+        scrub_sched_status.m_ordinal_of_requested_replica,
+        scrub_sched_status.m_num_to_reserve);
     } else {
       return fmt::format(
 	"{}scrubbing for {}s",
@@ -2962,7 +2972,7 @@ std::string pg_stat_t::dump_scrub_schedule() const
     case pg_scrub_sched_status_t::queued:
       return fmt::format(
         "queued for {}scrub",
-        ((scrub_sched_status.m_is_deep == scrub_level_t::deep) ? "deep " : ""));
+        (scrub_sched_status.m_is_deep == scrub_level_t::deep) ? "deep " : "");
     default:
       // a bug!
       return "SCRUB STATE MISMATCH!"s;
@@ -2977,12 +2987,15 @@ bool operator==(const pg_scrubbing_status_t& l, const pg_scrubbing_status_t& r)
     l.m_duration_seconds == r.m_duration_seconds &&
     l.m_is_active == r.m_is_active &&
     l.m_is_deep == r.m_is_deep &&
-    l.m_is_periodic == r.m_is_periodic;
+    l.m_is_periodic == r.m_is_periodic &&
+    l.m_osd_to_respond == r.m_osd_to_respond &&
+    l.m_ordinal_of_requested_replica == r.m_ordinal_of_requested_replica &&
+    l.m_num_to_reserve == r.m_num_to_reserve;
 }
 
 void pg_stat_t::encode(ceph::buffer::list &bl) const
 {
-  ENCODE_START(29, 22, bl);
+  ENCODE_START(30, 22, bl);
   encode(version, bl);
   encode(reported_seq, bl);
   encode(reported_epoch, bl);
@@ -3042,6 +3055,9 @@ void pg_stat_t::encode(ceph::buffer::list &bl) const
   encode(objects_trimmed, bl);
   encode(snaptrim_duration, bl);
   encode(log_dups_size, bl);
+  encode(scrub_sched_status.m_osd_to_respond, bl);
+  encode(scrub_sched_status.m_ordinal_of_requested_replica, bl);
+  encode(scrub_sched_status.m_num_to_reserve, bl);
 
   ENCODE_FINISH(bl);
 }
@@ -3050,7 +3066,7 @@ void pg_stat_t::decode(ceph::buffer::list::const_iterator &bl)
 {
   bool tmp;
   uint32_t old_state;
-  DECODE_START(29, bl);
+  DECODE_START(30, bl);
   decode(version, bl);
   decode(reported_seq, bl);
   decode(reported_epoch, bl);
@@ -3139,6 +3155,18 @@ void pg_stat_t::decode(ceph::buffer::list::const_iterator &bl)
     }
     if (struct_v >= 29) {
       decode(log_dups_size, bl);
+    }
+    if (struct_v >= 30) {
+      uint16_t osd_to_respond;
+      decode(osd_to_respond, bl);
+      scrub_sched_status.m_osd_to_respond = osd_to_respond;
+      uint8_t tmp8;
+      decode(tmp8, bl);
+      scrub_sched_status.m_ordinal_of_requested_replica = tmp8;
+      decode(tmp8, bl);
+      scrub_sched_status.m_num_to_reserve = tmp8;
+    } else {
+      scrub_sched_status.m_num_to_reserve = 0;
     }
   }
   DECODE_FINISH(bl);
@@ -3677,13 +3705,14 @@ void pg_info_t::generate_test_instances(list<pg_info_t*>& o)
 // -- pg_notify_t --
 void pg_notify_t::encode(ceph::buffer::list &bl) const
 {
-  ENCODE_START(3, 2, bl);
+  ENCODE_START(4, 2, bl);
   encode(query_epoch, bl);
   encode(epoch_sent, bl);
   encode(info, bl);
   encode(to, bl);
   encode(from, bl);
   encode(past_intervals, bl);
+  encode(pg_features, bl);
   ENCODE_FINISH(bl);
 }
 
@@ -3697,6 +3726,9 @@ void pg_notify_t::decode(ceph::buffer::list::const_iterator &bl)
   decode(from, bl);
   if (struct_v >= 3) {
     decode(past_intervals, bl);
+  }
+  if (struct_v >= 4) {
+    decode(pg_features, bl);
   }
   DECODE_FINISH(bl);
 }
@@ -3719,9 +3751,11 @@ void pg_notify_t::generate_test_instances(list<pg_notify_t*>& o)
 {
   o.push_back(new pg_notify_t);
   o.push_back(new pg_notify_t(shard_id_t(3), shard_id_t::NO_SHARD, 1, 1,
-            pg_info_t(spg_t(pg_t(0,10), shard_id_t(-1))), PastIntervals()));
+	    pg_info_t(spg_t(pg_t(0,10), shard_id_t(-1))), PastIntervals(),
+            PG_FEATURE_CLASSIC_ALL));
   o.push_back(new pg_notify_t(shard_id_t(0), shard_id_t(2), 3, 10,
-            pg_info_t(spg_t(pg_t(10,10), shard_id_t(2))), PastIntervals()));
+	    pg_info_t(spg_t(pg_t(10,10), shard_id_t(2))), PastIntervals(),
+            PG_FEATURE_CLASSIC_ALL));
 }
 
 ostream &operator<<(ostream &lhs, const pg_notify_t &notify)

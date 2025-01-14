@@ -503,7 +503,7 @@ class Orchestrator(object):
         """
         raise NotImplementedError()
 
-    def exit_host_maintenance(self, hostname: str) -> OrchResult:
+    def exit_host_maintenance(self, hostname: str, force: bool = False, offline: bool = False) -> OrchResult:
         """
         Return a host from maintenance, restarting the clusters systemd target
         """
@@ -517,6 +517,15 @@ class Orchestrator(object):
         to manually rescan
 
         :param hostname: (str) host name
+        """
+        raise NotImplementedError()
+
+    def replace_device(self,
+                       hostname: str,
+                       device: str,
+                       clear: bool = False,
+                       yes_i_really_mean_it: bool = False) -> OrchResult:
+        """Perform all required operations in order to replace a device.
         """
         raise NotImplementedError()
 
@@ -576,7 +585,12 @@ class Orchestrator(object):
         raise NotImplementedError()
 
     @handle_orch_error
-    def apply(self, specs: Sequence["GenericSpec"], no_overwrite: bool = False) -> List[str]:
+    def apply(
+        self,
+        specs: Sequence["GenericSpec"],
+        no_overwrite: bool = False,
+        continue_on_error: bool = False
+    ) -> List[str]:
         """
         Applies any spec
         """
@@ -699,12 +713,18 @@ class Orchestrator(object):
 
     def remove_osds(self, osd_ids: List[str],
                     replace: bool = False,
+                    replace_block: bool = False,
+                    replace_db: bool = False,
+                    replace_wal: bool = False,
                     force: bool = False,
                     zap: bool = False,
                     no_destroy: bool = False) -> OrchResult[str]:
         """
         :param osd_ids: list of OSD IDs
         :param replace: marks the OSD as being destroyed. See :ref:`orchestrator-osd-replace`
+        :param replace_block: marks the corresponding block device as being replaced.
+        :param replace_db: marks the corresponding db device as being replaced.
+        :param replace_wal: marks the corresponding wal device as being replaced.
         :param force: Forces the OSD removal process without waiting for the data to be drained first.
         :param zap: Zap/Erase all devices associated with the OSDs (DESTROYS DATA)
         :param no_destroy: Do not destroy associated VGs/LVs with the OSD.
@@ -725,6 +745,10 @@ class Orchestrator(object):
         """
         Returns a status of the ongoing OSD removal operations.
         """
+        raise NotImplementedError()
+
+    def set_osd_spec(self, service_name: str, osd_ids: List[str]) -> OrchResult:
+        """ set service of osd """
         raise NotImplementedError()
 
     def blink_device_light(self, ident_fault: str, on: bool, locations: List['DeviceLightLoc']) -> OrchResult[List[str]]:
@@ -881,9 +905,17 @@ class Orchestrator(object):
         """Change/Add a specific setting for a tuned profile"""
         raise NotImplementedError()
 
+    def tuned_profile_add_settings(self, profile_name: str, setting: dict) -> OrchResult[str]:
+        """Change/Add multiple settings for a tuned profile"""
+        raise NotImplementedError()
+
     def tuned_profile_rm_setting(self, profile_name: str, setting: str) -> OrchResult[str]:
         """Remove a specific setting for a tuned profile"""
         raise NotImplementedError()
+
+    def tuned_profile_rm_settings(self, profile_name: str, settings: List[str]) -> OrchResult[str]:
+        """Remove multiple settings from a tuned profile"""
+        raise NotImplementedError
 
     def upgrade_check(self, image: Optional[str], version: Optional[str]) -> OrchResult[str]:
         raise NotImplementedError()

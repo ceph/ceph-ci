@@ -3,13 +3,8 @@ import os
 from typing import Dict, List, Tuple
 
 from ..call_wrappers import call, CallVerbosity
+from ceph.cephadm.images import DefaultImages
 from ..constants import (
-    DEFAULT_ALERT_MANAGER_IMAGE,
-    DEFAULT_GRAFANA_IMAGE,
-    DEFAULT_LOKI_IMAGE,
-    DEFAULT_NODE_EXPORTER_IMAGE,
-    DEFAULT_PROMETHEUS_IMAGE,
-    DEFAULT_PROMTAIL_IMAGE,
     UID_NOBODY,
     GID_NOGROUP,
 )
@@ -21,7 +16,13 @@ from ..daemon_form import register as register_daemon_form
 from ..daemon_identity import DaemonIdentity
 from ..deployment_utils import to_deployment_container
 from ..exceptions import Error
-from ..net_utils import get_fqdn, get_hostname, get_ip_addresses, wrap_ipv6
+from ..net_utils import (
+    get_fqdn,
+    get_hostname,
+    get_ip_addresses,
+    wrap_ipv6,
+    EndPoint,
+)
 
 
 @register_daemon_form
@@ -41,7 +42,7 @@ class Monitoring(ContainerDaemonForm):
 
     components = {
         'prometheus': {
-            'image': DEFAULT_PROMETHEUS_IMAGE,
+            'image': DefaultImages.PROMETHEUS.image_ref,
             'cpus': '2',
             'memory': '4GB',
             'args': [
@@ -53,7 +54,7 @@ class Monitoring(ContainerDaemonForm):
             ],
         },
         'loki': {
-            'image': DEFAULT_LOKI_IMAGE,
+            'image': DefaultImages.LOKI.image_ref,
             'cpus': '1',
             'memory': '1GB',
             'args': [
@@ -62,7 +63,7 @@ class Monitoring(ContainerDaemonForm):
             'config-json-files': ['loki.yml'],
         },
         'promtail': {
-            'image': DEFAULT_PROMTAIL_IMAGE,
+            'image': DefaultImages.PROMTAIL.image_ref,
             'cpus': '1',
             'memory': '1GB',
             'args': [
@@ -73,13 +74,13 @@ class Monitoring(ContainerDaemonForm):
             ],
         },
         'node-exporter': {
-            'image': DEFAULT_NODE_EXPORTER_IMAGE,
+            'image': DefaultImages.NODE_EXPORTER.image_ref,
             'cpus': '1',
             'memory': '1GB',
             'args': ['--no-collector.timex'],
         },
         'grafana': {
-            'image': DEFAULT_GRAFANA_IMAGE,
+            'image': DefaultImages.GRAFANA.image_ref,
             'cpus': '2',
             'memory': '4GB',
             'args': [],
@@ -91,14 +92,9 @@ class Monitoring(ContainerDaemonForm):
             ],
         },
         'alertmanager': {
-            'image': DEFAULT_ALERT_MANAGER_IMAGE,
+            'image': DefaultImages.ALERTMANAGER.image_ref,
             'cpus': '2',
             'memory': '2GB',
-            'args': [
-                '--cluster.listen-address=:{}'.format(
-                    port_map['alertmanager'][1]
-                ),
-            ],
             'config-json-files': [
                 'alertmanager.yml',
             ],
@@ -253,11 +249,14 @@ class Monitoring(ContainerDaemonForm):
                     ip = meta['ip']
                 if 'ports' in meta and meta['ports']:
                     port = meta['ports'][0]
-            if daemon_type == 'prometheus':
-                config = fetch_configs(ctx)
+            config = fetch_configs(ctx)
+            if daemon_type in ['prometheus', 'alertmanager']:
                 ip_to_bind_to = config.get('ip_to_bind_to', '')
                 if ip_to_bind_to:
                     ip = ip_to_bind_to
+                web_listen_addr = str(EndPoint(ip, port))
+                r += [f'--web.listen-address={web_listen_addr}']
+            if daemon_type == 'prometheus':
                 retention_time = config.get('retention_time', '15d')
                 retention_size = config.get(
                     'retention_size', '0'
@@ -281,9 +280,11 @@ class Monitoring(ContainerDaemonForm):
                     r += ['--web.route-prefix=/prometheus/']
                 else:
                     r += [f'--web.external-url={scheme}://{host}:{port}']
-            r += [f'--web.listen-address={ip}:{port}']
         if daemon_type == 'alertmanager':
-            config = fetch_configs(ctx)
+            clus_listen_addr = str(
+                EndPoint(ip, self.port_map[daemon_type][1])
+            )
+            r += [f'--cluster.listen-address={clus_listen_addr}']
             use_url_prefix = config.get('use_url_prefix', False)
             peers = config.get('peers', list())  # type: ignore
             for peer in peers:
@@ -299,13 +300,11 @@ class Monitoring(ContainerDaemonForm):
         if daemon_type == 'promtail':
             r += ['--config.expand-env']
         if daemon_type == 'prometheus':
-            config = fetch_configs(ctx)
             try:
                 r += [f'--web.config.file={config["web_config"]}']
             except KeyError:
                 pass
         if daemon_type == 'node-exporter':
-            config = fetch_configs(ctx)
             try:
                 r += [f'--web.config.file={config["web_config"]}']
             except KeyError:

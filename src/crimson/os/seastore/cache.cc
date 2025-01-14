@@ -28,15 +28,6 @@ SET_SUBSYS(seastore_cache);
 
 namespace crimson::os::seastore {
 
-std::ostream &operator<<(std::ostream &out, const backref_entry_t &ent) {
-  return out << "backref_entry_t{"
-	     << ent.paddr << "~" << ent.len << ", "
-	     << "laddr: " << ent.laddr << ", "
-	     << "type: " << ent.type << ", "
-	     << "seq: " << ent.seq << ", "
-	     << "}";
-}
-
 Cache::Cache(
   ExtentPlacementManager &epm)
   : epm(epm),
@@ -44,7 +35,7 @@ Cache::Cache(
 	  "seastore_cache_lru_size"))
 {
   LOG_PREFIX(Cache::Cache);
-  INFO("created, lru_capacity={}B", lru.get_capacity_bytes());
+  INFO("created, lru_capacity=0x{:x}B", lru.get_capacity_bytes());
   register_metrics();
   segment_providers_by_device_id.resize(DEVICE_ID_MAX, nullptr);
 }
@@ -63,18 +54,18 @@ Cache::retire_extent_ret Cache::retire_extent_addr(
   Transaction &t, paddr_t addr, extent_len_t length)
 {
   LOG_PREFIX(Cache::retire_extent_addr);
-  TRACET("retire {}~{}", t, addr, length);
+  TRACET("retire {}~0x{:x}", t, addr, length);
 
   assert(addr.is_real() && !addr.is_block_relative());
 
   CachedExtentRef ext;
   auto result = t.get_extent(addr, &ext);
   if (result == Transaction::get_extent_ret::PRESENT) {
-    DEBUGT("retire {}~{} on t -- {}", t, addr, length, *ext);
+    DEBUGT("retire {}~0x{:x} on t -- {}", t, addr, length, *ext);
     t.add_to_retired_set(CachedExtentRef(&*ext));
     return retire_extent_iertr::now();
   } else if (result == Transaction::get_extent_ret::RETIRED) {
-    ERRORT("retire {}~{} failed, already retired -- {}", t, addr, length, *ext);
+    ERRORT("retire {}~0x{:x} failed, already retired -- {}", t, addr, length, *ext);
     ceph_abort();
   }
 
@@ -85,7 +76,7 @@ Cache::retire_extent_ret Cache::retire_extent_addr(
   // retiring is not included by the cache hit metrics
   ext = query_cache(addr);
   if (ext) {
-    DEBUGT("retire {}~{} in cache -- {}", t, addr, length, *ext);
+    DEBUGT("retire {}~0x{:x} in cache -- {}", t, addr, length, *ext);
   } else {
     // add a new placeholder to Cache
     ext = CachedExtent::make_cached_extent_ref<
@@ -95,7 +86,7 @@ Cache::retire_extent_ret Cache::retire_extent_addr(
               PLACEMENT_HINT_NULL,
               NULL_GENERATION,
 	      TRANS_ID_NULL);
-    DEBUGT("retire {}~{} as placeholder, add extent -- {}",
+    DEBUGT("retire {}~0x{:x} as placeholder, add extent -- {}",
            t, addr, length, *ext);
     add_extent(ext);
   }
@@ -123,7 +114,7 @@ void Cache::retire_absent_extent_addr(
 	    PLACEMENT_HINT_NULL,
 	    NULL_GENERATION,
 	    TRANS_ID_NULL);
-  DEBUGT("retire {}~{} as placeholder, add extent -- {}",
+  DEBUGT("retire {}~0x{:x} as placeholder, add extent -- {}",
 	 t, addr, length, *ext);
   add_extent(ext);
   t.add_to_read_set(ext);
@@ -172,6 +163,7 @@ void Cache::register_metrics()
     {extent_types_t::LADDR_INTERNAL,      sm::label_instance("ext", "LADDR_INTERNAL")},
     {extent_types_t::LADDR_LEAF,          sm::label_instance("ext", "LADDR_LEAF")},
     {extent_types_t::DINK_LADDR_LEAF,     sm::label_instance("ext", "DINK_LADDR_LEAF")},
+    {extent_types_t::ROOT_META,           sm::label_instance("ext", "ROOT_META")},
     {extent_types_t::OMAP_INNER,          sm::label_instance("ext", "OMAP_INNER")},
     {extent_types_t::OMAP_LEAF,           sm::label_instance("ext", "OMAP_LEAF")},
     {extent_types_t::ONODE_BLOCK_STAGED,  sm::label_instance("ext", "ONODE_BLOCK_STAGED")},
@@ -1081,7 +1073,7 @@ CachedExtentRef Cache::alloc_new_extent_by_type(
 )
 {
   LOG_PREFIX(Cache::alloc_new_extent_by_type);
-  SUBDEBUGT(seastore_cache, "allocate {} {}B, hint={}, gen={}",
+  SUBDEBUGT(seastore_cache, "allocate {} 0x{:x}B, hint={}, gen={}",
             t, type, length, hint, rewrite_gen_printer_t{gen});
   ceph_assert(get_extent_category(type) == data_category_t::METADATA);
   switch (type) {
@@ -1092,6 +1084,9 @@ CachedExtentRef Cache::alloc_new_extent_by_type(
     return alloc_new_non_data_extent<lba_manager::btree::LBAInternalNode>(t, length, hint, gen);
   case extent_types_t::LADDR_LEAF:
     return alloc_new_non_data_extent<lba_manager::btree::LBALeafNode>(
+      t, length, hint, gen);
+  case extent_types_t::ROOT_META:
+    return alloc_new_non_data_extent<RootMetaBlock>(
       t, length, hint, gen);
   case extent_types_t::ONODE_BLOCK_STAGED:
     return alloc_new_non_data_extent<onode::SeastoreNodeExtent>(
@@ -1129,7 +1124,7 @@ std::vector<CachedExtentRef> Cache::alloc_new_data_extents_by_type(
 )
 {
   LOG_PREFIX(Cache::alloc_new_data_extents_by_type);
-  SUBDEBUGT(seastore_cache, "allocate {} {}B, hint={}, gen={}",
+  SUBDEBUGT(seastore_cache, "allocate {} 0x{:x}B, hint={}, gen={}",
             t, type, length, hint, rewrite_gen_printer_t{gen});
   ceph_assert(get_extent_category(type) == data_category_t::DATA);
   std::vector<CachedExtentRef> res;
@@ -1344,21 +1339,39 @@ record_t Cache::prepare_record(
   io_stat_t retire_stat;
   std::vector<alloc_delta_t> alloc_deltas;
   alloc_delta_t rel_delta;
+  backref_entry_refs_t backref_entries;
   rel_delta.op = alloc_delta_t::op_types_t::CLEAR;
   for (auto &i: t.retired_set) {
     auto &extent = i.extent;
     get_by_ext(efforts.retire_by_ext,
                extent->get_type()).increment(extent->get_length());
     retire_stat.increment(extent->get_length());
-    DEBUGT("retired and remove extent -- {}", t, *extent);
+    DEBUGT("retired and remove extent {}~0x{:x} -- {}",
+	   t, extent->get_paddr(), extent->get_length(), *extent);
     commit_retire_extent(t, extent);
-    if (is_backref_mapped_extent_node(extent) ||
-        is_retired_placeholder_type(extent->get_type())) {
+
+    // Note: commit extents and backref allocations in the same place
+    if (is_backref_mapped_type(extent->get_type()) ||
+	is_retired_placeholder_type(extent->get_type())) {
+      DEBUGT("backref_entry free {}~0x{:x}",
+	     t,
+	     extent->get_paddr(),
+	     extent->get_length());
       rel_delta.alloc_blk_ranges.emplace_back(
-	extent->get_paddr(),
-	L_ADDR_NULL,
-	extent->get_length(),
-	extent->get_type());
+	alloc_blk_t::create_retire(
+	  extent->get_paddr(),
+	  extent->get_length(),
+	  extent->get_type()));
+      backref_entries.emplace_back(
+	backref_entry_t::create_retire(
+	  extent->get_paddr(),
+	  extent->get_length(),
+	  extent->get_type()));
+    } else if (is_backref_node(extent->get_type())) {
+      remove_backref_extent(extent->get_paddr());
+    } else {
+      ERRORT("Got unexpected extent type: {}", t, *extent);
+      ceph_abort("imposible");
     }
   }
   alloc_deltas.emplace_back(std::move(rel_delta));
@@ -1395,27 +1408,40 @@ record_t Cache::prepare_record(
     if (modify_time == NULL_TIME) {
       modify_time = commit_time;
     }
+    laddr_t fresh_laddr;
+    if (i->is_logical()) {
+      fresh_laddr = i->cast<LogicalCachedExtent>()->get_laddr();
+    } else if (is_lba_node(i->get_type())) {
+      fresh_laddr = i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin;
+    } else {
+      fresh_laddr = L_ADDR_NULL;
+    }
     record.push_back(extent_t{
 	i->get_type(),
-	i->is_logical()
-	? i->cast<LogicalCachedExtent>()->get_laddr()
-	: (is_lba_node(i->get_type())
-	  ? i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin
-	  : L_ADDR_NULL),
+	fresh_laddr,
 	std::move(bl)
       },
       modify_time);
-    if (i->is_valid()
-	&& is_backref_mapped_extent_node(i)) {
+
+    if (!i->is_valid()) {
+      continue;
+    }
+    if (is_backref_mapped_type(i->get_type())) {
+      laddr_t alloc_laddr;
+      if (i->is_logical()) {
+	alloc_laddr = i->cast<LogicalCachedExtent>()->get_laddr();
+      } else if (is_lba_node(i->get_type())) {
+	alloc_laddr = i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin;
+      } else {
+	assert(i->get_type() == extent_types_t::TEST_BLOCK_PHYSICAL);
+	alloc_laddr = L_ADDR_MIN;
+      }
       alloc_delta.alloc_blk_ranges.emplace_back(
-	i->get_paddr(),
-	i->is_logical()
-	? i->cast<LogicalCachedExtent>()->get_laddr()
-	: (is_lba_node(i->get_type())
-	  ? i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin
-	  : L_ADDR_NULL),
-	i->get_length(),
-	i->get_type());
+	alloc_blk_t::create_alloc(
+	  i->get_paddr(),
+	  alloc_laddr,
+	  i->get_length(),
+	  i->get_type()));
     }
   }
 
@@ -1426,14 +1452,20 @@ record_t Cache::prepare_record(
     get_by_ext(efforts.fresh_ool_by_ext,
                i->get_type()).increment(i->get_length());
     i->prepare_commit();
-    if (is_backref_mapped_extent_node(i)) {
+    if (is_backref_mapped_type(i->get_type())) {
+      laddr_t alloc_laddr;
+      if (i->is_logical()) {
+        alloc_laddr = i->cast<LogicalCachedExtent>()->get_laddr();
+      } else {
+        assert(is_lba_node(i->get_type()));
+        alloc_laddr = i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin;
+      }
       alloc_delta.alloc_blk_ranges.emplace_back(
-	i->get_paddr(),
-	i->is_logical()
-	? i->cast<LogicalCachedExtent>()->get_laddr()
-	: i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin,
-	i->get_length(),
-	i->get_type());
+	alloc_blk_t::create_alloc(
+	  i->get_paddr(),
+	  alloc_laddr,
+	  i->get_length(),
+	  i->get_type()));
     }
   }
 
@@ -1451,19 +1483,57 @@ record_t Cache::prepare_record(
     i->state = CachedExtent::extent_state_t::CLEAN;
     assert(i->is_logical());
     i->clear_modified_region();
-    touch_extent(*i, &trans_src);
+    touch_extent(*i, &trans_src, t.get_cache_hint());
     DEBUGT("inplace rewrite ool block is commmitted -- {}", t, *i);
   }
 
+  auto existing_stats = t.get_existing_block_stats();
+  DEBUGT("total existing blocks num: {}, exist clean num: {}, "
+	 "exist mutation pending num: {}",
+	 t,
+	 existing_stats.valid_num,
+	 existing_stats.clean_num,
+	 existing_stats.mutated_num);
   for (auto &i: t.existing_block_list) {
-    if (i->is_valid()) {
-      alloc_delta.alloc_blk_ranges.emplace_back(
-        i->get_paddr(),
+    assert(is_logical_type(i->get_type()));
+    if (!i->is_valid()) {
+      continue;
+    }
+
+    if (i->is_exist_clean()) {
+      i->state = CachedExtent::extent_state_t::CLEAN;
+    } else {
+      assert(i->is_exist_mutation_pending());
+      // i->state must become DIRTY in complete_commit()
+    }
+
+    // exist mutation pending extents must be in t.mutated_block_list
+    add_extent(i);
+    const auto t_src = t.get_src();
+    if (i->is_dirty()) {
+      add_to_dirty(i, &t_src);
+    } else {
+      touch_extent(*i, &t_src, t.get_cache_hint());
+    }
+
+    alloc_delta.alloc_blk_ranges.emplace_back(
+      alloc_blk_t::create_alloc(
+	i->get_paddr(),
 	i->cast<LogicalCachedExtent>()->get_laddr(),
 	i->get_length(),
-	i->get_type());
-    }
+	i->get_type()));
+
+    // Note: commit extents and backref allocations in the same place
+    // Note: remapping is split into 2 steps, retire and alloc, they must be
+    //       committed atomically together
+    backref_entries.emplace_back(
+      backref_entry_t::create_alloc(
+	i->get_paddr(),
+	i->cast<LogicalCachedExtent>()->get_laddr(),
+	i->get_length(),
+	i->get_type()));
   }
+
   alloc_deltas.emplace_back(std::move(alloc_delta));
 
   for (auto b : alloc_deltas) {
@@ -1516,6 +1586,9 @@ record_t Cache::prepare_record(
     delta.bl = bl;
     record.push_back(std::move(delta));
   }
+
+  apply_backref_mset(backref_entries);
+  t.set_backref_entries(std::move(backref_entries));
 
   ceph_assert(t.get_fresh_block_stats().num ==
               t.inline_block_list.size() +
@@ -1616,26 +1689,35 @@ record_t Cache::prepare_record(
   return record;
 }
 
-void Cache::backref_batch_update(
-  std::vector<backref_entry_ref> &&list,
-  const journal_seq_t &seq)
+void Cache::apply_backref_byseq(
+  backref_entry_refs_t&& backref_entries,
+  const journal_seq_t& seq)
 {
-  LOG_PREFIX(Cache::backref_batch_update);
-  DEBUG("inserting {} entries at {}", list.size(), seq);
-  ceph_assert(seq != JOURNAL_SEQ_NULL);
-
-  for (auto &ent : list) {
-    backref_entry_mset.insert(*ent);
+  LOG_PREFIX(Cache::apply_backref_byseq);
+  DEBUG("backref_entry apply {} entries at {}",
+	backref_entries.size(), seq);
+  assert(seq != JOURNAL_SEQ_NULL);
+  if (backref_entries.empty()) {
+    return;
   }
-
-  auto iter = backref_entryrefs_by_seq.find(seq);
-  if (iter == backref_entryrefs_by_seq.end()) {
-    backref_entryrefs_by_seq.emplace(seq, std::move(list));
+  if (backref_entryrefs_by_seq.empty()) {
+    backref_entryrefs_by_seq.insert(
+      backref_entryrefs_by_seq.end(),
+      {seq, std::move(backref_entries)});
+    return;
+  }
+  auto last = backref_entryrefs_by_seq.rbegin();
+  assert(last->first <= seq);
+  if (last->first == seq) {
+    last->second.insert(
+      last->second.end(),
+      std::make_move_iterator(backref_entries.begin()),
+      std::make_move_iterator(backref_entries.end()));
   } else {
-    iter->second.insert(
-      iter->second.end(),
-      std::make_move_iterator(list.begin()),
-      std::make_move_iterator(list.end()));
+    assert(last->first < seq);
+    backref_entryrefs_by_seq.insert(
+      backref_entryrefs_by_seq.end(),
+      {seq, std::move(backref_entries)});
   }
 }
 
@@ -1648,7 +1730,7 @@ void Cache::complete_commit(
   SUBTRACET(seastore_t, "final_block_start={}, start_seq={}",
             t, final_block_start, start_seq);
 
-  std::vector<backref_entry_ref> backref_list;
+  backref_entry_refs_t backref_entries;
   t.for_each_finalized_fresh_block([&](const CachedExtentRef &i) {
     if (!i->is_valid()) {
       return;
@@ -1677,24 +1759,30 @@ void Cache::complete_commit(
     add_extent(i);
     assert(!i->is_dirty());
     const auto t_src = t.get_src();
-    touch_extent(*i, &t_src);
+    touch_extent(*i, &t_src, t.get_cache_hint());
     epm.commit_space_used(i->get_paddr(), i->get_length());
-    if (is_backref_mapped_extent_node(i)) {
-      DEBUGT("backref_list new {} len {}",
+
+    // Note: commit extents and backref allocations in the same place
+    if (is_backref_mapped_type(i->get_type())) {
+      DEBUGT("backref_entry alloc {}~0x{:x}",
 	     t,
 	     i->get_paddr(),
 	     i->get_length());
-      backref_list.emplace_back(
-	std::make_unique<backref_entry_t>(
+      laddr_t alloc_laddr;
+      if (i->is_logical()) {
+	alloc_laddr = i->cast<LogicalCachedExtent>()->get_laddr();
+      } else if (is_lba_node(i->get_type())) {
+	alloc_laddr = i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin;
+      } else {
+	assert(i->get_type() == extent_types_t::TEST_BLOCK_PHYSICAL);
+	alloc_laddr = L_ADDR_MIN;
+      }
+      backref_entries.emplace_back(
+	backref_entry_t::create_alloc(
 	  i->get_paddr(),
-	  i->is_logical()
-	  ? i->cast<LogicalCachedExtent>()->get_laddr()
-	  : (is_lba_node(i->get_type())
-	    ? i->cast<lba_manager::btree::LBANode>()->get_node_meta().begin
-	    : L_ADDR_NULL),
+	  alloc_laddr,
 	  i->get_length(),
-	  i->get_type(),
-	  start_seq));
+	  i->get_type()));
     } else if (is_backref_node(i->get_type())) {
 	add_backref_extent(
 	  i->get_paddr(),
@@ -1731,9 +1819,10 @@ void Cache::complete_commit(
     epm.mark_space_free(extent->get_paddr(), extent->get_length());
   }
   for (auto &i: t.existing_block_list) {
-    if (i->is_valid()) {
-      epm.mark_space_used(i->get_paddr(), i->get_length());
+    if (!i->is_valid()) {
+      continue;
     }
+    epm.mark_space_used(i->get_paddr(), i->get_length());
   }
 
   for (auto &i: t.mutated_block_list) {
@@ -1747,64 +1836,10 @@ void Cache::complete_commit(
   for (auto &i: t.retired_set) {
     auto &extent = i.extent;
     extent->dirty_from_or_retired_at = start_seq;
-    if (is_backref_mapped_extent_node(extent) ||
-        is_retired_placeholder_type(extent->get_type())) {
-      DEBUGT("backref_list free {} len {}",
-	     t,
-	     extent->get_paddr(),
-	     extent->get_length());
-      backref_list.emplace_back(
-	std::make_unique<backref_entry_t>(
-	  extent->get_paddr(),
-	  L_ADDR_NULL,
-	  extent->get_length(),
-	  extent->get_type(),
-	  start_seq));
-    } else if (is_backref_node(extent->get_type())) {
-      remove_backref_extent(extent->get_paddr());
-    } else {
-      ERRORT("{}", t, *extent);
-      ceph_abort("not possible");
-    }
   }
 
-  auto existing_stats = t.get_existing_block_stats();
-  DEBUGT("total existing blocks num: {}, exist clean num: {}, "
-	 "exist mutation pending num: {}",
-	 t,
-	 existing_stats.valid_num,
-	 existing_stats.clean_num,
-	 existing_stats.mutated_num);
-  for (auto &i: t.existing_block_list) {
-    if (i->is_valid()) {
-      if (i->is_exist_clean()) {
-	i->state = CachedExtent::extent_state_t::CLEAN;
-      } else {
-	assert(i->state == CachedExtent::extent_state_t::DIRTY);
-      }
-      DEBUGT("backref_list new existing {} len {}",
-	     t,
-	     i->get_paddr(),
-	     i->get_length());
-      backref_list.emplace_back(
-        std::make_unique<backref_entry_t>(
-	  i->get_paddr(),
-	  i->cast<LogicalCachedExtent>()->get_laddr(),
-	  i->get_length(),
-	  i->get_type(),
-	  start_seq));
-      add_extent(i);
-      const auto t_src = t.get_src();
-      if (i->is_dirty()) {
-        add_to_dirty(i, &t_src);
-      } else {
-        touch_extent(*i, &t_src);
-      }
-    }
-  }
-  if (!backref_list.empty()) {
-    backref_batch_update(std::move(backref_list), start_seq);
-  }
+  apply_backref_byseq(t.move_backref_entries(), start_seq);
+  commit_backref_entries(std::move(backref_entries), start_seq);
 
   for (auto &i: t.pre_alloc_list) {
     if (!i->is_valid()) {
@@ -1822,7 +1857,7 @@ void Cache::init()
     remove_extent(root, nullptr);
     root = nullptr;
   }
-  root = new RootBlock();
+  root = CachedExtent::make_cached_extent_ref<RootBlock>();
   root->init(CachedExtent::extent_state_t::CLEAN,
              P_ADDR_ROOT,
              PLACEMENT_HINT_NULL,
@@ -1927,25 +1962,18 @@ Cache::replay_delta(
 
     alloc_delta_t alloc_delta;
     decode(alloc_delta, delta.bl);
-    std::vector<backref_entry_ref> backref_list;
+    backref_entry_refs_t backref_entries;
     for (auto &alloc_blk : alloc_delta.alloc_blk_ranges) {
       if (alloc_blk.paddr.is_relative()) {
 	assert(alloc_blk.paddr.is_record_relative());
 	alloc_blk.paddr = record_base.add_relative(alloc_blk.paddr);
       }
-      DEBUG("replay alloc_blk {}~{} {}, journal_seq: {}",
+      DEBUG("replay alloc_blk {}~0x{:x} {}, journal_seq: {}",
 	alloc_blk.paddr, alloc_blk.len, alloc_blk.laddr, journal_seq);
-      backref_list.emplace_back(
-	std::make_unique<backref_entry_t>(
-	  alloc_blk.paddr,
-	  alloc_blk.laddr,
-	  alloc_blk.len,
-	  alloc_blk.type,
-	  journal_seq));
+      backref_entries.emplace_back(
+	backref_entry_t::create(alloc_blk));
     }
-    if (!backref_list.empty()) {
-      backref_batch_update(std::move(backref_list), journal_seq);
-    }
+    commit_backref_entries(std::move(backref_entries), journal_seq);
     return replay_delta_ertr::make_ready_future<std::pair<bool, CachedExtentRef>>(
       std::make_pair(true, nullptr));
   }
@@ -1998,8 +2026,9 @@ Cache::replay_delta(
         [](CachedExtent &) {},
         [this](CachedExtent &ext) {
           // replay is not included by the cache hit metrics
-          touch_extent(ext, nullptr);
-        }) :
+          touch_extent(ext, nullptr, CACHE_HINT_TOUCH);
+        },
+        nullptr) :
       _get_extent_if_cached(
 	delta.paddr)
     ).handle_error(
@@ -2162,7 +2191,8 @@ Cache::do_get_caching_extent_by_type(
   laddr_t laddr,
   extent_len_t length,
   extent_init_func_t &&extent_init_func,
-  extent_init_func_t &&on_cache)
+  extent_init_func_t &&on_cache,
+  const Transaction::src_t* p_src)
 {
   return [=, this, extent_init_func=std::move(extent_init_func)]() mutable {
     switch (type) {
@@ -2171,55 +2201,61 @@ Cache::do_get_caching_extent_by_type(
       return get_extent_ertr::make_ready_future<CachedExtentRef>();
     case extent_types_t::BACKREF_INTERNAL:
       return do_get_caching_extent<backref::BackrefInternalNode>(
-	offset, length, std::move(extent_init_func), std::move(on_cache)
+	offset, length, std::move(extent_init_func), std::move(on_cache), p_src
       ).safe_then([](auto extent) {
 	return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::BACKREF_LEAF:
       return do_get_caching_extent<backref::BackrefLeafNode>(
-	offset, length, std::move(extent_init_func), std::move(on_cache)
+	offset, length, std::move(extent_init_func), std::move(on_cache), p_src
       ).safe_then([](auto extent) {
 	return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::LADDR_INTERNAL:
       return do_get_caching_extent<lba_manager::btree::LBAInternalNode>(
-	offset, length, std::move(extent_init_func), std::move(on_cache)
+	offset, length, std::move(extent_init_func), std::move(on_cache), p_src
       ).safe_then([](auto extent) {
 	return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::LADDR_LEAF:
       return do_get_caching_extent<lba_manager::btree::LBALeafNode>(
-	offset, length, std::move(extent_init_func), std::move(on_cache)
+	offset, length, std::move(extent_init_func), std::move(on_cache), p_src
       ).safe_then([](auto extent) {
 	return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
+    case extent_types_t::ROOT_META:
+      return do_get_caching_extent<RootMetaBlock>(
+	offset, length, std::move(extent_init_func), std::move(on_cache), p_src
+      ).safe_then([](auto extent) {
+        return CachedExtentRef(extent.detach(), false /* add_ref */);
+      });
     case extent_types_t::OMAP_INNER:
       return do_get_caching_extent<omap_manager::OMapInnerNode>(
-          offset, length, std::move(extent_init_func), std::move(on_cache)
+        offset, length, std::move(extent_init_func), std::move(on_cache), p_src
       ).safe_then([](auto extent) {
         return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::OMAP_LEAF:
       return do_get_caching_extent<omap_manager::OMapLeafNode>(
-          offset, length, std::move(extent_init_func), std::move(on_cache)
+        offset, length, std::move(extent_init_func), std::move(on_cache), p_src
       ).safe_then([](auto extent) {
         return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::COLL_BLOCK:
       return do_get_caching_extent<collection_manager::CollectionNode>(
-          offset, length, std::move(extent_init_func), std::move(on_cache)
+        offset, length, std::move(extent_init_func), std::move(on_cache), p_src
       ).safe_then([](auto extent) {
         return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::ONODE_BLOCK_STAGED:
       return do_get_caching_extent<onode::SeastoreNodeExtent>(
-          offset, length, std::move(extent_init_func), std::move(on_cache)
+        offset, length, std::move(extent_init_func), std::move(on_cache), p_src
       ).safe_then([](auto extent) {
 	return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::OBJECT_DATA_BLOCK:
       return do_get_caching_extent<ObjectDataBlock>(
-          offset, length, std::move(extent_init_func), std::move(on_cache)
+        offset, length, std::move(extent_init_func), std::move(on_cache), p_src
       ).safe_then([](auto extent) {
 	return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
@@ -2228,13 +2264,13 @@ Cache::do_get_caching_extent_by_type(
       return get_extent_ertr::make_ready_future<CachedExtentRef>();
     case extent_types_t::TEST_BLOCK:
       return do_get_caching_extent<TestBlock>(
-          offset, length, std::move(extent_init_func), std::move(on_cache)
+        offset, length, std::move(extent_init_func), std::move(on_cache), p_src
       ).safe_then([](auto extent) {
 	return CachedExtentRef(extent.detach(), false /* add_ref */);
       });
     case extent_types_t::TEST_BLOCK_PHYSICAL:
       return do_get_caching_extent<TestBlockPhysical>(
-          offset, length, std::move(extent_init_func), std::move(on_cache)
+        offset, length, std::move(extent_init_func), std::move(on_cache), p_src
       ).safe_then([](auto extent) {
 	return CachedExtentRef(extent.detach(), false /* add_ref */);
       });

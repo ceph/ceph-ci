@@ -77,11 +77,22 @@ class NvmeofGatewaysConfig(object):
         cls._save_config(config)
 
     @classmethod
-    def remove_gateway(cls, name):
+    def remove_gateway(cls, name, daemon_name=None):
         config = cls.get_gateways_config()
         if name not in config['gateways']:
             raise NvmeofGatewayDoesNotExist(name)
-        del config['gateways'][name]
+
+        if not daemon_name:
+            del config['gateways'][name]
+        else:
+            # remove the daemon from the list of gateways
+            config['gateways'][name] = [daemon for daemon in config['gateways'][name]
+                                        if daemon['daemon_name'] != daemon_name]
+
+            # if there are no more daemons in the list, remove the gateway
+            if not config['gateways'][name]:
+                del config['gateways'][name]
+
         cls._save_config(config)
 
     @classmethod
@@ -177,6 +188,18 @@ def _get_running_daemon_svc_config(svc_config, running_daemons):
 
 def _get_default_service(gateways):
     if gateways:
-        service_name = list(gateways.keys())[0]
+        gateway_keys = list(gateways.keys())
+        # if there are more than 1 gateway, rather than chosing a random gateway
+        # from any of the group, raise an exception to make it clear that we need
+        # to specify the group name in the API request.
+        if len(gateway_keys) > 1:
+            raise DashboardException(
+                msg=(
+                    "Multiple NVMe-oF gateway groups are configured. "
+                    "Please specify the 'gw_group' parameter in the request."
+                ),
+                component="nvmeof"
+            )
+        service_name = gateway_keys[0]
         return service_name, gateways[service_name][0]['service_url']
     return None

@@ -3977,10 +3977,27 @@ paths:
           application/json:
             schema:
               properties:
+                force_update:
+                  description: Force update the config option
+                  type: boolean
                 name:
+                  description: Config option name
                   type: string
                 value:
-                  type: string
+                  description: Section and Value of the config option
+                  items:
+                    properties:
+                      section:
+                        description: Section/Client where config needs to be updated
+                        type: string
+                      value:
+                        description: Value of the config option
+                        type: string
+                    required:
+                    - section
+                    - value
+                    type: object
+                  type: array
               required:
               - name
               - value
@@ -4007,6 +4024,7 @@ paths:
             trace.
       security:
       - jwt: []
+      summary: Create/Update Cluster Configuration
       tags:
       - ClusterConfiguration
     put:
@@ -10790,6 +10808,274 @@ paths:
       - jwt: []
       tags:
       - Prometheus
+  /api/rgw/accounts:
+    get:
+      parameters:
+      - default: false
+        in: query
+        name: detailed
+        schema:
+          type: boolean
+      responses:
+        '200':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              type: object
+          description: OK
+        '400':
+          description: Operation exception. Please check the response body for details.
+        '401':
+          description: Unauthenticated access. Please login first.
+        '403':
+          description: Unauthorized access. Please check your permissions.
+        '500':
+          description: Unexpected error. Please check the response body for the stack
+            trace.
+      security:
+      - jwt: []
+      tags:
+      - RgwUserAccounts
+    post:
+      parameters: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                account_id:
+                  type: integer
+                account_name:
+                  type: integer
+                email:
+                  type: string
+              type: object
+      responses:
+        '201':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              type: object
+          description: Resource created.
+        '202':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              type: object
+          description: Operation is still executing. Please check the task queue.
+        '400':
+          description: Operation exception. Please check the response body for details.
+        '401':
+          description: Unauthenticated access. Please login first.
+        '403':
+          description: Unauthorized access. Please check your permissions.
+        '500':
+          description: Unexpected error. Please check the response body for the stack
+            trace.
+      security:
+      - jwt: []
+      tags:
+      - RgwUserAccounts
+  /api/rgw/accounts/{account_id}:
+    delete:
+      parameters:
+      - description: Account id
+        in: path
+        name: account_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '202':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              type: object
+          description: Operation is still executing. Please check the task queue.
+        '204':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              type: object
+          description: Resource deleted.
+        '400':
+          description: Operation exception. Please check the response body for details.
+        '401':
+          description: Unauthenticated access. Please login first.
+        '403':
+          description: Unauthorized access. Please check your permissions.
+        '500':
+          description: Unexpected error. Please check the response body for the stack
+            trace.
+      security:
+      - jwt: []
+      summary: Delete RGW Account
+      tags:
+      - RgwUserAccounts
+    get:
+      parameters:
+      - description: Account id
+        in: path
+        name: account_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              type: object
+          description: OK
+        '400':
+          description: Operation exception. Please check the response body for details.
+        '401':
+          description: Unauthenticated access. Please login first.
+        '403':
+          description: Unauthorized access. Please check your permissions.
+        '500':
+          description: Unexpected error. Please check the response body for the stack
+            trace.
+      security:
+      - jwt: []
+      summary: Get RGW Account by id
+      tags:
+      - RgwUserAccounts
+    put:
+      parameters:
+      - description: Account id
+        in: path
+        name: account_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                account_name:
+                  type: integer
+                email:
+                  type: string
+              type: object
+      responses:
+        '200':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              type: object
+          description: Resource updated.
+        '202':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              type: object
+          description: Operation is still executing. Please check the task queue.
+        '400':
+          description: Operation exception. Please check the response body for details.
+        '401':
+          description: Unauthenticated access. Please login first.
+        '403':
+          description: Unauthorized access. Please check your permissions.
+        '500':
+          description: Unexpected error. Please check the response body for the stack
+            trace.
+      security:
+      - jwt: []
+      summary: Update RGW account info
+      tags:
+      - RgwUserAccounts
+  /api/rgw/accounts/{account_id}/quota:
+    put:
+      parameters:
+      - description: Account id
+        in: path
+        name: account_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                max_objects:
+                  type: string
+                max_size:
+                  description: Max size
+                  type: string
+                quota_type:
+                  type: string
+              required:
+              - quota_type
+              - max_size
+              - max_objects
+              type: object
+      responses:
+        '200':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              type: object
+          description: Resource updated.
+        '202':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              type: object
+          description: Operation is still executing. Please check the task queue.
+        '400':
+          description: Operation exception. Please check the response body for details.
+        '401':
+          description: Unauthenticated access. Please login first.
+        '403':
+          description: Unauthorized access. Please check your permissions.
+        '500':
+          description: Unexpected error. Please check the response body for the stack
+            trace.
+      security:
+      - jwt: []
+      summary: Set RGW Account/Bucket quota
+      tags:
+      - RgwUserAccounts
+  /api/rgw/accounts/{account_id}/quota/status:
+    put:
+      parameters:
+      - description: Account id
+        in: path
+        name: account_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                quota_status:
+                  type: string
+                quota_type:
+                  type: string
+              required:
+              - quota_type
+              - quota_status
+              type: object
+      responses:
+        '200':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              type: object
+          description: Resource updated.
+        '202':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              type: object
+          description: Operation is still executing. Please check the task queue.
+        '400':
+          description: Operation exception. Please check the response body for details.
+        '401':
+          description: Unauthenticated access. Please login first.
+        '403':
+          description: Unauthorized access. Please check your permissions.
+        '500':
+          description: Unexpected error. Please check the response body for the stack
+            trace.
+      security:
+      - jwt: []
+      summary: Enable/Disable RGW Account/Bucket quota
+      tags:
+      - RgwUserAccounts
   /api/rgw/bucket:
     get:
       parameters:
@@ -11193,7 +11479,6 @@ paths:
                   type: string
               required:
               - bucket_id
-              - uid
               type: object
       responses:
         '200':
@@ -14056,6 +14341,500 @@ paths:
       - jwt: []
       tags:
       - Settings
+  /api/smb/cluster:
+    get:
+      description: "\n        List smb clusters\n        "
+      parameters: []
+      responses:
+        '200':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              schema:
+                items:
+                  properties:
+                    auth_mode:
+                      description: Either 'active-directory' or 'user'
+                      type: string
+                    cluster_id:
+                      description: Unique identifier for the cluster
+                      type: string
+                    custom_dns:
+                      description: List of custom DNS server addresses
+                      items:
+                        type: string
+                      type: array
+                    domain_settings:
+                      description: Domain-specific settings for active-directory auth
+                        mode
+                      properties:
+                        join_sources:
+                          description: List of join auth sources for domain settings
+                          items:
+                            properties:
+                              ref:
+                                description: Reference identifier for the join auth
+                                  resource
+                                type: string
+                              source_type:
+                                description: resource
+                                type: string
+                            required:
+                            - source_type
+                            - ref
+                            type: object
+                          type: array
+                        realm:
+                          description: Domain realm, e.g., 'DOMAIN1.SINK.TEST'
+                          type: string
+                      required:
+                      - realm
+                      - join_sources
+                      type: object
+                    intent:
+                      description: Desired state of the resource, e.g., 'present'
+                        or 'removed'
+                      type: string
+                    placement:
+                      description: Placement configuration for the resource
+                      properties:
+                        count:
+                          description: Number of instances to place
+                          type: integer
+                      required:
+                      - count
+                      type: object
+                    resource_type:
+                      description: ceph.smb.cluster
+                      type: string
+                    user_group_settings:
+                      description: User group settings for user auth mode
+                      items:
+                        properties:
+                          ref:
+                            description: Reference identifier for the user group resource
+                            type: string
+                          source_type:
+                            description: resource
+                            type: string
+                        required:
+                        - source_type
+                        - ref
+                        type: object
+                      type: array
+                  type: object
+                required:
+                - resource_type
+                - cluster_id
+                - auth_mode
+                - intent
+                - domain_settings
+                - user_group_settings
+                - custom_dns
+                - placement
+                type: array
+          description: OK
+        '400':
+          description: Operation exception. Please check the response body for details.
+        '401':
+          description: Unauthenticated access. Please login first.
+        '403':
+          description: Unauthorized access. Please check your permissions.
+        '500':
+          description: Unexpected error. Please check the response body for the stack
+            trace.
+      security:
+      - jwt: []
+      summary: List smb clusters
+      tags:
+      - SMB
+    post:
+      description: "\n        Create an smb cluster\n\n        :param cluster_resource:\
+        \ Dict cluster data\n        :return: Returns cluster resource.\n        :rtype:\
+        \ Dict[str, Any]\n        "
+      parameters: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                cluster_resource:
+                  description: cluster_resource
+                  type: string
+              required:
+              - cluster_resource
+              type: object
+      responses:
+        '201':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              schema:
+                properties:
+                  results:
+                    description: List of results with resource details
+                    items:
+                      properties:
+                        resource:
+                          description: Resource details
+                          properties:
+                            auth_mode:
+                              description: Either 'active-directory' or 'user'
+                              type: string
+                            cluster_id:
+                              description: Unique identifier for the cluster
+                              type: string
+                            custom_dns:
+                              description: List of custom DNS server addresses (optional)
+                              items:
+                                type: string
+                              type: array
+                            domain_settings:
+                              description: Domain-specific settings for active-directory
+                                auth mode
+                              properties:
+                                join_sources:
+                                  description: List of join auth sources for domain
+                                    settings
+                                  items:
+                                    properties:
+                                      ref:
+                                        description: Reference identifier for the
+                                          join auth resource
+                                        type: string
+                                      source_type:
+                                        description: resource
+                                        type: string
+                                    required:
+                                    - source_type
+                                    - ref
+                                    type: object
+                                  type: array
+                                realm:
+                                  description: Domain realm, e.g., 'DOMAIN1.SINK.TEST'
+                                  type: string
+                              required:
+                              - realm
+                              - join_sources
+                              type: object
+                            intent:
+                              description: Desired state of the resource, e.g., 'present'
+                                or 'removed'
+                              type: string
+                            placement:
+                              description: Placement configuration for the resource
+                                (optional)
+                              properties:
+                                count:
+                                  description: Number of instances to place
+                                  type: integer
+                              required:
+                              - count
+                              type: object
+                            resource_type:
+                              description: ceph.smb.cluster
+                              type: string
+                            user_group_settings:
+                              description: User group settings for user auth mode
+                                (optional)
+                              items:
+                                properties:
+                                  ref:
+                                    description: Reference identifier for the user
+                                      group resource
+                                    type: string
+                                  source_type:
+                                    description: resource
+                                    type: string
+                                required:
+                                - source_type
+                                - ref
+                                type: object
+                              type: array
+                          required:
+                          - resource_type
+                          - cluster_id
+                          - auth_mode
+                          - intent
+                          - domain_settings
+                          - user_group_settings
+                          - custom_dns
+                          - placement
+                          type: object
+                        state:
+                          description: State of the resource
+                          type: string
+                        success:
+                          description: Indicates whether the operation was successful
+                          type: boolean
+                      required:
+                      - resource
+                      - state
+                      - success
+                      type: object
+                    type: array
+                  success:
+                    description: Overall success status of the operation
+                    type: boolean
+                required:
+                - results
+                - success
+                type: object
+          description: Resource created.
+        '202':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              type: object
+          description: Operation is still executing. Please check the task queue.
+        '400':
+          description: Operation exception. Please check the response body for details.
+        '401':
+          description: Unauthenticated access. Please login first.
+        '403':
+          description: Unauthorized access. Please check your permissions.
+        '500':
+          description: Unexpected error. Please check the response body for the stack
+            trace.
+      security:
+      - jwt: []
+      summary: Create smb cluster
+      tags:
+      - SMB
+  /api/smb/cluster/{cluster_id}:
+    get:
+      description: "\n        Get an smb cluster by cluster id\n        "
+      parameters:
+      - description: Unique identifier for the cluster
+        in: path
+        name: cluster_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              schema:
+                properties:
+                  auth_mode:
+                    description: Either 'active-directory' or 'user'
+                    type: string
+                  cluster_id:
+                    description: Unique identifier for the cluster
+                    type: string
+                  custom_dns:
+                    description: List of custom DNS server addresses
+                    items:
+                      type: string
+                    type: array
+                  domain_settings:
+                    description: Domain-specific settings for active-directory auth
+                      mode
+                    properties:
+                      join_sources:
+                        description: List of join auth sources for domain settings
+                        items:
+                          properties:
+                            ref:
+                              description: Reference identifier for the join auth
+                                resource
+                              type: string
+                            source_type:
+                              description: resource
+                              type: string
+                          required:
+                          - source_type
+                          - ref
+                          type: object
+                        type: array
+                      realm:
+                        description: Domain realm, e.g., 'DOMAIN1.SINK.TEST'
+                        type: string
+                    required:
+                    - realm
+                    - join_sources
+                    type: object
+                  intent:
+                    description: Desired state of the resource, e.g., 'present' or
+                      'removed'
+                    type: string
+                  placement:
+                    description: Placement configuration for the resource
+                    properties:
+                      count:
+                        description: Number of instances to place
+                        type: integer
+                    required:
+                    - count
+                    type: object
+                  resource_type:
+                    description: ceph.smb.cluster
+                    type: string
+                  user_group_settings:
+                    description: User group settings for user auth mode
+                    items:
+                      properties:
+                        ref:
+                          description: Reference identifier for the user group resource
+                          type: string
+                        source_type:
+                          description: resource
+                          type: string
+                      required:
+                      - source_type
+                      - ref
+                      type: object
+                    type: array
+                required:
+                - resource_type
+                - cluster_id
+                - auth_mode
+                - intent
+                - domain_settings
+                - user_group_settings
+                - custom_dns
+                - placement
+                type: object
+          description: OK
+        '400':
+          description: Operation exception. Please check the response body for details.
+        '401':
+          description: Unauthenticated access. Please login first.
+        '403':
+          description: Unauthorized access. Please check your permissions.
+        '500':
+          description: Unexpected error. Please check the response body for the stack
+            trace.
+      security:
+      - jwt: []
+      summary: Get an smb cluster
+      tags:
+      - SMB
+  /api/smb/share:
+    get:
+      description: "\n        List all smb shares or all shares for a given cluster\n\
+        \n        :param cluster_id: Dict containing cluster information\n       \
+        \ :return: Returns list of shares.\n        :rtype: List[Dict]\n        "
+      parameters:
+      - default: ''
+        description: Unique identifier for the cluster
+        in: query
+        name: cluster_id
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              schema:
+                properties:
+                  browseable:
+                    description: Indicates if the share is browseable
+                    type: boolean
+                  cephfs:
+                    description: Configuration for the CephFS share
+                    properties:
+                      path:
+                        description: Path within the CephFS file system
+                        type: string
+                      provider:
+                        description: Provider of the CephFS share, e.g., 'samba-vfs'
+                        type: string
+                      volume:
+                        description: Name of the CephFS file system
+                        type: string
+                    required:
+                    - volume
+                    - path
+                    - provider
+                    type: object
+                  cluster_id:
+                    description: Unique identifier for the cluster
+                    type: string
+                  intent:
+                    description: Desired state of the resource, e.g., 'present' or
+                      'removed'
+                    type: string
+                  name:
+                    description: Name of the share
+                    type: string
+                  readonly:
+                    description: Indicates if the share is read-only
+                    type: boolean
+                  resource_type:
+                    description: ceph.smb.share
+                    type: string
+                  share_id:
+                    description: Unique identifier for the share
+                    type: string
+                required:
+                - resource_type
+                - cluster_id
+                - share_id
+                - intent
+                - name
+                - readonly
+                - browseable
+                - cephfs
+                type: object
+          description: OK
+        '400':
+          description: Operation exception. Please check the response body for details.
+        '401':
+          description: Unauthenticated access. Please login first.
+        '403':
+          description: Unauthorized access. Please check your permissions.
+        '500':
+          description: Unexpected error. Please check the response body for the stack
+            trace.
+      security:
+      - jwt: []
+      summary: List smb shares
+      tags:
+      - SMB
+  /api/smb/share/{cluster_id}/{share_id}:
+    delete:
+      description: "\n        Remove an smb share from a given cluster\n\n       \
+        \ :param cluster_id: Cluster identifier\n        :param share_id: Share identifier\n\
+        \        :return: None.\n        "
+      parameters:
+      - description: Unique identifier for the cluster
+        in: path
+        name: cluster_id
+        required: true
+        schema:
+          type: string
+      - description: Unique identifier for the share
+        in: path
+        name: share_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '202':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              type: object
+          description: Operation is still executing. Please check the task queue.
+        '204':
+          content:
+            application/vnd.ceph.api.v1.0+json:
+              schema:
+                properties: {}
+                type: object
+          description: Resource deleted.
+        '400':
+          description: Operation exception. Please check the response body for details.
+        '401':
+          description: Unauthenticated access. Please login first.
+        '403':
+          description: Unauthorized access. Please check your permissions.
+        '500':
+          description: Unexpected error. Please check the response body for the stack
+            trace.
+      security:
+      - jwt: []
+      summary: Remove smb shares
+      tags:
+      - SMB
   /api/summary:
     get:
       parameters: []
@@ -15473,12 +16252,16 @@ tags:
   name: RgwSite
 - description: RGW User Management API
   name: RgwUser
+- description: RGW User Accounts API
+  name: RgwUserAccounts
 - description: '*No description available*'
   name: RgwZone
 - description: '*No description available*'
   name: RgwZonegroup
 - description: Role Management API
   name: Role
+- description: SMB Cluster Management API
+  name: SMB
 - description: Service Management API
   name: Service
 - description: Settings Management API
