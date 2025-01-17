@@ -129,6 +129,8 @@ TEST(formatter, dump_large_item) {
 TEST(formatter, parse_types) {
   // Check that JSONParser::parse() works with expected data types 
   // (otherwise at least indirectly tested elsewhere):
+
+  const auto json_input = R"({"expiration": "2025-01-17T10:26:46Z", "conditions": [{"bucket": "user-hqfadib9zxyj2pygevewzf45t-1"}, ["starts-with", "$key", "foo"], {"acl": "private"}, ["starts-with", "$Content-Type", "text/plain"], ["content-length-range", 0, 1024]]})";
   
   { 
   JSONParser parser;
@@ -157,5 +159,24 @@ TEST(formatter, parse_types) {
   
   JSONObj *pgstat_obj = parser.find_obj("pg_stats");
   EXPECT_TRUE(pgstat_obj);
+  }
+
+  {
+  JSONParser parser;
+ 
+  buffer::list bl;
+  bl.append(json_input);
+
+  ASSERT_TRUE(parser.parse(bl));
+
+  JSONObjIter oi = parser.find_first();
+  JSONObj *o0 = *oi;
+  ++oi;
+  JSONObj *o1 = *oi;
+  std::cerr << "JFW: POST-PARSE RESULT 0:\n" << *o0 << "\n-----\n";
+  std::cerr << "JFW: POST-PARSE RESULT 1:\n" << *o1 << "\n-----\n";
+
+  JSONObj *conditions = parser.find_obj("conditions");
+  std::cerr << *conditions << '\n';
   }
 }
