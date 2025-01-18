@@ -219,7 +219,7 @@ public:
  // operate on a string range or object:
   bool parse(const std::string& s) { return parse(std::string_view { s }); }
   bool parse(std::string_view sv);
-  bool parse(ceph::buffer::list& bl) { return parse(std::string_view { bl.c_str(), bl.length() }); }
+  bool parse(ceph::buffer::list& bl) { return parse(std::string_view { bl.c_str(), bl.length() - 1}); }
 
   bool parse(const char *buf_, int len) {
  	return buf_ ? 
