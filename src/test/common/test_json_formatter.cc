@@ -170,13 +170,18 @@ TEST(formatter, parse_types) {
   ASSERT_TRUE(parser.parse(bl));
 
   JSONObjIter oi = parser.find_first();
+
   JSONObj *o0 = *oi;
+  ASSERT_TRUE(nullptr != o0);
+
   ++oi;
   JSONObj *o1 = *oi;
-  std::cerr << "JFW: POST-PARSE RESULT 0:\n" << *o0 << "\n-----\n";
-  std::cerr << "JFW: POST-PARSE RESULT 1:\n" << *o1 << "\n-----\n";
+  ASSERT_TRUE(nullptr != o1);
 
   JSONObj *conditions = parser.find_obj("conditions");
-  std::cerr << *conditions << '\n';
+  ASSERT_TRUE(nullptr != conditions);
+
+  JSONObj *expiration = parser.find_obj("expiration");
+  ASSERT_TRUE(nullptr != conditions);
   }
 }
