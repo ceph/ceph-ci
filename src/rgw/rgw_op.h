@@ -1901,6 +1901,7 @@ public:
 
 class RGWInitMultipart : public RGWOp {
 protected:
+  RGWObjTags obj_tags;
   std::string upload_id;
   RGWAccessControlPolicy policy;
   ceph::real_time mtime;
