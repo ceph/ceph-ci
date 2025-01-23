@@ -46,9 +46,8 @@ public:
     return chunk_size;
   }
   unsigned int get_minimum_granularity() override { return 1; }
-  int encode_chunks(const set<int> &want_to_encode,
-			    map<int, bufferlist> *encoded) override {
-    encode_chunks_encoded = *encoded;
+  int encode_chunks(const std::map<int, bufferptr> &in,
+                    std::map<int, bufferptr> &out) override {
     return 0;
   }
   int decode_chunks(const set<int> &want_to_read,

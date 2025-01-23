@@ -639,7 +639,14 @@ TEST(ErasureCodeLrc, encode_decode)
     encoded[j].append(s);
     c++;
   }
-  EXPECT_EQ(0, lrc.encode_chunks(want_to_encode, &encoded));
+  std::map<int, bufferptr> in;
+  std::map<int, bufferptr> out;
+  for (auto&& [shard, list] : encoded) {
+    auto bp = list.begin().get_current_ptr();
+    if (shard < lrc.get_data_chunk_count()) in[shard] = bp;
+    else out[shard] = bp;
+  }
+  EXPECT_EQ(0, lrc.encode_chunks(in, out));
 
   {
     map<int, bufferlist> chunks;
@@ -772,7 +779,14 @@ TEST(ErasureCodeLrc, encode_decode_2)
     encoded[j].append(s);
     c++;
   }
-  EXPECT_EQ(0, lrc.encode_chunks(want_to_encode, &encoded));
+  std::map<int, bufferptr> in;
+  std::map<int, bufferptr> out;
+  for (auto&& [shard, list] : encoded) {
+    auto bp = list.begin().get_current_ptr();
+    if (shard < lrc.get_data_chunk_count()) in[shard] = bp;
+    else out[shard] = bp;
+  }
+  EXPECT_EQ(0, lrc.encode_chunks(in, out));
 
   {
     set<int> want_to_read;

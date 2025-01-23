@@ -737,40 +737,73 @@ int ErasureCodeLrc::_minimum_to_decode(const set<int> &want_to_read,
   return -EIO;
 }
 
-int ErasureCodeLrc::encode_chunks(const set<int> &want_to_encode,
-				  map<int, bufferlist> *encoded)
+int ErasureCodeLrc::encode_chunks(const std::map<int, bufferptr> &in, 
+                                  std::map<int, bufferptr> &out)
 {
+  unsigned int k = get_data_chunk_count();
+  unsigned int chunk_size = 0;
+  set<int> all_shards;
+  auto& nonconst_in = const_cast<std::map<int, bufferptr>&>(in);
+
+  for (const auto& [shard, ptr] : in) {
+    all_shards.insert(shard);
+    if (chunk_size == 0) chunk_size = ptr.length();
+    else ceph_assert(chunk_size == ptr.length());
+  }
+
   unsigned int top = layers.size();
-  for (vector<Layer>::reverse_iterator i = layers.rbegin();
-       i != layers.rend();
-       ++i) {
+  set<int> out_shards;
+  for (const auto& [shard, ptr] : out) {
+    out_shards.insert(shard);
+    all_shards.insert(shard);
+    if (chunk_size == 0) chunk_size = ptr.length();
+    else ceph_assert(chunk_size == ptr.length());
+  }
+
+  for (vector<Layer>::reverse_iterator i = layers.rbegin(); i != layers.rend(); ++i) {
     --top;
     if (includes(i->chunks_as_set.begin(), i->chunks_as_set.end(),
-		 want_to_encode.begin(), want_to_encode.end()))
+                 all_shards.begin(), all_shards.end())) {
       break;
+    }
   }
 
   for (unsigned int i = top; i < layers.size(); ++i) {
     const Layer &layer = layers[i];
-    set<int> layer_want_to_encode;
-    map<int, bufferlist> layer_encoded;
+    map<int, bufferptr> layer_in;
+    map<int, bufferptr> layer_out;
     int j = 0;
     for (const auto& c : layer.chunks) {
-      std::swap(layer_encoded[j], (*encoded)[c]);
-      if (want_to_encode.find(c) != want_to_encode.end())
-	layer_want_to_encode.insert(j);
+      if (std::find(all_shards.begin(), all_shards.end(), c) == all_shards.end()) {
+        // Shard index not in the in or out maps. The layer plugin will insert a
+        // buffer of 0s at this index before encoding.
+        j++;
+        continue;
+      }
+      if (j < k) {
+        if (std::find(out_shards.begin(), out_shards.end(), c) != out_shards.end()) {
+          layer_in[j] = out[c];
+        }
+        else {
+          layer_in[j] = nonconst_in[c];
+        }
+      }
+      else {
+        if (std::find(out_shards.begin(), out_shards.end(), c) != out_shards.end()) {
+          layer_out[j] = out[c];
+        }
+        else {
+          layer_out[j] = nonconst_in[c];
+        }
+      }
       j++;
     }
-    int err = layer.erasure_code->encode_chunks(layer_want_to_encode,
-						&layer_encoded);
-    j = 0;
-    for (const auto& c : layer.chunks) {
-      std::swap(layer_encoded[j++], (*encoded)[c]);
-    }
+    int err = layer.erasure_code->encode_chunks(layer_in, layer_out);
+    
     if (err) {
       derr << __func__ << " layer " << layer.chunks_map
-	   << " failed with " << err << " trying to encode "
-	   << layer_want_to_encode << dendl;
+ 	    << " failed with " << err << " trying to encode "
+ 	    << dendl;
       return err;
     }
   }

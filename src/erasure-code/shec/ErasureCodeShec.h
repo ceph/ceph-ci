@@ -86,11 +86,8 @@ public:
 				  const std::map<int, int> &available,
 				  std::set<int> *minimum) override;
 
-  int encode(const std::set<int> &want_to_encode,
-		     const ceph::buffer::list &in,
-		     std::map<int, ceph::buffer::list> *encoded) override;
-  int encode_chunks(const std::set<int> &want_to_encode,
-			    std::map<int, ceph::buffer::list> *encoded) override;
+  int encode_chunks(const std::map<int, bufferptr> &in, 
+                    std::map<int, bufferptr> &out) override;
 
   int _decode(const std::set<int> &want_to_read,
 	      const std::map<int, ceph::buffer::list> &chunks,

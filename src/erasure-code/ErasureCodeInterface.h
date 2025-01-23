@@ -338,6 +338,10 @@ namespace ceph {
     virtual unsigned int get_minimum_granularity() = 0;
 
     /**
+     * Note: The encode function is used for the older EC code path
+     * that is used when EC optimizations are turned off. EC optimizations
+     * are turned off for new pools by default.
+     *
      * Encode the content of **in** and store the result in
      * **encoded**. All buffers pointed to by **encoded** have the
      * same size. The **encoded** map contains at least all chunk
@@ -372,13 +376,46 @@ namespace ceph {
      * @param [out] encoded map chunk indexes to chunk data
      * @return **0** on success or a negative errno on error.
      */
-    virtual int encode(const std::set<int> &want_to_encode,
-                       const bufferlist &in,
-                       std::map<int, bufferlist> *encoded) = 0;
+     virtual int encode(const std::set<int> &want_to_encode,
+                        const bufferlist &in,
+                        std::map<int, bufferlist> *encoded) = 0;
 
-
-    virtual int encode_chunks(const std::set<int> &want_to_encode,
-                              std::map<int, bufferlist> *encoded) = 0;
+    /**
+     * Note: The encode_chunks function is used by the older EC code path
+     * that is used when EC optimizations are turned off. It is also used
+     * when EC optimizations are turned on.
+     *
+     * Encode the content of **in** and store the result in
+     * **out**. All buffers pointed to by **in** and **out** have the
+     * same size.
+     *
+     * The data chunks to be encoded are provided in the in map, these buffers
+     * are considered to be immutable (neither the bufferptr or the contents
+     * of the buffer may be changed). Some of these bufferptrs may be a special
+     * bufferptr representing a buffer of zeros. There is no way to represent
+     * a buffer for a chunk that consists of a mixture of data and zeros,
+     * the caller is expected to make multiple calls to encode_chunks using smaller
+     * buffers if this optimzation is worthwhile. The bufferptrs are expected to
+     * have suitable alignment (page alignment) and are a single contiguous
+     * range of memory. The caller is likely to have a bufferlist per chunk
+     * and may either need to make multiple calls to encode_chunks or use
+     * rebuild_and_align to create a single contiguous buffer for each chunk.
+     *
+     * The coding parity chunk bufferptrs are allocated by the caller and
+     * populated in the out map. These bufferptrs are expected to be written to
+     * by the erasure code plugin. Again the bufferptrs are expected to have
+     * suitable alignment and are a single contiguous range of memory.
+     * The erasure code plugin may replace one or more of these bufferptrs
+     * with a special bufferptr representing a buffer of zeros.
+     *
+     * Returns 0 on success.
+     *
+     * @param [in] in map of data shards to be encoded
+     * @param [out] out map of empty buffers for parity to be written to
+     * @return **0** on success or a negative errno on error.
+     */
+    virtual int encode_chunks(const std::map<int, bufferptr> &in,
+                              std::map<int, bufferptr> &out) = 0;
 
     /**
      * Calculate the delta between the old_data and new_data

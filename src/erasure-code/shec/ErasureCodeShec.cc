@@ -136,37 +136,42 @@ int ErasureCodeShec::minimum_to_decode_with_cost(const set<int> &want_to_read,
   return _minimum_to_decode(want_to_read, available_chunks, minimum_chunks);
 }
 
-int ErasureCodeShec::encode(const set<int> &want_to_encode,
-			    const bufferlist &in,
-			    map<int, bufferlist> *encoded)
+int ErasureCodeShec::encode_chunks(const std::map<int, bufferptr> &in, 
+                                   std::map<int, bufferptr> &out)
 {
-  unsigned int k = get_data_chunk_count();
-  unsigned int m = get_chunk_count() - k;
-  bufferlist out;
+  char *chunks[k + m]; //TODO don't use variable length arrays
+  memset(chunks, 0, sizeof(char*) * (k + m));
+  uint64_t size = 0;
 
-  if (!encoded || !encoded->empty()){
-    return -EINVAL;
+  for (auto &&[shard, ptr] : in) {
+    if (size == 0) size = ptr.length();
+    else ceph_assert(size == ptr.length());
+    chunks[shard] = const_cast<char*>(ptr.c_str());
   }
 
-  int err = encode_prepare(in, *encoded);
-  if (err)
-    return err;
-  encode_chunks(want_to_encode, encoded);
-  for (unsigned int i = 0; i < k + m; i++) {
-    if (want_to_encode.count(i) == 0)
-      encoded->erase(i);
+  for (auto &&[shard, ptr] : out) {
+    if (size == 0) size = ptr.length();
+    else ceph_assert(size == ptr.length());
+    chunks[shard] = ptr.c_str();
   }
-  return 0;
-}
 
-int ErasureCodeShec::encode_chunks(const set<int> &want_to_encode,
-				   map<int, bufferlist> *encoded)
-{
-  char *chunks[k + m];
-  for (int i = 0; i < k + m; i++){
-    chunks[i] = (*encoded)[i].c_str();
+  char *zeros = nullptr;
+
+  for (int i = 0; i < k + m; i++) {
+    if (in.contains(i) || out.contains(i)) continue;
+
+    if (zeros == nullptr) {
+      zeros = (char*)malloc(size);
+      memset(zeros, 0, size);
+    }
+
+    chunks[i] = zeros;
   }
-  shec_encode(&chunks[0], &chunks[k], (*encoded)[0].length());
+
+  shec_encode(&chunks[0], &chunks[k], size);
+
+  if (zeros != nullptr) free(zeros);
+
   return 0;
 }
 

@@ -78,8 +78,8 @@ namespace ceph {
                        std::map<int, bufferlist> &encoded) const;
 
     int encode(const std::set<int> &want_to_encode,
-                       const bufferlist &in,
-                       std::map<int, bufferlist> *encoded) override;
+               const bufferlist &in,
+               std::map<int, bufferlist> *encoded);
 
     int decode(const std::set<int> &want_to_read,
                 const std::map<int, bufferlist> &chunks,

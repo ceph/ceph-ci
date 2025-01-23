@@ -88,12 +88,12 @@ public:
 
   unsigned int get_chunk_size(unsigned int stripe_width) const override;
 
-  int encode_chunks(const std::set<int> &want_to_encode,
-                    std::map<int, ceph::buffer::list> *encoded) override;
+  int encode_chunks(const std::map<int, bufferptr> &in,
+                    std::map<int, bufferptr> &out) override;
 
   int decode_chunks(const std::set<int> &want_to_read,
-                            const std::map<int, ceph::buffer::list> &chunks,
-                            std::map<int, ceph::buffer::list> *decoded) override;
+                    const std::map<int, ceph::buffer::list> &chunks,
+                    std::map<int, ceph::buffer::list> *decoded) override;
 
   int init(ceph::ErasureCodeProfile &profile, std::ostream *ss) override;
 

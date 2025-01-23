@@ -215,15 +215,25 @@ int ErasureCode::encode(const set<int> &want_to_encode,
 {
   unsigned int k = get_data_chunk_count();
   unsigned int m = get_chunk_count() - k;
-  bufferlist out;
+  if (!encoded || !encoded->empty()){
+      return -EINVAL;
+    }
   int err = encode_prepare(in, *encoded);
   if (err)
     return err;
-  encode_chunks(want_to_encode, encoded);
+std::map<int, bufferptr> in_shards;
+    std::map<int, bufferptr> out_shards;
+    for (auto&& [shard, list] : *encoded) {
+      auto bp = list.begin().get_current_ptr();
+      if (shard < k) in_shards[shard] = bp;
+      else out_shards[shard] = bp;
+    }
+
+    encode_chunks(in_shards, out_shards);
   for (unsigned int i = 0; i < k + m; i++) {
     if (want_to_encode.count(i) == 0)
-      encoded->erase(i);
-  }
+      encoded->erase(i);}
+
   return 0;
 }
 

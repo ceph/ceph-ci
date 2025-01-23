@@ -131,24 +131,29 @@ int ErasureCodeClay::decode(const set<int> &want_to_read,
 
 void p(const set<int> &s) { cerr << s; } // for gdb
 
-int ErasureCodeClay::encode_chunks(const set<int> &want_to_encode,
-				   map<int, bufferlist> *encoded)
+int ErasureCodeClay::encode_chunks(const std::map<int, bufferptr> &in, 
+                                   std::map<int, bufferptr> &out)
 {
   map<int, bufferlist> chunks;
   set<int> parity_chunks;
-  int chunk_size = (*encoded)[0].length();
+  unsigned int size = 0;
+  auto& nonconst_in = const_cast<std::map<int, bufferptr>&>(in);
 
-  for (int i = 0; i < k + m; i++) {
-    if (i < k) {
-      chunks[i] = (*encoded)[i];
-    } else {
-      chunks[i+nu] = (*encoded)[i];
-      parity_chunks.insert(i+nu);
-    }
+  for (auto &&[shard, ptr] : nonconst_in) {
+    if (size == 0) size = ptr.length();
+    else ceph_assert(size == ptr.length());
+    chunks[shard].append(nonconst_in[shard]);
+  }
+
+  for (auto &&[shard, ptr] : out) {
+    if (size == 0) size = ptr.length();
+    else ceph_assert(size == ptr.length());
+    chunks[shard+nu].append(out[shard]);
+    parity_chunks.insert(shard+nu);
   }
 
   for (int i = k; i < k + nu; i++) {
-    bufferptr buf(buffer::create_aligned(chunk_size, SIMD_ALIGN));
+    bufferptr buf(buffer::create_aligned(size, SIMD_ALIGN));
     buf.zero();
     chunks[i].push_back(std::move(buf));
   }

@@ -102,13 +102,42 @@ unsigned int ErasureCodeJerasure::get_chunk_size(unsigned int stripe_width) cons
   }
 }
 
-int ErasureCodeJerasure::encode_chunks(const set<int> &want_to_encode,
-				       map<int, bufferlist> *encoded)
+int ErasureCodeJerasure::encode_chunks(const std::map<int, bufferptr> &in,
+                                       std::map<int, bufferptr> &out)
 {
-  char *chunks[k + m];
-  for (int i = 0; i < k + m; i++)
-    chunks[i] = (*encoded)[i].c_str();
-  jerasure_encode(&chunks[0], &chunks[k], (*encoded)[0].length());
+  char *chunks[k + m]; //TODO don't use variable length arrays
+  memset(chunks, 0, sizeof(char*) * (k + m));
+  uint64_t size = 0;
+
+  for (auto &&[shard, ptr] : in) {
+    if (size == 0) size = ptr.length();
+    else ceph_assert(size == ptr.length());
+    chunks[shard] = const_cast<char*>(ptr.c_str());
+  }
+
+  for (auto &&[shard, ptr] : out) {
+    if (size == 0) size = ptr.length();
+    else ceph_assert(size == ptr.length());
+    chunks[shard] = ptr.c_str();
+  }
+
+  char *zeros = nullptr;
+
+  for (int i = 0; i < k + m; i++) {
+    if (in.contains(i) || out.contains(i)) continue;
+
+    if (zeros == nullptr) {
+      zeros = (char*)malloc(size);
+      memset(zeros, 0, size);
+    }
+
+    chunks[i] = zeros;
+  }
+
+  jerasure_encode(&chunks[0], &chunks[k], size);
+
+  if (zeros != nullptr) free(zeros);
+
   return 0;
 }
 

@@ -113,8 +113,8 @@ public:
 
   unsigned int get_minimum_granularity() override;
 
-  int encode_chunks(const std::set<int> &want_to_encode,
-		    std::map<int, ceph::buffer::list> *encoded) override;
+  int encode_chunks(const std::map<int, bufferptr> &in, 
+                    std::map<int, bufferptr> &out);
 
   int decode_chunks(const std::set<int> &want_to_read,
 		    const std::map<int, ceph::buffer::list> &chunks,

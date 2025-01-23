@@ -82,8 +82,8 @@ public:
              const std::map<int, ceph::bufferlist> &chunks,
              std::map<int, ceph::bufferlist> *decoded, int chunk_size) override;
 
-  int encode_chunks(const std::set<int> &want_to_encode,
-	            std::map<int, ceph::bufferlist> *encoded) override;
+  int encode_chunks(const std::map<int, ceph::bufferptr> &in, 
+                    std::map<int, ceph::bufferptr> &out) override;
 
   int decode_chunks(const std::set<int> &want_to_read,
 		    const std::map<int, ceph::bufferlist> &chunks,

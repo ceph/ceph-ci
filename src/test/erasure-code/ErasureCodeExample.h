@@ -134,8 +134,8 @@ public:
     return 0;
   }
 
-  int encode_chunks(const std::set<int> &want_to_encode,
-			    std::map<int, bufferlist> *encoded) override {
+  int encode_chunks(const std::map<int, bufferptr> &in, 
+                    std::map<int, bufferptr> &out) override {
     ceph_abort();
     return 0;
   }
