@@ -54,6 +54,7 @@ def test_deploy_nfs_container(cephadm_fs, funkypatch):
             'config': 'BALONEY',
             'keyring': 'BUNKUS',
         }
+        ctx.limit_core_infinity = False
         _cephadm._common_deploy(ctx)
 
     with open(f'/var/lib/ceph/{fsid}/nfs.fun/unit.run') as f:
@@ -88,6 +89,7 @@ def test_deploy_snmp_container(cephadm_fs, funkypatch):
             'config': 'XXXXXXX',
             'keyring': 'YYYYYY',
         }
+        ctx.limit_core_infinity = False
         _cephadm._common_deploy(ctx)
 
     with open(f'/var/lib/ceph/{fsid}/snmp-gateway.sunmop/unit.run') as f:
@@ -124,6 +126,7 @@ def test_deploy_keepalived_container(cephadm_fs, funkypatch):
                 'keepalived.conf': 'neversayneveragain',
             },
         }
+        ctx.limit_core_infinity = False
         _cephadm._common_deploy(ctx)
 
     basedir = pathlib.Path(f'/var/lib/ceph/{fsid}/keepalived.uiop')
@@ -171,6 +174,7 @@ def test_deploy_haproxy_container(cephadm_fs, funkypatch):
                 'haproxy.cfg': 'bifrost',
             },
         }
+        ctx.limit_core_infinity = False
         _cephadm._common_deploy(ctx)
 
     basedir = pathlib.Path(f'/var/lib/ceph/{fsid}/haproxy.yyz')
@@ -215,6 +219,7 @@ def test_deploy_iscsi_container(cephadm_fs, funkypatch):
                 'iscsi-gateway.cfg': 'portal',
             },
         }
+        ctx.limit_core_infinity = False
         _cephadm._common_deploy(ctx)
 
     basedir = pathlib.Path(f'/var/lib/ceph/{fsid}/iscsi.wuzzy')
@@ -259,6 +264,7 @@ def test_deploy_nvmeof_container(cephadm_fs, funkypatch):
                 'ceph-nvmeof.conf': 'icantbeliveitsnotiscsi',
             },
         }
+        ctx.limit_core_infinity = False
         _cephadm._common_deploy(ctx)
 
     basedir = pathlib.Path(f'/var/lib/ceph/{fsid}/nvmeof.andu')
@@ -308,6 +314,7 @@ def test_deploy_a_monitoring_container(cephadm_fs, funkypatch):
             },
             'ip_to_bind_to': '1.2.3.4'
         }
+        ctx.limit_core_infinity = False
         _cephadm._common_deploy(ctx)
 
     basedir = pathlib.Path(f'/var/lib/ceph/{fsid}/prometheus.fire')
@@ -346,6 +353,7 @@ def test_deploy_ceph_mgr_container(cephadm_fs, funkypatch):
             'config': 'XXXXXXX',
             'keyring': 'YYYYYY',
         }
+        ctx.limit_core_infinity = False
         _cephadm._common_deploy(ctx)
 
     basedir = pathlib.Path(f'/var/lib/ceph/{fsid}/mgr.foo')
@@ -388,6 +396,7 @@ def test_deploy_ceph_osd_container(cephadm_fs, funkypatch):
             'config': 'XXXXXXX',
             'keyring': 'YYYYYY',
         }
+        ctx.limit_core_infinity = False
         _cephadm._common_deploy(ctx)
 
     basedir = pathlib.Path(f'/var/lib/ceph/{fsid}/osd.quux')
@@ -435,6 +444,7 @@ def test_deploy_ceph_exporter_container(cephadm_fs, funkypatch):
             'keyring': 'YYYYYY',
             'prio-limit': 12,
         }
+        ctx.limit_core_infinity = False
 
         # ceph-exporter is weird and special. it requires the "sock dir"
         # to already exist. that dir defaults to /var/run/ceph
@@ -480,6 +490,7 @@ def test_deploy_and_rm_iscsi(cephadm_fs, funkypatch):
                 'iscsi-gateway.cfg': 'portal',
             },
         }
+        ctx.limit_core_infinity = False
         _cephadm._common_deploy(ctx)
 
     unit_dir = pathlib.Path('/etc/systemd/system')
@@ -520,6 +531,7 @@ def test_deploy_smb_container(cephadm_fs, funkypatch):
             'config': 'SAMPLE',
             'keyring': 'SOMETHING',
         }
+        ctx.limit_core_infinity = False
         _cephadm._common_deploy(ctx)
 
     basedir = pathlib.Path(f'/var/lib/ceph/{fsid}/smb.b01s')
