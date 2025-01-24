@@ -13,6 +13,7 @@
 * RGW: For compatibility with AWS S3, LastModified timestamps are now truncated
   to the second. Note that during upgrade, users may observe these timestamps
   moving backwards as a result.
+* RGW: Lua scripts will not run against health checks.
 
 * RBD: All Python APIs that produce timestamps now return "aware" `datetime`
   objects instead of "naive" ones (i.e. those including time zone information
