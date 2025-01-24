@@ -137,7 +137,9 @@ build_dashboard_frontend() {
   cd src/pybind/mgr/dashboard/frontend
 
   . $TEMP_DIR/bin/activate
-  NG_CLI_ANALYTICS=false timeout 1h npm ci
+  if [ "${NPM_CI:-true}" = "true" ]; then
+    NG_CLI_ANALYTICS=false timeout 1h npm ci
+  fi
   echo "Building ceph-dashboard frontend with build:localize script";
   # we need to use "--" because so that "--configuration production"
   # survives accross all scripts redirections inside package.json
