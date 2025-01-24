@@ -1384,6 +1384,7 @@ class NvmeofServiceSpec(ServiceSpec):
                  transport_tcp_options: Optional[Dict[str, int]] =
                  {"in_capsule_data_size": 8192, "max_io_qpairs_per_ctrlr": 7},
                  tgt_cmd_extra_args: Optional[str] = None,
+                 iobuf_options: Optional[Dict[str, int]] = None,
                  discovery_addr: Optional[str] = None,
                  discovery_addr_map: Optional[Dict[str, str]] = None,
                  discovery_port: Optional[int] = None,
@@ -1520,6 +1521,8 @@ class NvmeofServiceSpec(ServiceSpec):
         self.transport_tcp_options: Optional[Dict[str, int]] = transport_tcp_options
         #: ``tgt_cmd_extra_args`` extra arguments for the nvmf_tgt process
         self.tgt_cmd_extra_args = tgt_cmd_extra_args
+        #: List of extra arguments for SPDK iobuf in the form opt=value
+        self.iobuf_options: Optional[Dict[str, int]] = iobuf_options
         #: ``discovery_addr`` address of the discovery service
         self.discovery_addr = discovery_addr
         #: ``discovery_addr_map`` per node address map of the discovery service
@@ -1550,7 +1553,7 @@ class NvmeofServiceSpec(ServiceSpec):
         self.monitor_client_log_file_dir = monitor_client_log_file_dir
 
     def get_port_start(self) -> List[int]:
-        return [self.port, 4420, self.discovery_port]
+        return [self.port, 4420, self.discovery_port, self.prometheus_port]
 
     def validate(self) -> None:
         #  TODO: what other parameters should be validated as part of this function?
@@ -2870,7 +2873,7 @@ class CephExporterSpec(ServiceSpec):
             extra_entrypoint_args=extra_entrypoint_args)
 
         self.service_type = service_type
-        self.sock_dir = sock_dir
+        self.sock_dir = None
         self.addrs = addrs
         self.port = port
         self.prio_limit = prio_limit
@@ -2881,6 +2884,11 @@ class CephExporterSpec(ServiceSpec):
 
     def validate(self) -> None:
         super(CephExporterSpec, self).validate()
+
+        if self.sock_dir and self.sock_dir != '/var/run/ceph/':
+            raise SpecValidationError(
+                'sock_dir setting is deprecated and must be either unset or set to /var/run/ceph/'
+            )
 
         if not isinstance(self.prio_limit, int):
             raise SpecValidationError(

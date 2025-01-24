@@ -917,15 +917,20 @@ void handle_replication_status_header(
   auto attr_iter = attrs.find(RGW_ATTR_OBJ_REPLICATION_STATUS);
   if (attr_iter != attrs.end() && attr_iter->second.to_str() == "PENDING") {
     if (s->object->is_sync_completed(dpp, obj_mtime)) {
-        s->object->set_atomic();
-        rgw::sal::Attrs setattrs, rmattrs;
-        bufferlist bl;
-        bl.append("COMPLETED");
-        setattrs[RGW_ATTR_OBJ_REPLICATION_STATUS] = std::move(bl);
-	int ret = s->object->set_obj_attrs(dpp, &setattrs, &rmattrs, s->yield, 0);
-	if (ret == 0) {
-	  ldpp_dout(dpp, 20) << *s->object << " has amz-replication-status header set to COMPLETED" << dendl;
-	}
+      s->object->set_atomic();
+      rgw::sal::Attrs setattrs, rmattrs;
+      bufferlist bl;
+      bl.append("COMPLETED");
+      setattrs[RGW_ATTR_OBJ_REPLICATION_STATUS] = bl;
+      int ret = s->object->set_obj_attrs(dpp, &setattrs, &rmattrs, s->yield, 0);
+      if (ret < 0) {
+        ldpp_dout(dpp, 0) << "ERROR: failed to set object replication status to COMPLETED ret=" << ret << dendl;
+        return;
+      }
+
+      ldpp_dout(dpp, 20) << *s->object << " has amz-replication-status header set to COMPLETED" << dendl;
+
+      attrs[RGW_ATTR_OBJ_REPLICATION_STATUS] = std::move(bl); // update the attrs so that the status is reflected in the response
     }
   }
 }
@@ -8582,6 +8587,10 @@ void RGWGetBucketPolicy::execute(optional_yield y)
 
 void RGWDeleteBucketPolicy::send_response()
 {
+  if (!op_ret) {
+    /* A successful Delete Bucket Policy should return a 204 on success */
+    op_ret = STATUS_NO_CONTENT;
+  }
   if (op_ret) {
     set_req_state_err(s, op_ret);
   }
@@ -9257,4 +9266,3 @@ void rgw_slo_entry::decode_json(JSONObj *obj)
   JSONDecoder::decode_json("etag", etag, obj);
   JSONDecoder::decode_json("size_bytes", size_bytes, obj);
 };
-

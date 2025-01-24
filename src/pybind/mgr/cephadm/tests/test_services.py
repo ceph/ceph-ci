@@ -284,7 +284,7 @@ class TestISCSIService:
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
     @patch("cephadm.module.CephadmOrchestrator.get_unique_name")
-    @patch("cephadm.services.iscsi.IscsiService.get_trusted_ips")
+    @patch("cephadm.services.iscsi.get_trusted_ips")
     def test_iscsi_config(self, _get_trusted_ips, _get_name, _run_cephadm, cephadm_module: CephadmOrchestrator):
 
         iscsi_daemon_id = 'testpool.test.qwert'
@@ -481,11 +481,11 @@ timeout = 1.0\n"""
                         "image": "",
                         "deploy_arguments": [],
                         "params": {
-                            "tcp_ports": [5500, 4420, 8009]
+                            "tcp_ports": [5500, 4420, 8009, 10008]
                         },
                         "meta": {
                             "service_name": "nvmeof.testpool",
-                            "ports": [5500, 4420, 8009],
+                            "ports": [5500, 4420, 8009, 10008],
                             "ip": None,
                             "deployed_by": [],
                             "rank": None,

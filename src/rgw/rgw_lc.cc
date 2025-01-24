@@ -2000,9 +2000,9 @@ int RGWLC::process(LCWorker* worker,
     }
   }
 
-  ret = static_cast<rgw::sal::RadosStore*>(driver)->getRados()->process_expire_objects(this, null_yield);
+  ret = driver->process_expired_objects(this, null_yield);
   if (ret < 0) {
-    ldpp_dout(this, 5) << "RGWLC::process_expire_objects: failed, "
+    ldpp_dout(this, 5) << "RGWLC::process_expired_objects: failed, "
 	          << " worker ix: " << worker->ix << dendl;
   }
 
@@ -2462,7 +2462,7 @@ void RGWLC::start_processor()
   for (int ix = 0; ix < maxw; ++ix) {
     auto worker  =
       std::make_unique<RGWLC::LCWorker>(this /* dpp */, cct, this, ix);
-    worker->create((string{"lifecycle_thr_"} + to_string(ix)).c_str());
+    worker->create((string{"rgw_lc_"} + to_string(ix)).c_str());
     workers.emplace_back(std::move(worker));
   }
 }
