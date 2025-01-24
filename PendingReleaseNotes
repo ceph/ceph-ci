@@ -1,75 +1,3 @@
->=20.0.0
-
-* RGW: The User Account feature introduced in Squid provides first-class support for
-  IAM APIs and policy. Our preliminary STS support was instead based on tenants, and
-  exposed some IAM APIs to admins only. This tenant-level IAM functionality is now
-  deprecated in favor of accounts. While we'll continue to support the tenant feature
-  itself for namespace isolation, the following features will be removed no sooner
-  than the V release:
-    * tenant-level IAM APIs like CreateRole, PutRolePolicy and PutUserPolicy,
-    * use of tenant names instead of accounts in IAM policy documents,
-    * interpretation of IAM policy without cross-account policy evaluation,
-    * S3 API support for cross-tenant names such as `Bucket='tenant:bucketname'`
-* RGW: Lua scripts will not run against health checks.
-
-* RBD: All Python APIs that produce timestamps now return "aware" `datetime`
-  objects instead of "naive" ones (i.e. those including time zone information
-  instead of those not including it).  All timestamps remain to be in UTC but
-  including `timezone.utc` makes it explicit and avoids the potential of the
-  returned timestamp getting misinterpreted -- in Python 3, many `datetime`
-  methods treat "naive" `datetime` objects as local times.
-* RBD: `rbd group info` and `rbd group snap info` commands are introduced to
-  show information about a group and a group snapshot respectively.
-* RBD: `rbd group snap ls` output now includes the group snapshot IDs. The header
-  of the column showing the state of a group snapshot in the unformatted CLI
-  output is changed from 'STATUS' to 'STATE'. The state of a group snapshot
-  that was shown as 'ok' is now shown as 'complete', which is more descriptive.
-* Based on tests performed at scale on an HDD based Ceph cluster, it was found
-  that scheduling with mClock was not optimal with multiple OSD shards. For
-  example, in the test cluster with multiple OSD node failures, the client
-  throughput was found to be inconsistent across test runs coupled with multiple
-  reported slow requests. However, the same test with a single OSD shard and
-  with multiple worker threads yielded significantly better results in terms of
-  consistency of client and recovery throughput across multiple test runs.
-  Therefore, as an interim measure until the issue with multiple OSD shards
-  (or multiple mClock queues per OSD) is investigated and fixed, the following
-  changes to the default option values have been made:
-   - osd_op_num_shards_hdd = 1 (was 5)
-   - osd_op_num_threads_per_shard_hdd = 5 (was 1)
-  For more details see https://tracker.ceph.com/issues/66289.
-* MGR: The Ceph Manager's always-on modulues/plugins can now be force-disabled.
-  This can be necessary in cases where we wish to prevent the manager from being
-  flooded by module commands when Ceph services are down or degraded.
-
-* CephFS: Modifying the setting "max_mds" when a cluster is
-  unhealthy now requires users to pass the confirmation flag
-  (--yes-i-really-mean-it). This has been added as a precaution to tell the
-  users that modifying "max_mds" may not help with troubleshooting or recovery
-  effort. Instead, it might further destabilize the cluster.
-* RADOS: Added convenience function `librados::AioCompletion::cancel()` with
-  the same behavior as `librados::IoCtx::aio_cancel()`.
-
-* mgr/restful, mgr/zabbix: both modules, already deprecated since 2020, have been
-  finally removed. They have not been actively maintenance in the last years,
-  and started suffering from vulnerabilities in their dependency chain (e.g.:
-  CVE-2023-46136).  As alternatives, for the `restful` module, the `dashboard` module
-  provides a richer and better maintained RESTful API. Regarding the `zabbix` module,
-  there are alternative monitoring solutions, like `prometheus`, which is the most
-  widely adopted among the Ceph user community.
-
-* CephFS: EOPNOTSUPP (Operation not supported ) is now returned by the CephFS
-  fuse client for `fallocate` for the default case (i.e. mode == 0) since
-  CephFS does not support disk space reservation. The only flags supported are
-  `FALLOC_FL_KEEP_SIZE` and `FALLOC_FL_PUNCH_HOLE`.
-* pybind/rados: Fixes WriteOp.zero() in the original reversed order of arguments
-  `offset` and `length`. When pybind calls WriteOp.zero(), the argument passed
-  does not match rados_write_op_zero, and offset and length are swapped, which
-  results in an unexpected response.
-
-* The HeadBucket API now reports the `X-RGW-Bytes-Used` and `X-RGW-Object-Count`
-  headers only when the `read-stats` querystring is explicitly included in the
-  API request.
-
 >=19.2.1
 
 * CephFS: Command `fs subvolume create` now allows tagging subvolumes through option
@@ -81,6 +9,8 @@
 
 * RADOS: A performance botteneck in the balancer mgr module has been fixed.
   Related Tracker: https://tracker.ceph.com/issues/68657
+
+* RGW: Lua scripts will not run against health checks.
 
 >=19.0.0
 
