@@ -53,12 +53,109 @@ def remove_nvmeof_gateway(_, name: str, daemon_name: str = ''):
 
 class OutputModifiers:
     @staticmethod
-    def subsystem_add(output: Optional[Dict[str, Any]], success: bool, cmd_dict: Dict[str, Any]):
-        return {'success': 'test successful'}
+    def subsystem_add(output: Optional[Dict[str, Any]], success: bool, cmd_dict: Dict[str, Any], e: Exception = None):
+        if success:
+            return {"success": f"Added subsystem: {cmd_dict['nqn']}"}
+        else: 
+            return {"failure": f"Failed to add subsystem: {cmd_dict['nqn']}. Error: {str(e)}"}
+
+    @staticmethod
+    def subsystem_del(output: Optional[Dict[str, Any]], success: bool, cmd_dict: Dict[str, Any], e: Exception = None):
+        if success:
+            return {"success": f"Deleted subsystem: {cmd_dict['nqn']}"}
+        else: 
+            return {"failure": f"Failed to delete subsystem: {cmd_dict['nqn']}. Error: {str(e)}"}
+        #"Deleting subsystem {args.subsystem}: Successful"
+        #"Failure deleting subsystem {args.subsystem}:\n{ex}"
+
+    @staticmethod
+    def listener_add(output: Optional[Dict[str, Any]], success: bool, cmd_dict: Dict[str, Any], e: Exception = None):
+        if success:
+            return {"success": f"Added {cmd_dict['nqn']} listener at {cmd_dict['traddr']}:{cmd_dict['trsvcid']}"}
+        else: 
+            return {"failure": f"Failed to add {cmd_dict['nqn']} listener at {cmd_dict['traddr']}:{cmd_dict['trsvcid']}. Error: {str(e)}"}
+        #"Adding {args.subsystem} listener at {traddr}:{args.trsvcid}: Successful"
+        #"Failure adding {args.subsystem} listener at {traddr}:{args.trsvcid}:\n{ex}
+
+    @staticmethod
+    def listener_del(output: Optional[Dict[str, Any]], success: bool, cmd_dict: Dict[str, Any], e: Exception = None):
+        if success:
+            return {"success": f"Deleted {cmd_dict['nqn']} listener at {cmd_dict['traddr']}:{cmd_dict['trsvcid']}"}
+        else: 
+            return {"failure": f"Failed to delete {cmd_dict['nqn']} listener at {cmd_dict['traddr']}:{cmd_dict['trsvcid']}. Error: {str(e)}"}
+        #"Failure deleting listener {traddr}:{args.trsvcid} from {args.subsystem}:\n{ex}"
+        #"Deleting listener {traddr}:{args.trsvcid} from {args.subsystem} {host_msg}: Successful"
+
+    @staticmethod
+    def namespace_add(output: Optional[Dict[str, Any]], success: bool, cmd_dict: Dict[str, Any], e: Exception = None):
+        if success:
+            return {"success": f"Added namespace {output['nsid'] if output else ''} to subsystem: {cmd_dict['nqn']}"}
+        else: 
+            return {"failure": f"Failed to add namespace {output['nsid'] if output else ''} to subsystem: {cmd_dict['nqn']}"}
+        #"Adding namespace {ret.nsid} to {args.subsystem}: Successful"
+        #"Failure adding namespace {nsid_msg}to {args.subsystem}"
+
+    @staticmethod
+    def namespace_del(output: Optional[Dict[str, Any]], success: bool, cmd_dict: Dict[str, Any], e: Exception = None):
+        if success:
+            return {"success": f"Deleted namespace {output['nsid'] if output else ''} to subsystem: {cmd_dict['nqn']}"}
+        else: 
+            return {"failure": f"Failed to del namespace {output['nsid'] if output else ''} to subsystem: {cmd_dict['nqn']}"}
+        #"Deleting namespace {args.nsid} from {args.subsystem}: Successful"
+        #Failure deleting namespace:\n{ex}"
+
+    @staticmethod
+    def host_add(output: Optional[Dict[str, Any]], success: bool, cmd_dict: Dict[str, Any], e: Exception = None):
+        if success:
+            if cmd_dict['host'] == '*':
+                return {"success": f"Allowed open host access to subsystem: {cmd_dict['nqn']}"}
+            else:
+                return {"success": f"Added host {cmd_dict['host']} subsystem: {cmd_dict['nqn']}"}
+        else: 
+            if cmd_dict['host'] == '*':
+                return {"failure": f"Failed to open host access to subsystem: {cmd_dict['nqn']}"}    
+            else: 
+                return {"failure": f"Failed to add host {cmd_dict['host']} subsystem: {cmd_dict['nqn']}"}    
+        """
+        if one_host_nqn == "*":
+                    errmsg = f"Failure allowing open host access to {args.subsystem}"
+                else:
+                    errmsg = f"Failure adding host {one_host_nqn} to {args.subsystem}"
+        
+        if one_host_nqn == "*":
+                        out_func(f"Allowing open host access to {args.subsystem}: Successful")
+                    else:
+                        out_func(f"Adding host {one_host_nqn} to {args.subsystem}: Successful")
+        """
+
+    @staticmethod
+    def host_del(output: Optional[Dict[str, Any]], success: bool, cmd_dict: Dict[str, Any], e: Exception = None):
+        if success:
+            if cmd_dict['host'] == '*':
+                return {"success": f"Disabled host access to subsystem: {cmd_dict['nqn']}"}
+            else:
+                return {"success": f"Removed host {cmd_dict['host']} access to subsystem: {cmd_dict['nqn']}"}
+        else: 
+            if cmd_dict['host'] == '*':
+                return {"failure": f"Failed to disable host access to subsystem: {cmd_dict['nqn']}"}    
+            else: 
+                return {"failure": f"Failed to remove host {cmd_dict['host']} access to subsystem: {cmd_dict['nqn']}"}    
+        """
+        if one_host_nqn == "*":
+                    errmsg = f"Failure disabling open host access to {args.subsystem}"
+                else:
+                    errmsg = f"Failure removing host {one_host_nqn} access to {args.subsystem}"
+                    
+        if one_host_nqn == "*":
+                        out_func(f"Disabling open host access to {args.subsystem}: Successful")
+                    else:
+                        out_func(f"Removing host {one_host_nqn} access from "
+                                 f"{args.subsystem}: Successful")
+        """
 
 
 class NvmeofCLICommand(CLICommand):
-    def __init__(self, prefix, perm = 'rw', poll = False, out_modifier: Callable[[Optional[Dict[str, Any]], bool, Dict[str, Any]], Dict[str, Any]] = None):
+    def __init__(self, prefix, perm = 'rw', poll = False, out_modifier: Callable[[Optional[Dict[str, Any]], bool, Dict[str, Any], Exception], Dict[str, Any]] = None):
         self.out_modifier = out_modifier
         super().__init__(prefix, perm, poll)
     
@@ -97,5 +194,5 @@ class NvmeofCLICommand(CLICommand):
             return HandleCommandResult(0, out, '')
         except DashboardException as e:
             if self.out_modifier:
-                self.out_modifier('', False, cmd_dict)
+                self.out_modifier(None, False, cmd_dict, e)
             return HandleCommandResult(-errno.EINVAL, '', str(e))
