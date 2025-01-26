@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import errno
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Callable
 
 import yaml
 from mgr_module import CLICheckNonemptyFileInput, CLICommand, CLIReadCommand, \
@@ -51,7 +51,17 @@ def remove_nvmeof_gateway(_, name: str, daemon_name: str = ''):
         return -errno.EINVAL, '', str(ex)
 
 
+class OutputModifiers:
+    @staticmethod
+    def subsystem_add(output: Optional[Dict[str, Any]], success: bool, cmd_dict: Dict[str, Any]):
+        return {'success': 'test successful'}
+
+
 class NvmeofCLICommand(CLICommand):
+    def __init__(self, prefix, perm = 'rw', poll = False, out_modifier: Callable[[Optional[Dict[str, Any]], bool, Dict[str, Any]], Dict[str, Any]] = None):
+        self.out_modifier = out_modifier
+        super().__init__(prefix, perm, poll)
+    
     def __call__(self, func) -> HandlerFuncType:  # type: ignore
         # pylint: disable=useless-super-delegation
         """
@@ -68,6 +78,8 @@ class NvmeofCLICommand(CLICommand):
              inbuf: Optional[str] = None) -> HandleCommandResult:
         try:
             ret = super().call(mgr, cmd_dict, inbuf)
+            if self.out_modifier:
+                ret = self.out_modifier(ret, True, cmd_dict)
             out_format = cmd_dict.get('format')
             if out_format == 'json' or not out_format:
                 if ret is None:
@@ -84,4 +96,6 @@ class NvmeofCLICommand(CLICommand):
                                            f"format '{out_format}' is not implemented")
             return HandleCommandResult(0, out, '')
         except DashboardException as e:
+            if self.out_modifier:
+                self.out_modifier('', False, cmd_dict)
             return HandleCommandResult(-errno.EINVAL, '', str(e))
