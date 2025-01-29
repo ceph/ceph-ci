@@ -1129,6 +1129,7 @@ class NFSServiceSpec(ServiceSpec):
                  config: Optional[Dict[str, str]] = None,
                  networks: Optional[List[str]] = None,
                  port: Optional[int] = None,
+                 monitoring_port: Optional[int] = None,
                  virtual_ip: Optional[str] = None,
                  enable_nlm: bool = False,
                  enable_haproxy_protocol: bool = False,
@@ -1145,6 +1146,7 @@ class NFSServiceSpec(ServiceSpec):
             extra_entrypoint_args=extra_entrypoint_args, custom_configs=custom_configs)
 
         self.port = port
+        self.monitoring_port = monitoring_port
         self.virtual_ip = virtual_ip
         self.enable_haproxy_protocol = enable_haproxy_protocol
         self.idmap_conf = idmap_conf
