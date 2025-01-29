@@ -75,7 +75,7 @@ void NVMeofGwMon::tick(){
         // This case handles either local slowness (calls being delayed
         // for whatever reason) or cluster election slowness (a long gap
         // between calls while an election happened)
-        dout(10) << ": resetting beacon timeouts due to mon delay "
+        dout(4) << ": resetting beacon timeouts due to mon delay "
                 "(slow election?) of " << now - last_tick << " seconds" << dendl;
         for (auto &i : last_beacon) {
           i.second = now;
@@ -95,7 +95,7 @@ void NVMeofGwMon::tick(){
         auto& lb = itr.first;
         auto last_beacon_time = itr.second;
         if(last_beacon_time < cutoff){
-            dout(10) << "beacon timeout for GW " << lb.gw_id << dendl;
+            dout(1) << "beacon timeout for GW " << lb.gw_id << dendl;
             pending_map.process_gw_map_gw_down( lb.gw_id, lb.group_key, propose);
             _propose_pending |= propose;
             last_beacon.erase(lb);
@@ -434,7 +434,7 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op){
         else {
             dout(4) << "GW  prepares the full startup " << gw_id << " GW availability: " << pending_map.Created_gws[group_key][gw_id].availability << dendl;
             if(pending_map.Created_gws[group_key][gw_id].availability == GW_AVAILABILITY_E::GW_AVAILABLE){
-                dout(4) << "GW marked as Available in the NVmeofGwMon database, performed full startup - Force gw to exit!" << gw_id <<dendl;
+                dout(1) << "GW marked as Available in the NVmeofGwMon database, performed full startup - Force gw to exit!" << gw_id <<dendl;
                 avail = GW_AVAILABILITY_E::GW_UNAVAILABLE;
                 // Monitor performs Force Failover for this GW in process_gw_map_gw_down
             }
