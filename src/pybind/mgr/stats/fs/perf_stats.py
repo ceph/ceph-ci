@@ -265,9 +265,9 @@ class FSPerfStats(object):
 
         self.log.debug(f"updating client metadata from {new_updates}")
 
-        cmd_dict = {'prefix': 'client ls'}
         for tag,val in new_updates.items():
-            self.module.send_command(val[2], "mds", str(val[1]), json.dumps(cmd_dict), tag)
+            # FIXME put result into val[2]
+            self.module.client.mds_command(str(val[1]), "client ls", "")
 
     def run(self):
         try:
