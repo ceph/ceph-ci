@@ -78,6 +78,5 @@ if [ "$rbd_iostat" = true  ]; then
 fi
 fio --showcmd $fio_file
 sudo fio $fio_file 
-wait
 
 echo "[nvmeof.fio] fio test successful!"
