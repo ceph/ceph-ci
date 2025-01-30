@@ -31,6 +31,7 @@ overrides:
       - OSD bench result
       - OSD_DOWN
     valgrind:
+      exit_on_first_error: false
       mon: [--tool=memcheck, --leak-check=full, --show-reachable=yes]
       osd: [--tool=memcheck]
       mds: [--tool=memcheck]
