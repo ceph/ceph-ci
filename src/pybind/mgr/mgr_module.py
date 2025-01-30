@@ -1,4 +1,5 @@
 import ceph_module  # noqa
+import cephfs
 
 from typing import (
     Any,
@@ -1886,6 +1887,7 @@ class MgrModule(ceph_module.BaseMgrModule, MgrModuleLoggingMixin):
         :param bool one_shot: a keyword-only param to make the command abort
             with EPIPE when the target resets or refuses to reconnect
         """
+        assert svc_type != 'mds'
         self._ceph_send_command(result, svc_type, svc_id, command, tag, inbuf, one_shot=one_shot)
 
     def tool_exec(

@@ -432,8 +432,8 @@ class CephFS(RESTController):
                                      "Client {0} does not exist in cephfs {1}".format(client_id,
                                                                                       fs_id))
         filters = [f'id={client_id}']
-        CephService.send_command('mds', 'client evict',
-                                 srv_spec='{0}:0'.format(fs_id), filters=filters)
+        cfs = self._cephfs_instance(fs_id)
+        cfs.mds_command(f"{fs_id}:0", 'client evict', filters=filters)
 
     @staticmethod
     def _cephfs_instance(fs_id):
@@ -656,7 +656,8 @@ class CephFSClients(object):
     @ViewCache()
     def get(self, suppress_errors='True'):
         try:
-            ret = CephService.send_command('mds', 'session ls', srv_spec='{0}:0'.format(self.fscid))
+            cfs = self._cephfs_instance(self.fscid)
+            cfs.mds_command(f'{self.fscid}:0', "session ls")
         except RuntimeError:
             if suppress_errors == 'True':
                 ret = []

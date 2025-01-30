@@ -2,6 +2,7 @@
 performance stats for ceph filesystem (for now...)
 """
 
+import cephfs
 import json
 from typing import List, Dict
 
@@ -25,6 +26,7 @@ class Module(MgrModule):
 
     def __init__(self, *args, **kwargs):
         super(Module, self).__init__(*args, **kwargs)
+        self.client = LibCephFS(rados_inst=self.rados)
         self.fs_perf_stats = FSPerfStats(self)
 
     def notify(self, notify_type: NotifyType, notify_id):
