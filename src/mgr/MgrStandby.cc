@@ -301,6 +301,10 @@ void MgrStandby::respawn()
   // to main() so that /proc/$pid/stat field 2 contains "(ceph-mgr)"
   // instead of "(exe)", so that killall (and log rotation) will work.
 
+  /* valgrind can't handle execve; just exit and let QA infra restart */
+  if (g_conf().get_val<bool>("valgrind_execve_exit")) {
+    _exit(0);
+  }
   char *new_argv[orig_argc+1];
   dout(1) << " e: '" << orig_argv[0] << "'" << dendl;
   for (int i=0; i<orig_argc; i++) {
