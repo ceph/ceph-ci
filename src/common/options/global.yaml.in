@@ -2187,6 +2187,15 @@ options:
   level: advanced
   desc: timeout for updating rotating keys (seconds)
   default: 10
+- name: valgrind_execve_exit
+  type: bool
+  level: dev
+  default: false
+  services:
+  - mon
+  - osd
+  flags:
+  - runtime
 - name: cephx_require_signatures
   type: bool
   level: advanced
