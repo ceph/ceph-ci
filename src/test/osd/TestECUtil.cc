@@ -152,7 +152,7 @@ TEST(ECUtil, shard_extent_map_t)
     bl1k.append_zero(1024);
     bl16k.append_zero(chunk_size * k);
     bl64k.append_zero(chunk_size * k * 4);
-    shard_extent_set_t ref;
+    shard_extent_set_t ref(sinfo.get_k_plus_m());
 
     // 1: Strangely aligned. (shard 0 [5~1024])
     emap.insert(5, 1024, bl1k);
@@ -207,11 +207,11 @@ TEST(ECUtil, shard_extent_map_t)
     {
       extent_set tmp;
 
-      tmp.insert(0, chunk_size * 8);
+      tmp.union_insert(0, chunk_size * 8);
       ref[3].intersection_of(tmp);
-      tmp.insert(0, chunk_size * 8 + 512);
+      tmp.union_insert(0, chunk_size * 8 + 512);
       ref[2].intersection_of(tmp);
-      tmp.insert(0, chunk_size * 9);
+      tmp.union_insert(0, chunk_size * 9);
       ref[1].intersection_of(tmp);
       ref[0].intersection_of(tmp);
     }
@@ -527,11 +527,13 @@ TEST(ECUtil, sinfo_ro_size_to_read_mask) {
   stripe_info_t sinfo(2, 1, 16*4096);
 
   {
-    shard_extent_set_t read_mask, zero_mask;
+    shard_extent_set_t read_mask(sinfo.get_k_plus_m());
+    shard_extent_set_t zero_mask(sinfo.get_k_plus_m());
     sinfo.ro_size_to_read_mask(1, read_mask);
     sinfo.ro_size_to_zero_mask(1, zero_mask);
 
-    shard_extent_set_t ref_read, ref_zero;
+    shard_extent_set_t ref_read(sinfo.get_k_plus_m());
+    shard_extent_set_t ref_zero(sinfo.get_k_plus_m());
     ref_read[0].insert(0, 4096);
     ref_zero[1].insert(0, 4096);
     ref_read[2].insert(0, 4096);
@@ -541,11 +543,13 @@ TEST(ECUtil, sinfo_ro_size_to_read_mask) {
   }
 
   {
-    shard_extent_set_t read_mask, zero_mask;
+    shard_extent_set_t read_mask(sinfo.get_k_plus_m());
+    shard_extent_set_t zero_mask(sinfo.get_k_plus_m());
     sinfo.ro_size_to_read_mask(4096, read_mask);
     sinfo.ro_size_to_zero_mask(4096, zero_mask);
 
-    shard_extent_set_t ref_read, ref_zero;
+    shard_extent_set_t ref_read(sinfo.get_k_plus_m());
+    shard_extent_set_t ref_zero(sinfo.get_k_plus_m());
     ref_read[0].insert(0, 4096);
     ref_zero[1].insert(0, 4096);
     ref_read[2].insert(0, 4096);
@@ -555,11 +559,13 @@ TEST(ECUtil, sinfo_ro_size_to_read_mask) {
   }
 
   {
-    shard_extent_set_t read_mask, zero_mask;
+    shard_extent_set_t read_mask(sinfo.get_k_plus_m());
+    shard_extent_set_t zero_mask(sinfo.get_k_plus_m());
     sinfo.ro_size_to_read_mask(4097, read_mask);
     sinfo.ro_size_to_zero_mask(4097, zero_mask);
 
-    shard_extent_set_t ref_read, ref_zero;
+    shard_extent_set_t ref_read(sinfo.get_k_plus_m());
+    shard_extent_set_t ref_zero(sinfo.get_k_plus_m());
     ref_read[0].insert(0, 8192);
     ref_zero[1].insert(0, 8192);
     ref_read[2].insert(0, 8192);
@@ -569,11 +575,13 @@ TEST(ECUtil, sinfo_ro_size_to_read_mask) {
   }
 
   {
-    shard_extent_set_t read_mask, zero_mask;
+    shard_extent_set_t read_mask(sinfo.get_k_plus_m());
+    shard_extent_set_t zero_mask(sinfo.get_k_plus_m());
     sinfo.ro_size_to_read_mask(8*4096+1, read_mask);
     sinfo.ro_size_to_zero_mask(8*4096+1, zero_mask);
 
-    shard_extent_set_t ref_read, ref_zero;
+    shard_extent_set_t ref_read(sinfo.get_k_plus_m());
+    shard_extent_set_t ref_zero(sinfo.get_k_plus_m());
     ref_read[0].insert(0, 8*4096);
     ref_read[1].insert(0, 4096);
     ref_zero[1].insert(4096, 7*4096);
@@ -584,11 +592,13 @@ TEST(ECUtil, sinfo_ro_size_to_read_mask) {
   }
 
   {
-    shard_extent_set_t read_mask, zero_mask;
+    shard_extent_set_t read_mask(sinfo.get_k_plus_m());
+    shard_extent_set_t zero_mask(sinfo.get_k_plus_m());
     sinfo.ro_size_to_read_mask(16*4096+1, read_mask);
     sinfo.ro_size_to_zero_mask(16*4096+1, zero_mask);
 
-    shard_extent_set_t ref_read, ref_zero;
+    shard_extent_set_t ref_read(sinfo.get_k_plus_m());
+    shard_extent_set_t ref_zero(sinfo.get_k_plus_m());
     ref_read[0].insert(0, 9*4096);
     ref_read[1].insert(0, 8*4096);
     ref_zero[1].insert(8*4096, 1*4096);
@@ -775,7 +785,7 @@ TEST(ECUtil, slice)
   bl4k.append_zero(4096);
   bl16k.append_zero(chunk_size * k);
   bl64k.append_zero(chunk_size * k * 4);
-  shard_extent_set_t ref;
+  shard_extent_set_t ref(sinfo.get_k_plus_m());
 
   sem.insert_in_shard(1, 512, bl1k);
   sem.insert_in_shard(2, 5, bl4k);

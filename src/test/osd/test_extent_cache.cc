@@ -46,9 +46,9 @@ shard_extent_map_t imap_from_iset(const shard_extent_set_t &sset, stripe_info_t 
   return out;
 }
 
-shard_extent_set_t iset_from_vector(vector<vector<pair<uint64_t, uint64_t>>> &&in)
+shard_extent_set_t iset_from_vector(vector<vector<pair<uint64_t, uint64_t>>> &&in, const stripe_info_t *sinfo)
 {
-  shard_extent_set_t out;
+  shard_extent_set_t out(sinfo->get_k_plus_m());
   for (int shard = 0; shard < (int)in.size(); shard++) {
     for (auto &&tup: in[shard]) {
       out[shard].insert(tup.first, tup.second);
@@ -104,13 +104,15 @@ struct Client : public ECExtentCache::BackendRead
     l.emplace_back(op);
     cache.execute(l);
   }
+
+  const stripe_info_t *get_stripe_info() const { return &sinfo; }
 };
 
 TEST(ECExtentCache, double_write_done)
 {
   Client cl(32, 2, 1, 64);
 
-  auto to_write = iset_from_vector({{{0, 10}}, {{0, 10}}});
+  auto to_write = iset_from_vector({{{0, 10}}, {{0, 10}}}, cl.get_stripe_info());
 
   optional op = cl.cache.prepare(cl.oid, nullopt, to_write, 10, 10, false,
   [&cl](ECExtentCache::OpRef &op)
@@ -125,8 +127,8 @@ TEST(ECExtentCache, simple_write)
 {
   Client cl(32, 2, 1, 64);
   {
-    auto to_read = iset_from_vector( {{{0, 2}}, {{0, 2}}});
-    auto to_write = iset_from_vector({{{0, 10}}, {{0, 10}}});
+    auto to_read = iset_from_vector( {{{0, 2}}, {{0, 2}}}, cl.get_stripe_info());
+    auto to_write = iset_from_vector({{{0, 10}}, {{0, 10}}}, cl.get_stripe_info());
 
     /*    OpRef request(hobject_t const &oid,
       std::optional<std::shard_extent_set_t> const &to_read,
@@ -159,8 +161,8 @@ TEST(ECExtentCache, simple_write)
   // Repeating the same read should complete without a backend read..
   // NOTE: This test is broken because the LRU is currently disabled.
   {
-    auto to_read = iset_from_vector( {{{0, 2}}, {{0, 2}}});
-    auto to_write = iset_from_vector({{{0, 10}}, {{0, 10}}});
+    auto to_read = iset_from_vector( {{{0, 2}}, {{0, 2}}}, cl.get_stripe_info());
+    auto to_write = iset_from_vector({{{0, 10}}, {{0, 10}}}, cl.get_stripe_info());
     optional op = cl.cache.prepare(cl.oid, to_read, to_write, 10, 10, false,
       [&cl](ECExtentCache::OpRef &op)
       {
@@ -179,8 +181,8 @@ TEST(ECExtentCache, simple_write)
   // This should not result in any backend reads, since the cache can be honoured
   // from the previous write.
   {
-    auto to_read = iset_from_vector( {{{2, 2}}, {{2, 2}}});
-    auto to_write = iset_from_vector({{{0, 10}}, {{0, 10}}});
+    auto to_read = iset_from_vector( {{{2, 2}}, {{2, 2}}}, cl.get_stripe_info());
+    auto to_write = iset_from_vector({{{0, 10}}, {{0, 10}}}, cl.get_stripe_info());
     optional op = cl.cache.prepare(cl.oid, to_read, to_write, 10, 10, false,
       [&cl](ECExtentCache::OpRef &op)
       {
@@ -200,7 +202,7 @@ TEST(ECExtentCache, simple_write)
 TEST(ECExtentCache, sequential_appends) {
   Client cl(32, 2, 1, 32);
 
-  auto to_write1 = iset_from_vector({{{0, 10}}});
+  auto to_write1 = iset_from_vector({{{0, 10}}}, cl.get_stripe_info());
 
   // The first write...
   optional op1 = cl.cache.prepare(cl.oid, nullopt, to_write1, 0, 10, false,
@@ -212,7 +214,7 @@ TEST(ECExtentCache, sequential_appends) {
 
   // Write should have been honoured immediately.
   ASSERT_FALSE(cl.results.empty());
-  auto to_write2 = iset_from_vector({{{10, 10}}});
+  auto to_write2 = iset_from_vector({{{10, 10}}}, cl.get_stripe_info());
   cl.complete_write(*op1);
   ASSERT_TRUE(cl.results.empty());
 
@@ -233,8 +235,8 @@ TEST(ECExtentCache, multiple_writes)
 {
   Client cl(32, 2, 1, 32);
 
-  auto to_read1 = iset_from_vector( {{{0, 2}}});
-  auto to_write1 = iset_from_vector({{{0, 10}}});
+  auto to_read1 = iset_from_vector( {{{0, 2}}}, cl.get_stripe_info());
+  auto to_write1 = iset_from_vector({{{0, 10}}}, cl.get_stripe_info());
 
   // This should drive a request for this IO, which we do not yet honour.
   optional op1 = cl.cache.prepare(cl.oid, to_read1, to_write1, 10, 10, false,
@@ -247,8 +249,8 @@ TEST(ECExtentCache, multiple_writes)
   ASSERT_TRUE(cl.results.empty());
 
   // Perform another request. We should not see any change in the read requests.
-  auto to_read2 = iset_from_vector( {{{8, 4}}});
-  auto to_write2 = iset_from_vector({{{10, 10}}});
+  auto to_read2 = iset_from_vector( {{{8, 4}}}, cl.get_stripe_info());
+  auto to_write2 = iset_from_vector({{{10, 10}}}, cl.get_stripe_info());
   optional op2 = cl.cache.prepare(cl.oid, to_read2, to_write2, 10, 10, false,
    [&cl](ECExtentCache::OpRef &op)
    {
@@ -259,8 +261,8 @@ TEST(ECExtentCache, multiple_writes)
   ASSERT_TRUE(cl.results.empty());
 
   // Perform another request, this to check that reads are coalesced.
-  auto to_read3 = iset_from_vector( {{{32, 6}}});
-  auto to_write3 = iset_from_vector({});
+  auto to_read3 = iset_from_vector( {{{32, 6}}}, cl.get_stripe_info());
+  auto to_write3 = iset_from_vector({}, cl.get_stripe_info());
   optional op3 = cl.cache.prepare(cl.oid, to_read3, to_write3, 10, 10, false,
    [&cl](ECExtentCache::OpRef &op)
    {
@@ -271,7 +273,7 @@ TEST(ECExtentCache, multiple_writes)
   ASSERT_TRUE(cl.results.empty());
 
   // Finally op4, with no reads.
-  auto to_write4 = iset_from_vector({{{20, 10}}});
+  auto to_write4 = iset_from_vector({{{20, 10}}}, cl.get_stripe_info());
   optional op4 = cl.cache.prepare(cl.oid, nullopt, to_write4, 10, 10, false,
    [&cl](ECExtentCache::OpRef &op)
    {
@@ -284,7 +286,7 @@ TEST(ECExtentCache, multiple_writes)
   // Completing the first read will allow the first write and start a batched read.
   // Note that the cache must not read what was written in op 1.
   cl.complete_read();
-  auto expected_read = iset_from_vector({{{10,2}, {32,6}}});
+  auto expected_read = iset_from_vector({{{10,2}, {32,6}}}, cl.get_stripe_info());
   ASSERT_EQ(expected_read, cl.active_reads);
   ASSERT_EQ(1, cl.results.size());
   ASSERT_EQ(to_read1, cl.results.front().get_extent_set());
@@ -322,8 +324,8 @@ struct Dummy
 TEST(ECExtentCache, on_change)
 {
   Client cl(32, 2, 1, 64);
-  auto to_read1 = iset_from_vector( {{{0, 2}}});
-  auto to_write1 = iset_from_vector({{{0, 10}}});
+  auto to_read1 = iset_from_vector( {{{0, 2}}}, cl.get_stripe_info());
+  auto to_write1 = iset_from_vector({{{0, 10}}}, cl.get_stripe_info());
 
   optional<ECExtentCache::OpRef> op;
   optional<shared_ptr<Dummy>> dummy;
@@ -379,19 +381,19 @@ TEST(ECExtentCache, multiple_misaligned_writes)
 
   // IO 1 is really a 6k write. The write is inflated to 8k, but the second 4k is
   // partial, so we read the second 4k to RMW
-  auto to_read1 = iset_from_vector( {{{4*1024, 4*1024}}});
-  auto to_write1 = iset_from_vector({{{0, 8*1024}}});
+  auto to_read1 = iset_from_vector( {{{4*1024, 4*1024}}}, cl.get_stripe_info());
+  auto to_write1 = iset_from_vector({{{0, 8*1024}}}, cl.get_stripe_info());
 
   // IO 2 is the next 8k write, starting at 6k. So we have a 12k write, reading the
   // first and last pages. The first part of this read should be in the cache.
-  auto to_read2 = iset_from_vector( {{{4*1024, 4*1024}, {12*4096, 4*4096}}});
-  auto to_read2_exec = iset_from_vector( {{{12*4096, 4*4096}}});
-  auto to_write2 = iset_from_vector({{{4*1024, 12*1024}}});
+  auto to_read2 = iset_from_vector( {{{4*1024, 4*1024}, {12*4096, 4*4096}}}, cl.get_stripe_info());
+  auto to_read2_exec = iset_from_vector( {{{12*4096, 4*4096}}}, cl.get_stripe_info());
+  auto to_write2 = iset_from_vector({{{4*1024, 12*1024}}}, cl.get_stripe_info());
 
   // IO 3 is the next misaligned 4k, very similar to IO 3.
-  auto to_read3 = iset_from_vector( {{{12*1024, 4*1024}, {20*4096, 4*4096}}});
-  auto to_read3_exec = iset_from_vector( {{{20*4096, 4*4096}}});
-  auto to_write3 = iset_from_vector({{{12*1024, 12*1024}}});
+  auto to_read3 = iset_from_vector( {{{12*1024, 4*1024}, {20*4096, 4*4096}}}, cl.get_stripe_info());
+  auto to_read3_exec = iset_from_vector( {{{20*4096, 4*4096}}}, cl.get_stripe_info());
+  auto to_write3 = iset_from_vector({{{12*1024, 12*1024}}}, cl.get_stripe_info());
 
   //Perform the first write, which should result in a read.
   optional op1 = cl.cache.prepare(cl.oid, to_read1, to_write1, 22*1024, 22*1024, false,
@@ -450,19 +452,19 @@ TEST(ECExtentCache, multiple_misaligned_writes2)
 
   // IO 1 is really a 6k write. The write is inflated to 8k, but the second 4k is
   // partial, so we read the second 4k to RMW
-  auto to_read1 = iset_from_vector( {{{4*1024, 4*1024}}});
-  auto to_write1 = iset_from_vector({{{0, 8*1024}}});
+  auto to_read1 = iset_from_vector( {{{4*1024, 4*1024}}}, cl.get_stripe_info());
+  auto to_write1 = iset_from_vector({{{0, 8*1024}}}, cl.get_stripe_info());
 
   // IO 2 is the next 8k write, starting at 6k. So we have a 12k write, reading the
   // first and last pages. The first part of this read should be in the cache.
-  auto to_read2 = iset_from_vector( {{{4*1024, 4*1024}, {12*1024, 4*1024}}});
-  auto to_read2_exec = iset_from_vector( {{{12*1024, 4*1024}}});
-  auto to_write2 = iset_from_vector({{{4*1024, 12*1024}}});
+  auto to_read2 = iset_from_vector( {{{4*1024, 4*1024}, {12*1024, 4*1024}}}, cl.get_stripe_info());
+  auto to_read2_exec = iset_from_vector( {{{12*1024, 4*1024}}}, cl.get_stripe_info());
+  auto to_write2 = iset_from_vector({{{4*1024, 12*1024}}}, cl.get_stripe_info());
 
   // IO 3 is the next misaligned 4k, very similar to IO 3.
-  auto to_read3 = iset_from_vector( {{{12*1024, 4*1024}, {20*1024, 4*1024}}});
-  auto to_read3_exec = iset_from_vector( {{{20*1024, 4*1024}}});
-  auto to_write3 = iset_from_vector({{{12*1024, 12*1024}}});
+  auto to_read3 = iset_from_vector( {{{12*1024, 4*1024}, {20*1024, 4*1024}}}, cl.get_stripe_info());
+  auto to_read3_exec = iset_from_vector( {{{20*1024, 4*1024}}}, cl.get_stripe_info());
+  auto to_write3 = iset_from_vector({{{12*1024, 12*1024}}}, cl.get_stripe_info());
 
   //Perform the first write, which should result in a read.
   optional op1 = cl.cache.prepare(cl.oid, to_read1, to_write1, 22*1024, 22*1024, false,
@@ -521,8 +523,8 @@ TEST(ECExtentCache, test_invalidate)
 
   /* First attempt a write which does not do any reads */
   {
-    auto to_read1 = iset_from_vector( {{{0, 4096}}});
-    auto to_write1 = iset_from_vector({{{0, 4096}}});
+    auto to_read1 = iset_from_vector( {{{0, 4096}}}, cl.get_stripe_info());
+    auto to_write1 = iset_from_vector({{{0, 4096}}}, cl.get_stripe_info());
     optional op1 = cl.cache.prepare(cl.oid, to_read1, to_write1, 4096, 4096, false,
       [&cl](ECExtentCache::OpRef &op)
       {
@@ -533,7 +535,7 @@ TEST(ECExtentCache, test_invalidate)
     ASSERT_TRUE(cl.results.empty());
 
     /* Now perform an invalidating cache write */
-    optional op2 = cl.cache.prepare(cl.oid, nullopt, shard_extent_set_t(), 4*1024, 0, false,
+    optional op2 = cl.cache.prepare(cl.oid, nullopt, shard_extent_set_t(cl.sinfo.get_k_plus_m()), 4*1024, 0, false,
       [&cl](ECExtentCache::OpRef &op)
       {
         cl.cache_ready(op->get_hoid(), op->get_result());
@@ -559,17 +561,17 @@ TEST(ECExtentCache, test_invalidate)
 
   /* Second test, modifies, deletes, creates, then modifies.  */
   {
-    auto to_read1 = iset_from_vector( {{{0, 8192}}});
-    auto to_write1 = iset_from_vector({{{0, 8192}}});
-    auto to_write2 = iset_from_vector({{{4096, 4096}}});
-    auto to_read3 = iset_from_vector( {{{0, 4096}}});
-    auto to_write3 = iset_from_vector({{{0, 4096}}});
+    auto to_read1 = iset_from_vector( {{{0, 8192}}}, cl.get_stripe_info());
+    auto to_write1 = iset_from_vector({{{0, 8192}}}, cl.get_stripe_info());
+    auto to_write2 = iset_from_vector({{{4096, 4096}}}, cl.get_stripe_info());
+    auto to_read3 = iset_from_vector( {{{0, 4096}}}, cl.get_stripe_info());
+    auto to_write3 = iset_from_vector({{{0, 4096}}}, cl.get_stripe_info());
     optional op1 = cl.cache.prepare(cl.oid, to_read1, to_write1, 8192, 8192, false,
       [&cl](ECExtentCache::OpRef &op)
       {
         cl.cache_ready(op->get_hoid(), op->get_result());
       });
-    optional op2 = cl.cache.prepare(cl.oid, nullopt, shard_extent_set_t(), 4*1024, 0, false,
+    optional op2 = cl.cache.prepare(cl.oid, nullopt, shard_extent_set_t(cl.sinfo.get_k_plus_m()), 4*1024, 0, false,
       [&cl](ECExtentCache::OpRef &op)
       {
         cl.cache_ready(op->get_hoid(), op->get_result());
@@ -622,18 +624,18 @@ TEST(ECExtentCache, test_invalidate_lru)
   /* Populate the cache LRU and then invalidate the cache. */
   {
     uint64_t bs = 3767;
-    auto io1 = iset_from_vector({{{align_page_prev(35*bs), align_page_next(36*bs) - align_page_prev(35*bs)}}});
+    auto io1 = iset_from_vector({{{align_page_prev(35*bs), align_page_next(36*bs) - align_page_prev(35*bs)}}}, cl.get_stripe_info());
     io1[k].insert(io1.get_extent_superset());
     io1[k+1].insert(io1.get_extent_superset());
-    auto io2 = iset_from_vector({{{align_page_prev(18*bs), align_page_next(19*bs) - align_page_prev(18*bs)}}});
+    auto io2 = iset_from_vector({{{align_page_prev(18*bs), align_page_next(19*bs) - align_page_prev(18*bs)}}}, cl.get_stripe_info());
     io2[k].insert(io1.get_extent_superset());
     io2[k+1].insert(io1.get_extent_superset());
     // io 3 is the truncate
-    auto io3 = shard_extent_set_t();
-    auto io4 = iset_from_vector({{{align_page_prev(30*bs), align_page_next(31*bs) - align_page_prev(30*bs)}}});
+    auto io3 = shard_extent_set_t(cl.sinfo.get_k_plus_m());
+    auto io4 = iset_from_vector({{{align_page_prev(30*bs), align_page_next(31*bs) - align_page_prev(30*bs)}}}, cl.get_stripe_info());
     io3[k].insert(io1.get_extent_superset());
     io3[k+1].insert(io1.get_extent_superset());
-    auto io5 = iset_from_vector({{{align_page_prev(18*bs), align_page_next(19*bs) - align_page_prev(18*bs)}}});
+    auto io5 = iset_from_vector({{{align_page_prev(18*bs), align_page_next(19*bs) - align_page_prev(18*bs)}}}, cl.get_stripe_info());
     io4[k].insert(io1.get_extent_superset());
     io4[k+1].insert(io1.get_extent_superset());
 

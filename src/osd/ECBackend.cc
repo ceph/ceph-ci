@@ -1249,17 +1249,17 @@ void ECBackend::handle_sub_read_reply(
       rop.complete.emplace(hoid, &sinfo);
     }
     auto &complete = rop.complete.at(hoid);
-    for (auto &&[shard, read] : req.shard_reads) {
+    for (auto &&[shard, read] : std::as_const(req.shard_reads)) {
 
-      if (complete.errors.contains(shard)) continue;
+      if (complete.errors.contains(read.pg_shard)) continue;
 
-      complete.processed_read_requests[shard.shard.id].union_of(read.extents);
-      complete.processed_read_requests[shard.shard.id].union_of(read.zero_pad);
+      complete.processed_read_requests[shard].union_of(read.extents);
+      complete.processed_read_requests[shard].union_of(read.zero_pad);
       if (read.zero_pad.empty())
         continue;
 
       if (!rop.complete.contains(hoid) ||
-        !complete.buffers_read.contains(shard.shard.id)) {
+        !complete.buffers_read.contains(shard)) {
 
         if (!read.extents.empty()) continue; // Complete the actual read first.
 
@@ -1272,9 +1272,9 @@ void ECBackend::handle_sub_read_reply(
         bufferlist bl;
         bl.append_zero(len);
         auto &buffers_read = complete.buffers_read;
-        buffers_read.insert_in_shard(shard.shard.id, off, bl);
+        buffers_read.insert_in_shard(shard, off, bl);
       }
-      rop.debug_log.emplace_back(ECUtil::ZERO_DONE, shard, read.zero_pad);
+      rop.debug_log.emplace_back(ECUtil::ZERO_DONE, read.pg_shard, read.zero_pad);
     }
   }
   for (auto &&[hoid, attr] : op.attrs_read) {

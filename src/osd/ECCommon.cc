@@ -73,6 +73,7 @@ ostream &operator<<(ostream &lhs, const ECCommon::shard_read_t &rhs)
   return lhs << "shard_read_t(extents=[" << rhs.extents << "]"
              << ", zero_pad=" << rhs.zero_pad
 	     << ", subchunk=" << rhs.subchunk
+             << ", pg_shard=" << rhs.pg_shard
 	     << ")";
 }
 
@@ -323,10 +324,11 @@ int ECCommon::ReadPipeline::get_min_avail_to_read_shards(
     if (!have.contains(shard)) {
       continue;
     }
-    pg_shard_t pg_shard = shards[shard_id_t(shard)];
+    shard_id_t shard_id(shard);
     extent_set extents = extra_extents;
     shard_read_t shard_read;
     shard_read.subchunk = subchunk;
+    shard_read.pg_shard = shards[shard_id];;
 
     if (read_request.shard_want_to_read.contains(shard)) {
       extents.union_of(read_request.shard_want_to_read.at(shard));
@@ -341,7 +343,7 @@ int ECCommon::ReadPipeline::get_min_avail_to_read_shards(
     }
 
     ceph_assert(!shard_read.zero_pad.empty() || !shard_read.extents.empty());
-    read_request.shard_reads[pg_shard] = shard_read;
+    read_request.shard_reads[shard_id] = shard_read;
   }
 
   dout(20) << __func__ << " for_recovery: " << for_recovery
@@ -392,16 +394,20 @@ int ECCommon::ReadPipeline::get_remaining_shards(
   // Rather than repeating whole read, we can remove everything we already have.
   for (auto iter = read_request.shard_reads.begin();
       iter != read_request.shard_reads.end();) {
-    auto &&[pg_shard, shard_read] = *(iter++);
+    auto &&[shard_id, shard_read] = *iter;
+    bool do_erase = false;
 
     // Ignore where shard has not been read at all.
-    if (read_result.processed_read_requests.contains(pg_shard.shard)) {
+    if (read_result.processed_read_requests.contains(shard_id)) {
+      shard_read.extents.subtract(read_result.processed_read_requests.at(shard_id));
+      shard_read.zero_pad.subtract(read_result.processed_read_requests.at(shard_id));
+      do_erase = shard_read.extents.empty() && shard_read.zero_pad.empty();
+    }
 
-      shard_read.extents.subtract(read_result.processed_read_requests.at(pg_shard.shard));
-      shard_read.zero_pad.subtract(read_result.processed_read_requests.at(pg_shard.shard));
-      if (shard_read.extents.empty() && shard_read.zero_pad.empty()) {
-        read_request.shard_reads.erase(pg_shard);
-      }
+    if (do_erase) {
+      iter = read_request.shard_reads.erase(iter);
+    } else {
+      ++iter;
     }
   }
 
@@ -449,23 +455,23 @@ void ECCommon::ReadPipeline::do_read_op(ReadOp &op)
   for (auto &&[hoid, read_request] : op.to_read) {
     bool need_attrs = read_request.want_attrs;
 
-    for (auto &&[shard, shard_read] : read_request.shard_reads) {
+    for (auto &&[_, shard_read] : read_request.shard_reads) {
       if (need_attrs) {
-	messages[shard].attrs_to_read.insert(hoid);
+	messages[shard_read.pg_shard].attrs_to_read.insert(hoid);
 	need_attrs = false;
       }
-      messages[shard].subchunks[hoid] = shard_read.subchunk;
-      op.obj_to_source[hoid].insert(shard);
-      op.source_to_obj[shard].insert(hoid);
+      messages[shard_read.pg_shard].subchunks[hoid] = shard_read.subchunk;
+      op.obj_to_source[hoid].insert(shard_read.pg_shard);
+      op.source_to_obj[shard_read.pg_shard].insert(hoid);
     }
-    for (auto &&[shard, shard_read] : read_request.shard_reads) {
+    for (auto &&[_, shard_read] : read_request.shard_reads) {
       bool empty = true;
       if (!shard_read.extents.empty()) {
-        op.debug_log.emplace_back(ECUtil::READ_REQUEST, shard, shard_read.extents);
+        op.debug_log.emplace_back(ECUtil::READ_REQUEST, shard_read.pg_shard, shard_read.extents);
         empty = false;
       }
       if (!shard_read.zero_pad.empty()) {
-        op.debug_log.emplace_back(ECUtil::ZERO_REQUEST, shard, shard_read.zero_pad);
+        op.debug_log.emplace_back(ECUtil::ZERO_REQUEST, shard_read.pg_shard, shard_read.zero_pad);
         empty = false;
       }
 
@@ -473,7 +479,7 @@ void ECCommon::ReadPipeline::do_read_op(ReadOp &op)
       for (auto extent = shard_read.extents.begin();
       		extent != shard_read.extents.end();
 		extent++) {
-	messages[shard].to_read[hoid].push_back(boost::make_tuple(extent.get_start(), extent.get_len(), read_request.flags));
+	messages[shard_read.pg_shard].to_read[hoid].push_back(boost::make_tuple(extent.get_start(), extent.get_len(), read_request.flags));
       }
     }
     ceph_assert(!need_attrs);
@@ -687,7 +693,7 @@ int ECCommon::ReadPipeline::send_all_remaining_reads(
 
   read_request_t &read_request = rop.to_read.at(hoid);
   // reset the old shard reads, we are going to read them again.
-  read_request.shard_reads = std::map<pg_shard_t, shard_read_t>();
+  read_request.shard_reads.clear();
   int r = get_remaining_shards(hoid, rop.complete.at(hoid), read_request,
         rop.do_redundant_reads, want_attrs);
 
@@ -711,7 +717,10 @@ bool ec_align_t::operator==(const ec_align_t &other) const {
 }
 
 bool ECCommon::shard_read_t::operator==(const shard_read_t &other) const {
-  return extents == other.extents && subchunk == other.subchunk;
+  return extents == other.extents &&
+    subchunk == other.subchunk &&
+    zero_pad == other.zero_pad &&
+    pg_shard == other.pg_shard;
 }
 
 bool ECCommon::read_request_t::operator==(const read_request_t &other) const {

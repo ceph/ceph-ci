@@ -83,6 +83,7 @@ struct ECCommon {
     extent_set extents;
     extent_set zero_pad;
     std::vector<std::pair<int, int>> subchunk;
+    pg_shard_t pg_shard;
     bool operator==(const shard_read_t &other) const;
   };
   friend std::ostream &operator<<(std::ostream &lhs, const shard_read_t &rhs);
@@ -91,7 +92,7 @@ struct ECCommon {
     const std::list<ec_align_t> to_read;
     const uint32_t flags = 0;
     const ECUtil::shard_extent_set_t shard_want_to_read;
-    std::map<pg_shard_t, shard_read_t> shard_reads;
+    mini_flat_map<shard_id_t, shard_read_t> shard_reads;
     bool want_attrs = false;
     uint64_t object_size;
     read_request_t(
@@ -101,11 +102,13 @@ struct ECCommon {
         to_read(to_read),
         flags(to_read.front().flags),
         shard_want_to_read(shard_want_to_read),
+        shard_reads(shard_want_to_read.get_max_shards()),
         want_attrs(want_attrs),
         object_size(object_size) {}
     read_request_t(const ECUtil::shard_extent_set_t shard_want_to_read,
       bool want_attrs, uint64_t object_size) :
         shard_want_to_read(shard_want_to_read),
+        shard_reads(shard_want_to_read.get_max_shards()),
         want_attrs(want_attrs),
         object_size(object_size) {}
     bool operator==(const read_request_t &other) const;

@@ -41,8 +41,13 @@ struct mini_flat_map
       if (key < map->data.size()) {
         value.emplace(key, *map->data[key]);
       } else {
-        ceph_assert((uint8_t)key == map->data.size()); // end
+        ceph_assert((int8_t)key == map->data.size()); // end
       }
+    }
+    // Only for end constructor.
+    iterator(const mini_flat_map *map, size_t map_size) : map(map), key((int8_t)map_size)
+    {
+      ceph_assert(map_size == map->data.size());
     }
 
     iterator& operator++()
@@ -53,7 +58,7 @@ struct mini_flat_map
     }
     iterator operator++(int)
     {
-      iterator tmp = *this;
+      iterator tmp(*this);
       this->operator++();
       return tmp;
     }
@@ -75,7 +80,7 @@ struct mini_flat_map
     iterator& operator=(const iterator &other) {
       if (this != &other) {
         key = other.key;
-        progress();
+        progress(); // populate value
       }
       return *this;
     }
@@ -113,8 +118,13 @@ struct mini_flat_map
       if (key < map->data.size()) {
         value.emplace(key, *map->data[key]);
       } else {
-        ceph_assert((uint8_t)key == map->data.size()); // end
+        ceph_assert((int8_t)key == map->data.size()); // end
       }
+    }
+
+    const_iterator(const mini_flat_map *map, size_t map_size) : map(map), key((int8_t)map_size)
+    {
+      ceph_assert(map_size == map->data.size());
     }
 
     const_iterator& operator++()
@@ -152,7 +162,7 @@ struct mini_flat_map
   std::vector<vector_type> data;
   const iterator _end;
   const const_iterator _const_end;
-  uint8_t _size;
+  int8_t _size;
 
   mini_flat_map(size_t max_size) : data(max_size), _end(this, max_size), _const_end(this, max_size), _size(0) {}
   mini_flat_map(mini_flat_map &&other) noexcept : data(std::move(other.data)), _end(this, data.size()), _const_end(this, data.size()), _size(0)
@@ -162,7 +172,7 @@ struct mini_flat_map
   mini_flat_map(const mini_flat_map &other) noexcept : data(other.data.size()) , _end(this, data.size()), _const_end(this, data.size()), _size(0)
   {
     for (auto &&[k, t] : other) {
-      emplace(k, std::move(t));
+      emplace(k, t);
     }
     ceph_assert(_size == other._size);
   };
@@ -184,7 +194,7 @@ struct mini_flat_map
   void swap(mini_flat_map &other) noexcept
   {
     data.swap(other.data);
-    uint8_t tmp = _size;
+    int8_t tmp = _size;
     _size = other._size;
     other._size = tmp;
   }
@@ -228,7 +238,7 @@ struct mini_flat_map
   {
     if(!contains(s)) return 0;
     _size--;
-    data.at(s).reset(nullptr);
+    data.at(s).reset();
     return 1;
   }
   const_iterator begin() const
@@ -311,11 +321,11 @@ struct mini_flat_map
   friend std::ostream& operator<<(std::ostream& lhs, const mini_flat_map<Key,T>& rhs)
   {
     int c = 0;
-    lhs << "count=" << (int)rhs._size << ", {";
+    lhs << "{";
     for (auto &&[k, v] : rhs) {
-      lhs << "[" << k << ":" << v << "]";
+      lhs << k << ":" << v;
       c++;
-      if (c < rhs._size) lhs << ", ";
+      if (c < rhs._size) lhs << ",";
     }
     lhs << "}";
     return lhs;

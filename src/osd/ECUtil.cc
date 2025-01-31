@@ -668,7 +668,12 @@ namespace ECUtil {
   {
     bool resized = false;
     for (auto &&[shard, emap]: extent_maps) {
-      for ( auto i = emap.begin(); i != emap.end(); ++i) {
+      extent_map aligned;
+
+      // Inserting while iterating is not supported in extent maps, make the
+      // iterated-over emap const to help defend against mistakes.
+      const extent_map &cemap = emap;
+      for ( auto i = cemap.begin(); i != cemap.end(); ++i) {
         bool resized_i = false;
         bufferlist bl = i.get_val();
         uint64_t start = i.get_off();
@@ -689,10 +694,12 @@ namespace ECUtil {
         // align. However, typical workloads are actually page aligned already,
         // so this should not cause problems on any sensible workload.
         if (bl.rebuild_aligned_size_and_memory(bl.length(), CEPH_PAGE_SIZE) || resized_i) {
-          emap.insert(start, end - start, bl);
+          // We are not permitted to modify the emap while iterating.
+          aligned.insert(start, end - start, bl);
         }
         if (resized_i) resized = true;
       }
+      emap.insert(aligned);
     }
 
     if (resized) compute_ro_range();

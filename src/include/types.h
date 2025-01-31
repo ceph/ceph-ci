@@ -545,6 +545,7 @@ struct shard_id_t {
   }
   bool operator==(const shard_id_t&) const = default;
   auto operator<=>(const shard_id_t&) const = default;
+  shard_id_t& operator++() { ++id; return *this; }
 };
 WRITE_CLASS_ENCODER(shard_id_t)
 std::ostream &operator<<(std::ostream &lhs, const shard_id_t &rhs);

@@ -108,6 +108,8 @@ namespace ECUtil {
       for (auto &&[_, e]: map) e.align(a);
     }
 
+    size_t get_max_shards() const { return map.max_size(); }
+
     void subtract(const shard_extent_set_t &set);
     void insert(const shard_extent_set_t &set);
 
@@ -563,9 +565,9 @@ public:
     extent_maps(sinfo->get_k_plus_m())
   {}
 
-  shard_extent_map_t(const stripe_info_t *sinfo, mini_flat_map<int, extent_map> &&extent_maps) :
+  shard_extent_map_t(const stripe_info_t *sinfo, mini_flat_map<int, extent_map> &&_extent_maps) :
     sinfo(sinfo),
-    extent_maps(std::move(extent_maps))
+    extent_maps(std::move(_extent_maps))
   {
     // Empty shards are not permitted, so clear them out.
     for (auto iter = extent_maps.begin(); iter != extent_maps.end();) {

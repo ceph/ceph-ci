@@ -29,11 +29,11 @@ struct Value {
 };
 
 struct Key {
-  uint8_t k;
+  int8_t k;
 
-  Key(uint8_t k) : k(k) {}
+  Key(int8_t k) : k(k) {}
 
-  constexpr operator uint8_t() const { return k; }
+  constexpr operator int8_t() const { return k; }
   Key &operator++() {k++; return *this;}
 
   friend std::ostream& operator<<(std::ostream& lhs, const Key& rhs)
@@ -54,7 +54,8 @@ TEST(mini_flat_map, copy_operator_and_element_access)
   mini_flat_map<Key, Value> m2 = m;
   ASSERT_EQ(m, m2);
   mini_flat_map<Key, Value> m3(m);
-
+  ASSERT_TRUE(m3.contains(0));
+  ASSERT_TRUE(m.contains(0));
 }
 
 TEST(mini_flat_map, iterators)

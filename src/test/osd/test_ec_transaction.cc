@@ -199,7 +199,7 @@ TEST(ectransaction, test_appending_write_non_aligned)
   ASSERT_FALSE(plan.to_read);
 
   // The writes will cover not cover the zero parts
-  ECUtil::shard_extent_set_t ref_write;
+  ECUtil::shard_extent_set_t ref_write(sinfo.get_k_plus_m());
   ref_write[1].insert(4096, 4096);
   ref_write[2].insert(4096, 4096);
   ASSERT_EQ(ref_write, plan.will_write);
@@ -236,7 +236,7 @@ TEST(ectransaction, append_with_large_hole)
   ASSERT_FALSE(plan.to_read);
 
   // The writes will cover the new zero parts.
-  ECUtil::shard_extent_set_t ref_write;
+  ECUtil::shard_extent_set_t ref_write(sinfo.get_k_plus_m());
   ref_write[0].insert(12*4096, 4096);
   ref_write[2].insert(12*4096, 4096);
   ASSERT_EQ(ref_write, plan.will_write);
@@ -273,7 +273,7 @@ TEST(ectransaction, test_append_not_page_aligned_with_large_hole)
   ASSERT_FALSE(plan.to_read);
 
   // Writes should grow to 4k
-  ECUtil::shard_extent_set_t ref_write;
+  ECUtil::shard_extent_set_t ref_write(sinfo.get_k_plus_m());
   ref_write[0].insert(12*4096, 4096);
   ref_write[2].insert(12*4096, 4096);
   ASSERT_EQ(ref_write, plan.will_write);
