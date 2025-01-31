@@ -1482,7 +1482,7 @@ int PeerReplayer::do_synchronize(const std::string &dir_root, const Snapshot &cu
       break;
     }
 
-    r = validate_source(dir_root, prev, &fh);
+    r = pre_sync_check_and_open_handles(dir_root, current, prev, &fh);
     if (r < 0) {
       derr << ": cannot proceed with sync: " << cpp_strerror(r) << dendl;
       return r;
