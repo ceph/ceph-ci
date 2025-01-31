@@ -21,14 +21,14 @@ class CertInfo:
       - days_to_expiration: Number of days until expiration.
       - error_info: Details of any exception encountered during validation.
     """
-    def __init__(self, entity: str,
-                 target: str,
+    def __init__(self, cert_name: str,
+                 target: Optional[str],
                  is_valid: bool = False,
                  is_close_to_expiration: bool = False,
                  days_to_expiration: int = 0,
                  error_info: str = ''):
-        self.entity = entity
-        self.target = target
+        self.cert_name = cert_name
+        self.target = target or ''
         self.is_valid = is_valid
         self.is_close_to_expiration = is_close_to_expiration
         self.days_to_expiration = days_to_expiration
@@ -199,14 +199,14 @@ class CertMgr:
     def rm_key(self, key_name: str, service_name: Optional[str] = None, host: Optional[str] = None) -> None:
         self.key_store.rm_tlsobject(key_name, service_name, host)
 
-    def cert_ls(self) -> Dict[str, Union[bool, Dict[str, Dict[str, bool]]]]:
+    def cert_ls(self, include_datails: bool = False) -> Dict[str, Union[bool, Dict[str, Dict[str, bool]]]]:
         ls: Dict = copy.deepcopy(self.cert_store.get_tlsobjects())
         for k, v in ls.items():
             if isinstance(v, dict):
-                tmp: Dict[str, Any] = {key: get_certificate_info(cast(Cert, v[key]).cert) for key in v if isinstance(v[key], Cert)}
+                tmp: Dict[str, Any] = {key: get_certificate_info(cast(Cert, v[key]).cert, include_datails) for key in v if isinstance(v[key], Cert)}
                 ls[k] = tmp if tmp else {}
             elif isinstance(v, Cert):
-                ls[k] = get_certificate_info(cast(Cert, v).cert) if bool(v) else False
+                ls[k] = get_certificate_info(cast(Cert, v).cert, include_datails) if bool(v) else {}
         return ls
 
     def key_ls(self) -> Dict[str, Union[bool, Dict[str, bool]]]:
@@ -229,6 +229,12 @@ class CertMgr:
             return [(entity, self.determine_scope(entity)) for entity in set(self.cert_to_service.values())]
         else:
             return list(self.cert_to_service.values())
+
+    def get_cert_scope(self, cert_name: str) -> TLSObjectScope:
+        for scope, certificates in self.known_certs.items():
+            if cert_name in certificates:
+                return scope
+        return TLSObjectScope.UNKNOWN
 
     def determine_scope(self, entity: str) -> str:
         for cert, service in self.cert_to_service.items():
