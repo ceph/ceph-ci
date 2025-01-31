@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <memory>
 #include <include/ceph_assert.h>
+#include <common/bitset_set.h>
 
 template <typename Key, typename T>
 struct mini_flat_map
@@ -318,6 +319,15 @@ struct mini_flat_map
     return const_iterator(this, key);
   }
 
+  bitset_set<128, Key> get_bitset_set()
+  {
+    bitset_set<128, Key> set;
+    for (auto &&[k, _] : *this) {
+      set.insert(k);
+    }
+    return set;
+  }
+
   friend std::ostream& operator<<(std::ostream& lhs, const mini_flat_map<Key,T>& rhs)
   {
     int c = 0;
@@ -330,5 +340,4 @@ struct mini_flat_map
     lhs << "}";
     return lhs;
   }
-
 };

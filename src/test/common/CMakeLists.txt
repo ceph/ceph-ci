@@ -263,6 +263,13 @@ add_executable(unittest_mini_flat_map
 add_ceph_unittest(unittest_mini_flat_map)
 target_link_libraries(unittest_mini_flat_map ceph-common GTest::Main)
 
+# unittest_bitset_set
+add_executable(unittest_bitset_set
+  test_bitset_set.cc
+)
+add_ceph_unittest(unittest_bitset_set)
+target_link_libraries(unittest_bitset_set ceph-common GTest::Main)
+
 # unittest_weighted_priority_queue
 add_executable(unittest_weighted_priority_queue
   test_weighted_priority_queue.cc

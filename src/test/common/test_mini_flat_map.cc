@@ -40,7 +40,7 @@ struct Key {
   {
     return lhs << (uint32_t)rhs.k;
   }
-  bool operator==(const Key &other) const { return k == other.k; }
+  friend bool operator==(const Key &lhs, const Key &rhs) { return lhs.k == rhs.k; }
 };
 
 TEST(mini_flat_map, copy_operator_and_element_access)
@@ -157,13 +157,3 @@ TEST(mini_flat_map, lookup)
 }
 // NO equal_range, lower_bound, upper_bound
 
-//
-//typedef ::testing::Types<
-//  mini_flat_map<Key, Value>,
-//  > MiniFlatMapTypes;
-//
-//TYPED_TEST_SUITE(IntervalSetTest, MiniFlatMapTypes);
-//
-//TYPED_TEST(MiniFlatMapTypes, compare) {
-//
-//}
