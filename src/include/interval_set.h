@@ -551,7 +551,7 @@ class interval_set {
           m.erase(p);
           m[start] = len + psecond;  // append to front
         } else {
-rin          ceph_assert(p->first > start+len);
+          ceph_assert(p->first > start+len);
 	  if (pstart)
 	    *pstart = start;
 	  if (plen)
