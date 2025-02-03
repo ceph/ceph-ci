@@ -51,9 +51,7 @@ protected:
   bool filter_out(const std::set<std::string>& filters) override;
 
 public:
-  ~MgrOpRequest() override {
-    request->put();
-  }
+  ~MgrOpRequest() override { }
 
   template<class T>
   const T* get_req() const { return static_cast<const T*>(request); }
