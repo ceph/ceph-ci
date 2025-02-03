@@ -324,12 +324,24 @@ class NFSService(CephService):
             '--namespace', cast(str, spec.service_id),
             'rm', 'grace',
         ]
-        subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=10
-        )
+        try:
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10
+            )
+        except Exception as e:
+            err_msg = f'Got unexpected exception trying to remove ganesha grace file for nfs.{spec.service_id} service: {str(e)}'
+            self.mgr.log.warning(err_msg)
+            raise OrchestratorError(err_msg)
+        if result.returncode:
+            if "No such file" in result.stderr.decode('utf-8'):
+                logger.info(f'Grace file for nfs.{spec.service_id} already deleted')
+            else:
+                err_msg = f'Failed to remove ganesha grace file for nfs.{spec.service_id} service: {result.stderr.decode("utf-8")}'
+                self.mgr.log.warning(err_msg)
+                raise OrchestratorError(err_msg)
 
     def _haproxy_hosts(self) -> List[str]:
         # NB: Ideally, we would limit the list to IPs on hosts running
