@@ -87,12 +87,12 @@ public:
 
   unsigned int get_chunk_size(unsigned int stripe_width) const override;
 
-  int encode_chunks(const std::map<int, bufferptr> &in,
-                    std::map<int, bufferptr> &out) override;
+  int encode_chunks(const shard_id_map<bufferptr> &in,
+                    shard_id_map<bufferptr> &out) override;
 
-  int decode_chunks(const std::set<int> &want_to_read,
-                    const std::map<int, ceph::buffer::list> &chunks,
-                    std::map<int, ceph::buffer::list> *decoded) override;
+  int decode_chunks(const shard_id_set &want_to_read,
+                    const shard_id_map<ceph::buffer::list> &chunks,
+                    shard_id_map<ceph::buffer::list> *decoded) override;
 
   int init(ceph::ErasureCodeProfile &profile, std::ostream *ss) override;
 
@@ -162,8 +162,8 @@ public:
                     const ceph::bufferptr &new_data,
                     ceph::bufferptr *delta);
 
-  void apply_delta(const std::map<int, ceph::bufferptr> &in,
-                   std::map <int, ceph::bufferptr> &out);
+  void apply_delta(const shard_id_map<ceph::bufferptr> &in,
+                   shard_id_map<ceph::bufferptr> &out);
 
   unsigned get_alignment() const override;
 
@@ -178,5 +178,6 @@ public:
   int parse(ceph::ErasureCodeProfile &profile,
             std::ostream *ss) override;
 };
+static_assert(!std::is_abstract<ErasureCodeIsaDefault>());
 
 #endif

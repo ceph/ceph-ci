@@ -127,7 +127,7 @@ struct ECCommonL {
       const hobject_t &hoid,
       read_result_t &res,
       std::list<ec_align_t> to_read,
-      std::set<int> wanted_to_read) = 0;
+      shard_id_set wanted_to_read) = 0;
 
     virtual void finish(int priority) && = 0;
 
@@ -175,7 +175,7 @@ struct ECCommonL {
 
     ZTracer::Trace trace;
 
-    std::map<hobject_t, std::set<int>> want_to_read;
+    std::map<hobject_t, shard_id_set> want_to_read;
     std::map<hobject_t, read_request_t> to_read;
     std::map<hobject_t, read_result_t> complete;
 
@@ -193,7 +193,7 @@ struct ECCommonL {
       bool for_recovery,
       std::unique_ptr<ReadCompleter> _on_complete,
       OpRequestRef op,
-      std::map<hobject_t, std::set<int>> &&_want_to_read,
+      std::map<hobject_t, shard_id_set> &&_want_to_read,
       std::map<hobject_t, read_request_t> &&_to_read)
       : priority(priority),
         tid(tid),
@@ -241,7 +241,7 @@ struct ECCommonL {
 
     void start_read_op(
       int priority,
-      std::map<hobject_t, std::set<int>> &want_to_read,
+      std::map<hobject_t, shard_id_set> &want_to_read,
       std::map<hobject_t, read_request_t> &to_read,
       OpRequestRef op,
       bool do_redundant_reads,
@@ -295,18 +295,18 @@ struct ECCommonL {
     void get_min_want_to_read_shards(
       uint64_t offset,				///< [in]
       uint64_t length,    			///< [in]
-      std::set<int> *want_to_read               ///< [out]
+      shard_id_set *want_to_read               ///< [out]
       );
     static void get_min_want_to_read_shards(
       const uint64_t offset,
       const uint64_t length,
       const ECUtilL::stripe_info_t& sinfo,
-      std::set<int> *want_to_read);
+      shard_id_set *want_to_read);
 
     int get_remaining_shards(
       const hobject_t &hoid,
-      const std::set<int> &avail,
-      const std::set<int> &want,
+      const shard_id_set &avail,
+      const shard_id_set &want,
       const read_result_t &result,
       std::map<pg_shard_t, std::vector<std::pair<int, int>>> *to_read,
       bool for_recovery);
@@ -314,19 +314,19 @@ struct ECCommonL {
     void get_all_avail_shards(
       const hobject_t &hoid,
       const std::set<pg_shard_t> &error_shards,
-      std::set<int> &have,
-      std::map<shard_id_t, pg_shard_t> &shards,
+      shard_id_set &have,
+      shard_id_map<pg_shard_t> &shards,
       bool for_recovery);
 
     friend std::ostream &operator<<(std::ostream &lhs, const ReadOp &rhs);
     friend struct FinishReadOp;
 
-    void get_want_to_read_shards(std::set<int> *want_to_read) const;
+    void get_want_to_read_shards(shard_id_set *want_to_read) const;
 
     /// Returns to_read replicas sufficient to reconstruct want
     int get_min_avail_to_read_shards(
       const hobject_t &hoid,     ///< [in] object
-      const std::set<int> &want,      ///< [in] desired shards
+      const shard_id_set &want,      ///< [in] desired shards
       bool for_recovery,         ///< [in] true if we may use non-acting replicas
       bool do_redundant_reads,   ///< [in] true if we want to issue redundant reads to reduce latency
       std::map<pg_shard_t, std::vector<std::pair<int, int>>> *to_read   ///< [out] shards, corresponding subchunks to read
@@ -427,7 +427,7 @@ struct ECCommonL {
         pg_t pgid,
         const ECUtilL::stripe_info_t &sinfo,
         std::map<hobject_t,extent_map> *written,
-        std::map<shard_id_t, ceph::os::Transaction> *transactions,
+        shard_id_map<ceph::os::Transaction> *transactions,
         DoutPrefixProvider *dpp,
         const ceph_release_t require_osd_release = ceph_release_t::unknown) = 0;
     };

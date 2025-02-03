@@ -177,71 +177,71 @@ TEST(ECCommon, get_min_want_to_read_shards)
 
   // read nothing at the very beginning
   {
-    std::set<int> want_to_read;
+    shard_id_set want_to_read;
     ECLegacy::ECCommonL::ReadPipeline::get_min_want_to_read_shards(
       0, 0, s, &want_to_read);
-    ASSERT_TRUE(want_to_read == std::set<int>{});
+    ASSERT_TRUE(want_to_read == shard_id_set{});
   }
 
   // read nothing at the middle (0-sized partial read)
   {
-    std::set<int> want_to_read;
+    shard_id_set want_to_read;
     ECLegacy::ECCommonL::ReadPipeline::get_min_want_to_read_shards(
       2048, 0, s, &want_to_read);
-    ASSERT_TRUE(want_to_read == std::set<int>{});
+    ASSERT_TRUE(want_to_read == shard_id_set{});
   }
 
   // read not-so-many (< chunk_size) bytes at the middle (partial read)
   {
-    std::set<int> want_to_read;
+    shard_id_set want_to_read;
     ECLegacy::ECCommonL::ReadPipeline::get_min_want_to_read_shards(
       2048, 42, s, &want_to_read);
-    ASSERT_TRUE(want_to_read == std::set<int>{2});
+    ASSERT_EQ(want_to_read, shard_id_set{2});
   }
 
   // read more (> chunk_size) bytes at the middle (partial read)
   {
-    std::set<int> want_to_read;
+    shard_id_set want_to_read;
     ECLegacy::ECCommonL::ReadPipeline::get_min_want_to_read_shards(
       1024, 1024+42, s, &want_to_read);
     // extra () due to a language / macro limitation
-    ASSERT_TRUE(want_to_read == (std::set<int>{1, 2}));
+    ASSERT_TRUE(want_to_read == (shard_id_set{1, 2}));
   }
 
   // full stripe except last chunk
   {
-    std::set<int> want_to_read;
+    shard_id_set want_to_read;
     ECLegacy::ECCommonL::ReadPipeline::get_min_want_to_read_shards(
       0, 3*1024, s, &want_to_read);
     // extra () due to a language / macro limitation
-    ASSERT_TRUE(want_to_read == (std::set<int>{0, 1, 2}));
+    ASSERT_TRUE(want_to_read == (shard_id_set{0, 1, 2}));
   }
 
   // full stripe except 1st chunk
   {
-    std::set<int> want_to_read;
+    shard_id_set want_to_read;
     ECLegacy::ECCommonL::ReadPipeline::get_min_want_to_read_shards(
       1024, swidth-1024, s, &want_to_read);
     // extra () due to a language / macro limitation
-    ASSERT_TRUE(want_to_read == (std::set<int>{1, 2, 3}));
+    ASSERT_TRUE(want_to_read == (shard_id_set{1, 2, 3}));
   }
 
   // large, multi-stripe read starting just after 1st chunk
   {
-    std::set<int> want_to_read;
+    shard_id_set want_to_read;
     ECLegacy::ECCommonL::ReadPipeline::get_min_want_to_read_shards(
       1024, swidth*42, s, &want_to_read);
     // extra () due to a language / macro limitation
-    ASSERT_TRUE(want_to_read == (std::set<int>{0, 1, 2, 3}));
+    ASSERT_TRUE(want_to_read == (shard_id_set{0, 1, 2, 3}));
   }
 
   // large read from the beginning
   {
-    std::set<int> want_to_read;
+    shard_id_set want_to_read;
     ECLegacy::ECCommonL::ReadPipeline::get_min_want_to_read_shards(
       0, swidth*42, s, &want_to_read);
     // extra () due to a language / macro limitation
-    ASSERT_TRUE(want_to_read == (std::set<int>{0, 1, 2, 3}));
+    ASSERT_TRUE(want_to_read == (shard_id_set{0, 1, 2, 3}));
   }
 }
 
@@ -255,16 +255,16 @@ TEST(ECCommon, get_min_want_to_read_shards_bug67087)
   ASSERT_EQ(s.get_stripe_width(), swidth);
   ASSERT_EQ(s.get_chunk_size(), 1024);
 
-  std::set<int> want_to_read;
+  shard_id_set want_to_read;
 
   // multitple calls with the same want_to_read can happen during
   // multi-region reads.
   {
     ECLegacy::ECCommonL::ReadPipeline::get_min_want_to_read_shards(
       512, 512, s, &want_to_read);
-    ASSERT_EQ(want_to_read, std::set<int>{0});
+    ASSERT_EQ(want_to_read, shard_id_set{0});
     ECLegacy::ECCommonL::ReadPipeline::get_min_want_to_read_shards(
       512+16*1024, 512, s, &want_to_read);
-    ASSERT_EQ(want_to_read, std::set<int>{0});
+    ASSERT_EQ(want_to_read, shard_id_set{0});
   }
 }

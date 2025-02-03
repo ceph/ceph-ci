@@ -40,13 +40,13 @@ namespace ECLegacy {
     const hobject_t &oid,
     const ECUtilL::stripe_info_t &sinfo,
     ErasureCodeInterfaceRef &ecimpl,
-    const set<int> &want,
+    const shard_id_set &want,
     uint64_t offset,
     bufferlist bl,
     uint32_t flags,
     ECUtilL::HashInfoRef hinfo,
     extent_map &written,
-    map<shard_id_t, ObjectStore::Transaction> *transactions,
+    shard_id_map<ObjectStore::Transaction> *transactions,
     DoutPrefixProvider *dpp)
   {
     const uint64_t before_size = hinfo->get_total_logical_size(sinfo);
@@ -54,7 +54,7 @@ namespace ECLegacy {
     ceph_assert(sinfo.logical_offset_is_stripe_aligned(bl.length()));
     ceph_assert(bl.length());
 
-    map<int, bufferlist> buffers;
+    shard_id_map<bufferlist> buffers(sinfo.get_k_plus_m());
     int r = ECUtilL::encode(
       sinfo, ecimpl, bl, want, &buffers);
     ceph_assert(r == 0);
@@ -104,7 +104,7 @@ namespace ECLegacy {
     const map<hobject_t,extent_map> &partial_extents,
     vector<pg_log_entry_t> &entries,
     map<hobject_t,extent_map> *written_map,
-    map<shard_id_t, ObjectStore::Transaction> *transactions,
+    shard_id_map<ObjectStore::Transaction> *transactions,
     set<hobject_t> *temp_added,
     set<hobject_t> *temp_removed,
     DoutPrefixProvider *dpp,
@@ -538,7 +538,7 @@ namespace ECLegacy {
                              << dendl;
         }
 
-        set<int> want;
+        shard_id_set want;
         for (unsigned i = 0; i < ecimpl->get_chunk_count(); ++i) {
           want.insert(i);
         }

@@ -14,6 +14,10 @@
 
 #pragma once
 
+#include "include/types.h"
+#include "common/bitset_set.h"
+#include "common/mini_flat_map.h"
+
 struct ec_align_t {
   uint64_t offset;
   uint64_t size;
@@ -30,3 +34,7 @@ struct ec_align_t {
   bool operator==(const ec_align_t &other) const;
 };
 
+using shard_id_set = bitset_set<128, shard_id_t>;
+
+template <typename T>
+using shard_id_map = mini_flat_map<shard_id_t, T>;

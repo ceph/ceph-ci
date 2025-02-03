@@ -150,6 +150,11 @@ struct mini_flat_map
       return *value;
     }
 
+    const std::pair<const Key&, T&>* operator->()
+    {
+      return value.operator->();
+    }
+
     const_iterator& operator=(const const_iterator &other) {
       if (this != &other) {
         key = other.key;
@@ -285,11 +290,22 @@ struct mini_flat_map
   }
 
   template< class... Args >
-  bool emplace(Key k, Args&&... args)
+  bool emplace(const Key k, Args&&... args)
   {
     if (!data[k]) {
       _size++;
       vector_type t = std::make_unique<T>(std::forward<Args>(args)...);
+      data[k] = std::move(t);
+      return true;
+    }
+    return false;
+  }
+
+  bool insert(const Key &k, const T &value)
+  {
+    if (!data[k]) {
+      _size++;
+      vector_type t = std::make_unique<T>(value);
       data[k] = std::move(t);
       return true;
     }

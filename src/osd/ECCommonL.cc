@@ -211,8 +211,8 @@ namespace ECLegacy {
   void ECCommonL::ReadPipeline::get_all_avail_shards(
     const hobject_t &hoid,
     const set<pg_shard_t> &error_shards,
-    set<int> &have,
-    map<shard_id_t, pg_shard_t> &shards,
+    shard_id_set &have,
+    shard_id_map<pg_shard_t> &shards,
     bool for_recovery)
   {
     for (set<pg_shard_t>::const_iterator i =
@@ -233,7 +233,7 @@ namespace ECLegacy {
         ceph_assert(!have.count(i->shard));
         have.insert(i->shard);
         ceph_assert(!shards.count(i->shard));
-        shards.insert(make_pair(i->shard, *i));
+        shards.emplace(i->shard, *i);
       }
     }
 
@@ -255,7 +255,7 @@ namespace ECLegacy {
         if (hoid < info.last_backfill &&
             !missing.is_missing(hoid)) {
           have.insert(i->shard);
-          shards.insert(make_pair(i->shard, *i));
+          shards.emplace(i->shard, *i);
             }
            }
 
@@ -273,7 +273,7 @@ namespace ECLegacy {
           if (error_shards.find(*i) != error_shards.end())
             continue;
           have.insert(i->shard);
-          shards.insert(make_pair(i->shard, *i));
+          shards.emplace(i->shard, *i);
              }
       }
     }
@@ -281,7 +281,7 @@ namespace ECLegacy {
 
   int ECCommonL::ReadPipeline::get_min_avail_to_read_shards(
     const hobject_t &hoid,
-    const set<int> &want,
+    const shard_id_set &want,
     bool for_recovery,
     bool do_redundant_reads,
     map<pg_shard_t, vector<pair<int, int>>> *to_read)
@@ -289,13 +289,13 @@ namespace ECLegacy {
     // Make sure we don't do redundant reads for recovery
     ceph_assert(!for_recovery || !do_redundant_reads);
 
-    set<int> have;
-    map<shard_id_t, pg_shard_t> shards;
+    shard_id_set have;
+    shard_id_map<pg_shard_t> shards(sinfo.get_k_plus_m());
     set<pg_shard_t> error_shards;
 
     get_all_avail_shards(hoid, error_shards, have, shards, for_recovery);
 
-    map<int, vector<pair<int, int>>> need;
+    shard_id_map<vector<pair<int, int>>> need(sinfo.get_k_plus_m());
     int r = ec_impl->minimum_to_decode(want, have, &need);
     if (r < 0)
       return r;
@@ -323,7 +323,7 @@ namespace ECLegacy {
     const uint64_t offset,
     const uint64_t length,
     const ECUtilL::stripe_info_t& sinfo,
-    set<int> *want_to_read)
+    shard_id_set *want_to_read)
   {
     const auto [left_chunk_index, right_chunk_index] =
       sinfo.offset_length_to_data_chunk_indices(offset, length);
@@ -339,7 +339,7 @@ namespace ECLegacy {
   void ECCommonL::ReadPipeline::get_min_want_to_read_shards(
     const uint64_t offset,
     const uint64_t length,
-    set<int> *want_to_read)
+    shard_id_set *want_to_read)
   {
     get_min_want_to_read_shards(
       offset, length, sinfo,  want_to_read);
@@ -349,16 +349,16 @@ namespace ECLegacy {
 
   int ECCommonL::ReadPipeline::get_remaining_shards(
     const hobject_t &hoid,
-    const set<int> &avail,
-    const set<int> &want,
+    const shard_id_set &avail,
+    const shard_id_set &want,
     const read_result_t &result,
     map<pg_shard_t, vector<pair<int, int>>> *to_read,
     bool for_recovery)
   {
     ceph_assert(to_read);
 
-    set<int> have;
-    map<shard_id_t, pg_shard_t> shards;
+    shard_id_set have;
+    shard_id_map<pg_shard_t> shards(sinfo.get_k_plus_m());
     set<pg_shard_t> error_shards;
     for (auto &p : result.errors) {
       error_shards.insert(p.first);
@@ -366,7 +366,7 @@ namespace ECLegacy {
 
     get_all_avail_shards(hoid, error_shards, have, shards, for_recovery);
 
-    map<int, vector<pair<int, int>>> need;
+    shard_id_map<vector<pair<int, int>>> need(sinfo.get_k_plus_m());
     int r = ec_impl->minimum_to_decode(want, have, &need);
     if (r < 0) {
       dout(0) << __func__ << " not enough shards left to try for " << hoid
@@ -374,7 +374,7 @@ namespace ECLegacy {
       return -EIO;
     }
 
-    set<int> shards_left;
+    shard_id_set shards_left;
     for (auto p : need) {
       if (avail.find(p.first) == avail.end()) {
         shards_left.insert(p.first);
@@ -383,7 +383,7 @@ namespace ECLegacy {
 
     vector<pair<int, int>> subchunks;
     subchunks.push_back(make_pair(0, ec_impl->get_sub_chunk_count()));
-    for (set<int>::iterator i = shards_left.begin();
+    for (shard_id_set::const_iterator i = shards_left.begin();
          i != shards_left.end();
          ++i) {
       ceph_assert(shards.count(shard_id_t(*i)));
@@ -395,7 +395,7 @@ namespace ECLegacy {
 
   void ECCommonL::ReadPipeline::start_read_op(
     int priority,
-    map<hobject_t, set<int>> &want_to_read,
+    map<hobject_t, shard_id_set> &want_to_read,
     map<hobject_t, read_request_t> &to_read,
     OpRequestRef _op,
     bool do_redundant_reads,
@@ -498,7 +498,7 @@ namespace ECLegacy {
   }
 
   void ECCommonL::ReadPipeline::get_want_to_read_shards(
-    std::set<int> *want_to_read) const
+    shard_id_set *want_to_read) const
   {
 
     for (int i = 0; i < (int)sinfo.get_k(); ++i) {
@@ -516,7 +516,7 @@ namespace ECLegacy {
       const hobject_t &hoid,
       ECCommonL::read_result_t &res,
       list<ec_align_t> to_read,
-      set<int> wanted_to_read) override
+      shard_id_set wanted_to_read) override
     {
       auto* cct = read_pipeline.cct;
       dout(20) << __func__ << " completing hoid=" << hoid
@@ -532,7 +532,7 @@ namespace ECLegacy {
           read_pipeline.sinfo.offset_len_to_chunk_bounds(bounds);
         ceph_assert(res.returned.front().get<0>() == aligned.first);
         ceph_assert(res.returned.front().get<1>() == aligned.second);
-        map<int, bufferlist> to_decode;
+        shard_id_map<bufferlist> to_decode(read_pipeline.sinfo.get_k_plus_m());
         bufferlist bl;
         for (map<pg_shard_t, bufferlist>::iterator j =
                res.returned.front().get<2>().begin();
@@ -616,11 +616,11 @@ out:
       return;
     }
 
-    map<hobject_t, set<int>> obj_want_to_read;
+    map<hobject_t, shard_id_set> obj_want_to_read;
 
     map<hobject_t, read_request_t> for_read_op;
     for (auto &&to_read: reads) {
-      set<int> want_to_read;
+      shard_id_set want_to_read;
       if (cct->_conf->osd_ec_partial_reads) {
         for (const auto& single_region : to_read.second) {
           get_min_want_to_read_shards(single_region.offset,
@@ -670,7 +670,7 @@ out:
     const hobject_t &hoid,
     ReadOp &rop)
   {
-    set<int> already_read;
+    shard_id_set already_read;
     const set<pg_shard_t>& ots = rop.obj_to_source[hoid];
     for (set<pg_shard_t>::iterator i = ots.begin(); i != ots.end(); ++i)
       already_read.insert(i->shard);
@@ -826,7 +826,7 @@ out:
       ceph_assert(op->pending_read.empty());
     }
 
-    map<shard_id_t, ObjectStore::Transaction> trans;
+    shard_id_map<ObjectStore::Transaction> trans(sinfo.get_k_plus_m());
     for (set<pg_shard_t>::const_iterator i =
            get_parent()->get_acting_recovery_backfill_shards().begin();
          i != get_parent()->get_acting_recovery_backfill_shards().end();
@@ -888,7 +888,7 @@ out:
          ++i) {
       op->pending_apply.insert(*i);
       op->pending_commit.insert(*i);
-      map<shard_id_t, ObjectStore::Transaction>::iterator iter =
+      shard_id_map<ObjectStore::Transaction>::iterator iter =
         trans.find(i->shard);
       ceph_assert(iter != trans.end());
       bool should_send = get_parent()->should_send_op(*i, op->hoid);
@@ -965,7 +965,7 @@ struct ECDummyOp : ECCommonL::RMWPipeline::Op {
         pg_t pgid,
         const ECUtilL::stripe_info_t &sinfo,
         std::map<hobject_t,extent_map> *written,
-        std::map<shard_id_t, ObjectStore::Transaction> *transactions,
+        shard_id_map<ObjectStore::Transaction> *transactions,
         DoutPrefixProvider *dpp,
         const ceph_release_t require_osd_release) final
     {

@@ -178,13 +178,13 @@ int ErasureCodeBench::encode()
   bufferlist in;
   in.append(string(in_size, 'X'));
   in.rebuild_aligned(ErasureCode::SIMD_ALIGN);
-  set<int> want_to_encode;
+  shard_id_set want_to_encode;
   for (int i = 0; i < k + m; i++) {
     want_to_encode.insert(i);
   }
   utime_t begin_time = ceph_clock_now();
   for (int i = 0; i < max_iterations; i++) {
-    std::map<int,bufferlist> encoded;
+    shard_id_map<bufferlist> encoded(erasure_code->get_chunk_count());
     code = erasure_code->encode(want_to_encode, in, &encoded);
     if (code)
       return code;
@@ -194,7 +194,7 @@ int ErasureCodeBench::encode()
   return 0;
 }
 
-static void display_chunks(const map<int,bufferlist> &chunks,
+static void display_chunks(const shard_id_map<bufferlist> &chunks,
 			   unsigned int chunk_count) {
   cout << "chunks ";
   for (unsigned int chunk = 0; chunk < chunk_count; chunk++) {
@@ -208,8 +208,8 @@ static void display_chunks(const map<int,bufferlist> &chunks,
   cout << "(X) is an erased chunk" << endl;
 }
 
-int ErasureCodeBench::decode_erasures(const map<int,bufferlist> &all_chunks,
-				      const map<int,bufferlist> &chunks,
+int ErasureCodeBench::decode_erasures(const shard_id_map<bufferlist> &all_chunks,
+				      const shard_id_map<bufferlist> &chunks,
 				      unsigned i,
 				      unsigned want_erasures,
 				      ErasureCodeInterfaceRef erasure_code)
@@ -219,16 +219,16 @@ int ErasureCodeBench::decode_erasures(const map<int,bufferlist> &all_chunks,
   if (want_erasures == 0) {
     if (verbose)
       display_chunks(chunks, erasure_code->get_chunk_count());
-    set<int> want_to_read;
+    shard_id_set want_to_read;
     for (unsigned int chunk = 0; chunk < erasure_code->get_chunk_count(); chunk++)
       if (chunks.count(chunk) == 0)
 	want_to_read.insert(chunk);
 
-    map<int,bufferlist> decoded;
+    shard_id_map<bufferlist> decoded(erasure_code->get_chunk_count());
     code = erasure_code->decode(want_to_read, chunks, &decoded, 0);
     if (code)
       return code;
-    for (set<int>::iterator chunk = want_to_read.begin();
+    for (shard_id_set::const_iterator chunk = want_to_read.begin();
 	 chunk != want_to_read.end();
 	 ++chunk) {
       if (all_chunks.find(*chunk)->second.length() != decoded[*chunk].length()) {
@@ -247,7 +247,7 @@ int ErasureCodeBench::decode_erasures(const map<int,bufferlist> &all_chunks,
   }
 
   for (; i < erasure_code->get_chunk_count(); i++) {
-    map<int,bufferlist> one_less = chunks;
+    shard_id_map<bufferlist> one_less = chunks;
     one_less.erase(i);
     code = decode_erasures(all_chunks, one_less, i + 1, want_erasures - 1, erasure_code);
     if (code)
@@ -274,17 +274,17 @@ int ErasureCodeBench::decode()
   in.append(string(in_size, 'X'));
   in.rebuild_aligned(ErasureCode::SIMD_ALIGN);
 
-  set<int> want_to_encode;
+  shard_id_set want_to_encode;
   for (int i = 0; i < k + m; i++) {
     want_to_encode.insert(i);
   }
 
-  map<int,bufferlist> encoded;
+  shard_id_map<bufferlist> encoded(erasure_code->get_chunk_count());
   code = erasure_code->encode(want_to_encode, in, &encoded);
   if (code)
     return code;
 
-  set<int> want_to_read = want_to_encode;
+  shard_id_set want_to_read = want_to_encode;
 
   if (erased.size() > 0) {
     for (vector<int>::const_iterator i = erased.begin();
@@ -301,12 +301,12 @@ int ErasureCodeBench::decode()
       if (code)
 	return code;
     } else if (erased.size() > 0) {
-      map<int,bufferlist> decoded;
+      shard_id_map<bufferlist> decoded(erasure_code->get_chunk_count());
       code = erasure_code->decode(want_to_read, encoded, &decoded, 0);
       if (code)
 	return code;
     } else {
-      map<int,bufferlist> chunks = encoded;
+      shard_id_map<bufferlist> chunks = encoded;
       for (int j = 0; j < erasures; j++) {
 	int erasure;
 	do {
@@ -314,7 +314,7 @@ int ErasureCodeBench::decode()
 	} while(chunks.count(erasure) == 0);
 	chunks.erase(erasure);
       }
-      map<int,bufferlist> decoded;
+      shard_id_map<bufferlist> decoded(erasure_code->get_chunk_count());
       code = erasure_code->decode(want_to_read, chunks, &decoded, 0);
       if (code)
 	return code;

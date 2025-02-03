@@ -544,14 +544,10 @@ int ErasureCodeLrc::init(ErasureCodeProfile &profile,
   return 0;
 }
 
-set<int> ErasureCodeLrc::get_erasures(const set<int> &want,
-				      const set<int> &available) const
+shard_id_set ErasureCodeLrc::get_erasures(const shard_id_set &want,
+				      const shard_id_set &available) const
 {
-  set<int> result;
-  set_difference(want.begin(), want.end(),
-		 available.begin(), available.end(),
-		 inserter(result, result.end()));
-  return result;
+  return shard_id_set::difference(want, available);
 }
 
 unsigned int ErasureCodeLrc::get_chunk_size(unsigned int stripe_width) const
@@ -564,18 +560,18 @@ unsigned int ErasureCodeLrc::get_minimum_granularity()
   return layers.front().erasure_code->get_minimum_granularity();
 }
 
-void p(const set<int> &s) { cerr << s; } // for gdb
+void p(const shard_id_set &s) { cerr << s; } // for gdb
 
-int ErasureCodeLrc::_minimum_to_decode(const set<int> &want_to_read,
-				       const set<int> &available_chunks,
-				       set<int> *minimum)
+int ErasureCodeLrc::_minimum_to_decode(const shard_id_set &want_to_read,
+				       const shard_id_set &available_chunks,
+				       shard_id_set *minimum)
 {
   dout(20) << __func__ << " want_to_read " << want_to_read
 	   << " available_chunks " << available_chunks << dendl;
   {
-    set<int> erasures_total;
-    set<int> erasures_not_recovered;
-    set<int> erasures_want;
+    shard_id_set erasures_total;
+    shard_id_set erasures_not_recovered;
+    shard_id_set erasures_want;
     for (unsigned int i = 0; i < get_chunk_count(); ++i) {
       if (available_chunks.count(i) == 0) {
 	erasures_total.insert(i);
@@ -609,20 +605,16 @@ int ErasureCodeLrc::_minimum_to_decode(const set<int> &want_to_read,
       //
       // If this layer has no chunk that we want, skip it.
       //
-      set<int> layer_want;
-      set_intersection(want_to_read.begin(), want_to_read.end(),
-		       i->chunks_as_set.begin(), i->chunks_as_set.end(),
-		       inserter(layer_want, layer_want.end()));
+      shard_id_set layer_want;
+      layer_want = shard_id_set::intersection(want_to_read, i->chunks_as_set);
       if (layer_want.empty())
 	continue;
       //
       // Are some of the chunks we want missing ?
       //
-      set<int> layer_erasures;
-      set_intersection(layer_want.begin(), layer_want.end(),
-		       erasures_want.begin(), erasures_want.end(),
-		       inserter(layer_erasures, layer_erasures.end()));
-      set<int> layer_minimum;
+      shard_id_set layer_erasures = shard_id_set::intersection(layer_want, erasures_want);
+
+      shard_id_set layer_minimum;
       if (layer_erasures.empty()) {
 	//
 	// The chunks we want are available, this is the minimum we need
@@ -630,10 +622,7 @@ int ErasureCodeLrc::_minimum_to_decode(const set<int> &want_to_read,
 	//
 	layer_minimum = layer_want;
       } else {
-	set<int> erasures;
-	set_intersection(i->chunks_as_set.begin(), i->chunks_as_set.end(),
-			 erasures_not_recovered.begin(), erasures_not_recovered.end(),
-			 inserter(erasures, erasures.end()));
+        shard_id_set erasures = shard_id_set::intersection(i->chunks_as_set, erasures_not_recovered);
 
 	if (erasures.size() > i->erasure_code->get_coding_chunk_count()) {
 	  //
@@ -646,15 +635,13 @@ int ErasureCodeLrc::_minimum_to_decode(const set<int> &want_to_read,
 	  // Get all available chunks in that layer to recover the
 	  // missing one(s).
 	  //
-	  set_difference(i->chunks_as_set.begin(), i->chunks_as_set.end(),
-			 erasures_not_recovered.begin(), erasures_not_recovered.end(),
-			 inserter(layer_minimum, layer_minimum.end()));
+	  layer_minimum = shard_id_set::difference(i->chunks_as_set, erasures_not_recovered);
 	  //
 	  // Chunks recovered by this layer are removed from the list of
 	  // erasures so that upper levels do not attempt to recover
 	  // them.
 	  //
-	  for (set<int>::const_iterator j = erasures.begin();
+	  for (shard_id_set::const_iterator j = erasures.begin();
 	       j != erasures.end();
 	       ++j) {
 	    erasures_not_recovered.erase(*j);
@@ -662,11 +649,11 @@ int ErasureCodeLrc::_minimum_to_decode(const set<int> &want_to_read,
 	  }
 	}
       }
-      minimum->insert(layer_minimum.begin(), layer_minimum.end());
+      minimum->insert(layer_minimum);
     }
     if (erasures_want.empty()) {
-      minimum->insert(want_to_read.begin(), want_to_read.end());
-      for (set<int>::const_iterator i = erasures_total.begin();
+      minimum->insert(want_to_read);
+      for (shard_id_set::const_iterator i = erasures_total.begin();
 	   i != erasures_total.end();
 	   ++i) {
 	if (minimum->count(*i))
@@ -687,7 +674,7 @@ int ErasureCodeLrc::_minimum_to_decode(const set<int> &want_to_read,
     // that do not contain chunks that we want, in the hope that it
     // will help the upper layers.
     //
-    set<int> erasures_total;
+    shard_id_set erasures_total;
     for (unsigned int i = 0; i < get_chunk_count(); ++i) {
       if (available_chunks.count(i) == 0)
 	erasures_total.insert(i);
@@ -696,11 +683,8 @@ int ErasureCodeLrc::_minimum_to_decode(const set<int> &want_to_read,
     for (vector<Layer>::reverse_iterator i = layers.rbegin();
 	 i != layers.rend();
 	 ++i) {
-      set<int> layer_erasures;
-      set_intersection(i->chunks_as_set.begin(), i->chunks_as_set.end(),
-		       erasures_total.begin(), erasures_total.end(),
-		       inserter(layer_erasures, layer_erasures.end()));
-      //
+      shard_id_set layer_erasures = shard_id_set::intersection(i->chunks_as_set, erasures_total);
+
       // If this layer has no erasure, skip it
       //
       if (layer_erasures.empty())
@@ -713,7 +697,7 @@ int ErasureCodeLrc::_minimum_to_decode(const set<int> &want_to_read,
 	// erasures so that upper levels know they can rely on their
 	// availability
 	//
-	for (set<int>::const_iterator j = layer_erasures.begin();
+	for (shard_id_set::const_iterator j = layer_erasures.begin();
 	     j != layer_erasures.end();
 	     ++j) {
 	  erasures_total.erase(*j);
@@ -737,13 +721,13 @@ int ErasureCodeLrc::_minimum_to_decode(const set<int> &want_to_read,
   return -EIO;
 }
 
-int ErasureCodeLrc::encode_chunks(const std::map<int, bufferptr> &in, 
-                                  std::map<int, bufferptr> &out)
+int ErasureCodeLrc::encode_chunks(const shard_id_map<bufferptr> &in, 
+                                  shard_id_map<bufferptr> &out)
 {
   unsigned int k = get_data_chunk_count();
   unsigned int chunk_size = 0;
-  set<int> all_shards;
-  auto& nonconst_in = const_cast<std::map<int, bufferptr>&>(in);
+  shard_id_set all_shards;
+  auto& nonconst_in = const_cast<shard_id_map<bufferptr>&>(in);
 
   for (const auto& [shard, ptr] : in) {
     all_shards.insert(shard);
@@ -752,7 +736,7 @@ int ErasureCodeLrc::encode_chunks(const std::map<int, bufferptr> &in,
   }
 
   unsigned int top = layers.size();
-  set<int> out_shards;
+  shard_id_set out_shards;
   for (const auto& [shard, ptr] : out) {
     out_shards.insert(shard);
     all_shards.insert(shard);
@@ -762,26 +746,25 @@ int ErasureCodeLrc::encode_chunks(const std::map<int, bufferptr> &in,
 
   for (vector<Layer>::reverse_iterator i = layers.rbegin(); i != layers.rend(); ++i) {
     --top;
-    if (includes(i->chunks_as_set.begin(), i->chunks_as_set.end(),
-                 all_shards.begin(), all_shards.end())) {
+    if (i->chunks_as_set.includes(all_shards)) {
       break;
     }
   }
 
   for (unsigned int i = top; i < layers.size(); ++i) {
     const Layer &layer = layers[i];
-    map<int, bufferptr> layer_in;
-    map<int, bufferptr> layer_out;
+    shard_id_map<bufferptr> layer_in(get_chunk_count());
+    shard_id_map<bufferptr> layer_out(get_chunk_count());
     int j = 0;
     for (const auto& c : layer.chunks) {
-      if (std::find(all_shards.begin(), all_shards.end(), c) == all_shards.end()) {
+      if (all_shards.contains(c)) {
         // Shard index not in the in or out maps. The layer plugin will insert a
         // buffer of 0s at this index before encoding.
         j++;
         continue;
       }
       if (j < k) {
-        if (std::find(out_shards.begin(), out_shards.end(), c) != out_shards.end()) {
+        if (out_shards.contains(c)) {
           layer_in[j] = out[c];
         }
         else {
@@ -789,7 +772,7 @@ int ErasureCodeLrc::encode_chunks(const std::map<int, bufferptr> &in,
         }
       }
       else {
-        if (std::find(out_shards.begin(), out_shards.end(), c) != out_shards.end()) {
+        if (out_shards.contains(c)) {
           layer_out[j] = out[c];
         }
         else {
@@ -811,12 +794,12 @@ int ErasureCodeLrc::encode_chunks(const std::map<int, bufferptr> &in,
   return 0;
 }
 
-int ErasureCodeLrc::decode_chunks(const set<int> &want_to_read,
-				  const map<int, bufferlist> &chunks,
-				  map<int, bufferlist> *decoded)
+int ErasureCodeLrc::decode_chunks(const shard_id_set &want_to_read,
+				  const shard_id_map<bufferlist> &chunks,
+				  shard_id_map<bufferlist> *decoded)
 {
-  set<int> available_chunks;
-  set<int> erasures;
+  shard_id_set available_chunks;
+  shard_id_set erasures;
   for (unsigned int i = 0; i < get_chunk_count(); ++i) {
     if (chunks.count(i) != 0)
       available_chunks.insert(i);
@@ -824,15 +807,12 @@ int ErasureCodeLrc::decode_chunks(const set<int> &want_to_read,
       erasures.insert(i);
   }
 
-  set<int> want_to_read_erasures;
+  shard_id_set want_to_read_erasures;
 
   for (vector<Layer>::reverse_iterator layer = layers.rbegin();
        layer != layers.rend();
        ++layer) {
-    set<int> layer_erasures;
-    set_intersection(layer->chunks_as_set.begin(), layer->chunks_as_set.end(),
-		     erasures.begin(), erasures.end(),
-		     inserter(layer_erasures, layer_erasures.end()));
+    shard_id_set layer_erasures = shard_id_set::intersection(layer->chunks_as_set, erasures);
 
     if (layer_erasures.size() >
 	layer->erasure_code->get_coding_chunk_count()) {
@@ -840,9 +820,9 @@ int ErasureCodeLrc::decode_chunks(const set<int> &want_to_read,
     } else if(layer_erasures.size() == 0) {
       // skip because all chunks are already available
     } else {
-      set<int> layer_want_to_read;
-      map<int, bufferlist> layer_chunks;
-      map<int, bufferlist> layer_decoded;
+      shard_id_set layer_want_to_read;
+      shard_id_map<bufferlist> layer_chunks(get_chunk_count());
+      shard_id_map<bufferlist> layer_decoded(get_chunk_count());
       int j = 0;
       for (vector<int>::const_iterator c = layer->chunks.begin();
 	   c != layer->chunks.end();
@@ -877,10 +857,7 @@ int ErasureCodeLrc::decode_chunks(const set<int> &want_to_read,
 	++j;
 	erasures.erase(*c);
       }
-      want_to_read_erasures.clear();
-      set_intersection(erasures.begin(), erasures.end(),
-		       want_to_read.begin(), want_to_read.end(),
-		       inserter(want_to_read_erasures, want_to_read_erasures.end()));
+      want_to_read_erasures = shard_id_set::intersection(erasures, want_to_read);
       if (want_to_read_erasures.size() == 0)
 	break;
     }
@@ -903,8 +880,8 @@ void ErasureCodeLrc::encode_delta(const bufferptr &old_data,
   ceph_abort("Not yet supported by this plugin");
 }
 
-void ErasureCodeLrc::apply_delta(const std::map<int, bufferptr> &in,
-                                 std::map <int, bufferptr> &out)
+void ErasureCodeLrc::apply_delta(const shard_id_map<bufferptr> &in,
+                                 shard_id_map<bufferptr> &out)
 {
   ceph_abort("Not yet supported by this plugin");
 }

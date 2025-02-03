@@ -19,6 +19,21 @@ struct Key {
   friend bool operator==(const Key &lhs, const Key &rhs) { return lhs.k == rhs.k; }
 };
 
+TEST(bitset_set, constructors)
+{
+  bitset_set<128, Key> bs;
+  ASSERT_TRUE(bs.empty());
+  bs.insert(2);
+  bs.insert(4);
+  bitset_set<128, Key> bs2(bs);
+  ASSERT_EQ(bs, bs2);
+  int array[] = {2, 4};
+  bitset_set<128, Key> bs3(array, array + 2);
+  ASSERT_EQ(bs, bs3);
+  bitset_set<128, Key> bs4{2, 4};
+  ASSERT_EQ(bs, bs4);
+}
+
 TEST(bitset_set, insert_emplace)
 {
   bitset_set<128, Key> bitset;

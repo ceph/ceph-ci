@@ -78,23 +78,23 @@ public:
 
   unsigned int get_chunk_size(unsigned int stripe_width) const override;
 
-  int _minimum_to_decode(const std::set<int> &want_to_read,
-			 const std::set<int> &available_chunks,
-			 std::set<int> *minimum);
+  int _minimum_to_decode(const shard_id_set &want_to_read,
+			 const shard_id_set &available_chunks,
+			 shard_id_set *minimum);
 
-  int minimum_to_decode_with_cost(const std::set<int> &want_to_read,
-				  const std::map<int, int> &available,
-				  std::set<int> *minimum) override;
+  int minimum_to_decode_with_cost(const shard_id_set &want_to_read,
+				  const shard_id_map<int> &available,
+				  shard_id_set *minimum) override;
 
-  int encode_chunks(const std::map<int, bufferptr> &in, 
-                    std::map<int, bufferptr> &out) override;
+  int encode_chunks(const shard_id_map<bufferptr> &in, 
+                    shard_id_map<bufferptr> &out) override;
 
-  int _decode(const std::set<int> &want_to_read,
-	      const std::map<int, ceph::buffer::list> &chunks,
-	      std::map<int, ceph::buffer::list> *decoded) override;
-  int decode_chunks(const std::set<int> &want_to_read,
-		    const std::map<int, ceph::buffer::list> &chunks,
-		    std::map<int, ceph::buffer::list> *decoded) override;
+  int _decode(const shard_id_set &want_to_read,
+	      const shard_id_map<ceph::buffer::list> &chunks,
+	      shard_id_map<ceph::buffer::list> *decoded) override;
+  int decode_chunks(const shard_id_set &want_to_read,
+		    const shard_id_map<ceph::buffer::list> &chunks,
+		    shard_id_map<ceph::buffer::list> *decoded) override;
 
   int init(ceph::ErasureCodeProfile &profile, std::ostream *ss) override;
   virtual void shec_encode(char **data,
@@ -146,8 +146,8 @@ public:
   void encode_delta(const ceph::bufferptr &old_data,
                     const ceph::bufferptr &new_data,
                     ceph::bufferptr *delta);
-  void apply_delta(const std::map<int, ceph::bufferptr> &in,
-                   std::map <int, ceph::bufferptr> &out);
+  void apply_delta(const shard_id_map<ceph::bufferptr> &in,
+                   shard_id_map<ceph::bufferptr> &out);
 
   unsigned get_alignment() const override;
   unsigned int get_minimum_granularity() override
@@ -158,5 +158,6 @@ public:
 private:
   int parse(const ceph::ErasureCodeProfile &profile) override;
 };
+static_assert(!std::is_abstract<ErasureCodeShecReedSolomonVandermonde>());
 
 #endif

@@ -51,8 +51,8 @@ public:
   int run_create();
   int run_check();
   int decode_erasures(ErasureCodeInterfaceRef erasure_code,
-		      set<int> erasures,
-		      map<int,bufferlist> chunks);
+		      shard_id_set erasures,
+		      shard_id_map<bufferlist> chunks);
   string content_path();
   string chunk_path(unsigned int chunk);
 };
@@ -177,15 +177,15 @@ int ErasureCodeNonRegression::run_create()
     in.splice(stripe_width, in.length() - stripe_width);
   if (in.write_file(content_path().c_str()))
     return 1;
-  set<int> want_to_encode;
+  shard_id_set want_to_encode;
   for (unsigned int i = 0; i < erasure_code->get_chunk_count(); i++) {
     want_to_encode.insert(i);
   }
-  map<int,bufferlist> encoded;
+  shard_id_map<bufferlist> encoded(erasure_code->get_chunk_count());
   code = erasure_code->encode(want_to_encode, in, &encoded);
   if (code)
     return code;
-  for (map<int,bufferlist>::iterator chunk = encoded.begin();
+  for (shard_id_map<bufferlist>::iterator chunk = encoded.begin();
        chunk != encoded.end();
        ++chunk) {
     if (chunk->second.write_file(chunk_path(chunk->first).c_str()))
@@ -195,22 +195,22 @@ int ErasureCodeNonRegression::run_create()
 }
 
 int ErasureCodeNonRegression::decode_erasures(ErasureCodeInterfaceRef erasure_code,
-					      set<int> erasures,
-					      map<int,bufferlist> chunks)
+					      shard_id_set erasures,
+					      shard_id_map<bufferlist> chunks)
 {
-  map<int,bufferlist> available;
-  for (map<int,bufferlist>::iterator chunk = chunks.begin();
+  shard_id_map<bufferlist> available(erasure_code->get_chunk_count());
+  for (shard_id_map<bufferlist>::iterator chunk = chunks.begin();
        chunk != chunks.end();
        ++chunk) {
     if (erasures.count(chunk->first) == 0)
       available[chunk->first] = chunk->second;
       
   }
-  map<int,bufferlist> decoded;
+  shard_id_map<bufferlist> decoded(erasure_code->get_chunk_count());
   int code = erasure_code->decode(erasures, available, &decoded, available.begin()->second.length());
   if (code)
     return code;
-  for (set<int>::iterator erasure = erasures.begin();
+  for (shard_id_set::const_iterator erasure = erasures.begin();
        erasure != erasures.end();
        ++erasure) {
     if (!chunks[*erasure].contents_equal(decoded[*erasure])) {
@@ -239,17 +239,17 @@ int ErasureCodeNonRegression::run_check()
     cerr << errors << endl;
     return 1;
   }
-  set<int> want_to_encode;
+  shard_id_set want_to_encode;
   for (unsigned int i = 0; i < erasure_code->get_chunk_count(); i++) {
     want_to_encode.insert(i);
   }
 
-  map<int,bufferlist> encoded;
+  shard_id_map<bufferlist> encoded(erasure_code->get_chunk_count());
   code = erasure_code->encode(want_to_encode, in, &encoded);
   if (code)
     return code;
 
-  for (map<int,bufferlist>::iterator chunk = encoded.begin();
+  for (shard_id_map<bufferlist>::iterator chunk = encoded.begin();
        chunk != encoded.end();
        ++chunk) {
     bufferlist existing;
@@ -266,7 +266,7 @@ int ErasureCodeNonRegression::run_check()
   }
 
   // erasing a single chunk is likely to use a specific code path in every plugin
-  set<int> erasures;
+  shard_id_set erasures;
   erasures.clear();
   erasures.insert(0);
   code = decode_erasures(erasure_code, erasures, encoded);

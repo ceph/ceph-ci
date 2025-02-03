@@ -147,6 +147,8 @@
 #include <memory>
 #include <string>
 #include "include/buffer_fwd.h"
+#include "osd/ECTypes.h"
+#include "common/mini_flat_map.h"
 
 class CrushWrapper;
 
@@ -294,9 +296,9 @@ namespace ceph {
      *              subchunk index offsets, count.
      * @return **0** on success or a negative errno on error.
      */
-    virtual int minimum_to_decode(const std::set<int> &want_to_read,
-                                  const std::set<int> &available,
-                                  std::map<int, std::vector<std::pair<int, int>>> 
+    virtual int minimum_to_decode(const shard_id_set &want_to_read,
+                                  const shard_id_set &available,
+                                  shard_id_map<std::vector<std::pair<int, int>>>
                                   *minimum) = 0;
 
     /**
@@ -323,9 +325,9 @@ namespace ceph {
      * @param [out] minimum chunk indexes to retrieve 
      * @return **0** on success or a negative errno on error.
      */
-    virtual int minimum_to_decode_with_cost(const std::set<int> &want_to_read,
-                                            const std::map<int, int> &available,
-                                            std::set<int> *minimum) = 0;
+    virtual int minimum_to_decode_with_cost(const shard_id_set &want_to_read,
+                                            const shard_id_map<int> &available,
+                                            shard_id_set *minimum) = 0;
 
     /**
      * Return the minimum number of bytes that the plugin and technique
@@ -376,9 +378,9 @@ namespace ceph {
      * @param [out] encoded map chunk indexes to chunk data
      * @return **0** on success or a negative errno on error.
      */
-     virtual int encode(const std::set<int> &want_to_encode,
+     virtual int encode(const shard_id_set &want_to_encode,
                         const bufferlist &in,
-                        std::map<int, bufferlist> *encoded) = 0;
+                        shard_id_map<bufferlist> *encoded) = 0;
 
     /**
      * Note: The encode_chunks function is used by the older EC code path
@@ -414,8 +416,8 @@ namespace ceph {
      * @param [out] out map of empty buffers for parity to be written to
      * @return **0** on success or a negative errno on error.
      */
-    virtual int encode_chunks(const std::map<int, bufferptr> &in, 
-                              std::map<int, bufferptr> &out) = 0;
+    virtual int encode_chunks(const shard_id_map<bufferptr> &in,
+                              shard_id_map<bufferptr> &out) = 0;
 
     /**
      * Calculate the delta between the old_data and new_data
@@ -468,8 +470,8 @@ namespace ceph {
      * @param [in] new_data second buffer to xor
      * @param [out] delta buffer containing the delta of old_data and new_data
      */
-    virtual void apply_delta(const std::map<int, bufferptr> &in,
-                             std::map <int, bufferptr> &out) = 0;
+    virtual void apply_delta(const shard_id_map<bufferptr> &in,
+                             shard_id_map<bufferptr> &out) = 0;
 
     /**
      * Decode the **chunks** and store at least **want_to_read**
@@ -505,13 +507,13 @@ namespace ceph {
      * @param [in] chunk_size chunk size
      * @return **0** on success or a negative errno on error.
      */
-    virtual int decode(const std::set<int> &want_to_read,
-                       const std::map<int, bufferlist> &chunks,
-                       std::map<int, bufferlist> *decoded, int chunk_size) = 0;
+    virtual int decode(const shard_id_set &want_to_read,
+                       const shard_id_map<bufferlist> &chunks,
+                       shard_id_map<bufferlist> *decoded, int chunk_size) = 0;
 
-    virtual int decode_chunks(const std::set<int> &want_to_read,
-                              const std::map<int, bufferlist> &chunks,
-                              std::map<int, bufferlist> *decoded) = 0;
+    virtual int decode_chunks(const shard_id_set &want_to_read,
+                              const shard_id_map<bufferlist> &chunks,
+                              shard_id_map<bufferlist> *decoded) = 0;
 
     /**
      * Return the ordered list of chunks or an empty vector
@@ -562,10 +564,10 @@ namespace ceph {
      * 			    will be concatenated into `decoded` in index order
      * @return **0** on success or a negative errno on error.
      */
-    virtual int decode_concat(const std::set<int>& want_to_read,
-			      const std::map<int, bufferlist> &chunks,
+    virtual int decode_concat(const shard_id_set& want_to_read,
+			      const shard_id_map<bufferlist> &chunks,
 			      bufferlist *decoded) = 0;
-    virtual int decode_concat(const std::map<int, bufferlist> &chunks,
+    virtual int decode_concat(const shard_id_map<bufferlist> &chunks,
 			      bufferlist *decoded) = 0;
     /**
      * Return a set of flags indicating which EC optimizations are supported

@@ -522,7 +522,7 @@ struct shard_id_t {
   int8_t id;
 
   shard_id_t() : id(0) {}
-  constexpr explicit shard_id_t(int8_t _id) : id(_id) {}
+  constexpr shard_id_t(int8_t _id) : id(_id) {}
 
   constexpr operator int8_t() const { return id; }
 
@@ -543,9 +543,9 @@ struct shard_id_t {
     ls.push_back(new shard_id_t(1));
     ls.push_back(new shard_id_t(2));
   }
-  bool operator==(const shard_id_t&) const = default;
-  auto operator<=>(const shard_id_t&) const = default;
   shard_id_t& operator++() { ++id; return *this; }
+  // Do not add == <=>, etc... operators here, as the non-explicit constructors
+  // and implicit casting will do the right thing.
 };
 WRITE_CLASS_ENCODER(shard_id_t)
 std::ostream &operator<<(std::ostream &lhs, const shard_id_t &rhs);

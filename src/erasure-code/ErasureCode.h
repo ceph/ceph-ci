@@ -23,10 +23,12 @@
  */ 
 
 #include "ErasureCodeInterface.h"
+#include "common/mini_flat_map.h"
 
 namespace ceph {
 
   class ErasureCode : public ErasureCodeInterface {
+
   public:
     static const unsigned SIMD_ALIGN;
 
@@ -62,35 +64,35 @@ namespace ceph {
       return 1;
     }
 
-    virtual int _minimum_to_decode(const std::set<int> &want_to_read,
-				   const std::set<int> &available_chunks,
-				   std::set<int> *minimum);
+    virtual int _minimum_to_decode(const shard_id_set &want_to_read,
+				   const shard_id_set &available_chunks,
+				   shard_id_set *minimum);
 
-    int minimum_to_decode(const std::set<int> &want_to_read,
-			  const std::set<int> &available,
-			  std::map<int, std::vector<std::pair<int, int>>> *minimum) override;
+    int minimum_to_decode(const shard_id_set &want_to_read,
+			  const shard_id_set &available,
+			  mini_flat_map<shard_id_t, std::vector<std::pair<int, int>>> *minimum) override;
 
-    int minimum_to_decode_with_cost(const std::set<int> &want_to_read,
-                                            const std::map<int, int> &available,
-                                            std::set<int> *minimum) override;
+    int minimum_to_decode_with_cost(const shard_id_set &want_to_read,
+                                            const mini_flat_map<shard_id_t, int> &available,
+                                            shard_id_set *minimum) override;
 
     int encode_prepare(const bufferlist &raw,
-                       std::map<int, bufferlist> &encoded) const;
+                       mini_flat_map<shard_id_t, bufferlist> &encoded) const;
 
-    int encode(const std::set<int> &want_to_encode,
+    int encode(const shard_id_set &want_to_encode,
                const bufferlist &in,
-               std::map<int, bufferlist> *encoded);
+               mini_flat_map<shard_id_t, bufferlist> *encoded);
 
-    int encode_chunks(const std::map<int, bufferptr> &in, 
-                      std::map<int, bufferptr> &out) override;
+    int encode_chunks(const mini_flat_map<shard_id_t, bufferptr> &in, 
+                      mini_flat_map<shard_id_t, bufferptr> &out) override;
 
-    int decode(const std::set<int> &want_to_read,
-                const std::map<int, bufferlist> &chunks,
-                std::map<int, bufferlist> *decoded, int chunk_size) override;
+    int decode(const shard_id_set &want_to_read,
+                const mini_flat_map<shard_id_t, bufferlist> &chunks,
+                mini_flat_map<shard_id_t, bufferlist> *decoded, int chunk_size) override;
 
-    virtual int _decode(const std::set<int> &want_to_read,
-			const std::map<int, bufferlist> &chunks,
-			std::map<int, bufferlist> *decoded);
+    virtual int _decode(const shard_id_set &want_to_read,
+			const mini_flat_map<shard_id_t, bufferlist> &chunks,
+			mini_flat_map<shard_id_t, bufferlist> *decoded);
 
     const std::vector<int> &get_chunk_mapping() const override;
 
@@ -115,10 +117,10 @@ namespace ceph {
 			 const std::string &default_value,
 			 std::ostream *ss);
 
-    int decode_concat(const std::set<int>& want_to_read,
-		      const std::map<int, bufferlist> &chunks,
+    int decode_concat(const shard_id_set& want_to_read,
+		      const mini_flat_map<shard_id_t, bufferlist> &chunks,
 		      bufferlist *decoded) override;
-    int decode_concat(const std::map<int, bufferlist> &chunks,
+    int decode_concat(const mini_flat_map<shard_id_t, bufferlist> &chunks,
 		      bufferlist *decoded) override;
 
   protected:
@@ -128,6 +130,7 @@ namespace ceph {
   private:
     int chunk_index(unsigned int i) const;
   };
+
 }
 
 #endif

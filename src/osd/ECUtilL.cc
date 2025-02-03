@@ -23,8 +23,8 @@ namespace ECLegacy {
   int ECUtilL::decode(
     const stripe_info_t &sinfo,
     ErasureCodeInterfaceRef &ec_impl,
-    const set<int> want_to_read,
-    map<int, bufferlist> &to_decode,
+    const shard_id_set want_to_read,
+    mini_flat_map<shard_id_t, bufferlist> &to_decode,
     bufferlist *out)
   {
     ceph_assert(to_decode.size());
@@ -35,7 +35,7 @@ namespace ECLegacy {
     ceph_assert(out);
     ceph_assert(out->length() == 0);
 
-    for (map<int, bufferlist>::iterator i = to_decode.begin();
+    for (mini_flat_map<shard_id_t, bufferlist>::iterator i = to_decode.begin();
          i != to_decode.end();
          ++i) {
       ceph_assert(i->second.length() == total_data_size);
@@ -45,8 +45,8 @@ namespace ECLegacy {
       return 0;
 
     for (uint64_t i = 0; i < total_data_size; i += sinfo.get_chunk_size()) {
-      map<int, bufferlist> chunks;
-      for (map<int, bufferlist>::iterator j = to_decode.begin();
+      mini_flat_map<shard_id_t, bufferlist> chunks(sinfo.get_chunk_size());
+      for (mini_flat_map<shard_id_t, bufferlist>::iterator j = to_decode.begin();
 	   j != to_decode.end();
 	   ++j) {
         chunks[j->first].substr_of(j->second, i, sinfo.get_chunk_size());
@@ -63,8 +63,8 @@ namespace ECLegacy {
   int ECUtilL::decode(
     const stripe_info_t &sinfo,
     ErasureCodeInterfaceRef &ec_impl,
-    map<int, bufferlist> &to_decode,
-    map<int, bufferlist*> &out) {
+    mini_flat_map<shard_id_t, bufferlist> &to_decode,
+    mini_flat_map<shard_id_t, bufferlist*> &out) {
 
     ceph_assert(to_decode.size());
 
@@ -73,8 +73,8 @@ namespace ECLegacy {
         return 0;
     }
 
-    set<int> need;
-    for (map<int, bufferlist*>::iterator i = out.begin();
+    shard_id_set need;
+    for (mini_flat_map<shard_id_t, bufferlist*>::iterator i = out.begin();
          i != out.end();
          ++i) {
       ceph_assert(i->second);
@@ -82,13 +82,13 @@ namespace ECLegacy {
       need.insert(i->first);
     }
 
-    set<int> avail;
+    shard_id_set avail;
     for (auto &&i : to_decode) {
       ceph_assert(i.second.length() != 0);
       avail.insert(i.first);
     }
 
-    map<int, vector<pair<int, int>>> min;
+    mini_flat_map<shard_id_t, vector<pair<int, int>>> min(sinfo.get_k_plus_m());
     int r = ec_impl->minimum_to_decode(need, avail, &min);
     ceph_assert(r == 0);
 
@@ -110,7 +110,7 @@ namespace ECLegacy {
     }
 
     for (int i = 0; i < chunks_count; i++) {
-      map<int, bufferlist> chunks;
+      mini_flat_map<shard_id_t, bufferlist> chunks(sinfo.get_k_plus_m());
       for (auto j = to_decode.begin();
 	   j != to_decode.end();
 	   ++j) {
@@ -118,7 +118,7 @@ namespace ECLegacy {
                                    i*repair_data_per_chunk,
                                    repair_data_per_chunk);
       }
-      map<int, bufferlist> out_bls;
+      mini_flat_map<shard_id_t, bufferlist> out_bls(sinfo.get_k_plus_m());
       r = ec_impl->decode(need, chunks, &out_bls, sinfo.get_chunk_size());
       ceph_assert(r == 0);
       for (auto j = out.begin(); j != out.end(); ++j) {
@@ -137,8 +137,8 @@ namespace ECLegacy {
     const stripe_info_t &sinfo,
     ErasureCodeInterfaceRef &ec_impl,
     bufferlist &in,
-    const set<int> &want,
-    map<int, bufferlist> *out) {
+    const shard_id_set &want,
+    mini_flat_map<shard_id_t, bufferlist> *out) {
 
     uint64_t logical_size = in.length();
 
@@ -150,12 +150,12 @@ namespace ECLegacy {
       return 0;
 
     for (uint64_t i = 0; i < logical_size; i += sinfo.get_stripe_width()) {
-      map<int, bufferlist> encoded;
+      mini_flat_map<shard_id_t, bufferlist> encoded(sinfo.get_k_plus_m());
       bufferlist buf;
       buf.substr_of(in, i, sinfo.get_stripe_width());
       int r = ec_impl->encode(want, buf, &encoded);
       ceph_assert(r == 0);
-      for (map<int, bufferlist>::iterator i = encoded.begin();
+      for (mini_flat_map<shard_id_t, bufferlist>::iterator i = encoded.begin();
 	   i != encoded.end();
 	   ++i) {
         ceph_assert(i->second.length() == sinfo.get_chunk_size());
@@ -163,7 +163,7 @@ namespace ECLegacy {
       }
     }
 
-    for (map<int, bufferlist>::iterator i = out->begin();
+    for (mini_flat_map<shard_id_t, bufferlist>::iterator i = out->begin();
          i != out->end();
          ++i) {
       ceph_assert(i->second.length() % sinfo.get_chunk_size() == 0);
@@ -175,12 +175,12 @@ namespace ECLegacy {
   }
 
   void ECUtilL::HashInfo::append(uint64_t old_size,
-			        map<int, bufferlist> &to_append) {
+			        mini_flat_map<shard_id_t, bufferlist> &to_append) {
     ceph_assert(old_size == total_chunk_size);
     uint64_t size_to_append = to_append.begin()->second.length();
     if (has_chunk_hash()) {
       ceph_assert(to_append.size() == cumulative_shard_hashes.size());
-      for (map<int, bufferlist>::iterator i = to_append.begin();
+      for (mini_flat_map<shard_id_t, bufferlist>::iterator i = to_append.begin();
 	   i != to_append.end();
 	   ++i) {
         ceph_assert(size_to_append == i->second.length());
@@ -238,7 +238,7 @@ namespace ECLegacy {
     {
       bufferlist bl;
       bl.append_zero(20);
-      map<int, bufferlist> buffers;
+      mini_flat_map<shard_id_t, bufferlist> buffers(128);
       buffers[0] = bl;
       buffers[1] = bl;
       buffers[2] = bl;

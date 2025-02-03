@@ -280,7 +280,7 @@ public:
   virtual ~RecoveryBackend() = default;
   virtual void commit_txn_send_replies(
     ceph::os::Transaction&& txn,
-    std::map<int, MOSDPGPushReply*> replies) = 0;
+    shard_id_map<MOSDPGPushReply*> replies) = 0;
   void dispatch_recovery_messages(RecoveryMessages &m, int priority);
 
       PGBackend::RecoveryHandle *open_recovery_op();
@@ -327,7 +327,7 @@ public:
 
     void commit_txn_send_replies(
       ceph::os::Transaction&& txn,
-      std::map<int, MOSDPGPushReply*> replies) override;
+      shard_id_map<MOSDPGPushReply*> replies) override;
 
     PGBackend::Listener *get_parent() const { return parent; }
 
@@ -362,7 +362,7 @@ public:
    * Determines the whether _have is sufficient to recover an object
    */
   class ECRecPred : public IsPGRecoverablePredicate {
-    std::set<int> want;
+    shard_id_set want;
     ceph::ErasureCodeInterfaceRef ec_impl;
   public:
     explicit ECRecPred(ceph::ErasureCodeInterfaceRef ec_impl) : ec_impl(ec_impl) {
@@ -371,13 +371,13 @@ public:
       }
     }
     bool operator()(const std::set<pg_shard_t> &_have) const override {
-      std::set<int> have;
+      shard_id_set have;
       for (std::set<pg_shard_t>::const_iterator i = _have.begin();
 	   i != _have.end();
 	   ++i) {
 	have.insert(i->shard);
       }
-      std::map<int, std::vector<std::pair<int, int>>> min;
+      mini_flat_map<shard_id_t, std::vector<std::pair<int, int>>> min(ec_impl->get_chunk_count());
       return ec_impl->minimum_to_decode(want, have, &min) == 0;
     }
   };

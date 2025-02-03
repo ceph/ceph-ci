@@ -220,7 +220,7 @@ namespace ECLegacy {
         hobject_t hoid;
         eversion_t v;
         std::set<pg_shard_t> missing_on;
-        std::set<shard_id_t> missing_on_shards;
+        shard_id_set missing_on_shards;
 
         ObjectRecoveryInfo recovery_info;
         ObjectRecoveryProgress recovery_progress;
@@ -244,7 +244,7 @@ namespace ECLegacy {
         }
 
         // must be filled if state == WRITING
-        std::map<int, ceph::buffer::list> returned_data;
+        mini_flat_map<shard_id_t, ceph::buffer::list> returned_data;
         std::map<std::string, ceph::buffer::list, std::less<>> xattrs;
         ECUtilL::HashInfoRef hinfo;
         ObjectContextRef obc;
@@ -255,7 +255,7 @@ namespace ECLegacy {
 
         void dump(ceph::Formatter *f) const;
 
-        RecoveryOp() : state(IDLE) {}
+        RecoveryOp(int max_shards) : state(IDLE), returned_data(max_shards) {}
       };
       friend ostream &operator<<(ostream &lhs, const RecoveryOp &rhs);
       std::map<hobject_t, RecoveryOp> recovery_ops;
@@ -353,7 +353,7 @@ namespace ECLegacy {
      * Determines the whether _have is sufficient to recover an object
      */
     class ECRecPred : public IsPGRecoverablePredicate {
-      std::set<int> want;
+      shard_id_set want;
       ceph::ErasureCodeInterfaceRef ec_impl;
     public:
       explicit ECRecPred(ceph::ErasureCodeInterfaceRef ec_impl) : ec_impl(ec_impl) {
@@ -362,13 +362,13 @@ namespace ECLegacy {
         }
       }
       bool operator()(const std::set<pg_shard_t> &_have) const override {
-        std::set<int> have;
+        shard_id_set have;
         for (std::set<pg_shard_t>::const_iterator i = _have.begin();
              i != _have.end();
              ++i) {
           have.insert(i->shard);
-             }
-        std::map<int, std::vector<std::pair<int, int>>> min;
+        }
+        mini_flat_map<shard_id_t, std::vector<std::pair<int, int>>> min(ec_impl->get_chunk_count());
         return ec_impl->minimum_to_decode(want, have, &min) == 0;
       }
     };

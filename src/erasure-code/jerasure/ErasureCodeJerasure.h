@@ -63,19 +63,19 @@ public:
 
   unsigned int get_chunk_size(unsigned int stripe_width) const override;
 
-  int encode_chunks(const std::map<int, bufferptr> &in, 
-                    std::map<int, bufferptr> &out) override;
+  int encode_chunks(const shard_id_map<bufferptr> &in,
+                    shard_id_map<bufferptr> &out) override;
 
-  int decode_chunks(const std::set<int> &want_to_read,
-		    const std::map<int, ceph::buffer::list> &chunks,
-		    std::map<int, ceph::buffer::list> *decoded) override;
+  int decode_chunks(const shard_id_set &want_to_read,
+		    const shard_id_map<ceph::buffer::list> &chunks,
+		    shard_id_map<ceph::buffer::list> *decoded) override;
 
   void encode_delta(const ceph::bufferptr &old_data,
                     const ceph::bufferptr &new_data,
                     ceph::bufferptr *delta) override;
 
-  virtual void apply_delta(const std::map<int, ceph::bufferptr> &in,
-                           std::map <int, ceph::bufferptr> &out) = 0;
+  virtual void apply_delta(const shard_id_map<ceph::bufferptr> &in,
+                           shard_id_map<ceph::bufferptr> &out) = 0;
 
   int init(ceph::ErasureCodeProfile &profile, std::ostream *ss) override;
 
@@ -90,12 +90,12 @@ public:
   virtual void prepare() = 0;
   static bool is_prime(int value);
 
-  void matrix_apply_delta(const std::map<int, bufferptr> &in,
-                          std::map <int, bufferptr> &out,
+  void matrix_apply_delta(const shard_id_map<bufferptr> &in,
+                          shard_id_map<bufferptr> &out,
                           int k, int w, int *matrix);
 
-  void schedule_apply_delta(const std::map<int, bufferptr> &in,
-                            std::map <int, bufferptr> &out,
+  void schedule_apply_delta(const shard_id_map<bufferptr> &in,
+                            shard_id_map<bufferptr> &out,
                             int k, int w, int packetsize,
                             int ** simple_schedule);
 
@@ -128,8 +128,8 @@ public:
                                char **data,
                                char **coding,
                                int blocksize) override;
-  void apply_delta(const std::map<int, ceph::bufferptr> &in,
-                   std::map <int, ceph::bufferptr> &out) override;
+  void apply_delta(const shard_id_map<ceph::bufferptr> &in,
+                   shard_id_map<ceph::bufferptr> &out) override;
   unsigned get_alignment() const override;
   unsigned int get_minimum_granularity() override
   {
@@ -164,8 +164,8 @@ public:
                                char **data,
                                char **coding,
                                int blocksize) override;
-  void apply_delta(const std::map<int, ceph::bufferptr> &in,
-                   std::map <int, ceph::bufferptr> &out) override;
+  void apply_delta(const shard_id_map<ceph::bufferptr> &in,
+                   shard_id_map<ceph::bufferptr> &out) override;
   unsigned get_alignment() const override;
   unsigned int get_minimum_granularity() override
   {
@@ -205,8 +205,8 @@ public:
                                char **data,
                                char **coding,
                                int blocksize) override;
-  void apply_delta(const std::map<int, ceph::bufferptr> &in,
-                   std::map <int, ceph::bufferptr> &out) override;
+  void apply_delta(const shard_id_map<ceph::bufferptr> &in,
+                   shard_id_map<ceph::bufferptr> &out) override;
   unsigned get_alignment() const override;
   unsigned int get_minimum_granularity() override
   {
@@ -262,8 +262,8 @@ public:
                                char **data,
                                char **coding,
                                int blocksize) override;
-  void apply_delta(const std::map<int, ceph::bufferptr> &in,
-                   std::map <int, ceph::bufferptr> &out) override;
+  void apply_delta(const shard_id_map<ceph::bufferptr> &in,
+                   shard_id_map<ceph::bufferptr> &out) override;
   unsigned get_alignment() const override;
   unsigned int get_minimum_granularity() override
   {

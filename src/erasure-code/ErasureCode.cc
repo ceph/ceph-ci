@@ -119,18 +119,17 @@ namespace ceph {
     return chunk_mapping.size() > i ? chunk_mapping[i] : i;
   }
 
-  int ErasureCode::_minimum_to_decode(const set<int> &want_to_read,
-                                     const set<int> &available_chunks,
-                                     set<int> *minimum)
+  int ErasureCode::_minimum_to_decode(const shard_id_set &want_to_read,
+                                     const shard_id_set &available_chunks,
+                                     shard_id_set *minimum)
   {
-    if (includes(available_chunks.begin(), available_chunks.end(),
-                 want_to_read.begin(), want_to_read.end())) {
+    if (available_chunks.includes(want_to_read)) {
       *minimum = want_to_read;
                  } else {
                    unsigned int k = get_data_chunk_count();
                    if (available_chunks.size() < (unsigned)k)
                      return -EIO;
-                   set<int>::iterator i;
+                   shard_id_set::const_iterator i;
                    unsigned j;
                    for (i = available_chunks.begin(), j = 0; j < (unsigned)k; ++i, j++)
                      minimum->insert(*i);
@@ -138,11 +137,11 @@ namespace ceph {
     return 0;
   }
 
-  int ErasureCode::minimum_to_decode(const set<int> &want_to_read,
-                                     const set<int> &available_chunks,
-                                     map<int, vector<pair<int, int>>> *minimum)
+  int ErasureCode::minimum_to_decode(const shard_id_set &want_to_read,
+                                     const shard_id_set &available_chunks,
+                                     shard_id_map<vector<pair<int, int>>> *minimum)
   {
-    set<int> minimum_shard_ids;
+    shard_id_set minimum_shard_ids;
     int r = _minimum_to_decode(want_to_read, available_chunks, &minimum_shard_ids);
     if (r != 0) {
       return r;
@@ -150,17 +149,17 @@ namespace ceph {
     vector<pair<int, int>> default_subchunks;
     default_subchunks.push_back(make_pair(0, get_sub_chunk_count()));
     for (auto &&id : minimum_shard_ids) {
-      minimum->insert(make_pair(id, default_subchunks));
+      minimum->emplace(id, default_subchunks);
     }
     return 0;
   }
 
-  int ErasureCode::minimum_to_decode_with_cost(const set<int> &want_to_read,
-                                               const map<int, int> &available,
-                                               set<int> *minimum)
+  int ErasureCode::minimum_to_decode_with_cost(const shard_id_set &want_to_read,
+                                               const shard_id_map<int> &available,
+                                               shard_id_set *minimum)
   {
-    set <int> available_chunks;
-    for (map<int, int>::const_iterator i = available.begin();
+    shard_id_set available_chunks;
+    for (shard_id_map<int>::const_iterator i = available.begin();
          i != available.end();
          ++i)
       available_chunks.insert(i->first);
@@ -168,7 +167,7 @@ namespace ceph {
   }
 
    int ErasureCode::encode_prepare(const bufferlist &raw,
-                                   map<int, bufferlist> &encoded) const
+                                   shard_id_map<bufferlist> &encoded) const
    {
      unsigned int k = get_data_chunk_count();
      unsigned int m = get_chunk_count() - k;
@@ -204,9 +203,9 @@ namespace ceph {
      return 0;
   }
 
-  int ErasureCode::encode(const set<int> &want_to_encode,
+  int ErasureCode::encode(const shard_id_set &want_to_encode,
                           const bufferlist &in,
-                          map<int, bufferlist> *encoded)
+                          shard_id_map<bufferlist> *encoded)
   {
     unsigned int k = get_data_chunk_count();
     unsigned int m = get_chunk_count() - k;
@@ -219,11 +218,15 @@ namespace ceph {
     if (err)
       return err;
 
-    std::map<int, bufferptr> in_shards;
-    std::map<int, bufferptr> out_shards;
-    for (auto&& [shard, list] : *encoded) {
-      auto bp = list.begin().get_current_ptr();
-      if (shard < k) in_shards[shard] = bp;
+    shard_id_map<bufferptr> in_shards(get_chunk_count());
+    shard_id_map<bufferptr> out_shards(get_chunk_count());
+
+    for (int raw_shard=0; raw_shard < get_chunk_count(); raw_shard++) {
+      shard_id_t shard = chunk_index(raw_shard);
+      if (!encoded->contains(shard)) continue;
+
+      auto bp = encoded->at(shard).begin().get_current_ptr();
+      if (raw_shard < k) in_shards[shard] = bp;
       else out_shards[shard] = bp;
     }
 
@@ -238,26 +241,26 @@ namespace ceph {
   }
 
 // TODO: write this function! Although every plugin has its own version to override this one
-int ErasureCode::encode_chunks(const std::map<int, bufferptr> &in, 
-                               std::map<int, bufferptr> &out)
+int ErasureCode::encode_chunks(const shard_id_map<bufferptr> &in, 
+                               shard_id_map<bufferptr> &out)
 {
   return 0;
 };
 
-int ErasureCode::_decode(const set<int> &want_to_read,
-			 const map<int, bufferlist> &chunks,
-			 map<int, bufferlist> *decoded)
+int ErasureCode::_decode(const shard_id_set &want_to_read,
+			 const shard_id_map<bufferlist> &chunks,
+			 shard_id_map<bufferlist> *decoded)
 {
   vector<int> have;
   have.reserve(chunks.size());
-  for (map<int, bufferlist>::const_iterator i = chunks.begin();
+  for (shard_id_map<bufferlist>::const_iterator i = chunks.begin();
        i != chunks.end();
        ++i) {
     have.push_back(i->first);
   }
   if (includes(
 	have.begin(), have.end(), want_to_read.begin(), want_to_read.end())) {
-    for (set<int>::iterator i = want_to_read.begin();
+    for (shard_id_set::const_iterator i = want_to_read.begin();
 	 i != want_to_read.end();
 	 ++i) {
       (*decoded)[*i] = chunks.find(*i)->second;
@@ -282,9 +285,9 @@ int ErasureCode::_decode(const set<int> &want_to_read,
   return decode_chunks(want_to_read, chunks, decoded);
 }
 
-int ErasureCode::decode(const set<int> &want_to_read,
-                        const map<int, bufferlist> &chunks,
-                        map<int, bufferlist> *decoded, int chunk_size)
+int ErasureCode::decode(const shard_id_set &want_to_read,
+                        const shard_id_map<bufferlist> &chunks,
+                        shard_id_map<bufferlist> *decoded, int chunk_size)
 {
   return _decode(want_to_read, chunks, decoded);
 }
@@ -370,11 +373,11 @@ int ErasureCode::to_string(const std::string &name,
   return 0;
 }
 
-int ErasureCode::decode_concat(const set<int>& want_to_read,
-			       const map<int, bufferlist> &chunks,
+int ErasureCode::decode_concat(const shard_id_set& want_to_read,
+			       const shard_id_map<bufferlist> &chunks,
 			       bufferlist *decoded)
 {
-  map<int, bufferlist> decoded_map;
+  shard_id_map<bufferlist> decoded_map(get_chunk_count());
   int r = _decode(want_to_read, chunks, &decoded_map);
   if (r == 0) {
     for (unsigned int i = 0; i < get_data_chunk_count(); i++) {
@@ -392,10 +395,10 @@ int ErasureCode::decode_concat(const set<int>& want_to_read,
   return r;
 }
 
-int ErasureCode::decode_concat(const map<int, bufferlist> &chunks,
+int ErasureCode::decode_concat(const shard_id_map<bufferlist> &chunks,
 			       bufferlist *decoded)
 {
-  set<int> want_to_read;
+  shard_id_set want_to_read;
   for (unsigned int i = 0; i < get_data_chunk_count(); i++) {
     want_to_read.insert(chunk_index(i));
   }

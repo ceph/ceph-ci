@@ -102,8 +102,8 @@ unsigned int ErasureCodeJerasure::get_chunk_size(unsigned int stripe_width) cons
   }
 }
 
-int ErasureCodeJerasure::encode_chunks(const std::map<int, bufferptr> &in, 
-                                       std::map<int, bufferptr> &out)
+int ErasureCodeJerasure::encode_chunks(const shard_id_map<bufferptr> &in, 
+                                       shard_id_map<bufferptr> &out)
 {
   char *chunks[k + m]; //TODO don't use variable length arrays
   memset(chunks, 0, sizeof(char*) * (k + m));
@@ -141,9 +141,9 @@ int ErasureCodeJerasure::encode_chunks(const std::map<int, bufferptr> &in,
   return 0;
 }
 
-int ErasureCodeJerasure::decode_chunks(const set<int> &want_to_read,
-				       const map<int, bufferlist> &chunks,
-				       map<int, bufferlist> *decoded)
+int ErasureCodeJerasure::decode_chunks(const shard_id_set &want_to_read,
+				       const shard_id_map<bufferlist> &chunks,
+				       shard_id_map<bufferlist> *decoded)
 {
   unsigned blocksize = (*chunks.begin()).second.length();
   int erasures[k + m + 1];
@@ -196,8 +196,8 @@ bool ErasureCodeJerasure::is_prime(int value)
   return false;
 }
 
-void ErasureCodeJerasure::matrix_apply_delta(const std::map<int, bufferptr> &in,
-                                             std::map <int, bufferptr> &out,
+void ErasureCodeJerasure::matrix_apply_delta(const shard_id_map<bufferptr> &in,
+                                             shard_id_map<bufferptr> &out,
                                              int k, int w, int *matrix)
 {
   auto first = in.begin();
@@ -248,8 +248,8 @@ void ErasureCodeJerasure::do_scheduled_ops(char **ptrs, int **operations, int pa
   }
 }
 
-void ErasureCodeJerasure::schedule_apply_delta(const std::map<int, bufferptr> &in,
-                                               std::map <int, bufferptr> &out,
+void ErasureCodeJerasure::schedule_apply_delta(const shard_id_map<bufferptr> &in,
+                                               shard_id_map<bufferptr> &out,
                                                int k, int w, int packetsize,
                                                int ** simple_schedule)
 {
@@ -296,8 +296,8 @@ int ErasureCodeJerasureReedSolomonVandermonde::jerasure_decode(int *erasures,
 				erasures, data, coding, blocksize);
 }
 
-void ErasureCodeJerasureReedSolomonVandermonde::apply_delta(const std::map<int, bufferptr> &in,
-                                                            std::map <int, bufferptr> &out)
+void ErasureCodeJerasureReedSolomonVandermonde::apply_delta(const shard_id_map<bufferptr> &in,
+                                                            shard_id_map<bufferptr> &out)
 {
   matrix_apply_delta(in, out, k, w, matrix);
 }
@@ -352,8 +352,8 @@ int ErasureCodeJerasureReedSolomonRAID6::jerasure_decode(int *erasures,
   return jerasure_matrix_decode(k, m, w, matrix, 1, erasures, data, coding, blocksize);
 }
 
-void ErasureCodeJerasureReedSolomonRAID6::apply_delta(const std::map<int, bufferptr> &in,
-                                                      std::map <int, bufferptr> &out)
+void ErasureCodeJerasureReedSolomonRAID6::apply_delta(const shard_id_map<bufferptr> &in,
+                                                      shard_id_map<bufferptr> &out)
 {
   matrix_apply_delta(in, out, k, w, matrix);
 }
@@ -412,8 +412,8 @@ int ErasureCodeJerasureCauchy::jerasure_decode(int *erasures,
 				       erasures, data, coding, blocksize, packetsize, 1);
 }
 
-void ErasureCodeJerasureCauchy::apply_delta(const std::map<int, bufferptr> &in,
-                                            std::map <int, bufferptr> &out)
+void ErasureCodeJerasureCauchy::apply_delta(const shard_id_map<bufferptr> &in,
+                                            shard_id_map<bufferptr> &out)
 {
   schedule_apply_delta(in, out, k, w, packetsize, simple_schedule);
 }
@@ -511,8 +511,8 @@ int ErasureCodeJerasureLiberation::jerasure_decode(int *erasures,
 				       coding, blocksize, packetsize, 1);
 }
 
-void ErasureCodeJerasureLiberation::apply_delta(const std::map<int, bufferptr> &in,
-                                                std::map <int, bufferptr> &out)
+void ErasureCodeJerasureLiberation::apply_delta(const shard_id_map<bufferptr> &in,
+                                                shard_id_map<bufferptr> &out)
 {
   schedule_apply_delta(in, out, k, w, packetsize, simple_schedule);
 }

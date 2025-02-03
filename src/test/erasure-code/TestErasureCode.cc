@@ -26,13 +26,13 @@ using namespace std;
 
 class ErasureCodeTest : public ErasureCode {
 public:
-  map<int, bufferlist> encode_chunks_encoded;
+  shard_id_map<bufferlist> encode_chunks_encoded;
   unsigned int k;
   unsigned int m;
   unsigned int chunk_size;
 
   ErasureCodeTest(unsigned int _k, unsigned int _m, unsigned int _chunk_size) :
-    k(_k), m(_m), chunk_size(_chunk_size) {}
+  encode_chunks_encoded(_k + _m), k(_k), m(_m), chunk_size(_chunk_size) {}
   ~ErasureCodeTest() override {}
 
   int init(ErasureCodeProfile &profile, ostream *ss) override {
@@ -46,13 +46,13 @@ public:
     return chunk_size;
   }
   unsigned int get_minimum_granularity() override { return 1; }
-  int encode_chunks(const std::map<int, bufferptr> &in,
-                    std::map<int, bufferptr> &out) override {
+  int encode_chunks(const shard_id_map<bufferptr> &in,
+                    shard_id_map<bufferptr> &out) override {
     return 0;
   }
-  int decode_chunks(const set<int> &want_to_read,
-                    const map<int, bufferlist> &chunks,
-                    map<int, bufferlist> *decoded) override {
+  int decode_chunks(const shard_id_set  &want_to_read,
+                    const shard_id_map<bufferlist> &chunks,
+                   shard_id_map<bufferlist> *decoded) override {
     ceph_abort_msg("ErasureCode::decode_chunks not implemented");
   }
   void encode_delta(const bufferptr &old_data,
@@ -60,8 +60,8 @@ public:
                     bufferptr *delta) override {
     ceph_abort_msg("ErasureCode::encode_delta not implemented");
   }
-    virtual void apply_delta(const std::map<int, bufferptr> &in,
-                             std::map <int, bufferptr> &out) override {
+  virtual void apply_delta(const shard_id_map<bufferptr> &in,
+                           shard_id_map<bufferptr> &out) override {
     ceph_abort_msg("ErasureCode::apply_delta not implemented");
   }
 
@@ -69,6 +69,7 @@ public:
 		  CrushWrapper &crush,
 		  ostream *ss) const override { return 0; }
 };
+static_assert(!std::is_abstract<ErasureCodeTest>());
 
 /*
  *  If we have a buffer of 5 bytes (X below) and a chunk size of 3
@@ -110,7 +111,7 @@ TEST(ErasureCodeTest, encode_memory_align)
   unsigned chunk_size = ErasureCode::SIMD_ALIGN * 7;
   ErasureCodeTest erasure_code(k, m, chunk_size);
 
-  set<int> want_to_encode;
+  shard_id_set  want_to_encode;
   for (unsigned int i = 0; i < erasure_code.get_chunk_count(); i++)
     want_to_encode.insert(i);
   string data(chunk_size + chunk_size / 2, 'X'); // uses 1.5 chunks out of 3
@@ -121,7 +122,7 @@ TEST(ErasureCodeTest, encode_memory_align)
   ptr.set_length(data.length());
   bufferlist in;
   in.append(ptr);
-  map<int, bufferlist> encoded;
+  shard_id_map<bufferlist> encoded(k+m);
 
   ASSERT_FALSE(in.is_aligned(ErasureCode::SIMD_ALIGN));
   ASSERT_EQ(0, erasure_code.encode(want_to_encode, in, &encoded));
@@ -139,7 +140,7 @@ TEST(ErasureCodeTest, encode_misaligned_non_contiguous)
   unsigned chunk_size = ErasureCode::SIMD_ALIGN * 7;
   ErasureCodeTest erasure_code(k, m, chunk_size);
 
-  set<int> want_to_encode;
+  shard_id_set  want_to_encode;
   for (unsigned int i = 0; i < erasure_code.get_chunk_count(); i++)
     want_to_encode.insert(i);
   string data(chunk_size, 'X');
@@ -154,7 +155,7 @@ TEST(ErasureCodeTest, encode_misaligned_non_contiguous)
     bufferptr ptr(buffer::create_aligned(data.length() + 1, ErasureCode::SIMD_ALIGN));
     in.append(ptr);
   }
-  map<int, bufferlist> encoded;
+  shard_id_map<bufferlist> encoded(k + m);
 
   ASSERT_FALSE(in.is_contiguous());
   ASSERT_TRUE(in.front().is_aligned(ErasureCode::SIMD_ALIGN));

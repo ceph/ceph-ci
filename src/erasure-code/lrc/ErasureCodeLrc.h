@@ -54,7 +54,7 @@ public:
     std::vector<int> data;
     std::vector<int> coding;
     std::vector<int> chunks;
-    std::set<int> chunks_as_set;
+    shard_id_set chunks_as_set;
     std::string chunks_map;
     ceph::ErasureCodeProfile profile;
   };
@@ -84,12 +84,12 @@ public:
 
   ~ErasureCodeLrc() override {}
 
-  std::set<int> get_erasures(const std::set<int> &need,
-			const std::set<int> &available) const;
+  shard_id_set get_erasures(const shard_id_set &need,
+			const shard_id_set &available) const;
 
-  int _minimum_to_decode(const std::set<int> &want_to_read,
-			 const std::set<int> &available,
-			 std::set<int> *minimum) override;
+  int _minimum_to_decode(const shard_id_set &want_to_read,
+			 const shard_id_set &available,
+			 shard_id_set *minimum) override;
 
   int create_rule(const std::string &name,
 			     CrushWrapper &crush,
@@ -113,19 +113,19 @@ public:
 
   unsigned int get_minimum_granularity() override;
 
-  int encode_chunks(const std::map<int, bufferptr> &in, 
-                    std::map<int, bufferptr> &out);
+  int encode_chunks(const shard_id_map<bufferptr> &in,
+                    shard_id_map<bufferptr> &out);
 
-  int decode_chunks(const std::set<int> &want_to_read,
-		    const std::map<int, ceph::buffer::list> &chunks,
-		    std::map<int, ceph::buffer::list> *decoded) override;
+  int decode_chunks(const shard_id_set &want_to_read,
+		    const shard_id_map<ceph::buffer::list> &chunks,
+		    shard_id_map<ceph::buffer::list> *decoded) override;
 
   void encode_delta(const ceph::bufferptr &old_data,
                     const ceph::bufferptr &new_data,
                     ceph::bufferptr *delta);
 
-  void apply_delta(const std::map<int, ceph::bufferptr> &in,
-                   std::map <int, ceph::bufferptr> &out);
+  void apply_delta(const shard_id_map<ceph::bufferptr> &in,
+                   shard_id_map<ceph::bufferptr> &out);
 
   int init(ceph::ErasureCodeProfile &profile, std::ostream *ss) override;
 
@@ -149,5 +149,6 @@ public:
   int layers_sanity_checks(const std::string &description_string,
 			   std::ostream *ss) const;
 };
+static_assert(!std::is_abstract<ErasureCodeLrc>());
 
 #endif

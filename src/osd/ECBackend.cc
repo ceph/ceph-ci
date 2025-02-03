@@ -66,19 +66,6 @@ struct ECRecoveryHandle : public PGBackend::RecoveryHandle {
   list<ECBackend::RecoveryBackend::RecoveryOp> ops;
 };
 
-static ostream &operator<<(ostream &lhs, const map<int, bufferlist> &rhs)
-{
-  lhs << "[";
-  for (map<int, bufferlist>::const_iterator i = rhs.begin();
-       i != rhs.end();
-       ++i) {
-    if (i != rhs.begin())
-      lhs << ", ";
-    lhs << make_pair(i->first, i->second.length());
-  }
-  return lhs << "]";
-}
-
 ostream &operator<<(ostream &lhs, const ECBackend::RecoveryBackend::RecoveryOp &rhs)
 {
   return lhs << "RecoveryOp("
@@ -425,17 +412,17 @@ void ECBackend::RecoveryBackend::handle_recovery_read_complete(
 struct SendPushReplies : public Context {
   PGBackend::Listener *l;
   epoch_t epoch;
-  map<int, MOSDPGPushReply*> replies;
+  shard_id_map<MOSDPGPushReply*> replies;
   SendPushReplies(
     PGBackend::Listener *l,
     epoch_t epoch,
-    map<int, MOSDPGPushReply*> &in) : l(l), epoch(epoch) {
+    shard_id_map<MOSDPGPushReply*> &in) : l(l), epoch(epoch), replies(in.max_size()) {
     replies.swap(in);
   }
   void finish(int) override {
     std::vector<std::pair<int, Message*>> messages;
     messages.reserve(replies.size());
-    for (map<int, MOSDPGPushReply*>::iterator i = replies.begin();
+    for (shard_id_map<MOSDPGPushReply*>::iterator i = replies.begin();
 	 i != replies.end();
 	 ++i) {
       messages.push_back(std::make_pair(i->first, i->second));
@@ -446,7 +433,7 @@ struct SendPushReplies : public Context {
     replies.clear();
   }
   ~SendPushReplies() override {
-    for (map<int, MOSDPGPushReply*>::iterator i = replies.begin();
+    for (shard_id_map<MOSDPGPushReply*>::iterator i = replies.begin();
 	 i != replies.end();
 	 ++i) {
       i->second->put();
@@ -487,7 +474,7 @@ struct RecoveryReadCompleter : ECCommon::ReadCompleter {
 
 void ECBackend::ECRecoveryBackend::commit_txn_send_replies(
   ceph::os::Transaction&& txn,
-  std::map<int, MOSDPGPushReply*> replies)
+  shard_id_map<MOSDPGPushReply*> replies)
 {
   txn.register_on_complete(
       get_parent()->bless_context(
@@ -517,7 +504,7 @@ void ECBackend::RecoveryBackend::dispatch_recovery_messages(RecoveryMessages &m,
     };
     get_parent()->send_message_osd_cluster(wrapped_msg, msg->map_epoch);
   }
-  map<int, MOSDPGPushReply*> replies;
+  shard_id_map<MOSDPGPushReply*> replies(sinfo.get_k_plus_m());
   for (map<pg_shard_t, vector<PushReplyOp> >::iterator i =
 	 m.push_replies.begin();
        i != m.push_replies.end();
@@ -530,7 +517,7 @@ void ECBackend::RecoveryBackend::dispatch_recovery_messages(RecoveryMessages &m,
     msg->pgid = spg_t(get_parent()->get_info().pgid.pgid, i->first.shard);
     msg->replies.swap(i->second);
     msg->compute_cost(cct);
-    replies.insert(make_pair(i->first.osd, msg));
+    replies.insert(i->first.osd, msg);
   }
 
 #if 1
@@ -1316,14 +1303,14 @@ void ECBackend::handle_sub_read_reply(
   // or in a non-recovery read check for completion once all the shards read.
   if (rop.do_redundant_reads || rop.in_progress.empty()) {
     for ( auto &&[oid, read_result]: rop.complete) {
-      set<int> have;
+      shard_id_set have;
       for ( auto&& [shard, _] : read_result.processed_read_requests) {
         have.insert(shard);
         dout(20) << __func__ << " have shard=" << shard << dendl;
       }
-      map<int, vector<pair<int, int>>> dummy_minimum;
+      shard_id_map<vector<pair<int, int>>> dummy_minimum(sinfo.get_k_plus_m());
       int err;
-      set<int> want_to_read;
+      shard_id_set want_to_read;
       for (auto &&[shard, _]:rop.to_read.at(oid).shard_want_to_read) {
         want_to_read.insert(shard);
       }

@@ -103,8 +103,7 @@ void* thread1(void* pParam)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" //length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -114,7 +113,6 @@ void* thread1(void* pParam)
 
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
-  map<int, bufferlist> decoded;
   bufferlist out1, out2, usable;
 
   time(&start);
@@ -128,6 +126,8 @@ void* thread1(void* pParam)
     ErasureCodeShec* shec = new ErasureCodeShecReedSolomonVandermonde(
 				    tcache,
 				    ErasureCodeShec::MULTIPLE);
+    shard_id_map<bufferlist> decoded(shec->get_chunk_count());
+    shard_id_map<bufferlist> encoded(shec->get_chunk_count());
     ErasureCodeProfile *profile = new ErasureCodeProfile();
     (*profile)["plugin"] = "shec";
     (*profile)["technique"] = "multiple";
@@ -175,7 +175,7 @@ void* thread1(void* pParam)
     }
 
     //decode
-    r = shec->_decode(set<int>(want_to_decode, want_to_decode + 2),
+    r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 2),
 		      encoded,
 		      &decoded);
 

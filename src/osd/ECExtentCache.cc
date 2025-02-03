@@ -414,7 +414,7 @@ shard_extent_map_t ECExtentCache::Object::get_cache(std::optional<shard_extent_s
 {
   if (!set) return shard_extent_map_t(&sinfo);
 
-  mini_flat_map<int, extent_map> res(sinfo.get_k_plus_m());
+  shard_id_map<extent_map> res(sinfo.get_k_plus_m());
   for (auto && [shard, eset] : *set) {
     for ( auto [off, len] : eset) {
       for (uint64_t slice_start = line_align(off);

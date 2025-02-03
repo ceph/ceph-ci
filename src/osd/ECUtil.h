@@ -61,7 +61,7 @@ namespace ECUtil {
   struct shard_extent_set_t
   {
     // The following boilerplate is just to make this look like a map.
-    mini_flat_map<int, extent_set> map;
+    shard_id_map<extent_set> map;
 
     shard_extent_set_t(short max_shards) : map(max_shards) {}
 
@@ -70,7 +70,7 @@ namespace ECUtil {
     void swap(shard_extent_set_t &other) { map.swap(other.map); }
     void clear() { map.clear(); }
     auto erase(int shard) { return map.erase(shard); }
-    auto erase(mini_flat_map<int, extent_set>::iterator &iter) { return map.erase(iter);}
+    auto erase(shard_id_map<extent_set>::iterator &iter) { return map.erase(iter);}
     void erase_stripe(uint64_t offset, uint64_t length) {
       for (auto it = map.begin(); it != map.end();) {
         it->second.erase(offset, length);
@@ -438,7 +438,7 @@ public:
   HashInfo() {}
   explicit HashInfo(unsigned num_chunks) :
     cumulative_shard_hashes(num_chunks, -1) {}
-  void append(uint64_t old_size, std::map<int, bufferptr> &to_append);
+  void append(uint64_t old_size, shard_id_map<bufferptr> &to_append);
   void clear() {
     total_chunk_size = 0;
     cumulative_shard_hashes = std::vector<uint32_t>(
@@ -481,13 +481,13 @@ class shard_extent_map_t
     uint64_t length = (uint64_t)-1;
     uint64_t start = (uint64_t)-1;
     uint64_t end = (uint64_t)-1;
-    mini_flat_map<int, std::pair<extent_map::const_iterator, bufferlist::const_iterator>> iters;
-    std::map<int, bufferptr> slice;
+    shard_id_map<std::pair<extent_map::const_iterator, bufferlist::const_iterator>> iters;
+    shard_id_map<bufferptr> slice;
     shard_extent_map_t &sem;
     void advance();
   public:
     slice_iterator(shard_extent_map_t &sem);
-    std::map<int, bufferptr> &get_bufferptrs() { return slice; }
+    shard_id_map<bufferptr> &get_bufferptrs() { return slice; }
     uint64_t get_offset() { return offset; }
     uint64_t get_length() { return length; }
     bool is_end() { return slice.empty(); }
@@ -506,7 +506,7 @@ public:
   uint64_t ro_end;
   uint64_t start_offset;
   uint64_t end_offset;
-  mini_flat_map<int, extent_map> extent_maps;
+  shard_id_map<extent_map> extent_maps;
 
   slice_iterator begin_slice_iterator();
 
@@ -565,7 +565,7 @@ public:
     extent_maps(sinfo->get_k_plus_m())
   {}
 
-  shard_extent_map_t(const stripe_info_t *sinfo, mini_flat_map<int, extent_map> &&_extent_maps) :
+  shard_extent_map_t(const stripe_info_t *sinfo, shard_id_map<extent_map> &&_extent_maps) :
     sinfo(sinfo),
     extent_maps(std::move(_extent_maps))
   {
@@ -656,7 +656,7 @@ public:
   shard_extent_set_t get_extent_set();
   void insert_parity_buffers();
   void erase_shard(int shard);
-  std::map<int, bufferlist> slice(int offset, int length) const;
+  shard_id_map<bufferlist> slice(int offset, int length) const;
   shard_extent_map_t slice_map(int offset, int length) const;
   std::string debug_string(uint64_t inteval, uint64_t offset) const;
   void erase_stripe(uint64_t offset, uint64_t length);

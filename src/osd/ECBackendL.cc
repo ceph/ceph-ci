@@ -177,7 +177,8 @@ namespace ECLegacy {
     dout(10) << __func__ << ": canceling recovery op for obj " << hoid
 	     << dendl;
     ceph_assert(recovery_ops.count(hoid));
-    eversion_t v = recovery_ops[hoid].v;
+    recovery_ops.emplace(hoid, sinfo.get_k_plus_m());
+    eversion_t v = recovery_ops.at(hoid).v;
     recovery_ops.erase(hoid);
 
     set<pg_shard_t> fl;
@@ -190,11 +191,11 @@ namespace ECLegacy {
   struct RecoveryMessages {
     map<hobject_t,
         ECCommonL::read_request_t> recovery_reads;
-    map<hobject_t, set<int>> want_to_read;
+    map<hobject_t, shard_id_set> want_to_read;
 
     void recovery_read(
       const hobject_t &hoid, uint64_t off, uint64_t len,
-      set<int> &&_want_to_read,
+      shard_id_set &&_want_to_read,
       const map<pg_shard_t, vector<pair<int, int>>> &need,
       bool attrs)
     {
@@ -319,13 +320,13 @@ namespace ECLegacy {
     if (op.after_progress.data_complete) {
       if ((get_parent()->pgb_is_primary())) {
         ceph_assert(recovery_ops.count(op.soid));
-        ceph_assert(recovery_ops[op.soid].obc);
+        ceph_assert(recovery_ops.at(op.soid).obc);
         if (get_parent()->pg_is_repair() || is_repair)
           get_parent()->inc_osd_stat_repaired();
         get_parent()->on_local_recover(
 	  op.soid,
 	  op.recovery_info,
-	  recovery_ops[op.soid].obc,
+	  recovery_ops.at(op.soid).obc,
 	  false,
 	  &m->t);
       } else {
@@ -351,7 +352,7 @@ namespace ECLegacy {
   {
     if (!recovery_ops.count(op.soid))
       return;
-    RecoveryOp &rop = recovery_ops[op.soid];
+    RecoveryOp &rop = recovery_ops.at(op.soid);
     ceph_assert(rop.waiting_on_pushes.count(from));
     rop.waiting_on_pushes.erase(from);
     continue_recovery_op(rop, m);
@@ -370,15 +371,15 @@ namespace ECLegacy {
 	     << ")"
 	     << dendl;
     ceph_assert(recovery_ops.count(hoid));
-    RecoveryBackend::RecoveryOp &op = recovery_ops[hoid];
+    RecoveryBackend::RecoveryOp &op = recovery_ops.at(hoid);
     ceph_assert(op.returned_data.empty());
-    map<int, bufferlist*> target;
-    for (set<shard_id_t>::iterator i = op.missing_on_shards.begin();
+    shard_id_map<bufferlist*> target(sinfo.get_k_plus_m());
+    for (shard_id_set::const_iterator i = op.missing_on_shards.begin();
          i != op.missing_on_shards.end();
          ++i) {
       target[*i] = &(op.returned_data[*i]);
     }
-    map<int, bufferlist> from;
+    shard_id_map<bufferlist> from(sinfo.get_k_plus_m());
     for(map<pg_shard_t, bufferlist>::iterator i = to_read.get<2>().begin();
         i != to_read.get<2>().end();
         ++i) {
@@ -467,7 +468,7 @@ namespace ECLegacy {
       const hobject_t &hoid,
       ECCommonL::read_result_t &res,
       list<ec_align_t>,
-      set<int> wanted_to_read) override
+      shard_id_set wanted_to_read) override
     {
       if (!(res.r == 0 && res.errors.empty())) {
         backend._failed_push(hoid, res);
@@ -568,7 +569,7 @@ namespace ECLegacy {
         // start read
         op.state = RecoveryOp::READING;
         ceph_assert(!op.recovery_progress.data_complete);
-        set<int> want(op.missing_on_shards.begin(), op.missing_on_shards.end());
+        shard_id_set want(op.missing_on_shards);
         uint64_t from = op.recovery_progress.data_recovered_to;
         uint64_t amount = get_recovery_chunk_size();
 
@@ -583,7 +584,7 @@ namespace ECLegacy {
             derr << __func__ << ": " << op.hoid << " has inconsistent hinfo"
                  << dendl;
             ceph_assert(recovery_ops.count(op.hoid));
-            eversion_t v = recovery_ops[op.hoid].v;
+            eversion_t v = recovery_ops.at(op.hoid).v;
             recovery_ops.erase(op.hoid);
 	    // TODO: not in crimson yet
             get_parent()->on_failed_pull({get_parent()->whoami_shard()},
@@ -767,7 +768,7 @@ namespace ECLegacy {
     PGBackend::RecoveryHandle *_h)
   {
     ECRecoveryHandle *h = static_cast<ECRecoveryHandle*>(_h);
-    h->ops.push_back(RecoveryOp());
+    h->ops.push_back(RecoveryOp(sinfo.get_k_plus_m()));
     h->ops.back().v = v;
     h->ops.back().hoid = hoid;
     h->ops.back().obc = obc;
@@ -1302,7 +1303,7 @@ namespace ECLegacy {
           rop.complete.begin();
         iter != rop.complete.end();
         ++iter) {
-        set<int> have;
+        shard_id_set have;
         for (map<pg_shard_t, bufferlist>::const_iterator j =
             iter->second.returned.front().get<2>().begin();
           j != iter->second.returned.front().get<2>().end();
@@ -1310,7 +1311,7 @@ namespace ECLegacy {
           have.insert(j->first.shard);
           dout(20) << __func__ << " have shard=" << j->first.shard << dendl;
         }
-        map<int, vector<pair<int, int>>> dummy_minimum;
+        shard_id_map<vector<pair<int, int>>> dummy_minimum(sinfo.get_k_plus_m());
         int err;
         if ((err = ec_impl->minimum_to_decode(rop.want_to_read[iter->first], have, &dummy_minimum)) < 0) {
 	  dout(20) << __func__ << " minimum_to_decode failed" << dendl;
@@ -1437,7 +1438,7 @@ namespace ECLegacy {
         pg_t pgid,
         const ECUtilL::stripe_info_t &sinfo,
         std::map<hobject_t,extent_map> *written,
-        std::map<shard_id_t, ObjectStore::Transaction> *transactions,
+        shard_id_map<ObjectStore::Transaction> *transactions,
         DoutPrefixProvider *dpp,
         const ceph_release_t require_osd_release) final
     {

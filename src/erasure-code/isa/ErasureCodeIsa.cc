@@ -80,8 +80,8 @@ ErasureCodeIsa::get_chunk_size(unsigned int stripe_width) const
 
 // -----------------------------------------------------------------------------
 
-int ErasureCodeIsa::encode_chunks(const std::map<int, bufferptr> &in, 
-                                       std::map<int, bufferptr> &out)
+int ErasureCodeIsa::encode_chunks(const shard_id_map<bufferptr> &in, 
+                                       shard_id_map<bufferptr> &out)
 {
   char *chunks[k + m]; //TODO don't use variable length arrays
   memset(chunks, 0, sizeof(char*) * (k + m));
@@ -119,9 +119,9 @@ int ErasureCodeIsa::encode_chunks(const std::map<int, bufferptr> &in,
   return 0;
 }
 
-int ErasureCodeIsa::decode_chunks(const set<int> &want_to_read,
-                                  const map<int, bufferlist> &chunks,
-                                  map<int, bufferlist> *decoded)
+int ErasureCodeIsa::decode_chunks(const shard_id_set &want_to_read,
+                                  const shard_id_map<bufferlist> &chunks,
+                                  shard_id_map<bufferlist> *decoded)
 {
   unsigned blocksize = (*chunks.begin()).second.length();
   int erasures[k + m + 1];
@@ -231,8 +231,8 @@ ErasureCodeIsaDefault::encode_delta(const bufferptr &old_data,
 // -----------------------------------------------------------------------------
 
 void
-ErasureCodeIsaDefault::apply_delta(const map<int, bufferptr> &in,
-                                        map <int, bufferptr> &out)
+ErasureCodeIsaDefault::apply_delta(const shard_id_map<bufferptr> &in,
+                                        shard_id_map<bufferptr> &out)
 {
   auto first = in.begin();
   const unsigned blocksize = first->second.length();

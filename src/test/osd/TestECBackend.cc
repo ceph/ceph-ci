@@ -136,8 +136,8 @@ public:
     return 0;
   }
 
-  int minimum_to_decode(const set<int> &want_to_read, const set<int> &available,
-			std::map<int, std::vector<std::pair<int, int>>> *minimum) override {
+  int minimum_to_decode(const shard_id_set &want_to_read, const shard_id_set &available,
+			shard_id_map<std::vector<std::pair<int, int>>> *minimum) override {
     int parity_shard_index = data_chunk_count;
     for (int shard : want_to_read) {
       if (available.contains(shard)) {
@@ -159,26 +159,26 @@ public:
     return 0;
   }
 
-  int minimum_to_decode_with_cost(const set<int> &want_to_read, const map<int, int> &available,
-				  std::set<int> *minimum) override {
+  int minimum_to_decode_with_cost(const shard_id_set &want_to_read, const shard_id_map<int> &available,
+				  shard_id_set *minimum) override {
     return 0;
   }
 
-  int encode(const set<int> &want_to_encode, const bufferlist &in, std::map<int, bufferlist> *encoded) override {
+  int encode(const shard_id_set &want_to_encode, const bufferlist &in, shard_id_map<bufferlist> *encoded) override {
     return 0;
   }
 
-  int encode_chunks(const std::map<int, bufferptr> &in, std::map<int, bufferptr> &out) override {
+  int encode_chunks(const shard_id_map<bufferptr> &in, shard_id_map<bufferptr> &out) override {
     return 0;
   }
 
-  int decode(const set<int> &want_to_read, const map<int, bufferlist> &chunks, std::map<int, bufferlist> *decoded,
+  int decode(const shard_id_set &want_to_read, const shard_id_map<bufferlist> &chunks, shard_id_map<bufferlist> *decoded,
 	     int chunk_size) override {
     return 0;
   }
 
-  int decode_chunks(const set<int> &want_to_read, const map<int, bufferlist> &chunks,
-		    std::map<int, bufferlist> *decoded) override {
+  int decode_chunks(const shard_id_set &want_to_read, const shard_id_map<bufferlist> &chunks,
+		    shard_id_map<bufferlist> *decoded) override {
     return 0;
   }
 
@@ -186,19 +186,19 @@ public:
     return chunk_mapping;
   }
 
-  int decode_concat(const set<int> &want_to_read, const map<int, bufferlist> &chunks, bufferlist *decoded) override {
+  int decode_concat(const shard_id_set &want_to_read, const shard_id_map<bufferlist> &chunks, bufferlist *decoded) override {
     return 0;
   }
 
-  int decode_concat(const map<int, bufferlist> &chunks, bufferlist *decoded) override {
+  int decode_concat(const shard_id_map<bufferlist> &chunks, bufferlist *decoded) override {
     return 0;
   }
 
   unsigned get_minimum_granularity() override { return 0; }
   void encode_delta(const bufferptr &old_data, const bufferptr &new_data
     , bufferptr *delta) override {}
-  void apply_delta(const std::map<int, bufferptr> &in
-    , std::map<int, bufferptr> &out) override {}
+  void apply_delta(const shard_id_map<bufferptr> &in
+    , shard_id_map<bufferptr> &out) override {}
 };
 
 class ECListenerStub : public ECListener {

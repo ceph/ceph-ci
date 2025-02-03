@@ -185,7 +185,7 @@ namespace ECLegacy {
       const std::map<hobject_t,extent_map> &partial_extents,
       std::vector<pg_log_entry_t> &entries,
       std::map<hobject_t,extent_map> *written,
-      std::map<shard_id_t, ceph::os::Transaction> *transactions,
+      shard_id_map<ceph::os::Transaction> *transactions,
       std::set<hobject_t> *temp_added,
       std::set<hobject_t> *temp_removed,
       DoutPrefixProvider *dpp,

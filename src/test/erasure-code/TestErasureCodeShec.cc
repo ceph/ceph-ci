@@ -969,9 +969,9 @@ TEST(ErasureCodeShec, minimum_to_decode_8)
   shec->init(*profile, &cerr);
 
   //minimum_to_decode
-  set<int> want_to_decode;
-  set<int> available_chunks;
-  set<int> minimum_chunks;
+  shard_id_set want_to_decode;
+  shard_id_set available_chunks;
+  shard_id_set minimum_chunks;
 
   for (int i = 0; i < 8; ++i) {
     want_to_decode.insert(i);
@@ -1005,9 +1005,9 @@ TEST(ErasureCodeShec, minimum_to_decode_9)
   shec->init(*profile, &cerr);
 
   //minimum_to_decode
-  set<int> want_to_decode;
-  set<int> available_chunks;
-  set<int> minimum_chunks;
+  shard_id_set want_to_decode;
+  shard_id_set available_chunks;
+  shard_id_set minimum_chunks;
 
   for (int i = 0; i < 4; ++i) {
     want_to_decode.insert(i);
@@ -1041,9 +1041,9 @@ TEST(ErasureCodeShec, minimum_to_decode_10)
   shec->init(*profile, &cerr);
 
   //minimum_to_decode
-  set<int> want_to_decode;
-  set<int> available_chunks;
-  set<int> minimum_chunks;
+  shard_id_set want_to_decode;
+  shard_id_set available_chunks;
+  shard_id_set minimum_chunks;
 
   for (int i = 0; i < 7; ++i) {
     want_to_decode.insert(i);
@@ -1077,9 +1077,9 @@ TEST(ErasureCodeShec, minimum_to_decode_11)
   shec->init(*profile, &cerr);
 
   //minimum_to_decode
-  set<int> want_to_decode;
-  set<int> available_chunks;
-  set<int> minimum_chunks;
+  shard_id_set want_to_decode;
+  shard_id_set available_chunks;
+  shard_id_set minimum_chunks;
 
   for (int i = 0; i < 5; ++i) {
     want_to_decode.insert(i);
@@ -1113,8 +1113,8 @@ TEST(ErasureCodeShec, minimum_to_decode_12)
   shec->init(*profile, &cerr);
 
   //minimum_to_decode
-  set<int> want_to_decode;
-  set<int> available_chunks;
+  shard_id_set want_to_decode;
+  shard_id_set available_chunks;
   //minimum_chunks is NULL
 
   for (int i = 0; i < 7; ++i) {
@@ -1146,9 +1146,9 @@ TEST(ErasureCodeShec, minimum_to_decode_13)
   shec->init(*profile, &cerr);
 
   //minimum_to_decode
-  set<int> want_to_decode;
-  set<int> available_chunks;
-  set<int> minimum_chunks, minimum;
+  shard_id_set want_to_decode;
+  shard_id_set available_chunks;
+  shard_id_set minimum_chunks, minimum;
 
   for (int i = 0; i < 7; ++i) {
     want_to_decode.insert(i);
@@ -1187,9 +1187,9 @@ TEST(ErasureCodeShec, minimum_to_decode2_1)
   shec->init(*profile, &cerr);
 
   //minimum_to_decode
-  set<int> want_to_decode;
-  set<int> available_chunks;
-  set<int> minimum_chunks;
+  shard_id_set want_to_decode;
+  shard_id_set available_chunks;
+  shard_id_set minimum_chunks;
 
   want_to_decode.insert(0);
   available_chunks.insert(0);
@@ -1223,9 +1223,9 @@ TEST(ErasureCodeShec, minimum_to_decode2_3)
   shec->init(*profile, &cerr);
 
   //minimum_to_decode
-  set<int> want_to_decode;
-  set<int> available_chunks;
-  set<int> minimum_chunks;
+  shard_id_set want_to_decode;
+  shard_id_set available_chunks;
+  shard_id_set minimum_chunks;
 
   want_to_decode.insert(0);
   want_to_decode.insert(2);
@@ -1272,13 +1272,13 @@ TEST(ErasureCodeShec, minimum_to_decode_with_cost_1)
   shec->init(*profile, &cerr);
 
   //minimum_to_decode_with_cost
-  set<int> want_to_decode;
-  map<int, int> available_chunks;
-  set<int> minimum_chunks;
+  shard_id_set want_to_decode;
+  shard_id_map<int> available_chunks(shec->get_chunk_count());
+  shard_id_set minimum_chunks;
 
   for (int i = 0; i < 7; ++i) {
     want_to_decode.insert(i);
-    available_chunks.insert(make_pair(i, i));
+    available_chunks.insert(i, i);
   }
 
   int r = shec->minimum_to_decode_with_cost(want_to_decode, available_chunks,
@@ -1308,9 +1308,9 @@ TEST(ErasureCodeShec, minimum_to_decode_with_cost_2_3)
   shec->init(*profile, &cerr);
 
   //minimum_to_decode_with_cost
-  set<int> want_to_decode;
-  map<int, int> available_chunks;
-  set<int> minimum_chunks;
+  shard_id_set want_to_decode;
+  shard_id_map<int> available_chunks(shec->get_chunk_count());
+  shard_id_set minimum_chunks;
 
   want_to_decode.insert(0);
   want_to_decode.insert(2);
@@ -1358,8 +1358,8 @@ TEST(ErasureCodeShec, encode_1)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -1376,9 +1376,9 @@ TEST(ErasureCodeShec, encode_1)
 
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6 };
-  map<int, bufferlist> decoded;
+  shard_id_map<bufferlist> decoded(shec->get_chunk_count());
   decoded.clear();
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 2),
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 2),
 		    encoded,
 		    &decoded);
   EXPECT_NE(nullptr, shec->matrix);
@@ -1419,8 +1419,8 @@ TEST(ErasureCodeShec, encode_2)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -1436,8 +1436,8 @@ TEST(ErasureCodeShec, encode_2)
 
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6 };
-  map<int, bufferlist> decoded;
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 2), encoded,
+  shard_id_map<bufferlist> decoded(shec->get_chunk_count());
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 2), encoded,
 		    &decoded);
   EXPECT_TRUE(shec->matrix != NULL);
   EXPECT_EQ(0, r);
@@ -1477,13 +1477,13 @@ TEST(ErasureCodeShec, encode_3)
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
   );
-  set<int> want_to_encode;
+  shard_id_set want_to_encode;
   for (unsigned int i = 0; i < shec->get_chunk_count(); ++i) {
     want_to_encode.insert(i);
   }
   want_to_encode.insert(10);
   want_to_encode.insert(11);
-  map<int, bufferlist> encoded;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
   int r = shec->encode(want_to_encode, in, &encoded);
   EXPECT_EQ(0, r);
   EXPECT_EQ(shec->get_chunk_count(), encoded.size());
@@ -1491,8 +1491,8 @@ TEST(ErasureCodeShec, encode_3)
 
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6 };
-  map<int, bufferlist> decoded;
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 2), encoded,
+  shard_id_map<bufferlist> decoded(shec->get_chunk_count());
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 2), encoded,
 		   &decoded);
   EXPECT_TRUE(shec->matrix != NULL);
   EXPECT_EQ(0, r);
@@ -1532,8 +1532,8 @@ TEST(ErasureCodeShec, encode_4)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -1550,8 +1550,8 @@ TEST(ErasureCodeShec, encode_4)
 
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6 };
-  map<int, bufferlist> decoded;
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 2), encoded,
+  shard_id_map<bufferlist> decoded(shec->get_chunk_count());
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 2), encoded,
 		    &decoded);
   EXPECT_TRUE(shec->matrix != NULL);
   EXPECT_EQ(0, r);
@@ -1591,7 +1591,7 @@ TEST(ErasureCodeShec, encode_8)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
+  shard_id_set want_to_encode;
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -1625,8 +1625,8 @@ TEST(ErasureCodeShec, encode_9)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(100);
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -1663,8 +1663,8 @@ TEST(ErasureCodeShec, encode2_1)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -1681,8 +1681,8 @@ TEST(ErasureCodeShec, encode2_1)
 
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6 };
-  map<int, bufferlist> decoded;
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 2), encoded,
+  shard_id_map<bufferlist> decoded(shec->get_chunk_count());
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 2), encoded,
 		    &decoded);
   EXPECT_TRUE(shec->matrix != NULL);
   EXPECT_EQ(0, r);
@@ -1722,8 +1722,8 @@ TEST(ErasureCodeShec, encode2_3)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -1751,9 +1751,9 @@ TEST(ErasureCodeShec, encode2_3)
 
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6 };
-  map<int, bufferlist> decoded;
+  shard_id_map<bufferlist> decoded(shec->get_chunk_count());
 
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 2), encoded,
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 2), encoded,
 		    &decoded);
   EXPECT_TRUE(shec->matrix != NULL);
   EXPECT_EQ(0, r);
@@ -1793,8 +1793,8 @@ TEST(ErasureCodeShec, decode_1)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -1813,9 +1813,9 @@ TEST(ErasureCodeShec, decode_1)
   // all chunks are available
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6 };
-  map<int, bufferlist> decoded;
+  shard_id_map<bufferlist> decoded(shec->get_chunk_count());
 
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 7), encoded,
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 7), encoded,
 		    &decoded);
   EXPECT_TRUE(shec->matrix != NULL);
   EXPECT_EQ(0, r);
@@ -1859,8 +1859,8 @@ TEST(ErasureCodeShec, decode_8)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -1879,9 +1879,9 @@ TEST(ErasureCodeShec, decode_8)
   // all chunks are available
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6, 7 }; //more than k+m
-  map<int, bufferlist> decoded;
+  shard_id_map<bufferlist> decoded(shec->get_chunk_count());
 
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 8), encoded,
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 8), encoded,
 		    &decoded);
   EXPECT_EQ(0, r);
   EXPECT_EQ(7u, decoded.size());
@@ -1925,8 +1925,8 @@ TEST(ErasureCodeShec, decode_9)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(128);
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -1945,14 +1945,14 @@ TEST(ErasureCodeShec, decode_9)
   // all chunks are available
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
-  map<int, bufferlist> decoded;
+  shard_id_map<bufferlist> decoded(shec->get_chunk_count());
 
   //extra data
   bufferlist buf;
   buf.append("abc");
   encoded[100] = buf;
 
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 10), encoded,
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 10), encoded,
 		    &decoded);
   EXPECT_TRUE(shec->matrix != NULL);
   EXPECT_EQ(0, r);
@@ -2003,8 +2003,8 @@ TEST(ErasureCodeShec, decode_10)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -2022,13 +2022,14 @@ TEST(ErasureCodeShec, decode_10)
 
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6 }; //more than k+m
-  map<int, bufferlist> decoded, inchunks;
+  shard_id_map<bufferlist> decoded(shec->get_chunk_count());
+  shard_id_map<bufferlist> inchunks(shec->get_chunk_count());
 
   for ( unsigned int i = 0; i < 3; ++i) {
-    inchunks.insert(make_pair(i, encoded[i]));
+    inchunks.insert(i, encoded[i]);
   }
 
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 7), inchunks,
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 7), inchunks,
 		    &decoded);
   EXPECT_EQ(-1, r);
 
@@ -2054,8 +2055,8 @@ TEST(ErasureCodeShec, decode_11)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -2072,13 +2073,14 @@ TEST(ErasureCodeShec, decode_11)
 
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4 };
-  map<int, bufferlist> decoded, inchunks;
+  shard_id_map<bufferlist> decoded(shec->get_chunk_count());
+  shard_id_map<bufferlist> inchunks(shec->get_chunk_count());
 
   for ( unsigned int i = 4; i < 7; ++i) {
-    inchunks.insert(make_pair(i, encoded[i]));
+    inchunks.insert(i, encoded[i]);
   }
 
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 5), inchunks,
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 5), inchunks,
 		    &decoded);
   EXPECT_EQ(-1, r);
 
@@ -2104,8 +2106,8 @@ TEST(ErasureCodeShec, decode_12)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -2126,7 +2128,7 @@ TEST(ErasureCodeShec, decode_12)
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6 };
 
   //decoded = NULL
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 7), encoded,
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 7), encoded,
 		    NULL);
   EXPECT_NE(0, r);
 
@@ -2152,8 +2154,8 @@ TEST(ErasureCodeShec, decode_13)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -2172,7 +2174,7 @@ TEST(ErasureCodeShec, decode_13)
   // all chunks are available
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6 };
-  map<int, bufferlist> decoded;
+  shard_id_map<bufferlist> decoded(100);
 
   //extra data
   bufferlist buf;
@@ -2181,7 +2183,7 @@ TEST(ErasureCodeShec, decode_13)
     decoded[i] = buf;
   }
 
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 7), encoded,
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 7), encoded,
 		    &decoded);
   EXPECT_NE(0, r);
 
@@ -2207,8 +2209,8 @@ TEST(ErasureCodeShec, decode2_1)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -2227,9 +2229,9 @@ TEST(ErasureCodeShec, decode2_1)
   // all chunks are available
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
-  map<int, bufferlist> decoded;
+  shard_id_map<bufferlist> decoded(shec->get_chunk_count());
 
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 2), encoded,
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 2), encoded,
 		    &decoded);
   EXPECT_TRUE(shec->matrix != NULL);
   EXPECT_EQ(0, r);
@@ -2263,8 +2265,8 @@ TEST(ErasureCodeShec, decode2_3)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -2283,7 +2285,7 @@ TEST(ErasureCodeShec, decode2_3)
   // all chunks are available
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
-  map<int, bufferlist> decoded;
+  shard_id_map<bufferlist> decoded(shec->get_chunk_count());
 
   pthread_t tid;
   g_flag = 0;
@@ -2293,7 +2295,7 @@ TEST(ErasureCodeShec, decode2_3)
   }
   sleep(1);
   printf("*** test start ***\n");
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 2), encoded,
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 2), encoded,
 		    &decoded);
   EXPECT_TRUE(shec->matrix != NULL);
   EXPECT_EQ(0, r);
@@ -2330,8 +2332,8 @@ TEST(ErasureCodeShec, decode2_4)
 
   //encode
   bufferlist in;
-  set<int> want_to_encode;
-  map<int, bufferlist> encoded;
+  shard_id_set want_to_encode;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
   in.append("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//length = 62
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//124
@@ -2349,14 +2351,14 @@ TEST(ErasureCodeShec, decode2_4)
 
   //decode
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
-  map<int, bufferlist> decoded;
+  shard_id_map<bufferlist> decoded(shec->get_chunk_count());
 
   // cannot recover
   bufferlist out;
-  map<int, bufferlist> degraded;
+  shard_id_map<bufferlist> degraded(shec->get_chunk_count());
   degraded[0] = encoded[0];
 
-  r = shec->_decode(set<int>(want_to_decode, want_to_decode + 2), degraded,
+  r = shec->_decode(shard_id_set(want_to_decode, want_to_decode + 2), degraded,
 		    &decoded);
   EXPECT_EQ(-1, r);
 
@@ -2671,9 +2673,9 @@ TEST(ErasureCodeShec, get_chunk_size_1_2)
 void* thread1(void* pParam)
 {
   ErasureCodeShec* shec = (ErasureCodeShec*) pParam;
-  set<int> want_to_decode;
-  set<int> available_chunks;
-  set<int> minimum_chunks;
+  shard_id_set want_to_decode;
+  shard_id_set available_chunks;
+  shard_id_set minimum_chunks;
 
   want_to_decode.insert(0);
   want_to_decode.insert(1);
@@ -2694,9 +2696,9 @@ void* thread1(void* pParam)
 void* thread2(void* pParam)
 {
   ErasureCodeShec* shec = (ErasureCodeShec*) pParam;
-  set<int> want_to_decode;
-  map<int, int> available_chunks;
-  set<int> minimum_chunks;
+  shard_id_set want_to_decode;
+  shard_id_map<int> available_chunks(shec->get_chunk_count());
+  shard_id_set minimum_chunks;
 
   want_to_decode.insert(0);
   want_to_decode.insert(1);
@@ -2771,12 +2773,12 @@ void* thread4(void* pParam)
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//186
 	    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//248
   );
-  set<int> want_to_encode;
+  shard_id_set want_to_encode;
   for (unsigned int i = 0; i < shec->get_chunk_count(); ++i) {
     want_to_encode.insert(i);
   }
 
-  map<int, bufferlist> encoded;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
   printf("*** thread loop start ***\n");
   g_flag = 1;
@@ -2800,20 +2802,20 @@ void* thread5(void* pParam)
 	  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//248
 	  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"//310
   );
-  set<int> want_to_encode;
+  shard_id_set want_to_encode;
   for (unsigned int i = 0; i < shec->get_chunk_count(); ++i) {
     want_to_encode.insert(i);
   }
-  map<int, bufferlist> encoded;
+  shard_id_map<bufferlist> encoded(shec->get_chunk_count());
   shec->encode(want_to_encode, in, &encoded);
 
   int want_to_decode[] = { 0, 1, 2, 3, 4, 5 };
-  map<int, bufferlist> decoded;
+  shard_id_map<bufferlist> decoded(shec->get_chunk_count());
 
   printf("*** thread loop start ***\n");
   g_flag = 1;
   while (g_flag == 1) {
-    shec->_decode(set<int>(want_to_decode, want_to_decode + 2), encoded,
+    shec->_decode(shard_id_set(want_to_decode, want_to_decode + 2), encoded,
 		  &decoded);
     decoded.clear();
   }

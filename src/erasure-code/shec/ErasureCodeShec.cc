@@ -68,17 +68,17 @@ unsigned int ErasureCodeShec::get_chunk_size(unsigned int stripe_width) const
   return padded_length / k;
 }
 
-int ErasureCodeShec::_minimum_to_decode(const set<int> &want_to_read,
-				       const set<int> &available_chunks,
-				       set<int> *minimum_chunks)
+int ErasureCodeShec::_minimum_to_decode(const shard_id_set &want_to_read,
+				       const shard_id_set &available_chunks,
+				       shard_id_set *minimum_chunks)
 {
   if (!minimum_chunks) return -EINVAL;
 
-  for (set<int>::iterator it = available_chunks.begin(); it != available_chunks.end(); ++it){
+  for (shard_id_set::const_iterator it = available_chunks.begin(); it != available_chunks.end(); ++it){
     if (*it < 0 || k+m <= *it) return -EINVAL;
   }
 
-  for (set<int>::iterator it = want_to_read.begin(); it != want_to_read.end(); ++it){
+  for (shard_id_set::const_iterator it = want_to_read.begin(); it != want_to_read.end(); ++it){
     if (*it < 0 || k+m <= *it) return -EINVAL;
   }
 
@@ -91,13 +91,13 @@ int ErasureCodeShec::_minimum_to_decode(const set<int> &want_to_read,
   memset(minimum, 0, sizeof(minimum));
   (*minimum_chunks).clear();
 
-  for (set<int>::const_iterator i = want_to_read.begin();
+  for (shard_id_set::const_iterator i = want_to_read.begin();
        i != want_to_read.end();
        ++i) {
     want[*i] = 1;
   }
 
-  for (set<int>::const_iterator i = available_chunks.begin();
+  for (shard_id_set::const_iterator i = available_chunks.begin();
        i != available_chunks.end();
        ++i) {
     avails[*i] = 1;
@@ -122,13 +122,13 @@ int ErasureCodeShec::_minimum_to_decode(const set<int> &want_to_read,
   return 0;
 }
 
-int ErasureCodeShec::minimum_to_decode_with_cost(const set<int> &want_to_read,
-						 const map<int, int> &available,
-						 set<int> *minimum_chunks)
+int ErasureCodeShec::minimum_to_decode_with_cost(const shard_id_set &want_to_read,
+						 const shard_id_map<int> &available,
+						 shard_id_set *minimum_chunks)
 {
-  set <int> available_chunks;
+  shard_id_set available_chunks;
 
-  for (map<int, int>::const_iterator i = available.begin();
+  for (shard_id_map<int>::const_iterator i = available.begin();
        i != available.end();
        ++i)
     available_chunks.insert(i->first);
@@ -136,8 +136,8 @@ int ErasureCodeShec::minimum_to_decode_with_cost(const set<int> &want_to_read,
   return _minimum_to_decode(want_to_read, available_chunks, minimum_chunks);
 }
 
-int ErasureCodeShec::encode_chunks(const std::map<int, bufferptr> &in, 
-                                   std::map<int, bufferptr> &out)
+int ErasureCodeShec::encode_chunks(const shard_id_map<bufferptr> &in, 
+                                   shard_id_map<bufferptr> &out)
 {
   char *chunks[k + m]; //TODO don't use variable length arrays
   memset(chunks, 0, sizeof(char*) * (k + m));
@@ -175,9 +175,9 @@ int ErasureCodeShec::encode_chunks(const std::map<int, bufferptr> &in,
   return 0;
 }
 
-int ErasureCodeShec::_decode(const set<int> &want_to_read,
-			    const map<int, bufferlist> &chunks,
-			    map<int, bufferlist> *decoded)
+int ErasureCodeShec::_decode(const shard_id_set &want_to_read,
+			    const shard_id_map<bufferlist> &chunks,
+			    shard_id_map<bufferlist> *decoded)
 {
   vector<int> have;
 
@@ -190,14 +190,14 @@ int ErasureCodeShec::_decode(const set<int> &want_to_read,
   }
 
   have.reserve(chunks.size());
-  for (map<int, bufferlist>::const_iterator i = chunks.begin();
+  for (shard_id_map<bufferlist>::const_iterator i = chunks.begin();
        i != chunks.end();
        ++i) {
     have.push_back(i->first);
   }
   if (includes(
 	have.begin(), have.end(), want_to_read.begin(), want_to_read.end())) {
-    for (set<int>::iterator i = want_to_read.begin();
+    for (shard_id_set::const_iterator i = want_to_read.begin();
 	 i != want_to_read.end();
 	 ++i) {
       (*decoded)[*i] = chunks.find(*i)->second;
@@ -222,9 +222,9 @@ int ErasureCodeShec::_decode(const set<int> &want_to_read,
   return decode_chunks(want_to_read, chunks, decoded);
 }
 
-int ErasureCodeShec::decode_chunks(const set<int> &want_to_read,
-				   const map<int, bufferlist> &chunks,
-				   map<int, bufferlist> *decoded)
+int ErasureCodeShec::decode_chunks(const shard_id_set &want_to_read,
+				   const shard_id_map<bufferlist> &chunks,
+				   shard_id_map<bufferlist> *decoded)
 {
   unsigned blocksize = (*chunks.begin()).second.length();
   int erased[k + m];
@@ -292,8 +292,8 @@ void ErasureCodeShecReedSolomonVandermonde::encode_delta(const bufferptr &old_da
   //TODO return a special zero buffer if delta is all zeroes
 }
 
-void ErasureCodeShecReedSolomonVandermonde::apply_delta(const std::map<int, bufferptr> &in,
-                                                        std::map <int, bufferptr> &out)
+void ErasureCodeShecReedSolomonVandermonde::apply_delta(const shard_id_map<bufferptr> &in,
+                                                        shard_id_map<bufferptr> &out)
 {
   auto first = in.begin();
   const unsigned blocksize = first->second.length();

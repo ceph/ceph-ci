@@ -198,7 +198,7 @@ void ECCommon::ReadPipeline::on_change()
 
 void ECCommon::ReadPipeline::get_all_avail_shards(
   const hobject_t &hoid,
-  set<int> &have,
+  shard_id_set &have,
   map<shard_id_t, pg_shard_t> &shards,
   bool for_recovery,
   const std::optional<set<pg_shard_t>>& error_shards)
@@ -274,13 +274,13 @@ int ECCommon::ReadPipeline::get_min_avail_to_read_shards(
     return 0;
   }
 
-  set<int> have;
+  shard_id_set have;
   map<shard_id_t, pg_shard_t> shards;
 
   get_all_avail_shards(hoid, have, shards, for_recovery, error_shards);
 
-  map<int, vector<pair<int, int>>> need;
-  set<int> want;
+  shard_id_map<vector<pair<int, int>>> need(sinfo.get_k_plus_m());
+  shard_id_set want;
 
   for (auto &&[shard, _] : read_request.shard_want_to_read) {
     want.insert(shard);

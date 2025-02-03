@@ -191,22 +191,22 @@ namespace ECLegacy {
     int decode(
       const stripe_info_t &sinfo,
       ceph::ErasureCodeInterfaceRef &ec_impl,
-      const std::set<int> want_to_read,
-      std::map<int, ceph::buffer::list> &to_decode,
+      const shard_id_set want_to_read,
+      mini_flat_map<shard_id_t, ceph::buffer::list> &to_decode,
       ceph::buffer::list *out);
 
     int decode(
       const stripe_info_t &sinfo,
       ceph::ErasureCodeInterfaceRef &ec_impl,
-      std::map<int, ceph::buffer::list> &to_decode,
-      std::map<int, ceph::buffer::list*> &out);
+      mini_flat_map<shard_id_t, ceph::buffer::list> &to_decode,
+      mini_flat_map<shard_id_t, ceph::buffer::list*> &out);
 
     int encode(
       const stripe_info_t &sinfo,
       ceph::ErasureCodeInterfaceRef &ec_impl,
       ceph::buffer::list &in,
-      const std::set<int> &want,
-      std::map<int, ceph::buffer::list> *out);
+      const shard_id_set &want,
+      mini_flat_map<shard_id_t, ceph::buffer::list> *out);
 
     class HashInfo {
       uint64_t total_chunk_size = 0;
@@ -218,7 +218,7 @@ namespace ECLegacy {
       HashInfo() {}
       explicit HashInfo(unsigned num_chunks) :
         cumulative_shard_hashes(num_chunks, -1) {}
-      void append(uint64_t old_size, std::map<int, ceph::buffer::list> &to_append);
+      void append(uint64_t old_size, mini_flat_map<shard_id_t, ceph::buffer::list> &to_append);
       void clear() {
         total_chunk_size = 0;
         cumulative_shard_hashes = std::vector<uint32_t>(

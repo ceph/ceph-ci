@@ -111,10 +111,10 @@ ECTransaction::WritePlanObj::WritePlanObj(
   const ECUtil::HashInfoRef &&hinfo,
   const ECUtil::HashInfoRef &&shinfo) :
 hoid(hoid),
+will_write(sinfo.get_k_plus_m()),
 hinfo(hinfo),
 shinfo(shinfo),
-orig_size(orig_size), // On-disk object sizes are rounded up to the next page.
-will_write(sinfo.get_k_plus_m())
+orig_size(orig_size) // On-disk object sizes are rounded up to the next page.
 {
   extent_set ro_writes;
 

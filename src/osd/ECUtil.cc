@@ -5,6 +5,9 @@
 #include "global/global_context.h"
 #include "include/encoding.h"
 #include "ECUtil.h"
+
+#include <googletest/googlemock/include/gmock/gmock-matchers.h>
+
 #include "common/debug.h"
 
 #define dout_context g_ceph_context
@@ -16,6 +19,9 @@ using namespace std;
 using ceph::bufferlist;
 using ceph::ErasureCodeInterfaceRef;
 using ceph::Formatter;
+
+template<typename T>
+using shard_id_map = shard_id_map<T>;
 
 // FIXME: We want this to be the same as the constant in ErasureCode.h, which
 //        cannot be included here, for reasons I have not figured out yet.
@@ -441,7 +447,6 @@ namespace ECUtil {
           if (emap.contains(offset, length))
             continue;
         }
-        std::set<int> shards;
         bufferlist bl;
         bl.push_back(buffer::create_aligned(length, CEPH_PAGE_SIZE));
         extent_maps[shard].insert(offset, length, bl);
@@ -450,7 +455,7 @@ namespace ECUtil {
   }
 
   shard_extent_map_t::slice_iterator::slice_iterator(shard_extent_map_t &sem) :
-    sem(sem), iters(sem.sinfo->get_k_plus_m())
+    iters(sem.sinfo->get_k_plus_m()), slice(sem.sinfo->get_k_plus_m()), sem(sem)
   {
     for (auto &&[shard, emap] : sem.extent_maps) {
       auto emap_iter = emap.begin();
@@ -568,17 +573,14 @@ namespace ECUtil {
         break;
       }
 
-      std::map<int, bufferptr> all_shards = iter.get_bufferptrs();
-      std::map<int, bufferptr> in;
-      std::map<int, bufferptr> out;
+      const shard_id_map<bufferptr>& all_shards = iter.get_bufferptrs();
+      shard_id_map<bufferptr> in(sinfo->get_k_plus_m());
+      shard_id_map<bufferptr> out(sinfo->get_k_plus_m());
 
-      auto in_start = all_shards.begin();
-      auto in_end = all_shards.lower_bound(ec_impl->get_data_chunk_count());
-      in.insert(in_start, in_end);
-
-      auto out_start = all_shards.lower_bound(ec_impl->get_data_chunk_count());
-      auto out_end = all_shards.lower_bound(ec_impl->get_data_chunk_count() + ec_impl->get_coding_chunk_count());
-      out.insert(out_start, out_end);      
+      for (auto &&[shard, bp] : all_shards) {
+        if (shard < sinfo->get_k()) in.emplace(shard, bp);
+        else out.emplace(shard, bp);
+      }
 
       int ret = ec_impl->encode_chunks(in, out);
       if (ret) return ret;
@@ -630,8 +632,8 @@ namespace ECUtil {
          * recoveries at one time. There may be some performance gains in
          * * that scenario if found necessary.
          */
-        std::set<int> want_to_read;
-        std::map<int, bufferlist> decoded;
+        shard_id_set want_to_read;
+        shard_id_map<bufferlist> decoded(sinfo->get_k_plus_m());
 
         want_to_read.insert(shard);
         auto s = slice(offset, length);
@@ -705,9 +707,9 @@ namespace ECUtil {
     if (resized) compute_ro_range();
   }
 
-  std::map<int, bufferlist> shard_extent_map_t::slice(int offset, int length) const
+  shard_id_map<bufferlist> shard_extent_map_t::slice(int offset, int length) const
   {
-    std::map<int, bufferlist> slice;
+    shard_id_map<bufferlist> slice(sinfo->get_k_plus_m());
 
     for (auto &&[shard, emap]: extent_maps) {
       bufferlist shard_bl;
@@ -951,7 +953,7 @@ namespace ECUtil {
 }
 
 void ECUtil::HashInfo::append(uint64_t old_size,
-			      map<int, bufferptr> &to_append) {
+			      shard_id_map<bufferptr> &to_append) {
   ceph_assert(old_size == total_chunk_size);
   uint64_t size_to_append = to_append.begin()->second.length();
   if (has_chunk_hash()) {
@@ -1038,7 +1040,9 @@ void ECUtil::HashInfo::generate_test_instances(list<HashInfo*>& o)
   {
     bufferptr bp;
     bp.append_zeros(20);
-    map<int, bufferptr> buffers;
+    // We don't have the k+m here, but this is not critical performance, so
+    // create an oversized map.
+    shard_id_map<bufferptr> buffers(128);
     buffers[0] = bp;
     buffers[1] = bp;
     buffers[2] = bp;

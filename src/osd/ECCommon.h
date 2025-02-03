@@ -328,7 +328,7 @@ struct ECCommon {
 
     void get_all_avail_shards(
       const hobject_t &hoid,
-      std::set<int> &have,
+      shard_id_set &have,
       std::map<shard_id_t, pg_shard_t> &shards,
       bool for_recovery,
       const std::optional<std::set<pg_shard_t>>& error_shards = std::nullopt);

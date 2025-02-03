@@ -6,8 +6,6 @@
 
 #include <errno.h>
 #include <stdlib.h>
-#include "arch/probe.h"
-#include "arch/intel.h"
 #include "erasure-code/ErasureCodePlugin.h"
 #include "global/global_context.h"
 #include "common/config_proxy.h"
@@ -101,7 +99,7 @@ TEST_P(PluginTest,Initialize)
 TEST_P(PluginTest,PartialRead)
 {
   initialize();
-  set<int> want_to_encode;
+  shard_id_set want_to_encode;
   for (unsigned int i = 0 ; i < get_k_plus_m(); i++) {
     want_to_encode.insert(i);
   }
@@ -118,7 +116,7 @@ TEST_P(PluginTest,PartialRead)
   for (unsigned int i = 0; i < get_k(); i++) {
     generate_chunk(bl);
   }
-  map<int,bufferlist> encoded;
+  shard_id_map<bufferlist> encoded(get_k_plus_m());
   erasure_code->encode(want_to_encode, bl, &encoded);
   std::vector<int> chunk_mapping = erasure_code->get_chunk_mapping();
   bool different = false;
@@ -149,7 +147,7 @@ TEST_P(PluginTest,PartialRead)
 TEST_P(PluginTest,PartialWrite)
 {
   initialize();
-  set<int> want_to_encode;
+  shard_id_set want_to_encode;
   for (unsigned int i = 0 ; i < get_k_plus_m(); i++) {
     want_to_encode.insert(i);
   }
@@ -192,11 +190,11 @@ TEST_P(PluginTest,PartialWrite)
     bl2.append(b3);
     bl3.append(c2);
   }
-  map<int,bufferlist> encoded1;
+  shard_id_map<bufferlist> encoded1(get_k_plus_m());
   erasure_code->encode(want_to_encode, bl1, &encoded1);
-  map<int,bufferlist> encoded2;
+  shard_id_map<bufferlist> encoded2(get_k_plus_m());
   erasure_code->encode(want_to_encode, bl2, &encoded2);
-  map<int,bufferlist> encoded3;
+  shard_id_map<bufferlist> encoded3(get_k_plus_m());
   erasure_code->encode(want_to_encode, bl3, &encoded3);
   bool different = false;
   for (unsigned int i = 0; i < get_k_plus_m(); i++) {
@@ -242,7 +240,7 @@ TEST_P(PluginTest,PartialWrite)
 TEST_P(PluginTest,ZeroInZeroOut)
 {
   initialize();
-  set<int> want_to_encode;
+  shard_id_set want_to_encode;
   for (unsigned int i = 0 ; i < get_k_plus_m(); i++) {
     want_to_encode.insert(i);
   }
@@ -257,7 +255,7 @@ TEST_P(PluginTest,ZeroInZeroOut)
   for (unsigned int i = 0; i < get_k(); i++) {
     generate_chunk(bl, 0);
   }
-  map<int,bufferlist> encoded;
+  shard_id_map<bufferlist> encoded(get_k_plus_m());
   erasure_code->encode(want_to_encode, bl, &encoded);
   bool different = false;
   bufferlist expects;
@@ -295,7 +293,7 @@ TEST_P(PluginTest,ParityDelta_SingleDeltaSingleParity)
       ErasureCodeInterface::FLAG_EC_PLUGIN_PARITY_DELTA_OPTIMIZATION)) {
         GTEST_SKIP() << "Plugin does not support parity delta optimization";
   }
-  set<int> want_to_encode;
+  shard_id_set want_to_encode;
   for (unsigned int i = 0 ; i < get_k_plus_m(); i++) {
     want_to_encode.insert(i);
   }
@@ -303,7 +301,7 @@ TEST_P(PluginTest,ParityDelta_SingleDeltaSingleParity)
   for (unsigned int i = 0; i < get_k(); i++) {
     generate_chunk(old_bl);
   }
-  map<int,bufferlist> old_encoded;
+  shard_id_map<bufferlist> old_encoded(get_k_plus_m());
   erasure_code->encode(want_to_encode, old_bl, &old_encoded);
   
   bufferlist new_chunk_bl;
@@ -339,7 +337,7 @@ TEST_P(PluginTest,ParityDelta_SingleDeltaSingleParity)
   ceph::bufferptr old_parity = buffer::create_aligned(chunk_size, 4096);
   old_encoded[random_parity].begin(0).copy(chunk_size, old_parity.c_str());
 
-  map<int,bufferlist> new_encoded;
+  shard_id_map<bufferlist> new_encoded(get_k_plus_m());
   bufferlist new_bl;
   for (auto i = old_encoded.begin(); i != old_encoded.end(); i++) {
     if ((unsigned int)i->first >= get_k()) {
@@ -357,12 +355,12 @@ TEST_P(PluginTest,ParityDelta_SingleDeltaSingleParity)
   ceph::bufferptr expected_parity = buffer::create_aligned(chunk_size, 4096);
   new_encoded[random_parity].begin().copy_deep(chunk_size, expected_parity);
 
-  map <int, bufferptr> in_map;
+  shard_id_map<bufferptr> in_map(get_k_plus_m());
   in_map[random_chunk] = delta;
   in_map[random_parity] = old_parity;
-  map <int, bufferptr> out_map;
+  shard_id_map<bufferptr> out_map(get_k_plus_m());
   out_map[random_parity] = old_parity;
-  erasure_code->apply_delta((const map<int, bufferptr>)in_map, out_map);
+  erasure_code->apply_delta(in_map, out_map);
 
   bool parity_matches = true;
   for (int i = 0; i < chunk_size; i++) {
@@ -391,7 +389,7 @@ TEST_P(PluginTest,ParityDelta_MultipleDeltaMultipleParity)
       ErasureCodeInterface::FLAG_EC_PLUGIN_PARITY_DELTA_OPTIMIZATION)) {
         GTEST_SKIP() << "Plugin does not support parity delta optimization";
   }
-  set<int> want_to_encode;
+  shard_id_set want_to_encode;
   for (unsigned int i = 0 ; i < get_k_plus_m(); i++) {
     want_to_encode.insert(i);
   }
@@ -400,14 +398,14 @@ TEST_P(PluginTest,ParityDelta_MultipleDeltaMultipleParity)
   for (unsigned int i = 0; i < get_k(); i++) {
     generate_chunk(old_bl);
   }
-  map<int,bufferlist> old_encoded;
+  shard_id_map<bufferlist> old_encoded(get_k_plus_m());
   erasure_code->encode(want_to_encode, old_bl, &old_encoded);
   
   bufferlist new_bl;
   for (unsigned int i = 0; i < get_k(); i++) {
     generate_chunk(new_bl);
   }
-  map<int,bufferlist> new_encoded;
+  shard_id_map<bufferlist> new_encoded(get_k_plus_m());
   erasure_code->encode(want_to_encode, new_bl, &new_encoded);
 
   ceph::bufferptr old_data = buffer::create_aligned(chunk_size*get_k(), 4096);
@@ -432,8 +430,8 @@ TEST_P(PluginTest,ParityDelta_MultipleDeltaMultipleParity)
   }
   EXPECT_EQ(delta_matches, true);
 
-  map <int, bufferptr> in_map;
-  map <int, bufferptr> out_map;
+  shard_id_map<bufferptr> in_map(get_k_plus_m());
+  shard_id_map<bufferptr> out_map(get_k_plus_m());
   for (unsigned int i = 0; i < get_k(); i++) {
     ceph::bufferptr tmp = buffer::create_aligned(chunk_size, 4096);
     delta.copy_out(chunk_size * i, chunk_size, tmp.c_str());
@@ -446,7 +444,7 @@ TEST_P(PluginTest,ParityDelta_MultipleDeltaMultipleParity)
     out_map[i] = tmp;
   }
 
-  erasure_code->apply_delta((const map<int, bufferptr>)in_map, out_map);
+  erasure_code->apply_delta(in_map, out_map);
 
   bool parity_matches = true;
 

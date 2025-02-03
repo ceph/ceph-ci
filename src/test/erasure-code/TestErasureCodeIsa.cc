@@ -31,11 +31,11 @@ ErasureCodeIsaTableCache tcache;
 
 class IsaErasureCodeTest : public ::testing::Test {
 public:
-  void compare_chunks(bufferlist &in, map<int, bufferlist> &encoded);
+  void compare_chunks(bufferlist &in, shard_id_map<bufferlist> &encoded);
   void encode_decode(unsigned object_size); 
 };
 
-void IsaErasureCodeTest::compare_chunks(bufferlist &in, map<int, bufferlist> &encoded)
+void IsaErasureCodeTest::compare_chunks(bufferlist &in, shard_id_map<bufferlist> &encoded)
 {
   unsigned object_size = in.length();
   unsigned chunk_size = encoded[0].length();
@@ -61,8 +61,8 @@ void IsaErasureCodeTest::encode_decode(unsigned object_size)
   // may be multiple bufferptr if object_size is larger than CEPH_PAGE_SIZE
   in.append(payload.c_str(), payload.length());
   int want_to_encode[] = {0, 1, 2, 3};
-  map<int, bufferlist> encoded;
-  EXPECT_EQ(0, Isa.encode(set<int>(want_to_encode, want_to_encode + 4),
+  shard_id_map<bufferlist> encoded(Isa.get_chunk_count());
+  EXPECT_EQ(0, Isa.encode(shard_id_set(want_to_encode, want_to_encode + 4),
                           in,
                           &encoded));
   EXPECT_EQ(4u, encoded.size());
@@ -73,8 +73,8 @@ void IsaErasureCodeTest::encode_decode(unsigned object_size)
   // all chunks are available
   {
     int want_to_decode[] = {0, 1};
-    map<int, bufferlist> decoded;
-    EXPECT_EQ(0, Isa._decode(set<int>(want_to_decode, want_to_decode + 2),
+    shard_id_map<bufferlist> decoded(Isa.get_chunk_count());
+    EXPECT_EQ(0, Isa._decode(shard_id_set(want_to_decode, want_to_decode + 2),
 			     encoded,
 			     &decoded));
     EXPECT_EQ(2u, decoded.size());
@@ -84,15 +84,15 @@ void IsaErasureCodeTest::encode_decode(unsigned object_size)
 
   // one data chunk is missing
   {
-    map<int, bufferlist> degraded = encoded;
+    shard_id_map<bufferlist> degraded = encoded;
 
     string enc1(encoded[1].c_str(), chunk_size);
 
     degraded.erase(1);
     EXPECT_EQ(3u, degraded.size());
     int want_to_decode[] = {1};
-    map<int, bufferlist> decoded;
-    EXPECT_EQ(0, Isa._decode(set<int>(want_to_decode, want_to_decode + 1),
+    shard_id_map<bufferlist> decoded(Isa.get_chunk_count());
+    EXPECT_EQ(0, Isa._decode(shard_id_set(want_to_decode, want_to_decode + 1),
 			     degraded,
 			     &decoded));
     // always decode all, regardless of want_to_decode
@@ -103,15 +103,15 @@ void IsaErasureCodeTest::encode_decode(unsigned object_size)
 
   // non-xor coding chunk is missing
   {
-    map<int, bufferlist> degraded = encoded;
+    shard_id_map<bufferlist> degraded = encoded;
 
     string enc3(encoded[3].c_str(), chunk_size);
 
     degraded.erase(3);
     EXPECT_EQ(3u, degraded.size());
     int want_to_decode[] = {3};
-    map<int, bufferlist> decoded;
-    EXPECT_EQ(0, Isa._decode(set<int>(want_to_decode, want_to_decode + 1),
+    shard_id_map<bufferlist> decoded(Isa.get_chunk_count());
+    EXPECT_EQ(0, Isa._decode(shard_id_set(want_to_decode, want_to_decode + 1),
                             degraded,
                             &decoded));
     // always decode all, regardless of want_to_decode
@@ -122,15 +122,15 @@ void IsaErasureCodeTest::encode_decode(unsigned object_size)
 
   // xor coding chunk is missing
   {
-    map<int, bufferlist> degraded = encoded;
+    shard_id_map<bufferlist> degraded = encoded;
 
     string enc2(encoded[2].c_str(), chunk_size);
 
     degraded.erase(2);
     EXPECT_EQ(3u, degraded.size());
     int want_to_decode[] = {2};
-    map<int, bufferlist> decoded;
-    EXPECT_EQ(0, Isa._decode(set<int>(want_to_decode, want_to_decode + 1),
+    shard_id_map<bufferlist> decoded(Isa.get_chunk_count());
+    EXPECT_EQ(0, Isa._decode(shard_id_set(want_to_decode, want_to_decode + 1),
 			     degraded,
 			     &decoded));
     // always decode all, regardless of want_to_decode
@@ -141,7 +141,7 @@ void IsaErasureCodeTest::encode_decode(unsigned object_size)
 
   // one data and one coding chunk is missing
   {
-    map<int, bufferlist> degraded = encoded;
+    shard_id_map<bufferlist> degraded = encoded;
 
     string enc3(encoded[3].c_str(), chunk_size);
 
@@ -149,8 +149,8 @@ void IsaErasureCodeTest::encode_decode(unsigned object_size)
     degraded.erase(3);
     EXPECT_EQ(2u, degraded.size());
     int want_to_decode[] = {1, 3};
-    map<int, bufferlist> decoded;
-    EXPECT_EQ(0, Isa._decode(set<int>(want_to_decode, want_to_decode + 2),
+    shard_id_map<bufferlist> decoded(Isa.get_chunk_count());
+    EXPECT_EQ(0, Isa._decode(shard_id_set(want_to_decode, want_to_decode + 2),
 			     degraded,
 			     &decoded));
     // always decode all, regardless of want_to_decode
@@ -161,13 +161,13 @@ void IsaErasureCodeTest::encode_decode(unsigned object_size)
 
   // two data chunks are missing
   {
-    map<int, bufferlist> degraded = encoded;
+    shard_id_map<bufferlist> degraded = encoded;
     degraded.erase(0);
     degraded.erase(1);
     EXPECT_EQ(2u, degraded.size());
     int want_to_decode[] = {0, 1};
-    map<int, bufferlist> decoded;
-    EXPECT_EQ(0, Isa._decode(set<int>(want_to_decode, want_to_decode + 2),
+    shard_id_map<bufferlist> decoded(Isa.get_chunk_count());
+    EXPECT_EQ(0, Isa._decode(shard_id_set(want_to_decode, want_to_decode + 2),
 			     degraded,
 			     &decoded));
     // always decode all, regardless of want_to_decode
@@ -200,9 +200,9 @@ TEST_F(IsaErasureCodeTest, minimum_to_decode)
   // If trying to read nothing, the minimum is empty.
   //
   {
-    set<int> want_to_read;
-    set<int> available_chunks;
-    set<int> minimum;
+    shard_id_set want_to_read;
+    shard_id_set available_chunks;
+    shard_id_set minimum;
 
     EXPECT_EQ(0, Isa._minimum_to_decode(want_to_read,
 					available_chunks,
@@ -213,9 +213,9 @@ TEST_F(IsaErasureCodeTest, minimum_to_decode)
   // There is no way to read a chunk if none are available.
   //
   {
-    set<int> want_to_read;
-    set<int> available_chunks;
-    set<int> minimum;
+    shard_id_set want_to_read;
+    shard_id_set available_chunks;
+    shard_id_set minimum;
 
     want_to_read.insert(0);
 
@@ -227,9 +227,9 @@ TEST_F(IsaErasureCodeTest, minimum_to_decode)
   // Reading a subset of the available chunks is always possible.
   //
   {
-    set<int> want_to_read;
-    set<int> available_chunks;
-    set<int> minimum;
+    shard_id_set want_to_read;
+    shard_id_set available_chunks;
+    shard_id_set minimum;
 
     want_to_read.insert(0);
     available_chunks.insert(0);
@@ -244,9 +244,9 @@ TEST_F(IsaErasureCodeTest, minimum_to_decode)
   // chunks available.
   //
   {
-    set<int> want_to_read;
-    set<int> available_chunks;
-    set<int> minimum;
+    shard_id_set want_to_read;
+    shard_id_set available_chunks;
+    shard_id_set minimum;
 
     want_to_read.insert(0);
     want_to_read.insert(1);
@@ -266,9 +266,9 @@ TEST_F(IsaErasureCodeTest, minimum_to_decode)
   // of CPU and memory.
   //
   {
-    set<int> want_to_read;
-    set<int> available_chunks;
-    set<int> minimum;
+    shard_id_set want_to_read;
+    shard_id_set available_chunks;
+    shard_id_set minimum;
 
     want_to_read.insert(1);
     want_to_read.insert(3);
@@ -333,11 +333,11 @@ TEST_F(IsaErasureCodeTest, encode)
     // it is not properly aligned, it is padded with zeros.
     //
     bufferlist in;
-    map<int,bufferlist> encoded;
+    shard_id_map<bufferlist> encoded(Isa.get_chunk_count());
     int want_to_encode[] = { 0, 1, 2, 3 };
     int trail_length = 1;
     in.append(string(aligned_object_size + trail_length, 'X'));
-    EXPECT_EQ(0, Isa.encode(set<int>(want_to_encode, want_to_encode+4),
+    EXPECT_EQ(0, Isa.encode(shard_id_set(want_to_encode, want_to_encode+4),
 				 in,
 				 &encoded));
     EXPECT_EQ(4u, encoded.size());
@@ -357,8 +357,8 @@ TEST_F(IsaErasureCodeTest, encode)
     // valgrind (there is no leak).
     //
     bufferlist in;
-    map<int,bufferlist> encoded;
-    set<int> want_to_encode;
+    shard_id_map<bufferlist> encoded(Isa.get_chunk_count());
+    shard_id_set want_to_encode;
     want_to_encode.insert(0);
     int trail_length = 1;
     in.append(string(aligned_object_size + trail_length, 'X'));
@@ -379,9 +379,9 @@ TEST_F(IsaErasureCodeTest, sanity_check_k)
 }
 
 bool
-DecodeAndVerify(ErasureCodeIsaDefault& Isa, map<int, bufferlist> &degraded, set<int> want_to_decode, buffer::ptr* enc, int length)
+DecodeAndVerify(ErasureCodeIsaDefault& Isa, shard_id_map<bufferlist> &degraded, shard_id_set want_to_decode, buffer::ptr* enc, int length)
 {
-  map<int, bufferlist> decoded;
+  shard_id_map<bufferlist> decoded(Isa.get_chunk_count());
   bool ok;
 
   // decode as requested
@@ -445,9 +445,9 @@ TEST_F(IsaErasureCodeTest, isa_vandermonde_exhaustive)
   bufferlist in;
   in.push_back(in_ptr);
 
-  set<int>want_to_encode;
+  shard_id_set want_to_encode;
 
-  map<int, bufferlist> encoded;
+  shard_id_map<bufferlist> encoded(Isa.get_chunk_count());
   for (int i = 0; i < (k + m); i++) {
     want_to_encode.insert(i);
   }
@@ -481,8 +481,8 @@ TEST_F(IsaErasureCodeTest, isa_vandermonde_exhaustive)
   int cnt_cf = 0;
 
   for (int l1 = 0; l1 < (k + m); l1++) {
-    map<int, bufferlist> degraded = encoded;
-    set<int> want_to_decode;
+    shard_id_map<bufferlist> degraded = encoded;
+    shard_id_set want_to_decode;
     bool err;
     degraded.erase(l1);
     want_to_decode.insert(l1);
@@ -572,9 +572,9 @@ TEST_F(IsaErasureCodeTest, isa_cauchy_exhaustive)
   bufferlist in;
   in.push_back(in_ptr);
 
-  set<int>want_to_encode;
+  shard_id_set want_to_encode;
 
-  map<int, bufferlist> encoded;
+  shard_id_map<bufferlist> encoded(Isa.get_chunk_count());
   for (int i = 0; i < (k + m); i++) {
     want_to_encode.insert(i);
   }
@@ -608,8 +608,8 @@ TEST_F(IsaErasureCodeTest, isa_cauchy_exhaustive)
   int cnt_cf = 0;
 
   for (int l1 = 0; l1 < (k + m); l1++) {
-    map<int, bufferlist> degraded = encoded;
-    set<int> want_to_decode;
+    shard_id_map<bufferlist> degraded = encoded;
+    shard_id_set want_to_decode;
     bool err;
     degraded.erase(l1);
     want_to_decode.insert(l1);
@@ -699,9 +699,9 @@ TEST_F(IsaErasureCodeTest, isa_cauchy_cache_trash)
   bufferlist in;
   in.push_back(in_ptr);
 
-  set<int>want_to_encode;
+  shard_id_set want_to_encode;
 
-  map<int, bufferlist> encoded;
+  shard_id_map<bufferlist> encoded(Isa.get_chunk_count());
   for (int i = 0; i < (k + m); i++) {
     want_to_encode.insert(i);
   }
@@ -735,8 +735,8 @@ TEST_F(IsaErasureCodeTest, isa_cauchy_cache_trash)
   int cnt_cf = 0;
 
   for (int l1 = 0; l1 < (k + m); l1++) {
-    map<int, bufferlist> degraded = encoded;
-    set<int> want_to_decode;
+    shard_id_map<bufferlist> degraded = encoded;
+    shard_id_set want_to_decode;
     bool err;
     degraded.erase(l1);
     want_to_decode.insert(l1);
@@ -825,9 +825,9 @@ TEST_F(IsaErasureCodeTest, isa_xor_codec)
   bufferlist in;
   in.push_back(in_ptr);
 
-  set<int>want_to_encode;
+  shard_id_set want_to_encode;
 
-  map<int, bufferlist> encoded;
+  shard_id_map<bufferlist> encoded(Isa.get_chunk_count());
   for (int i = 0; i < (k + m); i++) {
     want_to_encode.insert(i);
   }
@@ -861,8 +861,8 @@ TEST_F(IsaErasureCodeTest, isa_xor_codec)
   int cnt_cf = 0;
 
   for (int l1 = 0; l1 < (k + m); l1++) {
-    map<int, bufferlist> degraded = encoded;
-    set<int> want_to_decode;
+    shard_id_map<bufferlist> degraded = encoded;
+    shard_id_set want_to_decode;
     bool err;
     degraded.erase(l1);
     want_to_decode.insert(l1);
