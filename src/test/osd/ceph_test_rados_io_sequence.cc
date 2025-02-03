@@ -405,7 +405,6 @@ void ceph::io_sequence::tester::SelectECPool::create_pool(
        fmt::format("crush-failure-domain=osd")}};
   rc = send_mon_command(ecProfileSetRequest, rados, "OSDECProfileSetRequest",
                         inbl, &outbl, formatter.get());
-
   ceph_assert(rc == 0);
 
   ceph::messaging::osd::OSDECPoolCreateRequest poolCreateRequest{
