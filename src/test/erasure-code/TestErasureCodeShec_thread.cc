@@ -126,8 +126,6 @@ void* thread1(void* pParam)
     ErasureCodeShec* shec = new ErasureCodeShecReedSolomonVandermonde(
 				    tcache,
 				    ErasureCodeShec::MULTIPLE);
-    shard_id_map<bufferlist> decoded(shec->get_chunk_count());
-    shard_id_map<bufferlist> encoded(shec->get_chunk_count());
     ErasureCodeProfile *profile = new ErasureCodeProfile();
     (*profile)["plugin"] = "shec";
     (*profile)["technique"] = "multiple";
@@ -137,6 +135,9 @@ void* thread1(void* pParam)
     (*profile)["c"] = param->c;
     (*profile)["w"] = param->w;
     r = shec->init(*profile, &cerr);
+
+    shard_id_map<bufferlist> decoded(shec->get_chunk_count());
+    shard_id_map<bufferlist> encoded(shec->get_chunk_count());
 
     int i_k = std::atoi(param->k.c_str());
     int i_m = std::atoi(param->m.c_str());

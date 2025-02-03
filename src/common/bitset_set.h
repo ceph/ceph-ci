@@ -116,8 +116,8 @@ public:
 
   /** insert k into set.  */
   void insert(const bitset_set other) {
-    for (Key k; k < MAX; ++k) {
-      words[k] |= other.words[k];
+    for (int i = 0; i < WORDS; ++i) {
+      words[i] |= other.words[i];
     }
   }
 
@@ -268,7 +268,7 @@ public:
 
   bool includes(const bitset_set &other) const
   {
-    for (int i=0; i < WORDS; ++i) {
+    for (size_t i = 0; i < WORDS; ++i) {
       if ((words[i] & other.words[i]) != other.words[i]) return false;
     }
     return true;

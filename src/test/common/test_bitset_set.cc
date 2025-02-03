@@ -46,6 +46,11 @@ TEST(bitset_set, insert_emplace)
     ASSERT_EQ(k, keys[i++]);
   }
   ASSERT_EQ(2, i);
+
+  bitset_set<128, Key> bitset2;
+  bitset2.insert(5);
+  bitset2.insert(bitset);
+  ASSERT_EQ(3, bitset2.size());
 }
 
 TEST(bitset_set, erase) {

@@ -292,6 +292,7 @@ struct mini_flat_map
   template< class... Args >
   bool emplace(const Key k, Args&&... args)
   {
+    ceph_assert(k < max_size());
     if (!data[k]) {
       _size++;
       vector_type t = std::make_unique<T>(std::forward<Args>(args)...);

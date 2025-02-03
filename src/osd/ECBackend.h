@@ -280,7 +280,7 @@ public:
   virtual ~RecoveryBackend() = default;
   virtual void commit_txn_send_replies(
     ceph::os::Transaction&& txn,
-    shard_id_map<MOSDPGPushReply*> replies) = 0;
+    std::map<int, MOSDPGPushReply*> replies) = 0;
   void dispatch_recovery_messages(RecoveryMessages &m, int priority);
 
       PGBackend::RecoveryHandle *open_recovery_op();
@@ -327,7 +327,7 @@ public:
 
     void commit_txn_send_replies(
       ceph::os::Transaction&& txn,
-      shard_id_map<MOSDPGPushReply*> replies) override;
+      std::map<int, MOSDPGPushReply*> replies) override;
 
     PGBackend::Listener *get_parent() const { return parent; }
 
