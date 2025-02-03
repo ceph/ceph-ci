@@ -449,7 +449,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         Option(
             'set_coredump_overrides',
             type='bool',
-            default=True,
+            default=False,
             desc='Whether cephadm should use a systemd drop-in to modify coredump settings'
         ),
         Option(
@@ -552,7 +552,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             self.oob_default_addr = ''
             self.ssh_keepalive_interval = 0
             self.ssh_keepalive_count_max = 0
-            self.set_coredump_overrides = True
+            self.set_coredump_overrides = False
             self.coredump_max_size = 0
 
         self.notify(NotifyType.mon_map, None)
