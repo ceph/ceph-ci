@@ -757,28 +757,10 @@ int ErasureCodeLrc::encode_chunks(const shard_id_map<bufferptr> &in,
     shard_id_map<bufferptr> layer_out(get_chunk_count());
     int j = 0;
     for (const auto& c : layer.chunks) {
-      if (all_shards.contains(c)) {
-        // Shard index not in the in or out maps. The layer plugin will insert a
-        // buffer of 0s at this index before encoding.
-        j++;
-        continue;
-      }
-      if (j < k) {
-        if (out_shards.contains(c)) {
-          layer_in[j] = out[c];
-        }
-        else {
-          layer_in[j] = nonconst_in[c];
-        }
-      }
-      else {
-        if (out_shards.contains(c)) {
-          layer_out[j] = out[c];
-        }
-        else {
-          layer_out[j] = nonconst_in[c];
-        }
-      }
+      if (nonconst_in.contains(c))
+        layer_in[j] = nonconst_in[c];
+      if (out.contains(c))
+        layer_out[j] = out[c];
       j++;
     }
     int err = layer.erasure_code->encode_chunks(layer_in, layer_out);
