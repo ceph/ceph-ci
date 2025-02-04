@@ -46,7 +46,7 @@ int PyModuleRunner::serve()
 
   auto pValue = PyObject_CallMethod(pClassInstance,
       const_cast<char*>("serve"), nullptr);
-
+  clog->debug() << "serve() returned " << pValue;
   int r = 0;
   if (pValue != NULL) {
     Py_DECREF(pValue);
@@ -106,5 +106,6 @@ void* PyModuleRunner::PyModuleRunnerThread::entry()
   // No need to acquire the GIL here; the module does it.
   dout(4) << "Entering thread for " << mod->get_name() << dendl;
   mod->serve();
+  dout(4) << "Thread for " << mod->get_name() << " is done" << dendl;
   return nullptr;
 }
