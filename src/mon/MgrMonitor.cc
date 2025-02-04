@@ -131,14 +131,7 @@ const static std::map<uint32_t, std::set<std::string>> always_on_modules = {
     CEPH_RELEASE_SQUID, {
       "crash",
       "status",
-      "progress",
       "balancer",
-      "devicehealth",
-      "orchestrator",
-      "rbd_support",
-      "volumes",
-      "pg_autoscaler",
-      "telemetry",
     }
   },
 };
