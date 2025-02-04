@@ -1712,7 +1712,7 @@ class FilesystemBase(MDSClusterBase):
             base_args.extend(["--rank", "%s" % str(rank)])
 
         t1 = datetime.datetime.now()
-        r = self.tool_remote.sh(script=base_args + args, stdout=StringIO()).strip()
+        r = self.tool_remote.sh(script=base_args + args, stdout=StringIO(), stderr=StringIO()).strip()
         duration = datetime.datetime.now() - t1
         log.debug("Ran {0} in time {1}, result:\n{2}".format(
             base_args + args, duration, r
