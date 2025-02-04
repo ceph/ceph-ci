@@ -1717,6 +1717,7 @@ debug_ms = 1
 debug_mgr = 20
 debug_monc = 20
 debug_mon = 20
+valgrind_execve_exit = true
 
 [osd]
 debug_ms = 1

@@ -1061,14 +1061,16 @@
   ...
 }
 
-{
-  ignore *all* ceph-mgr python crap.  this is overkill, but better than nothing
-  Memcheck:Leak
-  match-leak-kinds: all
-  ...
-  fun:Py*
-  ...
-}
+#{
+#  ignore *all* ceph-mgr python crap.  this is overkill, but better than nothing
+#  Memcheck:Leak
+#  match-leak-kinds: all
+#  ...
+#  fun:Py*
+#  ...
+#}
+
+
 
 {
   something in glibc
