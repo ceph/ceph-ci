@@ -758,13 +758,24 @@ TEST(ECUtil, slice_iterator)
 
 TEST(ECUtil, object_size_to_shard_size)
 {
+  // This should return aligned values, inputs verifying that the result is
+  // aligned to the next page
+  std::vector<uint64_t> inputs = {0x4D000, 0x4CCFF, 0x4C001};
+
   stripe_info_t sinfo(4, 2, 4*4096);
-  ASSERT_EQ(0x14000, sinfo.object_size_to_shard_size(0x4D000, 0));
-  ASSERT_EQ(0x13000, sinfo.object_size_to_shard_size(0x4D000, 1));
-  ASSERT_EQ(0x13000, sinfo.object_size_to_shard_size(0x4D000, 2));
-  ASSERT_EQ(0x13000, sinfo.object_size_to_shard_size(0x4D000, 3));
-  ASSERT_EQ(0x14000, sinfo.object_size_to_shard_size(0x4D000, 4));
-  ASSERT_EQ(0x14000, sinfo.object_size_to_shard_size(0x4D000, 5));
+  for (uint64_t input : inputs)
+  {
+    ASSERT_EQ(0x14000, sinfo.object_size_to_shard_size(input, 0));
+    ASSERT_EQ(0x13000, sinfo.object_size_to_shard_size(input, 1));
+    ASSERT_EQ(0x13000, sinfo.object_size_to_shard_size(input, 2));
+    ASSERT_EQ(0x13000, sinfo.object_size_to_shard_size(input, 3));
+    ASSERT_EQ(0x14000, sinfo.object_size_to_shard_size(input, 4));
+    ASSERT_EQ(0x14000, sinfo.object_size_to_shard_size(input, 5));
+  }
+
+  // Verify +/-1 also rounds correctly
+  ASSERT_EQ(0x13000, sinfo.object_size_to_shard_size(0x4C000, 0));
+  ASSERT_EQ(0x14000, sinfo.object_size_to_shard_size(0x4D001, 1));
 }
 
 TEST(ECUtil, slice)

@@ -454,10 +454,6 @@ public:
       ScrubMap::object &o);
 
   uint64_t be_get_ondisk_size(uint64_t logical_size, int8_t shard_id) const {
-    uint64_t ondisk_size = object_size_to_shard_size(logical_size, shard_id);
-    return ondisk_size = ondisk_size % CEPH_PAGE_SIZE
-                             ? ondisk_size + CEPH_PAGE_SIZE -
-                                   (ondisk_size % CEPH_PAGE_SIZE)
-                             : ondisk_size;
+    return object_size_to_shard_size(logical_size, shard_id);
   }
 };

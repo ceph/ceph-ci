@@ -124,6 +124,17 @@ namespace ECUtil {
 
   };
 
+  inline uint64_t page_mask() {
+    static const uint64_t page_mask = ((uint64_t)CEPH_PAGE_SIZE) - 1;
+    return page_mask;
+  }
+  inline uint64_t align_page_next(uint64_t val) {
+    return p2roundup(val, (uint64_t)CEPH_PAGE_SIZE);
+  }
+  inline uint64_t align_page_prev(uint64_t val) {
+    return p2align(val, (uint64_t)CEPH_PAGE_SIZE);
+  }
+
   class stripe_info_t {
   friend class shard_extent_map_t;
 
@@ -249,7 +260,7 @@ public:
       }
       shard_size += remainder;
     }
-    return shard_size;
+    return ECUtil::align_page_next(shard_size);
   }
 
   uint64_t ro_offset_to_shard_offset(uint64_t ro_offset, int shard) const
@@ -419,17 +430,6 @@ public:
     uint64_t ro_size,
     ECUtil::shard_extent_set_t &shard_extent_set) const;
 };
-
-inline uint64_t page_mask() {
-  static const uint64_t page_mask = ((uint64_t)CEPH_PAGE_SIZE) - 1;
-  return page_mask;
-}
-inline uint64_t align_page_next(uint64_t val) {
-  return p2roundup(val, (uint64_t)CEPH_PAGE_SIZE);
-}
-inline uint64_t align_page_prev(uint64_t val) {
-  return p2align(val, (uint64_t)CEPH_PAGE_SIZE);
-}
 
 class HashInfo {
   uint64_t total_chunk_size = 0;
