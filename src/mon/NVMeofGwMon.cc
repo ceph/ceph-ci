@@ -232,8 +232,8 @@ bool NVMeofGwMon::get_gw_by_addr(const entity_addr_t &sub_addr,
      NvmeGwMonStates& gw_created_map = created_map_pair.second;
      for (auto& gw_created_pair: gw_created_map) {
        gw_id = gw_created_pair.first;
-       if ((gw_created_pair.second.availability !=
-          gw_availability_t::GW_CREATED) &&
+       if (/*(gw_created_pair.second.availability !=
+          gw_availability_t::GW_CREATED) &&*/
           (gw_created_pair.second.addr_vect == entity_addrvec_t(sub_addr))) {
          dout(10) << "found gw-vect " << gw_created_pair.second.addr_vect
                << " GW " << gw_id << " group-key " << group_key <<  dendl;
