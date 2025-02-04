@@ -17,11 +17,12 @@ from threading import Event
 
 from ceph.deployment.service_spec import PrometheusSpec
 from cephadm.cert_mgr import CertMgr
+from cephadm.tlsobject_store import TLSObjectScope
 
 import string
 from typing import List, Dict, Optional, Callable, Tuple, TypeVar, \
     Any, Set, TYPE_CHECKING, cast, NamedTuple, Sequence, \
-    Awaitable, Iterator
+    Awaitable, Iterator, Union
 
 import datetime
 import os
@@ -53,7 +54,7 @@ from mgr_module import (
     NotifyType,
     MonCommandFailed,
 )
-from mgr_util import build_url
+from mgr_util import build_url, verify_cacrt_content, ServerConfigException
 import orchestrator
 from orchestrator.module import to_format, Format
 
@@ -85,7 +86,6 @@ from .inventory import (
     ClientKeyringSpec,
     TunedProfileStore,
     NodeProxyCache,
-    CertKeyStore,
     OrchSecretNotFound,
 )
 from .upgrade import CephadmUpgrade
@@ -407,6 +407,28 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             desc='Log all refresh metadata. Includes daemon, device, and host info collected regularly. Only has effect if logging at debug level'
         ),
         Option(
+            'certificate_automated_rotation_enabled',
+            type='bool',
+            default=False,
+            desc='This flag controls whether cephadm automatically rotates certificates upon expiration.',
+        ),
+        Option(
+            'certificate_duration_days',
+            type='int',
+            default=(3 * 365),
+            desc='Specifies the duration of self certificates generated and signed by cephadm root CA',
+            min=90,
+            max=(10 * 365)
+        ),
+        Option(
+            'certificate_renewal_threshold_days',
+            type='int',
+            default=30,
+            desc='Specifies the lead time in days to initiate certificate renewal before expiration.',
+            min=10,
+            max=90
+        ),
+        Option(
             'secure_monitoring_stack',
             type='bool',
             default=False,
@@ -539,6 +561,9 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
             self.oob_default_addr = ''
             self.ssh_keepalive_interval = 0
             self.ssh_keepalive_count_max = 0
+            self.certificate_duration_days = 0
+            self.certificate_renewal_threshold_days = 0
+            self.certificate_automated_rotation_enabled = False
 
         self.notify(NotifyType.mon_map, None)
         self.config_notify()
@@ -588,9 +613,6 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         self.tuned_profiles.load()
 
         self.tuned_profile_utils = TunedProfileUtils(self)
-
-        self.cert_key_store = CertKeyStore(self)
-        self.cert_key_store.load()
 
         self.cert_mgr = CertMgr(self, self.get_mgr_ip())
 
@@ -3121,42 +3143,137 @@ Then run the following:
                 'certificate': self.cert_mgr.get_root_ca()}
 
     @handle_orch_error
-    def cert_store_cert_ls(self) -> Dict[str, Any]:
-        return self.cert_key_store.cert_ls()
+    def cert_store_cert_ls(self, show_details: bool = False) -> Dict[str, Any]:
+        return self.cert_mgr.cert_ls(show_details)
+
+    @handle_orch_error
+    def cert_store_entity_ls(self) -> List[Union[str, Tuple[str, str]]]:
+        return self.cert_mgr.entity_ls()
+
+    @handle_orch_error
+    def cert_store_reload(self) -> str:
+        self.cert_mgr.load()
+        return "OK"
+
+    @handle_orch_error
+    def cert_store_cert_check(self) -> List[str]:
+        report = []
+        for cert_info, _ in self.cert_mgr.get_problematic_certificates():
+            target = f' ({cert_info.target})' if cert_info.target else ''
+            cert_details = f"'{cert_info.cert_name}{target}'"
+            if not cert_info.is_valid:
+                if 'expired' in cert_info.error_info.lower():
+                    report.append(f'Certificate {cert_details} has expired.')
+                else:
+                    report.append(f'Invalid certificate {cert_details}: {cert_info.error_info}.')
+            elif cert_info.is_close_to_expiration:
+                report.append(f'Certificate {cert_details} is close to expiration. Remaining days: {cert_info.days_to_expiration}.')
+        return report
 
     @handle_orch_error
     def cert_store_key_ls(self) -> Dict[str, Any]:
-        return self.cert_key_store.key_ls()
+        return self.cert_mgr.key_ls()
 
     @handle_orch_error
     def cert_store_get_cert(
         self,
-        entity: str,
+        cert_name: str,
         service_name: Optional[str] = None,
         hostname: Optional[str] = None,
         no_exception_when_missing: bool = False
     ) -> str:
-        cert = self.cert_key_store.get_cert(entity, service_name or '', hostname or '')
+        cert = self.cert_mgr.get_cert(cert_name, service_name or '', hostname or '')
         if not cert:
             if no_exception_when_missing:
                 return ''
-            raise OrchSecretNotFound(entity=entity, service_name=service_name, hostname=hostname)
+            raise OrchSecretNotFound(entity=cert_name, service_name=service_name, hostname=hostname)
         return cert
 
     @handle_orch_error
     def cert_store_get_key(
         self,
-        entity: str,
+        key_name: str,
         service_name: Optional[str] = None,
         hostname: Optional[str] = None,
         no_exception_when_missing: bool = False
     ) -> str:
-        key = self.cert_key_store.get_key(entity, service_name or '', hostname or '')
+        key = self.cert_mgr.get_key(key_name, service_name or '', hostname or '')
         if not key:
             if no_exception_when_missing:
                 return ''
-            raise OrchSecretNotFound(entity=entity, service_name=service_name, hostname=hostname)
+            raise OrchSecretNotFound(entity=key_name, service_name=service_name, hostname=hostname)
         return key
+
+    @handle_orch_error
+    def cert_store_set_pair(
+        self,
+        cert: str,
+        key: str,
+        entity: str,
+        service_name: str = "",
+        hostname: str = "",
+        force: bool = False
+    ) -> str:
+        target = service_name or hostname
+        entities = self.cert_mgr.entity_ls()
+        if entity in entities:
+            cert_info = self.cert_mgr.check_certificate_state(entity, target, cert, key)
+            if force or (cert_info.is_valid and not cert_info.is_close_to_expiration):
+                cert_names = self.cert_mgr.list_entity_known_certificates(entity)
+                if len(cert_names) == 1:
+                    cert_name = cert_names[0]
+                    key_name = cert_name.replace('_cert', '_key')
+                    scope = self.cert_mgr.get_cert_scope(cert_name)
+
+                    if scope == TLSObjectScope.HOST and not hostname:
+                        raise OrchestratorError(f"Certificate for '{entity}' is bound to a host. Please specify the host with --hostname.")
+                    elif scope == TLSObjectScope.SERVICE and not service_name:
+                        raise OrchestratorError(f"Certificate for '{entity}' is bound to a service. Please specify the service with --service-name.")
+                    elif scope == TLSObjectScope.UNKNOWN:
+                        raise OrchestratorError(f"Unknown certificate '{cert_name}'. Please user 'ceph orch certmgr cert ls' to list all the supported certificates.")
+
+                    self.cert_mgr.save_cert(cert_name, cert, service_name, hostname, True)
+                    self.cert_mgr.save_key(key_name, key, service_name, hostname, True)
+                    return "Certficate/key pair set correctly"
+                else:
+                    raise OrchestratorError(f"Entity '{entity}' has many certificates, plz specify which one from the list: {cert_names}")
+            else:
+                if cert_info.is_close_to_expiration:
+                    raise OrchestratorError(f"Certififcate is close to its expiration date ({cert_info.days_to_expiration } remaining days).")
+                else:
+                    raise OrchestratorError(f"Invalid certificate: {cert_info.error_info}")
+        else:
+            raise OrchestratorError(f"Invalid entity: {entity}. Please use 'ceph orch certmgr entity ls' to list valid entities.")
+
+    @handle_orch_error
+    def cert_store_set_cert(
+        self,
+        cert: str,
+        cert_name: str,
+        service_name: Optional[str] = None,
+        hostname: Optional[str] = None,
+    ) -> str:
+
+        try:
+            days_to_expiration = verify_cacrt_content(cert)
+            if days_to_expiration < self.certificate_renewal_threshold_days:
+                raise OrchestratorError(f'Error: Certificate is about to expire (Remaining days: {days_to_expiration})')
+        except ServerConfigException as e:
+            raise OrchestratorError(f'Error: Invalid certificate for {cert_name}: {e}')
+
+        self.cert_mgr.save_cert(cert_name, cert, service_name, hostname, True)
+        return f'Certificate for {cert_name} set correctly'
+
+    @handle_orch_error
+    def cert_store_set_key(
+        self,
+        key: str,
+        key_name: str,
+        service_name: Optional[str] = None,
+        hostname: Optional[str] = None,
+    ) -> str:
+        self.cert_mgr.save_key(key_name, key, service_name, hostname, True)
+        return f'Key for {key_name} set correctly'
 
     @handle_orch_error
     def apply_mon(self, spec: ServiceSpec) -> str:
@@ -3302,6 +3419,15 @@ Then run the following:
     def set_health_warning(self, name: str, summary: str, count: int, detail: List[str]) -> None:
         self.health_checks[name] = {
             'severity': 'warning',
+            'summary': summary,
+            'count': count,
+            'detail': detail,
+        }
+        self.set_health_checks(self.health_checks)
+
+    def set_health_error(self, name: str, summary: str, count: int, detail: List[str]) -> None:
+        self.health_checks[name] = {
+            'severity': 'error',
             'summary': summary,
             'count': count,
             'detail': detail,
