@@ -1061,14 +1061,16 @@
   ...
 }
 
-{
-  ignore *all* ceph-mgr python crap.  this is overkill, but better than nothing
-  Memcheck:Leak
-  match-leak-kinds: all
-  ...
-  fun:Py*
-  ...
-}
+#{
+#  ignore *all* ceph-mgr python crap.  this is overkill, but better than nothing
+#  Memcheck:Leak
+#  match-leak-kinds: all
+#  ...
+#  fun:Py*
+#  ...
+#}
+
+
 
 {
   something in glibc
@@ -1114,4 +1116,65 @@
    ...
    fun:_dl_init
    ...
+}
+
+
+# new mgr supprstion
+{
+   StackStringStream false positive leak dctor 
+   Memcheck:Leak
+   match-leak-kinds: possible
+   ...
+   fun:_ZNSt6vectorISt10unique_ptrI17StackStringStreamILm4096EESt14default_deleteIS2_EESaIS5_EE12emplace_backIJS5_EEERS5_DpOT_.constprop.0.isra.0
+   fun:_ZN23CachedStackStringStreamD1Ev
+   fun:UnknownInlinedFun
+   fun:_ZN6librbd3api9NamespaceINS_8ImageCtxEE4listERN8librados7v14_2_05IoCtxEPSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaISE_EE
+   fun:rbd_namespace_list
+   fun:__pyx_pf_3rbd_3RBD_110namespace_list
+   fun:__pyx_pw_3rbd_3RBD_111namespace_list
+   ...
+}
+
+{
+   md_config_t hold cache, not a leak
+   Memcheck:Leak
+   match-leak-kinds: possible
+   fun:posix_memalign
+   fun:UnknownInlinedFun
+   fun:_ZN4ceph6buffer7v15_2_04list19refill_append_spaceEj
+   fun:_ZN4ceph6buffer7v15_2_04list6appendEPKcj
+   fun:UnknownInlinedFun
+   fun:UnknownInlinedFun
+   fun:_ZN11md_config_t15get_defaults_blERK12ConfigValuesPN4ceph6buffer7v15_2_04listE
+   ...
+}
+
+{
+   _dl_init leaks supprstion
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   ...
+   fun:call_init
+   fun:call_init
+   fun:_dl_init
+   fun:_dl_catch_exception
+   ...
+   fun:PyImport_ImportModuleLevelObject
+   ...
+}
+
+{
+   PyModule config leak supprstion
+   Memcheck:Leak
+   match-leak-kinds: possible
+   fun:malloc
+   fun:PyObject_Malloc
+   fun:PyFloat_FromDouble
+   fun:PyFloat_GetInfo
+   ...
+   fun:Py_InitializeFromConfig
+   fun:_ZN16PyModuleRegistry4initEv
+   fun:_ZN10MgrStandby4initEv
+   fun:main
 }
