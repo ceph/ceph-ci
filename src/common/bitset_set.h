@@ -1,13 +1,27 @@
-//
-/* The standard bitset library does not behave like a "std::set", making it
- * hard to use as a drop-in replace.  This templated class is intended to behave
- * like a std::set() with the restriction that it can only store values less
- * than N. The contents is stored as a bitset for efficiency and there are some
- * extensions (such as insert_range) that exploit this implementations, however
- * the main intent is that this is a drop-in replacement for std::set.
+// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
+// vim: ts=8 sw=2 smarttab
+/*
+ * Ceph - scalable distributed file system
  *
- * The Key type provided must implement pre-increment and cast-to-int operators.
- * Any int casts should sufficient.
+ * Copyright (C) 2024 IBM
+ *
+ * Author: Alex Ainscow
+ *
+ * This is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License version 2.1, as published by the Free Software
+ * Foundation.  See file COPYING.
+ */
+
+/* The standard bitset library does not behave like a "std::set", making it
+ * hard to use as a drop-in replacement. This templated class is intended to
+ * behave like a std::set() with the restriction that it can only store values
+ * less than N. The contents is stored as a bitset for efficiency and there are
+ * some extensions (such as insert_range) that exploit the implementation,
+ * however the main intent is that this is a drop-in replacement for std::set.
+ *
+ * The Key must cast to/from int8_t unambiguously and support the pre-increment
+ * operator.
 */
 
 #pragma once
@@ -91,13 +105,19 @@ private:
   const_iterator _end;
 
 public:
+
+  /** default constructor */
   bitset_set() : _end(this, MAX) { clear(); }
+  /** Copy constructor */
   bitset_set(const bitset_set& other) : _end(this, MAX)
   {
     copy(other);
   }
-  bitset_set(bitset_set&& other) : bitset_set(other)
+  /** Move constructor (copies) */
+  bitset_set(bitset_set&& other) noexcept : bitset_set(other)
   {}
+
+  /** Construct from compatible iterators */
   template< class InputIt >
   bitset_set( const InputIt first, const InputIt last ) : bitset_set()
   {
@@ -105,10 +125,13 @@ public:
       emplace(*it);
     }
   }
+  /** Constructor for initializer lists (mini_flat_map{1,2}) */
   bitset_set(const std::initializer_list<Key> init) : bitset_set(init.begin(), init.end())
   {}
+  /** Convenience utility for converting from a std::set */
   bitset_set(const std::set<Key> &std_set) : bitset_set(std_set.begin(), std_set.end())
   {}
+  /** Convenience utility for converting from a std::set<int> */
   bitset_set(const std::set<int> &std_set) : bitset_set(std_set.begin(), std_set.end())
   {}
 
@@ -129,8 +152,13 @@ public:
    * must be constructed, so the int value can be inserted.  The key is
    * immediately discarded.
    *
-   * This also does not return an const_iterator, as this was not needed by any
-   * client.
+   * Unlike std::set, this does not return a const_iterator, as this was not
+   * needed by any clients.
+   *
+   * This is useful as a drop-in-replacement or where this template is used
+   * in another template.
+   *
+   * Where possible, insert should be used rather than emplace.
    */
   template< class... Args >
   std::pair<const_iterator, bool> emplace(Args&&... args)
@@ -141,11 +169,15 @@ public:
     return std::make_pair(const_iterator(this, k), add);
   }
 
+  /** erase key from set. Unlike std::set does not return anything */
   void erase(const Key k) {
     ceph_assert(k < MAX);
     words[k / BITS_PER_UINT64] &= ~(1UL << (k % BITS_PER_UINT64));
   }
 
+  /** Efficiently insert a range of values. When N is small, this is
+   * essentially an O(1) algorithm, although technically it is O(N)
+   */
   void insert_range(const Key start, int length)
   {
     int start_word = start / BITS_PER_UINT64;
@@ -163,6 +195,9 @@ public:
     }
   }
 
+  /** Efficiently erase a range of values. When N is small, this is
+   * essentially an O(1) algorithm, although technically it is O(N)
+   */
   void erase_range(const Key start, int length)
   {
     int start_word = start / BITS_PER_UINT64;
@@ -180,12 +215,14 @@ public:
     }
   }
 
+  /** Clear all entries from list */
   void clear() {
     for (size_t i = 0; i < WORDS; ++i) {
       words[i] = 0;
     }
   }
 
+  /** @return true if there are no keys in the container */
   bool empty() const {
     bool empty = true;
     for (size_t i = 0; i < WORDS; ++i) {
@@ -197,22 +234,31 @@ public:
     return empty;
   }
 
+  /** @return true if the container contains Key k. */
   bool contains(Key k) const
   {
     ceph_assert(k < MAX);
     return (words[k / BITS_PER_UINT64] & 1UL << (k % BITS_PER_UINT64));
   }
 
+  /** @return the count of matching keys in the container. Either returns 0 or 1
+   */
   int count(Key k) const {
     return contains(k) ? 1 : 0;
   }
 
+  /** @return a const_iterator to the specified key, or end if it does not
+   * exist.  O(1) complexity.
+   */
   const_iterator find( const Key& k ) const
   {
     if (contains(k)) return const_iterator(this, k);
     return end();
   }
 
+  /** @return number of keys in the container. O(1) complexity on most
+   * modern CPUs.
+   */
   size_t size() const {
     size_t count = 0;
     for (size_t i = 0; i < WORDS; ++i) {
@@ -221,32 +267,42 @@ public:
     return count;
   }
 
-  size_t max_size() { return MAX; }
+  /** @return maximum size of set  */
+  size_t max_size() const { return MAX; }
 
+  /** Utility for encode/decode to allow serialisations */
   void bound_encode(size_t& p) const {
     for (size_t i = 0 ; i < WORDS; ++i) {
       denc_varint(words[i], p);
     }
   }
+  /** Utility for encode/decode to allow serialisations */
   void encode(ceph::buffer::list::contiguous_appender &bl) const {
     for (size_t i = 0 ; i < WORDS; ++i) {
       denc_varint(words[i], bl);
     }
   }
+  /** Utility for encode/decode to allow serialisations */
   void decode(ceph::buffer::ptr::const_iterator &bl) {
     for (size_t i = 0 ; i < WORDS; ++i) {
       denc_varint(words[i], bl);
     }
   }
 
-  // Not possible to modify the keys on the fly, so only const.
+  /** @return begin const_iterator. There is no non-const iterator */
   const_iterator begin() const {
     return const_iterator(this);
   }
+  /** @return begin const_iterator. There is no non-const iterator */
   const_iterator cbegin() const { return begin(); }
+  /** @return begin const_iterator. There is no non-const iterator */
   const_iterator end() const { return _end; }
+  /** @return begin const_iterator. There is no non-const iterator */
   const_iterator cend() const { return _end; }
 
+  /** Utility for implemting copy operators.  Not intented to be used
+   * externally, although it is safe to do so
+   */
   void copy(const bitset_set &other)
   {
     for (size_t i = 0; i < WORDS; ++i) {
@@ -254,19 +310,22 @@ public:
     }
   }
 
+  /** Assign-with-copy operator */
   bitset_set &operator=(const bitset_set& other)
   {
     copy(other);
     return *this;
   }
 
-  bitset_set &operator=(bitset_set&& other)
+  /** Assign with move operator */
+  bitset_set &operator=(bitset_set&& other) noexcept
   {
     copy(other);
     return *this;
   }
 
-  void swap(bitset_set &other)
+  /** Swap contents with other. */
+  void swap(bitset_set &other) noexcept
   {
     bitset_set tmp(other);
     for (size_t i = 0 ; i < WORDS; ++i) {
@@ -275,6 +334,10 @@ public:
     }
   }
 
+  /** Returns true if other contains a subset of the keys in this container.
+   *
+   * Useful to replace std::includes if comparing complete sets
+   */
   bool includes(const bitset_set &other) const
   {
     for (size_t i = 0; i < WORDS; ++i) {
@@ -283,6 +346,7 @@ public:
     return true;
   }
 
+  /** Standard copy operator */
   friend bool operator==( const bitset_set& lhs, const bitset_set& rhs )
   {
     for (size_t i = 0 ; i < WORDS; ++i) {
@@ -291,6 +355,7 @@ public:
     return true;
   }
 
+  /** Standard ostream operator */
   friend std::ostream& operator<<(std::ostream& lhs, const bitset_set& rhs)
   {
     int c = 0;
@@ -304,6 +369,11 @@ public:
     return lhs;
   }
 
+  /** returns a bitset_set with the elements from lhs which are not found in rhs
+   *
+   * Useful to replace calls to std::difference which looked at the complete
+   * sets.
+   */
   static bitset_set difference(const bitset_set& lhs, const bitset_set& rhs)
   {
     bitset_set res;
@@ -313,6 +383,11 @@ public:
     return res;
   }
 
+  /** returns a bitset_set with the elements from lhs which are found in rhs
+   *
+   * Useful to replace calls to std::intersection which looked at the complete
+   * sets.
+   */
   static bitset_set intersection(const bitset_set& lhs, const bitset_set& rhs)
   {
     bitset_set res;
@@ -322,6 +397,7 @@ public:
     return res;
   }
 
+  /** Spaceship operator! Woosh... */
   friend std::strong_ordering operator<=>(const bitset_set &lhs, const bitset_set &rhs)
   {
     for (size_t i = 0 ; i < WORDS; ++i) {
