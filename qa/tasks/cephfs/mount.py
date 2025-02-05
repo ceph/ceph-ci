@@ -21,7 +21,7 @@ from tasks.cephfs.filesystem import Filesystem
 
 log = logging.getLogger(__name__)
 
-UMOUNT_TIMEOUT = 300
+UMOUNT_TIMEOUT = 36000
 
 
 class CephFSMountBase(object):
