@@ -1178,7 +1178,7 @@ class OrchestratorCli(OrchestratorClientMixin, MgrModule,
         if format != Format.plain:
             return HandleCommandResult(stdout=to_format(entity_ls, format, many=False, cls=None))
         else:
-            result_str = f'{entity_ls}'
+            result_str = yaml.dump(entity_ls, default_flow_style=False, sort_keys=False)
             return HandleCommandResult(stdout=result_str)
 
     @_cli_read_command('orch certmgr cert check')

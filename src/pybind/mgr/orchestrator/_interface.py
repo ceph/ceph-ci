@@ -563,7 +563,7 @@ class Orchestrator(object):
     def cert_store_cert_ls(self, show_details: bool = False) -> OrchResult[Dict[str, Any]]:
         raise NotImplementedError()
 
-    def cert_store_entity_ls(self) -> OrchResult[List[Union[str, Tuple[str, str]]]]:
+    def cert_store_entity_ls(self) -> OrchResult[Dict[Any, Dict[str, List[str]]]]:
         raise NotImplementedError()
 
     def cert_store_reload(self) -> OrchResult[str]:

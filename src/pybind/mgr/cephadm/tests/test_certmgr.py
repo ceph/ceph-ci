@@ -296,7 +296,6 @@ class TestCertMgr(object):
 
     @mock.patch("cephadm.module.CephadmOrchestrator.set_store")
     def test_tlsobject_store_save_cert(self, _set_store, cephadm_module: CephadmOrchestrator):
-        cephadm_module.cert_mgr._init_tlsobject_store()
 
         rgw_frontend_rgw_foo_host2_cert = 'fake-rgw-cert'
         nvmeof_client_cert = 'fake-nvmeof-client-cert'
@@ -324,7 +323,6 @@ class TestCertMgr(object):
 
     @mock.patch("cephadm.module.CephadmOrchestrator.set_store")
     def test_tlsobject_store_cert_ls(self, _set_store, cephadm_module: CephadmOrchestrator):
-        cephadm_module.cert_mgr._init_tlsobject_store()
 
         def get_generated_cephadm_cert_info_1():
             return {
@@ -446,7 +444,6 @@ class TestCertMgr(object):
 
     @mock.patch("cephadm.module.CephadmOrchestrator.set_store")
     def test_tlsobject_store_save_key(self, _set_store, cephadm_module: CephadmOrchestrator):
-        cephadm_module.cert_mgr._init_tlsobject_store()
 
         grafana_host1_key = 'fake-grafana-host1-key'
         grafana_host2_key = 'fake-grafana-host2-key'
@@ -471,7 +468,6 @@ class TestCertMgr(object):
 
     @mock.patch("cephadm.module.CephadmOrchestrator.set_store")
     def test_tlsobject_store_key_ls(self, _set_store, cephadm_module: CephadmOrchestrator):
-        cephadm_module.cert_mgr._init_tlsobject_store()
 
         expected_ls = {
             'grafana_key': {},
@@ -498,7 +494,6 @@ class TestCertMgr(object):
 
     @mock.patch("cephadm.module.CephadmOrchestrator.get_store_prefix")
     def test_tlsobject_store_load(self, _get_store_prefix, cephadm_module: CephadmOrchestrator):
-        cephadm_module.cert_mgr._init_tlsobject_store()
 
         rgw_frontend_rgw_foo_host2_cert = 'fake-rgw-cert'
         grafana_host1_key = 'fake-grafana-host1-cert'
@@ -539,7 +534,6 @@ class TestCertMgr(object):
         assert cephadm_module.cert_mgr.key_store.known_entities['nvmeof_encryption_key']['nvmeof.foo'] == PrivKey(nvmeof_encryption_key)
 
     def test_tlsobject_store_get_cert_key(self, cephadm_module: CephadmOrchestrator):
-        cephadm_module.cert_mgr._init_tlsobject_store()
 
         rgw_frontend_rgw_foo_host2_cert = 'fake-rgw-cert'
         nvmeof_client_cert = 'fake-nvmeof-client-cert'
@@ -581,7 +575,6 @@ class TestCertMgr(object):
             cephadm_module.cert_mgr.get_key('grafana_key')
 
     def test_tlsobject_store_rm_cert(self, cephadm_module: CephadmOrchestrator):
-        cephadm_module.cert_mgr._init_tlsobject_store()
 
         # Save some certificates and ensure certificates are present
         cephadm_module.cert_mgr.save_cert('rgw_frontend_ssl_cert', 'fake-rgw-cert', service_name='rgw.foo', user_made=True)
@@ -596,7 +589,6 @@ class TestCertMgr(object):
         assert cephadm_module.cert_mgr.get_cert('nvmeof_server_cert', service_name='nvmeof.foo') is None
 
     def test_tlsobject_store_rm_key(self, cephadm_module: CephadmOrchestrator):
-        cephadm_module.cert_mgr._init_tlsobject_store()
 
         # Save some keys and ensure keys are present
         cephadm_module.cert_mgr.save_key('grafana_key', 'fake-grafana-host1-key', host='host1')
@@ -637,7 +629,6 @@ class TestCertMgr(object):
     def test_certificate_renewal_for_self_signed(self, _set_store, cephadm_module: CephadmOrchestrator):
         """ Test that self-signed certificates close to expiration are renewed """
         cert_mgr = cephadm_module.cert_mgr
-        cert_mgr._init_tlsobject_store()
 
         # for services with host scope
         cert_mgr.save_cert('grafana_cert', EXPIRED_CERT, host="test_host", user_made=True)

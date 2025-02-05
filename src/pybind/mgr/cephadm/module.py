@@ -22,7 +22,7 @@ from cephadm.tlsobject_store import TLSObjectScope
 import string
 from typing import List, Dict, Optional, Callable, Tuple, TypeVar, \
     Any, Set, TYPE_CHECKING, cast, NamedTuple, Sequence, \
-    Awaitable, Iterator, Union
+    Awaitable, Iterator
 
 import datetime
 import os
@@ -614,7 +614,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
 
         self.tuned_profile_utils = TunedProfileUtils(self)
 
-        self.cert_mgr = CertMgr(self, self.get_mgr_ip())
+        self._init_cert_mgr()
 
         # ensure the host lists are in sync
         for h in self.inventory.keys():
@@ -682,6 +682,28 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
            be returned instead.
         """
         return self.inventory.get_fqdn(hostname) or self.inventory.get_addr(hostname)
+
+    def _init_cert_mgr(self) -> None:
+
+        self.cert_mgr = CertMgr(self)
+
+        # register global certificates
+        self.cert_mgr.register_cert_key_pair('mgmt-gateway', 'mgmt_gw_cert', 'mgmt_gw_key', TLSObjectScope.GLOBAL)
+        self.cert_mgr.register_cert_key_pair('oauth2-proxy', 'oauth2_proxy_cert', 'oauth2_proxy_key', TLSObjectScope.GLOBAL)
+
+        # register per-service certificates
+        self.cert_mgr.register_cert_key_pair('ingress', 'ingress_ssl_cert', 'ingress_ssl_key', TLSObjectScope.SERVICE)
+        self.cert_mgr.register_cert_key_pair('iscsi', 'iscsi_ssl_cert', 'iscsi_ssl_key', TLSObjectScope.SERVICE)
+        self.cert_mgr.register_cert_key_pair('nvmeof', 'nvmeof_server_cert', 'nvmeof_server_key', TLSObjectScope.SERVICE)
+        self.cert_mgr.register_cert_key_pair('nvmeof', 'nvmeof_client_cert', 'nvmeof_client_key', TLSObjectScope.SERVICE)
+        self.cert_mgr.register_cert('nvmeof', 'nvmeof_root_ca_cert', TLSObjectScope.SERVICE)
+        self.cert_mgr.register_cert('rgw', 'rgw_frontend_ssl_cert', TLSObjectScope.SERVICE)
+        self.cert_mgr.register_key('nvmeof', 'nvmeof_encryption_key', TLSObjectScope.SERVICE)
+
+        # register per-host certificates
+        self.cert_mgr.register_cert_key_pair('grafana', 'grafana_cert', 'grafana_key', TLSObjectScope.HOST)
+
+        self.cert_mgr.init_tlsobject_store()
 
     def _get_security_config(self) -> Tuple[bool, bool, bool]:
         oauth2_proxy_enabled = len(self.cache.get_daemons_by_service('oauth2-proxy')) > 0
@@ -3136,8 +3158,8 @@ Then run the following:
         return self.cert_mgr.cert_ls(show_details)
 
     @handle_orch_error
-    def cert_store_entity_ls(self) -> List[Union[str, Tuple[str, str]]]:
-        return self.cert_mgr.entity_ls()
+    def cert_store_entity_ls(self) -> Dict[str, Dict[str, List[str]]]:
+        return self.cert_mgr.get_entities()
 
     @handle_orch_error
     def cert_store_reload(self) -> str:
@@ -3203,34 +3225,38 @@ Then run the following:
         hostname: str = "",
         force: bool = False
     ) -> str:
+
+        if entity not in self.cert_mgr.list_entities():
+            raise OrchestratorError(f"Invalid entity: {entity}. Please use 'ceph orch certmgr entity ls' to list valid entities.")
+
         target = service_name or hostname
-        entities = self.cert_mgr.entity_ls()
-        if entity in entities:
-            cert_info = self.cert_mgr.check_certificate_state(entity, target, cert, key)
-            if force or (cert_info.is_valid and not cert_info.is_close_to_expiration):
-                cert_names = self.cert_mgr.list_entity_known_certificates(entity)
-                if len(cert_names) == 1:
-                    cert_name = cert_names[0]
-                    key_name = cert_name.replace('_cert', '_key')
-                    scope = self.cert_mgr.get_cert_scope(cert_name)
-
-                    if scope == TLSObjectScope.HOST and not hostname:
-                        raise OrchestratorError(f"Certificate for '{entity}' is bound to a host. Please specify the host with --hostname.")
-                    elif scope == TLSObjectScope.SERVICE and not service_name:
-                        raise OrchestratorError(f"Certificate for '{entity}' is bound to a service. Please specify the service with --service-name.")
-                    elif scope == TLSObjectScope.UNKNOWN:
-                        raise OrchestratorError(f"Unknown certificate '{cert_name}'. Please user 'ceph orch certmgr cert ls' to list all the supported certificates.")
-
-                    self.cert_mgr.save_cert(cert_name, cert, service_name, hostname, True)
-                    self.cert_mgr.save_key(key_name, key, service_name, hostname, True)
-                    return "Certficate/key pair set correctly"
-                else:
-                    raise OrchestratorError(f"Entity '{entity}' has many certificates, plz specify which one from the list: {cert_names}")
+        cert_info = self.cert_mgr.check_certificate_state(entity, target, cert, key)
+        if not force:
+            if cert_info.is_close_to_expiration:
+                raise OrchestratorError(f"Certififcate is close to its expiration date ({cert_info.days_to_expiration } remaining days).")
             else:
-                if cert_info.is_close_to_expiration:
-                    raise OrchestratorError(f"Certififcate is close to its expiration date ({cert_info.days_to_expiration } remaining days).")
-                else:
-                    raise OrchestratorError(f"Invalid certificate: {cert_info.error_info}")
+                raise OrchestratorError(f"Invalid certificate: {cert_info.error_info}")
+
+        cert_names = self.cert_mgr.list_entity_known_certificates(entity)
+        if len(cert_names) == 1:
+
+            cert_name = cert_names[0]
+            key_name = cert_name.replace('_cert', '_key')
+            scope = self.cert_mgr.get_cert_scope(cert_name)
+
+            if scope == TLSObjectScope.HOST and not hostname:
+                raise OrchestratorError(f"Certificate for '{entity}' is bound to a host. Please specify the host with --hostname.")
+            elif scope == TLSObjectScope.SERVICE and not service_name:
+                raise OrchestratorError(f"Certificate for '{entity}' is bound to a service. Please specify the service with --service-name.")
+            elif scope == TLSObjectScope.UNKNOWN:
+                raise OrchestratorError(f"Unknown certificate '{cert_name}'. Please user 'ceph orch certmgr cert ls' to list all the supported certificates.")
+
+            self.cert_mgr.save_cert(cert_name, cert, service_name, hostname, True)
+            self.cert_mgr.save_key(key_name, key, service_name, hostname, True)
+            return "Certficate/key pair set correctly"
+
+        elif len(cert_names) > 1:
+            raise OrchestratorError(f"Entity '{entity}' has many certificates, plz specify which one from the list: {cert_names}")
         else:
             raise OrchestratorError(f"Invalid entity: {entity}. Please use 'ceph orch certmgr entity ls' to list valid entities.")
 

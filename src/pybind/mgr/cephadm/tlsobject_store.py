@@ -22,12 +22,19 @@ class TLSObjectScope(Enum):
     GLOBAL = "global"
     UNKNOWN = "unknown"
 
+    def __str__(self) -> str:
+        return self.value
+
+    def __repr__(self) -> str:
+        return self.value
+
 
 class TLSObjectStore():
 
     def __init__(self, mgr: 'CephadmOrchestrator',
                  tlsobject_class: Type[TLSObjectProtocol],
                  known_entities: Dict[TLSObjectScope, List[str]]) -> None:
+
         self.mgr: CephadmOrchestrator = mgr
         self.tlsobject_class = tlsobject_class
         all_known_entities = [item for sublist in known_entities.values() for item in sublist]
@@ -65,7 +72,7 @@ class TLSObjectStore():
         tlsobject = self.tlsobject_class(tlsobject, user_made)
         scope, target = self.get_tlsobject_scope_and_target(entity, service_name, host)
         j: Union[str, Dict[Any, Any], None] = None
-        if scope in {TLSObjectScope.SERVICE, TLSObjectScope.HOST}:
+        if scope in (TLSObjectScope.SERVICE, TLSObjectScope.HOST):
             self.known_entities[entity][target] = tlsobject
             j = {
                 key: self.tlsobject_class.to_json(self.known_entities[entity][key])
@@ -82,7 +89,7 @@ class TLSObjectStore():
         self._validate_tlsobject_entity(entity, service_name, host)
         scope, target = self.get_tlsobject_scope_and_target(entity, service_name, host)
         j: Union[str, Dict[Any, Any], None] = None
-        if scope in {TLSObjectScope.SERVICE, TLSObjectScope.HOST}:
+        if scope in (TLSObjectScope.SERVICE, TLSObjectScope.HOST):
             if entity in self.known_entities and target in self.known_entities[entity]:
                 del self.known_entities[entity][target]
                 j = {

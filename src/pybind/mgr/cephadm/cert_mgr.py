@@ -64,95 +64,54 @@ class CertMgr:
     Additionally, CertMgr provides methods for certificate management, including retrieving, saving,
     and removing certificates and keys, as well as reporting certificate health status in case of issues.
 
-    This class holds two important mappings: known_certs and known_keys. Both of them define all the known
-    certificates managed by cephadm. Each certificate/key has a pre-defined scope: Global, Host, or Service.
+    This class holds the following important mappings:
+      - known_certs
+      - known_keys
+      - entities
+
+    First ones holds all the known certificates and keys managed by cephadm. Each certificate/key has a
+    pre-defined scope: Global, Host, or Service.
 
        - Global: The same certificates is used for all the service daemons (e.g mgmt-gateway).
        - Host: Certificates specific to individual hosts within the cluster (e.g Grafana).
        - Service: Certificates tied to specific service (e.g RGW).
 
-    The cert_to_service is an inverse mapping that associates each certificate with its service. This is
-    needed trigger the corresponding service reconfiguration when updating some certificate and also when
-    setting the cert/key from CLI.
-
+    The entities mapping associates each scoped entity with its certificates. This information is needed
+    to trigger the corresponding service reconfiguration when updating some certificate and also when
+    setting the cert/key pair from CLI.
     """
 
     CEPHADM_ROOT_CA_CERT = 'cephadm_root_ca_cert'
     CEPHADM_ROOT_CA_KEY = 'cephadm_root_ca_key'
     CEPHADM_CERTMGR_HEALTH_ERR = 'CEPHADM_CERT_ERROR'
 
-    ####################################################
-    #  cephadm certmgr known Certificates section
-    known_certs = {
-        TLSObjectScope.SERVICE: [
-            'iscsi_ssl_cert',
-            'rgw_frontend_ssl_cert',
-            'ingress_ssl_cert',
-            'nvmeof_server_cert',
-            'nvmeof_client_cert',
-            'nvmeof_root_ca_cert',
-        ],
-        TLSObjectScope.HOST: [
-            'grafana_cert',
-        ],
-        TLSObjectScope.GLOBAL: [
-            'mgmt_gw_cert',
-            'oauth2_proxy_cert',
-            CEPHADM_ROOT_CA_CERT,
-        ],
-    }
-
-    ####################################################
-    #  cephadm certmgr known Keys section
-    known_keys = {
-        TLSObjectScope.SERVICE: [
-            'iscsi_ssl_key',
-            'ingress_ssl_key',
-            'nvmeof_server_key',
-            'nvmeof_client_key',
-            'nvmeof_encryption_key',
-        ],
-        TLSObjectScope.HOST: [
-            'grafana_key',
-        ],
-        TLSObjectScope.GLOBAL: [
-            'mgmt_gw_key',
-            'oauth2_proxy_key',
-            CEPHADM_ROOT_CA_KEY,
-        ],
-    }
-
-    ####################################################
-    #  inverse cert -> service mapping
-    cert_to_service = {
-        'rgw_frontend_ssl_cert': 'rgw',
-        'iscsi_ssl_cert': 'iscsi',
-        'ingress_ssl_cert': 'ingress',
-        'nvmeof_server_cert': 'nvmeof',
-        'nvmeof_client_cert': 'nvmeof',
-        'nvmeof_root_ca_cert': 'nvmeof',
-        'mgmt_gw_cert': 'mgmt-gateway',
-        'oauth2_proxy_cert': 'oauth2-proxy',
-        'grafana_cert': 'grafana',
-    }
-
-    def __init__(self,
-                 mgr: "CephadmOrchestrator",
-                 mgr_ip: str) -> None:
+    def __init__(self, mgr: "CephadmOrchestrator") -> None:
         self.mgr = mgr
-        self.mgr_ip = mgr_ip
-        self._init_tlsobject_store()
-        self._initialize_root_ca(mgr_ip)
-        self.bad_certificates: List[CertInfo] = []
+        self.known_certs: Dict[TLSObjectScope, List[str]] = {
+            TLSObjectScope.SERVICE: [],
+            TLSObjectScope.HOST: [],
+            TLSObjectScope.GLOBAL: [self.CEPHADM_ROOT_CA_CERT],
+        }
+        self.known_keys: Dict[TLSObjectScope, List[str]] = {
+            TLSObjectScope.SERVICE: [],
+            TLSObjectScope.HOST: [],
+            TLSObjectScope.GLOBAL: [self.CEPHADM_ROOT_CA_KEY],
+        }
+        self.entities: Dict[TLSObjectScope, Dict[str, List[str]]] = {
+            TLSObjectScope.SERVICE: {},
+            TLSObjectScope.HOST: {},
+            TLSObjectScope.GLOBAL: {},
+        }
 
-    def _init_tlsobject_store(self) -> None:
+    def init_tlsobject_store(self) -> None:
         self.cert_store = TLSObjectStore(self.mgr, Cert, self.known_certs)
         self.cert_store.load()
         self.key_store = TLSObjectStore(self.mgr, PrivKey, self.known_keys)
         self.key_store.load()
+        self._initialize_root_ca(self.mgr.get_mgr_ip())
 
     def load(self) -> None:
-        self._init_tlsobject_store()
+        self.init_tlsobject_store()
 
     def _initialize_root_ca(self, ip: str) -> None:
         self.ssl_certs: SSLCerts = SSLCerts(self.mgr._cluster_fsid, self.mgr.certificate_duration_days)
@@ -170,6 +129,59 @@ class CertMgr:
 
     def get_root_ca(self) -> str:
         return self.ssl_certs.get_root_cert()
+
+    def register_cert_key_pair(self, entity: str, cert_name: str, key_name: str, scope: TLSObjectScope) -> None:
+        """
+        Registers a certificate/key for a given entity under a specific scope.
+
+        :param entity: The entity (e.g., service, host) owning the certificate.
+        :param cert_name: The name of the certificate.
+        :param key_name: The name of the key.
+        :param scope: The TLSObjectScope (SERVICE, HOST, GLOBAL).
+        """
+        self.register_cert(entity, cert_name, scope)
+        self.register_key(entity, key_name, scope)
+
+    def register_cert(self, entity: str, cert_name: str, scope: TLSObjectScope) -> None:
+        """
+        Registers a certificate/key for a given entity under a specific scope.
+
+        :param entity: The entity (e.g., service, host) owning the certificate.
+        :param cert_name: The name of the certificate.
+        :param scope: The TLSObjectScope (SERVICE, HOST, GLOBAL).
+        """
+        if cert_name not in self.known_certs[scope]:
+            self.known_certs[scope].append(cert_name)
+        if entity not in self.entities[scope]:
+            self.entities[scope][entity] = []
+        self.entities[scope][entity].append(cert_name)
+
+    def register_key(self, entity: str, key_name: str, scope: TLSObjectScope) -> None:
+        """
+        Registers a certificate/key for a given entity under a specific scope.
+
+        :param entity: The entity (e.g., service, host) owning the certificate.
+        :param key_name: The name of the key.
+        :param scope: The TLSObjectScope (SERVICE, HOST, GLOBAL).
+        """
+        if key_name and key_name not in self.known_keys[scope]:
+            self.known_keys[scope].append(key_name)
+        if entity not in self.entities[scope]:
+            self.entities[scope][entity] = []
+        self.entities[scope][entity].append(key_name)
+
+    def cert_to_entity(self, cert_name: str) -> str:
+        """
+        Retrieves the entity that owns a given certificate or key name.
+
+        :param cert_name: The certificate or key name.
+        :return: The entity name if found, otherwise None.
+        """
+        for scope_entities in self.entities.values():
+            for entity, certs in scope_entities.items():
+                if cert_name in certs:
+                    return entity
+        return 'unkown'
 
     def generate_cert(
         self,
@@ -222,30 +234,35 @@ class CertMgr:
         return ls
 
     def list_entity_known_certificates(self, entity: str) -> List[str]:
-        return [cert_name for cert_name, service in self.cert_to_service.items() if service == entity]
+        """
+        Retrieves all certificates associated with a given entity.
 
-    def entity_ls(self, get_scope: bool = False) -> List[Union[str, Tuple[str, str]]]:
-        if get_scope:
-            return [(entity, self.determine_scope(entity)) for entity in set(self.cert_to_service.values())]
-        else:
-            return list(self.cert_to_service.values())
+        :param entity: The entity name.
+        :return: A list of certificate names, or None if the entity is not found.
+        """
+        for scope, entities in self.entities.items():
+            if entity in entities:
+                return entities[entity]  # Return certs for the entity
+        return []
+
+    def get_entities(self, get_scope: bool = False) -> Dict[str, Dict[str, List[str]]]:
+        return {str(scope): entities for scope, entities in self.entities.items()}
+
+    def list_entities(self) -> List[str]:
+        """
+        Retrieves a list of all registered entities across all scopes.
+        :return: A list of entity names.
+        """
+        entities: List[str] = []
+        for scope_entities in self.entities.values():
+            entities.extend(scope_entities.keys())
+        return entities
 
     def get_cert_scope(self, cert_name: str) -> TLSObjectScope:
         for scope, certificates in self.known_certs.items():
             if cert_name in certificates:
                 return scope
         return TLSObjectScope.UNKNOWN
-
-    def determine_scope(self, entity: str) -> str:
-        for cert, service in self.cert_to_service.items():
-            if service == entity:
-                if cert in self.known_certs[TLSObjectScope.SERVICE]:
-                    return TLSObjectScope.SERVICE.value
-                elif cert in self.known_certs[TLSObjectScope.HOST]:
-                    return TLSObjectScope.HOST.value
-                elif cert in self.known_certs[TLSObjectScope.GLOBAL]:
-                    return TLSObjectScope.GLOBAL.value
-        return TLSObjectScope.UNKNOWN.value
 
     def _notify_certificates_health_status(self, problematic_certificates: List[CertInfo]) -> None:
 
@@ -415,7 +432,7 @@ class CertMgr:
             if cert_info.is_close_to_expiration:
                 if self.mgr.certificate_automated_rotation_enabled and not cert_obj.user_made:
                     self._renew_self_signed_certificate(cert_info, cert_obj, cert_info.target)
-                    services_to_reconfig.add(self.cert_to_service[cert_info.cert_name])
+                    services_to_reconfig.add(self.cert_to_entity(cert_info.cert_name))
                 else:
                     certs_to_fix.append(cert_info)
             elif not cert_info.is_valid:
@@ -426,7 +443,7 @@ class CertMgr:
                     service_name, host = self.cert_store.determine_tlsobject_target(cert_info.cert_name, cert_info.target)
                     logger.info(f'Removing invalid certificate for {cert_info.cert_name} to trigger regeneration (service: {service_name}, host: {host}).')
                     self.cert_store.rm_tlsobject(cert_info.cert_name, service_name, host)
-                    services_to_reconfig.add(self.cert_to_service.get(cert_info.cert_name, 'unknown'))
+                    services_to_reconfig.add(self.cert_to_entity(cert_info.cert_name))
 
         self._notify_certificates_health_status(certs_to_fix)
 
