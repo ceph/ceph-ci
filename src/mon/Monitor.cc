@@ -3098,15 +3098,19 @@ void Monitor::get_cluster_status(stringstream &ss, Formatter *f,
     {
       size_t maxlen = 3;
       auto& service_map = mgrstatmon()->get_service_map();
-      std::map<std::string, std::set<std::string>> nvmeof_groups;
+      std::map<NvmeGroupKey, std::set<std::string>> nvmeof_services;
       for (auto& p : service_map.services) {
         if (p.first == "nvmeof") {
           auto daemons = p.second.daemons;
           for (auto& d : daemons) {
             auto group = d.second.metadata.find("group");
-            auto gw_id = d.second.metadata.find("id"); 
-            nvmeof_groups[group->second].insert(gw_id->second);
-            maxlen = std::max(maxlen, p.first.size() + group->second.size() + 3); 
+            auto pool = d.second.metadata.find("pool_name"); 
+            auto gw_id = d.second.metadata.find("id");
+            NvmeGroupKey group_key = std::make_pair(pool->second,  group->second); 
+            nvmeof_services[group_key].insert(gw_id->second);
+            maxlen = std::max(maxlen, 
+                p.first.size() + group->second.size() + pool->second.size() + 3
+              ); // nvmeof (pool.group):
           }
         } else {
           maxlen = std::max(maxlen, p.first.size());
@@ -3157,12 +3161,32 @@ void Monitor::get_cluster_status(stringstream &ss, Formatter *f,
           continue;
         }
         if (p.first == "nvmeof") {
-          for (auto& group : nvmeof_groups) {
-            ss << "    " << p.first << " (" << group.first << "): ";
-            ss << string(maxlen - p.first.size() - group.first.size() - 3, ' ');
-            ss << group.second.size() << " gateway" << (group.second.size() ? "s" : "") << " active (";
-            for (auto gw = group.second.begin(); gw != group.second.end(); ++gw){
-              if (gw != group.second.begin()) {
+          auto created_gws = nvmegwmon()->get_map().created_gws;
+          for (const auto& created_map_pair: created_gws) {
+            const auto& group_key = created_map_pair.first;
+            // const auto& group_name = group_key.second;
+            // const auto& pool_name = group_key.first;
+            const NvmeGwMonStates& gw_created_map = created_map_pair.second;
+            const int total = gw_created_map.size();
+            // const int active = nvmeof_services.size();
+
+
+            // for (const auto& gw_created_pair: gw_created_map) {
+            //   const auto& gw_id = gw_created_pair.first;
+            // }
+          // }
+          // paxos_service[PAXOS_NVMEGW]
+          // for (auto& group : nvmeof_services) {
+            auto& active_gws = nvmeof_services[group_key]; // gateways active in group
+
+            ss << "    " << p.first << " (" << group_key.first << "." << group_key.second << "): ";
+            ss << string(maxlen - p.first.size() - group_key.first.size() 
+                    - group_key.second.size() - 3, ' ');
+            // ss << group.size() << " gateway" << (group.size() ? "s" : "") << " active out of " << total << " (active: ";
+            ss << total << " gateway" << (active_gws.size() ? "s" : "") << ": " 
+               << active_gws.size() << " active (";
+            for (auto gw = active_gws.begin(); gw != active_gws.end(); ++gw){
+              if (gw != active_gws.begin()) {
 	              ss << ", ";
               }
               ss << *gw; 
