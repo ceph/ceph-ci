@@ -1883,7 +1883,8 @@ if ! grep -qs /var/lib/ceph/9b9d7609-f4d5-4aba-94c8-effa764d96c9/iscsi.daemon_id
 """
             with open('/var/lib/ceph/9b9d7609-f4d5-4aba-94c8-effa764d96c9/iscsi.daemon_id/sidecar-tcmu.run') as f:
                 contents = f.read()
-            assert contents == """#!/bin/sh
+            assert contents == """if ! grep -qs /var/lib/ceph/9b9d7609-f4d5-4aba-94c8-effa764d96c9/iscsi.daemon_id/configfs /proc/mounts; then mount -t configfs none /var/lib/ceph/9b9d7609-f4d5-4aba-94c8-effa764d96c9/iscsi.daemon_id/configfs; fi
+#!/bin/sh
 # sidecar: tcmu
 
 set -e
