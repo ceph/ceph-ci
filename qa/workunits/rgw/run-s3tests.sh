@@ -27,9 +27,9 @@ dir=tmp.s3-tests.$$
 # clone and bootstrap
 mkdir $dir
 cd $dir
-git clone https://github.com/ceph/s3-tests
+git clone https://github.com/AliMasarweh/s3-tests.git
 cd s3-tests
-git checkout ceph-$branch
+git checkout wip-alimasa-sns-cross-tenant
 S3TEST_CONF=s3tests.conf.SAMPLE tox -- -m "not fails_on_rgw and not sse_s3 and not lifecycle_expiration and not test_of_sts and not webidentity_test" -v
 
 cd ../..
