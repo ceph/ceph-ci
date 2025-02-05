@@ -92,7 +92,7 @@ struct ECCommon {
     const std::list<ec_align_t> to_read;
     const uint32_t flags = 0;
     const ECUtil::shard_extent_set_t shard_want_to_read;
-    mini_flat_map<shard_id_t, shard_read_t> shard_reads;
+    shard_id_map<shard_read_t> shard_reads;
     bool want_attrs = false;
     uint64_t object_size;
     read_request_t(
@@ -329,7 +329,7 @@ struct ECCommon {
     void get_all_avail_shards(
       const hobject_t &hoid,
       shard_id_set &have,
-      std::map<shard_id_t, pg_shard_t> &shards,
+      shard_id_map<pg_shard_t> &shards,
       bool for_recovery,
       const std::optional<std::set<pg_shard_t>>& error_shards = std::nullopt);
 
@@ -442,7 +442,7 @@ struct ECCommon {
         pg_t pgid,
         const ECUtil::stripe_info_t &sinfo,
         std::map<hobject_t, ECUtil::shard_extent_map_t>* written,
-        std::map<shard_id_t, ceph::os::Transaction> *transactions,
+        shard_id_map<ceph::os::Transaction> *transactions,
         DoutPrefixProvider *dpp,
 	const OSDMapRef& osdmap) = 0;
 

@@ -28,31 +28,31 @@ namespace ECLegacy {
       const uint64_t chunk_size;
       const unsigned int k; // Can be calculated with a division from above. Better to cache.
       const unsigned int m;
-      const std::vector<int> chunk_mapping;
-      const std::vector<unsigned int> chunk_mapping_reverse;
+      const std::vector<shard_id_t> chunk_mapping;
+      const std::vector<raw_shard_id_t> chunk_mapping_reverse;
     private:
-      static std::vector<int> complete_chunk_mapping(
-        std::vector<int> _chunk_mapping, unsigned int n)
+      static std::vector<shard_id_t> complete_chunk_mapping(
+        std::vector<shard_id_t> _chunk_mapping, unsigned int n)
       {
         unsigned int size = _chunk_mapping.size();
-        std::vector<int> chunk_mapping(n);
-        for (unsigned int i = 0; i < n; i++) {
+        std::vector<shard_id_t> chunk_mapping(n);
+        for (shard_id_t i = 0; i < n; ++i) {
           if (size > i) {
             chunk_mapping.at(i) = _chunk_mapping.at(i);
           } else {
-            chunk_mapping.at(i) = static_cast<int>(i);
+            chunk_mapping.at(i) = i;
           }
         }
         return chunk_mapping;
       }
-      static std::vector<unsigned int> reverse_chunk_mapping(
-        std::vector<int> chunk_mapping)
+      static std::vector<raw_shard_id_t> reverse_chunk_mapping(
+        std::vector<shard_id_t> chunk_mapping)
       {
         unsigned int size = chunk_mapping.size();
-        std::vector<unsigned int> reverse(size);
+        std::vector<raw_shard_id_t> reverse(size);
         std::vector<bool> used(size,false);
-        for (unsigned int i = 0; i < size; i++) {
-          int index = chunk_mapping.at(i);
+        for (raw_shard_id_t i; i < size; ++i) {
+          shard_id_t index = chunk_mapping.at(int(i));
           // Mapping must be a bijection and a permutation
           ceph_assert(!used.at(index));
           used.at(index) = true;
@@ -77,12 +77,12 @@ namespace ECLegacy {
           chunk_size(stripe_width / k),
           k(k),
           m(m),
-          chunk_mapping(complete_chunk_mapping(std::vector<int>(), k + m)),
+          chunk_mapping(complete_chunk_mapping(std::vector<shard_id_t>(), k + m)),
           chunk_mapping_reverse(reverse_chunk_mapping(chunk_mapping)) {
         ceph_assert(stripe_width % k == 0);
       }
       stripe_info_t(unsigned int k, unsigned int m, uint64_t stripe_width,
-                    std::vector<int> _chunk_mapping)
+                    std::vector<shard_id_t> _chunk_mapping)
         : stripe_width(stripe_width),
           chunk_size(stripe_width / k),
           k(k),
@@ -109,10 +109,10 @@ namespace ECLegacy {
       unsigned int get_k_plus_m() const {
         return k + m;
       }
-      int get_shard(unsigned int raw_shard) const {
-        return chunk_mapping[raw_shard];
+      shard_id_t get_shard(raw_shard_id_t raw_shard) const {
+        return chunk_mapping[int(raw_shard)];
       }
-      unsigned int get_raw_shard(int shard) const {
+      raw_shard_id_t get_raw_shard(shard_id_t shard) const {
         return chunk_mapping_reverse[shard];
       }
       uint64_t logical_to_prev_chunk_offset(uint64_t offset) const {
@@ -229,7 +229,7 @@ namespace ECLegacy {
       void decode(ceph::buffer::list::const_iterator &bl);
       void dump(ceph::Formatter *f) const;
       static void generate_test_instances(std::list<HashInfo*>& o);
-      uint32_t get_chunk_hash(int shard) const {
+      uint32_t get_chunk_hash(shard_id_t shard) const {
         ceph_assert((unsigned)shard < cumulative_shard_hashes.size());
         return cumulative_shard_hashes[shard];
       }

@@ -105,7 +105,7 @@ void ECUtil::stripe_info_t::ro_range_to_shards(
     uint64_t start_adj = 0;
     uint64_t end_adj = 0;
 
-    if (raw_shard<start_shard) {
+    if (raw_shard < start_shard) {
       // Shards before the start, must start on the next chunk.
       start_adj = chunk_size;
     } else if (raw_shard == start_shard) {
@@ -121,7 +121,7 @@ void ECUtil::stripe_info_t::ro_range_to_shards(
     }
 
     auto shard = chunk_mapping.size() > raw_shard ?
-             chunk_mapping[raw_shard] : static_cast<int>(raw_shard);
+             chunk_mapping[raw_shard] : shard_id_t(raw_shard);
 
     uint64_t off = start + start_adj;
     uint64_t len =  end + end_adj - start - start_adj;
@@ -273,7 +273,7 @@ namespace ECUtil {
           out.start_offset = min(out.start_offset, range_start);
           out.end_offset = max(out.end_offset, range_end);
 
-          int raw_shard = sinfo->get_raw_shard(shard);
+          raw_shard_id_t raw_shard = sinfo->get_raw_shard(shard);
           if (raw_shard < sinfo->get_k()) {
             out.ro_start = std::min(out.ro_start, calc_ro_offset(raw_shard, range_start));
             out.ro_end = std::max(out.ro_end, calc_ro_end(raw_shard, range_end));
@@ -331,7 +331,7 @@ namespace ECUtil {
   /* Insert a buffer for a particular shard.
    * NOTE: DO NOT CALL sinfo->get_min_want_shards()
    */
-  void shard_extent_map_t::insert_in_shard(int shard, uint64_t off,
+  void shard_extent_map_t::insert_in_shard(shard_id_t shard, uint64_t off,
     const buffer::list &bl)
   {
     if (bl.length() == 0)
@@ -357,7 +357,7 @@ namespace ECUtil {
    * If the client knows the new start and end, use this interface to improve
    * performance.
    */
-  void shard_extent_map_t::insert_in_shard(int shard, uint64_t off,
+  void shard_extent_map_t::insert_in_shard(shard_id_t shard, uint64_t off,
     const buffer::list &bl, uint64_t new_start, uint64_t new_end)
   {
     if (bl.length() == 0)
@@ -438,8 +438,7 @@ namespace ECUtil {
      * e.g. appends will not provide parity buffers.
      * We should EITHER have no buffers, or have the right buffers.
      */
-    for (unsigned int i=sinfo->get_k(); i<sinfo->get_k_plus_m(); i++) {
-      int shard = sinfo->get_shard(i);
+    for (shard_id_t shard = sinfo->get_k(); shard < sinfo->get_k_plus_m(); ++shard) {
       for (auto &&[offset, length] : encode_set) {
         /* No need to recreate buffers we already have */
         if (extent_maps.contains(shard)) {
@@ -761,7 +760,7 @@ namespace ECUtil {
     return slice;
   }
 
-  void shard_extent_map_t::get_buffer(int shard, uint64_t offset, uint64_t length,
+  void shard_extent_map_t::get_buffer(shard_id_t shard, uint64_t offset, uint64_t length,
                                       buffer::list &append_to) const
   {
     const extent_map &emap = extent_maps.at(shard);
@@ -782,7 +781,7 @@ namespace ECUtil {
     }
   }
 
-  void shard_extent_map_t::get_shard_first_buffer(int shard, buffer::list &append_to) const {
+  void shard_extent_map_t::get_shard_first_buffer(shard_id_t shard, buffer::list &append_to) const {
 
     if (!extent_maps.contains(shard))
       return;
@@ -794,7 +793,7 @@ namespace ECUtil {
     append_to.append(range.get_val());
   }
 
-  uint64_t shard_extent_map_t::get_shard_first_offset(int shard) const {
+  uint64_t shard_extent_map_t::get_shard_first_offset(shard_id_t shard) const {
 
     if (!extent_maps.contains(shard))
       return invalid_offset;
@@ -806,7 +805,7 @@ namespace ECUtil {
     return range.get_off();
   }
 
-  void shard_extent_map_t::zero_pad(int shard, uint64_t offset, uint64_t length)
+  void shard_extent_map_t::zero_pad(shard_id_t shard, uint64_t offset, uint64_t length)
   {
     const extent_map &emap = extent_maps[shard];
     if (emap.contains(offset, length)) return;
@@ -832,7 +831,7 @@ namespace ECUtil {
     return shard_eset;
   }
 
-  void shard_extent_map_t::erase_shard(int shard)
+  void shard_extent_map_t::erase_shard(shard_id_t shard)
   {
     if (extent_maps.erase(shard)) {
       compute_ro_range();
@@ -851,13 +850,13 @@ namespace ECUtil {
     pair read_pair(ro_offset, ro_length);
     auto chunk_aligned_read = sinfo->ro_range_to_chunk_ro_range(read_pair);
 
-    int raw_shard = (ro_offset / chunk_size) % data_chunk_count;
+    raw_shard_id_t raw_shard((ro_offset / chunk_size) % data_chunk_count);
 
     for (uint64_t chunk_offset = chunk_aligned_read.first;
         chunk_offset < chunk_aligned_read.first + chunk_aligned_read.second;
-        chunk_offset += chunk_size, raw_shard++) {
+        chunk_offset += chunk_size, ++raw_shard) {
 
-      if (raw_shard == data_chunk_count) raw_shard = 0;
+      if ((int(raw_shard) == data_chunk_count)) raw_shard = 0;
 
       uint64_t sub_chunk_offset = std::max(chunk_offset, ro_offset);
       uint64_t sub_chunk_shard_offset = (chunk_offset / stripe_size) * chunk_size + sub_chunk_offset - chunk_offset;
@@ -914,7 +913,7 @@ namespace ECUtil {
     compute_ro_range();
   }
 
-  bool shard_extent_map_t::contains(int shard) const
+  bool shard_extent_map_t::contains(shard_id_t shard) const
   {
     return extent_maps.contains(shard);
   }

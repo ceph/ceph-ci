@@ -392,17 +392,17 @@ void PGBackend::partialwrite(
     ldpp_dout(dpp, 10) << __func__ << ": BILL_LOG_PW version=" << entry.version << " last_update=" << info->last_update << " last_complete=" << info->last_complete << dendl;
     ldpp_dout(dpp, 10) << __func__ << ": BILL_LOG_PW partial_writes_last_complete=" << info->partial_writes_last_complete << dendl;
     const pg_pool_t &pool = get_parent()->get_pool();
-    for (unsigned int shard = 0; shard < get_parent()->get_pool().size; shard++) {
-      if (pool.is_nonprimary_shard(shard_id_t(shard))) {
-        if (!entry.is_written_shard(shard_id_t(shard))) {
-	  if (!info->partial_writes_last_complete.contains(shard_id_t(shard))) {
+    for (shard_id_t shard = 0; shard < get_parent()->get_pool().size; ++shard) {
+      if (pool.is_nonprimary_shard(shard)) {
+        if (!entry.is_written_shard(shard)) {
+	  if (!info->partial_writes_last_complete.contains(shard)) {
 	    // 1st partial write since all logs were updated
             ldpp_dout(dpp, 10) << __func__ << ": BILL_LOG_PW set shard=" << shard << " entry=" << entry << dendl;
-	    info->partial_writes_last_complete[shard_id_t(shard)] = entry.version;
-	  } else if (info->partial_writes_last_complete[shard_id_t(shard)].version + 1  == entry.version.version) {
+	    info->partial_writes_last_complete[shard] = entry.version;
+	  } else if (info->partial_writes_last_complete[shard].version + 1  == entry.version.version) {
 	    // Subsequent partial write, version is sequential
             ldpp_dout(dpp, 10) << __func__ << ": BILL_LOG_PW inc shard=" << shard << " entry=" << entry << dendl;
-	    info->partial_writes_last_complete[shard_id_t(shard)] = entry.version;
+	    info->partial_writes_last_complete[shard] = entry.version;
 	  } else {
 	    // Subsequent partial write, discontiguous versions  - recovery will be required
             ldpp_dout(dpp, 10) << __func__ << ": BILL_LOG_PW discontiguous shard=" << shard << " entry=" << entry << dendl;
@@ -410,7 +410,7 @@ void PGBackend::partialwrite(
         } else {
 	  // Log updated, partial write entry not required
           ldpp_dout(dpp, 10) << __func__ << ": BILL_LOG_PW clear shard=" << shard << " entry=" << entry << dendl;
-          info->partial_writes_last_complete.erase(shard_id_t(shard));
+          info->partial_writes_last_complete.erase(shard);
 	}
       }
     }

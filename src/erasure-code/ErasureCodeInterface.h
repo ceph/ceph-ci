@@ -586,7 +586,7 @@ namespace ceph {
      *
      * @return vector<int> list of indices of chunks to be remapped
      */
-    virtual const std::vector<int> &get_chunk_mapping() const = 0;
+    virtual const std::vector<shard_id_t> &get_chunk_mapping() const = 0;
 
     /**
      * Decode the first **get_data_chunk_count()** **chunks** and

@@ -2692,15 +2692,12 @@ void OSDMap::_pg_to_raw_osds(
 
 int OSDMap::_pick_primary(const pg_pool_t& pool, const vector<int>& osds) const
 {
-  int shard = 0;
+  shard_id_t shard = 0;
   for (auto osd : osds) {
-    if (pool.is_nonprimary_shard(shard_id_t(shard++))) {
-      // Shard cannot be a primary
-      continue;
-    }
-    if (osd != CRUSH_ITEM_NONE) {
+    if (!pool.is_nonprimary_shard(shard) && osd != CRUSH_ITEM_NONE) {
       return osd;
     }
+    ++shard;
   }
   // PG is incomplete - pick any available OSD
   for (auto osd : osds) {

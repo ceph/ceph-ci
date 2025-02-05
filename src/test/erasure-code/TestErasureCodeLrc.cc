@@ -630,7 +630,7 @@ TEST(ErasureCodeLrc, encode_decode)
     tmp.claim_append(encoded[i]);
     encoded[i].swap(tmp);
   }
-  const vector<int> &mapping = lrc.get_chunk_mapping();
+  const vector<shard_id_t> &mapping = lrc.get_chunk_mapping();
   char c = 'A';
   for (unsigned int i = 0; i < lrc.get_data_chunk_count(); i++) {
     int j = mapping[i];
@@ -770,7 +770,7 @@ TEST(ErasureCodeLrc, encode_decode_2)
     tmp.claim_append(encoded[i]);
     encoded[i].swap(tmp);
   }
-  const vector<int> &mapping = lrc.get_chunk_mapping();
+  const vector<shard_id_t> &mapping = lrc.get_chunk_mapping();
   char c = 'A';
   for (unsigned int i = 0; i < lrc.get_data_chunk_count(); i++) {
     int j = mapping[i];

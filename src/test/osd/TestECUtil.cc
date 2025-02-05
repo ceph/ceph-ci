@@ -31,8 +31,8 @@ TEST(ECUtil, stripe_info_t_chunk_mapping)
   int k=4;
   int m=2;
   int chunk_size = 4096;
-  vector<int> forward_cm(k+m);
-  vector<int> reverse_cm(k+m);
+  vector<shard_id_t> forward_cm(k+m);
+  vector<shard_id_t> reverse_cm(k+m);
 
   std::iota(forward_cm.begin(), forward_cm.end(), 0);
   std::iota(reverse_cm.rbegin(), reverse_cm.rend(), 0);
@@ -41,13 +41,14 @@ TEST(ECUtil, stripe_info_t_chunk_mapping)
   stripe_info_t forward_sinfo2(k, m, chunk_size*k, forward_cm);
   stripe_info_t reverse_sinfo(k, m, chunk_size*k, reverse_cm);
 
-  for (int i : forward_cm) {
-    ASSERT_EQ(i, forward_sinfo1.get_shard(i));
-    ASSERT_EQ(i, forward_sinfo1.get_raw_shard(i));
-    ASSERT_EQ(i, forward_sinfo2.get_shard(i));
-    ASSERT_EQ(i, forward_sinfo2.get_raw_shard(i));
-    ASSERT_EQ(i, reverse_sinfo.get_shard(k+m-i-1));
-    ASSERT_EQ(k+m-i-1, reverse_sinfo.get_raw_shard(i));
+  for (shard_id_t shard_id : forward_cm) {
+    raw_shard_id_t raw_shard_id(shard_id);
+    ASSERT_EQ(shard_id, forward_sinfo1.get_shard(raw_shard_id));
+    ASSERT_EQ(raw_shard_id, forward_sinfo1.get_raw_shard(shard_id));
+    ASSERT_EQ(shard_id, forward_sinfo2.get_shard(raw_shard_id));
+    ASSERT_EQ(raw_shard_id, forward_sinfo2.get_raw_shard(shard_id));
+    ASSERT_EQ(shard_id, reverse_sinfo.get_shard(raw_shard_id_t(k + m - int(raw_shard_id) - 1)));
+    ASSERT_EQ(raw_shard_id_t(k + m- int(shard_id) - 1), reverse_sinfo.get_raw_shard(shard_id));
   }
 
   ASSERT_EQ(k, forward_sinfo1.get_k());
@@ -60,7 +61,7 @@ TEST(ECUtil, shard_extent_map_t)
   int k=4;
   int m=2;
   int chunk_size = 4096;
-  stripe_info_t sinfo(k, m, chunk_size*k, vector<int>(0));
+  stripe_info_t sinfo(k, m, chunk_size*k, vector<shard_id_t>(0));
 
   // insert_in_shard
   {
@@ -331,7 +332,7 @@ TEST(ECUtil, shard_extent_map_t_scenario_1)
   int k=2;
   int m=2;
   int chunk_size = 4096;
-  stripe_info_t sinfo(k, m,  chunk_size*k, vector<int>(0));
+  stripe_info_t sinfo(k, m,  chunk_size*k, vector<shard_id_t>(0));
   shard_extent_map_t semap(&sinfo);
 
   bufferlist bl;
@@ -450,7 +451,7 @@ TEST(ECUtil, shard_extent_map_t_insert_ro_buffer)
   int m=2;
   int chunk_size = 4096;
   char c = 1;
-  stripe_info_t sinfo(k, m, chunk_size*k, vector<int>(0));
+  stripe_info_t sinfo(k, m, chunk_size*k, vector<shard_id_t>(0));
   shard_extent_map_t semap(&sinfo);
 
   bufferlist bl;
@@ -502,7 +503,7 @@ TEST(ECUtil, shard_extent_map_t_insert_ro_buffer_3)
   uint64_t ro_length = 32 * 1024;
 
   char c = 5;
-  stripe_info_t sinfo(k, m, chunk_size*k, vector<int>(0));
+  stripe_info_t sinfo(k, m, chunk_size*k, vector<shard_id_t>(0));
   shard_extent_map_t semap(&sinfo);
   bufferlist ref;
   bufferlist in;

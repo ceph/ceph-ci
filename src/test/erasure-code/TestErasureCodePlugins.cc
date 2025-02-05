@@ -118,11 +118,11 @@ TEST_P(PluginTest,PartialRead)
   }
   shard_id_map<bufferlist> encoded(get_k_plus_m());
   erasure_code->encode(want_to_encode, bl, &encoded);
-  std::vector<int> chunk_mapping = erasure_code->get_chunk_mapping();
+  std::vector<shard_id_t> chunk_mapping = erasure_code->get_chunk_mapping();
   bool different = false;
-  for (unsigned int i = 0; i < get_k_plus_m(); i++) {
+  for (shard_id_t i = 0; i < get_k_plus_m(); ++i) {
     EXPECT_EQ(chunk_size, encoded[i].length());
-    unsigned int index = (chunk_mapping.size() > i) ? chunk_mapping[i] : i;
+    shard_id_t index = (chunk_mapping.size() > i) ? chunk_mapping[i] : i;
     if (i < get_k()) {
       bufferlist expects;
       expects.substr_of(bl, i * chunk_size, chunk_size);

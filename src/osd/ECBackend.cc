@@ -369,8 +369,8 @@ void ECBackend::RecoveryBackend::handle_recovery_read_complete(
   sinfo.ro_size_to_zero_mask(op.recovery_info.size, zero_mask);
 
   ECUtil::shard_extent_set_t shard_want_to_read(sinfo.get_k_plus_m());
-  for (int raw_shard = 0; raw_shard < sinfo.get_k(); raw_shard++) {
-    int shard = sinfo.get_shard(raw_shard);
+  for (raw_shard_id_t raw_shard; raw_shard < sinfo.get_k(); ++raw_shard) {
+    shard_id_t shard = sinfo.get_shard(raw_shard);
     shard_want_to_read[shard].union_of(buffer_superset);
 
     //FIXME: decode needs to be improved to interpret missing buffers as zero.
@@ -1444,7 +1444,7 @@ struct ECClassicalOp : ECCommon::RMWPipeline::Op {
     pg_t pgid,
     const ECUtil::stripe_info_t &sinfo,
     map<hobject_t, ECUtil::shard_extent_map_t>* written,
-    std::map<shard_id_t, ObjectStore::Transaction> *transactions,
+    shard_id_map<ObjectStore::Transaction> *transactions,
     DoutPrefixProvider *dpp,
     const OSDMapRef& osdmap) final
   {

@@ -199,7 +199,7 @@ void ECCommon::ReadPipeline::on_change()
 void ECCommon::ReadPipeline::get_all_avail_shards(
   const hobject_t &hoid,
   shard_id_set &have,
-  map<shard_id_t, pg_shard_t> &shards,
+  shard_id_map<pg_shard_t> &shards,
   bool for_recovery,
   const std::optional<set<pg_shard_t>>& error_shards)
 {
@@ -219,7 +219,7 @@ void ECCommon::ReadPipeline::get_all_avail_shards(
       ceph_assert(!have.count(shard));
       have.insert(shard);
       ceph_assert(!shards.count(shard));
-      shards.insert(make_pair(shard, pg_shard));
+      shards.insert(shard, pg_shard);
     }
   }
 
@@ -238,7 +238,7 @@ void ECCommon::ReadPipeline::get_all_avail_shards(
       const pg_missing_t &missing = get_parent()->get_shard_missing(pg_shard);
       if (hoid < info.last_backfill && !missing.is_missing(hoid)) {
 	have.insert(shard);
-	shards.insert(make_pair(shard, pg_shard));
+	shards.insert(shard, pg_shard);
       }
     }
 
@@ -254,7 +254,7 @@ void ECCommon::ReadPipeline::get_all_avail_shards(
 	if (error_shards && error_shards->contains(pg_shard))
 	  continue;
 	have.insert(pg_shard.shard);
-	shards.insert(make_pair(pg_shard.shard, pg_shard));
+	shards.insert(pg_shard.shard, pg_shard);
       }
     }
   }
@@ -275,7 +275,7 @@ int ECCommon::ReadPipeline::get_min_avail_to_read_shards(
   }
 
   shard_id_set have;
-  map<shard_id_t, pg_shard_t> shards;
+  shard_id_map<pg_shard_t> shards(sinfo.get_k_plus_m());
 
   get_all_avail_shards(hoid, have, shards, for_recovery, error_shards);
 
@@ -371,8 +371,7 @@ int ECCommon::ReadPipeline::get_remaining_shards(
   bool for_recovery,
   bool fast_read)
 {
-  set<int> have;
-  map<shard_id_t, pg_shard_t> shards;
+  shard_id_map<pg_shard_t> shards(sinfo.get_k_plus_m());
   set<pg_shard_t> error_shards;
   for (auto &&[shard, _] : read_result.errors) {
     error_shards.insert(shard);
@@ -530,8 +529,8 @@ void ECCommon::ReadPipeline::get_want_to_read_shards(
   }
 
   // Non-optimised version.
-  for (unsigned int raw_shard = 0; raw_shard < sinfo.get_k(); ++raw_shard) {
-    int shard = sinfo.get_shard(raw_shard);
+  for (raw_shard_id_t raw_shard; raw_shard < sinfo.get_k(); ++raw_shard) {
+    shard_id_t shard = sinfo.get_shard(raw_shard);
 
     for (auto &&read : to_read) {
       auto offset_len = sinfo.chunk_aligned_ro_range_to_shard_ro_range(read.offset, read.size);
@@ -646,7 +645,7 @@ void ECCommon::ReadPipeline::objects_read_and_reconstruct_for_rmw(
     return;
   }
 
-  map<hobject_t, set<int>> obj_want_to_read;
+  map<hobject_t, shard_id_set> obj_want_to_read;
 
   map<hobject_t, read_request_t> for_read_op;
   for (auto &&[hoid, read_request]: to_read) {
@@ -761,7 +760,7 @@ void ECCommon::RMWPipeline::cache_ready(Op &op)
     op.hoid,
     op.delta_stats);
 
-  map<shard_id_t, ObjectStore::Transaction> trans;
+  shard_id_map<ObjectStore::Transaction> trans(sinfo.get_k_plus_m());
   for (auto &&shard : get_parent()->get_acting_recovery_backfill_shards()) {
     trans[shard.shard];
   }
@@ -903,7 +902,7 @@ struct ECDummyOp : ECCommon::RMWPipeline::Op {
     pg_t pgid,
     const ECUtil::stripe_info_t &sinfo,
     map<hobject_t, ECUtil::shard_extent_map_t>* written,
-    std::map<shard_id_t, ObjectStore::Transaction> *transactions,
+    shard_id_map<ObjectStore::Transaction> *transactions,
     DoutPrefixProvider *dpp,
     const OSDMapRef& osdmap) final
   {

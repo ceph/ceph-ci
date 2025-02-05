@@ -331,7 +331,7 @@ namespace ECLegacy {
       std::min(right_chunk_index - left_chunk_index,
                (uint64_t)sinfo.get_k());
     for(uint64_t i = 0; i < distance; i++) {
-      auto raw_shard = (left_chunk_index + i) % sinfo.get_k();
+      raw_shard_id_t raw_shard((left_chunk_index + i) % sinfo.get_k());
       want_to_read->insert(sinfo.get_shard(raw_shard));
     }
   }
@@ -501,7 +501,7 @@ namespace ECLegacy {
     std::set<int> *want_to_read) const
   {
 
-    for (int i = 0; i < (int)sinfo.get_k(); ++i) {
+    for (raw_shard_id_t i; i < sinfo.get_k(); ++i) {
       want_to_read->insert(sinfo.get_shard(i));
     }
   }
@@ -565,8 +565,8 @@ namespace ECLegacy {
 	read_pipeline.sinfo.logical_to_prev_stripe_offset(aligned.first);
       uint64_t chunk_size = read_pipeline.sinfo.get_chunk_size();
       uint64_t trim_offset = 0;
-      for (auto shard : wanted_to_read) {
-	if (read_pipeline.sinfo.get_raw_shard(shard) * chunk_size <
+      for (shard_id_t shard : wanted_to_read) {
+	if (uint64_t(read_pipeline.sinfo.get_raw_shard(shard)) * chunk_size <
 	    aligned_offset_in_stripe) {
 	  trim_offset += chunk_size;
 	} else {

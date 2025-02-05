@@ -268,7 +268,7 @@ public:
     // call from parents -- get raw attrs, without any filtering for hinfo
     return PGBackend::objects_get_attrs(hoid, out);
   }
-  uint64_t object_size_to_shard_size(const uint64_t size, int shard) const override {
+  uint64_t object_size_to_shard_size(const uint64_t size, shard_id_t shard) const override {
     if (is_optimized()) return optimized.object_size_to_shard_size(size, shard);
     return legacy.object_size_to_shard_size(size); // All shards are the same size.
   }

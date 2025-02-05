@@ -204,8 +204,8 @@ public:
     return 0;
   }
 
-  const std::vector<int> &get_chunk_mapping() const override {
-    static std::vector<int> mapping;
+  const std::vector<shard_id_t> &get_chunk_mapping() const override {
+    static std::vector<shard_id_t> mapping;
     return mapping;
   }
 

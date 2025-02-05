@@ -65,11 +65,11 @@ namespace ECUtil {
 
     shard_extent_set_t(short max_shards) : map(max_shards) {}
 
-    bool contains(int shard) const { return map.contains(shard); }
+    bool contains(shard_id_t shard) const { return map.contains(shard); }
     bool empty() const { return map.empty(); }
-    void swap(shard_extent_set_t &other) { map.swap(other.map); }
+    void swap(shard_extent_set_t &other) noexcept { map.swap(other.map); }
     void clear() { map.clear(); }
-    auto erase(int shard) { return map.erase(shard); }
+    auto erase(shard_id_t shard) { return map.erase(shard); }
     auto erase(shard_id_map<extent_set>::iterator &iter) { return map.erase(iter);}
     void erase_stripe(uint64_t offset, uint64_t length) {
       for (auto it = map.begin(); it != map.end();) {
@@ -82,11 +82,11 @@ namespace ECUtil {
     auto begin() { return map.begin(); }
     auto end() const { return map.cend(); }
     auto end() { return map.end(); }
-    void emplace(int shard, extent_set &&set) { map.emplace(shard, std::move(set)); }
+    void emplace(shard_id_t shard, extent_set &&set) { map.emplace(shard, std::move(set)); }
     int shard_count() { return map.size(); }
-    extent_set &at(int shard) { return map.at(shard); }
-    const extent_set &at(int shard) const { return map.at(shard); }
-    extent_set &operator[] (int shard) { return map[shard]; }
+    extent_set &at(shard_id_t shard) { return map.at(shard); }
+    const extent_set &at(shard_id_t shard) const { return map.at(shard); }
+    extent_set &operator[] (shard_id_t shard) { return map[shard]; }
     bool operator== (shard_extent_set_t const &other) const {
       return map == other.map;
     }
@@ -144,8 +144,8 @@ namespace ECUtil {
   const pg_pool_t *pool;
   const unsigned int k; // Can be calculated with a division from above. Better to cache.
   const unsigned int m;
-  const std::vector<int> chunk_mapping;
-  const std::vector<unsigned int> chunk_mapping_reverse;
+  const std::vector<shard_id_t> chunk_mapping;
+  const std::vector<raw_shard_id_t> chunk_mapping_reverse;
 private:
   void ro_range_to_shards(
     uint64_t ro_offset,
@@ -155,11 +155,11 @@ private:
     buffer::list *bl,
     shard_extent_map_t *shard_extent_map) const;
 
-  static std::vector<int> complete_chunk_mapping(
-    std::vector<int> _chunk_mapping, unsigned int n)
+  static std::vector<shard_id_t> complete_chunk_mapping(
+    std::vector<shard_id_t> _chunk_mapping, unsigned int n)
   {
     unsigned int size = (int)_chunk_mapping.size();
-    std::vector<int> chunk_mapping(n);
+    std::vector<shard_id_t> chunk_mapping(n);
     for (unsigned int i = 0; i < n; i++) {
       if (size > i) {
         chunk_mapping.at(i) = _chunk_mapping.at(i);
@@ -169,18 +169,18 @@ private:
     }
     return chunk_mapping;
   }
-  static std::vector<unsigned int> reverse_chunk_mapping(
-    std::vector<int> chunk_mapping)
+  static std::vector<raw_shard_id_t> reverse_chunk_mapping(
+    std::vector<shard_id_t> chunk_mapping)
   {
-    unsigned int size = (int)chunk_mapping.size();
-    std::vector<unsigned int> reverse(size);
+    size_t size = chunk_mapping.size();
+    std::vector<raw_shard_id_t> reverse(size);
     std::vector<bool> used(size);
-    for (unsigned int i = 0; i < size; i++) {
-      int shard = chunk_mapping.at(i);
+    for (raw_shard_id_t raw_shard; raw_shard < size; ++raw_shard) {
+      shard_id_t shard = chunk_mapping[int(raw_shard)];
       // Mapping must be a bijection and a permutation
       ceph_assert(!used.at(shard));
       used.at(shard) = true;
-      reverse.at(shard) = i;
+      reverse.at(shard) = raw_shard;
     }
     return reverse;
   }
@@ -205,12 +205,12 @@ public:
       pool(nullptr),
       k(k),
       m(m),
-      chunk_mapping(complete_chunk_mapping(std::vector<int>(), k + m)),
+      chunk_mapping(complete_chunk_mapping(std::vector<shard_id_t>(), k + m)),
       chunk_mapping_reverse(reverse_chunk_mapping(chunk_mapping)) {
     ceph_assert(stripe_width % k == 0);
   }
   stripe_info_t(unsigned int k, unsigned int m, uint64_t stripe_width,
-		std::vector<int> _chunk_mapping)
+		std::vector<shard_id_t> _chunk_mapping)
     : stripe_width(stripe_width),
       plugin_flags(0xFFFFFFFFFFFFFFFFul), // Everything enabled for test harnesses.
       chunk_size(stripe_width / k),
@@ -222,7 +222,7 @@ public:
     ceph_assert(stripe_width % k == 0);
   }
   stripe_info_t(unsigned int k, unsigned int m, uint64_t stripe_width,
-                  pg_pool_t *pool, std::vector<int> _chunk_mapping)
+                  pg_pool_t *pool, std::vector<shard_id_t> _chunk_mapping)
       : stripe_width(stripe_width),
         plugin_flags(0xFFFFFFFFFFFFFFFFul), // Everything enabled for test harnesses.
         chunk_size(stripe_width / k),
@@ -241,20 +241,20 @@ public:
         pool(pool),
         k(k),
         m(m),
-        chunk_mapping(complete_chunk_mapping(std::vector<int>(), k + m)),
+        chunk_mapping(complete_chunk_mapping(std::vector<shard_id_t>(), k + m)),
         chunk_mapping_reverse(reverse_chunk_mapping(chunk_mapping)) {
     ceph_assert(stripe_width % k == 0);
   }
-  uint64_t object_size_to_shard_size(const uint64_t size, int shard) const {
+  uint64_t object_size_to_shard_size(const uint64_t size, shard_id_t shard) const {
     uint64_t remainder = size % get_stripe_width();
     uint64_t shard_size = (size - remainder) / k;
-    unsigned int raw_shard = get_raw_shard(shard);
+    raw_shard_id_t raw_shard = get_raw_shard(shard);
     if (raw_shard >= get_k()) {
       // coding parity shards have same size as data shard 0
       raw_shard = 0;
     }
-    if (remainder > raw_shard * get_chunk_size()) {
-      remainder -= raw_shard * get_chunk_size();
+    if (remainder > uint64_t(raw_shard) * get_chunk_size()) {
+      remainder -=  uint64_t(raw_shard) * get_chunk_size();
       if (remainder > get_chunk_size()) {
 	remainder = get_chunk_size();
       }
@@ -263,7 +263,7 @@ public:
     return ECUtil::align_page_next(shard_size);
   }
 
-  uint64_t ro_offset_to_shard_offset(uint64_t ro_offset, int shard) const
+  uint64_t ro_offset_to_shard_offset(uint64_t ro_offset, shard_id_t shard) const
   {
     uint64_t full_stripes = (ro_offset / stripe_width) * chunk_size;
     int offset_shard = (ro_offset / chunk_size) % k;
@@ -306,10 +306,10 @@ public:
   unsigned int get_k_plus_m() const {
     return k + m;
   }
-  int get_shard(unsigned int raw_shard) const {
-    return chunk_mapping[raw_shard];
+  const shard_id_t get_shard(const raw_shard_id_t raw_shard) const {
+    return chunk_mapping[int(raw_shard)];
   }
-  unsigned int get_raw_shard(int shard) const
+  raw_shard_id_t get_raw_shard(shard_id_t shard) const
   {
     return chunk_mapping_reverse.at(shard);
   }
@@ -401,7 +401,7 @@ public:
 
     if (parity.empty()) return;
 
-    for (int shard : get_parity_shards()) {
+    for (shard_id_t shard : get_parity_shards()) {
       shard_extent_set[shard].union_of(parity);
     }
   }
@@ -449,7 +449,7 @@ public:
   void decode(ceph::buffer::list::const_iterator &bl);
   void dump(ceph::Formatter *f) const;
   static void generate_test_instances(std::list<HashInfo*>& o);
-  uint32_t get_chunk_hash(int shard) const {
+  uint32_t get_chunk_hash(shard_id_t shard) const {
     ceph_assert((unsigned)shard < cumulative_shard_hashes.size());
     return cumulative_shard_hashes[shard];
   }
@@ -511,13 +511,13 @@ public:
   slice_iterator begin_slice_iterator();
 
   /* This caculates the ro offset for an offset into a particular shard */
-  uint64_t calc_ro_offset(int raw_shard, int shard_offset) const {
+  uint64_t calc_ro_offset(raw_shard_id_t raw_shard, int shard_offset) const {
     int stripes = shard_offset / sinfo->chunk_size;
-    return stripes * sinfo->stripe_width + raw_shard * sinfo->chunk_size +
+    return stripes * sinfo->stripe_width + uint64_t(raw_shard) * sinfo->chunk_size +
       shard_offset % sinfo->chunk_size;
   }
 
-  uint64_t calc_ro_end(int raw_shard, int shard_offset) const {
+  uint64_t calc_ro_end(raw_shard_id_t raw_shard, int shard_offset) const {
     return calc_ro_offset(raw_shard, shard_offset - 1) + 1;
   }
 
@@ -532,7 +532,7 @@ public:
     uint64_t o_end = 0;
 
     for (auto &&[shard, emap] : extent_maps) {
-      int raw_shard = sinfo->get_raw_shard(shard);
+      raw_shard_id_t raw_shard = sinfo->get_raw_shard(shard);
       uint64_t start_off = emap.get_start_off();
       uint64_t end_off = emap.get_end_off();
       o_start = std::min(o_start, start_off);
@@ -609,13 +609,13 @@ public:
    *
    * * This method will raise an exception if the shard has no extents.
    */
-  const extent_map &get_extent_map(int shard) const {
+  const extent_map &get_extent_map(shard_id_t shard) const {
     return extent_maps.at(shard);
   }
 
   /* Return a particular extent set.
    */
-  const extent_set get_extent_set(int shard) const {
+  const extent_set get_extent_set(shard_id_t shard) const {
     return extent_maps.at(shard).get_interval_set();
   }
 
@@ -627,7 +627,7 @@ public:
     return ret;
   }
 
-  bool contains_shard(int shard) const {
+  bool contains_shard(shard_id_t shard) const {
     return extent_maps.contains(shard);
   }
 
@@ -635,8 +635,8 @@ public:
   shard_extent_map_t intersect_ro_range(uint64_t ro_offset, uint64_t ro_length) const;
   shard_extent_map_t intersect(std::optional<shard_extent_set_t> const &other) const;
   shard_extent_map_t intersect(shard_extent_set_t const &other) const;
-  void insert_in_shard(int shard, uint64_t off, const buffer::list &bl);
-  void insert_in_shard(int shard, uint64_t off, const buffer::list &bl, uint64_t new_start, uint64_t new_end);
+  void insert_in_shard(shard_id_t shard, uint64_t off, const buffer::list &bl);
+  void insert_in_shard(shard_id_t shard, uint64_t off, const buffer::list &bl, uint64_t new_start, uint64_t new_end);
   void insert_ro_zero_buffer( uint64_t ro_offset, uint64_t ro_length );
   void insert(shard_extent_map_t const &other);
   void append_zeros_to_ro_offset( uint64_t ro_offset );
@@ -644,24 +644,22 @@ public:
   extent_set get_extent_superset() const;
   int encode(ErasureCodeInterfaceRef& ec_impl, const HashInfoRef &hinfo, uint64_t before_ro_size);
   int decode(ErasureCodeInterfaceRef& ec_impl, ECUtil::shard_extent_set_t want);
-  void get_buffer(int shard, uint64_t offset, uint64_t length, buffer::list &append_to) const;
-  void get_shard_first_buffer(int shard, buffer::list &append_to) const;
-  uint64_t get_shard_first_offset(int shard) const;
-  void zero_pad(int shard, uint64_t offset, uint64_t length);
-  void zero_pad(uint64_t offset, uint64_t length);
+  void get_buffer(shard_id_t shard, uint64_t offset, uint64_t length, buffer::list &append_to) const;
+  void get_shard_first_buffer(shard_id_t shard, buffer::list &append_to) const;
+  uint64_t get_shard_first_offset(shard_id_t shard) const;
+  void zero_pad(shard_id_t shard, uint64_t offset, uint64_t length);
   bufferlist get_ro_buffer(uint64_t ro_offset, uint64_t ro_length);
   /* Returns a buffer assuming that there is a single contigious buffer
    * represented by the map. */
   bufferlist get_ro_buffer();
   shard_extent_set_t get_extent_set();
   void insert_parity_buffers();
-  void erase_shard(int shard);
+  void erase_shard(shard_id_t shard);
   shard_id_map<bufferlist> slice(int offset, int length) const;
   shard_extent_map_t slice_map(int offset, int length) const;
   std::string debug_string(uint64_t inteval, uint64_t offset) const;
   void erase_stripe(uint64_t offset, uint64_t length);
-  bool contains(int shard) const;
-  bool contains(int shard, extent_set other_eset) const;
+  bool contains(shard_id_t shard) const;
   bool contains(std::optional<shard_extent_set_t> const &other) const;
   bool contains(shard_extent_set_t const &other) const;
   void pad_and_rebuild_to_page_align();
@@ -725,7 +723,7 @@ struct log_entry_t {
    const pg_shard_t &shard,
    const shard_extent_map_t &extent_map) :
   event(event), shard(shard),
-  io(extent_map.contains(shard.shard.id)?
+  io(extent_map.contains(shard.shard)?
     extent_map.get_extent_map(shard.shard.id).get_interval_set():
     extent_set()) {}
 

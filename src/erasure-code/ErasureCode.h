@@ -32,7 +32,7 @@ namespace ceph {
   public:
     static const unsigned SIMD_ALIGN;
 
-    std::vector<int> chunk_mapping;
+    std::vector<shard_id_t> chunk_mapping;
     ErasureCodeProfile _profile;
 
     // for CRUSH rule
@@ -103,7 +103,7 @@ namespace ceph {
 			const mini_flat_map<shard_id_t, bufferlist> &chunks,
 			mini_flat_map<shard_id_t, bufferlist> *decoded);
 
-    const std::vector<int> &get_chunk_mapping() const override;
+    const std::vector<shard_id_t> &get_chunk_mapping() const override;
 
     int to_mapping(const ErasureCodeProfile &profile,
 		   std::ostream *ss);
@@ -140,7 +140,7 @@ namespace ceph {
 	      std::ostream *ss);
 
   private:
-    int chunk_index(unsigned int i) const;
+    shard_id_t chunk_index(raw_shard_id_t i) const;
   };
 
 }

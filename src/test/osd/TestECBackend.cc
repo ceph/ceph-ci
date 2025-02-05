@@ -101,7 +101,7 @@ public:
   }
 
   ErasureCodeProfile _profile;
-  const std::vector<int> chunk_mapping = {}; // no remapping
+  const std::vector<shard_id_t> chunk_mapping = {}; // no remapping
   std::vector<std::pair<int, int>> default_sub_chunk = {std::pair(0,1)};
   int data_chunk_count = 4;
   int chunk_count = 6;
@@ -210,7 +210,7 @@ public:
     return 0;
   }
 
-  const vector<int> &get_chunk_mapping() const override {
+  const vector<shard_id_t> &get_chunk_mapping() const override {
     return chunk_mapping;
   }
 
@@ -715,7 +715,7 @@ TEST(ECCommon, get_min_avail_to_read_shards) {
     g_ceph_context->_conf->osd_ec_partial_reads_experimental;
   g_ceph_context->_conf->osd_ec_partial_reads_experimental = true;
 
-  ECUtil::stripe_info_t s(k, m, swidth, vector<int>(0));
+  ECUtil::stripe_info_t s(k, m, swidth, vector<shard_id_t>(0));
   ECListenerStub listenerStub;
   ASSERT_EQ(s.get_stripe_width(), swidth);
   ASSERT_EQ(s.get_chunk_size(), swidth / k);
@@ -977,7 +977,7 @@ TEST(ECCommon, shard_read_combo_tests)
     g_ceph_context->_conf->osd_ec_partial_reads_experimental;
   g_ceph_context->_conf->osd_ec_partial_reads_experimental = true;
 
-  ECUtil::stripe_info_t s(k, m, swidth, vector<int>(0));
+  ECUtil::stripe_info_t s(k, m, swidth, vector<shard_id_t>(0));
   ECListenerStub listenerStub;
   ASSERT_EQ(s.get_stripe_width(), swidth);
   ASSERT_EQ(s.get_chunk_size(), swidth/k);
@@ -1103,7 +1103,7 @@ TEST(ECCommon, get_remaining_shards)
 
   g_ceph_context->_conf->osd_ec_partial_reads_experimental = true;
 
-  ECUtil::stripe_info_t s(k, m, swidth, vector<int>(0));
+  ECUtil::stripe_info_t s(k, m, swidth, vector<shard_id_t>(0));
   ECListenerStub listenerStub;
   ASSERT_EQ(s.get_stripe_width(), swidth);
   ASSERT_EQ(s.get_chunk_size(), swidth/k);
@@ -1202,7 +1202,7 @@ TEST(ECCommon, encode)
 
   g_ceph_context->_conf->osd_ec_partial_reads_experimental = true;
 
-  ECUtil::stripe_info_t s(k, m, swidth, vector<int>(0));
+  ECUtil::stripe_info_t s(k, m, swidth, vector<shard_id_t>(0));
   ECListenerStub listenerStub;
   ASSERT_EQ(s.get_stripe_width(), swidth);
   ASSERT_EQ(s.get_chunk_size(), swidth/k);

@@ -73,7 +73,7 @@ TEST(ectransaction, two_writes_separated_misaligned_overwrite)
 
   pg_pool_t pool;
   pool.set_flag(pg_pool_t::FLAG_EC_OPTIMIZATIONS);
-  ECUtil::stripe_info_t sinfo(2, 2, 8192, &pool, std::vector<int>(0));
+  ECUtil::stripe_info_t sinfo(2, 2, 8192, &pool, std::vector<shard_id_t>(0));
   object_info_t oi;
   oi.size = 3112960;
 
@@ -107,7 +107,7 @@ TEST(ectransaction, partial_write)
 
   pg_pool_t pool;
   pool.set_flag(pg_pool_t::FLAG_EC_OPTIMIZATIONS);
-  ECUtil::stripe_info_t sinfo(2, 1, 8192, &pool, std::vector<int>(0));
+  ECUtil::stripe_info_t sinfo(2, 1, 8192, &pool, std::vector<shard_id_t>(0));
   object_info_t oi;
   oi.size = 8;
   ECTransaction::WritePlanObj plan(
@@ -143,7 +143,7 @@ TEST(ectransaction, overlapping_write_non_aligned)
 
   pg_pool_t pool;
   pool.set_flag(pg_pool_t::FLAG_EC_OPTIMIZATIONS);
-  ECUtil::stripe_info_t sinfo(2, 1, 8192, &pool, std::vector<int>(0));
+  ECUtil::stripe_info_t sinfo(2, 1, 8192, &pool, std::vector<shard_id_t>(0));
   object_info_t oi;
   oi.size = 8;
   ECTransaction::WritePlanObj plan(
@@ -180,7 +180,7 @@ TEST(ectransaction, test_appending_write_non_aligned)
 
   pg_pool_t pool;
   pool.set_flag(pg_pool_t::FLAG_EC_OPTIMIZATIONS);
-  ECUtil::stripe_info_t sinfo(2, 1, 8192, &pool, std::vector<int>(0));
+  ECUtil::stripe_info_t sinfo(2, 1, 8192, &pool, std::vector<shard_id_t>(0));
   object_info_t oi;
   oi.size = 4*4096;
   ECTransaction::WritePlanObj plan(
@@ -217,7 +217,7 @@ TEST(ectransaction, append_with_large_hole)
 
   pg_pool_t pool;
   pool.set_flag(pg_pool_t::FLAG_EC_OPTIMIZATIONS);
-  ECUtil::stripe_info_t sinfo(2, 1, 8192, &pool, std::vector<int>(0));
+  ECUtil::stripe_info_t sinfo(2, 1, 8192, &pool, std::vector<shard_id_t>(0));
   object_info_t oi;
   oi.size = 25*4096;
   ECTransaction::WritePlanObj plan(
@@ -254,7 +254,7 @@ TEST(ectransaction, test_append_not_page_aligned_with_large_hole)
 
   pg_pool_t pool;
   pool.set_flag(pg_pool_t::FLAG_EC_OPTIMIZATIONS);
-  ECUtil::stripe_info_t sinfo(2, 1, 8192, &pool, std::vector<int>(0));
+  ECUtil::stripe_info_t sinfo(2, 1, 8192, &pool, std::vector<shard_id_t>(0));
   object_info_t oi;
   oi.size = 25*4096;
   ECTransaction::WritePlanObj plan(

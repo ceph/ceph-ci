@@ -4135,7 +4135,7 @@ public:
    const version_t gen,
    const std::vector<std::pair<uint64_t, uint64_t>> &extents,
    const uint64_t object_size,
-   const std::vector<std::set<shard_id_t>> &shards) {
+   const std::vector<shard_id_set> &shards) {
     ceph_assert(can_local_rollback);
     ceph_assert(!rollback_info_completed);
     if (max_required_version < 2)

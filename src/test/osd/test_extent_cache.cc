@@ -67,7 +67,7 @@ struct Client : public ECExtentCache::BackendRead
   list<shard_extent_map_t> results;
 
   Client(uint64_t chunk_size, int k, int m, uint64_t cache_size) :
-    sinfo(k, m, k*chunk_size, vector<int>(0)),
+    sinfo(k, m, k*chunk_size, vector<shard_id_t>(0)),
     lru(cache_size), cache(*this, lru, sinfo, g_ceph_context) {};
 
   void backend_read(hobject_t _oid, const shard_extent_set_t& request,

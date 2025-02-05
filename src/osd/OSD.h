@@ -416,7 +416,7 @@ public:
   unsigned get_num_shards() const {
     return m_objecter_finishers;
   }
-  Finisher* get_objecter_finisher(int shard) {
+  Finisher* get_objecter_finisher(shard_id_t shard) {
     return objecter_finishers[shard].get();
   }
 

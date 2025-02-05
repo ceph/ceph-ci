@@ -4938,9 +4938,6 @@ void pg_log_entry_t::decode_with_checksum(ceph::buffer::list::const_iterator& p)
   this->decode(q);
 }
 
-// shard_id_set is defined in ECTypes.h, but most uses do not need encode/decode
-WRITE_CLASS_DENC(shard_id_set)
-
 void pg_log_entry_t::encode(ceph::buffer::list &bl) const
 {
   ENCODE_START(15, 4, bl);
