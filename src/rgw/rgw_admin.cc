@@ -11519,8 +11519,8 @@ next:
     int final_ret = 0;
     do {
       rgw_pubsub_topics result;
-      ret = old_ps.get_topics(dpp(), next_token, max_entries, result,
-                              next_token, null_yield);
+      ret = old_ps.get_topics_v2(dpp(), next_token, max_entries, result,
+                                 next_token, null_yield);
       if (ret < 0 && ret != -ENOENT) {
         cerr << "ERROR: could not get topics: " << cpp_strerror(-ret)
              << std::endl;
