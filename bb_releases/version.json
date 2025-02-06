@@ -1,5 +1,5 @@
 {
-    "ceph-base-version": "19.2.0",
-    "bb-version": "4",
-    "bb-patch": "topic_attrs_sasl_auth"
+    "ceph-base-version": "19.2.1",
+    "bb-version": "0",
+    "bb-patch": "squid_release"
 }
