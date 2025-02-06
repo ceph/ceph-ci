@@ -1708,7 +1708,7 @@ static void dump_inconsistent(const inconsistent_obj_t& inc,
     f.dump_bool("primary", shard_info.second.primary);
     auto shard = osd_shard.shard;
     if (shard != shard_id_t::NO_SHARD)
-      f.dump_unsigned("shard", shard);
+      f.dump_unsigned("shard", int(shard));
     dump_shard(shard_info.second, inc, f);
     f.close_section();
   }

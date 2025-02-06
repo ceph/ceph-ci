@@ -115,12 +115,12 @@ TEST_P(ParameterTest, parameter_all)
 
     do {
       for (unsigned int i = 0; i < shec->get_chunk_count(); i++) {
-	available_chunks.insert(i);
+	available_chunks.insert(shard_id_t(i));
       }
       for (unsigned int i = 0; i < shec->get_chunk_count(); i++) {
 	if (array_want_to_decode[i]) {
-	  want_to_decode.insert(i);
-	  available_chunks.erase(i);
+	  want_to_decode.insert(shard_id_t(i));
+	  available_chunks.erase(shard_id_t(i));
 	}
       }
 
@@ -156,10 +156,10 @@ TEST_P(ParameterTest, parameter_all)
   shard_id_map<int> available_chunks_with_cost(shec->get_chunk_count());
 
   for (unsigned int i = 0; i < 1; i++) {
-    want_to_decode_with_cost.insert(i);
+    want_to_decode_with_cost.insert(shard_id_t(i));
   }
   for (unsigned int i = 0; i < shec->get_chunk_count(); i++) {
-    available_chunks_with_cost[i] = i;
+    available_chunks_with_cost[shard_id_t(i)] = i;
   }
 
   result = shec->minimum_to_decode_with_cost(
@@ -180,13 +180,13 @@ TEST_P(ParameterTest, parameter_all)
 	    "012345"//192
   );
   for (unsigned int i = 0; i < shec->get_chunk_count(); i++) {
-    want_to_encode.insert(i);
+    want_to_encode.insert(shard_id_t(i));
   }
 
   result = shec->encode(want_to_encode, in, &encoded);
   EXPECT_EQ(0, result);
   EXPECT_EQ(i_k+i_m, (int)encoded.size());
-  EXPECT_EQ(c_size, encoded[0].length());
+  EXPECT_EQ(c_size, encoded[shard_id_t(0)].length());
 
   //decode
   int want_to_decode2[i_k + i_m];
@@ -200,14 +200,14 @@ TEST_P(ParameterTest, parameter_all)
 			 encoded, &decoded);
   EXPECT_EQ(0, result);
   EXPECT_EQ(2u, decoded.size());
-  EXPECT_EQ(c_size, decoded[0].length());
+  EXPECT_EQ(c_size, decoded[shard_id_t(0)].length());
 
   //check encoded,decoded
   bufferlist out1, out2, usable;
 
   //out1 is "encoded"
   for (unsigned int i = 0; i < encoded.size(); i++) {
-    out1.append(encoded[i]);
+    out1.append(encoded[shard_id_t(i)]);
   }
 
   //out2 is "decoded"

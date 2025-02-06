@@ -22,36 +22,38 @@
 #include <common/bitset_set.h>
 
 /* This class struct provides an API similar to std::map, but with the
- * restriction that "Key" must cast to/from int8_t without ambiguity. For
- * example, the key could be a simple wrapper for an int8_t, used to provide
+ * restriction that "Key" must cast to/from I without ambiguity. For
+ * example, the key could be a simple wrapper for an I, used to provide
  * some type safety.  Additionally, the constructor must be passed the max
  * value of the key, referred to as max_size.
  *
- * The structure is a vector of unique_ptrs, indexed by the key. This therefore
+ * The structure is a vector of optionals, indexed by the key. This therefore
  * provides O(1) lookup, with an extremely low constant overhead. The size
- * reflects the number of non-null unique_ptrs, which is tracked independently.
+ * reflects the number of populated optionals, which is tracked independently.
  *
  * This was written generically, but with a single purpose in mind (in Erasure
  * Coding), so the interface is not as complete as it could be.
  */
-template <typename Key, typename T>
+template <typename Key, typename T, typename I = int8_t>
 struct mini_flat_map
 {
-  using vector_type = std::unique_ptr<T>;
+  using vector_type = std::optional<T>;
+  using value_type = std::pair<const Key&, T&>;
+  using const_value_type = const std::pair<const Key&, const T&>;
   struct iterator
   {
-    const mini_flat_map *map;
-    std::optional<std::pair<const Key&, T&>> value;
+    mini_flat_map *map;
+    std::optional<value_type> value;
     Key key;
 
     void progress()
     {
-      while (key < map->data.size() && !map->data[key]) {
+      while (I(key) < map->data.size() && !map->data[I(key)]) {
         ++key;
       }
 
-      if (key < map->data.size()) {
-        value.emplace(key, *map->data[key]);
+      if (I(key) < map->data.size()) {
+        value.emplace(key, *(map->data[I(key)]));
       } else {
         value.reset();
       }
@@ -59,21 +61,21 @@ struct mini_flat_map
 
     using difference_type = std::ptrdiff_t;
 
-    iterator(const mini_flat_map *map) : map(map), key(0)
+    iterator(mini_flat_map *map) : map(map), key(0)
     {
       progress();
     }
 
-    iterator(const mini_flat_map *map, Key key) : map(map), key(key)
+    iterator(mini_flat_map *map, Key key) : map(map), key(key)
     {
-      if (key < map->data.size()) {
-        value.emplace(key, *map->data[key]);
+      if (I(key) < map->data.size()) {
+        value.emplace(key, *map->data[I(key)]);
       } else {
-        ceph_assert(int8_t(key) == map->data.size()); // end
+        ceph_assert(I(key) == map->data.size()); // end
       }
     }
     // Only for end constructor.
-    iterator(const mini_flat_map *map, size_t map_size) : map(map), key(map_size)
+    iterator(mini_flat_map *map, size_t map_size) : map(map), key(map_size)
     {
       ceph_assert(map_size == map->data.size());
     }
@@ -95,12 +97,12 @@ struct mini_flat_map
       return key == other.key && map == other.map;
     }
 
-    std::pair<const Key&, T&>& operator*()
+    value_type& operator*()
     {
       return *value;
     }
 
-    std::pair<const Key&, T&>* operator->()
+    value_type* operator->()
     {
       return value.operator->();
     }
@@ -118,17 +120,18 @@ struct mini_flat_map
   struct const_iterator
   {
     const mini_flat_map *map;
-    std::optional<const std::pair<const Key&, T&>> value;
+    std::optional<const_value_type> value;
     Key key;
 
     void progress()
     {
-      while (key < map->data.size() && !map->data[key]) {
+      while (I(key) < map->data.size() && !map->data[I(key)]) {
         ++key;
       }
 
-      if (key < map->data.size()) {
-        value.emplace(key, *map->data[key]);
+      if (I(key) < map->data.size()) {
+        const T& v = *(map->data[I(key)]);
+        value.emplace(key, v);
       } else {
         value.reset();
       }
@@ -144,9 +147,9 @@ struct mini_flat_map
     const_iterator(const mini_flat_map *map, Key key) : map(map), key(key)
     {
       if (key < map->data.size()) {
-        value.emplace(key, *map->data[key]);
+        value.emplace(key, *map->data[I(key)]);
       } else {
-        ceph_assert(key == map->data.size()); // end
+        ceph_assert(I(key) == map->data.size()); // end
       }
     }
 
@@ -172,12 +175,12 @@ struct mini_flat_map
       return key == other.key && map == other.map;
     }
 
-    const std::pair<const Key&, T&>& operator*() const
+    const_value_type& operator*() const
     {
       return *value;
     }
 
-    const std::pair<const Key&, T&>* operator->()
+    const_value_type* operator->()
     {
       return value.operator->();
     }
@@ -215,7 +218,7 @@ struct mini_flat_map
   mini_flat_map( size_t max_size, const InputIt first, const InputIt last ) : mini_flat_map(max_size)
   {
     for (InputIt it = first; it != last; ++it) {
-      const Key &k(it->first);
+      const Key k(it->first);
       auto &args = it->second;
       emplace(k, args);
     }
@@ -249,7 +252,7 @@ struct mini_flat_map
    */
   bool contains(const Key& key) const
   {
-    return key < data.size() && data.at(key);
+    return I(key) < data.size() && data.at(I(key));
   }
 
   /** Checks if the container has no elements. */
@@ -266,7 +269,7 @@ struct mini_flat_map
   void swap(mini_flat_map &other) noexcept
   {
     data.swap(other.data);
-    int8_t tmp = _size;
+    I tmp = _size;
     _size = other._size;
     other._size = tmp;
   }
@@ -306,7 +309,7 @@ struct mini_flat_map
    */
   iterator erase(iterator &i)
   {
-    erase(i.key);
+    erase(i->first);
     i.progress();
     return i;
   }
@@ -317,7 +320,7 @@ struct mini_flat_map
    */
   iterator erase(const_iterator &i)
   {
-    erase(i.key);
+    erase(i->first);
     i.progress();
     return iterator(this, i.key);
   }
@@ -330,7 +333,7 @@ struct mini_flat_map
   {
     if(!contains(k)) return 0;
     _size--;
-    data.at(k).reset();
+    data.at(I(k)).reset();
     return 1;
   }
 
@@ -364,7 +367,7 @@ struct mini_flat_map
   {
     return _end;
   }
-  /** return number of elements in map, This is the number of unique_ptrs
+  /** return number of elements in map, This is the number of optionals
    * which are not null in the map.
    * @return size_t size
    */
@@ -384,7 +387,7 @@ struct mini_flat_map
   T& at(const Key &k)
   {
     if (!contains(k)) throw std::out_of_range("Key not found");
-    return *data.at(k);
+    return *data.at(I(k));
   }
   /** Returns a reference to the mapped value of the element with specified key.
    * If no such element exists, an exception of type std::out_of_range is thrown.
@@ -395,7 +398,7 @@ struct mini_flat_map
   const T& at(const Key &k) const
   {
     if (!contains(k)) throw std::out_of_range("Key not found");
-    return *data.at(k);
+    return *data.at(I(k));
   }
 
   /** Equality operator */
@@ -437,11 +440,10 @@ struct mini_flat_map
   template< class... Args >
   bool emplace(const Key &k, Args&&... args)
   {
-    ceph_assert(k < max_size());
-    if (!data[k]) {
+    ceph_assert(I(k) < max_size());
+    if (!data[I(k)]) {
       _size++;
-      vector_type t = std::make_unique<T>(std::forward<Args>(args)...);
-      data[k] = std::move(t);
+      data[I(k)].emplace(std::forward<Args>(args)...);
       return true;
     }
     return false;
@@ -450,13 +452,7 @@ struct mini_flat_map
   /** Inserts an element into the container using the copy operator */
   bool insert(const Key &k, const T &value)
   {
-    if (!data[k]) {
-      _size++;
-      vector_type t = std::make_unique<T>(value);
-      data[k] = std::move(t);
-      return true;
-    }
-    return false;
+    return emplace(k, value);
   }
 
   /** Returns a reference to the value that is mapped to a key equivalent to key,
@@ -502,17 +498,12 @@ struct mini_flat_map
     return const_iterator(this, key);
   }
 
-  /** Returns a bitset_set containing every key that exists in the map.
-   *
-   * @return bitset_set
-   */
-  bitset_set<128, Key> get_bitset_set()
+  template<size_t N>
+  void populate_bitset_set( bitset_set<N, Key> &set ) const
   {
-    bitset_set<128, Key> set;
-    for (auto &&[k, _] : *this) {
-      set.insert(k);
+    for (int i=0; i < data.size(); i++) {
+      set.insert(Key(i));
     }
-    return set;
   }
 
   /** Standard ostream operator */
@@ -528,4 +519,5 @@ struct mini_flat_map
     lhs << "}";
     return lhs;
   }
+
 };

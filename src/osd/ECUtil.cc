@@ -165,7 +165,7 @@ void ECUtil::stripe_info_t::trim_shard_extent_set_for_ro_offset (uint64_t ro_off
    * not written and we don't need to generated zeros for either */
   int ro_offset_shard = (ro_offset / chunk_size) % k;
   if (ro_offset_shard == 0) {
-    uint64_t shard_offset = ro_offset_to_shard_offset(ro_offset, 0);
+    uint64_t shard_offset = ro_offset_to_shard_offset(ro_offset, raw_shard_id_t(0));
     for (auto &&iter = shard_extent_set.begin(); iter != shard_extent_set.end();) {
       iter->second.erase_after(align_page_next(shard_offset));
       if (iter->second.empty()) iter = shard_extent_set.erase(iter);
@@ -438,7 +438,7 @@ namespace ECUtil {
      * e.g. appends will not provide parity buffers.
      * We should EITHER have no buffers, or have the right buffers.
      */
-    for (shard_id_t shard = sinfo->get_k(); shard < sinfo->get_k_plus_m(); ++shard) {
+    for (shard_id_t shard(sinfo->get_k()); shard < sinfo->get_k_plus_m(); ++shard) {
       for (auto &&[offset, length] : encode_set) {
         /* No need to recreate buffers we already have */
         if (extent_maps.contains(shard)) {
@@ -646,8 +646,8 @@ namespace ECUtil {
         for (auto&& [shard, list] : s) {
           in[shard] = list.begin().get_current_ptr();
         }
-        for (int i = 0; i < (ec_impl->get_data_chunk_count() + ec_impl->get_coding_chunk_count()); i++) {
-          if (in.find(i) == in.end()) {
+        for (shard_id_t i; i < (ec_impl->get_data_chunk_count() + ec_impl->get_coding_chunk_count()); ++i) {
+          if (in.contains(i)) {
             bufferptr ptr(buffer::create_aligned(length, SIMD_ALIGN));
             out[i] = ptr;
           }
@@ -966,8 +966,8 @@ void ECUtil::HashInfo::append(uint64_t old_size,
     for (auto &&[shard, ptr] : to_append) {
       ceph_assert(size_to_append == ptr.length());
       ceph_assert(shard < static_cast<int>(cumulative_shard_hashes.size()));
-      cumulative_shard_hashes[shard] =
-        ceph_crc32c(cumulative_shard_hashes[shard],
+      cumulative_shard_hashes[int(shard)] =
+        ceph_crc32c(cumulative_shard_hashes[int(shard)],
           (unsigned char*)ptr.c_str(), ptr.length());
     }
   }
@@ -1048,9 +1048,9 @@ void ECUtil::HashInfo::generate_test_instances(list<HashInfo*>& o)
     // We don't have the k+m here, but this is not critical performance, so
     // create an oversized map.
     shard_id_map<bufferptr> buffers(128);
-    buffers[0] = bp;
-    buffers[1] = bp;
-    buffers[2] = bp;
+    buffers[shard_id_t(0)] = bp;
+    buffers[shard_id_t(1)] = bp;
+    buffers[shard_id_t(2)] = bp;
     o.back()->append(0, buffers);
     o.back()->append(20, buffers);
   }

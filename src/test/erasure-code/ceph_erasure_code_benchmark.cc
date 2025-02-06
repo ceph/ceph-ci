@@ -179,7 +179,7 @@ int ErasureCodeBench::encode()
   in.append(string(in_size, 'X'));
   in.rebuild_aligned(ErasureCode::SIMD_ALIGN);
   shard_id_set want_to_encode;
-  for (int i = 0; i < k + m; i++) {
+  for (shard_id_t i; i < k + m; ++i) {
     want_to_encode.insert(i);
   }
   utime_t begin_time = ceph_clock_now();
@@ -197,7 +197,7 @@ int ErasureCodeBench::encode()
 static void display_chunks(const shard_id_map<bufferlist> &chunks,
 			   unsigned int chunk_count) {
   cout << "chunks ";
-  for (unsigned int chunk = 0; chunk < chunk_count; chunk++) {
+  for (shard_id_t chunk; chunk < chunk_count; ++chunk) {
     if (chunks.count(chunk) == 0) {
       cout << "(" << chunk << ")";
     } else {
@@ -210,7 +210,7 @@ static void display_chunks(const shard_id_map<bufferlist> &chunks,
 
 int ErasureCodeBench::decode_erasures(const shard_id_map<bufferlist> &all_chunks,
 				      const shard_id_map<bufferlist> &chunks,
-				      unsigned i,
+				      shard_id_t shard,
 				      unsigned want_erasures,
 				      ErasureCodeInterfaceRef erasure_code)
 {
@@ -220,7 +220,7 @@ int ErasureCodeBench::decode_erasures(const shard_id_map<bufferlist> &all_chunks
     if (verbose)
       display_chunks(chunks, erasure_code->get_chunk_count());
     shard_id_set want_to_read;
-    for (unsigned int chunk = 0; chunk < erasure_code->get_chunk_count(); chunk++)
+    for (shard_id_t chunk; chunk < erasure_code->get_chunk_count(); ++chunk)
       if (chunks.count(chunk) == 0)
 	want_to_read.insert(chunk);
 
@@ -246,10 +246,10 @@ int ErasureCodeBench::decode_erasures(const shard_id_map<bufferlist> &all_chunks
     return 0;
   }
 
-  for (; i < erasure_code->get_chunk_count(); i++) {
+  for (; shard < erasure_code->get_chunk_count(); ++shard) {
     shard_id_map<bufferlist> one_less = chunks;
-    one_less.erase(i);
-    code = decode_erasures(all_chunks, one_less, i + 1, want_erasures - 1, erasure_code);
+    one_less.erase(shard);
+    code = decode_erasures(all_chunks, one_less, shard + 1, want_erasures - 1, erasure_code);
     if (code)
       return code;
   }
@@ -275,7 +275,7 @@ int ErasureCodeBench::decode()
   in.rebuild_aligned(ErasureCode::SIMD_ALIGN);
 
   shard_id_set want_to_encode;
-  for (int i = 0; i < k + m; i++) {
+  for (shard_id_t i; i < k + m; ++i) {
     want_to_encode.insert(i);
   }
 
@@ -290,14 +290,14 @@ int ErasureCodeBench::decode()
     for (vector<int>::const_iterator i = erased.begin();
 	 i != erased.end();
 	 ++i)
-      encoded.erase(*i);
+      encoded.erase(shard_id_t(*i));
     display_chunks(encoded, erasure_code->get_chunk_count());
   }
 
   utime_t begin_time = ceph_clock_now();
   for (int i = 0; i < max_iterations; i++) {
     if (exhaustive_erasures) {
-      code = decode_erasures(encoded, encoded, 0, erasures, erasure_code);
+      code = decode_erasures(encoded, encoded, shard_id_t(0), erasures, erasure_code);
       if (code)
 	return code;
     } else if (erased.size() > 0) {
@@ -311,8 +311,8 @@ int ErasureCodeBench::decode()
 	int erasure;
 	do {
 	  erasure = rand() % ( k + m );
-	} while(chunks.count(erasure) == 0);
-	chunks.erase(erasure);
+	} while(chunks.count(shard_id_t(erasure)) == 0);
+	chunks.erase(shard_id_t(erasure));
       }
       shard_id_map<bufferlist> decoded(erasure_code->get_chunk_count());
       code = erasure_code->decode(want_to_read, chunks, &decoded, 0);

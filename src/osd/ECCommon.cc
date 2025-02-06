@@ -761,8 +761,8 @@ void ECCommon::RMWPipeline::cache_ready(Op &op)
     op.delta_stats);
 
   shard_id_map<ObjectStore::Transaction> trans(sinfo.get_k_plus_m());
-  for (auto &&shard : get_parent()->get_acting_recovery_backfill_shards()) {
-    trans[shard.shard];
+  for (auto &&pg_shard : get_parent()->get_acting_recovery_backfill_shards()) {
+    trans[pg_shard.shard];
   }
 
   op.trace.event("start ec write");

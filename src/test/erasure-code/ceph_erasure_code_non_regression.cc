@@ -54,7 +54,7 @@ public:
 		      shard_id_set erasures,
 		      shard_id_map<bufferlist> chunks);
   string content_path();
-  string chunk_path(unsigned int chunk);
+  string chunk_path(shard_id_t chunk);
 };
 
 int ErasureCodeNonRegression::setup(int argc, char** argv) {
@@ -178,7 +178,7 @@ int ErasureCodeNonRegression::run_create()
   if (in.write_file(content_path().c_str()))
     return 1;
   shard_id_set want_to_encode;
-  for (unsigned int i = 0; i < erasure_code->get_chunk_count(); i++) {
+  for (shard_id_t i; i < erasure_code->get_chunk_count(); ++i) {
     want_to_encode.insert(i);
   }
   shard_id_map<bufferlist> encoded(erasure_code->get_chunk_count());
@@ -240,7 +240,7 @@ int ErasureCodeNonRegression::run_check()
     return 1;
   }
   shard_id_set want_to_encode;
-  for (unsigned int i = 0; i < erasure_code->get_chunk_count(); i++) {
+  for (shard_id_t i; i < erasure_code->get_chunk_count(); ++i) {
     want_to_encode.insert(i);
   }
 
@@ -268,7 +268,7 @@ int ErasureCodeNonRegression::run_check()
   // erasing a single chunk is likely to use a specific code path in every plugin
   shard_id_set erasures;
   erasures.clear();
-  erasures.insert(0);
+  erasures.insert(shard_id_t());
   code = decode_erasures(erasure_code, erasures, encoded);
   if (code)
     return code;
@@ -276,8 +276,8 @@ int ErasureCodeNonRegression::run_check()
   if (erasure_code->get_chunk_count() - erasure_code->get_data_chunk_count() > 1) {
     // erasing two chunks is likely to be the general case
     erasures.clear();
-    erasures.insert(0);
-    erasures.insert(erasure_code->get_chunk_count() - 1);
+    erasures.insert(shard_id_t());
+    erasures.insert(shard_id_t(erasure_code->get_chunk_count() - 1));
     code = decode_erasures(erasure_code, erasures, encoded);
     if (code)
       return code;
@@ -293,7 +293,7 @@ string ErasureCodeNonRegression::content_path()
   return path.str();
 }
 
-string ErasureCodeNonRegression::chunk_path(unsigned int chunk)
+string ErasureCodeNonRegression::chunk_path(shard_id_t chunk)
 {
   stringstream path;
   path << directory << "/" << chunk;

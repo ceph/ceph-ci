@@ -195,7 +195,7 @@ struct pg_shard_t {
   void dump(ceph::Formatter *f) const {
     f->dump_unsigned("osd", osd);
     if (shard != shard_id_t::NO_SHARD) {
-      f->dump_unsigned("shard", shard);
+      f->dump_unsigned("shard", int8_t(shard));
     }
   }
   static void generate_test_instances(std::list<pg_shard_t*>& o) {
@@ -609,7 +609,7 @@ struct spg_t {
   }
   void dump(ceph::Formatter *f) const {
     f->dump_stream("pgid") << pgid;
-    f->dump_unsigned("shard", shard);
+    f->dump_unsigned("shard", int8_t(shard));
   }
   static void generate_test_instances(std::list<spg_t*>& o) {
     o.push_back(new spg_t);
@@ -637,7 +637,7 @@ namespace std {
     size_t operator()( const spg_t& x ) const
       {
       static hash<uint32_t> H;
-      return H(hash<pg_t>()(x.pgid) ^ x.shard);
+      return H(hash<pg_t>()(x.pgid) ^ int(x.shard));
     }
   };
 } // namespace std
@@ -1609,7 +1609,7 @@ public:
   uint64_t expected_num_objects = 0; ///< expected number of objects on this pool, a value of 0 indicates
                                      ///< user does not specify any expected value
   bool fast_read = false;            ///< whether turn on fast read on the pool or not
-  std::vector<bool> nonprimary_shards; ///< EC partial writes: shards that cannot become a primary
+  shard_id_set nonprimary_shards; ///< EC partial writes: shards that cannot become a primary
   pool_opts_t opts; ///< options
 
   typedef enum {
@@ -1916,7 +1916,7 @@ public:
 
   /// EC partial writes: test if a shard is a non-primary
   bool is_nonprimary_shard(const shard_id_t shard) const {
-    return !nonprimary_shards.empty() && nonprimary_shards.at(shard);
+    return !nonprimary_shards.empty() && nonprimary_shards.contains(shard);
   }
 
   void encode(ceph::buffer::list& bl, uint64_t features) const;
@@ -3274,7 +3274,7 @@ struct pg_fast_info_t {
     f->open_array_section("partial_writes_last_complete");
     for (const auto & [shard, version] : partial_writes_last_complete) {
       f->open_object_section("shard");
-      f->dump_int("id", shard);
+      f->dump_int("id", int(shard));
       f->dump_stream("version") << version;
       f->close_section();
     }

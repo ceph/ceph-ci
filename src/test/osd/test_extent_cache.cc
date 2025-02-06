@@ -26,7 +26,7 @@ shard_extent_map_t imap_from_vector(vector<vector<pair<uint64_t, uint64_t>>> &&i
     for (auto &&tup: in[shard]) {
       bufferlist bl;
       bl.append_zero(tup.second);
-      out.insert_in_shard(shard, tup.first, bl);
+      out.insert_in_shard(shard_id_t(shard), tup.first, bl);
     }
   }
   return out;
@@ -51,7 +51,7 @@ shard_extent_set_t iset_from_vector(vector<vector<pair<uint64_t, uint64_t>>> &&i
   shard_extent_set_t out(sinfo->get_k_plus_m());
   for (int shard = 0; shard < (int)in.size(); shard++) {
     for (auto &&tup: in[shard]) {
-      out[shard].insert(tup.first, tup.second);
+      out[shard_id_t(shard)].insert(tup.first, tup.second);
     }
   }
   return out;
@@ -625,19 +625,19 @@ TEST(ECExtentCache, test_invalidate_lru)
   {
     uint64_t bs = 3767;
     auto io1 = iset_from_vector({{{align_page_prev(35*bs), align_page_next(36*bs) - align_page_prev(35*bs)}}}, cl.get_stripe_info());
-    io1[k].insert(io1.get_extent_superset());
-    io1[k+1].insert(io1.get_extent_superset());
+    io1[shard_id_t(k)].insert(io1.get_extent_superset());
+    io1[shard_id_t(k+1)].insert(io1.get_extent_superset());
     auto io2 = iset_from_vector({{{align_page_prev(18*bs), align_page_next(19*bs) - align_page_prev(18*bs)}}}, cl.get_stripe_info());
-    io2[k].insert(io1.get_extent_superset());
-    io2[k+1].insert(io1.get_extent_superset());
+    io2[shard_id_t(k)].insert(io1.get_extent_superset());
+    io2[shard_id_t(k+1)].insert(io1.get_extent_superset());
     // io 3 is the truncate
     auto io3 = shard_extent_set_t(cl.sinfo.get_k_plus_m());
     auto io4 = iset_from_vector({{{align_page_prev(30*bs), align_page_next(31*bs) - align_page_prev(30*bs)}}}, cl.get_stripe_info());
-    io3[k].insert(io1.get_extent_superset());
-    io3[k+1].insert(io1.get_extent_superset());
+    io3[shard_id_t(k)].insert(io1.get_extent_superset());
+    io3[shard_id_t(k+1)].insert(io1.get_extent_superset());
     auto io5 = iset_from_vector({{{align_page_prev(18*bs), align_page_next(19*bs) - align_page_prev(18*bs)}}}, cl.get_stripe_info());
-    io4[k].insert(io1.get_extent_superset());
-    io4[k+1].insert(io1.get_extent_superset());
+    io4[shard_id_t(k)].insert(io1.get_extent_superset());
+    io4[shard_id_t(k+1)].insert(io1.get_extent_superset());
 
     optional op1 = cl.cache.prepare(cl.oid, nullopt, io1, 0, align_page_next(36*bs), false,
       [&cl](ECExtentCache::OpRef &op)

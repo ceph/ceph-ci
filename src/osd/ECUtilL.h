@@ -36,11 +36,11 @@ namespace ECLegacy {
       {
         unsigned int size = _chunk_mapping.size();
         std::vector<shard_id_t> chunk_mapping(n);
-        for (shard_id_t i = 0; i < n; ++i) {
+        for (shard_id_t i; i < n; ++i) {
           if (size > i) {
-            chunk_mapping.at(i) = _chunk_mapping.at(i);
+            chunk_mapping.at(int(i)) = _chunk_mapping.at(int(i));
           } else {
-            chunk_mapping.at(i) = i;
+            chunk_mapping.at(int(i)) = i;
           }
         }
         return chunk_mapping;
@@ -50,13 +50,13 @@ namespace ECLegacy {
       {
         unsigned int size = chunk_mapping.size();
         std::vector<raw_shard_id_t> reverse(size);
-        std::vector<bool> used(size,false);
+        shard_id_set used;
         for (raw_shard_id_t i; i < size; ++i) {
           shard_id_t index = chunk_mapping.at(int(i));
           // Mapping must be a bijection and a permutation
-          ceph_assert(!used.at(index));
-          used.at(index) = true;
-          reverse.at(index) = i;
+          ceph_assert(!used.contains(index));
+          used.insert(index);
+          reverse.at(int(index)) = i;
         }
         return reverse;
       }
@@ -113,7 +113,7 @@ namespace ECLegacy {
         return chunk_mapping[int(raw_shard)];
       }
       raw_shard_id_t get_raw_shard(shard_id_t shard) const {
-        return chunk_mapping_reverse[shard];
+        return chunk_mapping_reverse[int(shard)];
       }
       uint64_t logical_to_prev_chunk_offset(uint64_t offset) const {
         return (offset / stripe_width) * chunk_size;
@@ -230,8 +230,8 @@ namespace ECLegacy {
       void dump(ceph::Formatter *f) const;
       static void generate_test_instances(std::list<HashInfo*>& o);
       uint32_t get_chunk_hash(shard_id_t shard) const {
-        ceph_assert((unsigned)shard < cumulative_shard_hashes.size());
-        return cumulative_shard_hashes[shard];
+        ceph_assert(int(shard) < cumulative_shard_hashes.size());
+        return cumulative_shard_hashes[int(shard)];
       }
       uint64_t get_total_chunk_size() const {
         return total_chunk_size;

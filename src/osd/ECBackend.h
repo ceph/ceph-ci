@@ -366,16 +366,12 @@ public:
     ceph::ErasureCodeInterfaceRef ec_impl;
   public:
     explicit ECRecPred(ceph::ErasureCodeInterfaceRef ec_impl) : ec_impl(ec_impl) {
-      for (unsigned i = 0; i < ec_impl->get_chunk_count(); ++i) {
-	want.insert(i);
-      }
+      want.insert_range(shard_id_t(0), ec_impl->get_chunk_count());
     }
     bool operator()(const std::set<pg_shard_t> &_have) const override {
       shard_id_set have;
-      for (std::set<pg_shard_t>::const_iterator i = _have.begin();
-	   i != _have.end();
-	   ++i) {
-	have.insert(i->shard);
+      for (pg_shard_t p : _have) {
+	have.insert(p.shard);
       }
       mini_flat_map<shard_id_t, std::vector<std::pair<int, int>>> min(ec_impl->get_chunk_count());
       return ec_impl->minimum_to_decode(want, have, &min) == 0;
@@ -453,7 +449,7 @@ public:
     ScrubMapBuilder &pos,
       ScrubMap::object &o);
 
-  uint64_t be_get_ondisk_size(uint64_t logical_size, int8_t shard_id) const {
+  uint64_t be_get_ondisk_size(uint64_t logical_size, shard_id_t shard_id) const {
     return object_size_to_shard_size(logical_size, shard_id);
   }
 };

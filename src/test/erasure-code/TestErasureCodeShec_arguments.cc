@@ -63,7 +63,7 @@ void create_table_shec432() {
       {
         for (int i = 0; i < 7; ++i) {
           if (want & (1 << i)) {
-            table_key.insert(i);
+            table_key.insert(shard_id_t(i));
           }
         }
       }
@@ -110,7 +110,7 @@ void create_table_shec432() {
         vec_avails.clear();
         for (int j = 0; j < 7; ++j) {
           if (vec[i] & (1 << j)) {
-            vec_avails.insert(j);
+            vec_avails.insert(shard_id_t(j));
           }
         }
         table_value.insert(vec_avails);
@@ -194,18 +194,18 @@ TEST(ParameterTest, combination_all)
   );
   shard_id_set want_to_encode;
   for (unsigned int i = 0; i < shec->get_chunk_count(); ++i) {
-    want_to_encode.insert(i);
+    want_to_encode.insert(shard_id_t(i));
   }
 
   shard_id_map<bufferlist> encoded(shec->get_chunk_count());
   result = shec->encode(want_to_encode, in, &encoded);
   EXPECT_EQ(0, result);
   EXPECT_EQ(i_k+i_m, (int)encoded.size());
-  EXPECT_EQ(c_size, encoded[0].length());
+  EXPECT_EQ(c_size, encoded[shard_id_t(0)].length());
   bufferlist out1;
   //out1 is "encoded"
   for (unsigned int i = 0; i < encoded.size(); ++i) {
-    out1.append(encoded[i]);
+    out1.append(encoded[shard_id_t(i)]);
   }
   EXPECT_FALSE(out1 == in);
 
@@ -229,11 +229,11 @@ TEST(ParameterTest, combination_all)
 	  shard_id_map<bufferlist> inchunks(shec->get_chunk_count());
           for (unsigned int i = 0; i < shec->get_chunk_count(); ++i) {
 	    if (array_want_to_read[i]) {
-	      want_to_read.insert(i);
+	      want_to_read.insert(shard_id_t(i));
 	    }
             if (array_available_chunks[i]) {
-              available_chunks.insert(i);
-              inchunks.insert(i, encoded[i]);
+              available_chunks.insert(shard_id_t(i));
+              inchunks.insert(shard_id_t(i), encoded[shard_id_t(i)]);
             }
           }
 
@@ -251,7 +251,7 @@ TEST(ParameterTest, combination_all)
 	    EXPECT_EQ(0u, minimum_chunks.size());
             EXPECT_EQ(0, dresult);
             EXPECT_EQ(0u, decoded.size());
-            EXPECT_EQ(0u, decoded[0].length());
+            EXPECT_EQ(0u, decoded[shard_id_t(0)].length());
             if (result != 0 || dresult != 0) {
               ++unexpected_count;
             }
@@ -276,8 +276,8 @@ TEST(ParameterTest, combination_all)
                 if (array_want_to_read[i]) {
 		  bufferlist usable;
                   usable.substr_of(in, c_size * i, c_size);
-                  int cmp = memcmp(decoded[i].c_str(), usable.c_str(), c_size);
-                  EXPECT_EQ(c_size, decoded[i].length());
+                  int cmp = memcmp(decoded[shard_id_t(i)].c_str(), usable.c_str(), c_size);
+                  EXPECT_EQ(c_size, decoded[shard_id_t(i)].length());
                   EXPECT_EQ(0, cmp);
                   if (cmp != 0) {
                     ++unexpected_count;
@@ -306,12 +306,12 @@ TEST(ParameterTest, combination_all)
                   if (array_want_to_read[i]) {
 		    bufferlist usable;
                     usable.substr_of(in, c_size * i, c_size);
-                    int cmp = memcmp(decoded[i].c_str(), usable.c_str(), c_size);
-                    EXPECT_EQ(c_size, decoded[i].length());
+                    int cmp = memcmp(decoded[shard_id_t(i)].c_str(), usable.c_str(), c_size);
+                    EXPECT_EQ(c_size, decoded[shard_id_t(i)].length());
                     EXPECT_EQ(0, cmp);
                     if (cmp != 0) {
                       ++unexpected_count;
-                      std::cout << "decoded[" << i << "] = " << decoded[i].c_str() << std::endl;
+                      std::cout << "decoded[" << i << "] = " << decoded[shard_id_t(i)].c_str() << std::endl;
                       std::cout << "usable = " << usable.c_str() << std::endl;
                       std::cout << "want_to_read    :" << want_to_read << std::endl;
                       std::cout << "available_chunks:" << available_chunks << std::endl;

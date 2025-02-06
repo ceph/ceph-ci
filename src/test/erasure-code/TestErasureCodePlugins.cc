@@ -100,7 +100,7 @@ TEST_P(PluginTest,PartialRead)
 {
   initialize();
   shard_id_set want_to_encode;
-  for (unsigned int i = 0 ; i < get_k_plus_m(); i++) {
+  for (shard_id_t i; i < get_k_plus_m(); ++i) {
     want_to_encode.insert(i);
   }
   // Test erasure code is systematic and that the data
@@ -120,12 +120,12 @@ TEST_P(PluginTest,PartialRead)
   erasure_code->encode(want_to_encode, bl, &encoded);
   std::vector<shard_id_t> chunk_mapping = erasure_code->get_chunk_mapping();
   bool different = false;
-  for (shard_id_t i = 0; i < get_k_plus_m(); ++i) {
+  for (shard_id_t i; i < get_k_plus_m(); ++i) {
     EXPECT_EQ(chunk_size, encoded[i].length());
-    shard_id_t index = (chunk_mapping.size() > i) ? chunk_mapping[i] : i;
+    shard_id_t index = (chunk_mapping.size() > i) ? chunk_mapping[int(i)] : i;
     if (i < get_k()) {
       bufferlist expects;
-      expects.substr_of(bl, i * chunk_size, chunk_size);
+      expects.substr_of(bl, int(i) * chunk_size, chunk_size);
       if (expects != encoded[index]) {
 	different = true;
       }
@@ -148,7 +148,7 @@ TEST_P(PluginTest,PartialWrite)
 {
   initialize();
   shard_id_set want_to_encode;
-  for (unsigned int i = 0 ; i < get_k_plus_m(); i++) {
+  for (shard_id_t i; i < get_k_plus_m(); ++i) {
     want_to_encode.insert(i);
   }
   // Test erasure code can perform partial writes
@@ -197,7 +197,7 @@ TEST_P(PluginTest,PartialWrite)
   shard_id_map<bufferlist> encoded3(get_k_plus_m());
   erasure_code->encode(want_to_encode, bl3, &encoded3);
   bool different = false;
-  for (unsigned int i = 0; i < get_k_plus_m(); i++) {
+  for (shard_id_t i; i < get_k_plus_m(); ++i) {
     EXPECT_EQ(chunk_size*3, encoded1[i].length());
     EXPECT_EQ(chunk_size*3, encoded2[i].length());
     EXPECT_EQ(chunk_size, encoded3[i].length());
@@ -241,7 +241,7 @@ TEST_P(PluginTest,ZeroInZeroOut)
 {
   initialize();
   shard_id_set want_to_encode;
-  for (unsigned int i = 0 ; i < get_k_plus_m(); i++) {
+  for (shard_id_t i; i < get_k_plus_m(); ++i) {
     want_to_encode.insert(i);
   }
   // Test erasure code generates zeros for coding parity if data chunks are zeros
@@ -260,7 +260,7 @@ TEST_P(PluginTest,ZeroInZeroOut)
   bool different = false;
   bufferlist expects;
   generate_chunk(expects, 0);
-  for (unsigned int i = 0; i < get_k_plus_m(); i++) {
+  for (shard_id_t i; i < get_k_plus_m(); ++i) {
     EXPECT_EQ(chunk_size, encoded[i].length());
     if (expects != encoded[i]) {
       different = true;
@@ -294,11 +294,11 @@ TEST_P(PluginTest,ParityDelta_SingleDeltaSingleParity)
         GTEST_SKIP() << "Plugin does not support parity delta optimization";
   }
   shard_id_set want_to_encode;
-  for (unsigned int i = 0 ; i < get_k_plus_m(); i++) {
+  for (shard_id_t i ; i < get_k_plus_m(); ++i) {
     want_to_encode.insert(i);
   }
   bufferlist old_bl;
-  for (unsigned int i = 0; i < get_k(); i++) {
+  for (unsigned int i = 0; i < get_k(); ++i) {
     generate_chunk(old_bl);
   }
   shard_id_map<bufferlist> old_encoded(get_k_plus_m());
@@ -310,10 +310,10 @@ TEST_P(PluginTest,ParityDelta_SingleDeltaSingleParity)
   random_device rand;
   mt19937 gen(rand());
   uniform_int_distribution<> chunk_range(0, get_k()-1);
-  unsigned int random_chunk = chunk_range(gen);
+  shard_id_t random_chunk(chunk_range(gen));
 
   ceph::bufferptr old_data = buffer::create_aligned(chunk_size, 4096);
-  old_bl.begin(random_chunk * chunk_size).copy(chunk_size, old_data.c_str());
+  old_bl.begin(int(random_chunk) * chunk_size).copy(chunk_size, old_data.c_str());
   ceph::bufferptr new_data = new_chunk_bl.front();
   ceph::bufferptr delta = buffer::create_aligned(chunk_size, 4096);
   ceph::bufferptr expected_delta = buffer::create_aligned(chunk_size, 4096);
@@ -333,7 +333,7 @@ TEST_P(PluginTest,ParityDelta_SingleDeltaSingleParity)
   EXPECT_EQ(delta_matches, true);
 
   uniform_int_distribution<> parity_range(get_k(), get_k_plus_m()-1);
-  unsigned int random_parity = parity_range(gen);
+  shard_id_t random_parity(parity_range(gen));
   ceph::bufferptr old_parity = buffer::create_aligned(chunk_size, 4096);
   old_encoded[random_parity].begin(0).copy(chunk_size, old_parity.c_str());
 
@@ -343,7 +343,7 @@ TEST_P(PluginTest,ParityDelta_SingleDeltaSingleParity)
     if ((unsigned int)i->first >= get_k()) {
       continue;
     }
-    if ((unsigned int)i->first == random_chunk) {
+    if (i->first == random_chunk) {
       new_bl.append(new_data);
     } 
     else {
@@ -390,7 +390,7 @@ TEST_P(PluginTest,ParityDelta_MultipleDeltaMultipleParity)
         GTEST_SKIP() << "Plugin does not support parity delta optimization";
   }
   shard_id_set want_to_encode;
-  for (unsigned int i = 0 ; i < get_k_plus_m(); i++) {
+  for (shard_id_t i ; i < get_k_plus_m(); ++i) {
     want_to_encode.insert(i);
   }
 
@@ -432,12 +432,12 @@ TEST_P(PluginTest,ParityDelta_MultipleDeltaMultipleParity)
 
   shard_id_map<bufferptr> in_map(get_k_plus_m());
   shard_id_map<bufferptr> out_map(get_k_plus_m());
-  for (unsigned int i = 0; i < get_k(); i++) {
+  for (shard_id_t i; i < get_k(); ++i) {
     ceph::bufferptr tmp = buffer::create_aligned(chunk_size, 4096);
-    delta.copy_out(chunk_size * i, chunk_size, tmp.c_str());
+    delta.copy_out(chunk_size * int(i), chunk_size, tmp.c_str());
     in_map[i] = tmp;
   }
-  for (unsigned int i = get_k(); i < get_k_plus_m(); i++) {
+  for (shard_id_t i(get_k()); i < get_k_plus_m(); ++i) {
     ceph::bufferptr tmp = buffer::create_aligned(chunk_size, 4096);
     old_encoded[i].begin().copy(chunk_size, tmp.c_str());
     in_map[i] = tmp;
@@ -448,7 +448,7 @@ TEST_P(PluginTest,ParityDelta_MultipleDeltaMultipleParity)
 
   bool parity_matches = true;
 
-  for (unsigned int i = get_k(); i < get_k_plus_m(); i++) {
+  for (shard_id_t i(get_k()); i < get_k_plus_m(); ++i) {
     for (int j = 0; j < chunk_size; j++) {
       if (out_map[i].c_str()[j] != new_encoded[i].c_str()[j]) {
         parity_matches = false;

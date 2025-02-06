@@ -623,7 +623,7 @@ void ECBackend::RecoveryBackend::continue_recovery_op(
 	PushOp &pop = m->pushes[pg_shard].back();
 	pop.soid = op.hoid;
 	pop.version = op.v;
-	op.returned_data->get_shard_first_buffer(pg_shard.shard.id, pop.data);
+	op.returned_data->get_shard_first_buffer(pg_shard.shard, pop.data);
 	dout(10) << __func__ << ": pop shard=" << pg_shard
                  << ", oid=" << pop.soid
                  << ", before_progress=" << op.recovery_progress
@@ -632,7 +632,7 @@ void ECBackend::RecoveryBackend::continue_recovery_op(
 		 << ", size=" << op.obc->obs.oi.size << dendl;
 	if (pop.data.length())
 	  pop.data_included.union_insert(
-	    op.returned_data->get_shard_first_offset(pg_shard.shard.id),
+	    op.returned_data->get_shard_first_offset(pg_shard.shard),
 	    pop.data.length()
 	    );
 	if (op.recovery_progress.first) {
@@ -973,7 +973,7 @@ void ECBackend::handle_sub_write(
     async);
 
   if (!get_parent()->pg_is_undersized() &&
-      (unsigned)get_parent()->whoami_shard().shard >= sinfo.get_k())
+      int(get_parent()->whoami_shard().shard) >= sinfo.get_k())
     op.t.set_fadvise_flag(CEPH_OSD_OP_FLAG_FADVISE_DONTNEED);
 
   localt.register_on_commit(
@@ -1887,7 +1887,7 @@ int ECBackend::be_deep_scrub(
        * we match our chunk hash and our recollection of the hash for
        * chunk 0 matches that of our peers, there is likely no corruption.
        */
-      o.digest = hinfo->get_chunk_hash(0);
+      o.digest = hinfo->get_chunk_hash(shard_id_t(0));
       o.digest_present = true;
     } else {
       /* Hack! We must be using partial overwrites, and partial overwrites

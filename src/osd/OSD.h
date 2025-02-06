@@ -417,7 +417,7 @@ public:
     return m_objecter_finishers;
   }
   Finisher* get_objecter_finisher(shard_id_t shard) {
-    return objecter_finishers[shard].get();
+    return objecter_finishers[int(shard)].get();
   }
 
   // -- Objecter, for tiering reads/writes from/to other OSDs --

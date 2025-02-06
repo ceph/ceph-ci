@@ -205,7 +205,7 @@ ostream &operator<<(ostream &lhs, const pg_shard_t &rhs)
     return lhs << "?";
   if (rhs.shard == shard_id_t::NO_SHARD)
     return lhs << rhs.get_osd();
-  return lhs << rhs.get_osd() << '(' << (unsigned)(rhs.shard) << ')';
+  return lhs << rhs.get_osd() << '(' << int(rhs.shard) << ')';
 }
 
 void dump(Formatter* f, const osd_alerts_t& alerts)
@@ -3669,7 +3669,7 @@ void pg_info_t::dump(Formatter *f) const
   f->open_array_section("partial_writes_last_complete");
   for (const auto & [shard, version] : partial_writes_last_complete) {
     f->open_object_section("shard");
-    f->dump_int("id", shard);
+    f->dump_int("id", int(shard));
     f->dump_stream("version") << version;
     f->close_section();
   }
@@ -3759,8 +3759,8 @@ void pg_notify_t::decode(ceph::buffer::list::const_iterator &bl)
 
 void pg_notify_t::dump(Formatter *f) const
 {
-  f->dump_int("from", from);
-  f->dump_int("to", to);
+  f->dump_int("from", int(from));
+  f->dump_int("to", int(to));
   f->dump_unsigned("query_epoch", query_epoch);
   f->dump_unsigned("epoch_sent", epoch_sent);
   {
@@ -3789,8 +3789,8 @@ ostream &operator<<(ostream &lhs, const pg_notify_t &notify)
       << " " << notify.info;
   if (notify.from != shard_id_t::NO_SHARD ||
       notify.to != shard_id_t::NO_SHARD)
-    lhs << " " << (unsigned)notify.from
-	<< "->" << (unsigned)notify.to;
+    lhs << " " << int(notify.from)
+	<< "->" << int(notify.to);
   lhs << " " << notify.past_intervals;
   return lhs << ")";
 }
@@ -4504,8 +4504,8 @@ void pg_query_t::decode(ceph::buffer::list::const_iterator &bl) {
 
 void pg_query_t::dump(Formatter *f) const
 {
-  f->dump_int("from", from);
-  f->dump_int("to", to);
+  f->dump_int("from", int(from));
+  f->dump_int("to", int(to));
   f->dump_string("type", get_type_name());
   f->dump_stream("since") << since;
   f->dump_stream("epoch_sent") << epoch_sent;
@@ -6629,7 +6629,7 @@ void object_info_t::dump(Formatter *f) const
   f->open_array_section("shard_versions");
   for (auto p = shard_versions.cbegin(); p != shard_versions.cend(); ++p) {
     f->open_object_section("shard");
-    f->dump_int("id", p->first);
+    f->dump_int("id", int(p->first));
     f->dump_stream("version") << p->second;
     f->close_section();
   }

@@ -91,16 +91,12 @@ int ErasureCodeShec::_minimum_to_decode(const shard_id_set &want_to_read,
   memset(minimum, 0, sizeof(minimum));
   (*minimum_chunks).clear();
 
-  for (shard_id_set::const_iterator i = want_to_read.begin();
-       i != want_to_read.end();
-       ++i) {
-    want[*i] = 1;
+  for (shard_id_t shard : want_to_read) {
+    want[int(shard)] = 1;
   }
 
-  for (shard_id_set::const_iterator i = available_chunks.begin();
-       i != available_chunks.end();
-       ++i) {
-    avails[*i] = 1;
+  for (shard_id_t shard : available_chunks) {
+    avails[int(shard)] = 1;
   }
 
   {
@@ -116,7 +112,7 @@ int ErasureCodeShec::_minimum_to_decode(const shard_id_set &want_to_read,
   }
 
   for (int i = 0; i < k + m; i++) {
-    if (minimum[i] == 1) minimum_chunks->insert(i);
+    if (minimum[i] == 1) minimum_chunks->insert(shard_id_t(i));
   }
 
   return 0;
@@ -146,18 +142,18 @@ int ErasureCodeShec::encode_chunks(const shard_id_map<bufferptr> &in,
   for (auto &&[shard, ptr] : in) {
     if (size == 0) size = ptr.length();
     else ceph_assert(size == ptr.length());
-    chunks[shard] = const_cast<char*>(ptr.c_str());
+    chunks[int(shard)] = const_cast<char*>(ptr.c_str());
   }
 
   for (auto &&[shard, ptr] : out) {
     if (size == 0) size = ptr.length();
     else ceph_assert(size == ptr.length());
-    chunks[shard] = ptr.c_str();
+    chunks[int(shard)] = ptr.c_str();
   }
 
   char *zeros = nullptr;
 
-  for (int i = 0; i < k + m; i++) {
+  for (shard_id_t i; i < k + m; ++i) {
     if (in.contains(i) || out.contains(i)) continue;
 
     if (zeros == nullptr) {
@@ -165,7 +161,7 @@ int ErasureCodeShec::encode_chunks(const shard_id_map<bufferptr> &in,
       memset(zeros, 0, size);
     }
 
-    chunks[i] = zeros;
+    chunks[int(i)] = zeros;
   }
 
   shec_encode(&chunks[0], &chunks[k], size);
@@ -190,31 +186,31 @@ int ErasureCodeShec::decode_chunks(const shard_id_set &want_to_read,
     if (size == 0) size = ptr.length();
     else ceph_assert(size == ptr.length());
     if (shard < k) {
-      data[shard] = ptr.c_str();
+      data[int(shard)] = ptr.c_str();
     }
     else {
-      coding[shard - k] = ptr.c_str();
+      coding[int(shard) - k] = ptr.c_str();
     }
-    avails[shard] = 1;
-    erased[shard] = 0;
+    avails[int(shard)] = 1;
+    erased[int(shard)] = 0;
   }
 
   for (auto &&[shard, ptr] : out) {
     if (size == 0) size = ptr.length();
     else ceph_assert(size == ptr.length());
     if (shard < k) {
-      data[shard] = ptr.c_str();
+      data[int(shard)] = ptr.c_str();
     }
     else {
-      coding[shard - k] = ptr.c_str();
+      coding[int(shard) - k] = ptr.c_str();
     }
-    avails[shard] = 0;
+    avails[int(shard)] = 0;
     if (want_to_read.count(shard) > 0) {
-      erased[shard] = 1;
+      erased[int(shard)] = 1;
       erased_count++;
     }
     else {
-      erased[shard] = 0;
+      erased[int(shard)] = 0;
     }
   }
 
@@ -275,13 +271,13 @@ void ErasureCodeShecReedSolomonVandermonde::apply_delta(const shard_id_map<buffe
           char* output_data = const_cast<char*>(codingbuf.c_str());
           switch (w) {
             case 8:
-              galois_w08_region_multiply(input_data, matrix[datashard + (k * (codingshard - k))], blocksize, output_data, 1);
+              galois_w08_region_multiply(input_data, matrix[int(datashard) + (k * (int(codingshard) - k))], blocksize, output_data, 1);
               break;
             case 16:
-              galois_w16_region_multiply(input_data, matrix[datashard + (k * (codingshard - k))], blocksize, output_data, 1);
+              galois_w16_region_multiply(input_data, matrix[int(datashard) + (k * (int(codingshard) - k))], blocksize, output_data, 1);
               break;
             case 32:
-              galois_w32_region_multiply(input_data, matrix[datashard + (k * (codingshard - k))], blocksize, output_data, 1);
+              galois_w32_region_multiply(input_data, matrix[int(datashard) + (k * (int(codingshard) - k))], blocksize, output_data, 1);
               break;
           }
           //}

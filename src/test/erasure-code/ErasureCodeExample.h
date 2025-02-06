@@ -26,11 +26,11 @@
 #include "osd/osd_types.h"
 #include "erasure-code/ErasureCode.h"
 
-#define FIRST_DATA_CHUNK 0
-#define SECOND_DATA_CHUNK 1
+#define FIRST_DATA_CHUNK shard_id_t(0)
+#define SECOND_DATA_CHUNK shard_id_t(1)
 #define DATA_CHUNKS 2u
 
-#define CODING_CHUNK 2
+#define CODING_CHUNK shard_id_t(2)
 #define CODING_CHUNKS 1u
 
 #define MINIMUM_TO_RECOVER 2u
@@ -114,9 +114,9 @@ public:
     //
     char *p = out.c_str();
     for (unsigned i = 0; i < chunk_length; i++)
-      p[i + CODING_CHUNK * chunk_length] =
-        p[i + FIRST_DATA_CHUNK * chunk_length] ^
-	p[i + SECOND_DATA_CHUNK * chunk_length];
+      p[i + int(CODING_CHUNK) * chunk_length] =
+        p[i + int(FIRST_DATA_CHUNK) * chunk_length] ^
+	p[i + int(SECOND_DATA_CHUNK) * chunk_length];
     //
     // populate the bufferlist with bufferptr pointing
     // to chunk boundaries
@@ -126,7 +126,7 @@ public:
          j != want_to_encode.end();
          ++j) {
       bufferlist tmp;
-      bufferptr chunk(ptr, (*j) * chunk_length, chunk_length);
+      bufferptr chunk(ptr, int(*j) * chunk_length, chunk_length);
       tmp.push_back(chunk);
       tmp.claim_append((*encoded)[*j]);
       (*encoded)[*j].swap(tmp);

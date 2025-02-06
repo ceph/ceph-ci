@@ -42,7 +42,7 @@ TEST(ECUtil, stripe_info_t_chunk_mapping)
   stripe_info_t reverse_sinfo(k, m, chunk_size*k, reverse_cm);
 
   for (shard_id_t shard_id : forward_cm) {
-    raw_shard_id_t raw_shard_id(shard_id);
+    raw_shard_id_t raw_shard_id((int)shard_id);
     ASSERT_EQ(shard_id, forward_sinfo1.get_shard(raw_shard_id));
     ASSERT_EQ(raw_shard_id, forward_sinfo1.get_raw_shard(shard_id));
     ASSERT_EQ(shard_id, forward_sinfo2.get_shard(raw_shard_id));
@@ -68,14 +68,14 @@ TEST(ECUtil, shard_extent_map_t)
     shard_extent_map_t semap(&sinfo);
     int new_off = 512;
     int new_len = 1024;
-    int shard0 = 0;
-    int shard2 = 2;
+    shard_id_t shard0(0);
+    shard_id_t shard2(2);
 
     // Empty
-    ASSERT_FALSE(semap.contains_shard(0));
-    ASSERT_FALSE(semap.contains_shard(1));
-    ASSERT_FALSE(semap.contains_shard(2));
-    ASSERT_FALSE(semap.contains_shard(3));
+    ASSERT_FALSE(semap.contains_shard(shard_id_t(0)));
+    ASSERT_FALSE(semap.contains_shard(shard_id_t(1)));
+    ASSERT_FALSE(semap.contains_shard(shard_id_t(2)));
+    ASSERT_FALSE(semap.contains_shard(shard_id_t(3)));
     ASSERT_TRUE(semap.empty());
     ASSERT_EQ(std::numeric_limits<uint64_t>::max(), semap.get_ro_start());
     ASSERT_EQ(std::numeric_limits<uint64_t>::max(), semap.get_ro_end());
@@ -87,13 +87,13 @@ TEST(ECUtil, shard_extent_map_t)
     buffer::list bl;
     bl.append_zero(new_len);
     semap.insert_in_shard(shard2, new_off, bl);
-    ASSERT_FALSE(semap.contains_shard(0));
-    ASSERT_FALSE(semap.contains_shard(1));
-    ASSERT_TRUE(semap.contains_shard(2));
-    ASSERT_FALSE(semap.contains_shard(3));
+    ASSERT_FALSE(semap.contains_shard(shard_id_t(0)));
+    ASSERT_FALSE(semap.contains_shard(shard_id_t(1)));
+    ASSERT_TRUE(semap.contains_shard(shard_id_t(2)));
+    ASSERT_FALSE(semap.contains_shard(shard_id_t(3)));
     ASSERT_FALSE(semap.empty());
-    ASSERT_EQ(shard2 * chunk_size + new_off, semap.get_ro_start());
-    ASSERT_EQ(shard2 * chunk_size + new_off + new_len, semap.get_ro_end());
+    ASSERT_EQ(int(shard2) * chunk_size + new_off, semap.get_ro_start());
+    ASSERT_EQ(int(shard2) * chunk_size + new_off + new_len, semap.get_ro_end());
     ASSERT_EQ(new_off, semap.get_start_offset());
     ASSERT_EQ(new_off + bl.length(), semap.get_end_offset());
     auto iter = semap.get_extent_map(shard2).begin();
@@ -104,13 +104,13 @@ TEST(ECUtil, shard_extent_map_t)
 
     // Insert a 1k buffer in shard 0
     semap.insert_in_shard(shard0, new_off, bl);
-    ASSERT_TRUE(semap.contains_shard(0));
-    ASSERT_FALSE(semap.contains_shard(1));
-    ASSERT_TRUE(semap.contains_shard(2));
-    ASSERT_FALSE(semap.contains_shard(3));
+    ASSERT_TRUE(semap.contains_shard(shard_id_t(0)));
+    ASSERT_FALSE(semap.contains_shard(shard_id_t(1)));
+    ASSERT_TRUE(semap.contains_shard(shard_id_t(2)));
+    ASSERT_FALSE(semap.contains_shard(shard_id_t(3)));
     ASSERT_FALSE(semap.empty());
-    ASSERT_EQ(shard0 * chunk_size + new_off, semap.get_ro_start());
-    ASSERT_EQ(shard2 * chunk_size + new_off + new_len, semap.get_ro_end());
+    ASSERT_EQ(int(shard0) * chunk_size + new_off, semap.get_ro_start());
+    ASSERT_EQ(int(shard2) * chunk_size + new_off + new_len, semap.get_ro_end());
     ASSERT_EQ(new_off, semap.get_start_offset());
     ASSERT_EQ(new_off + bl.length(), semap.get_end_offset());
     iter = semap.get_extent_map(shard0).begin();
@@ -126,8 +126,8 @@ TEST(ECUtil, shard_extent_map_t)
 
     /* Insert overlapping into next stripe */
     semap.insert_in_shard(shard2, chunk_size - 512, bl);
-    ASSERT_EQ(shard0 * chunk_size + new_off, semap.get_ro_start());
-    ASSERT_EQ((shard2 + k) * chunk_size + 512, semap.get_ro_end());
+    ASSERT_EQ(int(shard0) * chunk_size + new_off, semap.get_ro_start());
+    ASSERT_EQ((int(shard2) + k) * chunk_size + 512, semap.get_ro_end());
     ASSERT_EQ(new_off, semap.get_start_offset());
     ASSERT_EQ(chunk_size - 512 + bl.length(), semap.get_end_offset());
 
@@ -157,35 +157,35 @@ TEST(ECUtil, shard_extent_map_t)
 
     // 1: Strangely aligned. (shard 0 [5~1024])
     emap.insert(5, 1024, bl1k);
-    ref[0].insert(5, 1024);
+    ref[shard_id_t(0)].insert(5, 1024);
     // 2: Start of second chunk (shard 1 [0~1024])
     emap.insert(chunk_size, 1024, bl1k);
-    ref[1].insert(0, 1024);
+    ref[shard_id_t(1)].insert(0, 1024);
     // 3: Overlap two chunks (shard1[3584~512], shard2[0~512])
     emap.insert(chunk_size*2 - 512, 1024, bl1k);
-    ref[1].insert(3584, 512);
-    ref[2].insert(0, 512);
+    ref[shard_id_t(1)].insert(3584, 512);
+    ref[shard_id_t(2)].insert(0, 512);
     // 4: Overlap two stripes (shard3[3584~512], shard0[4096~512])
     emap.insert(chunk_size*4 - 512, 1024, bl1k);
-    ref[3].insert(3584, 512);
-    ref[0].insert(4096, 512);
+    ref[shard_id_t(3)].insert(3584, 512);
+    ref[shard_id_t(0)].insert(4096, 512);
     // 5: Full stripe (shard*[8192~4096])
     emap.insert(chunk_size*k*2, chunk_size*k, bl16k);
     for (auto &&[_, eset] : ref)
       eset.insert(8192, 4096);
     // 6: Two half stripes (shard0,1[20480~4096], shard 2,3[16384~4096])
     emap.insert(chunk_size*k*4 + 2*chunk_size, chunk_size * k, bl16k);
-    ref[0].insert(20480, 4096);
-    ref[1].insert(20480, 4096);
-    ref[2].insert(16384, 4096);
-    ref[3].insert(16384, 4096);
+    ref[shard_id_t(0)].insert(20480, 4096);
+    ref[shard_id_t(1)].insert(20480, 4096);
+    ref[shard_id_t(2)].insert(16384, 4096);
+    ref[shard_id_t(3)].insert(16384, 4096);
 
     // 7: Two half stripes, strange alignment (shard0,1[36864~4096], shard2[32773~4096], shard3[32784~4096])
     emap.insert(chunk_size*k*8 + 2*chunk_size + 5, chunk_size * k, bl16k);
-    ref[0].insert(36864, 4096);
-    ref[1].insert(36864, 4096);
-    ref[2].insert(32773, 4096);
-    ref[3].insert(32768, 4096);
+    ref[shard_id_t(0)].insert(36864, 4096);
+    ref[shard_id_t(1)].insert(36864, 4096);
+    ref[shard_id_t(2)].insert(32773, 4096);
+    ref[shard_id_t(3)].insert(32768, 4096);
 
     // 8: Multiple stripes (shard*[49152, 16384]
     emap.insert(chunk_size*k*12, chunk_size * k * 4, bl64k);
@@ -209,12 +209,12 @@ TEST(ECUtil, shard_extent_map_t)
       extent_set tmp;
 
       tmp.union_insert(0, chunk_size * 8);
-      ref[3].intersection_of(tmp);
+      ref[shard_id_t(3)].intersection_of(tmp);
       tmp.union_insert(0, chunk_size * 8 + 512);
-      ref[2].intersection_of(tmp);
+      ref[shard_id_t(2)].intersection_of(tmp);
       tmp.union_insert(0, chunk_size * 9);
-      ref[1].intersection_of(tmp);
-      ref[0].intersection_of(tmp);
+      ref[shard_id_t(1)].intersection_of(tmp);
+      ref[shard_id_t(0)].intersection_of(tmp);
     }
 
     for (auto &&[shard, eset] : ref) {
@@ -228,10 +228,10 @@ TEST(ECUtil, shard_extent_map_t)
 
     /* Append again */
     semap.append_zeros_to_ro_offset(chunk_size * k * 9 + 2 * chunk_size + 512);
-    ref[0].insert(chunk_size * 9, chunk_size);
-    ref[1].insert(chunk_size * 9, chunk_size);
-    ref[2].insert(chunk_size * 8 + 512, chunk_size);
-    ref[3].insert(chunk_size * 8, chunk_size);
+    ref[shard_id_t(0)].insert(chunk_size * 9, chunk_size);
+    ref[shard_id_t(1)].insert(chunk_size * 9, chunk_size);
+    ref[shard_id_t(2)].insert(chunk_size * 8 + 512, chunk_size);
+    ref[shard_id_t(3)].insert(chunk_size * 8, chunk_size);
 
     for (auto &&[shard, eset] : ref) {
       ASSERT_EQ(eset, semap.get_extent_map(shard).get_interval_set())
@@ -280,18 +280,18 @@ TEST(ECUtil, shard_extent_map_t)
     {
       extent_set tmp;
       tmp.insert(chunk_size, chunk_size * 8);
-      ref[0].intersection_of(tmp);
+      ref[shard_id_t(0)].intersection_of(tmp);
     }
     {
       extent_set tmp;
       tmp.insert(chunk_size - 256, chunk_size * 8);
-      ref[1].intersection_of(tmp);
+      ref[shard_id_t(1)].intersection_of(tmp);
     }
     {
       extent_set tmp;
       tmp.insert(0, chunk_size * 8);
-      ref[2].intersection_of(tmp);
-      ref[3].intersection_of(tmp);
+      ref[shard_id_t(2)].intersection_of(tmp);
+      ref[shard_id_t(3)].intersection_of(tmp);
     }
 
     for (auto &&[shard, eset] : ref) {
@@ -337,23 +337,23 @@ TEST(ECUtil, shard_extent_map_t_scenario_1)
 
   bufferlist bl;
   bl.append_zero(chunk_size);
-  semap.insert_in_shard(0, chunk_size, bl);
-  semap.insert_in_shard(0, chunk_size*3, bl);
-  semap.insert_in_shard(1, chunk_size, bl);
-  semap.insert_in_shard(1, chunk_size*3, bl);
+  semap.insert_in_shard(shard_id_t(0), chunk_size, bl);
+  semap.insert_in_shard(shard_id_t(0), chunk_size*3, bl);
+  semap.insert_in_shard(shard_id_t(1), chunk_size, bl);
+  semap.insert_in_shard(shard_id_t(1), chunk_size*3, bl);
 
   for (int i=0; i<k; i++) {
-    auto &&iter = semap.get_extent_map(i).begin();
+    auto &&iter = semap.get_extent_map(shard_id_t(i)).begin();
     ASSERT_EQ(chunk_size, iter.get_off());
     ASSERT_EQ(chunk_size, iter.get_len());
     ++iter;
     ASSERT_EQ(chunk_size*3, iter.get_off());
     ASSERT_EQ(chunk_size, iter.get_len());
     ++iter;
-    ASSERT_EQ(semap.get_extent_map(i).end(), iter);
+    ASSERT_EQ(semap.get_extent_map(shard_id_t(i)).end(), iter);
   }
-  ASSERT_FALSE(semap.contains_shard(2));
-  ASSERT_FALSE(semap.contains_shard(3));
+  ASSERT_FALSE(semap.contains_shard(shard_id_t(2)));
+  ASSERT_FALSE(semap.contains_shard(shard_id_t(3)));
   ASSERT_EQ(2*chunk_size, semap.get_ro_start());
   ASSERT_EQ(8*chunk_size, semap.get_ro_end());
   ASSERT_EQ(chunk_size, semap.get_start_offset());
@@ -371,17 +371,17 @@ TEST(ECUtil, shard_extent_map_t_scenario_1)
   sinfo.ro_range_to_shard_extent_map(6*chunk_size, 2048, bl3, semap);
 
   for (int i=0; i<k; i++) {
-    auto &&iter = semap.get_extent_map(i).begin();
+    auto &&iter = semap.get_extent_map(shard_id_t(i)).begin();
     ASSERT_EQ(chunk_size, iter.get_off());
     ASSERT_EQ(chunk_size, iter.get_len());
     ++iter;
     ASSERT_EQ(chunk_size*3, iter.get_off());
     ASSERT_EQ(chunk_size, iter.get_len());
     ++iter;
-    ASSERT_EQ(semap.get_extent_map(i).end(), iter);
+    ASSERT_EQ(semap.get_extent_map(shard_id_t(i)).end(), iter);
   }
-  ASSERT_FALSE(semap.contains_shard(2));
-  ASSERT_FALSE(semap.contains_shard(3));
+  ASSERT_FALSE(semap.contains_shard(shard_id_t(2)));
+  ASSERT_FALSE(semap.contains_shard(shard_id_t(3)));
   ASSERT_EQ(2*chunk_size, semap.get_ro_start());
   ASSERT_EQ(8*chunk_size, semap.get_ro_end());
   ASSERT_EQ(chunk_size, semap.get_start_offset());
@@ -390,43 +390,43 @@ TEST(ECUtil, shard_extent_map_t_scenario_1)
 
   shard_extent_map_t semap2 = semap.intersect_ro_range(0, 8*chunk_size);
   for (int i=0; i<k; i++) {
-    auto &&iter = semap.get_extent_map(i).begin();
+    auto &&iter = semap.get_extent_map(shard_id_t(i)).begin();
     ASSERT_EQ(chunk_size, iter.get_off());
     ASSERT_EQ(chunk_size, iter.get_len());
     ++iter;
     ASSERT_EQ(chunk_size*3, iter.get_off());
     ASSERT_EQ(chunk_size, iter.get_len());
     ++iter;
-    ASSERT_EQ(semap.get_extent_map(i).end(), iter);
+    ASSERT_EQ(semap.get_extent_map(shard_id_t(i)).end(), iter);
   }
 
-  ASSERT_FALSE(semap.contains_shard(2));
-  ASSERT_FALSE(semap.contains_shard(3));
+  ASSERT_FALSE(semap.contains_shard(shard_id_t(2)));
+  ASSERT_FALSE(semap.contains_shard(shard_id_t(3)));
 
   for (int i=0; i<k; i++) {
-    auto &&iter = semap2.get_extent_map(i).begin();
+    auto &&iter = semap2.get_extent_map(shard_id_t(i)).begin();
     ASSERT_EQ(chunk_size, iter.get_off());
     ASSERT_EQ(chunk_size, iter.get_len());
     ++iter;
     ASSERT_EQ(chunk_size*3, iter.get_off());
     ASSERT_EQ(chunk_size, iter.get_len());
     ++iter;
-    ASSERT_EQ(semap2.get_extent_map(i).end(), iter);
+    ASSERT_EQ(semap2.get_extent_map(shard_id_t(i)).end(), iter);
   }
 
-  ASSERT_FALSE(semap2.contains_shard(2));
-  ASSERT_FALSE(semap2.contains_shard(3));
+  ASSERT_FALSE(semap2.contains_shard(shard_id_t(2)));
+  ASSERT_FALSE(semap2.contains_shard(shard_id_t(3)));
 
   semap2.insert_parity_buffers();
   for (int i=0; i<(k+m); i++) {
-    auto &&iter = semap2.get_extent_map(i).begin();
+    auto &&iter = semap2.get_extent_map(shard_id_t(i)).begin();
     ASSERT_EQ(chunk_size, iter.get_off());
     ASSERT_EQ(chunk_size, iter.get_len());
     ++iter;
     ASSERT_EQ(chunk_size*3, iter.get_off());
     ASSERT_EQ(chunk_size, iter.get_len());
     ++iter;
-    ASSERT_EQ(semap2.get_extent_map(i).end(), iter);
+    ASSERT_EQ(semap2.get_extent_map(shard_id_t(i)).end(), iter);
   }
 }
 
@@ -465,7 +465,7 @@ TEST(ECUtil, shard_extent_map_t_insert_ro_buffer)
   for (char i=0; i<44; i++) {
     buf[i*1024] = c;
     int chunk = i/4;
-    int shard = chunk % k;
+    shard_id_t shard(chunk % k);
     int offset = chunk_size * (chunk / k) + i % 4 * 1024;
     bufferlist tmp;
     ref_semap.get_buffer(shard, offset, 1024, tmp);
@@ -479,13 +479,13 @@ TEST(ECUtil, shard_extent_map_t_insert_ro_buffer)
   insert_bl.c_str()[0] = c;
   {
     bufferlist tmp;
-    ref_semap.get_buffer(1, 14*1024, 1024, tmp);
+    ref_semap.get_buffer(shard_id_t(1), 14*1024, 1024, tmp);
     tmp.c_str()[0] = c++;
   }
   insert_bl.c_str()[1024] = c;
   {
     bufferlist tmp;
-    ref_semap.get_buffer(1, 15*1024, 1024, tmp);
+    ref_semap.get_buffer(shard_id_t(1), 15*1024, 1024, tmp);
     tmp.c_str()[0] = c++;
   }
 
@@ -535,9 +535,9 @@ TEST(ECUtil, sinfo_ro_size_to_read_mask) {
 
     shard_extent_set_t ref_read(sinfo.get_k_plus_m());
     shard_extent_set_t ref_zero(sinfo.get_k_plus_m());
-    ref_read[0].insert(0, 4096);
-    ref_zero[1].insert(0, 4096);
-    ref_read[2].insert(0, 4096);
+    ref_read[shard_id_t(0)].insert(0, 4096);
+    ref_zero[shard_id_t(1)].insert(0, 4096);
+    ref_read[shard_id_t(2)].insert(0, 4096);
 
     ASSERT_EQ(ref_read, read_mask);
     ASSERT_EQ(ref_zero, zero_mask);
@@ -551,9 +551,9 @@ TEST(ECUtil, sinfo_ro_size_to_read_mask) {
 
     shard_extent_set_t ref_read(sinfo.get_k_plus_m());
     shard_extent_set_t ref_zero(sinfo.get_k_plus_m());
-    ref_read[0].insert(0, 4096);
-    ref_zero[1].insert(0, 4096);
-    ref_read[2].insert(0, 4096);
+    ref_read[shard_id_t(0)].insert(0, 4096);
+    ref_zero[shard_id_t(1)].insert(0, 4096);
+    ref_read[shard_id_t(2)].insert(0, 4096);
 
     ASSERT_EQ(ref_read, read_mask);
     ASSERT_EQ(ref_zero, zero_mask);
@@ -567,9 +567,9 @@ TEST(ECUtil, sinfo_ro_size_to_read_mask) {
 
     shard_extent_set_t ref_read(sinfo.get_k_plus_m());
     shard_extent_set_t ref_zero(sinfo.get_k_plus_m());
-    ref_read[0].insert(0, 8192);
-    ref_zero[1].insert(0, 8192);
-    ref_read[2].insert(0, 8192);
+    ref_read[shard_id_t(0)].insert(0, 8192);
+    ref_zero[shard_id_t(1)].insert(0, 8192);
+    ref_read[shard_id_t(2)].insert(0, 8192);
 
     ASSERT_EQ(ref_read, read_mask);
     ASSERT_EQ(ref_zero, zero_mask);
@@ -583,10 +583,10 @@ TEST(ECUtil, sinfo_ro_size_to_read_mask) {
 
     shard_extent_set_t ref_read(sinfo.get_k_plus_m());
     shard_extent_set_t ref_zero(sinfo.get_k_plus_m());
-    ref_read[0].insert(0, 8*4096);
-    ref_read[1].insert(0, 4096);
-    ref_zero[1].insert(4096, 7*4096);
-    ref_read[2].insert(0, 8*4096);
+    ref_read[shard_id_t(0)].insert(0, 8*4096);
+    ref_read[shard_id_t(1)].insert(0, 4096);
+    ref_zero[shard_id_t(1)].insert(4096, 7*4096);
+    ref_read[shard_id_t(2)].insert(0, 8*4096);
 
     ASSERT_EQ(ref_read, read_mask);
     ASSERT_EQ(ref_zero, zero_mask);
@@ -600,10 +600,10 @@ TEST(ECUtil, sinfo_ro_size_to_read_mask) {
 
     shard_extent_set_t ref_read(sinfo.get_k_plus_m());
     shard_extent_set_t ref_zero(sinfo.get_k_plus_m());
-    ref_read[0].insert(0, 9*4096);
-    ref_read[1].insert(0, 8*4096);
-    ref_zero[1].insert(8*4096, 1*4096);
-    ref_read[2].insert(0, 9*4096);
+    ref_read[shard_id_t(0)].insert(0, 9*4096);
+    ref_read[shard_id_t(1)].insert(0, 8*4096);
+    ref_zero[shard_id_t(1)].insert(8*4096, 1*4096);
+    ref_read[shard_id_t(2)].insert(0, 9*4096);
 
     ASSERT_EQ(ref_read, read_mask);
     ASSERT_EQ(ref_zero, zero_mask);
@@ -626,8 +626,8 @@ TEST(ECUtil, slice_iterator)
   b.append_zero(4096);
   b.c_str()[0] = 'B';
 
-  sem.insert_in_shard(0, 0, a);
-  sem.insert_in_shard(1, 0, b);
+  sem.insert_in_shard(shard_id_t(0), 0, a);
+  sem.insert_in_shard(shard_id_t(1), 0, b);
   {
     auto iter = sem.begin_slice_iterator();
 
@@ -636,10 +636,10 @@ TEST(ECUtil, slice_iterator)
       ASSERT_EQ(0, iter.get_offset());
       ASSERT_EQ(4096, iter.get_length());
       ASSERT_EQ(2, out.size());
-      ASSERT_EQ(4096, out[0].length());
-      ASSERT_EQ(4096, out[1].length());
-      ASSERT_EQ('A', out[0].c_str()[0]);
-      ASSERT_EQ('B', out[1].c_str()[0]);
+      ASSERT_EQ(4096, out[shard_id_t(0)].length());
+      ASSERT_EQ(4096, out[shard_id_t(1)].length());
+      ASSERT_EQ('A', out[shard_id_t(0)].c_str()[0]);
+      ASSERT_EQ('B', out[shard_id_t(1)].c_str()[0]);
     }
 
     ++iter;
@@ -650,8 +650,8 @@ TEST(ECUtil, slice_iterator)
       ASSERT_EQ(4096, iter.get_length());
       ASSERT_FALSE(out.empty());
       ASSERT_EQ(1, out.size());
-      ASSERT_EQ(4096, out[0].length());
-      ASSERT_EQ('C', out[0].c_str()[0]);
+      ASSERT_EQ(4096, out[shard_id_t(0)].length());
+      ASSERT_EQ('C', out[shard_id_t(0)].c_str()[0]);
     }
 
     ++iter;
@@ -664,8 +664,8 @@ TEST(ECUtil, slice_iterator)
   d.c_str()[0] = 'D';
   e.append_zero(4096);
   e.c_str()[0] = 'E';
-  sem.insert_in_shard(0, 4096*4, d);
-  sem.insert_in_shard(1, 4096*4, e);
+  sem.insert_in_shard(shard_id_t(0), 4096*4, d);
+  sem.insert_in_shard(shard_id_t(1), 4096*4, e);
 
   {
     auto iter = sem.begin_slice_iterator();
@@ -676,10 +676,10 @@ TEST(ECUtil, slice_iterator)
       ASSERT_EQ(4096, iter.get_length());
       ASSERT_FALSE(out.empty());
       ASSERT_EQ(2, out.size());
-      ASSERT_EQ(4096, out[0].length());
-      ASSERT_EQ(4096, out[1].length());
-      ASSERT_EQ('A', out[0].c_str()[0]);
-      ASSERT_EQ('B', out[1].c_str()[0]);
+      ASSERT_EQ(4096, out[shard_id_t(0)].length());
+      ASSERT_EQ(4096, out[shard_id_t(1)].length());
+      ASSERT_EQ('A', out[shard_id_t(0)].c_str()[0]);
+      ASSERT_EQ('B', out[shard_id_t(1)].c_str()[0]);
     }
 
     ++iter;
@@ -689,8 +689,8 @@ TEST(ECUtil, slice_iterator)
       ASSERT_EQ(4096, iter.get_length());
       ASSERT_FALSE(out.empty());
       ASSERT_EQ(1, out.size());
-      ASSERT_EQ(4096, out[0].length());
-      ASSERT_EQ('C', out[0].c_str()[0]);
+      ASSERT_EQ(4096, out[shard_id_t(0)].length());
+      ASSERT_EQ('C', out[shard_id_t(0)].c_str()[0]);
     }
 
     ++iter;
@@ -700,9 +700,9 @@ TEST(ECUtil, slice_iterator)
       ASSERT_EQ(4096, iter.get_length());
       ASSERT_FALSE(out.empty());
       ASSERT_EQ(2, out.size());
-      ASSERT_EQ(4096, out[0].length());
-      ASSERT_EQ('D', out[0].c_str()[0]);
-      ASSERT_EQ('E', out[1].c_str()[0]);
+      ASSERT_EQ(4096, out[shard_id_t(0)].length());
+      ASSERT_EQ('D', out[shard_id_t(0)].c_str()[0]);
+      ASSERT_EQ('E', out[shard_id_t(1)].c_str()[0]);
     }
 
     ++iter;
@@ -718,10 +718,10 @@ TEST(ECUtil, slice_iterator)
   c.append_zero(4096);
   c.c_str()[0] = 'C';
 
-  sem.insert_in_shard(0, 4096*1, a);
-  sem.insert_in_shard(1, 4096*1, b);
-  sem.insert_in_shard(0, 4096*2, c);
-  sem.insert_in_shard(1, 4096*2, d);
+  sem.insert_in_shard(shard_id_t(0), 4096*1, a);
+  sem.insert_in_shard(shard_id_t(1), 4096*1, b);
+  sem.insert_in_shard(shard_id_t(0), 4096*2, c);
+  sem.insert_in_shard(shard_id_t(1), 4096*2, d);
 
   {
     auto iter = sem.begin_slice_iterator();
@@ -732,10 +732,10 @@ TEST(ECUtil, slice_iterator)
       ASSERT_EQ(4096, iter.get_length());
       ASSERT_FALSE(out.empty());
       ASSERT_EQ(2, out.size());
-      ASSERT_EQ(4096, out[0].length());
-      ASSERT_EQ(4096, out[1].length());
-      ASSERT_EQ('A', out[0].c_str()[0]);
-      ASSERT_EQ('B', out[1].c_str()[0]);
+      ASSERT_EQ(4096, out[shard_id_t(0)].length());
+      ASSERT_EQ(4096, out[shard_id_t(1)].length());
+      ASSERT_EQ('A', out[shard_id_t(0)].c_str()[0]);
+      ASSERT_EQ('B', out[shard_id_t(1)].c_str()[0]);
     }
 
     ++iter;
@@ -745,10 +745,10 @@ TEST(ECUtil, slice_iterator)
       ASSERT_EQ(4096, iter.get_length());
       ASSERT_FALSE(out.empty());
       ASSERT_EQ(2, out.size());
-      ASSERT_EQ(4096, out[0].length());
-      ASSERT_EQ(4096, out[1].length());
-      ASSERT_EQ('C', out[0].c_str()[0]);
-      ASSERT_EQ('D', out[1].c_str()[0]);
+      ASSERT_EQ(4096, out[shard_id_t(0)].length());
+      ASSERT_EQ(4096, out[shard_id_t(1)].length());
+      ASSERT_EQ('C', out[shard_id_t(0)].c_str()[0]);
+      ASSERT_EQ('D', out[shard_id_t(1)].c_str()[0]);
     }
 
     ++iter;
@@ -766,12 +766,12 @@ TEST(ECUtil, object_size_to_shard_size)
   stripe_info_t sinfo(4, 2, 4*4096);
   for (uint64_t input : inputs)
   {
-    ASSERT_EQ(0x14000, sinfo.object_size_to_shard_size(input, 0));
-    ASSERT_EQ(0x13000, sinfo.object_size_to_shard_size(input, 1));
-    ASSERT_EQ(0x13000, sinfo.object_size_to_shard_size(input, 2));
-    ASSERT_EQ(0x13000, sinfo.object_size_to_shard_size(input, 3));
-    ASSERT_EQ(0x14000, sinfo.object_size_to_shard_size(input, 4));
-    ASSERT_EQ(0x14000, sinfo.object_size_to_shard_size(input, 5));
+    ASSERT_EQ(0x14000, sinfo.object_size_to_shard_size(input, shard_id_t(0)));
+    ASSERT_EQ(0x13000, sinfo.object_size_to_shard_size(input, shard_id_t(1)));
+    ASSERT_EQ(0x13000, sinfo.object_size_to_shard_size(input, shard_id_t(2)));
+    ASSERT_EQ(0x13000, sinfo.object_size_to_shard_size(input, shard_id_t(3)));
+    ASSERT_EQ(0x14000, sinfo.object_size_to_shard_size(input, shard_id_t(4)));
+    ASSERT_EQ(0x14000, sinfo.object_size_to_shard_size(input, shard_id_t(5)));
   }
 
   // Verify +/-1 also rounds correctly
@@ -799,16 +799,16 @@ TEST(ECUtil, slice)
   bl64k.append_zero(chunk_size * k * 4);
   shard_extent_set_t ref(sinfo.get_k_plus_m());
 
-  sem.insert_in_shard(1, 512, bl1k);
-  sem.insert_in_shard(2, 5, bl4k);
-  sem.insert_in_shard(3, 256, bl16k);
-  sem.insert_in_shard(4, 5, bl64k);
+  sem.insert_in_shard(shard_id_t(1), 512, bl1k);
+  sem.insert_in_shard(shard_id_t(2), 5, bl4k);
+  sem.insert_in_shard(shard_id_t(3), 256, bl16k);
+  sem.insert_in_shard(shard_id_t(4), 5, bl64k);
 
   {
     auto slice = sem.slice(512, 1024);
     ASSERT_EQ(4, slice.size());
     for (int i=1; i<5; i++) {
-      ASSERT_EQ(1024, slice[i].length());
+      ASSERT_EQ(1024, slice[shard_id_t(i)].length());
     }
   }
 
@@ -819,8 +819,8 @@ TEST(ECUtil, slice)
     ASSERT_EQ(512+1024, slice_map.get_end_offset());
 
     for (int i=1; i<5; i++) {
-      ASSERT_EQ(512, slice_map.get_extent_map(i).get_start_off());
-      ASSERT_EQ(512+1024, slice_map.get_extent_map(i).get_end_off());
+      ASSERT_EQ(512, slice_map.get_extent_map(shard_id_t(i)).get_start_off());
+      ASSERT_EQ(512+1024, slice_map.get_extent_map(shard_id_t(i)).get_end_off());
     }
   }
 
@@ -829,14 +829,14 @@ TEST(ECUtil, slice)
     ASSERT_EQ(4, slice_map.get_extent_maps().size());
     ASSERT_EQ(5, slice_map.get_start_offset());
     ASSERT_EQ(4096, slice_map.get_end_offset());
-    ASSERT_EQ(512, slice_map.get_extent_map(1).get_start_off());
-    ASSERT_EQ(512 + 1024, slice_map.get_extent_map(1).get_end_off());
-    ASSERT_EQ(5, slice_map.get_extent_map(2).get_start_off());
-    ASSERT_EQ(4096, slice_map.get_extent_map(2).get_end_off());
-    ASSERT_EQ(256, slice_map.get_extent_map(3).get_start_off());
-    ASSERT_EQ(4096, slice_map.get_extent_map(3).get_end_off());
-    ASSERT_EQ(5, slice_map.get_extent_map(4).get_start_off());
-    ASSERT_EQ(4096, slice_map.get_extent_map(4).get_end_off());
+    ASSERT_EQ(512, slice_map.get_extent_map(shard_id_t(1)).get_start_off());
+    ASSERT_EQ(512 + 1024, slice_map.get_extent_map(shard_id_t(1)).get_end_off());
+    ASSERT_EQ(5, slice_map.get_extent_map(shard_id_t(2)).get_start_off());
+    ASSERT_EQ(4096, slice_map.get_extent_map(shard_id_t(2)).get_end_off());
+    ASSERT_EQ(256, slice_map.get_extent_map(shard_id_t(3)).get_start_off());
+    ASSERT_EQ(4096, slice_map.get_extent_map(shard_id_t(3)).get_end_off());
+    ASSERT_EQ(5, slice_map.get_extent_map(shard_id_t(4)).get_start_off());
+    ASSERT_EQ(4096, slice_map.get_extent_map(shard_id_t(4)).get_end_off());
   }
 
   {

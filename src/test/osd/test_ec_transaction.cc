@@ -127,8 +127,8 @@ TEST(ectransaction, partial_write)
   extent_set ref_write;
   ref_write.insert(0, 4096);
   ASSERT_EQ(2u, plan.will_write.shard_count());
-  ASSERT_EQ(ref_write, plan.will_write.at(0));
-  ASSERT_EQ(ref_write, plan.will_write.at(2));
+  ASSERT_EQ(ref_write, plan.will_write.at(shard_id_t(0)));
+  ASSERT_EQ(ref_write, plan.will_write.at(shard_id_t(2)));
 }
 
 TEST(ectransaction, overlapping_write_non_aligned)
@@ -164,8 +164,8 @@ TEST(ectransaction, overlapping_write_non_aligned)
   ref.insert(0, 4096);
   ASSERT_EQ(2u, plan.will_write.shard_count());
   ASSERT_EQ(1u, (*plan.to_read).shard_count());
-  ASSERT_EQ(ref, plan.will_write.at(0));
-  ASSERT_EQ(ref, plan.will_write.at(2));
+  ASSERT_EQ(ref, plan.will_write.at(shard_id_t(0)));
+  ASSERT_EQ(ref, plan.will_write.at(shard_id_t(2)));
 }
 
 TEST(ectransaction, test_appending_write_non_aligned)
@@ -200,8 +200,8 @@ TEST(ectransaction, test_appending_write_non_aligned)
 
   // The writes will cover not cover the zero parts
   ECUtil::shard_extent_set_t ref_write(sinfo.get_k_plus_m());
-  ref_write[1].insert(4096, 4096);
-  ref_write[2].insert(4096, 4096);
+  ref_write[shard_id_t(1)].insert(4096, 4096);
+  ref_write[shard_id_t(2)].insert(4096, 4096);
   ASSERT_EQ(ref_write, plan.will_write);
 }
 
@@ -237,8 +237,8 @@ TEST(ectransaction, append_with_large_hole)
 
   // The writes will cover the new zero parts.
   ECUtil::shard_extent_set_t ref_write(sinfo.get_k_plus_m());
-  ref_write[0].insert(12*4096, 4096);
-  ref_write[2].insert(12*4096, 4096);
+  ref_write[shard_id_t(0)].insert(12*4096, 4096);
+  ref_write[shard_id_t(2)].insert(12*4096, 4096);
   ASSERT_EQ(ref_write, plan.will_write);
 }
 
@@ -274,7 +274,7 @@ TEST(ectransaction, test_append_not_page_aligned_with_large_hole)
 
   // Writes should grow to 4k
   ECUtil::shard_extent_set_t ref_write(sinfo.get_k_plus_m());
-  ref_write[0].insert(12*4096, 4096);
-  ref_write[2].insert(12*4096, 4096);
+  ref_write[shard_id_t(0)].insert(12*4096, 4096);
+  ref_write[shard_id_t(2)].insert(12*4096, 4096);
   ASSERT_EQ(ref_write, plan.will_write);
 }

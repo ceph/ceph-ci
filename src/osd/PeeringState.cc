@@ -352,7 +352,7 @@ bool PeeringState::proc_replica_notify(const pg_shard_t &from, const pg_notify_t
         psdout(0) << "BILLPROCREPINFO osd." << from << " setting shard " << shard << " to " << version << dendl;
 	info.partial_writes_last_complete[shard] = version;
       }
-      auto other = peer_info.find(pg_shard_t(acting[shard],shard_id_t(shard)));
+      auto other = peer_info.find(pg_shard_t(acting[int(shard)],shard_id_t(shard)));
       if (other != peer_info.end()) {
 	if (version > other->second.last_complete) {
 	  psdout(0) << "BILLPROCREPINFO2 osd." << other->first << " has last_complete " << other->second.last_complete << " but partial_write_last_complete says its at " << version << dendl;
@@ -1665,7 +1665,7 @@ void PeeringState::calc_ec_acting(
       for (auto j = all_info_by_shard[shard_id_t(i)].begin();
 	   j != all_info_by_shard[shard_id_t(i)].end();
 	   ++j) {
-	ceph_assert(j->shard == i);
+	ceph_assert(int(j->shard) == i);
 	if (!all_info.find(*j)->second.is_incomplete() &&
 	    all_info.find(*j)->second.last_update >=
 	    auth_log_shard->second.log_tail) {
@@ -6050,7 +6050,8 @@ PeeringState::Active::Active(my_context ctx)
        p != ps->acting_recovery_backfill.end();
        ++p) {
     if (p->shard != ps->pg_whoami.shard) {
-      ps->blocked_by.insert(p->shard);
+      // FIXME?: Should this not be an OSD?
+      ps->blocked_by.insert(int(p->shard));
     }
   }
   pl->publish_stats_to_osd();
@@ -6226,7 +6227,8 @@ boost::statechart::result PeeringState::Active::react(const MInfoRec& infoevt)
       ps->peer_activated.insert(infoevt.from).second) {
     psdout(10) << " peer osd." << infoevt.from
 	       << " activated and committed" << dendl;
-    ps->blocked_by.erase(infoevt.from.shard);
+    // FIXME?: Should this not be an OSD?
+    ps->blocked_by.erase(int(infoevt.from.shard));
     pl->publish_stats_to_osd();
     if (ps->peer_activated.size() == ps->acting_recovery_backfill.size()) {
       all_activated_and_committed();

@@ -74,8 +74,8 @@ namespace ECLegacy {
     }
 
     for (auto &&i : *transactions) {
-      ceph_assert(buffers.count(i.first));
-      bufferlist &enc_bl = buffers[i.first];
+      ceph_assert(buffers.count(int(i.first)));
+      bufferlist &enc_bl = buffers[int(i.first)];
       if (offset >= before_size) {
         i.second.set_alloc_hint(
           coll_t(spg_t(pgid, i.first)),

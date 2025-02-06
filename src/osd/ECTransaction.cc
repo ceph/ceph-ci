@@ -556,7 +556,7 @@ void ECTransaction::generate_transactions(
 	  t.truncate(
 	    coll_t(spg_t(pgid, shard)),
 	    ghobject_t(oid, ghobject_t::NO_GEN, shard),
-	    sinfo.ro_offset_to_shard_offset(plan.orig_size, shard));
+	    sinfo.ro_offset_to_shard_offset(plan.orig_size, sinfo.get_raw_shard(shard)));
 	}
       }
 
@@ -753,7 +753,7 @@ void ECTransaction::generate_transactions(
 	    ldpp_dout(dpp, 20) << "BILLOI: Full shard write, no prev shard versions -  version " << oi.version << dendl;
 	  }
 	} else {
-          for (shard_id_t shard = 0; shard < sinfo.get_k_plus_m(); ++shard) {
+          for (shard_id_t shard; shard < sinfo.get_k_plus_m(); ++shard) {
 	    if (sinfo.is_nonprimary_shard(shard)) {
               if (entry->is_written_shard(shard) || plan.orig_size != plan.projected_size) {
 		// Written - erase per shard version

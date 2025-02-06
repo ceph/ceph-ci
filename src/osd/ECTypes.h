@@ -63,9 +63,9 @@ struct raw_shard_id_t {
     ls.push_back(new raw_shard_id_t(2));
   }
   raw_shard_id_t& operator++() { ++id; return *this; }
-  friend std::strong_ordering operator<=>(const raw_shard_id_t &lhs, const raw_shard_id_t &rhs) { return lhs.id <=> rhs.id; }
-  friend std::strong_ordering operator<=>(int lhs, const raw_shard_id_t &rhs) { return lhs <=> rhs.id; }
-  friend std::strong_ordering operator<=>(const raw_shard_id_t &lhs, int rhs) { return lhs.id <=> rhs; }
+  friend constexpr std::strong_ordering operator<=>(const raw_shard_id_t &lhs, const raw_shard_id_t &rhs) { return lhs.id <=> rhs.id; }
+  friend constexpr std::strong_ordering operator<=>(int lhs, const raw_shard_id_t &rhs) { return lhs <=> rhs.id; }
+  friend constexpr std::strong_ordering operator<=>(const raw_shard_id_t &lhs, int rhs) { return lhs.id <=> rhs; }
 
   raw_shard_id_t& operator=(int other) { id = other; return *this; }
   bool operator==(const raw_shard_id_t &other) const { return id == other.id; }

@@ -125,15 +125,15 @@ namespace ceph {
   {
     if (available_chunks.includes(want_to_read)) {
       *minimum = want_to_read;
-                 } else {
-                   unsigned int k = get_data_chunk_count();
-                   if (available_chunks.size() < (unsigned)k)
-                     return -EIO;
-                   shard_id_set::const_iterator i;
-                   unsigned j;
-                   for (i = available_chunks.begin(), j = 0; j < (unsigned)k; ++i, j++)
-                     minimum->insert(*i);
-                 }
+    } else {
+      unsigned int k = get_data_chunk_count();
+      if (available_chunks.size() < (unsigned)k)
+        return -EIO;
+      shard_id_set::const_iterator i;
+      unsigned j;
+      for (i = available_chunks.begin(), j = 0; j < (unsigned)k; ++i, j++)
+        minimum->insert(*i);
+    }
     return 0;
   }
 
@@ -247,7 +247,7 @@ namespace ceph {
 
     encode_chunks(in_shards, out_shards);
 
-    for (unsigned int i = 0; i < k + m; i++) {
+    for (shard_id_t i; i < k + m; ++i) {
       if (want_to_encode.count(i) == 0)
         encoded->erase(i);
     }
@@ -281,7 +281,7 @@ int ErasureCode::_decode(const shard_id_set &want_to_read,
 			 const shard_id_map<bufferlist> &chunks,
 			 shard_id_map<bufferlist> *decoded)
 {
-  vector<int> have;
+  shard_id_set have;
 
   if (!decoded || !decoded->empty()){
     return -EINVAL;
@@ -290,18 +290,12 @@ int ErasureCode::_decode(const shard_id_set &want_to_read,
     return -1;
   }
 
-  have.reserve(chunks.size());
-  for (shard_id_map<bufferlist>::const_iterator i = chunks.begin();
-       i != chunks.end();
-       ++i) {
-    have.push_back(i->first);
+  for (auto &&[shard, _] : chunks) {
+    have.insert(shard);
   }
-  if (includes(
-	have.begin(), have.end(), want_to_read.begin(), want_to_read.end())) {
-    for (shard_id_set::const_iterator i = want_to_read.begin();
-	 i != want_to_read.end();
-	 ++i) {
-      (*decoded)[*i] = chunks.find(*i)->second;
+  if (have.includes(want_to_read)) {
+    for (auto &&shard : want_to_read) {
+      (*decoded)[shard] = chunks.at(shard);
     }
     return 0;
   }
@@ -309,8 +303,8 @@ int ErasureCode::_decode(const shard_id_set &want_to_read,
   unsigned int m = get_chunk_count() - k;
   unsigned blocksize = (*chunks.begin()).second.length();
   shard_id_set erasures;
-  for (unsigned int i = 0; i < k + m; i++) {
-    if (chunks.find(i) == chunks.end()) {
+  for (shard_id_t i; i < k + m; ++i) {
+    if (!chunks.contains(i)) {
       bufferlist tmp;
       bufferptr ptr(buffer::create_aligned(blocksize, SIMD_ALIGN));
       tmp.push_back(ptr);
@@ -373,7 +367,7 @@ int ErasureCode::to_mapping(const ErasureCodeProfile &profile,
     vector<int> coding_chunk_mapping;
     for(std::string::iterator it = mapping.begin(); it != mapping.end(); ++it) {
       if (*it == 'D')
-	chunk_mapping.push_back(position);
+	chunk_mapping.push_back(shard_id_t(position));
       else
 	coding_chunk_mapping.push_back(position);
       position++;

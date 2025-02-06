@@ -220,7 +220,7 @@ int ErasureCodeLrc::layers_init(ostream *ss)
       if (*it == 'c')
 	layer.coding.push_back(position);
       if (*it == 'c' || *it == 'D')
-	layer.chunks_as_set.insert(position);
+	layer.chunks_as_set.insert(shard_id_t(position));
       position++;
     }
     layer.chunks = layer.data;
@@ -572,7 +572,7 @@ int ErasureCodeLrc::_minimum_to_decode(const shard_id_set &want_to_read,
     shard_id_set erasures_total;
     shard_id_set erasures_not_recovered;
     shard_id_set erasures_want;
-    for (unsigned int i = 0; i < get_chunk_count(); ++i) {
+    for (shard_id_t i; i < get_chunk_count(); ++i) {
       if (available_chunks.count(i) == 0) {
 	erasures_total.insert(i);
 	erasures_not_recovered.insert(i);
@@ -675,7 +675,7 @@ int ErasureCodeLrc::_minimum_to_decode(const shard_id_set &want_to_read,
     // will help the upper layers.
     //
     shard_id_set erasures_total;
-    for (unsigned int i = 0; i < get_chunk_count(); ++i) {
+    for (shard_id_t i; i < get_chunk_count(); ++i) {
       if (available_chunks.count(i) == 0)
 	erasures_total.insert(i);
     }
@@ -755,13 +755,13 @@ int ErasureCodeLrc::encode_chunks(const shard_id_map<bufferptr> &in,
     const Layer &layer = layers[i];
     shard_id_map<bufferptr> layer_in(get_chunk_count());
     shard_id_map<bufferptr> layer_out(get_chunk_count());
-    int j = 0;
+    shard_id_t j;
     for (const auto& c : layer.chunks) {
-      if (nonconst_in.contains(c))
-        layer_in[j] = nonconst_in[c];
-      if (out.contains(c))
-        layer_out[j] = out[c];
-      j++;
+      if (nonconst_in.contains(shard_id_t(c)))
+        layer_in[j] = nonconst_in[shard_id_t(c)];
+      if (out.contains(shard_id_t(c)))
+        layer_out[j] = out[shard_id_t(c)];
+      ++j;
     }
     int err = layer.erasure_code->encode_chunks(layer_in, layer_out);
     
@@ -813,17 +813,18 @@ int ErasureCodeLrc::decode_chunks(const shard_id_set &want_to_read,
       shard_id_set layer_want_to_read;
       shard_id_map<bufferptr> layer_in(get_chunk_count());
       shard_id_map<bufferptr> layer_out(get_chunk_count());
-      int j = 0;
+      shard_id_t j;
       for (vector<int>::const_iterator c = layer->chunks.begin();
 	   c != layer->chunks.end();
 	   ++c)
       {
-        if (erasures.count(*c) == 0) {
-          if (in.find(*c) != in.end()) layer_in[j] = in[*c];
-          else layer_in[j] = out[*c];
+        shard_id_t cs(*c);
+        if (!erasures.contains(cs)) {
+          if (in.contains(cs)) layer_in[j] = in[cs];
+          else layer_in[j] = out[cs];
         }
         else {
-          layer_out[j] = out[*c];
+          layer_out[j] = out[cs];
         }
         ++j;
       }
@@ -839,7 +840,7 @@ int ErasureCodeLrc::decode_chunks(const shard_id_set &want_to_read,
 	   c != layer->chunks.end();
 	   ++c)
       {
-	erasures.erase(*c);
+	erasures.erase(shard_id_t(*c));
       }
       want_to_read_erasures = shard_id_set::intersection(erasures, want_to_read);
       if (want_to_read_erasures.size() == 0)

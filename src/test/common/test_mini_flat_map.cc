@@ -33,7 +33,7 @@ struct Key {
 
   Key(int8_t k) : k(k) {}
 
-  constexpr operator int8_t() const { return k; }
+  explicit constexpr operator int8_t() const { return k; }
   Key &operator++() {k++; return *this;}
 
   friend std::ostream& operator<<(std::ostream& lhs, const Key& rhs)

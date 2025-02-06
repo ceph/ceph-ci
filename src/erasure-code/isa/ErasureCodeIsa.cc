@@ -90,18 +90,18 @@ int ErasureCodeIsa::encode_chunks(const shard_id_map<bufferptr> &in,
   for (auto &&[shard, ptr] : in) {
     if (size == 0) size = ptr.length();
     else ceph_assert(size == ptr.length());
-    chunks[shard] = const_cast<char*>(ptr.c_str());
+    chunks[int(shard)] = const_cast<char*>(ptr.c_str());
   }
 
   for (auto &&[shard, ptr] : out) {
     if (size == 0) size = ptr.length();
     else ceph_assert(size == ptr.length());
-    chunks[shard] = ptr.c_str();
+    chunks[int(shard)] = ptr.c_str();
   }
 
   char *zeros = nullptr;
 
-  for (int i = 0; i < k + m; i++) {
+  for (shard_id_t i; i < k + m; ++i) {
     if (in.contains(i) || out.contains(i)) continue;
 
     if (zeros == nullptr) {
@@ -109,7 +109,7 @@ int ErasureCodeIsa::encode_chunks(const shard_id_map<bufferptr> &in,
       memset(zeros, 0, size);
     }
 
-    chunks[i] = zeros;
+    chunks[int(i)] = zeros;
   }
 
   isa_encode(&chunks[0], &chunks[k], size);
@@ -133,10 +133,10 @@ int ErasureCodeIsa::decode_chunks(const shard_id_set &want_to_read,
     if (size == 0) size = ptr.length();
     else ceph_assert(size == ptr.length());
     if (shard < k) {
-      data[shard] = const_cast<char*>(ptr.c_str());
+      data[int(shard)] = const_cast<char*>(ptr.c_str());
     }
     else {
-      coding[shard - k] = const_cast<char*>(ptr.c_str());
+      coding[int(shard) - k] = const_cast<char*>(ptr.c_str());
     }
   }
 
@@ -144,12 +144,12 @@ int ErasureCodeIsa::decode_chunks(const shard_id_set &want_to_read,
     if (size == 0) size = ptr.length();
     else ceph_assert(size == ptr.length());
     if (shard < k) {
-      data[shard] = const_cast<char*>(ptr.c_str());
+      data[int(shard)] = const_cast<char*>(ptr.c_str());
     }
     else {
-      coding[shard - k] = const_cast<char*>(ptr.c_str());
+      coding[int(shard) - k] = const_cast<char*>(ptr.c_str());
     }
-    erasures[erasures_count] = shard;
+    erasures[erasures_count] = int(shard);
     erasures_count++;
   }
 
@@ -268,7 +268,7 @@ ErasureCodeIsaDefault::apply_delta(const shard_id_map<bufferptr> &in,
           else {
             unsigned char* data = reinterpret_cast<unsigned char*>(const_cast<char*>(databuf.c_str()));
             unsigned char* coding = reinterpret_cast<unsigned char*>(const_cast<char*>(codingbuf.c_str()));
-            ec_encode_data_update(blocksize, k, 1, datashard, encode_tbls + (32 * k * (codingshard - k)), data, &coding);
+            ec_encode_data_update(blocksize, k, 1, int(datashard), encode_tbls + (32 * k * (int(codingshard) - k)), data, &coding);
           }
           //TODO return a special zero buffer if coding buffer is all zeroes
         }

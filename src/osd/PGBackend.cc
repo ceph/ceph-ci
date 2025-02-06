@@ -392,7 +392,7 @@ void PGBackend::partialwrite(
     ldpp_dout(dpp, 10) << __func__ << ": BILL_LOG_PW version=" << entry.version << " last_update=" << info->last_update << " last_complete=" << info->last_complete << dendl;
     ldpp_dout(dpp, 10) << __func__ << ": BILL_LOG_PW partial_writes_last_complete=" << info->partial_writes_last_complete << dendl;
     const pg_pool_t &pool = get_parent()->get_pool();
-    for (shard_id_t shard = 0; shard < get_parent()->get_pool().size; ++shard) {
+    for (shard_id_t shard; shard < get_parent()->get_pool().size; ++shard) {
       if (pool.is_nonprimary_shard(shard)) {
         if (!entry.is_written_shard(shard)) {
 	  if (!info->partial_writes_last_complete.contains(shard)) {

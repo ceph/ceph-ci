@@ -89,9 +89,9 @@ TYPED_TEST(ErasureCodeTest, encode_decode)
 				 in,
 				 &encoded));
     EXPECT_EQ(4u, encoded.size());
-    unsigned length =  encoded[0].length();
-    EXPECT_EQ(0, memcmp(encoded[0].c_str(), in.c_str(), length));
-    EXPECT_EQ(0, memcmp(encoded[1].c_str(), in.c_str() + length,
+    unsigned length =  encoded[shard_id_t(0)].length();
+    EXPECT_EQ(0, memcmp(encoded[shard_id_t(0)].c_str(), in.c_str(), length));
+    EXPECT_EQ(0, memcmp(encoded[shard_id_t(1)].c_str(), in.c_str() + length,
 			in.length() - length));
 
 
@@ -103,17 +103,17 @@ TYPED_TEST(ErasureCodeTest, encode_decode)
 				    encoded,
 				    &decoded));
       EXPECT_EQ(2u, decoded.size()); 
-      EXPECT_EQ(length, decoded[0].length());
-      EXPECT_EQ(0, memcmp(decoded[0].c_str(), in.c_str(), length));
-      EXPECT_EQ(0, memcmp(decoded[1].c_str(), in.c_str() + length,
+      EXPECT_EQ(length, decoded[shard_id_t(0)].length());
+      EXPECT_EQ(0, memcmp(decoded[shard_id_t(0)].c_str(), in.c_str(), length));
+      EXPECT_EQ(0, memcmp(decoded[shard_id_t(1)].c_str(), in.c_str() + length,
 			  in.length() - length));
     }
 
     // two chunks are missing 
     {
       shard_id_map< bufferlist> degraded = encoded;
-      degraded.erase(0);
-      degraded.erase(1);
+      degraded.erase(shard_id_t(0));
+      degraded.erase(shard_id_t(1));
       EXPECT_EQ(2u, degraded.size());
       int want_to_decode[] = { 0, 1 };
       shard_id_map< bufferlist> decoded(jerasure.get_chunk_count());
@@ -122,9 +122,9 @@ TYPED_TEST(ErasureCodeTest, encode_decode)
 				    &decoded));
       // always decode all, regardless of want_to_decode
       EXPECT_EQ(4u, decoded.size()); 
-      EXPECT_EQ(length, decoded[0].length());
-      EXPECT_EQ(0, memcmp(decoded[0].c_str(), in.c_str(), length));
-      EXPECT_EQ(0, memcmp(decoded[1].c_str(), in.c_str() + length,
+      EXPECT_EQ(length, decoded[shard_id_t(0)].length());
+      EXPECT_EQ(0, memcmp(decoded[shard_id_t(0)].c_str(), in.c_str(), length));
+      EXPECT_EQ(0, memcmp(decoded[shard_id_t(1)].c_str(), in.c_str() + length,
 			  in.length() - length));
     }
 
@@ -133,28 +133,28 @@ TYPED_TEST(ErasureCodeTest, encode_decode)
       shard_id_map< bufferlist> partial_decode = encoded;
       // we have everything but want only the first chunk
       shard_id_set partial_want_to_read;
-      partial_want_to_read.insert(0);
+      partial_want_to_read.insert(shard_id_t(0));
       EXPECT_EQ(1u, partial_want_to_read.size());
       bufferlist out;
       EXPECT_EQ(0, jerasure.decode_concat(partial_want_to_read,
 					  partial_decode,
 					  &out));
-      EXPECT_EQ(out.length(), partial_decode[0].length());
+      EXPECT_EQ(out.length(), partial_decode[shard_id_t(0)].length());
     }
 
     // partial degraded decode with the exact-sized decode_concat()
     {
       shard_id_map< bufferlist> partial_decode = encoded;
       // we have everything but what we really want
-      partial_decode.erase(0);
+      partial_decode.erase(shard_id_t(0));
       shard_id_set partial_want_to_read;
-      partial_want_to_read.insert(0);
+      partial_want_to_read.insert(shard_id_t(0));
       EXPECT_EQ(1u, partial_want_to_read.size());
       bufferlist out;
       EXPECT_EQ(0, jerasure.decode_concat(partial_want_to_read,
 					  partial_decode,
 					  &out));
-      EXPECT_EQ(out.length(), encoded[0].length());
+      EXPECT_EQ(out.length(), encoded[shard_id_t(0)].length());
     }
   }
 }
@@ -190,7 +190,7 @@ TYPED_TEST(ErasureCodeTest, minimum_to_decode)
     shard_id_set available_chunks;
     shard_id_set minimum;
 
-    want_to_read.insert(0);
+    want_to_read.insert(shard_id_t(0));
 
     EXPECT_EQ(-EIO, jerasure._minimum_to_decode(want_to_read,
 						available_chunks,
@@ -204,8 +204,8 @@ TYPED_TEST(ErasureCodeTest, minimum_to_decode)
     shard_id_set available_chunks;
     shard_id_set minimum;
 
-    want_to_read.insert(0);
-    available_chunks.insert(0);
+    want_to_read.insert(shard_id_t(0));
+    available_chunks.insert(shard_id_t(0));
 
     EXPECT_EQ(0, jerasure._minimum_to_decode(want_to_read,
 					     available_chunks,
@@ -221,9 +221,9 @@ TYPED_TEST(ErasureCodeTest, minimum_to_decode)
     shard_id_set available_chunks;
     shard_id_set minimum;
 
-    want_to_read.insert(0);
-    want_to_read.insert(1);
-    available_chunks.insert(0);
+    want_to_read.insert(shard_id_t(0));
+    want_to_read.insert(shard_id_t(1));
+    available_chunks.insert(shard_id_t(0));
 
     EXPECT_EQ(-EIO, jerasure._minimum_to_decode(want_to_read,
 						available_chunks,
@@ -243,17 +243,17 @@ TYPED_TEST(ErasureCodeTest, minimum_to_decode)
     shard_id_set available_chunks;
     shard_id_set minimum;
 
-    want_to_read.insert(1);
-    want_to_read.insert(3);
-    available_chunks.insert(0);
-    available_chunks.insert(2);
-    available_chunks.insert(3);
+    want_to_read.insert(shard_id_t(1));
+    want_to_read.insert(shard_id_t(3));
+    available_chunks.insert(shard_id_t(0));
+    available_chunks.insert(shard_id_t(2));
+    available_chunks.insert(shard_id_t(3));
 
     EXPECT_EQ(0, jerasure._minimum_to_decode(want_to_read,
 					     available_chunks,
 					     &minimum));
     EXPECT_EQ(2u, minimum.size());
-    EXPECT_EQ(0u, minimum.count(3));
+    EXPECT_EQ(0u, minimum.count(shard_id_t(3)));
   }
 }
 
@@ -281,8 +281,8 @@ TEST(ErasureCodeTest, encode)
 				 in,
 				 &encoded));
     EXPECT_EQ(4u, encoded.size());
-    char *last_chunk = encoded[1].c_str();
-    int length =encoded[1].length();
+    char *last_chunk = encoded[shard_id_t(1)].c_str();
+    int length =encoded[shard_id_t(1)].length();
     EXPECT_EQ('X', last_chunk[0]);
     EXPECT_EQ('\0', last_chunk[length - trail_length]);
   }
@@ -299,7 +299,7 @@ TEST(ErasureCodeTest, encode)
     bufferlist in;
     shard_id_map<bufferlist> encoded(jerasure.get_chunk_count());
     shard_id_set want_to_encode;
-    want_to_encode.insert(0);
+    want_to_encode.insert(shard_id_t(0));
     int trail_length = 1;
     in.append(string(aligned_object_size + trail_length, 'X'));
     EXPECT_EQ(0, jerasure.encode(want_to_encode, in, &encoded));

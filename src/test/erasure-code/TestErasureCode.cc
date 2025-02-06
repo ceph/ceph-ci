@@ -112,8 +112,7 @@ TEST(ErasureCodeTest, encode_memory_align)
   ErasureCodeTest erasure_code(k, m, chunk_size);
 
   shard_id_set  want_to_encode;
-  for (unsigned int i = 0; i < erasure_code.get_chunk_count(); i++)
-    want_to_encode.insert(i);
+  want_to_encode.insert_range(shard_id_t(0), erasure_code.get_chunk_count());
   string data(chunk_size + chunk_size / 2, 'X'); // uses 1.5 chunks out of 3
   // make sure nothing is memory aligned
   bufferptr ptr(buffer::create_aligned(data.length() + 1, ErasureCode::SIMD_ALIGN));
@@ -126,11 +125,11 @@ TEST(ErasureCodeTest, encode_memory_align)
 
   ASSERT_FALSE(in.is_aligned(ErasureCode::SIMD_ALIGN));
   ASSERT_EQ(0, erasure_code.encode(want_to_encode, in, &encoded));
-  for (unsigned int i = 0; i < erasure_code.get_chunk_count(); i++)
+  for (shard_id_t i; i < erasure_code.get_chunk_count(); ++i)
     ASSERT_TRUE(encoded[i].is_aligned(ErasureCode::SIMD_ALIGN));
   for (unsigned i = 0; i < chunk_size / 2; i++)
-    ASSERT_EQ(encoded[1][i], 'X');
-  ASSERT_NE(encoded[1][chunk_size / 2], 'X');
+    ASSERT_EQ(encoded[shard_id_t(1)][i], 'X');
+  ASSERT_NE(encoded[shard_id_t(1)][chunk_size / 2], 'X');
 }
 
 TEST(ErasureCodeTest, encode_misaligned_non_contiguous)
@@ -141,7 +140,7 @@ TEST(ErasureCodeTest, encode_misaligned_non_contiguous)
   ErasureCodeTest erasure_code(k, m, chunk_size);
 
   shard_id_set  want_to_encode;
-  for (unsigned int i = 0; i < erasure_code.get_chunk_count(); i++)
+  for (shard_id_t i; i < erasure_code.get_chunk_count(); ++i)
     want_to_encode.insert(i);
   string data(chunk_size, 'X');
   // create a non contiguous bufferlist where the frist and the second
@@ -163,7 +162,7 @@ TEST(ErasureCodeTest, encode_misaligned_non_contiguous)
   ASSERT_TRUE(in.back().is_aligned(ErasureCode::SIMD_ALIGN));
   ASSERT_FALSE(in.back().is_n_align_sized(chunk_size));
   ASSERT_EQ(0, erasure_code.encode(want_to_encode, in, &encoded));
-  for (unsigned int i = 0; i < erasure_code.get_chunk_count(); i++) {
+  for (shard_id_t i; i < erasure_code.get_chunk_count(); ++i) {
     ASSERT_TRUE(encoded[i].is_aligned(ErasureCode::SIMD_ALIGN));
     ASSERT_TRUE(encoded[i].is_n_align_sized(chunk_size));
   }

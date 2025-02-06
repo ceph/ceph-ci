@@ -2692,7 +2692,7 @@ void OSDMap::_pg_to_raw_osds(
 
 int OSDMap::_pick_primary(const pg_pool_t& pool, const vector<int>& osds) const
 {
-  shard_id_t shard = 0;
+  shard_id_t shard(0);
   for (auto osd : osds) {
     if (!pool.is_nonprimary_shard(shard) && osd != CRUSH_ITEM_NONE) {
       return osd;
@@ -3021,8 +3021,8 @@ int OSDMap::calc_pg_role(pg_shard_t who, const vector<int>& acting)
       }
     }
   } else {
-    if (who.shard < nrep && acting[who.shard] == who.osd) {
-      return who.shard;
+    if (who.shard < nrep && acting[int(who.shard)] == who.osd) {
+      return int(who.shard);
     }
   }
   return -1;

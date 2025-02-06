@@ -51,6 +51,7 @@ public:
 
     const_iterator() : set(nullptr), pos(0) {}
     const_iterator(const bitset_set *_set, size_t _pos) : set(_set), pos(_pos) {}
+    const_iterator(const bitset_set *_set, Key _pos) : set(_set), pos(_pos) {}
 
     const_iterator(const bitset_set *_set) : set(_set), pos(MAX) {
       for (size_t i = 0; i < WORDS; ++i) {
@@ -64,8 +65,8 @@ public:
 
     const_iterator& operator++() {
       uint64_t v;
-      size_t i = (pos + 1) / BITS_PER_UINT64;
-      int bit = (pos + 1) % BITS_PER_UINT64;
+      size_t i = (int(pos) + 1) / BITS_PER_UINT64;
+      int bit = (int(pos) + 1) % BITS_PER_UINT64;
       while (i < WORDS) {
         if (bit == BITS_PER_UINT64) {
           v = set->words[i];
@@ -92,7 +93,7 @@ public:
 
     bool operator==(const const_iterator& rhs) const
     {
-      return pos == rhs.pos;
+      return int(pos) == int(rhs.pos);
     }
     bool operator!=(const const_iterator& rhs) const {return !operator==(rhs);}
 
@@ -137,8 +138,8 @@ public:
 
   /** insert k into set.  */
   void insert(const Key k) {
-    ceph_assert(k < MAX);
-    words[k / BITS_PER_UINT64] |= 1UL << (k % BITS_PER_UINT64);
+    ceph_assert(int(k) < MAX);
+    words[int(k) / BITS_PER_UINT64] |= 1UL << (int(k) % BITS_PER_UINT64);
   }
 
   /** insert k into set.  */
@@ -163,7 +164,7 @@ public:
   template< class... Args >
   std::pair<const_iterator, bool> emplace(Args&&... args)
   {
-    Key k(args...);
+    const Key k(args...);
     bool add = !contains(k);
     if (add) insert(k);
     return std::make_pair(const_iterator(this, k), add);
@@ -171,8 +172,8 @@ public:
 
   /** erase key from set. Unlike std::set does not return anything */
   void erase(const Key k) {
-    ceph_assert(k < MAX);
-    words[k / BITS_PER_UINT64] &= ~(1UL << (k % BITS_PER_UINT64));
+    ceph_assert(int(k) < MAX);
+    words[int(k) / BITS_PER_UINT64] &= ~(1UL << (int(k) % BITS_PER_UINT64));
   }
 
   /** Efficiently insert a range of values. When N is small, this is
@@ -180,18 +181,18 @@ public:
    */
   void insert_range(const Key start, int length)
   {
-    int start_word = start / BITS_PER_UINT64;
-    int end_word = (start + length) / BITS_PER_UINT64;
+    int start_word = int(start) / BITS_PER_UINT64;
+    int end_word = (int(start) + length) / BITS_PER_UINT64;
     ceph_assert(0 <= end_word && end_word < MAX);
 
     if (start_word == end_word) {
-      words[start_word] |= ((1UL << length) - 1) << (start % BITS_PER_UINT64);
+      words[start_word] |= ((1UL << length) - 1) << (int(start) % BITS_PER_UINT64);
     } else {
-      words[start_word] |= -1UL << (start % BITS_PER_UINT64);
+      words[start_word] |= -1UL << (int(start) % BITS_PER_UINT64);
       while (++start_word < end_word) {
         words[start_word] = -1UL;
       }
-      words[end_word] |= (1UL << ((start + length) % BITS_PER_UINT64)) - 1;
+      words[end_word] |= (1UL << ((int(start) + length) % BITS_PER_UINT64)) - 1;
     }
   }
 
@@ -200,18 +201,18 @@ public:
    */
   void erase_range(const Key start, int length)
   {
-    int start_word = start / BITS_PER_UINT64;
-    int end_word = (start + length) / BITS_PER_UINT64;
+    int start_word = int(start) / BITS_PER_UINT64;
+    int end_word = (int(start) + length) / BITS_PER_UINT64;
     ceph_assert(0 <= end_word && end_word < MAX);
 
     if (start_word == end_word) {
-      words[start_word] &= ~(((1UL << length) - 1) << (start % BITS_PER_UINT64));
+      words[start_word] &= ~(((1UL << length) - 1) << (int(start) % BITS_PER_UINT64));
     } else {
-      words[start_word] &= ~(-1UL << (start % BITS_PER_UINT64));
+      words[start_word] &= ~(-1UL << (int(start) % BITS_PER_UINT64));
       while (++start_word < end_word) {
         words[start_word] = 0;
       }
-      words[end_word] &= ~((1UL << ((start + length) % BITS_PER_UINT64)) - 1);
+      words[end_word] &= ~((1UL << ((int(start) + length) % BITS_PER_UINT64)) - 1);
     }
   }
 
@@ -237,8 +238,8 @@ public:
   /** @return true if the container contains Key k. */
   bool contains(Key k) const
   {
-    ceph_assert(k < MAX);
-    return (words[k / BITS_PER_UINT64] & 1UL << (k % BITS_PER_UINT64));
+    ceph_assert(int(k) < MAX);
+    return (words[int(k) / BITS_PER_UINT64] & 1UL << (int(k) % BITS_PER_UINT64));
   }
 
   /** @return the count of matching keys in the container. Either returns 0 or 1

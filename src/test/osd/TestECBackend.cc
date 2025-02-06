@@ -140,20 +140,22 @@ public:
 
   int minimum_to_decode(const shard_id_set &want_to_read, const shard_id_set &available,
 			shard_id_map<std::vector<std::pair<int, int>>> *minimum) override {
-    int parity_shard_index = data_chunk_count;
-    for (int shard : want_to_read) {
+    shard_id_t parity_shard_index(data_chunk_count);
+    for (shard_id_t shard : want_to_read) {
       if (available.contains(shard)) {
 	(*minimum)[shard] = default_sub_chunk;
       } else {
         // Shard is missing.  Recover with every other shard and one parity
         // for each missing shard.
-        for (int i=0; i<data_chunk_count; i++) {
+        for (shard_id_t i; i<data_chunk_count; ++i) {
           if (available.contains(i))
             (*minimum)[i] = default_sub_chunk;
-          else
-            (*minimum)[parity_shard_index++] = default_sub_chunk;
+          else {
+            (*minimum)[parity_shard_index] = default_sub_chunk;
+            ++parity_shard_index;
+          }
 
-          if (parity_shard_index == chunk_count)
+          if (int(parity_shard_index) == chunk_count)
             return -EIO; // Cannot recover.
         }
       }
@@ -501,7 +503,7 @@ TEST(ECCommon, get_min_want_to_read_shards)
     ec_align_t to_read(2048, 42, 1);
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
-    ref[2].insert(0, 42);
+    ref[shard_id_t(2)].insert(0, 42);
     ASSERT_EQ(want_to_read, ref);
   }
 
@@ -511,7 +513,7 @@ TEST(ECCommon, get_min_want_to_read_shards)
     ec_align_t to_read(swidth+2048, 42, 1);
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
-    ref[2].insert(csize, 42);
+    ref[shard_id_t(2)].insert(csize, 42);
     ASSERT_EQ(want_to_read, ref);
   }
 
@@ -521,8 +523,8 @@ TEST(ECCommon, get_min_want_to_read_shards)
     ec_align_t to_read(csize, csize + 42, 1);
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
-    ref[1].insert(0, csize);
-    ref[2].insert(0, 42);
+    ref[shard_id_t(1)].insert(0, csize);
+    ref[shard_id_t(2)].insert(0, 42);
     ASSERT_EQ(want_to_read, ref);
   }
 
@@ -532,8 +534,8 @@ TEST(ECCommon, get_min_want_to_read_shards)
     ec_align_t to_read(swidth + csize, csize + 42, 1);
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
-    ref[1].insert(csize, csize);
-    ref[2].insert(csize, 42);
+    ref[shard_id_t(1)].insert(csize, csize);
+    ref[shard_id_t(2)].insert(csize, 42);
     ASSERT_EQ(want_to_read, ref);
   }
 
@@ -543,9 +545,9 @@ TEST(ECCommon, get_min_want_to_read_shards)
     ec_align_t to_read(0, 3*csize, 1);
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
-    ref[0].insert(0, csize);
-    ref[1].insert(0, csize);
-    ref[2].insert(0, csize);
+    ref[shard_id_t(0)].insert(0, csize);
+    ref[shard_id_t(1)].insert(0, csize);
+    ref[shard_id_t(2)].insert(0, csize);
     ASSERT_EQ(want_to_read, ref);
   }
 
@@ -555,9 +557,9 @@ TEST(ECCommon, get_min_want_to_read_shards)
     ec_align_t to_read(swidth, 3*csize, 1);
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
-    ref[0].insert(csize, csize);
-    ref[1].insert(csize, csize);
-    ref[2].insert(csize, csize);
+    ref[shard_id_t(0)].insert(csize, csize);
+    ref[shard_id_t(1)].insert(csize, csize);
+    ref[shard_id_t(2)].insert(csize, csize);
     ASSERT_EQ(want_to_read, ref);
   }
 
@@ -567,9 +569,9 @@ TEST(ECCommon, get_min_want_to_read_shards)
     ec_align_t to_read(csize, swidth - csize, 1);
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
-    ref[1].insert(0, csize);
-    ref[2].insert(0, csize);
-    ref[3].insert(0, csize);
+    ref[shard_id_t(1)].insert(0, csize);
+    ref[shard_id_t(2)].insert(0, csize);
+    ref[shard_id_t(3)].insert(0, csize);
     ASSERT_EQ(want_to_read, ref);
   }
 
@@ -579,9 +581,9 @@ TEST(ECCommon, get_min_want_to_read_shards)
     ec_align_t to_read(swidth + csize, swidth - csize, 1);
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
-    ref[1].insert(csize, csize);
-    ref[2].insert(csize, csize);
-    ref[3].insert(csize, csize);
+    ref[shard_id_t(1)].insert(csize, csize);
+    ref[shard_id_t(2)].insert(csize, csize);
+    ref[shard_id_t(3)].insert(csize, csize);
     ASSERT_EQ(want_to_read, ref);
   }
 
@@ -594,10 +596,10 @@ TEST(ECCommon, get_min_want_to_read_shards)
     ec_align_t to_read(csize, swidth * 42, 1);
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
-    ref[0].insert(csize, csize*42);
-    ref[1].insert(0, csize*42);
-    ref[2].insert(0, csize*42);
-    ref[3].insert(0, csize*42);
+    ref[shard_id_t(0)].insert(csize, csize*42);
+    ref[shard_id_t(1)].insert(0, csize*42);
+    ref[shard_id_t(2)].insert(0, csize*42);
+    ref[shard_id_t(3)].insert(0, csize*42);
     ASSERT_EQ(want_to_read, ref);
   }
 
@@ -610,10 +612,10 @@ TEST(ECCommon, get_min_want_to_read_shards)
     ec_align_t to_read(swidth + csize, swidth * 42, 1);
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
-    ref[0].insert(csize*2, csize*42);
-    ref[1].insert(csize, csize*42);
-    ref[2].insert(csize, csize*42);
-    ref[3].insert(csize, csize*42);
+    ref[shard_id_t(0)].insert(csize*2, csize*42);
+    ref[shard_id_t(1)].insert(csize, csize*42);
+    ref[shard_id_t(2)].insert(csize, csize*42);
+    ref[shard_id_t(3)].insert(csize, csize*42);
     ASSERT_EQ(want_to_read, ref);
   }
 
@@ -624,10 +626,10 @@ TEST(ECCommon, get_min_want_to_read_shards)
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
 
-    ref[0].insert(0, csize*42);
-    ref[1].insert(0, csize*42);
-    ref[2].insert(0, csize*42);
-    ref[3].insert(0, csize*42);
+    ref[shard_id_t(0)].insert(0, csize*42);
+    ref[shard_id_t(1)].insert(0, csize*42);
+    ref[shard_id_t(2)].insert(0, csize*42);
+    ref[shard_id_t(3)].insert(0, csize*42);
     ASSERT_EQ(want_to_read, ref);
   }
 
@@ -638,10 +640,10 @@ TEST(ECCommon, get_min_want_to_read_shards)
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
 
-    ref[0].insert(0, csize*42);
-    ref[1].insert(0, csize*42);
-    ref[2].insert(0, csize*42);
-    ref[3].insert(0, csize*42);
+    ref[shard_id_t(0)].insert(0, csize*42);
+    ref[shard_id_t(1)].insert(0, csize*42);
+    ref[shard_id_t(2)].insert(0, csize*42);
+    ref[shard_id_t(3)].insert(0, csize*42);
     ASSERT_EQ(want_to_read, ref);
   }
 
@@ -652,10 +654,10 @@ TEST(ECCommon, get_min_want_to_read_shards)
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
 
-    ref[0].insert(csize, csize*42);
-    ref[1].insert(csize, csize*42);
-    ref[2].insert(csize, csize*42);
-    ref[3].insert(csize, csize*42);
+    ref[shard_id_t(0)].insert(csize, csize*42);
+    ref[shard_id_t(1)].insert(csize, csize*42);
+    ref[shard_id_t(2)].insert(csize, csize*42);
+    ref[shard_id_t(3)].insert(csize, csize*42);
     ASSERT_EQ(want_to_read, ref);
   }
 
@@ -666,10 +668,10 @@ TEST(ECCommon, get_min_want_to_read_shards)
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
 
-    ref[0].insert(csize, csize+csize/2);
-    ref[1].insert(csize, csize);
-    ref[2].insert(csize, csize);
-    ref[3].insert(csize, csize);
+    ref[shard_id_t(0)].insert(csize, csize+csize/2);
+    ref[shard_id_t(1)].insert(csize, csize);
+    ref[shard_id_t(2)].insert(csize, csize);
+    ref[shard_id_t(3)].insert(csize, csize);
     ASSERT_EQ(want_to_read, ref);
   }
 
@@ -680,10 +682,10 @@ TEST(ECCommon, get_min_want_to_read_shards)
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
 
-    ref[0].insert(csize, csize);
-    ref[1].insert(csize, csize);
-    ref[2].insert(csize, csize);
-    ref[3].insert(0, csize+csize/2);
+    ref[shard_id_t(0)].insert(csize, csize);
+    ref[shard_id_t(1)].insert(csize, csize);
+    ref[shard_id_t(2)].insert(csize, csize);
+    ref[shard_id_t(3)].insert(0, csize+csize/2);
     ASSERT_EQ(want_to_read, ref);
   }
   // large read that starts and ends on last shard, partial first shard.
@@ -693,10 +695,10 @@ TEST(ECCommon, get_min_want_to_read_shards)
     pipeline.get_min_want_to_read_shards(to_read, want_to_read);
     ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
 
-    ref[0].insert(csize, csize);
-    ref[1].insert(csize, csize);
-    ref[2].insert(csize, csize);
-    ref[3].insert(csize/2, csize);
+    ref[shard_id_t(0)].insert(csize, csize);
+    ref[shard_id_t(1)].insert(csize, csize);
+    ref[shard_id_t(2)].insert(csize, csize);
+    ref[shard_id_t(3)].insert(csize/2, csize);
     ASSERT_EQ(want_to_read, ref);
   }
 }
@@ -747,20 +749,19 @@ TEST(ECCommon, get_min_avail_to_read_shards) {
     ECUtil::shard_extent_set_t to_read_list(s.get_k_plus_m());
     hobject_t hoid;
 
-    for (unsigned int i=0; i<k; i++) {
-      to_read_list[i].insert(i*2*page_size, page_size);
+    for (shard_id_t i; i<k; ++i) {
+      to_read_list[i].insert(int(i) * 2 * page_size, page_size);
     }
 
     ECCommon::read_request_t read_request(to_read_list, false, object_size);
     pipeline.get_min_avail_to_read_shards(hoid, false, false, read_request);
 
     ECCommon::read_request_t ref(to_read_list, false, object_size);
-    for (unsigned int i=0; i<k; i++) {
-      shard_id_t shard_id(i);
-      ref.shard_reads[shard_id].extents = to_read_list[i];
+    for (shard_id_t shard_id; shard_id < k; ++shard_id) {
+      ref.shard_reads[shard_id].extents = to_read_list[shard_id];
       ref.shard_reads[shard_id].subchunk = ecode->default_sub_chunk;
-      ref.shard_reads[shard_id].pg_shard = pg_shard_t(shard_id);
-      ref.shard_reads[shard_id].pg_shard = pg_shard_t(i, shard_id);
+      ref.shard_reads[shard_id].pg_shard = pg_shard_t(int(shard_id));
+      ref.shard_reads[shard_id].pg_shard = pg_shard_t(int(shard_id), shard_id);
     }
     ASSERT_EQ(read_request,  ref);
   }
@@ -769,8 +770,8 @@ TEST(ECCommon, get_min_avail_to_read_shards) {
   {
     ECUtil::shard_extent_set_t to_read_list(s.get_k_plus_m());
     hobject_t hoid;
-    for (unsigned int i=0; i<k; i++) {
-      to_read_list[i].insert(i*2*page_size, page_size);
+    for (shard_id_t i; i<k; ++i) {
+      to_read_list[i].insert(int(i) * 2 * page_size, page_size);
     }
 
     ECCommon::read_request_t read_request(to_read_list, false, object_size);
@@ -779,11 +780,11 @@ TEST(ECCommon, get_min_avail_to_read_shards) {
     pipeline.get_min_avail_to_read_shards(hoid, false, false, read_request);
 
     ECCommon::read_request_t ref(to_read_list, false, object_size);
-    for (unsigned int i=0; i<k; i++) {
+    for (shard_id_t i; i<k; ++i) {
       shard_id_t shard_id(i);
       ref.shard_reads[shard_id].extents = to_read_list[i];
       ref.shard_reads[shard_id].subchunk = ecode->default_sub_chunk;
-      ref.shard_reads[shard_id].pg_shard = pg_shard_t(i, shard_id);
+      ref.shard_reads[shard_id].pg_shard = pg_shard_t(int(i), shard_id);
     }
 
     ASSERT_EQ(read_request,  ref);
@@ -795,8 +796,8 @@ TEST(ECCommon, get_min_avail_to_read_shards) {
     ECUtil::shard_extent_set_t to_read_list(s.get_k_plus_m());
     hobject_t hoid;
 
-    for (int i=0; i < (int)k; i++) {
-      to_read_list[i].insert(i*2*page_size + i + 1, i+1);
+    for (shard_id_t i; i < (int)k; ++i) {
+      to_read_list[i].insert(int(i) * 2 * page_size + int(i) + 1, int(i) + 1);
     }
     ECCommon::read_request_t ref(to_read_list, false, object_size);
     ECCommon::read_request_t read_request(to_read_list, false, object_size);
@@ -817,26 +818,26 @@ TEST(ECCommon, get_min_avail_to_read_shards) {
     ECUtil::shard_extent_set_t to_read_list(s.get_k_plus_m());
     hobject_t hoid;
 
-    for (unsigned int i=0; i<k; i++) {
-      to_read_list[i].insert(i*2*page_size, page_size);
+    for (shard_id_t i; i<k; ++i) {
+      to_read_list[i].insert(int(i) * 2 * page_size, page_size);
     }
 
     ECCommon::read_request_t read_request(to_read_list, false, object_size);
 
-    unsigned int missing_shard = 1;
+    shard_id_t missing_shard(1);
     int parity_shard = k;
-    listenerStub.acting_shards.erase(pg_shard_t(missing_shard, shard_id_t(missing_shard)));
+    listenerStub.acting_shards.erase(pg_shard_t(int(missing_shard), shard_id_t(missing_shard)));
 
     pipeline.get_min_avail_to_read_shards(hoid, false, false, read_request);
 
     ECCommon::read_request_t ref(to_read_list, false, object_size);
-    for (unsigned int i=0; i<k; i++) {
+    for (shard_id_t i; i<k; ++i) {
       if (i != missing_shard) {
         shard_id_t shard_id(i);
 	to_read_list[i].union_of(to_read_list[missing_shard]);
         ref.shard_reads[shard_id].subchunk = ecode->default_sub_chunk;
 	ref.shard_reads[shard_id].extents = to_read_list[i];
-        ref.shard_reads[shard_id].pg_shard = pg_shard_t(i, shard_id);
+        ref.shard_reads[shard_id].pg_shard = pg_shard_t(int(i), shard_id);
       } else {
 	ECCommon::shard_read_t parity_shard_read;
 	parity_shard_read.subchunk = ecode->default_sub_chunk;
@@ -858,10 +859,10 @@ TEST(ECCommon, get_min_avail_to_read_shards) {
     hobject_t hoid;
     unsigned int missing_shard = 1;
 
-    to_read_list[0].insert(0, page_size);
-    to_read_list[1].insert(page_size, page_size);
-    to_read_list[2].insert(2*page_size, page_size);
-    to_read_list[3].insert(3*page_size, page_size);
+    to_read_list[shard_id_t(0)].insert(0, page_size);
+    to_read_list[shard_id_t(1)].insert(page_size, page_size);
+    to_read_list[shard_id_t(2)].insert(2*page_size, page_size);
+    to_read_list[shard_id_t(3)].insert(3*page_size, page_size);
     ECCommon::read_request_t read_request(to_read_list, false, object_size);
     ECCommon::read_request_t ref(to_read_list, false, object_size);
 
@@ -897,9 +898,9 @@ TEST(ECCommon, get_min_avail_to_read_shards) {
     hobject_t hoid;
 
     extent_set extents_to_read;
-    for (unsigned int i=0; i<k; i++) {
-      to_read_list[i].insert(i*2*page_size, page_size);
-      extents_to_read.insert(i*2*page_size, page_size);
+    for (shard_id_t i; i<k; ++i) {
+      to_read_list[i].insert(int(i) * 2 * page_size, page_size);
+      extents_to_read.insert(int(i) * 2 * page_size, page_size);
     }
     ECCommon::read_request_t read_request(to_read_list, false, object_size);
 
@@ -922,28 +923,28 @@ TEST(ECCommon, get_min_avail_to_read_shards) {
     ECUtil::shard_extent_set_t to_read_list(s.get_k_plus_m());
     hobject_t hoid;
 
-    for (unsigned int i=0; i<k; i++) {
-      to_read_list[i].insert(i*2*page_size, page_size);
+    for (shard_id_t i; i<k; ++i) {
+      to_read_list[i].insert(int(i) * 2 * page_size, page_size);
     }
     ECCommon::read_request_t read_request(to_read_list, false, object_size);
 
-    unsigned int missing_shard = 1;
+    shard_id_t missing_shard(1);
     int parity_shard = k;
     std::set<pg_shard_t> error_shards;
-    error_shards.emplace(missing_shard, shard_id_t(missing_shard));
+    error_shards.emplace(int(missing_shard), shard_id_t(missing_shard));
     // Similar to previous tests with missing shards, but this time, emulate
     // the shard being missing as a result of a bad read.
     pipeline.get_min_avail_to_read_shards(hoid, false, false, read_request, error_shards);
 
     ECCommon::read_request_t ref(to_read_list, false, object_size);
     std::vector<ECCommon::shard_read_t> want_to_read(empty_shard_vector);
-    for (unsigned int i=0; i<k; i++) {
+    for (shard_id_t i; i<k; ++i) {
       if (i != missing_shard) {
-        want_to_read[i].subchunk = ecode->default_sub_chunk;
-        want_to_read[i].extents.union_of(to_read_list[missing_shard]);
-        want_to_read[i].extents.union_of(to_read_list[i]);
-        want_to_read[i].pg_shard = pg_shard_t(i, shard_id_t(i));
-        ref.shard_reads[shard_id_t(i)] = want_to_read[i];
+        want_to_read[int(i)].subchunk = ecode->default_sub_chunk;
+        want_to_read[int(i)].extents.union_of(to_read_list[missing_shard]);
+        want_to_read[int(i)].extents.union_of(to_read_list[i]);
+        want_to_read[int(i)].pg_shard = pg_shard_t(int(i), shard_id_t(i));
+        ref.shard_reads[shard_id_t(i)] = want_to_read[int(i)];
       } else {
         ECCommon::shard_read_t parity_shard_read;
         parity_shard_read.subchunk = ecode->default_sub_chunk;
@@ -1075,7 +1076,7 @@ TEST(ECCommon, get_min_want_to_read_shards_bug67087)
 
   ECUtil::shard_extent_set_t ref(s.get_k_plus_m());
 
-  ref[0].insert(512, 512);
+  ref[shard_id_t(0)].insert(512, 512);
 
   // multitple calls with the same want_to_read can happen during
   // multi-region reads. This will create multiple extents in want_to_read,
@@ -1087,7 +1088,7 @@ TEST(ECCommon, get_min_want_to_read_shards_bug67087)
     pipeline.get_min_want_to_read_shards(
      to_read2, want_to_read);
     // We have 4 data shards per stripe.
-    ref[0].insert(512+4*1024, 512);
+    ref[shard_id_t(0)].insert(512+4*1024, 512);
   }
 }
 
@@ -1128,7 +1129,7 @@ TEST(ECCommon, get_remaining_shards)
 
     // Mock up a read request
     ECUtil::shard_extent_set_t to_read(s.get_k_plus_m());
-    to_read[0].insert(0, 4096);
+    to_read[shard_id_t(0)].insert(0, 4096);
     ECCommon::read_request_t read_request(to_read, false, object_size);
     int missing_shard = 0;
 
@@ -1166,8 +1167,8 @@ TEST(ECCommon, get_remaining_shards)
     read_result.errors.emplace(pg_shards[missing_shard], -EIO);
     buffer::list bl;
     bl.append_zero(chunk_size/2);
-    read_result.buffers_read.insert_in_shard(0, chunk_size/2, bl);
-    read_result.processed_read_requests[0].insert(chunk_size/2, bl.length());
+    read_result.buffers_read.insert_in_shard(shard_id_t(0), chunk_size/2, bl);
+    read_result.processed_read_requests[shard_id_t(0)].insert(chunk_size/2, bl.length());
 
     pipeline.get_remaining_shards(hoid, read_result, read_request, false, false);
 
@@ -1214,7 +1215,7 @@ TEST(ECCommon, encode)
 
   ECUtil::shard_extent_map_t semap(&s);
 
-  for (int i=1; i<k+m; i++) {
+  for (shard_id_t i; i<k+m; ++i) {
     bufferlist bl;
     bl.append_zero(i>=k?4096:2048);
     semap.insert_in_shard(i, 12*1024, bl);

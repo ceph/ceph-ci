@@ -52,7 +52,7 @@ public:
   int run();
   int decode_erasures(const shard_id_map<ceph::buffer::list> &all_chunks,
 		      const shard_id_map<ceph::buffer::list> &chunks,
-		      unsigned i,
+		      shard_id_t shard,
 		      unsigned want_erasures,
 		      ErasureCodeInterfaceRef erasure_code);
   int decode();

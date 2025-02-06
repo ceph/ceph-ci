@@ -174,13 +174,13 @@ private:
   {
     size_t size = chunk_mapping.size();
     std::vector<raw_shard_id_t> reverse(size);
-    std::vector<bool> used(size);
+    shard_id_set used;
     for (raw_shard_id_t raw_shard; raw_shard < size; ++raw_shard) {
       shard_id_t shard = chunk_mapping[int(raw_shard)];
       // Mapping must be a bijection and a permutation
-      ceph_assert(!used.at(shard));
-      used.at(shard) = true;
-      reverse.at(shard) = raw_shard;
+      ceph_assert(!used.contains(shard));
+      used.insert(shard);
+      reverse.at(int(shard)) = raw_shard;
     }
     return reverse;
   }
@@ -263,12 +263,12 @@ public:
     return ECUtil::align_page_next(shard_size);
   }
 
-  uint64_t ro_offset_to_shard_offset(uint64_t ro_offset, shard_id_t shard) const
+  uint64_t ro_offset_to_shard_offset(uint64_t ro_offset, const raw_shard_id_t shard) const
   {
     uint64_t full_stripes = (ro_offset / stripe_width) * chunk_size;
     int offset_shard = (ro_offset / chunk_size) % k;
 
-    if (shard == offset_shard) return full_stripes + ro_offset % chunk_size;
+    if (int(shard) == offset_shard) return full_stripes + ro_offset % chunk_size;
     if (shard < offset_shard) return full_stripes + chunk_size;
     return full_stripes;
   }
@@ -311,7 +311,7 @@ public:
   }
   raw_shard_id_t get_raw_shard(shard_id_t shard) const
   {
-    return chunk_mapping_reverse.at(shard);
+    return chunk_mapping_reverse.at(int(shard));
   }
   /* Return a "span" - which can be iterated over */
   auto get_data_shards() const {
@@ -450,8 +450,8 @@ public:
   void dump(ceph::Formatter *f) const;
   static void generate_test_instances(std::list<HashInfo*>& o);
   uint32_t get_chunk_hash(shard_id_t shard) const {
-    ceph_assert((unsigned)shard < cumulative_shard_hashes.size());
-    return cumulative_shard_hashes[shard];
+    ceph_assert(int(shard) < cumulative_shard_hashes.size());
+    return cumulative_shard_hashes[int(shard)];
   }
   uint64_t get_total_chunk_size() const {
     return total_chunk_size;
@@ -720,11 +720,11 @@ struct log_entry_t {
   event(event), shard(shard) {}
   log_entry_t(
    const log_event_t event,
-   const pg_shard_t &shard,
+   const pg_shard_t &pg_shard,
    const shard_extent_map_t &extent_map) :
-  event(event), shard(shard),
-  io(extent_map.contains(shard.shard)?
-    extent_map.get_extent_map(shard.shard.id).get_interval_set():
+  event(event), shard(pg_shard),
+  io(extent_map.contains(pg_shard.shard)?
+    extent_map.get_extent_map(pg_shard.shard).get_interval_set():
     extent_set()) {}
 
   friend std::ostream& operator<<(std::ostream& out, const log_entry_t& lhs);

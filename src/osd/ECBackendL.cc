@@ -376,13 +376,13 @@ namespace ECLegacy {
     for (set<shard_id_t>::iterator i = op.missing_on_shards.begin();
          i != op.missing_on_shards.end();
          ++i) {
-      target[*i] = &(op.returned_data[*i]);
+      target[int(*i)] = &(op.returned_data[int(*i)]);
     }
     map<int, bufferlist> from;
     for(map<pg_shard_t, bufferlist>::iterator i = to_read.get<2>().begin();
         i != to_read.get<2>().end();
         ++i) {
-      from[i->first.shard] = std::move(i->second);
+      from[int(i->first.shard)] = std::move(i->second);
     }
     dout(10) << __func__ << ": " << from << dendl;
     int r;
@@ -637,12 +637,12 @@ namespace ECLegacy {
         for (set<pg_shard_t>::iterator mi = op.missing_on.begin();
 	     mi != op.missing_on.end();
 	     ++mi) {
-	  ceph_assert(op.returned_data.count(mi->shard));
+	  ceph_assert(op.returned_data.count(int(mi->shard)));
 	  m->pushes[*mi].push_back(PushOp());
 	  PushOp &pop = m->pushes[*mi].back();
 	  pop.soid = op.hoid;
 	  pop.version = op.v;
-	  pop.data = op.returned_data[mi->shard];
+	  pop.data = op.returned_data[int(mi->shard)];
 	  dout(10) << __func__ << ": before_progress=" << op.recovery_progress
 		   << ", after_progress=" << after_progress
 		   << ", pop.data.length()=" << pop.data.length()
@@ -997,7 +997,7 @@ namespace ECLegacy {
       async);
 
     if (!get_parent()->pg_is_undersized() &&
-        (unsigned)get_parent()->whoami_shard().shard >= sinfo.get_k())
+        int(get_parent()->whoami_shard().shard) >= sinfo.get_k())
       op.t.set_fadvise_flag(CEPH_OSD_OP_FLAG_FADVISE_DONTNEED);
 
     localt.register_on_commit(
@@ -1307,7 +1307,7 @@ namespace ECLegacy {
             iter->second.returned.front().get<2>().begin();
           j != iter->second.returned.front().get<2>().end();
           ++j) {
-          have.insert(j->first.shard);
+          have.insert(int(j->first.shard));
           dout(20) << __func__ << " have shard=" << j->first.shard << dendl;
         }
         map<int, vector<pair<int, int>>> dummy_minimum;
@@ -1820,7 +1820,7 @@ void ECBackendL::objects_read_async(
          * we match our chunk hash and our recollection of the hash for
          * chunk 0 matches that of our peers, there is likely no corruption.
          */
-        o.digest = hinfo->get_chunk_hash(0);
+        o.digest = hinfo->get_chunk_hash(shard_id_t(0));
         o.digest_present = true;
       } else {
         /* Hack! We must be using partial overwrites, and partial overwrites

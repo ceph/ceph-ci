@@ -366,7 +366,7 @@ namespace ECLegacy {
         for (std::set<pg_shard_t>::const_iterator i = _have.begin();
              i != _have.end();
              ++i) {
-          have.insert(i->shard);
+          have.insert(int(i->shard));
              }
         std::map<int, std::vector<std::pair<int, int>>> min;
         return ec_impl->minimum_to_decode(want, have, &min) == 0;
@@ -440,7 +440,7 @@ namespace ECLegacy {
       ScrubMapBuilder &pos,
       ScrubMap::object &o);
 
-    uint64_t be_get_ondisk_size(uint64_t logical_size, int8_t shard_id) const {
+    uint64_t be_get_ondisk_size(uint64_t logical_size, shard_id_t unused) const {
       return sinfo.logical_to_next_chunk_offset(logical_size);
     }
   };

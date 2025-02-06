@@ -1394,7 +1394,7 @@ public:
 
  uint64_t logical_to_ondisk_size(uint64_t logical_size,
                                  int8_t shard_id) const final {
-   return get_pgbackend()->be_get_ondisk_size(logical_size, shard_id);
+   return get_pgbackend()->be_get_ondisk_size(logical_size, shard_id_t(shard_id));
  }
 };
 

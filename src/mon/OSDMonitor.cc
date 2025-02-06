@@ -8868,7 +8868,6 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
       }
 #else
       ceph_assert(total == k + m); // Keep compiler happy.
-      p.nonprimary_shards.resize(total, false);
 #endif
       p.flags |= pg_pool_t::FLAG_EC_OPTIMIZATIONS;
     } else if (val == "false" || (interr.empty() && n == 0)) {

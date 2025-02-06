@@ -54,7 +54,7 @@ static int pow_int(int a, int x) {
 
 ErasureCodeClay::~ErasureCodeClay()
 {
-  for (int i = 0; i < q*t; i++) {
+  for (shard_id_t i; i < q*t; ++i) {
     if ((*U_buf)[i].length() != 0) (*U_buf)[i].clear();
   }
 }
@@ -152,14 +152,14 @@ int ErasureCodeClay::encode_chunks(const shard_id_map<bufferptr> &in,
     parity_chunks.insert(shard+nu);
   }
 
-  for (int i = k; i < k + nu; i++) {
+  for (shard_id_t i(k); i < k + nu; ++i) {
     bufferptr buf(buffer::create_aligned(size, SIMD_ALIGN));
     buf.zero();
     chunks[i].push_back(std::move(buf));
   }
 
   int res = decode_layered(parity_chunks, &chunks);
-  for (int i = k ; i < k + nu; i++) {
+  for (shard_id_t i(k) ; i < k + nu; ++i) {
   // need to clean some of the intermediate chunks here!!
     chunks[i].clear();
   }
@@ -195,14 +195,14 @@ int ErasureCodeClay::decode_chunks(const shard_id_set &want_to_read,
       coded_chunks[shard+nu].append(out[shard]);
   }
 
-  for (int i = k; i < k+nu; i++) {
+  for (shard_id_t i(k); i < k+nu; ++i) {
     bufferptr buf(buffer::create_aligned(size, SIMD_ALIGN));
     buf.zero();
     coded_chunks[i].push_back(std::move(buf));
   }
 
   int res = decode_layered(erasures, &coded_chunks);
-  for (int i = k; i < k+nu; i++) {
+  for (shard_id_t i(k); i < k+nu; ++i) {
     coded_chunks[i].clear();
   }
   return res;
@@ -353,13 +353,14 @@ int ErasureCodeClay::is_repair(const shard_id_set &want_to_read,
   if (want_to_read.size() > 1) return 0;
   else return 0;
 
-  int i = *want_to_read.begin();
+  shard_id_t shard = *want_to_read.begin();
+  int i = int(shard);
   int lost_node_id = (i < k) ? i: i+nu;
   for (int x = 0; x < q; x++) {
     int node = (lost_node_id/q)*q+x;
     node = (node < k) ? node : node-nu;
     if (node != i) { // node in the same group other than erased node
-      if (available_chunks.count(node) == 0) return 0;
+      if (available_chunks.count(shard_id_t(node)) == 0) return 0;
     }
   }
 
@@ -371,8 +372,8 @@ int ErasureCodeClay::minimum_to_repair(const shard_id_set &want_to_read,
 				       const shard_id_set &available_chunks,
 				       shard_id_map<vector<pair<int, int>>> *minimum)
 {
-  int i = *want_to_read.begin();
-  int lost_node_index = (i < k) ? i : i+nu;
+  shard_id_t i = *want_to_read.begin();
+  int lost_node_index = int((i < k) ? i : i+nu);
   int rep_node_index = 0;
 
   // add all the nodes in lost node's y column.
@@ -383,9 +384,9 @@ int ErasureCodeClay::minimum_to_repair(const shard_id_set &want_to_read,
       if (j != lost_node_index%q) {
         rep_node_index = (lost_node_index/q)*q+j;
         if (rep_node_index < k) {
-          minimum->emplace(rep_node_index, sub_chunk_ind);
+          minimum->emplace(shard_id_t(rep_node_index), sub_chunk_ind);
         } else if (rep_node_index >= k+nu) {
-          minimum->emplace(rep_node_index-nu, sub_chunk_ind);
+          minimum->emplace(shard_id_t(rep_node_index-nu), sub_chunk_ind);
         }
       }
     }
@@ -426,7 +427,7 @@ int ErasureCodeClay::get_repair_sub_chunk_count(const shard_id_set &want_to_read
   int weight_vector[t];
   std::fill(weight_vector, weight_vector + t, 0);
   for (auto to_read : want_to_read) {
-    weight_vector[to_read / q]++;
+    weight_vector[int(to_read) / q]++;
   }
 
   int repair_subchunks_count = 1;
@@ -459,9 +460,9 @@ int ErasureCodeClay::repair(const shard_id_set &want_to_read,
   shard_id_map<bufferlist> helper_data(q * t);
   shard_id_set aloof_nodes;
 
-  for (int i =  0; i < k + m; i++) {
+  for (shard_id_t i; i < k + m; ++i) {
     // included helper data only for d+nu nodes.
-    if (auto found = chunks.find(i); found != chunks.end()) { // i is a helper
+    if (auto found = chunks.find(shard_id_t(i)); found != chunks.end()) { // i is a helper
       if (i<k) {
 	helper_data[i] = found->second;
       } else {
@@ -469,21 +470,21 @@ int ErasureCodeClay::repair(const shard_id_set &want_to_read,
       }
     } else {
       if (i != *want_to_read.begin()) { // aloof node case.
-        int aloof_node_id = (i < k) ? i: i+nu;
+        shard_id_t aloof_node_id = (i < k) ? i: i+nu;
         aloof_nodes.insert(aloof_node_id);
       } else {
         bufferptr ptr(buffer::create_aligned(chunksize, SIMD_ALIGN));
 	ptr.zero();
-        int lost_node_id = (i < k) ? i : i+nu;
+        shard_id_t lost_node_id = (i < k) ? i : i+nu;
         (*repaired)[i].push_back(ptr);
         recovered_data[lost_node_id] = (*repaired)[i];
-        get_repair_subchunks(lost_node_id, repair_sub_chunks_ind);
+        get_repair_subchunks(int(lost_node_id), repair_sub_chunks_ind);
       }
     }
   }
 
   // this is for shortened codes i.e., when nu > 0
-  for (int i=k; i < k+nu; i++) {
+  for (shard_id_t i(k); i < k+nu; ++i) {
     bufferptr ptr(buffer::create_aligned(repair_blocksize, SIMD_ALIGN));
     ptr.zero();
     helper_data[i].push_back(ptr);
@@ -497,7 +498,7 @@ int ErasureCodeClay::repair(const shard_id_set &want_to_read,
 				repair_sub_chunks_ind);
 
   // clear buffers created for the purpose of shortening
-  for (int i = k; i < k+nu; i++) {
+  for (shard_id_t i(k); i < k+nu; ++i) {
     helper_data[i].clear();
   }
 
@@ -523,16 +524,16 @@ int ErasureCodeClay::repair_one_lost_chunk(shard_id_map<bufferlist> &recovered_d
   temp_buf.push_back(buf);
 
   for (auto [index,count] : repair_sub_chunks_ind) {
-    for (int j = index; j < index + count; j++) {
-      get_plane_vector(j, z_vec);
-      int order = 0;
+    for (shard_id_t j(index); j < index + count; ++j) {
+      get_plane_vector(int(j), z_vec);
+      shard_id_t order ;
       // check across all erasures and aloof nodes
       for ([[maybe_unused]] auto& [node, bl] : recovered_data) {
-        if (node % q == z_vec[node / q]) order++;
+        if (int(node) % q == z_vec[int(node) / q]) ++order;
         (void)bl;  // silence -Wunused-variable
       }
       for (auto node : aloof_nodes) {
-        if (node % q == z_vec[node / q]) order++;
+        if (int(node) % q == z_vec[int(node) / q]) ++order;
       }
       ceph_assert(order > 0);
       ordered_planes[order].insert(j);
@@ -543,7 +544,7 @@ int ErasureCodeClay::repair_one_lost_chunk(shard_id_map<bufferlist> &recovered_d
   }
   assert((unsigned)plane_ind == repair_subchunks);
 
-  for (int i = 0; i < q*t; i++) {
+  for (shard_id_t i(0); i < q*t; ++i) {
     if ((*U_buf)[i].length() == 0) {
       bufferptr buf(buffer::create_aligned(sub_chunk_no*sub_chunksize, SIMD_ALIGN));
       buf.zero();
@@ -551,41 +552,42 @@ int ErasureCodeClay::repair_one_lost_chunk(shard_id_map<bufferlist> &recovered_d
     }
   }
 
-  int lost_chunk = 0;
+  int lost_chunk;
   int count = 0;
   for ([[maybe_unused]] auto& [node, bl] : recovered_data) {
-    lost_chunk = node;
+    lost_chunk = int(node);
     count++;
     (void)bl;  // silence -Wunused-variable
   }
   ceph_assert(count == 1);
 
   shard_id_set erasures;
-  for (int i = 0; i < q; i++) {
-    erasures.insert(lost_chunk - lost_chunk % q + i);
+  for (int i = 0; i < q; ++i) {
+    erasures.insert(shard_id_t(lost_chunk - lost_chunk % q + i));
   }
   for (auto node : aloof_nodes) {
     erasures.insert(node);
   }
 
-  for (int order = 1; ;order++) {
+  for (shard_id_t order(1); ; ++order) {
     if (ordered_planes.count(order) == 0) {
       break;
     }
-    for (auto z : ordered_planes[order]) {
+    for (auto z_shard : ordered_planes[order]) {
+      int z = int(z_shard);
       get_plane_vector(z, z_vec);
 
       for (int y = 0; y < t; y++) {
 	for (int x = 0; x < q; x++) {
-	  int node_xy = y*q + x;
+	  shard_id_t node_xy(y*q + x);
 	  shard_id_map<bufferlist> known_subchunks(q * t);
 	  shard_id_map<bufferlist> pftsubchunks(q * t);
 	  shard_id_set pft_erasures;
 	  if (erasures.count(node_xy) == 0) {
 	    assert(helper_data.count(node_xy) > 0);
-	    int z_sw = z + (x - z_vec[y])*pow_int(q,t-1-y);
-	    int node_sw = y*q + z_vec[y];
-	    int i0 = 0, i1 = 1, i2 = 2, i3 = 3;
+	    shard_id_t z_sw(z + (x - z_vec[y])*pow_int(q,t-1-y));
+	    shard_id_t node_sw(y*q + z_vec[y]);
+	    shard_id_t i0, i1(1), i2(2), i3(3);
 	    if (z_vec[y] > x) {
 	      i0 = 1;
 	      i1 = 0;
@@ -593,16 +595,16 @@ int ErasureCodeClay::repair_one_lost_chunk(shard_id_map<bufferlist> &recovered_d
 	      i3 = 2;
 	    }
 	    if (aloof_nodes.count(node_sw) > 0) {
-	      assert(repair_plane_to_ind.count(z) > 0);
+	      assert(repair_plane_to_ind.count(z_shard) > 0);
 	      assert(repair_plane_to_ind.count(z_sw) > 0);
 	      pft_erasures.insert(i2);
-	      known_subchunks[i0].substr_of(helper_data[node_xy], repair_plane_to_ind[z]*sub_chunksize, sub_chunksize);
-	      known_subchunks[i3].substr_of((*U_buf)[node_sw], z_sw*sub_chunksize, sub_chunksize);
+	      known_subchunks[i0].substr_of(helper_data[node_xy], repair_plane_to_ind[z_shard]*sub_chunksize, sub_chunksize);
+	      known_subchunks[i3].substr_of((*U_buf)[node_sw], int(z_sw)*sub_chunksize, sub_chunksize);
 	      pftsubchunks[i0] = known_subchunks[i0];
 	      pftsubchunks[i1] = temp_buf;
 	      pftsubchunks[i2].substr_of((*U_buf)[node_xy], z*sub_chunksize, sub_chunksize);
 	      pftsubchunks[i3] = known_subchunks[i3];
-	      for (int i=0; i<3; i++) {
+	      for (shard_id_t i; i<3; ++i) {
 		pftsubchunks[i].rebuild_aligned(SIMD_ALIGN);
 	      }
               shard_id_map<bufferptr> in(get_chunk_count());
@@ -615,17 +617,17 @@ int ErasureCodeClay::repair_one_lost_chunk(shard_id_map<bufferlist> &recovered_d
               pft.erasure_code->decode_chunks(pft_erasures, in, out);
 	    } else {
 	      ceph_assert(helper_data.count(node_sw) > 0);
-	      ceph_assert(repair_plane_to_ind.count(z) > 0);
+	      ceph_assert(repair_plane_to_ind.count(z_shard) > 0);
 	      if (z_vec[y] != x){
 		pft_erasures.insert(i2);
 		ceph_assert(repair_plane_to_ind.count(z_sw) > 0);
-		known_subchunks[i0].substr_of(helper_data[node_xy], repair_plane_to_ind[z]*sub_chunksize, sub_chunksize);
+		known_subchunks[i0].substr_of(helper_data[node_xy], repair_plane_to_ind[z_shard]*sub_chunksize, sub_chunksize);
 		known_subchunks[i1].substr_of(helper_data[node_sw], repair_plane_to_ind[z_sw]*sub_chunksize, sub_chunksize);
 		pftsubchunks[i0] = known_subchunks[i0];
 		pftsubchunks[i1] = known_subchunks[i1];
 		pftsubchunks[i2].substr_of((*U_buf)[node_xy], z*sub_chunksize, sub_chunksize);
 		pftsubchunks[i3].substr_of(temp_buf, 0, sub_chunksize);
-		for (int i=0; i<3; i++) {
+		for (shard_id_t i; i<3; ++i) {
 		  pftsubchunks[i].rebuild_aligned(SIMD_ALIGN);
 		}
 	        shard_id_map<bufferptr> in(get_chunk_count());
@@ -640,7 +642,7 @@ int ErasureCodeClay::repair_one_lost_chunk(shard_id_map<bufferlist> &recovered_d
 		char* uncoupled_chunk = (*U_buf)[node_xy].c_str();
 		char* coupled_chunk = helper_data[node_xy].c_str();
 		memcpy(&uncoupled_chunk[z*sub_chunksize],
-		       &coupled_chunk[repair_plane_to_ind[z]*sub_chunksize],
+		       &coupled_chunk[repair_plane_to_ind[z_shard]*sub_chunksize],
 		       sub_chunksize);
 	      }
 	    }
@@ -650,7 +652,8 @@ int ErasureCodeClay::repair_one_lost_chunk(shard_id_map<bufferlist> &recovered_d
       ceph_assert(erasures.size() <= (unsigned)m);
       decode_uncoupled(erasures, z, sub_chunksize);
 
-      for (auto i : erasures) {
+      for (auto shard : erasures) {
+        int i = int(shard);
 	int x = i % q;
 	int y = i / q;
 	int node_sw = y*q+z_vec[y];
@@ -658,7 +661,7 @@ int ErasureCodeClay::repair_one_lost_chunk(shard_id_map<bufferlist> &recovered_d
 	shard_id_set pft_erasures;
 	shard_id_map<bufferlist> known_subchunks(q * t);
 	shard_id_map<bufferlist> pftsubchunks(q * t);
-	int i0 = 0, i1 = 1, i2 = 2, i3 = 3;
+	shard_id_t i0(0), i1(1), i2(2), i3(3);
 	if (z_vec[y] > x) {
 	  i0 = 1;
 	  i1 = 0;
@@ -666,26 +669,26 @@ int ErasureCodeClay::repair_one_lost_chunk(shard_id_map<bufferlist> &recovered_d
 	  i3 = 2;
 	}
 	// make sure it is not an aloof node before you retrieve repaired_data
-	if (aloof_nodes.count(i) == 0) {
+	if (aloof_nodes.count(shard) == 0) {
 	  if (x == z_vec[y]) { // hole-dot pair (type 0)
-	    char* coupled_chunk = recovered_data[i].c_str();
-	    char* uncoupled_chunk = (*U_buf)[i].c_str();
+	    char* coupled_chunk = recovered_data[shard].c_str();
+	    char* uncoupled_chunk = (*U_buf)[shard].c_str();
 	    memcpy(&coupled_chunk[z*sub_chunksize],
 		   &uncoupled_chunk[z*sub_chunksize],
 		   sub_chunksize);
 	  } else {
 	    ceph_assert(y == lost_chunk / q);
 	    ceph_assert(node_sw == lost_chunk);
-	    ceph_assert(helper_data.count(i) > 0);
+	    ceph_assert(helper_data.count(shard) > 0);
 	    pft_erasures.insert(i1);
-	    known_subchunks[i0].substr_of(helper_data[i], repair_plane_to_ind[z]*sub_chunksize, sub_chunksize);
-	    known_subchunks[i2].substr_of((*U_buf)[i], z*sub_chunksize, sub_chunksize);
+	    known_subchunks[i0].substr_of(helper_data[shard], repair_plane_to_ind[z_shard]*sub_chunksize, sub_chunksize);
+	    known_subchunks[i2].substr_of((*U_buf)[shard], z*sub_chunksize, sub_chunksize);
 
 	    pftsubchunks[i0] = known_subchunks[i0];
-	    pftsubchunks[i1].substr_of(recovered_data[node_sw], z_sw*sub_chunksize, sub_chunksize);
+	    pftsubchunks[i1].substr_of(recovered_data[shard_id_t(node_sw)], z_sw*sub_chunksize, sub_chunksize);
 	    pftsubchunks[i2] = known_subchunks[i2];
 	    pftsubchunks[i3] = temp_buf;
-	    for (int i=0; i<3; i++) {
+	    for (shard_id_t i; i<3; ++i) {
 	      pftsubchunks[i].rebuild_aligned(SIMD_ALIGN);
 	    }
 	    shard_id_map<bufferptr> in(q * t);
@@ -711,13 +714,13 @@ int ErasureCodeClay::decode_layered(shard_id_set &erased_chunks,
 {
   int num_erasures = erased_chunks.size();
 
-  int size = (*chunks)[0].length();
+  int size = (*chunks)[shard_id_t()].length();
   ceph_assert(size%sub_chunk_no == 0);
   int sc_size = size / sub_chunk_no;
 
   ceph_assert(num_erasures > 0);
 
-  for (int i = k+nu; (num_erasures < m) && (i < q*t); i++) {
+  for (shard_id_t i(k+nu); (num_erasures < m) && (i < q*t); ++i) {
     if ([[maybe_unused]] auto [it, added] = erased_chunks.emplace(i); added) {
       num_erasures++;
       (void)it;  // silence -Wunused-variable
@@ -728,7 +731,7 @@ int ErasureCodeClay::decode_layered(shard_id_set &erased_chunks,
   int max_iscore = get_max_iscore(erased_chunks);
   int order[sub_chunk_no];
   int z_vec[t];
-  for (int i = 0; i < q*t; i++) {
+  for (shard_id_t i(0); i < q*t; ++i) {
     if ((*U_buf)[i].length() == 0) {
       bufferptr buf(buffer::create_aligned(size, SIMD_ALIGN));
       buf.zero();
@@ -748,10 +751,11 @@ int ErasureCodeClay::decode_layered(shard_id_set &erased_chunks,
     for (int z = 0; z < sub_chunk_no; z++) {
       if (order[z] == iscore) {
 	get_plane_vector(z, z_vec);
-        for (auto node_xy : erased_chunks) {
+        for (auto shard : erased_chunks) {
+          int node_xy = int(shard);
           int x = node_xy % q;
           int y = node_xy / q;
-	  int node_sw = y*q+z_vec[y];
+	  shard_id_t node_sw(y*q+z_vec[y]);
           if (z_vec[y] != x) {
             if (erased_chunks.count(node_sw) == 0) {
 	      recover_type1_erasure(chunks, x, y, z, z_vec, sc_size);
@@ -761,8 +765,8 @@ int ErasureCodeClay::decode_layered(shard_id_set &erased_chunks,
               get_coupled_from_uncoupled(chunks, x, y, z, z_vec, sc_size);
 	    }
 	  } else {
-	    char* C = (*chunks)[node_xy].c_str();
-            char* U = (*U_buf)[node_xy].c_str();
+	    char* C = (*chunks)[shard_id_t(node_xy)].c_str();
+            char* U = (*U_buf)[shard_id_t(node_xy)].c_str();
             memcpy(&C[z*sc_size], &U[z*sc_size], sc_size);
           }
         }
@@ -782,8 +786,8 @@ int ErasureCodeClay::decode_erasures(const shard_id_set& erased_chunks, int z,
 
   for (int x = 0; x < q; x++) {
     for (int y = 0; y < t; y++) {
-      int node_xy = q*y+x;
-      int node_sw = q*y+z_vec[y];
+      shard_id_t node_xy(q*y+x);
+      shard_id_t node_sw(q*y+z_vec[y]);
       if (erased_chunks.count(node_xy) == 0) {
 	if (z_vec[y] < x) {
 	  get_uncoupled_from_coupled(chunks, x, y, z, z_vec, sc_size);
@@ -807,7 +811,7 @@ int ErasureCodeClay::decode_uncoupled(const shard_id_set& erased_chunks, int z, 
   shard_id_map<bufferlist> known_subchunks(q * t);
   shard_id_map<bufferlist> all_subchunks(q * t);
 
-  for (int i = 0; i < q*t; i++) {
+  for (shard_id_t i(0); i < q*t; ++i) {
     if (erased_chunks.count(i) == 0) {
       known_subchunks[i].substr_of((*U_buf)[i], z*sc_size, sc_size);
       all_subchunks[i] = known_subchunks[i];
@@ -834,7 +838,8 @@ void ErasureCodeClay::set_planes_sequential_decoding_order(int* order, shard_id_
   for (int z = 0; z < sub_chunk_no; z++) {
     get_plane_vector(z,z_vec);
     order[z] = 0;
-    for (auto i : erasures) {
+    for (auto shard : erasures) {
+      int i = int(shard);
       if (i % q == z_vec[i / q]) {
 	order[z] = order[z] + 1;
       }
@@ -848,8 +853,8 @@ void ErasureCodeClay::recover_type1_erasure(shard_id_map<bufferlist>* chunks,
 {
   shard_id_set erased_chunks;
 
-  int node_xy = y*q+x;
-  int node_sw = y*q+z_vec[y];
+  shard_id_t node_xy(y*q+x);
+  shard_id_t node_sw(y*q+z_vec[y]);
   int z_sw = z + (x - z_vec[y]) * pow_int(q,t-1-y);
 
   shard_id_map<bufferlist> known_subchunks(q * t);
@@ -857,7 +862,7 @@ void ErasureCodeClay::recover_type1_erasure(shard_id_map<bufferlist>* chunks,
   bufferptr ptr(buffer::create_aligned(sc_size, SIMD_ALIGN));
   ptr.zero();
 
-  int i0 = 0, i1 = 1, i2 = 2, i3 = 3;
+  shard_id_t i0, i1(1), i2(2), i3(3);
   if (z_vec[y] > x) {
     i0 = 1;
     i1 = 0;
@@ -873,7 +878,7 @@ void ErasureCodeClay::recover_type1_erasure(shard_id_map<bufferlist>* chunks,
   pftsubchunks[i2] = known_subchunks[i2];
   pftsubchunks[i3].push_back(ptr);
 
-  for (int i=0; i<3; i++) {
+  for (shard_id_t i; i<3; ++i) {
     pftsubchunks[i].rebuild_aligned_size_and_memory(sc_size, SIMD_ALIGN);
   }
 
@@ -892,24 +897,24 @@ void ErasureCodeClay::get_coupled_from_uncoupled(shard_id_map<bufferlist>* chunk
 						 int* z_vec, int sc_size)
 {
   shard_id_set erased_chunks;
-  erased_chunks.insert_range(0,2);
+  erased_chunks.insert_range(shard_id_t(0),2);
 
-  int node_xy = y*q+x;
-  int node_sw = y*q+z_vec[y];
+  shard_id_t node_xy(y*q+x);
+  shard_id_t node_sw(y*q+z_vec[y]);
   int z_sw = z + (x - z_vec[y]) * pow_int(q,t-1-y);
 
   ceph_assert(z_vec[y] < x);
   shard_id_map<bufferlist> uncoupled_subchunks(q * t);
-  uncoupled_subchunks[2].substr_of((*U_buf)[node_xy], z * sc_size, sc_size);
-  uncoupled_subchunks[3].substr_of((*U_buf)[node_sw], z_sw * sc_size, sc_size);
+  uncoupled_subchunks[shard_id_t(2)].substr_of((*U_buf)[node_xy], z * sc_size, sc_size);
+  uncoupled_subchunks[shard_id_t(3)].substr_of((*U_buf)[node_sw], z_sw * sc_size, sc_size);
 
   shard_id_map<bufferlist> pftsubchunks(q * t);
-  pftsubchunks[0].substr_of((*chunks)[node_xy], z * sc_size, sc_size);
-  pftsubchunks[1].substr_of((*chunks)[node_sw], z_sw * sc_size, sc_size);
-  pftsubchunks[2] = uncoupled_subchunks[2];
-  pftsubchunks[3] = uncoupled_subchunks[3];
+  pftsubchunks[shard_id_t(0)].substr_of((*chunks)[node_xy], z * sc_size, sc_size);
+  pftsubchunks[shard_id_t(1)].substr_of((*chunks)[node_sw], z_sw * sc_size, sc_size);
+  pftsubchunks[shard_id_t(2)] = uncoupled_subchunks[shard_id_t(2)];
+  pftsubchunks[shard_id_t(3)] = uncoupled_subchunks[shard_id_t(3)];
 
-  for (int i=0; i<3; i++) {
+  for (shard_id_t i; i<3; ++i) {
     pftsubchunks[i].rebuild_aligned_size_and_memory(sc_size, SIMD_ALIGN);
   }
   shard_id_map<bufferptr> in(q * t);
@@ -927,13 +932,13 @@ void ErasureCodeClay::get_uncoupled_from_coupled(shard_id_map<bufferlist>* chunk
 						 int* z_vec, int sc_size)
 {
   shard_id_set erased_chunks;
-  erased_chunks.insert_range(2,2);
+  erased_chunks.insert_range(shard_id_t(2),2);
 
-  int node_xy = y*q+x;
-  int node_sw = y*q+z_vec[y];
+  shard_id_t node_xy(y*q+x);
+  shard_id_t node_sw(y*q+z_vec[y]);
   int z_sw = z + (x - z_vec[y]) * pow_int(q,t-1-y);
 
-  int i0 = 0, i1 = 1, i2 = 2, i3 = 3;
+  shard_id_t i0, i1(1), i2(2), i3(3);
   if (z_vec[y] > x) {
     i0 = 1;
     i1 = 0;
@@ -945,11 +950,11 @@ void ErasureCodeClay::get_uncoupled_from_coupled(shard_id_map<bufferlist>* chunk
   coupled_subchunks[i1].substr_of((*chunks)[node_sw], z_sw * sc_size, sc_size);
 
   shard_id_map<bufferlist> pftsubchunks(k+m);
-  pftsubchunks[0] = coupled_subchunks[0];
-  pftsubchunks[1] = coupled_subchunks[1];
+  pftsubchunks[shard_id_t(0)] = coupled_subchunks[shard_id_t(0)];
+  pftsubchunks[shard_id_t(1)] = coupled_subchunks[shard_id_t(1)];
   pftsubchunks[i2].substr_of((*U_buf)[node_xy], z * sc_size, sc_size);
   pftsubchunks[i3].substr_of((*U_buf)[node_sw], z_sw * sc_size, sc_size);
-  for (int i=0; i<3; i++) {
+  for (shard_id_t i; i<3; ++i) {
     pftsubchunks[i].rebuild_aligned_size_and_memory(sc_size, SIMD_ALIGN);
   }
   shard_id_map<bufferptr> in(q * t);
@@ -968,7 +973,8 @@ int ErasureCodeClay::get_max_iscore(shard_id_set& erased_chunks)
   int iscore = 0;
   memset(weight_vec, 0, sizeof(int)*t);
 
-  for (auto i : erased_chunks) {
+  for (auto shard : erased_chunks) {
+    int i = int(shard);
     if (weight_vec[i / q] == 0) {
       weight_vec[i / q] = 1;
       iscore++;
