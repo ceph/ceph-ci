@@ -269,7 +269,7 @@ void PGBackend::rollback(
       const version_t gen,
       const std::vector<std::pair<uint64_t, uint64_t>> &extents,
       const uint64_t object_size,
-      const std::vector<std::set<shard_id_t>> &shards) override {
+      const std::vector<shard_id_set> &shards) override {
       ObjectStore::Transaction temp;
       const pg_pool_t& pool = pg->get_parent()->get_pool();
       ceph_assert(entry.written_shards.empty() || pool.allows_ecoptimizations());
@@ -329,7 +329,7 @@ struct Trimmer : public ObjectModDesc::Visitor {
     const version_t gen,
     const std::vector<std::pair<uint64_t, uint64_t>> &extents,
     const uint64_t object_size,
-    const std::vector<std::set<shard_id_t>> &shards) override {
+    const std::vector<shard_id_set> &shards) override {
     auto dpp = pg->get_parent()->get_dpp();
     ceph_assert(shards.empty() || shards.size() == extents.size());
     for (unsigned int i=0;i<extents.size();i++) {

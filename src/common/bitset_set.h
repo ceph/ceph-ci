@@ -284,9 +284,9 @@ public:
     }
   }
   /** Utility for encode/decode to allow serialisations */
-  void decode(ceph::buffer::ptr::const_iterator &bl) {
+  void decode(ceph::buffer::ptr::const_iterator &bp) {
     for (size_t i = 0 ; i < WORDS; ++i) {
-      denc_varint(words[i], bl);
+      denc_varint(words[i], bp);
     }
   }
 

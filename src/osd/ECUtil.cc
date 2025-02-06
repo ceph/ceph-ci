@@ -646,9 +646,9 @@ namespace ECUtil {
         for (auto&& [shard, list] : s) {
           in[shard] = list.begin().get_current_ptr();
         }
-        for (shard_id_t i; i < (ec_impl->get_data_chunk_count() + ec_impl->get_coding_chunk_count()); ++i) {
-          if (in.contains(i)) {
-            bufferptr ptr(buffer::create_aligned(length, SIMD_ALIGN));
+        for (shard_id_t i; i < sinfo->get_k_plus_m(); ++i) {
+          if (!in.contains(i)) {
+            bufferptr ptr(buffer::create_aligned(length, CEPH_PAGE_SIZE));
             out[i] = ptr;
           }
         }
