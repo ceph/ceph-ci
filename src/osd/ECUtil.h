@@ -263,13 +263,13 @@ public:
     return ECUtil::align_page_next(shard_size);
   }
 
-  uint64_t ro_offset_to_shard_offset(uint64_t ro_offset, const raw_shard_id_t shard) const
+  uint64_t ro_offset_to_shard_offset(uint64_t ro_offset, const raw_shard_id_t raw_shard) const
   {
     uint64_t full_stripes = (ro_offset / stripe_width) * chunk_size;
     int offset_shard = (ro_offset / chunk_size) % k;
 
-    if (int(shard) == offset_shard) return full_stripes + ro_offset % chunk_size;
-    if (shard < offset_shard) return full_stripes + chunk_size;
+    if (int(raw_shard) == offset_shard) return full_stripes + ro_offset % chunk_size;
+    if (raw_shard < offset_shard) return full_stripes + chunk_size;
     return full_stripes;
   }
 
