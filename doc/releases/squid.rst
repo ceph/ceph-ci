@@ -393,7 +393,7 @@ v19.2.0 Squid
    upgrade.
 
 Highlights
-~~~~~~~~~~
+----------
 
 RADOS
 
@@ -428,7 +428,7 @@ Crimson/Seastore
   information please visit: https://ceph.io/en/news/crimson
 
 Ceph
-~~~~
+----
 
 * ceph: a new `--daemon-output-file` switch is available for `ceph tell`
   commands to dump output to a file local to the daemon. For commands which
@@ -450,7 +450,7 @@ Ceph
   the output. Details in the tracker: https://tracker.ceph.com/issues/57460
 
 CephFS
-~~~~~~
+------
 
 * CephFS: it is now possible to pause write I/O and metadata mutations on a
   tree in the file system using a new suite of subvolume quiesce commands.
@@ -538,13 +538,13 @@ CephFS
   `ceph fs set <fs_name> balance_automate <bool>`.
 
 CephX
-~~~~~
+-----
 
 * cephx: key rotation is now possible using `ceph auth rotate`. Previously,
   this was only possible by deleting and then recreating the key.
 
 Dashboard
-~~~~~~~~~
+---------
 
 * Dashboard: Rearranged Navigation Layout: The navigation layout has been reorganized for improved usability and easier access to key features.
 * Dashboard: CephFS Improvments
@@ -558,7 +558,7 @@ Dashboard
   * Several UI/UX Improvements to the bucket form
 
 MGR
-~~~
+---
 
 * MGR/REST: The REST manager module will trim requests based on the
   'max_requests' option.  Without this feature, and in the absence of manual
@@ -567,7 +567,7 @@ MGR
 * MGR: An OpTracker to help debug mgr module issues is now available.
 
 Monitoring
-~~~~~~~~~~
+----------
 
 * Monitoring: Grafana dashboards are now loaded into the container at runtime
   rather than building a grafana image with the grafana dashboards. Official
@@ -581,7 +581,7 @@ Monitoring
   for the cluster log file as well as for all external entities.
 
 RADOS
-~~~~~
+-----
 
 * RADOS: ``A POOL_APP_NOT_ENABLED`` health warning will now be reported if the
   application is not enabled for the pool irrespective of whether the pool is
@@ -619,14 +619,14 @@ RADOS
 * RADOS: Scrub scheduling behavior has been improved.
 
 Crimson/Seastore
-~~~~~~~~~~~~~~~~
+----------------
 
 * Crimson's first tech preview release!
   Supporting RBD workloads on Replicated pools.
   For more information please visit: https://ceph.io/en/news/crimson
 
 RBD
-~~~
+---
 
 * RBD: When diffing against the beginning of time (`fromsnapname == NULL`) in
   fast-diff mode (`whole_object == true` with ``fast-diff`` image feature enabled
@@ -660,7 +660,7 @@ RBD
   mappings.  Additionally, `ceph-rbd` service starts much faster.
 
 RGW
-~~~
+---
 
 * RGW: GetObject and HeadObject requests now return a x-rgw-replicated-at
   header for replicated objects. This timestamp can be compared against the
@@ -761,7 +761,7 @@ RGW
   now contains the complete user ID, prefixed with the tenant ID.
 
 Telemetry
-~~~~~~~~~
+---------
 
 * The ``basic`` channel in telemetry now captures pool flags that allows us to
   better understand feature adoption, such as Crimson.
@@ -779,7 +779,7 @@ upgrade using the noautoscale flag.
    You can monitor the progress of your upgrade at each stage with the ``ceph versions`` command, which will tell you what ceph version(s) are running for each type of daemon.
 
 Upgrading cephadm clusters
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+--------------------------
 
 If your cluster is deployed with cephadm (first introduced in Octopus), then the upgrade process is entirely automated. To initiate the upgrade,
 
@@ -817,7 +817,7 @@ or canceled with
 Note that canceling the upgrade simply stops the process; there is no ability to downgrade back to Quincy or Reef.
 
 Upgrading non-cephadm clusters
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+------------------------------
 
 .. note::
 
@@ -962,7 +962,7 @@ Upgrading non-cephadm clusters
    see https://docs.ceph.com/en/squid/cephadm/adoption/.
 
 Post-upgrade
-~~~~~~~~~~~~
+------------
 
 #. Verify the cluster is healthy with `ceph health`. If your cluster is running Filestore, and you are upgrading directly from Quincy to Squid, a deprecation warning is expected. This warning can be temporarily muted using the following command
 
@@ -985,6 +985,6 @@ Post-upgrade
    The public dashboard that aggregates Ceph telemetry can be found at https://telemetry-public.ceph.com/.
 
 Upgrading from pre-Quincy releases (like Pacific)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-------------------------------------------------
 
 You **must** first upgrade to Quincy (17.2.z) or Reef (18.2.z) before upgrading to Squid.
