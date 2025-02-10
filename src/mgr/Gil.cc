@@ -14,7 +14,8 @@
 
 
 #include "Python.h"
-
+#include "mgr/mgr_perf_counters.h"
+#include "common/BackTrace.h"
 #include "common/debug.h"
 
 #define dout_context g_ceph_context
@@ -34,8 +35,24 @@ SafeThreadState::SafeThreadState(PyThreadState *ts_)
 Gil::Gil(SafeThreadState &ts, bool new_thread) : pThreadState(ts)
 {
   // Acquire the GIL, set the current thread state
+  auto start = std::chrono::high_resolution_clock::now();
   PyEval_RestoreThread(pThreadState.ts);
-  dout(25) << "GIL acquired for thread state " << pThreadState.ts << dendl;
+  auto wait_duration = std::chrono::duration_cast<std::chrono::nanoseconds>(
+    std::chrono::high_resolution_clock::now() - start);
+  dout(25) << "GIL acquired for thread state " << pThreadState.ts << " in "
+           << wait_duration.count() << "ns" << dendl;
+
+  perfcounter->tinc(l_mgr_gil_acquisition_avg, wait_duration);
+  auto current_avg = perfcounter->get_tavg_ns(l_mgr_gil_acquisition_avg);
+  uint64_t avg_ns = (current_avg.first != 0) ? (current_avg.second / current_avg.first) : 0;
+  uint64_t dynamic_threshold = avg_ns * 10;
+
+  if (wait_duration.count() > dynamic_threshold || wait_duration.count() > fixed_threshold_ns) {
+    dout(10) << "GIL acquisition average is " << avg_ns << "ns, "
+          << "threshold is " << dynamic_threshold << "ns"
+          << " wait_duration is " << wait_duration.count() << "ns" << dendl;
+    dout(10) << "GIL BackTrace:" << ClibBackTrace(0)  << dendl;
+  }
 
   //
   // If called from a separate OS thread (i.e. a thread not created

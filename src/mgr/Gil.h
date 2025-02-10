@@ -16,6 +16,8 @@
 
 #include <cassert>
 #include <functional>
+#include <cstdint>
+
 
 struct _ts;
 typedef struct _ts PyThreadState;
@@ -71,6 +73,7 @@ public:
 private:
   SafeThreadState &pThreadState;
   PyThreadState *pNewThreadState = nullptr;
+  const uint64_t fixed_threshold_ns = 200000;
 };
 
 // because the Python runtime could relinquish the GIL when performing GC
