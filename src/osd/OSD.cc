@@ -2078,7 +2078,7 @@ void OSDService::_queue_for_recovery(
           << ", recovery_ops_reserved " << recovery_ops_reserved
           << " -> " << (recovery_ops_reserved + reserved_pushes)
           << " awaiting_throttle list size " << awaiting_throttle.size()
-          << " Address of object " << pg_recovery.get()
+          << " priority " << p.priority
           << dendl;
 
   enqueue_back(OpSchedulerItem(std::move(pg_recovery),
@@ -10616,6 +10616,12 @@ int OSDShard::_wake_pg_slot(
   for (auto i = slot->to_process.rbegin();
        i != slot->to_process.rend();
        ++i) {
+    const OpSchedulerItem::OpQueueable::Ref& sptr = (*i).get_ref();
+    if (sptr->get_type() == OpSchedulerItem::OpQueueable::Type::PG_RECOVERY) {
+      dout(3) << __func__ << " Enqueue PGRecovery item to high queue(to_process): "
+              << *i << dendl;
+      ceph_assert((*i).get_reserved_pushes() > 0);
+    }
     scheduler->enqueue_front(std::move(*i));
     count++;
   }
@@ -10623,6 +10629,12 @@ int OSDShard::_wake_pg_slot(
   for (auto i = slot->waiting.rbegin();
        i != slot->waiting.rend();
        ++i) {
+    const OpSchedulerItem::OpQueueable::Ref& sptr = (*i).get_ref();
+    if (sptr->get_type() == OpSchedulerItem::OpQueueable::Type::PG_RECOVERY) {
+      dout(3) << __func__ << " Enqueue PGRecovery item to high queue(waiting): "
+              << *i << dendl;
+      ceph_assert((*i).get_reserved_pushes() > 0);
+    }
     scheduler->enqueue_front(std::move(*i));
     count++;
   }
@@ -10887,10 +10899,16 @@ void OSD::ShardedOpWQ::_add_slot_waiter(
 	     << ", will wait on " << qi << dendl;
     slot->waiting_peering[qi.get_map_epoch()].push_back(std::move(qi));
   } else {
-    dout(20) << __func__ << " " << pgid
+    const OpSchedulerItem::OpQueueable::Ref& sptr = qi.get_ref();
+    if (sptr->get_type() == OpSchedulerItem::OpQueueable::Type::PG_RECOVERY) {
+     dout(3) << __func__ << " " << pgid
 	     << " item epoch is "
 	     << qi.get_map_epoch()
-	     << ", will wait on " << qi << dendl;
+	     << ", will wait on " << qi
+             << ". Move PGRecovery item to waiting queue."
+             << dendl;
+      ceph_assert(qi.get_reserved_pushes() > 0);
+    }
     slot->waiting.push_back(std::move(qi));
   }
 }
@@ -10982,7 +11000,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
       }
       std::unique_lock wait_lock{sdata->sdata_wait_lock};
       auto future_time = ceph::real_clock::from_double(*when_ready);
-      dout(10) << __func__ << " dequeue future request at " << future_time << dendl;
+      dout(3) << __func__ << " dequeue future request at " << future_time << dendl;
       // Disable heartbeat timeout until we find a non-future work item to process.
       osd->cct->get_heartbeat_map()->clear_timeout(hb);
       sdata->shard_lock.unlock();
@@ -11004,9 +11022,16 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
 
   // Access the stored item
   auto item = std::move(std::get<OpSchedulerItem>(work_item));
+  const OpSchedulerItem::OpQueueable::Ref& sptr = item.get_ref();
   if (item.get_reserved_pushes() > 0) {
     osd->logger->inc(l_osd_robjdeq);
+  } else if (sptr->get_type() ==
+    OpSchedulerItem::OpQueueable::Type::PG_RECOVERY) {
+    dout(3) << __func__ << " PGRecovery item dequeued."
+            << " item: " << item << dendl;
+    osd->logger->inc(l_osd_robjdeq);
   }
+
   if (osd->is_stopping()) {
     sdata->shard_lock.unlock();
     for (auto c : oncommits) {
@@ -11098,6 +11123,10 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
   // take next item
   auto qi = std::move(slot->to_process.front());
   slot->to_process.pop_front();
+  const OpSchedulerItem::OpQueueable::Ref& sptr_tp = qi.get_ref();
+  if (sptr_tp->get_type() == OpSchedulerItem::OpQueueable::Type::PG_RECOVERY) {
+    ceph_assert(qi.get_reserved_pushes() > 0);
+  }
   dout(20) << __func__ << " " << qi << " pg " << pg << dendl;
   set<pair<spg_t,epoch_t>> new_children;
   OSDMapRef osdmap;
@@ -11165,7 +11194,7 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
         code_block = 7;
       }
     } else if (osdmap->is_up_acting_osd_shard(token, osd->whoami)) {
-      dout(20) << __func__ << " " << token
+      dout(3) << __func__ << " " << token
 	       << " no pg, should exist e" << osdmap->get_epoch()
 	       << ", will wait on " << qi << dendl;
       _add_slot_waiter(token, slot, std::move(qi));
@@ -11183,6 +11212,8 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
       unsigned pushes_to_free = qi.get_reserved_pushes();
       if (pushes_to_free > 0) {
 	sdata->shard_lock.unlock();
+        dout(3) << __func__ << " Releasing reserved pushes: "
+                << pushes_to_free << dendl;
 	osd->service.release_reserved_pushes(pushes_to_free);
 	handle_oncommits(oncommits);
 	return;
@@ -11199,8 +11230,6 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb)
   if (qi.is_peering()) {
     OSDMapRef osdmap = sdata->shard_osdmap;
     if (qi.get_map_epoch() > osdmap->get_epoch()) {
-      dout(3) << __func__ << " qi " << qi << " on pg " << pg
-              << " is peering...returning" << dendl;
       _add_slot_waiter(token, slot, std::move(qi));
       sdata->shard_lock.unlock();
       pg->unlock();
