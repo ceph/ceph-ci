@@ -1,3 +1,17 @@
+>=19.2.1
+
+* CephFS: Command `fs subvolume create` now allows tagging subvolumes through option
+  `--earmark` with a unique identifier needed for NFS or SMB services. The earmark
+  string for a subvolume is empty by default. To remove an already present earmark,
+  an empty string can be assigned to it. Additionally, commands
+  `ceph fs subvolume earmark set`, `ceph fs subvolume earmark get` and
+  `ceph fs subvolume earmark rm` have been added to set, get and remove earmark from a given subvolume.
+
+* RADOS: A performance botteneck in the balancer mgr module has been fixed.
+  Related Tracker: https://tracker.ceph.com/issues/68657
+
+* RGW: Lua scripts will not run against health checks.
+
 >=19.0.0
 
 * RGW: GetObject and HeadObject requests now return a x-rgw-replicated-at
