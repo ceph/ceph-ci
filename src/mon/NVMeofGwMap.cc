@@ -124,7 +124,6 @@ void NVMeofGwMap::process_gw_map_ka(const NvmeGwId &gw_id, const NvmeGroupKey& g
 {
     auto& gws_states = Created_gws[group_key];
     auto  gw_state = gws_states.find(gw_id);
-    ceph_assert (gw_state != gws_states.end());
     auto& st = gw_state->second;
     dout(20)  << "KA beacon from the GW " << gw_id << " in state " << (int)st.availability << dendl;
 
@@ -210,7 +209,6 @@ void  NVMeofGwMap::set_failover_gw_for_ANA_group(const NvmeGwId &failed_gw_id, c
     int rc = blocklist_gw (failed_gw_id, group_key, ANA_groupid, epoch, true);
     if(rc){
         gw_state.active_state(ANA_groupid); //TODO check whether it is valid to  start failover when nonces are empty !
-        //ceph_assert(false);
     }
     else{
         gw_state.sm_state[ANA_groupid] = GW_STATES_PER_AGROUP_E::GW_WAIT_BLOCKLIST_CMPL;
@@ -272,7 +270,6 @@ void  NVMeofGwMap::find_failover_candidate(const NvmeGwId &gw_id, const NvmeGrou
     auto& gws_states = Created_gws[group_key];
 
     auto gw_state = gws_states.find(gw_id);
-    ceph_assert(gw_state != gws_states.end());
 
     // this GW may handle several ANA groups and  for each of them need to found the candidate GW
     if (gw_state->second.sm_state[grpid] == GW_STATES_PER_AGROUP_E::GW_ACTIVE_STATE || gw_state->second.ana_grp_id == grpid) {
@@ -390,7 +387,7 @@ void NVMeofGwMap::fsm_handle_gw_alive (const NvmeGwId &gw_id, const NvmeGroupKey
         break;
 
         default:{
-            ceph_assert(false);
+            dout(1) << "Wrong state " << gw_id  << " " << state  << dendl;
         }
 
     }
@@ -456,7 +453,7 @@ void NVMeofGwMap::fsm_handle_gw_delete (const NvmeGwId &gw_id, const NvmeGroupKe
         break;
 
         default: {
-            ceph_assert(false);
+          dout(1) << "Wrong state " << gw_id  << " " << state  << dendl;
         }
     }
     if (map_modified) validate_gw_map(group_key);
@@ -501,7 +498,9 @@ void NVMeofGwMap::fsm_handle_to_expired(const NvmeGwId &gw_id, const NvmeGroupKe
     }
     else if(fbp_gw_state.sm_state[grpid] == GW_STATES_PER_AGROUP_E::GW_WAIT_BLOCKLIST_CMPL){
         dout(1) << " Expired GW_WAIT_FAILOVER_PREPARED timer from GW " << gw_id << " ANA groupId: "<< grpid << dendl;
-        ceph_assert(false);
+        fbp_gw_state.standby_state(grpid);
+        cancel_timer(gw_id, group_key, grpid);
+        map_modified = true;
     }
     if (map_modified) validate_gw_map(group_key);
 }
@@ -591,7 +590,8 @@ void  NVMeofGwMap::validate_gw_map(const NvmeGroupKey& group_key)
                if(count == 2) {
                    dout(1) << "number active states per ana-group " << ana_group << "more than 1 in pool-group " << group_key << dendl;
                    dout(1) << Created_gws[group_key] << dendl;
-                   ceph_assert(false);
+                   st.standby_state(ana_group);
+                   break;
                }
            }
        }
