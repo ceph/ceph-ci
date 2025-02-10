@@ -586,6 +586,42 @@ def test_bucket_create():
     for zone in zonegroup_conns.zones:
         assert check_all_buckets_exist(zone, buckets)
 
+def test_bucket_create_with_tenant():
+    zonegroup = realm.master_zonegroup()
+    zonegroup_conns = ZonegroupConns(zonegroup)
+    primary = zonegroup_conns.rw_zones[0]
+    secondary = zonegroup_conns.rw_zones[1]
+
+    access_key = 'abcd'
+    secret_key = 'efgh'
+    tenant = 'testx'
+    uid = 'test'
+
+    cmd = ['user', 'create', '--tenant', tenant, '--uid', uid, '--access-key', access_key, '--secret-key', secret_key, '--display-name', 'tenanted-user']
+    primary.zone.cluster.admin(cmd)
+
+    zonegroup_meta_checkpoint(zonegroup)
+
+    secondary_conn = boto.s3.connection.S3Connection(aws_access_key_id=access_key,
+                                aws_secret_access_key=secret_key,
+                                is_secure=False,
+                                port=secondary.zone.gateways[0].port,
+                                host=secondary.zone.gateways[0].host,
+                                calling_format='boto.s3.connection.OrdinaryCallingFormat')
+
+    secondary_conn.create_bucket('tenanted-bucket')
+    bucket_name = 'testx:tenanted-bucket'
+    zonegroup_meta_checkpoint(zonegroup)
+
+    primary_conn = boto.s3.connection.S3Connection(aws_access_key_id=access_key,
+                                aws_secret_access_key=secret_key,
+                                is_secure=False,
+                                port=primary.zone.gateways[0].port,
+                                host=primary.zone.gateways[0].host,
+                                calling_format='boto.s3.connection.OrdinaryCallingFormat')
+
+    assert primary_conn.get_bucket(bucket_name)
+
 def test_bucket_recreate():
     zonegroup = realm.master_zonegroup()
     zonegroup_conns = ZonegroupConns(zonegroup)
