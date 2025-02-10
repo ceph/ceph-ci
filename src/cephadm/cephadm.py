@@ -1205,6 +1205,19 @@ def deploy_daemon_units(
         post_stop_commands.append(
             CephIscsi.configfs_mount_umount(data_dir, mount=False)
         )
+        tcmu_container = CephContainer(
+            ctx,
+            image=container.image,
+            entrypoint='/usr/bin/tcmu-runner',
+            cname = f'{container.cname}-tcmu'
+        )
+        tcmu_container_exists = f'{ctx.container_engine.path} inspect %s-tcmu &>/dev/null'
+        post_stop_commands.append(
+            f'! {tcmu_container_exists % container.old_cname} || {" ".join(tcmu_container.stop_cmd(old_cname=True))} \n'
+        )
+        post_stop_commands.append(
+            f'! {tcmu_container_exists % container.cname} || {" ".join(tcmu_container.stop_cmd())} \n'
+        )
 
     runscripts.write_service_scripts(
         ctx,
