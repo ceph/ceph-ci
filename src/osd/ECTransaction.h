@@ -15,6 +15,11 @@
 #ifndef ECTRANSACTION_H
 #define ECTRANSACTION_H
 
+// Set to 1 to turn on parity delta writes for all EC encodes (if the plugin
+// supports parity delta writes).
+// Set to 0 to use full stripe encodes.
+#define PARTIY_DELTA_WRITES 1
+
 #include <ostream>
 
 #include "ECUtil.h"
@@ -35,6 +40,7 @@ namespace ECTransaction {
     const uint64_t orig_size;
     uint64_t projected_size;
     bool invalidates_cache;
+    bool do_parity_delta_write;
 
     WritePlanObj(
       const hobject_t &hoid,

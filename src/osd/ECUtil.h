@@ -442,6 +442,9 @@ public:
   bool supports_partial_writes() const {
     return (plugin_flags & ErasureCodeInterface::FLAG_EC_PLUGIN_PARTIAL_WRITE_OPTIMIZATION) != 0;
   }
+  bool supports_parity_delta_writes() const {
+    return (plugin_flags & ErasureCodeInterface::FLAG_EC_PLUGIN_PARITY_DELTA_OPTIMIZATION) != 0;
+  }
   uint64_t get_stripe_width() const {
     return stripe_width;
   }
@@ -466,7 +469,7 @@ public:
   }
   /* Return a "span" - which can be iterated over */
   auto get_data_shards() const {
-    return std::span(chunk_mapping).subspan(0, k - 1);
+    return std::span(chunk_mapping).subspan(0, k);
   }
   auto get_parity_shards() const {
     return std::span(chunk_mapping).subspan(k, m);
@@ -770,6 +773,8 @@ public:
   void insert_ro_extent_map(const extent_map &host_extent_map);
   extent_set get_extent_superset() const;
   int encode(ErasureCodeInterfaceRef& ec_impl, const HashInfoRef &hinfo, uint64_t before_ro_size);
+  int encode_parity_delta(ErasureCodeInterfaceRef& ec_impl, const HashInfoRef &hinfo, uint64_t before_ro_size,
+                          shard_extent_map_t &old_sem);
   int decode(ErasureCodeInterfaceRef& ec_impl, ECUtil::shard_extent_set_t want);
   int _decode(ErasureCodeInterfaceRef& ec_impl, const shard_id_set &want_set, const shard_id_set &need_set);
   void get_buffer(shard_id_t shard, uint64_t offset, uint64_t length, buffer::list &append_to) const;
@@ -790,6 +795,7 @@ public:
   bool contains(std::optional<shard_extent_set_t> const &other) const;
   bool contains(shard_extent_set_t const &other) const;
   void pad_and_rebuild_to_page_align();
+  // void pad_and_rebuild_to_page_align(shard_extent_map_t &sem);
   uint64_t size();
   void clear();
   uint64_t get_start_offset() const { return start_offset; }

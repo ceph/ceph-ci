@@ -55,11 +55,18 @@ static void encode_and_write(
   ErasureCodeInterfaceRef &ec_impl,
   ECTransaction::WritePlanObj &plan,
   ECUtil::shard_extent_map_t &shard_extent_map,
+  ECUtil::shard_extent_map_t &old_shard_extent_map,
   uint32_t flags,
   shard_id_map<ObjectStore::Transaction> *transactions,
   DoutPrefixProvider *dpp)
 {
-  int r = shard_extent_map.encode(ec_impl, plan.hinfo, plan.orig_size);
+  int r = 0;
+  if (plan.do_parity_delta_write) {
+    r = shard_extent_map.encode_parity_delta(ec_impl, plan.hinfo, plan.orig_size, old_shard_extent_map);
+  }
+  else {
+    r = shard_extent_map.encode(ec_impl, plan.hinfo, plan.orig_size);
+  }
   ceph_assert(r == 0);
 
   debug(oid, "parity", shard_extent_map, dpp);
@@ -150,12 +157,12 @@ orig_size(orig_size) // On-disk object sizes are rounded up to the next page.
     ro_writes.union_insert(start, end - start);
   }
 
-  extent_set outter_extent_superset;
+  extent_set outer_extent_superset;
 
   std::optional<ECUtil::shard_extent_set_t> inner;
   for (const auto& [ro_off, ro_len] : ro_writes) {
     /* Here, we calculate the "inner" and "outer" extent sets. The inner
-     * represents all complete pages written. The outter represents the rounded
+     * represents all complete pages written. The outer represents the rounded
      * up/down pages. Clearly if the IO is entirely aligned, then the inner
      * and outer sets are the same and we optimise this by avoiding
      * calculating the inner in this case.
@@ -164,19 +171,19 @@ orig_size(orig_size) // On-disk object sizes are rounded up to the next page.
      * from the backend as part of the RMW.
      */
     uint64_t raw_end = ro_off + ro_len;
-    uint64_t outter_off = ECUtil::align_page_prev(ro_off);
-    uint64_t outter_len = ECUtil::align_page_next(raw_end) - outter_off;
+    uint64_t outer_off = ECUtil::align_page_prev(ro_off);
+    uint64_t outer_len = ECUtil::align_page_next(raw_end) - outer_off;
     uint64_t inner_off  = ECUtil::align_page_next(ro_off);
     uint64_t inner_len  = std::max(inner_off, ECUtil::align_page_prev(raw_end)) - inner_off;
 
-    if (inner || outter_off != inner_off || outter_len != inner_len) {
+    if (inner || outer_off != inner_off || outer_len != inner_len) {
       if (!inner) inner = ECUtil::shard_extent_set_t(will_write);
       sinfo.ro_range_to_shard_extent_set(inner_off,inner_len, *inner);
     }
 
     // Will write is expanded to page offsets.
-    sinfo.ro_range_to_shard_extent_set(outter_off,outter_len,
-      will_write, outter_extent_superset);
+    sinfo.ro_range_to_shard_extent_set(outer_off,outer_len,
+      will_write, outer_extent_superset);
   }
 
   /* Construct the to read on the stack, to avoid having to insert and
@@ -190,14 +197,14 @@ orig_size(orig_size) // On-disk object sizes are rounded up to the next page.
     /* We are not yet attempting to optimise this path and we are instead opting to maintain the old behaviour, where
      * a full read and write is performed for every stripe.
      */
-    outter_extent_superset.align(sinfo.get_chunk_size());
-    if (!outter_extent_superset.empty()) {
+    outer_extent_superset.align(sinfo.get_chunk_size());
+    if (!outer_extent_superset.empty()) {
       for (raw_shard_id_t raw_shard; raw_shard < sinfo.get_k_plus_m(); ++raw_shard) {
         shard_id_t shard = sinfo.get_shard(raw_shard);
-        will_write[shard].union_of(outter_extent_superset);
+        will_write[shard].union_of(outer_extent_superset);
         if (read_mask.contains(shard)) {
           extent_set _read;
-          _read.union_of(outter_extent_superset);
+          _read.union_of(outer_extent_superset);
           _read.intersection_of(read_mask.at(shard));
           if (!_read.empty()) reads.emplace(shard, std::move(_read));
         }
@@ -225,7 +232,7 @@ orig_size(orig_size) // On-disk object sizes are rounded up to the next page.
       uint64_t aligned_zero_end = ECUtil::align_page_next(op.truncate->second);
       sinfo.ro_range_to_shard_extent_set(
         aligned_zero_start, aligned_zero_end - aligned_zero_start,
-        zero, outter_extent_superset);
+        zero, outer_extent_superset);
     }
 
     for (raw_shard_id_t raw_shard; raw_shard< sinfo.get_k_plus_m(); ++raw_shard) {
@@ -241,7 +248,7 @@ orig_size(orig_size) // On-disk object sizes are rounded up to the next page.
         if (!read_mask.contains(shard))
           continue;
 
-        _to_read.intersection_of(outter_extent_superset, read_mask.at((shard)));
+        _to_read.intersection_of(outer_extent_superset, read_mask.at((shard)));
 
         if (small_set.contains(shard)) {
           _to_read.subtract(small_set.at(shard));
@@ -250,16 +257,42 @@ orig_size(orig_size) // On-disk object sizes are rounded up to the next page.
         if (!_to_read.empty()) {
           reads.emplace(shard, std::move(_to_read));
         }
-      } else if (!outter_extent_superset.empty()) {
-        will_write[shard].union_of(outter_extent_superset);
+      } else if (!outer_extent_superset.empty()) {
+        will_write[shard].union_of(outer_extent_superset);
       }
     }
   }
+
+  // Create the read plan for parity delta writes so that we can decide which type of write to do.
+  // The read plan should be the same as the write plan...
+  do_parity_delta_write = false;
+#if PARTIY_DELTA_WRITES
+  if (sinfo.supports_parity_delta_writes()) {
+    if (orig_size == projected_size) do_parity_delta_write = true; // Not an append, so can do parity delta write
+    // If this is a parity delta write, and there are reads to do, then we need to set to_read = will_write.
+    // We will do it in generate_transactions when we know if we have reads to do.
+  }
+#endif
+    // ECUtil::shard_extent_set_t pdw_read_plan = will_write;
+    // calculate set of shards needed to read for full stripe write
+    // fs_reads = reads;
+    // calculate set of shards needed to read for parity delta write
+    // check extent cache for any shards in it - remove these from above sets
+    // calculate best option to take
+    //if (op.has_source(&source)) { // Can only do a parity delta write if there is old data and new data??? 
+
+    //}
 
   // Do not do a read if there is nothing to read!
   if (!reads.empty()) {
      to_read = std::move(reads);
   }
+
+  if (do_parity_delta_write) {
+   to_read = will_write;
+  }
+  //ldpp_dout(dpp, 20) << "JP: to_read: " << to_read << dendl;
+  //ldpp_dout(dpp, 20) << "JP: will_write: " << will_write << dendl;
 
   /* validate post conditions:
    * to_read should have an entry for `obj` if it isn't empty
@@ -289,6 +322,7 @@ void ECTransaction::generate_transactions(
   ceph_assert(temp_removed);
   ceph_assert(_t);
   auto &t = *_t;
+  ECUtil::shard_extent_map_t read_sem = (&sinfo);
 
   map<hobject_t, pg_log_entry_t*> obj_to_log;
   for (auto &&i: entries) {
@@ -515,6 +549,7 @@ void ECTransaction::generate_transactions(
       ECUtil::shard_extent_map_t to_write(&sinfo);
       auto pextiter = partial_extents.find(oid);
       if (pextiter != partial_extents.end()) {
+        read_sem = pextiter->second;
 	to_write = pextiter->second;
       }
       debug(oid, "to_write", to_write, dpp);
@@ -708,7 +743,7 @@ void ECTransaction::generate_transactions(
             }
           }
         }
-	encode_and_write(pgid, oid, ec_impl, plan, to_write, fadvise_flags,
+	encode_and_write(pgid, oid, ec_impl, plan, to_write, read_sem, fadvise_flags,
 	  transactions, dpp);
       }
 

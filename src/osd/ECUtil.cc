@@ -5,6 +5,7 @@
 #include "global/global_context.h"
 #include "include/encoding.h"
 #include "ECUtil.h"
+#include "common/debug.h"
 
 #define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_osd
@@ -18,6 +19,11 @@ using ceph::Formatter;
 
 template<typename T>
 using shard_id_map = shard_id_map<T>;
+
+static ostream& _prefix(std::ostream* _dout)
+{
+  return *_dout << "ECUtil: ";
+}
 
 std::pair<uint64_t, uint64_t> ECUtil::stripe_info_t::chunk_aligned_ro_range_to_shard_ro_range(
   uint64_t _off, uint64_t _len) const {
@@ -446,12 +452,13 @@ namespace ECUtil {
   }
 
   /* Encode parity chunks, using the encode_chunks interface into the
-   * erasure coding.  This generates all parity.
+   * erasure coding. This generates all parity using full stripe writes.
    */
   int shard_extent_map_t::encode(ErasureCodeInterfaceRef& ec_impl,
                                  const HashInfoRef &hinfo,
                                  uint64_t before_ro_size) 
   {
+    //dout(10) << "JP: encode start" << dendl;
     bool rebuild_req = false;
     shard_id_set out_set;
     out_set.insert_range(shard_id_t(sinfo->get_k()), sinfo->get_m());
@@ -489,6 +496,73 @@ namespace ECUtil {
       }
     }
 
+    //dout(10) << "JP: encode end" << dendl;
+    return 0;
+  }
+
+  /* Encode parity chunks, using the parity delta write interfaces on plugins
+   * that support them.
+   */
+  int shard_extent_map_t::encode_parity_delta(ErasureCodeInterfaceRef& ec_impl, 
+                                              const HashInfoRef &hinfo, 
+                                              uint64_t before_ro_size,
+                                              shard_extent_map_t &old_sem)
+  {
+    //dout(10) << "JP: PDW start" << dendl;
+    shard_id_set out_set;
+    out_set.insert_range(shard_id_t(sinfo->get_k()), sinfo->get_m());
+
+    for (auto i = sinfo->get_k(); i < sinfo->get_k_plus_m(); i++) {
+      extent_maps[shard_id_t(i)] = old_sem.extent_maps[shard_id_t(i)];
+    }
+
+    for (auto data_shard : sinfo->get_data_shards()) {
+      shard_extent_map_t s(sinfo);
+      if (!old_sem.contains_shard(data_shard) || !contains_shard(data_shard)) {
+        continue;
+      }
+      s.extent_maps[shard_id_t(0)] = old_sem.extent_maps[data_shard];
+      s.extent_maps[shard_id_t(1)] = extent_maps[data_shard];
+      for (auto i = sinfo->get_k(); i < sinfo->get_k_plus_m(); i++) {
+        s.extent_maps[shard_id_t(i)] = extent_maps[shard_id_t(i)];
+      }
+
+      s.compute_ro_range();
+
+      for (auto iter = s.begin_slice_iterator(out_set); !iter.is_end(); ++iter) {
+        // if (!iter.is_page_aligned()) {
+        //   dout(10) << "JP: rebuilding s" << dendl;
+        //   s.pad_and_rebuild_to_page_align();
+        // }
+        shard_id_map<bufferptr> &data_shards = iter.get_in_bufferptrs();
+        shard_id_map<bufferptr> &parity_shards = iter.get_out_bufferptrs();
+
+        unsigned int size = parity_shards[shard_id_t(sinfo->get_k())].length();
+        bufferptr delta = buffer::create_aligned(size, CEPH_PAGE_SIZE);
+        //dout(10) << "JP: delta size will be " << size << dendl;
+        delta.zero(false);
+
+        if (!data_shards[shard_id_t(0)].length() == 0) {
+          ec_impl->encode_delta(data_shards[shard_id_t(0)], data_shards[shard_id_t(1)], &delta);
+        }
+
+        shard_id_map<bufferptr> in(sinfo->get_k());
+        in.emplace(data_shard, delta);
+
+        if (!data_shards[shard_id_t(0)].length() == 0) {
+          ec_impl->apply_delta(in, parity_shards);
+        }
+
+        for (auto i = sinfo->get_k(); i < sinfo->get_k_plus_m(); i++) {
+          ceph::bufferlist bl;
+          bl.append(parity_shards[shard_id_t(i)]);
+          insert_in_shard(shard_id_t(i), iter.get_offset(), bl);
+        }
+      }
+    }
+
+    compute_ro_range();
+    //dout(10) << "JP: PDW end" << dendl;
     return 0;
   }
 
