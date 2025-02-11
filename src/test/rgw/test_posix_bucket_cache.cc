@@ -419,31 +419,62 @@ TEST_F(BucketCacheFixtureInotify1, List2Inotify1)
 
   /* Do a timed backoff up to ~20 seconds to pass on CI */
   while (timeout < 16000) {
+    names.clear();
     (void)bucket_cache->list_bucket(dpp, null_yield, &sb, marker, f);
-    if (names.size() == 25)
+    if (names.size() == 20)
       break;
-    std::cout << fmt::format("waiting for {}ms for cache sync", timeout) << std::endl;
+    std::cout << fmt::format("waiting for {}ms for cache sync size={}", timeout, names.size()) << std::endl;
     std::this_thread::sleep_for(1000ms);
     timeout *= 2;
-    names.clear();
   }
-  ASSERT_EQ(names.size(), 25);
+  ASSERT_EQ(names.size(), 20);
 
-  /* check these */
+  /* Add some */
   sf::path tp{sf::path{bucket_root} / bucket};
+  timeout = 50;
 
   std::string fbase{"upfile_"};
   for (int ix = 0; ix < 10; ++ix) {
     sf::path ttp{tp / fmt::format("{}{}", fbase, ix)};
+    std::ofstream ofs(ttp);
+    ofs << "data for " << ttp << std::endl;
+    ofs.close();
     ASSERT_TRUE(sf::exists(ttp));
   }
 
+  /* Do a timed backoff up to ~20 seconds to pass on CI */
+  while (timeout < 16000) {
+    names.clear();
+    (void)bucket_cache->list_bucket(dpp, null_yield, &sb, marker, f);
+    if (names.size() == 30)
+      break;
+    std::cout << fmt::format("waiting for {}ms for cache sync size={}", timeout, names.size()) << std::endl;
+    std::this_thread::sleep_for(1000ms);
+    timeout *= 2;
+  }
+  ASSERT_EQ(names.size(), 30);
+
   /* remove some */
+  timeout = 50;
+
   fbase = "file_";
   for (int ix = 5; ix < 10; ++ix) {
     sf::path ttp{tp / fmt::format("{}{}", fbase, ix)};
+    sf::remove(ttp);
     ASSERT_FALSE(sf::exists(ttp));
   }
+
+  /* Do a timed backoff up to ~20 seconds to pass on CI */
+  while (timeout < 16000) {
+    names.clear();
+    (void)bucket_cache->list_bucket(dpp, null_yield, &sb, marker, f);
+    if (names.size() == 25)
+      break;
+    std::cout << fmt::format("waiting for {}ms for cache sync size={}", timeout, names.size()) << std::endl;
+    std::this_thread::sleep_for(1000ms);
+    timeout *= 2;
+  }
+  ASSERT_EQ(names.size(), 25);
 } /* List2Inotify1 */
 
 int main (int argc, char *argv[])
