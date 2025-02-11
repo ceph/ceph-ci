@@ -1601,7 +1601,7 @@ void ECBackend::submit_transaction(
       }
     }
 
-    ECTransaction::WritePlanObj plan(oid, inner_op,
+    ECTransaction::WritePlanObj plan(get_parent()->get_dpp(),oid, inner_op,
       sinfo, old_object_size, oi, soi, std::move(hinfo), std::move(shinfo));
 
     if (plan.to_read) plans.want_read = true;

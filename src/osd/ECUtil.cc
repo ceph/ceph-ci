@@ -5,6 +5,9 @@
 #include "global/global_context.h"
 #include "include/encoding.h"
 #include "ECUtil.h"
+#include "common/debug.h"
+#include "include/stringify.h"
+#include <string>
 
 #define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_osd
@@ -18,6 +21,11 @@ using ceph::Formatter;
 
 template<typename T>
 using shard_id_map = shard_id_map<T>;
+
+static ostream& _prefix(std::ostream* _dout)
+{
+  return *_dout << "ECUtil: ";
+}
 
 std::pair<uint64_t, uint64_t> ECUtil::stripe_info_t::chunk_aligned_ro_range_to_shard_ro_range(
   uint64_t _off, uint64_t _len) const {
@@ -315,6 +323,19 @@ namespace ECUtil {
     extent_maps.clear();
   }
 
+  void shard_extent_map_t::deep_copy(shard_extent_map_t const &other)
+  {
+    for (auto && [shard, emap] : other.extent_maps) {
+      for (auto iter : emap) {
+        uint64_t off = iter.get_off();
+        uint64_t len = iter.get_len();
+        bufferlist bl = iter.get_val();
+        bl.rebuild();
+        extent_maps[shard].insert(off, len, bl);
+      }
+    }
+  }
+
 
   /* Insert a buffer for a particular shard.
    * NOTE: DO NOT CALL sinfo->get_min_want_shards()
@@ -449,7 +470,7 @@ namespace ECUtil {
   }
 
   /* Encode parity chunks, using the encode_chunks interface into the
-   * erasure coding.  This generates all parity.
+   * erasure coding. This generates all parity using full stripe writes.
    */
   int shard_extent_map_t::encode(ErasureCodeInterfaceRef& ec_impl,
                                  const HashInfoRef &hinfo,
@@ -492,6 +513,66 @@ namespace ECUtil {
       }
     }
 
+    return 0;
+  }
+
+  /* Encode parity chunks, using the parity delta write interfaces on plugins
+   * that support them.
+   */
+  int shard_extent_map_t::encode_parity_delta(ErasureCodeInterfaceRef& ec_impl, 
+                                              const HashInfoRef &hinfo, 
+                                              uint64_t before_ro_size,
+                                              shard_extent_map_t &old_sem)
+  {
+    shard_id_set out_set;
+    out_set.insert_range(shard_id_t(sinfo->get_k()), sinfo->get_m());
+
+    pad_and_rebuild_to_page_align();
+    old_sem.pad_and_rebuild_to_page_align();
+
+    for (auto data_shard : sinfo->get_data_shards()) {
+      shard_extent_map_t s(sinfo);
+      if (!contains_shard(data_shard)) {
+        continue;
+      }
+      s.extent_maps[shard_id_t(0)] = old_sem.extent_maps[data_shard];
+      s.extent_maps[shard_id_t(1)] = extent_maps[data_shard];
+      for (auto i = sinfo->get_k(); i < sinfo->get_k_plus_m(); i++) {
+        s.extent_maps[shard_id_t(i)] = old_sem.extent_maps[shard_id_t(i)];
+      }
+
+      s.compute_ro_range();
+
+      for (auto iter = s.begin_slice_iterator(out_set); !iter.is_end(); ++iter) {
+        ceph_assert(iter.is_page_aligned());
+        shard_id_map<bufferptr> &data_shards = iter.get_in_bufferptrs();
+        shard_id_map<bufferptr> &parity_shards = iter.get_out_bufferptrs();
+
+        ceph_assert(parity_shards.size() == sinfo->get_m());
+        unsigned int size = iter.get_length();
+        ceph_assert(size % 4096 == 0);
+        ceph_assert(size > 0);
+        bufferptr delta = buffer::create_aligned(size, CEPH_PAGE_SIZE);
+
+        ec_impl->encode_delta(data_shards[shard_id_t(0)], data_shards[shard_id_t(1)], &delta);
+
+        shard_id_map<bufferptr> in(sinfo->get_k_plus_m());
+        in.emplace(data_shard, delta);
+        
+        ec_impl->apply_delta(in, parity_shards);
+
+        // for (auto i = sinfo->get_k(); i < sinfo->get_k_plus_m(); i++) {
+        //   if (extent_maps.contains(shard_id_t(i))) {
+        //     dout(10) << "JP: new_sem has parity, copying " << i << dendl;
+        //     ceph::bufferlist bl;
+        //     bl.append(parity_shards[shard_id_t(i)]);
+        //     insert_in_shard(shard_id_t(i), iter.get_offset(), bl);
+        //   }
+        // }
+      }
+    }
+
+    compute_ro_range();
     return 0;
   }
 
@@ -669,6 +750,15 @@ namespace ECUtil {
     return range.get_off();
   }
 
+  void shard_extent_map_t::zero_pad(shard_extent_set_t const &pad_to)
+  {
+    for (auto &&[shard, eset] : pad_to) {
+      for (auto &&[off, len] : eset) {
+        zero_pad(shard, off, len);
+      }
+    }
+  }
+
   void shard_extent_map_t::zero_pad(shard_id_t shard, uint64_t offset, uint64_t length)
   {
     const extent_map &emap = extent_maps[shard];
@@ -810,10 +900,10 @@ namespace ECUtil {
 
   void shard_extent_set_t::subtract(const shard_extent_set_t &other) {
     for (auto && [shard, eset] : other) {
-      if (!contains(shard) || !other.contains(shard))
+      if (!contains(shard))
         continue;
 
-      at(shard).subtract(other.at(shard));
+      at(shard).subtract(eset);
       if(at(shard).empty()) erase(shard);
     }
   }
