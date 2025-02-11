@@ -1,0 +1,25 @@
+name: Cleanup ceph-ci.git
+run-name: ${{ github.actor }} cleaning up ceph-ci.git branches
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:  # allow manual triggering
+jobs:
+  Clean-CI:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout ceph-ci.git
+        uses: actions/checkout@v4
+        with:
+          path: ceph-ci
+
+      - name: checkout ceph.git
+        uses: actions/checkout@v4
+        with:
+          repository: ceph/ceph.git
+          path: ceph-ci/ceph
+          ref: main
+
+      - name: run clean-ci
+        run: ./ceph/src/script/clean-ci --remote=origin
+        working-directory: ./ceph-ci
