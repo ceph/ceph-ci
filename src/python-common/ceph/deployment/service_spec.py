@@ -1363,6 +1363,7 @@ class NvmeofServiceSpec(ServiceSpec):
                  {"in_capsule_data_size": 8192, "max_io_qpairs_per_ctrlr": 7},
                  tgt_cmd_extra_args: Optional[str] = None,
                  iobuf_options: Optional[Dict[str, int]] = None,
+                 qos_timeslice_in_usecs: Optional[int] = 0,
                  discovery_addr: Optional[str] = None,
                  discovery_port: Optional[int] = None,
                  log_level: Optional[str] = 'INFO',
@@ -1496,6 +1497,8 @@ class NvmeofServiceSpec(ServiceSpec):
         self.tgt_cmd_extra_args = tgt_cmd_extra_args
         #: List of extra arguments for SPDK iobuf in the form opt=value
         self.iobuf_options: Optional[Dict[str, int]] = iobuf_options
+        #: ``qos_timeslice_in_usecs`` timeslice for QOS code, in micro seconds
+        self.qos_timeslice_in_usecs = qos_timeslice_in_usecs
         #: ``discovery_addr`` address of the discovery service
         self.discovery_addr = discovery_addr
         #: ``discovery_port`` port of the discovery service
@@ -1556,6 +1559,7 @@ class NvmeofServiceSpec(ServiceSpec):
         verify_positive_int(self.bdevs_per_cluster, "Bdevs per cluster")
         if self.bdevs_per_cluster is not None and self.bdevs_per_cluster < 1:
             raise SpecValidationError("Bdevs per cluster should be at least 1")
+        verify_non_negative_int(self.qos_timeslice_in_usecs, "QOS timeslice")
 
         verify_non_negative_number(self.spdk_ping_interval_in_seconds, "SPDK ping interval")
         if (
