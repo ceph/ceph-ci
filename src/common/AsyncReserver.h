@@ -66,7 +66,7 @@ class AsyncReserver {
     auto q = in_progress.find(preempt_by_prio.begin()->second);
     ceph_assert(q != in_progress.end());
     Reservation victim = q->second;
-    rdout(10) << __func__ << " preempt " << victim << dendl;
+    rdout(3) << __func__ << " preempt " << victim << dendl;
     f->queue(victim.preempt);
     victim.preempt = nullptr;
     in_progress.erase(q);
@@ -260,7 +260,7 @@ public:
     ) {
     std::lock_guard l(lock);
     Reservation r(item, prio, on_reserved, on_preempt);
-    rdout(10) << __func__ << " queue " << r << dendl;
+    rdout(3) << __func__ << " queue " << r << dendl;
     ceph_assert(!queue_pointers.count(item) &&
 	   !in_progress.count(item));
     queues[prio].push_back(r);
@@ -316,7 +316,7 @@ public:
     if (i != queue_pointers.end()) {
       unsigned prio = i->second.first;
       const Reservation& r = *i->second.second;
-      rdout(10) << __func__ << " cancel " << r << " (was queued)" << dendl;
+      rdout(3) << __func__ << " cancel " << r << " (was queued)" << dendl;
       delete r.grant;
       delete r.preempt;
       queues[prio].erase(i->second.second);
@@ -327,7 +327,7 @@ public:
     } else {
       auto p = in_progress.find(item);
       if (p != in_progress.end()) {
-	rdout(10) << __func__ << " cancel " << p->second
+	rdout(3) << __func__ << " cancel " << p->second
 		  << " (was in progress)" << dendl;
 	if (p->second.preempt) {
 	  preempt_by_prio.erase(std::make_pair(p->second.prio, p->second.item));
@@ -335,7 +335,7 @@ public:
 	}
 	in_progress.erase(p);
       } else {
-	rdout(10) << __func__ << " cancel " << item << " (not found)" << dendl;
+	rdout(3) << __func__ << " cancel " << item << " (not found)" << dendl;
       }
     }
     do_queues();

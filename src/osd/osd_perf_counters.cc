@@ -169,6 +169,29 @@ PerfCounters *build_osd_logger(CephContext *cct) {
    "recovery bytes",
    "rbt", PerfCountersBuilder::PRIO_INTERESTING);
 
+  // Stuck recovery/backfill related counters - start
+  osd_plb.add_u64_counter(
+    l_osd_robjc, "total_recovery_obj_constructed",
+    "Constructed pg recovery object count",
+    "robc", PerfCountersBuilder::PRIO_INTERESTING);
+
+  osd_plb.add_u64_counter(
+    l_osd_robjd, "total_recovery_obj_destructed",
+    "Destructed pg recovery object count",
+    "robd", PerfCountersBuilder::PRIO_INTERESTING);
+
+  osd_plb.add_u64_counter(
+    l_osd_robjenq, "Enqueue_recovery_obj_count_at_osd",
+    "Enqueue pg recovery object count in osd",
+    "oobe", PerfCountersBuilder::PRIO_INTERESTING);
+
+  osd_plb.add_u64_counter(
+    l_osd_robjdeq, "Dequeue_recovery_obj_count_at_osd",
+    "Dequeue pg recovery object count in osd",
+    "oobd", PerfCountersBuilder::PRIO_INTERESTING);
+
+  // Stuck recovery/backfill related counters - end
+
   osd_plb.add_time_avg(
     l_osd_recovery_push_queue_lat,
     "l_osd_recovery_push_queue_latency",

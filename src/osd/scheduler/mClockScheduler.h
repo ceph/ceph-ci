@@ -37,6 +37,10 @@ enum {
   l_mclock_recovery_queue_len,
   l_mclock_best_effort_queue_len,
   l_mclock_all_type_queue_len,
+  l_osd_mclock_robje,
+  l_osd_mclock_robjd,
+  l_osd_mclock_robj_high_enqueue,
+  l_osd_mclock_robj_high_dequeue,
   l_mclock_last,
 };
 

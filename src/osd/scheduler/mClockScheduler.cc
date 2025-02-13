@@ -103,6 +103,20 @@ void mClockScheduler::_init_logger()
                     "background_best_effort type op count in mclock queue");
   m.add_u64_counter(l_mclock_all_type_queue_len, "mclock_all_type_queue_len",
                     "all type op count in mclock queue");
+  m.add_u64_counter(l_osd_mclock_robje, "Enqueue_recovery_obj_count_at_mclock",
+                    "Enqueue pg recovery object count in mclock",
+                    "robe", PerfCountersBuilder::PRIO_INTERESTING);
+  m.add_u64_counter(l_osd_mclock_robjd, "Dequeue_recovery_obj_count_at_mclock",
+                    "Dequeue pg recovery object count in mclock",
+                    "robd", PerfCountersBuilder::PRIO_INTERESTING);
+  m.add_u64_counter(l_osd_mclock_robj_high_enqueue,
+                    "Enqueue_rec_obj_count_mclock_high_queue",
+                    "Enqueue pg rec obj count in mclock high priority queue",
+                    "rohe", PerfCountersBuilder::PRIO_INTERESTING);
+  m.add_u64_counter(l_osd_mclock_robj_high_dequeue,
+                    "Dequeue_rec_obj_count_at_mclock_high_prio_queue",
+                    "Dequeue pg rec obj count in mclock high priority queue",
+                    "rohd", PerfCountersBuilder::PRIO_INTERESTING);
 
   logger = m.create_perf_counters();
   cct->get_perfcounters_collection()->add(logger);
@@ -112,6 +126,10 @@ void mClockScheduler::_init_logger()
   logger->set(l_mclock_recovery_queue_len, 0);
   logger->set(l_mclock_best_effort_queue_len, 0);
   logger->set(l_mclock_all_type_queue_len, 0);
+  logger->set(l_osd_mclock_robje, 0);
+  logger->set(l_osd_mclock_robjd, 0);
+  logger->set(l_osd_mclock_robj_high_enqueue, 0);
+  logger->set(l_osd_mclock_robj_high_dequeue, 0);
 }
 
 /* ClientRegistry holds the dmclock::ClientInfo configuration parameters
@@ -442,12 +460,18 @@ void mClockScheduler::enqueue(OpSchedulerItem&& item)
 {
   auto id = get_scheduler_id(item);
   unsigned priority = item.get_priority();
-  
+
+  int ret_status = 0;
+  int imm_or_high = 0;
+  uint64_t reserved_pushes = item.get_reserved_pushes();
+
   // TODO: move this check into OpSchedulerItem, handle backwards compat
   if (op_scheduler_class::immediate == id.class_id) {
     enqueue_high(immediate_class_priority, std::move(item));
+    imm_or_high = 1;
   } else if (priority >= cutoff_priority) {
     enqueue_high(priority, std::move(item));
+    imm_or_high = 1;
   } else {
     auto cost = calc_scaled_cost(item.get_cost());
     item.set_qos_cost(cost);
@@ -457,11 +481,32 @@ void mClockScheduler::enqueue(OpSchedulerItem&& item)
              << dendl;
 
     // Add item to scheduler queue
-    scheduler.add_request(
+    ret_status = scheduler.add_request(
       std::move(item),
       id,
       cost);
     _get_mclock_counter(id);
+  }
+
+  if (ret_status) // enqueue failed!
+  {
+    dout(3) << __func__ << " client_count: " << scheduler.client_count()
+            << " queue_sizes: [ "
+            << " high_priority_queue: " << high_priority.size()
+            << " sched: " << scheduler.request_count() << " ]"
+            << " Return status " << ret_status
+            << " reserved_pushes " << reserved_pushes
+            << " class_id " << id.class_id
+            << dendl;
+    dout(3) << __func__ << " mClockQueues: { "
+            << display_queues() << " }"
+            << dendl;
+  } else { // enqueue succeeded
+    // If reserved_pushes value > 0 it means object type is PGRecovery
+    // !imm_or_high means item added to mclock queue
+    if((reserved_pushes > 0) && !imm_or_high) {
+      logger->inc(l_osd_mclock_robje);
+    }
   }
 
  dout(20) << __func__ << " client_count: " << scheduler.client_count()
@@ -497,6 +542,8 @@ void mClockScheduler::enqueue_high(unsigned priority,
                                    OpSchedulerItem&& item,
 				   bool front)
 {
+  uint64_t reserved_pushes = item.get_reserved_pushes();
+
   if (front) {
     high_priority[priority].push_back(std::move(item));
   } else {
@@ -508,12 +555,17 @@ void mClockScheduler::enqueue_high(unsigned priority,
     client_profile_id_t()
   };
   _get_mclock_counter(id);
+
+  if (reserved_pushes > 0) {
+    logger->inc(l_osd_mclock_robj_high_enqueue);
+  }
 }
 
 WorkItem mClockScheduler::dequeue()
 {
   if (!high_priority.empty()) {
     auto iter = high_priority.begin();
+    priority_t prio = iter->first;
     // invariant: high_priority entries are never empty
     assert(!iter->second.empty());
     WorkItem ret{std::move(iter->second.back())};
@@ -529,6 +581,16 @@ WorkItem mClockScheduler::dequeue()
       client_profile_id_t()
     };
     _put_mclock_counter(id);
+
+    auto item = std::move(std::get<OpSchedulerItem>(ret));
+    if (item.get_reserved_pushes() > 0) {
+      dout(3) << __func__ << " dequeued PGRecovery item from high queue."
+              << " Qpriority " << prio
+              << " PGRecovery Item: " << item
+              << dendl;
+      logger->inc(l_osd_mclock_robj_high_dequeue);
+    }
+    ret = std::move(item);
     return ret;
   } else {
     mclock_queue_t::PullReq result = scheduler.pull_request();
@@ -543,7 +605,14 @@ WorkItem mClockScheduler::dequeue()
 
       auto &retn = result.get_retn();
       _put_mclock_counter(retn.client);
-      return std::move(*retn.request);
+
+      WorkItem work_item(std::move(*retn.request));
+      auto item = std::move(std::get<OpSchedulerItem>(work_item));
+      if (item.get_reserved_pushes() > 0) {
+        logger->inc(l_osd_mclock_robjd);
+      }
+      work_item = std::move(item);
+      return work_item;
     }
   }
 }

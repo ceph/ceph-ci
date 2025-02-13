@@ -13016,6 +13016,7 @@ void PrimaryLogPG::on_change(ObjectStore::Transaction &t)
 
   if (recovery_queued) {
     recovery_queued = false;
+    dout(3) << "Clear recovery queue PG: " << (*this) << dendl;
     osd->clear_queued_recovery(this);
   }
 
@@ -13225,7 +13226,7 @@ bool PrimaryLogPG::start_recovery_ops(
       !state_test(PG_STATE_BACKFILLING)) {
     /* TODO: I think this case is broken and will make do_recovery()
      * unhappy since we're returning false */
-    dout(10) << "recovery raced and were queued twice, ignoring!" << dendl;
+    dout(3) << "recovery raced and were queued twice, ignoring!" << dendl;
     return have_unfound();
   }
 
@@ -13262,17 +13263,17 @@ bool PrimaryLogPG::start_recovery_ops(
       missing.num_missing() == 0 &&
       waiting_on_backfill.empty()) {
     if (get_osdmap()->test_flag(CEPH_OSDMAP_NOBACKFILL)) {
-      dout(10) << "deferring backfill due to NOBACKFILL" << dendl;
+      dout(3) << "deferring backfill due to NOBACKFILL" << dendl;
       deferred_backfill = true;
     } else if (get_osdmap()->test_flag(CEPH_OSDMAP_NOREBALANCE) &&
 	       !is_degraded())  {
-      dout(10) << "deferring backfill due to NOREBALANCE" << dendl;
+      dout(3) << "deferring backfill due to NOREBALANCE" << dendl;
       deferred_backfill = true;
     } else if (!recovery_state.is_backfill_reserved()) {
       /* DNMNOTE I think this branch is dead */
-      dout(10) << "deferring backfill due to !backfill_reserved" << dendl;
+      dout(3) << "deferring backfill due to !backfill_reserved" << dendl;
       if (!backfill_reserving) {
-	dout(10) << "queueing RequestBackfill" << dendl;
+	dout(3) << "queueing RequestBackfill" << dendl;
 	backfill_reserving = true;
 	queue_peering_event(
 	  PGPeeringEventRef(
@@ -13287,7 +13288,7 @@ bool PrimaryLogPG::start_recovery_ops(
     }
   }
 
-  dout(10) << " started " << started << dendl;
+  dout(3) << " started " << started << dendl;
   osd->logger->inc(l_osd_rop, started);
 
   if (!recovering.empty() ||
@@ -13297,10 +13298,10 @@ bool PrimaryLogPG::start_recovery_ops(
   ceph_assert(recovering.empty());
   ceph_assert(recovery_ops_active == 0);
 
-  dout(10) << __func__ << " needs_recovery: "
+  dout(3) << __func__ << " needs_recovery: "
 	   << recovery_state.get_missing_loc().get_needs_recovery()
 	   << dendl;
-  dout(10) << __func__ << " missing_loc: "
+  dout(3) << __func__ << " missing_loc: "
 	   << recovery_state.get_missing_loc().get_missing_locs()
 	   << dendl;
   int unfound = get_num_unfound();
@@ -13328,7 +13329,7 @@ bool PrimaryLogPG::start_recovery_ops(
     state_clear(PG_STATE_RECOVERING);
     state_clear(PG_STATE_FORCED_RECOVERY);
     if (needs_backfill()) {
-      dout(10) << "recovery done, queuing backfill" << dendl;
+      dout(3) << "recovery done, queuing backfill" << dendl;
       queue_peering_event(
         PGPeeringEventRef(
           std::make_shared<PGPeeringEvent>(
@@ -13336,7 +13337,7 @@ bool PrimaryLogPG::start_recovery_ops(
             get_osdmap_epoch(),
             PeeringState::RequestBackfill())));
     } else {
-      dout(10) << "recovery done, no backfill" << dendl;
+      dout(3) << "recovery done, no backfill" << dendl;
       state_clear(PG_STATE_FORCED_BACKFILL);
       queue_peering_event(
         PGPeeringEventRef(
@@ -13349,7 +13350,7 @@ bool PrimaryLogPG::start_recovery_ops(
     state_clear(PG_STATE_BACKFILLING);
     state_clear(PG_STATE_FORCED_BACKFILL);
     state_clear(PG_STATE_FORCED_RECOVERY);
-    dout(10) << "recovery done, backfill done" << dendl;
+    dout(3) << "recovery done, backfill done" << dendl;
     queue_peering_event(
       PGPeeringEventRef(
         std::make_shared<PGPeeringEvent>(
