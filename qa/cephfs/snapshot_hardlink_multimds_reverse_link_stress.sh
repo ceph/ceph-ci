@@ -5,6 +5,7 @@ FS=a
 MAX_FILES=100
 
 function flush_mds_journal () {
+  sleep 5
   echo "flush mds.0 journal"
   $CEPH tell mds.0 flush journal > /dev/null 2>&1
   echo "flush mds.1 journal"
@@ -25,6 +26,8 @@ function fuse_mount () {
 function clean_data () {
   echo "--------------------------------------------------------------------------------------------------"
   echo "clean data ..."
+  echo "tree $MNT"
+  tree $MNT/
   echo "rm -rf $MNT"
   rm -rf $MNT/*
   flush_mds_journal
@@ -95,8 +98,11 @@ function stress_test_hardlink () {
   # Create 100 hardlinks in each directory
   for i in $(seq 1 $MAX_FILES)
   do
+    echo "ln $MNT/dir1/sub_dir1/dir1_file1 $MNT/dir2/sub_dir2/dir2_hl_file1_$i"
     ln $MNT/dir1/sub_dir1/dir1_file1 $MNT/dir2/sub_dir2/dir2_hl_file1_$i
+    echo "ln $MNT/dir1/sub_dir1/dir1_file1 $MNT/dir3/sub_dir3/dir3_hl_file1_$i"
     ln $MNT/dir1/sub_dir1/dir1_file1 $MNT/dir3/sub_dir3/dir3_hl_file1_$i
+    echo "ln $MNT/dir1/sub_dir1/dir1_file1 $MNT/dir1/sub_dir1/dir1_hl_file1_$i"
     ln $MNT/dir1/sub_dir1/dir1_file1 $MNT/dir1/sub_dir1/dir1_hl_file1_$i
   done
   flush_mds_journal
@@ -108,16 +114,24 @@ function stress_test_hardlink () {
   fi
 
   # Remove all the hardlinks, primary first to also test linkmerge
+  echo "Initiate linkmerge, remove primary: rm -f $MNT/dir1/sub_dir1/dir1_file1"
   rm -f $MNT/dir1/sub_dir1/dir1_file1
   for i in $(seq 1 $MAX_FILES)
   do
+    echo "rm -f $MNT/dir1/sub_dir1/dir1_hl_file1_$i"
     rm -f $MNT/dir1/sub_dir1/dir1_hl_file1_$i
-    rm -f $MNT/dir1/sub_dir2/dir2_hl_file1_$i
-    rm -f $MNT/dir1/sub_dir3/dir3_hl_file1_$i
+    echo "rm -f $MNT/dir2/sub_dir2/dir2_hl_file1_$i"
+    rm -f $MNT/dir2/sub_dir2/dir2_hl_file1_$i
+    echo "rm -f $MNT/dir3/sub_dir3/dir3_hl_file1_$i"
+    rm -f $MNT/dir3/sub_dir3/dir3_hl_file1_$i
   done
-
+ 
+  echo "Remove files created to initiage migration"
+  echo "rm -rf $MNT/dir1/init_migration1"
   rm -rf $MNT/dir1/init_migration1
+  echo "rm -rf $MNT/dir2/init_migration2"
   rm -rf $MNT/dir2/init_migration2
+  echo "rm -rf $MNT/dir3/init_migration3"
   rm -rf $MNT/dir3/init_migration3
 
   flush_mds_journal
