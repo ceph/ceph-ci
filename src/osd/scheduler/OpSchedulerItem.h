@@ -83,6 +83,9 @@ public:
       return q.print(out);
     }
 
+    enum class Type {PG_RECOVERY, PG_OP_QUEUEABLE, OTHER_TYPE};
+    virtual Type get_type() const = 0;
+
   };
 
 private:
@@ -190,6 +193,10 @@ public:
 
     return out << ")";
   }
+
+  const OpQueueable::Ref& get_ref() const {
+    return qitem;
+  }
 }; // class OpSchedulerItem
 
 
@@ -219,6 +226,10 @@ public:
 
   const spg_t& get_ordering_token() const final {
     return get_pgid();
+  }
+
+  Type get_type() const override {
+    return Type::PG_OP_QUEUEABLE;
   }
 };
 
@@ -505,12 +516,13 @@ public:
     return rhs << "PGRecovery(pgid=" << get_pgid()
 	       << " epoch_queued=" << epoch_queued
 	       << " reserved_pushes=" << reserved_pushes
+               << " priority=" << priority
 	       << ")";
   }
   std::string print() const final {
     return fmt::format(
-	"PGRecovery(pgid={} epoch_queued={} reserved_pushes={})", get_pgid(),
-	epoch_queued, reserved_pushes);
+	"PGRecovery(pgid={} epoch_queued={} reserved_pushes={} priority={})",
+        get_pgid(), epoch_queued, reserved_pushes, priority);
   }
   uint64_t get_reserved_pushes() const final {
     return reserved_pushes;
@@ -519,6 +531,9 @@ public:
     OSD *osd, OSDShard *sdata, PGRef& pg, ThreadPool::TPHandle &handle) final;
   op_scheduler_class get_scheduler_class() const final {
     return priority_to_scheduler_class(priority);
+  }
+  Type get_type() const override {
+    return Type::PG_RECOVERY;
   }
   ~PGRecovery();
 };

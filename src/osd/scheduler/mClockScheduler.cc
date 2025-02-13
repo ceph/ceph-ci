@@ -463,14 +463,25 @@ void mClockScheduler::enqueue(OpSchedulerItem&& item)
 
   int ret_status = 0;
   int imm_or_high = 0;
+  size_t qsize = 0;
   uint64_t reserved_pushes = item.get_reserved_pushes();
 
   // TODO: move this check into OpSchedulerItem, handle backwards compat
   if (op_scheduler_class::immediate == id.class_id) {
+    if (!high_priority.empty() &&
+        !high_priority[immediate_class_priority].empty()) {
+      qsize = high_priority[immediate_class_priority].size();
+    }
     enqueue_high(immediate_class_priority, std::move(item));
+    ceph_assert(high_priority[immediate_class_priority].size() == (qsize + 1));
     imm_or_high = 1;
   } else if (priority >= cutoff_priority) {
+    if (!high_priority.empty() &&
+        !high_priority[priority].empty()) {
+      qsize = high_priority[priority].size();
+    }
     enqueue_high(priority, std::move(item));
+    ceph_assert(high_priority[priority].size() == (qsize + 1));
     imm_or_high = 1;
   } else {
     auto cost = calc_scaled_cost(item.get_cost());
@@ -479,6 +490,14 @@ void mClockScheduler::enqueue(OpSchedulerItem&& item)
              << " item_cost: " << item.get_cost()
              << " scaled_cost: " << cost
              << dendl;
+
+    // get scheduler queue size
+    qsize = scheduler.request_count();
+    // verify non-zero reserved_pushes is set for PGRecovery item type
+    const OpSchedulerItem::OpQueueable::Ref& sptr = item.get_ref();
+    if (sptr->get_type() == OpSchedulerItem::OpQueueable::Type::PG_RECOVERY) {
+      ceph_assert(item.get_reserved_pushes() > 0);
+    }
 
     // Add item to scheduler queue
     ret_status = scheduler.add_request(
@@ -501,7 +520,14 @@ void mClockScheduler::enqueue(OpSchedulerItem&& item)
     dout(3) << __func__ << " mClockQueues: { "
             << display_queues() << " }"
             << dendl;
+    if (!imm_or_high) {
+      ceph_assert(scheduler.request_count() == qsize);
+    }
   } else { // enqueue succeeded
+    // Verify request count
+    if (!imm_or_high) {
+      ceph_assert(scheduler.request_count() == (qsize + 1));
+    }
     // If reserved_pushes value > 0 it means object type is PGRecovery
     // !imm_or_high means item added to mclock queue
     if((reserved_pushes > 0) && !imm_or_high) {
@@ -526,15 +552,41 @@ void mClockScheduler::enqueue_front(OpSchedulerItem&& item)
 {
   unsigned priority = item.get_priority();
   auto id = get_scheduler_id(item);
+  uint64_t reserved_pushes = item.get_reserved_pushes();
+  size_t qsize = 0;
+
+  if (reserved_pushes > 0) {
+    dout(3) << __func__ << " Enqueue PGRecovery Item into high queue "
+            << " item: " << item << " Qpriority: " << priority << dendl;
+  }
 
   if (op_scheduler_class::immediate == id.class_id) {
+    if (!high_priority.empty() &&
+        !high_priority[immediate_class_priority].empty()) {
+      qsize = high_priority[immediate_class_priority].size();
+    }
     enqueue_high(immediate_class_priority, std::move(item), true);
+    // verify enqueue suceeded
+    ceph_assert(high_priority[immediate_class_priority].size() == (qsize + 1));
   } else if (priority >= cutoff_priority) {
+    if (!high_priority.empty() &&
+        !high_priority[priority].empty()) {
+      qsize = high_priority[priority].size();
+    }
     enqueue_high(priority, std::move(item), true);
+    // verify enqueue suceeded
+    ceph_assert(high_priority[priority].size() == (qsize + 1));
   } else {
     // mClock does not support enqueue at front, so we use
     // the high queue with priority 0
-    enqueue_high(0, std::move(item), true);
+    priority = 0;
+    if (!high_priority.empty() &&
+        !high_priority[priority].empty()) {
+      qsize = high_priority[priority].size();
+    }
+    enqueue_high(priority, std::move(item), true);
+    // verify enqueue suceeded
+    ceph_assert(high_priority[priority].size() == (qsize + 1));
   }
 }
 
@@ -563,13 +615,19 @@ void mClockScheduler::enqueue_high(unsigned priority,
 
 WorkItem mClockScheduler::dequeue()
 {
+  size_t qsize = 0;
+
   if (!high_priority.empty()) {
     auto iter = high_priority.begin();
     priority_t prio = iter->first;
     // invariant: high_priority entries are never empty
     assert(!iter->second.empty());
+    // get current qsize
+    qsize = iter->second.size();
     WorkItem ret{std::move(iter->second.back())};
     iter->second.pop_back();
+    // verify item was dequeued
+    ceph_assert(iter->second.size() == (qsize - 1));
     if (iter->second.empty()) {
       // maintain invariant, high priority entries are never empty
       high_priority.erase(iter);
@@ -593,14 +651,24 @@ WorkItem mClockScheduler::dequeue()
     ret = std::move(item);
     return ret;
   } else {
+    qsize = scheduler.request_count();
     mclock_queue_t::PullReq result = scheduler.pull_request();
     if (result.is_future()) {
+      if (scheduler.request_count() != qsize) {
+        dout(3) << "Unexpected qsize: " << qsize
+                << " seen during future request!" << dendl;
+        display_queues();
+      }
+      // make sure item is still in the queue
+      ceph_assert(scheduler.request_count() == qsize);
       return result.getTime();
     } else if (result.is_none()) {
       ceph_assert(
 	0 == "Impossible, must have checked empty() first");
       return {};
     } else {
+      // confirm that the item is dequeued
+      ceph_assert(scheduler.request_count() == (qsize - 1));
       ceph_assert(result.is_retn());
 
       auto &retn = result.get_retn();
@@ -620,6 +688,13 @@ WorkItem mClockScheduler::dequeue()
 std::string mClockScheduler::display_queues() const
 {
   std::ostringstream out;
+  out << "scheduler.request_count: " << scheduler.request_count();
+  out << "HighPriorityQueue count: ";
+  for (auto it = high_priority.begin();
+       it != high_priority.end(); it++) {
+    out << " priority: " << it->first << " queue_size: " << it->second.size();
+  }
+  out << "queues: ";
   scheduler.display_queues(out);
   return out.str();
 }
