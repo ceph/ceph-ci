@@ -1978,7 +1978,7 @@ SeaStore::Shard::_do_transaction_step(
 	    log_root.get_type()
 	  ).si_then([&onode, &ctx](auto new_root) {
 	    if (new_root.must_update()) {
-	      onode->update_omap_root(*ctx.transaction, new_root);
+	      onode->update_log_root(*ctx.transaction, new_root);
 	    }
 	  });
 	}
