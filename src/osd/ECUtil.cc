@@ -1,6 +1,6 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 
-#include <errno.h>
+#include <errno.h> 
 #include "common/ceph_context.h"
 #include "global/global_context.h"
 #include "include/encoding.h"
