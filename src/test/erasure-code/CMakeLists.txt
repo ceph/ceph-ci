@@ -80,7 +80,7 @@ target_link_libraries(unittest_erasure_code_plugins
   ${CMAKE_DL_LIBS}
   ceph-common)
 endif(WITH_EC_ISA_PLUGIN)
-  
+
 # unittest_erasure_code_plugin_jerasure
 add_executable(unittest_erasure_code_plugin_jerasure
   TestErasureCodePluginJerasure.cc

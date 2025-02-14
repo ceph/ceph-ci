@@ -60,7 +60,7 @@ public:
   {
     friend class mini_flat_map;
     using mini_flat_map_p = std::conditional_t<is_const, const mini_flat_map*, mini_flat_map*>;
-    using value_type = std::conditional_t<is_const, const std::pair<const Key&, const T&>, const std::pair<const Key&, const T&>>;
+    using value_type = std::conditional_t<is_const, const std::pair<const Key&, const T&>, std::pair<const Key&, T&>>;
 
     mini_flat_map_p map;
     std::optional<value_type> value;

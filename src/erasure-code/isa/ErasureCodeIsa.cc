@@ -80,8 +80,8 @@ ErasureCodeIsa::get_chunk_size(unsigned int stripe_width) const
 
 // -----------------------------------------------------------------------------
 
-int ErasureCodeIsa::encode_chunks(const std::map<int, bufferptr> &in, 
-                                       std::map<int, bufferptr> &out)
+int ErasureCodeIsa::encode_chunks(const shard_id_map<bufferptr> &in,
+                                       shard_id_map<bufferptr> &out)
 {
   char *chunks[k + m]; //TODO don't use variable length arrays
   memset(chunks, 0, sizeof(char*) * (k + m));
@@ -90,18 +90,18 @@ int ErasureCodeIsa::encode_chunks(const std::map<int, bufferptr> &in,
   for (auto &&[shard, ptr] : in) {
     if (size == 0) size = ptr.length();
     else ceph_assert(size == ptr.length());
-    chunks[shard] = const_cast<char*>(ptr.c_str());
+    chunks[static_cast<int>(shard)] = const_cast<char*>(ptr.c_str());
   }
 
   for (auto &&[shard, ptr] : out) {
     if (size == 0) size = ptr.length();
     else ceph_assert(size == ptr.length());
-    chunks[shard] = ptr.c_str();
+    chunks[static_cast<int>(shard)] = ptr.c_str();
   }
 
   char *zeros = nullptr;
 
-  for (int i = 0; i < k + m; i++) {
+  for (shard_id_t i; i < k + m; ++i) {
     if (in.contains(i) || out.contains(i)) continue;
 
     if (zeros == nullptr) {
@@ -109,7 +109,7 @@ int ErasureCodeIsa::encode_chunks(const std::map<int, bufferptr> &in,
       memset(zeros, 0, size);
     }
 
-    chunks[i] = zeros;
+    chunks[static_cast<int>(i)] = zeros;
   }
 
   isa_encode(&chunks[0], &chunks[k], size);
@@ -119,28 +119,67 @@ int ErasureCodeIsa::encode_chunks(const std::map<int, bufferptr> &in,
   return 0;
 }
 
-int ErasureCodeIsa::decode_chunks(const set<int> &want_to_read,
-                                  const map<int, bufferlist> &chunks,
-                                  map<int, bufferlist> *decoded)
+int ErasureCodeIsa::decode_chunks(const shard_id_set &want_to_read,
+                                  shard_id_map<bufferptr> &in,
+				  shard_id_map<bufferptr> &out)
 {
-  unsigned blocksize = (*chunks.begin()).second.length();
+  unsigned int size = 0;
+  shard_id_set erasures_set;
+  shard_id_set to_free;
+  erasures_set.insert_range(shard_id_t(0), k + m);
   int erasures[k + m + 1];
   int erasures_count = 0;
   char *data[k];
   char *coding[m];
-  for (int i = 0; i < k + m; i++) {
-    if (chunks.find(i) == chunks.end()) {
-      erasures[erasures_count] = i;
-      erasures_count++;
+  memset(data, 0, sizeof(char*) * k);
+  memset(coding, 0, sizeof(char*) * m);
+
+  for (auto &&[shard, ptr] : in) {
+    if (size == 0) size = ptr.length();
+    else ceph_assert(size == ptr.length());
+    if (shard < k) {
+      data[static_cast<int>(shard)] = const_cast<char*>(ptr.c_str());
     }
-    if (i < k)
-      data[i] = (*decoded)[i].c_str();
-    else
-      coding[i - k] = (*decoded)[i].c_str();
+    else {
+      coding[static_cast<int>(shard) - k] = const_cast<char*>(ptr.c_str());
+    }
+    erasures_set.erase(shard);
   }
+
+  for (auto &&[shard, ptr] : out) {
+    if (size == 0) size = ptr.length();
+    else ceph_assert(size == ptr.length());
+    if (shard < k) {
+      data[static_cast<int>(shard)] = const_cast<char*>(ptr.c_str());
+    }
+    else {
+      coding[static_cast<int>(shard) - k] = const_cast<char*>(ptr.c_str());
+    }
+  }
+
+  for (int i = 0; i < k + m; i++) {
+    char **buf = i < k ? &data[i] : &coding[i - k];
+    if (*buf == nullptr) {
+      *buf = (char *)malloc(size);
+      to_free.insert(shard_id_t(i));
+    }
+  }
+
+  for (auto && shard : erasures_set) {
+    erasures[erasures_count++] = static_cast<int>(shard);
+  }
+
+
   erasures[erasures_count] = -1;
   ceph_assert(erasures_count > 0);
-  return isa_decode(erasures, data, coding, blocksize);
+  int r = isa_decode(erasures, data, coding, size);
+  for (auto & shard : to_free) {
+    int i = static_cast<int>(shard);
+    char **buf = i < k ? &data[i] : &coding[i - k];
+    free(*buf);
+    *buf = nullptr;
+  }
+  return r;
 }
 
 // -----------------------------------------------------------------------------
@@ -228,8 +267,8 @@ ErasureCodeIsaDefault::encode_delta(const bufferptr &old_data,
 // -----------------------------------------------------------------------------
 
 void
-ErasureCodeIsaDefault::apply_delta(const map<int, bufferptr> &in,
-                                        map <int, bufferptr> &out)
+ErasureCodeIsaDefault::apply_delta(const shard_id_map<bufferptr> &in,
+                                        shard_id_map<bufferptr> &out)
 {
   auto first = in.begin();
   const unsigned blocksize = first->second.length();
@@ -249,7 +288,7 @@ ErasureCodeIsaDefault::apply_delta(const map<int, bufferptr> &in,
           } else {
             unsigned char* data = reinterpret_cast<unsigned char*>(const_cast<char*>(databuf.c_str()));
             unsigned char* coding = reinterpret_cast<unsigned char*>(const_cast<char*>(codingbuf.c_str()));
-            ec_encode_data_update(blocksize, k, 1, datashard, encode_tbls + (32 * k * (codingshard - k)), data, &coding);
+            ec_encode_data_update(blocksize, k, 1, static_cast<int>(datashard), encode_tbls + (32 * k * (static_cast<int>(codingshard) - k)), data, &coding);
           }
         }
       }
