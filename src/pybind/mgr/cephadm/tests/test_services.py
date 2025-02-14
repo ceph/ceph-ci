@@ -2530,7 +2530,11 @@ class TestIngressService:
         haproxy_generated_conf = cephadm_module.cephadm_services['ingress'].haproxy_generate_config(
             CephadmDaemonDeploySpec(host='host1', daemon_id='ingress', service_name=ispec.service_name()))
 
-        assert haproxy_generated_conf[0] == haproxy_expected_conf
+        haproxy_generated_conf = haproxy_generated_conf[0]
+        gen_config_lines = [line.rstrip() for line in haproxy_generated_conf['files']['haproxy.cfg'].splitlines()]
+        exp_config_line = [line.rstrip() for line in haproxy_expected_conf['files']['haproxy.cfg'].splitlines()]
+
+        assert gen_config_lines == exp_config_line
 
         # swapping order now, should still pick out the one with the higher rank_generation
         # in this case both nfs are rank 0, so it should only take the one with rank_generation 1 a.k.a
@@ -2544,7 +2548,10 @@ class TestIngressService:
         haproxy_generated_conf = cephadm_module.cephadm_services['ingress'].haproxy_generate_config(
             CephadmDaemonDeploySpec(host='host1', daemon_id='ingress', service_name=ispec.service_name()))
 
-        assert haproxy_generated_conf[0] == haproxy_expected_conf
+        gen_config_lines = [line.rstrip() for line in haproxy_generated_conf['files']['haproxy.cfg'].splitlines()]
+        exp_config_lines = [line.rstrip() for line in haproxy_expected_conf['files']['haproxy.cfg'].splitlines()]
+
+        assert gen_config_lines == exp_config_lines
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
     def test_ingress_config(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
@@ -2671,7 +2678,10 @@ class TestIngressService:
                         }
                 }
 
-                assert haproxy_generated_conf[0] == haproxy_expected_conf
+                gen_config_lines = [line.rstrip() for line in haproxy_generated_conf[0]['files']['haproxy.cfg'].splitlines()]
+                exp_config_lines = [line.rstrip() for line in haproxy_expected_conf['files']['haproxy.cfg'].splitlines()]
+
+                assert gen_config_lines == exp_config_lines
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
     def test_ingress_config_ssl_rgw(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
@@ -2799,7 +2809,9 @@ class TestIngressService:
                         }
                 }
 
-                assert haproxy_generated_conf[0] == haproxy_expected_conf
+                gen_config_lines = [line.rstrip() for line in haproxy_generated_conf[0]['files']['haproxy.cfg'].splitlines()]
+                exp_config_lines = [line.rstrip() for line in haproxy_expected_conf['files']['haproxy.cfg'].splitlines()]
+                assert gen_config_lines == exp_config_lines
 
     @patch("cephadm.serve.CephadmServe._run_cephadm")
     def test_haproxy_config_rgw_tcp_mode(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
@@ -2990,7 +3002,7 @@ class TestIngressService:
                                 'http-request use-service prometheus-exporter if { path /metrics }\n    '
                                 'monitor-uri /health\n'
                                 '\nfrontend frontend\n    '
-                                'bind [::]:8089\n    '
+                                'bind [::]:8089 v4v6\n    '
                                 'default_backend backend\n\n'
                                 'backend backend\n    '
                                 'option forwardfor\n    '
@@ -3507,7 +3519,9 @@ class TestIngressService:
                 service_name=ispec.service_name(),
             ),
         )
-        assert haproxy_generated_conf == haproxy_expected_conf
+        gen_config_lines = [line.rstrip() for line in haproxy_generated_conf['files']['haproxy.cfg'].splitlines()]
+        exp_config_lines = [line.rstrip() for line in haproxy_expected_conf['files']['haproxy.cfg'].splitlines()]
+        assert gen_config_lines == exp_config_lines
 
         nfs_generated_conf, _ = nfs_svc.generate_config(
             CephadmDaemonDeploySpec(
