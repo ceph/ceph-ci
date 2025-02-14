@@ -14,7 +14,6 @@
 #include <Python.h>
 
 #include "osdc/Objecter.h"
-#include "client/Client.h"
 #include "common/errno.h"
 #include "mon/MonClient.h"
 #include "include/stringify.h"
@@ -54,10 +53,9 @@ using std::string;
 Mgr::Mgr(MonClient *monc_, const MgrMap& mgrmap,
          PyModuleRegistry *py_module_registry_,
 	 Messenger *clientm_, Objecter *objecter_,
-	 Client* client_, LogChannelRef clog_, LogChannelRef audit_clog_) :
+	 LogChannelRef clog_, LogChannelRef audit_clog_) :
   monc(monc_),
   objecter(objecter_),
-  client(client_),
   client_messenger(clientm_),
   finisher(g_ceph_context, "Mgr", "mgr-fin"),
   digest_received(false),
@@ -115,7 +113,7 @@ void MetadataUpdate::finish(int r)
 
       if (daemon_state.exists(key)) {
         DaemonStatePtr state = daemon_state.get(key);
-	map<string,string> m;
+	std::map<string,string> m;
 	{
 	  std::lock_guard l(state->lock);
 	  state->hostname = daemon_meta.at("hostname").get_str();
@@ -143,7 +141,7 @@ void MetadataUpdate::finish(int r)
         }
         daemon_meta.erase("hostname");
 
-	map<string,string> m;
+	std::map<string,string> m;
         for (const auto &[key, val] : daemon_meta) {
           m.emplace(key, val.get_str());
         }
@@ -332,7 +330,7 @@ void Mgr::init()
        ++p) {
     string devid = p->first.substr(7);
     dout(10) << "  updating " << devid << dendl;
-    map<string,string> meta;
+    std::map<string,string> meta;
     ostringstream ss;
     int r = get_json_str_map(p->second, ss, &meta, false);
     if (r < 0) {
@@ -351,7 +349,7 @@ void Mgr::init()
   py_module_registry->active_start(
     daemon_state, cluster_state,
     pre_init_store, mon_allows_kv_sub,
-    *monc, clog, audit_clog, *objecter, *client,
+    *monc, clog, audit_clog, *objecter,
     finisher, server);
 
   cluster_state.final_init();
@@ -451,7 +449,7 @@ void Mgr::load_all_metadata()
     daemon_meta.erase("name");
     daemon_meta.erase("hostname");
 
-    map<string,string> m;
+    std::map<string,string> m;
     for (const auto &[key, val] : daemon_meta) {
       m.emplace(key, val.get_str());
     }
@@ -476,7 +474,7 @@ void Mgr::load_all_metadata()
     osd_metadata.erase("id");
     osd_metadata.erase("hostname");
 
-    map<string,string> m;
+    std::map<string,string> m;
     for (const auto &i : osd_metadata) {
       m[i.first] = i.second.get_str();
     }
@@ -742,7 +740,7 @@ bool Mgr::got_mgr_map(const MgrMap& m)
   std::lock_guard l(lock);
   dout(10) << m << dendl;
 
-  set<string> old_modules;
+  std::set<string> old_modules;
   cluster_state.with_mgrmap([&](const MgrMap& m) {
       old_modules = m.modules;
     });
