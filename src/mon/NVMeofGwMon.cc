@@ -12,6 +12,7 @@
  */
 
 #include <boost/tokenizer.hpp>
+
 #include "include/stringify.h"
 #include "NVMeofGwMon.h"
 #include "messages/MNVMeofGwBeacon.h"
