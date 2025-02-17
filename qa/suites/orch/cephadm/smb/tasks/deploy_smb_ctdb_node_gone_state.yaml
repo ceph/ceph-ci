@@ -24,8 +24,6 @@ overrides:
 tasks:
 - cephadm.configure_samba_client_container:
     role: host.d
-- vip:
-    count: 1
 - cephadm:
 
 - cephadm.shell:
@@ -55,9 +53,12 @@ tasks:
 # verify CTDB is healthy, cluster well formed
 - cephadm.exec:
     host.a:
+      - sleep 30
       - "{{ctx.cephadm}} ls --no-detail  | {{ctx.cephadm}} shell jq -r 'map(select(.name | startswith(\"smb.modusr1\")))[-1].name' > /tmp/svcname"
+      - "{{ctx.cephadm}} enter -n $(cat /tmp/svcname) ctdb listnodes > /tmp/ctdb_listnodes"
       - "{{ctx.cephadm}} enter -n $(cat /tmp/svcname) ctdb status > /tmp/ctdb_status"
       - cat /tmp/ctdb_status
+      - cat /tmp/ctdb_listnodes
       - grep 'pnn:0 .*OK' /tmp/ctdb_status
       - grep 'pnn:1 .*OK' /tmp/ctdb_status
       - grep 'pnn:2 .*OK' /tmp/ctdb_status
