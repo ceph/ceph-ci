@@ -350,7 +350,7 @@ else:
         @NvmeofCLICommand("nvmeof ns add")
         @map_model(model.NamespaceCreation)
         @handle_nvmeof_error
-        def create(
+        def create( 
             self,
             nqn: str,
             rbd_image_name: str,
