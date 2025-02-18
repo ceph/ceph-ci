@@ -5,6 +5,7 @@
 
 # gperftools allocates a singleton of MallocExtension and never frees it
 leak:^MallocExtension::Initialize
+leak:^MallocExtension
 
 # from perfglue/heap_profiler.cc
 # gperftools allocates a singleton and never frees it
