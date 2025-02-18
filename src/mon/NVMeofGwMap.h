@@ -45,6 +45,8 @@ public:
 
   // map that handles timers started by all Gateway FSMs
   std::map<NvmeGroupKey, NvmeGwTimers> fsm_timers;
+  // debounce timers used to prevent fast failovers/failbacks
+  std::map<NvmeGroupKey, ceph::coarse_mono_clock::time_point> debounce_timers;
   /**
    * gw_epoch
    *
