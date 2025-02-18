@@ -35,6 +35,10 @@ void NVMeofGwMon::on_restart()
   last_beacon.clear();
   last_tick = ceph::coarse_mono_clock::now();
   synchronize_last_beacon();
+  auto now = ceph::coarse_mono_clock::now();
+  for (auto &debounce_it: pending_map.debounce_timers) {
+    debounce_it.second = now;
+  }
 }
 
 
@@ -163,7 +167,10 @@ version_t NVMeofGwMon::get_trim_to() const
 
 void NVMeofGwMon::create_pending()
 {
+  std::map<NvmeGroupKey, ceph::coarse_mono_clock::time_point> debounce_timers;
+  debounce_timers = pending_map.debounce_timers;
   pending_map = map;// deep copy of the object
+  pending_map.debounce_timers =  debounce_timers;
   pending_map.epoch++;
   dout(10) << " pending " << pending_map  << dendl;
 }

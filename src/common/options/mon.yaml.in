@@ -80,6 +80,13 @@ options:
   default: 10
   services:
   - mon
+- name: mon_nvmeofgw_debounce_interval
+  type: secs
+  level: advanced
+  desc: Period in  seconds to the next HA per gateway pool and group
+  default: 20
+  services:
+  - mon
 - name: mon_nvmeofgw_set_group_id_retry
   type: uint
   level: advanced
