@@ -69,6 +69,10 @@ void NVMeofGwMap::add_grp_id(
     gw_states_per_group_t::GW_STANDBY_STATE;
   fsm_timers[group_key][gw_id].data[grpid] = tm_data;
   created_gws[group_key][gw_id].blocklist_data[grpid] = blklist_data;
+  auto it = debounce_timers.find(group_key);
+  auto now = ceph::coarse_mono_clock::now();
+  if (it == debounce_timers.end())
+    debounce_timers[group_key] = now;
 }
 
 void NVMeofGwMap::remove_grp_id(
@@ -435,8 +439,10 @@ void NVMeofGwMap::set_failover_gw_for_ANA_group(
   NvmeGwMonState& gw_state = created_gws[group_key][gw_id];
   NvmeGwMonState& failed_gw_state = created_gws[group_key][failed_gw_id];
   epoch_t epoch;
+  auto now = ceph::coarse_mono_clock::now();
   dout(10) << "Found failover GW " << gw_id
 	   << " for ANA group " << (int)ANA_groupid << dendl;
+  debounce_timers[group_key] = now;
   if (failed_gw_state.availability == gw_availability_t::GW_CREATED) {
     dout(10) << "Failover GW " << gw_id <<
        " takes over the group of GW in Created state " <<
@@ -465,6 +471,15 @@ void NVMeofGwMap::find_failback_gw(
   auto& gws_states = created_gws[group_key];
   auto& gw_state = created_gws[group_key][gw_id];
   bool do_failback = false;
+  auto now = ceph::coarse_mono_clock::now();
+  const auto debounce_interval =
+    g_conf().get_val<std::chrono::seconds>("mon_nvmeofgw_debounce_interval");
+  if ((now - debounce_timers[group_key]) < debounce_interval) {
+    dout(10) << "failback for GW " << gw_id
+             << " temporary not permitted in pool " << group_key  << dendl;
+    propose = false;
+    goto exit;
+  }
   dout(10) << "Find failback GW for GW " << gw_id << dendl;
   for (auto& gw_state_it: gws_states) {
     auto& st = gw_state_it.second;
@@ -488,7 +503,7 @@ void NVMeofGwMap::find_failback_gw(
 	     << " to GW " << gw_id << dendl;
     gw_state.active_state(gw_state.ana_grp_id);
     propose = true;
-    return;
+    goto exit;
   }
 
   // try to do_failback
@@ -509,8 +524,12 @@ void NVMeofGwMap::find_failback_gw(
       gw_state.sm_state[gw_state.ana_grp_id] =
 	gw_states_per_group_t::GW_OWNER_WAIT_FAILBACK_PREPARED;
       propose = true;
-      break;
+      goto exit;
     }
+  }
+exit:
+  if (propose == true) { // Failback GW choosen, so set new debounce interval
+    debounce_timers[group_key] = now;
   }
 }
 
