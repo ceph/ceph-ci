@@ -1001,22 +1001,29 @@ ReplicatedRecoveryBackend::handle_push(
     push_op.attrset,
     std::move(push_op.omap_entries), &t);
 
-  if (complete) {
-    co_await pg.get_recovery_handler()->on_local_recover(
-      push_op.recovery_info.soid, push_op.recovery_info,
-      false, t);
-  }
-
   epoch_t epoch_frozen = pg.get_osdmap_epoch();
   DEBUGDPP("submitting transaction", pg);
 
-  co_await interruptor::make_interruptible(
-    shard_services.get_store().do_transaction(coll, std::move(t)));
-
   if (complete) {
-    //TODO: this should be grouped with pg.on_local_recover somehow.
+    // We lock the object manager without actually populating the contained
+    // obc.  This should be a valid use of the ObjectContextLoader::Manager
+    // interface as we do seperate locking and loading.  The next user of this
+    // obc will end up loading it as normal.
+    auto manager = pg.obc_loader.get_obc_manager(push_op.recovery_info.soid);
+    manager.lock_excl_sync(); /* cannot already be locked */
+
+    co_await pg.get_recovery_handler()->on_local_recover(
+      push_op.recovery_info.soid, push_op.recovery_info,
+      false, t);
+
+    co_await interruptor::make_interruptible(
+      shard_services.get_store().do_transaction(coll, std::move(t)));
+
     pg.get_recovery_handler()->_committed_pushed_object(
       epoch_frozen, pg.get_info().last_complete);
+  } else {
+    co_await interruptor::make_interruptible(
+      shard_services.get_store().do_transaction(coll, std::move(t)));
   }
 
   auto reply = crimson::make_message<MOSDPGPushReply>();
