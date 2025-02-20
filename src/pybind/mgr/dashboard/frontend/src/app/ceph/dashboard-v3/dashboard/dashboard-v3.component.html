@@ -27,23 +27,21 @@
               <i class="fa fa-external-link"></i>
             </a>
           </dd>
-          <ng-container>
-            <dt>Telemetry Dashboard
-              <cds-tag *ngIf="telemetryEnabled !== null"
-                       [class]="telemetryEnabled ? 'tag-success' : 'tag-secondary'"
-                       [size]="'md'"
-                       [ngbTooltip]="getTelemetryText()">
-                {{ telemetryEnabled ? 'Active' : 'Inactive' }}
-              </cds-tag>
+          <ng-container *ngIf="callHomeStatus$ | async as status">
+            <dt>
+              Call Home Connection
+              <i [ngClass]="callHomeRefreshLoading ? [icons.spinner, icons.spin] : [icons.refresh]"
+                 class="text-primary"
+                 (click)="testConnectivity()"></i>
+              <span class="d-block fw-light text-muted"
+                    [title]="status.last_checked * 1000 | date:'yyyy-MM-ddTHH:mm:ss.SSSZ':'UTC' | cdDate"
+                    *ngIf="status.last_checked">Last refreshed: {{ status.last_checked * 1000 | date:'yyyy-MM-ddTHH:mm:ss.SSSZ':'UTC' | relativeDate }}</span>
             </dt>
             <dd>
-              <a target="_blank"
-                 [href]="telemetryURL">
-                 {{ telemetryURL }}
-                <i class="fa fa-external-link"></i>
-              </a>
+              <cd-call-home-connectivity-status [status]="status"></cd-call-home-connectivity-status>
             </dd>
           </ng-container>
+
           <ng-container *ngIf="managedByConfig$ | async as managedByConfig">
             <span *ngIf="managedByConfig['MANAGED_BY_CLUSTERS'].length > 0">
               <dt>Managed By</dt>

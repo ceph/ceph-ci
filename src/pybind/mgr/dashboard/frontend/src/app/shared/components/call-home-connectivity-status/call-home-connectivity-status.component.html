@@ -1,0 +1,24 @@
+<ng-container *ngIf="status.connectivity; else connectionError">
+  <i [ngClass]="[icons.success]"
+     class="text-success"></i>
+  <span class="mt-n1"
+        id="active-no-error"
+        i18n>Active</span>
+</ng-container>
+
+<ng-template #connectionError>
+  <i [ngClass]="[icons.danger]"
+     class="text-danger"></i>
+  <a class="mt-n1"
+     [ngbPopover]="connectionInfo"
+     popoverClass="info-card-popover-cluster-status"
+     [openDelay]="300"
+     [closeDelay]="500"
+     triggers="mouseenter"
+     id="inactive-with-error"
+     i18n>Inactive</a>
+</ng-template>
+
+<ng-template #connectionInfo>
+  <cd-call-home-connection-info [message]="status.connectivity_error"></cd-call-home-connection-info>
+</ng-template>

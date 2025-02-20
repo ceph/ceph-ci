@@ -123,6 +123,9 @@ import ArrowDown16 from '@carbon/icons/es/arrow--down/16';
 import Warning16 from '@carbon/icons/es/warning/16';
 import Deploy16 from '@carbon/icons/es/deploy/16';
 import { SidebarLayoutComponent } from './sidebar-layout/sidebar-layout.component';
+import { ProductiveCardComponent } from './productive-card/productive-card.component';
+import { CallHomeConnectionInfoComponent } from './call-home-connection-info/call-home-connection-info.component';
+import { CallHomeConnectivityStatusComponent } from './call-home-connectivity-status/call-home-connectivity-status.component';
 
 @NgModule({
   imports: [
@@ -216,7 +219,16 @@ import { SidebarLayoutComponent } from './sidebar-layout/sidebar-layout.componen
     TearsheetComponent,
     TearsheetStepComponent,
     SidePanelComponent,
-    SidebarLayoutComponent
+    SidebarLayoutComponent,
+    ProductiveCardComponent,
+    CardGroupComponent,
+    CallHomeModalComponent,
+    CallHomeNotificationComponent,
+    StorageInsightsModalComponent,
+    StorageInsightsNotificationComponent,
+    ProgressComponent,
+    CallHomeConnectionInfoComponent,
+    CallHomeConnectivityStatusComponent
   ],
   providers: [provideCharts(withDefaultRegisterables())],
   exports: [
@@ -260,13 +272,18 @@ import { SidebarLayoutComponent } from './sidebar-layout/sidebar-layout.componen
     TearsheetComponent,
     TearsheetStepComponent,
     SidePanelComponent,
-    SidebarLayoutComponent
+    SidebarLayoutComponent,
+    ProductiveCardComponent,
+    CardGroupComponent,
+    CallHomeNotificationComponent,
+    StorageInsightsNotificationComponent,
+    CallHomeConnectionInfoComponent,
+    CallHomeConnectivityStatusComponent
   ]
 })
 export class ComponentsModule {
   constructor(private iconService: IconService) {
     this.iconService.registerAll([
-      InfoIcon,
       CopyIcon,
       downloadIcon,
       CheckmarkFilledIcon,

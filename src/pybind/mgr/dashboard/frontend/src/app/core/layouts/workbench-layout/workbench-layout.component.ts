@@ -56,9 +56,30 @@ export class WorkbenchLayoutComponent implements OnInit, OnDestroy {
     if (this.permissions.configOpt.read) {
       this.subs.add(this.multiClusterService.startPolling());
       this.subs.add(this.multiClusterService.startClusterTokenStatusPolling());
+      this.subs.add(this.summaryService.startPolling());
+      this.subs.add(this.taskManagerService.init(this.summaryService));
+
+      if (this.environment.build === 'ibm') {
+        this.subs.add(
+          this.callHomeNotificationService.remindLaterOn$.subscribe((visible: boolean) => {
+            this.showTopNotification('callHomeNotificationEnabled', visible);
+          })
+        );
+        this.subs.add(
+          this.storageInsightsNotificationService.remindLaterOn$.subscribe((visible: boolean) => {
+            this.showTopNotification('storagteInsightsEnabled', visible);
+          })
+        );
+      } else {
+        // disabling telemetry notification in ibm builds
+        this.subs.add(
+          this.telemetryNotificationService.update.subscribe((visible: boolean) => {
+            this.showTopNotification('telemetryNotificationEnabled', visible);
+          })
+        );
+      }
     }
-    this.subs.add(this.summaryService.startPolling());
-    this.subs.add(this.taskManagerService.init(this.summaryService));
+
 
     this.subs.add(
       this.authStorageService.isPwdDisplayed$.subscribe((isDisplayed) => {

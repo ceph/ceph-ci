@@ -12,6 +12,7 @@ import { delay, retryWhen, switchMap, tap } from 'rxjs/operators';
 import { SummaryService } from '../services/summary.service';
 
 const GLOBAL = 'global';
+import { NgbActiveModal } from '@ng-bootstrap/ng-bootstrap';
 
 @Injectable({
   providedIn: 'root'
@@ -92,7 +93,8 @@ export class MgrModuleService {
     navigateTo: string = '',
     notificationText?: string,
     navigateByUrl?: boolean,
-    reconnectingMessage: string = $localize`Reconnecting, please wait ...`
+    reconnectingMessage: string = $localize`Reconnecting, please wait ...`,
+    activeModal?: NgbActiveModal
   ): void {
     const moduleToggle$ = enabled ? this.disable(module) : this.enable(module);
 
@@ -127,6 +129,8 @@ export class MgrModuleService {
               if (table) {
                 table.refreshBtn();
               }
+
+              if (activeModal) activeModal.close();
 
               if (notificationText) {
                 this.notificationService.show(
