@@ -273,8 +273,10 @@ int process_request(const RGWProcessEnv& penv,
                     int* http_ret)
 {
   int ret = client_io->init(g_ceph_context);
+  rgw::sal::Driver* driver = penv.driver;
+  auto trans_id = driver->zone_unique_trans_id(req->id);
   dout(1) << "====== starting new request req=" << hex << req << dec
-	  << " =====" << dendl;
+          << " request_id=" << trans_id << " =====" << dendl;
   perfcounter->inc(l_rgw_req);
 
   RGWEnv& rgw_env = client_io->get_env();
@@ -284,7 +286,6 @@ int process_request(const RGWProcessEnv& penv,
 
   s->ratelimit_data = penv.ratelimiting->get_active();
 
-  rgw::sal::Driver* driver = penv.driver;
   std::unique_ptr<rgw::sal::User> u = driver->get_user(rgw_user());
   s->set_user(u);
 
@@ -295,11 +296,9 @@ int process_request(const RGWProcessEnv& penv,
   }
 
   s->req_id = driver->zone_unique_id(req->id);
-  s->trans_id = driver->zone_unique_trans_id(req->id);
+  s->trans_id = trans_id;
   s->host_id = driver->get_host_id();
   s->yield = yield;
-
-  ldpp_dout(s, 2) << "initializing for trans_id = " << s->trans_id << dendl;
 
   RGWOp* op = nullptr;
   int init_error = 0;
@@ -342,7 +341,8 @@ int process_request(const RGWProcessEnv& penv,
           "WARNING: failed to execute pre request script. "
           "error: " << rc << dendl;
       } else {
-        rc = rgw::lua::request::execute(driver, rest, penv.olog, s, op, script);
+        rc = rgw::lua::request::execute(driver, rest, penv.olog.get(), s, op,
+                                        script);
         if (rc < 0) {
           ldpp_dout(op, 5) <<
             "WARNING: failed to execute pre request script. "
@@ -440,7 +440,8 @@ done:
           "WARNING: failed to read post request script. "
           "error: " << rc << dendl;
       } else {
-        rc = rgw::lua::request::execute(driver, rest, penv.olog, s, op, script);
+        rc = rgw::lua::request::execute(driver, rest, penv.olog.get(), s, op,
+                                        script);
         if (rc < 0) {
           ldpp_dout(op, 5) <<
             "WARNING: failed to execute post request script. "
@@ -459,7 +460,7 @@ done:
     perfcounter->inc(l_rgw_qactive, -1);
   }
   if (should_log) {
-    rgw_log_op(rest, s, op, penv.olog);
+    rgw_log_op(rest, s, op, penv.olog.get());
   }
 
   if (http_ret != nullptr) {
