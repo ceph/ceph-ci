@@ -649,11 +649,11 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op)
       if (pending_map.created_gws[group_key][gw_id].availability ==
 	  gw_availability_t::GW_AVAILABLE) {
 	dout(1) << " Warning :GW marked as Available in the NVmeofGwMon "
-		<< "database, performed full startup - Apply GW!"
+		<< "database, performed full startup - Force gw to exit!"
 		<< gw_id << dendl;
-	 process_gw_down(gw_id, group_key, gw_propose, avail);
-	 LastBeacon lb = {gw_id, group_key};
-	 last_beacon[lb] = now; //Update last beacon
+        avail =  gw_availability_t::GW_UNAVAILABLE;
+        process_gw_down(gw_id, group_key, gw_propose, avail);
+        // Monitor performs Forced Failover for this GW in process_gw_map_gw_down
       } else if (
 	pending_map.created_gws[group_key][gw_id].performed_full_startup ==
 	false) {
