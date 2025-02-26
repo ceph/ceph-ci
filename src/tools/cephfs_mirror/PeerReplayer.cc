@@ -328,12 +328,14 @@ void PeerReplayer::shutdown() {
   m_remote_cluster.reset();
 }
 
-void PeerReplayer::add_directory(string_view dir_root, string_view sync_from_snapshot) {
-  dout(20) << ": dir_root=" << dir_root << ", sync_from_snapshot=" << sync_from_snapshot << dendl;
+void PeerReplayer::add_directory(string_view dir_root, bool sync_latest_snapshot,
+				 string_view sync_from_snapshot) {
+  dout(20) << ": dir_root=" << dir_root << ", sync_latest_snapshot=" << sync_latest_snapshot
+           << ", sync_from_snapshot=" << sync_from_snapshot << dendl;
 
   std::scoped_lock locker(m_lock);
   m_directories.emplace_back(dir_root);
-  m_snap_sync_stats.emplace(dir_root, SnapSyncStat(sync_from_snapshot));
+  m_snap_sync_stats.emplace(dir_root, SnapSyncStat(sync_latest_snapshot, sync_from_snapshot));
   m_cond.notify_all();
 }
 
@@ -583,6 +585,16 @@ int PeerReplayer::build_snap_map(const std::string &dir_root,
     if (snap_id >= snap_id_in) {
       snap_map->emplace(snap_id, snap);
     }
+  }
+
+  if (!is_remote && m_snap_sync_stats.at(dir_root).sync_latest_snapshot) {
+    // Now we know the highest snap_id object emplaced.
+    // Reset the snap_map to the highest snap_id element.
+    auto it = snap_map->rbegin();
+    auto sid = it->first;
+    auto sname = it->second;
+    snap_map->clear();
+    snap_map->emplace(sid, sname);
   }
 
   r = ceph_closedir(mnt, dirp);
