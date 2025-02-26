@@ -761,8 +761,17 @@ groups:
       - alert: "NVMeoFSubsystemNamespaceLimit"
         annotations:
           description: "Subsystems have a max namespace limit defined at creation time. This alert means that no more namespaces can be added to {{ $labels.nqn }}"
-          summary: "{{ $labels.nqn }} subsystem has reached its maximum number of namespaces "
-        expr: "(count by(nqn) (ceph_nvmeof_subsystem_namespace_metadata)) >= ceph_nvmeof_subsystem_namespace_limit"
+          summary: "{{ $labels.nqn }} subsystem has reached its maximum number of namespaces on cluster {{ $labels.cluster }}"
+        expr: "(count by(nqn, cluster, instance) (ceph_nvmeof_subsystem_namespace_metadata)) >= on(nqn, instance) group_right(cluster) ceph_nvmeof_subsystem_namespace_limit"
+        for: "1m"
+        labels:
+          severity: "warning"
+          type: "ceph_default"
+      - alert: "NVMeoFMultipleNamespacesOfRBDImage"
+        annotations:
+          description: "Each NVMeoF namespace must have a unique RBD pool and image, across all different gateway groups."
+          summary: "RBD image {{ $labels.pool_name }}/{{ $labels.rbd_name }} cannot be reused for multiple NVMeoF namespace "
+        expr: "count by(pool_name, rbd_name) (count by(bdev_name, pool_name, rbd_name) (ceph_nvmeof_bdev_metadata and on (bdev_name) ceph_nvmeof_subsystem_namespace_metadata)) > 1"
         for: "1m"
         labels:
           severity: "warning"
