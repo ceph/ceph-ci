@@ -327,8 +327,13 @@ bool MonClient::ms_dispatch(Message *m)
 	return true;
       }
     } else if (!active_con ||
-        (active_con->get_con() != m->get_connection() && m->get_type() != CEPH_MSG_MON_MAP)) {
+        (active_con->get_con() != m->get_connection())) { //&& m->get_type() != CEPH_MSG_MON_MAP)) {
       // ignore any messages outside our session(s) unless it's a quorum message
+      if (m->get_type() == CEPH_MSG_MON_MAP) {
+        handle_quorum_peon(static_cast<MMonMap*>(m));
+        m->put();
+        return true;
+      }
       ldout(cct, 10) << "discarding stray monitor message " << *m << dendl;
       m->put();
       return true;
@@ -399,6 +404,17 @@ void MonClient::flush_log()
 {
   std::lock_guard l(monc_lock);
   send_log();
+}
+
+void MonClient::handle_quorum_peon(MMonMap *m) {
+  auto con_addrs = m->get_source_addrs();
+  auto mon_name = monmap.get_name(con_addrs);
+
+  MonMap peon_map;
+  auto p = m->monmapbl.cbegin();
+  decode(peon_map, p);
+  quorum.add_quorum(peon_map.get_addrs(mon_name), peon_map.epoch, peon_map.quorum);
+  ldout(cct, 10) << " quorum is " << peon_map.quorum << " from mon." << mon_name << dendl;
 }
 
 /* Unlike all the other message-handling functions, we don't put away a reference
@@ -1464,7 +1480,7 @@ int MonClient::get_auth_request(
     if (con->is_anon()) {
       for (auto& i : mon_commands) {
 	if (i.second->target_con == con) {
-	  return i.second->target_session->get_auth_request(
+    return i.second->target_session->get_auth_request(
 	    auth_method, preferred_modes, bl,
 	    entity_name, want_keys, rotating_secrets.get());
 	}
@@ -1475,6 +1491,15 @@ int MonClient::get_auth_request(
 	return i.second.get_auth_request(
 	  auth_method, preferred_modes, bl,
 	  entity_name, want_keys, rotating_secrets.get());
+      }
+    }
+
+    // probably in aux list
+    for (auto& i : aux_list.get_aux_list()) {
+      if (i.second.is_con(con)) {
+        return i.second.get_auth_request(
+          auth_method, preferred_modes, bl,
+          entity_name, want_keys, rotating_secrets.get());
       }
     }
     return -ENOENT;
@@ -1519,6 +1544,11 @@ int MonClient::handle_auth_reply_more(
     for (auto& i : pending_cons) {
       if (i.second.is_con(con)) {
 	return i.second.handle_auth_reply_more(auth_meta, bl, reply);
+      }
+    }
+    for (auto& i : aux_list.get_aux_list()) {
+      if (i.second.is_con(con)) {
+        return i.second.handle_auth_reply_more(auth_meta, bl, reply);
       }
     }
     return -ENOENT;
@@ -1824,17 +1854,21 @@ int MonConnection::get_auth_request(
   uint32_t want_keys,
   RotatingKeyRing* keyring)
 {
+  ldout(cct,10) << __func__ << " method " << *method << dendl;
   using ceph::encode;
   // choose method
   if (auth_method < 0) {
+    ldout(cct,10) << __func__ << " no auth method provided" << dendl;
     std::vector<uint32_t> as;
     auth_registry->get_supported_methods(con->get_peer_type(), &as);
     if (as.empty()) {
+      lderr(cct) << __func__ << " no supported auth methods for peer type " << con->get_peer_type() << dendl;
       return -EACCES;
     }
     auth_method = as.front();
   }
   *method = auth_method;
+  ldout(cct,10) << __func__ << " method " << *method << dendl;
   auth_registry->get_supported_modes(con->get_peer_type(), auth_method,
 				     preferred_modes);
   ldout(cct,10) << __func__ << " method " << *method
