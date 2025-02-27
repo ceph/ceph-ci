@@ -1,0 +1,17 @@
+meta:
+- desc: run the rbd_mirror_group.sh workunit to test the rbd-mirror daemon with snapshot consistency groups 
+tasks:
+- workunit:
+    clients:
+      cluster1.client.mirror: [rbd/rbd_mirror_group.sh]
+    env:
+      # override workunit setting of CEPH_ARGS='--cluster'
+      CEPH_ARGS: ''
+      MIRROR_POOL_MODE: 'image'
+      RBD_MIRROR_MODE: "snapshot"
+      RBD_IMAGE_FEATURES: 'layering,exclusive-lock,object-map,fast-diff,deep-flatten'
+      RBD_MIRROR_INSTANCES: '1'
+      RBD_MIRROR_USE_EXISTING_CLUSTER: '1'
+      RBD_MIRROR_USE_RBD_MIRROR: '1'
+      RBD_MIRROR_SHOW_CLI_CMD: '1'
+      RBD_MIRROR_SKIP_DAEMON_CHECK: '1'
