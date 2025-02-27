@@ -295,7 +295,8 @@ struct ceph_mon_subscribe_ack {
 #define CEPH_MDSMAP_BALANCE_AUTOMATE             (1<<8)  /* automate metadata balancing */
 #define CEPH_MDSMAP_REFERENT_INODES              (1<<9)  /* create referent inode for hardlinks to store backtrace */
 #define CEPH_MDSMAP_DEFAULTS (CEPH_MDSMAP_ALLOW_SNAPS | \
-			      CEPH_MDSMAP_ALLOW_MULTIMDS_SNAPS)
+			      CEPH_MDSMAP_ALLOW_MULTIMDS_SNAPS | \
+                              CEPH_MDSMAP_REFERENT_INODES)
 
 /*
  * mds states
