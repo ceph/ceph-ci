@@ -295,7 +295,7 @@ int MonClient::ping_monitor(const string &mon_id, string *result_reply)
 
 bool MonClient::ms_dispatch(Message *m)
 {
-  ldout(cct, 25) << __func__ << " processing " << m << dendl;
+  ldout(cct, 25) << __func__ << " processing " << *m << dendl;
   // we only care about these message types
   switch (m->get_type()) {
   case CEPH_MSG_MON_MAP:
@@ -432,7 +432,7 @@ void MonClient::handle_monmap(MMonMap *m)
   ldout(cct, 10) << " got monmap " << monmap.epoch
 		 << " from mon." << old_name
 		 << " (according to old e" << monmap.get_epoch() << ")"
-                 << " quorum is " << m->quorum
+                 << " quorum is " << monmap.quorum
                  << dendl;
   ldout(cct, 10) << "dump:\n";
   monmap.print(*_dout);
@@ -462,9 +462,9 @@ void MonClient::handle_monmap(MMonMap *m)
   }
 
   cct->set_mon_addrs(monmap);
-
+  auto mon_name = monmap.get_name(con_addrs);
   // set quorum
-  quorum.add_quorum(m->peer_addrs, m->epoch, m->quorum);
+  quorum.add_quorum(monmap.get_addrs(mon_name), monmap.epoch, monmap.quorum);
   sub.got("monmap", monmap.get_epoch());
   map_cond.notify_all();
   want_monmap = false;
@@ -681,7 +681,7 @@ void MonClient::handle_auth(MAuthReply *m)
   if (!_hunting()) {
     ldout(cct, 20) << __func__ << " not hunting, ignoring stray auth reply "
        << m->get_connection()->get_peer_addr() 
-       << " exist active connection: " << active_con->get_con()->get_peer_addr() 
+       << " exist active connection: " << active_con->get_con()->get_peer_addr()
        << dendl;
 
     std::swap(active_con->get_auth(), auth);
@@ -725,6 +725,7 @@ void MonClient::handle_auth(MAuthReply *m)
     auto& mc = found->second;
     ceph_assert(mc.have_session());
     active_con.reset(new MonConnection(std::move(mc)));
+    pending_cons.erase(found);
     aux_list.splice(pending_cons);
     pending_cons.clear();
     ldout(cct, 10) << __func__ << " hunting success, active mon."
@@ -785,6 +786,7 @@ void MonClient::_reopen_session(int rank)
 
   active_con.reset();
   pending_cons.clear();
+  aux_list.clear();
 
   authenticate_err = 1;  // == in progress
 
@@ -1596,9 +1598,10 @@ int MonClient::handle_auth_done(
 	    return r;
 	  }
 	} else {
-	  active_con.reset(new MonConnection(std::move(i.second)));
+          active_con.reset(new MonConnection(std::move(i.second)));
+          pending_cons.erase(i.first);
           aux_list.splice(pending_cons);
-	  pending_cons.clear();
+          pending_cons.clear();
 	  ceph_assert(active_con->have_session());
           ldout(cct, 10) << __func__ << " hunting success, active mon."
                 << monmap.get_name(active_con->get_con()->get_peer_addr())
@@ -1612,23 +1615,6 @@ int MonClient::handle_auth_done(
 	  _finish_auth(r);
 	}
 	return r;
-      }
-    }
-    ldout(cct, 20) << __func__ << " failed to find pending mon con in pending_cons" << dendl;
-    for (auto& i : aux_list.get_aux_list()) {
-      if (i.second.is_con(con)) {
-        int r = i.second.handle_auth_done(
-          auth_meta, global_id, bl,
-          session_key, connection_secret);
-        if (r) {
-          ldout(cct, 20) << __func__ << " " << i.first << " failed r=" << r << " for aux addr " << i.first << dendl;
-          aux_list.erase(i.first);
-          if (!aux_list.empty()) {
-            return r;
-          }
-        }
-        ldout(cct, 20) << __func__ << " auth aux conn done: " << i.first << " returning " << r << dendl;
-        return r;
       }
     }
     return -ENOENT;
