@@ -122,17 +122,26 @@ class RBDMirrorThrasher(Thrasher, Greenlet):
             weight = 1.0 / len(self.daemons)
             count = 0
             for daemon in self.daemons:
-                skip = random.uniform(0.0, 1.0)
-                if weight <= skip:
-                    self.log('skipping daemon {label} with skip ({skip}) > weight ({weight})'.format(
-                        label=daemon.id_, skip=skip, weight=weight))
+                rand = random.uniform(0.0, 1.0)
+                if weight <= rand:
+                    self.log('skipping daemon {label} with rand ({rand}) > weight ({weight})'.format(
+                        label=daemon.id_, rand=rand, weight=weight))
                     continue
 
-                self.log('kill {label}'.format(label=daemon.id_))
-                try:
-                    daemon.signal(signal.SIGTERM)
-                except socket.error:
-                    pass
+                # Randomise whether we kill via SIGKILL or SIGTERM
+                if rand <= 0.5:
+                    self.log('kill (SIGKILL) {label}'.format(label=daemon.id_))
+                    try:
+                        daemon.signal(signal.SIGKILL)
+                    except socket.error:
+                        pass
+                else:
+                    self.log('kill (SIGTERM) {label}'.format(label=daemon.id_))
+                    try:
+                        daemon.signal(signal.SIGTERM)
+                    except socket.error:
+                        pass
+
                 killed_daemons.append(daemon)
                 stats['kill'] += 1
 

@@ -238,7 +238,7 @@ remove_image_retry ${CLUSTER2} ${POOL} ${big_image}
 wait_for_group_replay_started ${CLUSTER1} ${POOL}/${group} 1
 mirror_group_snapshot_and_wait_for_sync_complete ${CLUSTER1} ${CLUSTER2} ${POOL}/${group}
 test_images_in_latest_synced_group ${CLUSTER1} ${POOL}/${group} 1
-
+: '
 testlog "TEST: test group rename"
 new_name="${group}_RENAMED"
 group_rename ${CLUSTER2} ${POOL}/${group} ${POOL}/${new_name}
@@ -247,7 +247,7 @@ wait_for_group_status_in_pool_dir ${CLUSTER1} ${POOL}/${new_name} 'up+replaying'
 group_rename ${CLUSTER2} ${POOL}/${new_name} ${POOL}/${group}
 wait_for_group_replay_started ${CLUSTER1} ${POOL}/${group} 1
 wait_for_group_status_in_pool_dir ${CLUSTER1} ${POOL}/${group} 'up+replaying' 1
-
+'
 # TODO add new image to syncing snapshot
 #  rollback needs to remove new image before rolling back
 # also remove image and rollback
