@@ -4683,10 +4683,18 @@ void MDCache::rejoin_scour_survivor_replicas(mds_rank_t from, const cref_t<MMDSC
 	
 	if (dn->is_replica(from)) {
           if (ack) {
-            const auto it = ack->strong_dentries.find(dir->dirfrag());
-            if (it != ack->strong_dentries.end() && it->second.count(string_snap_t(dn->get_name(), dn->last)) > 0) {
-              continue;
-            }
+	    //MMDSCacheRejoin::dn_strong version handling, nothing code specific
+	    if (!ack->strong_dentries_new.empty()) {
+              const auto it = ack->strong_dentries_new.find(dir->dirfrag());
+              if (it != ack->strong_dentries_new.end() && it->second.count(string_snap_t(dn->get_name(), dn->last)) > 0) {
+                continue;
+              }
+	    } else {
+              const auto it = ack->strong_dentries.find(dir->dirfrag());
+              if (it != ack->strong_dentries.end() && it->second.count(string_snap_t(dn->get_name(), dn->last)) > 0) {
+                continue;
+              }
+	    }
           }
 	  dentry_remove_replica(dn, from, gather_locks);
 	  dout(10) << " rem " << *dn << dendl;
@@ -4800,118 +4808,223 @@ void MDCache::handle_cache_rejoin_strong(const cref_t<MMDSCacheRejoin> &strong)
       refragged = true;
     }
     
-    const auto it = strong->strong_dentries.find(dirfrag);
-    if (it != strong->strong_dentries.end()) {
-      const auto& dmap = it->second;
-      for (const auto &q : dmap) {
-        const string_snap_t& ss = q.first;
-        const MMDSCacheRejoin::dn_strong& d = q.second;
-        CDentry *dn;
-        if (!refragged)
-	  dn = dir->lookup(ss.name, ss.snapid);
-        else {
-	  frag_t fg = diri->pick_dirfrag(ss.name);
-	  dir = diri->get_dirfrag(fg);
-	  ceph_assert(dir);
-	  dn = dir->lookup(ss.name, ss.snapid);
-        }
-        if (!dn) {
-	  if (d.is_remote() || d.is_referent_remote()) {
-	    CInode *ref_in = nullptr;
-	    if (d.is_referent_remote()) {
-	      // TODO: ss.snapid for referent inode ? Since it's not snapped, always use
-	      // default CEPH_NOSNAP. Validate this by testing.
-	      ref_in = get_inode(d.referent_ino);
-	      if (!ref_in) {
-	        dout(20) << __func__ << " rejoin:  no dentry, referent inode not found in memory inventing " << dendl;
-		ref_in = rejoin_invent_inode(d.referent_ino, CEPH_NOSNAP);
-                ref_in->set_remote_ino(d.remote_ino);
+    if (!strong->strong_dentries_new.empty()) {
+      const auto it = strong->strong_dentries_new.find(dirfrag);
+      if (it != strong->strong_dentries_new.end()) {
+        const auto& dmap = it->second;
+        for (const auto &q : dmap) {
+          const string_snap_t& ss = q.first;
+          const MMDSCacheRejoin::dn_strong_new& d = q.second;
+          CDentry *dn;
+          if (!refragged)
+	    dn = dir->lookup(ss.name, ss.snapid);
+          else {
+	    frag_t fg = diri->pick_dirfrag(ss.name);
+	    dir = diri->get_dirfrag(fg);
+	    ceph_assert(dir);
+	    dn = dir->lookup(ss.name, ss.snapid);
+          }
+          if (!dn) {
+	    if (d.is_remote() || d.is_referent_remote()) {
+	      CInode *ref_in = nullptr;
+	      if (d.is_referent_remote()) {
+	        // TODO: ss.snapid for referent inode ? Since it's not snapped, always use
+	        // default CEPH_NOSNAP. Validate this by testing.
+	        ref_in = get_inode(d.referent_ino);
+	        if (!ref_in) {
+	          dout(20) << __func__ << " rejoin:  no dentry, referent inode not found in memory inventing " << dendl;
+		  ref_in = rejoin_invent_inode(d.referent_ino, CEPH_NOSNAP);
+                  ref_in->set_remote_ino(d.dn_s.remote_ino);
+	        }
+	        dout(20) << __func__ << " rejoin: no dentry, referent inode invented " << *ref_in << dendl;
+	      } else {
+	        dout(20) << __func__ << " rejoin: no dentry, add remote inode " << dendl;
 	      }
-	      dout(20) << __func__ << " rejoin: no dentry, referent inode invented " << *ref_in << dendl;
+	      dn = dir->add_remote_dentry(ss.name, ref_in, d.dn_s.remote_ino, d.dn_s.remote_d_type, mempool::mds_co::string(d.dn_s.alternate_name), d.dn_s.first, ss.snapid);
+	    } else if (d.is_null()) {
+	      dn = dir->add_null_dentry(ss.name, d.dn_s.first, ss.snapid);
 	    } else {
-	      dout(20) << __func__ << " rejoin: no dentry, add remote inode " << dendl;
+	      CInode *in = get_inode(d.dn_s.ino, ss.snapid);
+	      if (!in) in = rejoin_invent_inode(d.dn_s.ino, ss.snapid);
+	      dn = dir->add_primary_dentry(ss.name, in, mempool::mds_co::string(d.dn_s.alternate_name), d.dn_s.first, ss.snapid);
 	    }
-	    dn = dir->add_remote_dentry(ss.name, ref_in, d.remote_ino, d.remote_d_type, mempool::mds_co::string(d.alternate_name), d.first, ss.snapid);
-	  } else if (d.is_null()) {
-	    dn = dir->add_null_dentry(ss.name, d.first, ss.snapid);
-	  } else {
-	    CInode *in = get_inode(d.ino, ss.snapid);
-	    if (!in) in = rejoin_invent_inode(d.ino, ss.snapid);
-	    dn = dir->add_primary_dentry(ss.name, in, mempool::mds_co::string(d.alternate_name), d.first, ss.snapid);
+	    dout(10) << " invented " << *dn << dendl;
+          }
+          CDentry::linkage_t *dnl = dn->get_linkage();
+
+          // dn auth_pin?
+          const auto pinned_it = strong->authpinned_dentries.find(dirfrag);
+          if (pinned_it != strong->authpinned_dentries.end()) {
+            const auto peer_reqid_it = pinned_it->second.find(ss);
+            if (peer_reqid_it != pinned_it->second.end()) {
+              for (const auto &r : peer_reqid_it->second) {
+	        dout(10) << " dn authpin by " << r << " on " << *dn << dendl;
+
+	        // get/create peer mdrequest
+	        MDRequestRef mdr;
+	        if (have_request(r.reqid))
+	          mdr = request_get(r.reqid);
+	        else
+	          mdr = request_start_peer(r.reqid, r.attempt, strong);
+	        mdr->auth_pin(dn);
+              }
+            }
 	  }
-	  dout(10) << " invented " << *dn << dendl;
-        }
-        CDentry::linkage_t *dnl = dn->get_linkage();
 
-        // dn auth_pin?
-        const auto pinned_it = strong->authpinned_dentries.find(dirfrag);
-        if (pinned_it != strong->authpinned_dentries.end()) {
-          const auto peer_reqid_it = pinned_it->second.find(ss);
-          if (peer_reqid_it != pinned_it->second.end()) {
-            for (const auto &r : peer_reqid_it->second) {
-	      dout(10) << " dn authpin by " << r << " on " << *dn << dendl;
-
-	      // get/create peer mdrequest
-	      MDRequestRef mdr;
-	      if (have_request(r.reqid))
-	        mdr = request_get(r.reqid);
-	      else
-	        mdr = request_start_peer(r.reqid, r.attempt, strong);
-	      mdr->auth_pin(dn);
+          // dn xlock?
+          const auto xlocked_it = strong->xlocked_dentries.find(dirfrag);
+          if (xlocked_it != strong->xlocked_dentries.end()) {
+            const auto ss_req_it = xlocked_it->second.find(ss);
+            if (ss_req_it != xlocked_it->second.end()) {
+	      const MMDSCacheRejoin::peer_reqid& r = ss_req_it->second;
+	      dout(10) << " dn xlock by " << r << " on " << *dn << dendl;
+	      MDRequestRef mdr = request_get(r.reqid);  // should have this from auth_pin above.
+	      ceph_assert(mdr->is_auth_pinned(dn));
+	      if (!mdr->is_xlocked(&dn->versionlock)) {
+	        ceph_assert(dn->versionlock.can_xlock_local());
+	        dn->versionlock.get_xlock(mdr, mdr->get_client());
+	        mdr->emplace_lock(&dn->versionlock, MutationImpl::LockOp::XLOCK);
+	      }
+	      if (dn->lock.is_stable())
+	        dn->auth_pin(&dn->lock);
+	      dn->lock.set_state(LOCK_XLOCK);
+	      dn->lock.get_xlock(mdr, mdr->get_client());
+	      mdr->emplace_lock(&dn->lock, MutationImpl::LockOp::XLOCK);
             }
           }
-	}
 
-        // dn xlock?
-        const auto xlocked_it = strong->xlocked_dentries.find(dirfrag);
-        if (xlocked_it != strong->xlocked_dentries.end()) {
-          const auto ss_req_it = xlocked_it->second.find(ss);
-          if (ss_req_it != xlocked_it->second.end()) {
-	    const MMDSCacheRejoin::peer_reqid& r = ss_req_it->second;
-	    dout(10) << " dn xlock by " << r << " on " << *dn << dendl;
-	    MDRequestRef mdr = request_get(r.reqid);  // should have this from auth_pin above.
-	    ceph_assert(mdr->is_auth_pinned(dn));
-	    if (!mdr->is_xlocked(&dn->versionlock)) {
-	      ceph_assert(dn->versionlock.can_xlock_local());
-	      dn->versionlock.get_xlock(mdr, mdr->get_client());
-	      mdr->emplace_lock(&dn->versionlock, MutationImpl::LockOp::XLOCK);
+          dn->add_replica(from, d.dn_s.nonce);
+          dout(10) << " have " << *dn << dendl;
+
+          if (dnl->is_primary()) {
+	    if (d.is_primary()) {
+	      if (vinodeno_t(d.dn_s.ino, ss.snapid) != dnl->get_inode()->vino()) {
+	        // the survivor missed MDentryUnlink+MDentryLink messages ?
+	        ceph_assert(strong->strong_inodes.count(dnl->get_inode()->vino()) == 0);
+	        CInode *in = get_inode(d.dn_s.ino, ss.snapid);
+	        ceph_assert(in);
+	        ceph_assert(in->get_parent_dn());
+	        rejoin_unlinked_inodes[from].insert(in);
+	        dout(7) << " sender has primary dentry but wrong inode" << dendl;
+	      }
+	    } else {
+	      // the survivor missed MDentryLink message ?
+	      ceph_assert(strong->strong_inodes.count(dnl->get_inode()->vino()) == 0);
+	      dout(7) << " sender doesn't have primay dentry" << dendl;
 	    }
-	    if (dn->lock.is_stable())
-	      dn->auth_pin(&dn->lock);
-	    dn->lock.set_state(LOCK_XLOCK);
-	    dn->lock.get_xlock(mdr, mdr->get_client());
-	    mdr->emplace_lock(&dn->lock, MutationImpl::LockOp::XLOCK);
+          } else {
+	    if (d.is_primary()) {
+	      // the survivor missed MDentryUnlink message ?
+	      CInode *in = get_inode(d.dn_s.ino, ss.snapid);
+	      ceph_assert(in);
+	      ceph_assert(in->get_parent_dn());
+	      rejoin_unlinked_inodes[from].insert(in);
+	      dout(7) << " sender has primary dentry but we don't" << dendl;
+	    }
           }
         }
+      }
+    } else {
+      const auto it = strong->strong_dentries.find(dirfrag);
+      if (it != strong->strong_dentries.end()) {
+        const auto& dmap = it->second;
+        for (const auto &q : dmap) {
+          const string_snap_t& ss = q.first;
+          const MMDSCacheRejoin::dn_strong& d = q.second;
+          CDentry *dn;
+          if (!refragged)
+	    dn = dir->lookup(ss.name, ss.snapid);
+          else {
+	    frag_t fg = diri->pick_dirfrag(ss.name);
+	    dir = diri->get_dirfrag(fg);
+	    ceph_assert(dir);
+	    dn = dir->lookup(ss.name, ss.snapid);
+          }
+          if (!dn) {
+	    if (d.is_remote()) {
+	      dout(20) << __func__ << " rejoin: no dentry, add remote inode " << dendl;
+	      dn = dir->add_remote_dentry(ss.name, nullptr, d.remote_ino, d.remote_d_type, mempool::mds_co::string(d.alternate_name), d.first, ss.snapid);
+	    } else if (d.is_null()) {
+	      dn = dir->add_null_dentry(ss.name, d.first, ss.snapid);
+	    } else {
+	      CInode *in = get_inode(d.ino, ss.snapid);
+	      if (!in) in = rejoin_invent_inode(d.ino, ss.snapid);
+	      dn = dir->add_primary_dentry(ss.name, in, mempool::mds_co::string(d.alternate_name), d.first, ss.snapid);
+	    }
+	    dout(10) << " invented " << *dn << dendl;
+          }
+          CDentry::linkage_t *dnl = dn->get_linkage();
 
-        dn->add_replica(from, d.nonce);
-        dout(10) << " have " << *dn << dendl;
+          // dn auth_pin?
+          const auto pinned_it = strong->authpinned_dentries.find(dirfrag);
+          if (pinned_it != strong->authpinned_dentries.end()) {
+            const auto peer_reqid_it = pinned_it->second.find(ss);
+            if (peer_reqid_it != pinned_it->second.end()) {
+              for (const auto &r : peer_reqid_it->second) {
+	        dout(10) << " dn authpin by " << r << " on " << *dn << dendl;
 
-        if (dnl->is_primary()) {
-	  if (d.is_primary()) {
-	    if (vinodeno_t(d.ino, ss.snapid) != dnl->get_inode()->vino()) {
-	      // the survivor missed MDentryUnlink+MDentryLink messages ?
+	        // get/create peer mdrequest
+	        MDRequestRef mdr;
+	        if (have_request(r.reqid))
+	          mdr = request_get(r.reqid);
+	        else
+	          mdr = request_start_peer(r.reqid, r.attempt, strong);
+	        mdr->auth_pin(dn);
+              }
+            }
+	  }
+
+          // dn xlock?
+          const auto xlocked_it = strong->xlocked_dentries.find(dirfrag);
+          if (xlocked_it != strong->xlocked_dentries.end()) {
+            const auto ss_req_it = xlocked_it->second.find(ss);
+            if (ss_req_it != xlocked_it->second.end()) {
+	      const MMDSCacheRejoin::peer_reqid& r = ss_req_it->second;
+	      dout(10) << " dn xlock by " << r << " on " << *dn << dendl;
+	      MDRequestRef mdr = request_get(r.reqid);  // should have this from auth_pin above.
+	      ceph_assert(mdr->is_auth_pinned(dn));
+	      if (!mdr->is_xlocked(&dn->versionlock)) {
+	        ceph_assert(dn->versionlock.can_xlock_local());
+	        dn->versionlock.get_xlock(mdr, mdr->get_client());
+	        mdr->emplace_lock(&dn->versionlock, MutationImpl::LockOp::XLOCK);
+	      }
+	      if (dn->lock.is_stable())
+	        dn->auth_pin(&dn->lock);
+	      dn->lock.set_state(LOCK_XLOCK);
+	      dn->lock.get_xlock(mdr, mdr->get_client());
+	      mdr->emplace_lock(&dn->lock, MutationImpl::LockOp::XLOCK);
+            }
+          }
+
+          dn->add_replica(from, d.nonce);
+          dout(10) << " have " << *dn << dendl;
+
+          if (dnl->is_primary()) {
+	    if (d.is_primary()) {
+	      if (vinodeno_t(d.ino, ss.snapid) != dnl->get_inode()->vino()) {
+	        // the survivor missed MDentryUnlink+MDentryLink messages ?
+	        ceph_assert(strong->strong_inodes.count(dnl->get_inode()->vino()) == 0);
+	        CInode *in = get_inode(d.ino, ss.snapid);
+	        ceph_assert(in);
+	        ceph_assert(in->get_parent_dn());
+	        rejoin_unlinked_inodes[from].insert(in);
+	        dout(7) << " sender has primary dentry but wrong inode" << dendl;
+	      }
+	    } else {
+	      // the survivor missed MDentryLink message ?
 	      ceph_assert(strong->strong_inodes.count(dnl->get_inode()->vino()) == 0);
+	      dout(7) << " sender doesn't have primay dentry" << dendl;
+	    }
+          } else {
+	    if (d.is_primary()) {
+	      // the survivor missed MDentryUnlink message ?
 	      CInode *in = get_inode(d.ino, ss.snapid);
 	      ceph_assert(in);
 	      ceph_assert(in->get_parent_dn());
 	      rejoin_unlinked_inodes[from].insert(in);
-	      dout(7) << " sender has primary dentry but wrong inode" << dendl;
+	      dout(7) << " sender has primary dentry but we don't" << dendl;
 	    }
-	  } else {
-	    // the survivor missed MDentryLink message ?
-	    ceph_assert(strong->strong_inodes.count(dnl->get_inode()->vino()) == 0);
-	    dout(7) << " sender doesn't have primay dentry" << dendl;
-	  }
-        } else {
-	  if (d.is_primary()) {
-	    // the survivor missed MDentryUnlink message ?
-	    CInode *in = get_inode(d.ino, ss.snapid);
-	    ceph_assert(in);
-	    ceph_assert(in->get_parent_dn());
-	    rejoin_unlinked_inodes[from].insert(in);
-	    dout(7) << " sender has primary dentry but we don't" << dendl;
-	  }
+          }
         }
       }
     }
@@ -5070,96 +5183,166 @@ void MDCache::handle_cache_rejoin_ack(const cref_t<MMDSCacheRejoin> &ack)
     dout(10) << " got " << *dir << dendl;
 
     // dentries
-    auto it = ack->strong_dentries.find(p.first);
-    if (it != ack->strong_dentries.end()) {
-      for (const auto &q : it->second) {
-        CDentry *dn = dir->lookup(q.first.name, q.first.snapid);
-        if(!dn)
-	  dn = dir->add_null_dentry(q.first.name, q.second.first, q.first.snapid);
+    if (!ack->strong_dentries_new.empty()) {
+      auto it = ack->strong_dentries_new.find(p.first);
+      if (it != ack->strong_dentries_new.end()) {
+        for (const auto &q : it->second) {
+          CDentry *dn = dir->lookup(q.first.name, q.first.snapid);
+          if(!dn)
+	    dn = dir->add_null_dentry(q.first.name, q.second.dn_s.first, q.first.snapid);
 
-        CDentry::linkage_t *dnl = dn->get_linkage();
+          CDentry::linkage_t *dnl = dn->get_linkage();
 
-        ceph_assert(dn->last == q.first.snapid);
-        if (dn->first != q.second.first) {
-	  dout(10) << " adjust dn.first " << dn->first << " -> " << q.second.first << " on " << *dn << dendl;
-	  dn->first = q.second.first;
-        }
+          ceph_assert(dn->last == q.first.snapid);
+          if (dn->first != q.second.dn_s.first) {
+	    dout(10) << " adjust dn.first " << dn->first << " -> " << q.second.dn_s.first << " on " << *dn << dendl;
+	    dn->first = q.second.dn_s.first;
+          }
 
-        // may have bad linkage if we missed dentry link/unlink messages
-        if (dnl->is_primary()) {
-	  CInode *in = dnl->get_inode();
-	  if (!q.second.is_primary() ||
-	      vinodeno_t(q.second.ino, q.first.snapid) != in->vino()) {
-	    dout(10) << " had bad linkage for " << *dn << ", unlinking " << *in << dendl;
-	    dir->unlink_inode(dn);
-	  }
-        } else if (dnl->is_remote()) {
-	  if (!q.second.is_remote() ||
-	      q.second.remote_ino != dnl->get_remote_ino() ||
-	      q.second.remote_d_type != dnl->get_remote_d_type()) {
-	    dout(10) << " had bad linkage for " << *dn <<  dendl;
-	    dir->unlink_inode(dn);
-	  }
-        } else if (dnl->is_referent_remote()) {
-	  if (!q.second.is_referent_remote() ||
-	      q.second.remote_ino != dnl->get_remote_ino() ||
-	      q.second.remote_d_type != dnl->get_remote_d_type() ||
-	      q.second.referent_ino != dnl->get_referent_ino()) {
-	    dout(10) << __func__ << " had bad referent remote linkage for " << *dn <<  dendl;
-	    dir->unlink_inode(dn);
-	  }
-        } else {
-	  if (!q.second.is_null())
-	    dout(10) << " had bad linkage for " << *dn <<  dendl;
-        }
-
-	// hmm, did we have the proper linkage here?
-	if (dnl->is_null() && !q.second.is_null()) {
-	  if (q.second.is_remote()) {
-	    dn->dir->link_remote_inode(dn, q.second.remote_ino, q.second.remote_d_type);
-	  } else if (q.second.is_referent_remote()) {
-	    CInode *ref_in = get_inode(q.second.referent_ino, CEPH_NOSNAP);
-	    if (!ref_in) {
-	      // barebones inode;
-	      ref_in = new CInode(this, false, 2, CEPH_NOSNAP);
-	      auto _inode = ref_in->_get_inode();
-	      _inode->ino = q.second.referent_ino;
-	      _inode->mode = S_IFREG;
-	      _inode->layout = default_file_layout;
-	      add_inode(ref_in);
-	      dout(10) << __func__ << " add inode " << *ref_in << dendl;
-	    } else if (ref_in->get_parent_dn()) {
-	      dout(10) << __func__ << " had bad referent linkage for " << *(ref_in->get_parent_dn())
-		       << ", unlinking referent inode" << *ref_in << dendl;
-	      ref_in->get_parent_dir()->unlink_inode(ref_in->get_parent_dn());
+          // may have bad linkage if we missed dentry link/unlink messages
+          if (dnl->is_primary()) {
+	    CInode *in = dnl->get_inode();
+	    if (!q.second.is_primary() ||
+	        vinodeno_t(q.second.dn_s.ino, q.first.snapid) != in->vino()) {
+	      dout(10) << " had bad linkage for " << *dn << ", unlinking " << *in << dendl;
+	      dir->unlink_inode(dn);
 	    }
-	    dn->dir->link_referent_inode(dn, ref_in, q.second.remote_ino, q.second.remote_d_type);
-	    isolated_inodes.erase(ref_in);
-	  } else {
-	    CInode *in = get_inode(q.second.ino, q.first.snapid);
-	    if (!in) {
-	      // barebones inode; assume it's dir, the full inode loop below will clean up.
-	      in = new CInode(this, false, q.second.first, q.first.snapid);
-	      auto _inode = in->_get_inode();
-	      _inode->ino = q.second.ino;
-	      _inode->mode = S_IFDIR;
-	      _inode->dir_layout.dl_dir_hash = g_conf()->mds_default_dir_hash;
-	      add_inode(in);
-	      dout(10) << " add inode " << *in << dendl;
-	    } else if (in->get_parent_dn()) {
-	      dout(10) << " had bad linkage for " << *(in->get_parent_dn())
-		       << ", unlinking " << *in << dendl;
-	      in->get_parent_dir()->unlink_inode(in->get_parent_dn());
+          } else if (dnl->is_remote()) {
+	    if (!q.second.is_remote() ||
+	        q.second.dn_s.remote_ino != dnl->get_remote_ino() ||
+	        q.second.dn_s.remote_d_type != dnl->get_remote_d_type()) {
+	      dout(10) << " had bad linkage for " << *dn <<  dendl;
+	      dir->unlink_inode(dn);
 	    }
-	    dn->dir->link_primary_inode(dn, in);
-	    isolated_inodes.erase(in);
-	  }
-	}
+          } else if (dnl->is_referent_remote()) {
+	    if (!q.second.is_referent_remote() ||
+	        q.second.dn_s.remote_ino != dnl->get_remote_ino() ||
+	        q.second.dn_s.remote_d_type != dnl->get_remote_d_type() ||
+	        q.second.referent_ino != dnl->get_referent_ino()) {
+	      dout(10) << __func__ << " had bad referent remote linkage for " << *dn <<  dendl;
+	      dir->unlink_inode(dn);
+	    }
+          } else {
+	    if (!q.second.is_null())
+	      dout(10) << " had bad linkage for " << *dn <<  dendl;
+          }
 
-        dn->set_replica_nonce(q.second.nonce);
-        dn->lock.set_state_rejoin(q.second.lock, rejoin_waiters, survivor);
-        dn->state_clear(CDentry::STATE_REJOINING);
-        dout(10) << " got " << *dn << dendl;
+	  // hmm, did we have the proper linkage here?
+	  if (dnl->is_null() && !q.second.is_null()) {
+	    if (q.second.is_remote()) {
+	      dn->dir->link_remote_inode(dn, q.second.dn_s.remote_ino, q.second.dn_s.remote_d_type);
+	    } else if (q.second.is_referent_remote()) {
+	      CInode *ref_in = get_inode(q.second.referent_ino, CEPH_NOSNAP);
+	      if (!ref_in) {
+	        // barebones inode;
+	        ref_in = new CInode(this, false, 2, CEPH_NOSNAP);
+	        auto _inode = ref_in->_get_inode();
+	        _inode->ino = q.second.referent_ino;
+	        _inode->mode = S_IFREG;
+	        _inode->layout = default_file_layout;
+	        add_inode(ref_in);
+	        dout(10) << __func__ << " add inode " << *ref_in << dendl;
+	      } else if (ref_in->get_parent_dn()) {
+	        dout(10) << __func__ << " had bad referent linkage for " << *(ref_in->get_parent_dn())
+                         << ", unlinking referent inode" << *ref_in << dendl;
+	        ref_in->get_parent_dir()->unlink_inode(ref_in->get_parent_dn());
+	      }
+	      dn->dir->link_referent_inode(dn, ref_in, q.second.dn_s.remote_ino, q.second.dn_s.remote_d_type);
+	      isolated_inodes.erase(ref_in);
+	    } else {
+	      CInode *in = get_inode(q.second.dn_s.ino, q.first.snapid);
+	      if (!in) {
+	        // barebones inode; assume it's dir, the full inode loop below will clean up.
+	        in = new CInode(this, false, q.second.dn_s.first, q.first.snapid);
+	        auto _inode = in->_get_inode();
+	        _inode->ino = q.second.dn_s.ino;
+	        _inode->mode = S_IFDIR;
+	        _inode->dir_layout.dl_dir_hash = g_conf()->mds_default_dir_hash;
+	        add_inode(in);
+	        dout(10) << " add inode " << *in << dendl;
+	      } else if (in->get_parent_dn()) {
+	        dout(10) << " had bad linkage for " << *(in->get_parent_dn())
+		         << ", unlinking " << *in << dendl;
+	        in->get_parent_dir()->unlink_inode(in->get_parent_dn());
+	      }
+	      dn->dir->link_primary_inode(dn, in);
+	      isolated_inodes.erase(in);
+	    }
+	  }
+
+          dn->set_replica_nonce(q.second.dn_s.nonce);
+          dn->lock.set_state_rejoin(q.second.dn_s.lock, rejoin_waiters, survivor);
+          dn->state_clear(CDentry::STATE_REJOINING);
+          dout(10) << " got " << *dn << dendl;
+        }
+      }
+    } else {
+      auto it = ack->strong_dentries.find(p.first);
+      if (it != ack->strong_dentries.end()) {
+        for (const auto &q : it->second) {
+          CDentry *dn = dir->lookup(q.first.name, q.first.snapid);
+          if(!dn)
+	    dn = dir->add_null_dentry(q.first.name, q.second.first, q.first.snapid);
+
+          CDentry::linkage_t *dnl = dn->get_linkage();
+
+          ceph_assert(dn->last == q.first.snapid);
+          if (dn->first != q.second.first) {
+	    dout(10) << " adjust dn.first " << dn->first << " -> " << q.second.first << " on " << *dn << dendl;
+	    dn->first = q.second.first;
+          }
+
+          // may have bad linkage if we missed dentry link/unlink messages
+          if (dnl->is_primary()) {
+	    CInode *in = dnl->get_inode();
+	    if (!q.second.is_primary() ||
+	        vinodeno_t(q.second.ino, q.first.snapid) != in->vino()) {
+	      dout(10) << " had bad linkage for " << *dn << ", unlinking " << *in << dendl;
+	      dir->unlink_inode(dn);
+	    }
+          } else if (dnl->is_remote() || dnl->is_referent_remote()) {
+	    // Treat remote and referent remote same if old msg version is received
+	    if (!q.second.is_remote() ||
+	        q.second.remote_ino != dnl->get_remote_ino() ||
+	        q.second.remote_d_type != dnl->get_remote_d_type()) {
+	      dout(10) << " had bad linkage for " << *dn <<  dendl;
+	      dir->unlink_inode(dn);
+	    }
+          } else {
+	    if (!q.second.is_null())
+	      dout(10) << " had bad linkage for " << *dn <<  dendl;
+          }
+
+	  // hmm, did we have the proper linkage here?
+	  if (dnl->is_null() && !q.second.is_null()) {
+	    if (q.second.is_remote()) {
+	      dn->dir->link_remote_inode(dn, q.second.remote_ino, q.second.remote_d_type);
+	    } else {
+	      CInode *in = get_inode(q.second.ino, q.first.snapid);
+	      if (!in) {
+	        // barebones inode; assume it's dir, the full inode loop below will clean up.
+	        in = new CInode(this, false, q.second.first, q.first.snapid);
+	        auto _inode = in->_get_inode();
+	        _inode->ino = q.second.ino;
+	        _inode->mode = S_IFDIR;
+	        _inode->dir_layout.dl_dir_hash = g_conf()->mds_default_dir_hash;
+	        add_inode(in);
+	        dout(10) << " add inode " << *in << dendl;
+	      } else if (in->get_parent_dn()) {
+	        dout(10) << " had bad linkage for " << *(in->get_parent_dn())
+		         << ", unlinking " << *in << dendl;
+	        in->get_parent_dir()->unlink_inode(in->get_parent_dn());
+	      }
+	      dn->dir->link_primary_inode(dn, in);
+	      isolated_inodes.erase(in);
+	    }
+	  }
+
+          dn->set_replica_nonce(q.second.nonce);
+          dn->lock.set_state_rejoin(q.second.lock, rejoin_waiters, survivor);
+          dn->state_clear(CDentry::STATE_REJOINING);
+          dout(10) << " got " << *dn << dendl;
+        }
       }
     }
   }
