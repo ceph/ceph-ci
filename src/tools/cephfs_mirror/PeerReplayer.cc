@@ -654,8 +654,10 @@ int PeerReplayer::remote_mkdir(const std::string &epath, const struct ceph_statx
 #define NR_IOVECS 8 // # iovecs
 #define IOVEC_SIZE (8 * 1024 * 1024) // buffer size for each iovec
 int PeerReplayer::copy_to_remote(const std::string &dir_root,  const std::string &epath,
-                                 const struct ceph_statx &stx, const FHandles &fh) {
-  dout(10) << ": dir_root=" << dir_root << ", epath=" << epath << dendl;
+                                 const struct ceph_statx &stx, const FHandles &fh,
+                                 uint64_t num_blocks, struct cblock *b) {
+  dout(10) << ": dir_root=" << dir_root << ", epath=" << epath << ", num_blocks="
+           << num_blocks << dendl;
   int l_fd;
   int r_fd;
   void *ptr;
@@ -670,7 +672,7 @@ int PeerReplayer::copy_to_remote(const std::string &dir_root,  const std::string
 
   l_fd = r;
   r = ceph_openat(m_remote_mount, fh.r_fd_dir_root, epath.c_str(),
-                  O_CREAT | O_TRUNC | O_WRONLY | O_NOFOLLOW, stx.stx_mode);
+                  O_CREAT | O_WRONLY | O_NOFOLLOW, stx.stx_mode);
   if (r < 0) {
     derr << ": failed to create remote file path=" << epath << ": "
          << cpp_strerror(r) << dendl;
@@ -685,43 +687,86 @@ int PeerReplayer::copy_to_remote(const std::string &dir_root,  const std::string
     goto close_remote_fd;
   }
 
-  while (true) {
-    if (should_backoff(dir_root, &r)) {
-      dout(0) << ": backing off r=" << r << dendl;
-      break;
+  while (num_blocks > 0) {
+    auto offset = b->offset;
+    auto len = b->len;
+
+    dout(10) << ": dir_root=" << dir_root << ", epath=" << epath << ", block: ["
+             << offset << "~" << len << "]" << dendl;
+
+    auto end_offset = offset + len;
+    dout(20) << ": start offset=" << offset << ", end offset=" << end_offset
+             << dendl;
+    while (offset < end_offset) {
+      if (should_backoff(dir_root, &r)) {
+        dout(0) << ": backing off r=" << r << dendl;
+        break;
+      }
+
+      auto cut_off = len;
+      if (cut_off > NR_IOVECS*IOVEC_SIZE) {
+        cut_off = NR_IOVECS*IOVEC_SIZE;
+      }
+
+      int num_buffers = cut_off / IOVEC_SIZE;
+      if (cut_off % IOVEC_SIZE) {
+        ++num_buffers;
+      }
+
+      dout(20) << ": num_buffers=" << num_buffers << dendl;
+      for (int i = 0; i < num_buffers; ++i) {
+        iov[i].iov_base = (char *)ptr + IOVEC_SIZE*i;
+        if (cut_off < IOVEC_SIZE) {
+          ceph_assert(i+1 == num_buffers);
+          iov[i].iov_len = cut_off;
+        } else {
+          iov[i].iov_len = IOVEC_SIZE;
+          cut_off -= IOVEC_SIZE;
+        }
+      }
+
+      r = ceph_preadv(m_local_mount, l_fd, iov, num_buffers, offset);
+      if (r < 0) {
+        derr << ": failed to read local file path=" << epath << ": "
+             << cpp_strerror(r) << dendl;
+        break;
+      }
+      dout(10) << ": read: " << r << " bytes" << dendl;
+      if (r == 0) {
+        break;
+      }
+
+      int iovs = (int)(r / IOVEC_SIZE);
+      int t = r % IOVEC_SIZE;
+      if (t) {
+        iov[iovs].iov_len = t;
+        ++iovs;
+      }
+
+      dout(10) << ": writing to offset: " << offset << dendl;
+      r = ceph_pwritev(m_remote_mount, r_fd, iov, iovs, offset);
+      if (r < 0) {
+        derr << ": failed to write remote file path=" << epath << ": "
+             << cpp_strerror(r) << dendl;
+        break;
+      }
+
+      offset += r;
     }
 
-    for (int i = 0; i < NR_IOVECS; ++i) {
-      iov[i].iov_base = (char*)ptr + IOVEC_SIZE*i;
-      iov[i].iov_len = IOVEC_SIZE;
-    }
-
-    r = ceph_preadv(m_local_mount, l_fd, iov, NR_IOVECS, -1);
-    if (r < 0) {
-      derr << ": failed to read local file path=" << epath << ": "
-           << cpp_strerror(r) << dendl;
-      break;
-    }
-    if (r == 0) {
-      break;
-    }
-
-    int iovs = (int)(r / IOVEC_SIZE);
-    int t = r % IOVEC_SIZE;
-    if (t) {
-      iov[iovs].iov_len = t;
-      ++iovs;
-    }
-
-    r = ceph_pwritev(m_remote_mount, r_fd, iov, iovs, -1);
-    if (r < 0) {
-      derr << ": failed to write remote file path=" << epath << ": "
-           << cpp_strerror(r) << dendl;
-      break;
-    }
+    --num_blocks;
+    ++b;
   }
 
-  if (r == 0) {
+  if (num_blocks == 0) {
+    dout(20) << ": truncating epath=" << epath << " to " << stx.stx_size << " bytes"
+             << dendl;
+    r = ceph_ftruncate(m_remote_mount, r_fd, stx.stx_size);
+    if (r < 0) {
+      derr << ": failed to truncate remote file path=" << epath << ": "
+           << cpp_strerror(r) << dendl;
+      goto freeptr;
+    }
     r = ceph_fsync(m_remote_mount, r_fd, 0);
     if (r < 0) {
       derr << ": failed to sync data for file path=" << epath << ": "
@@ -729,6 +774,7 @@ int PeerReplayer::copy_to_remote(const std::string &dir_root,  const std::string
     }
   }
 
+freeptr:
   free(ptr);
 
 close_remote_fd:
@@ -748,18 +794,24 @@ close_local_fd:
   return r == 0 ? 0 : r;
 }
 
-int PeerReplayer::remote_file_op(const std::string &dir_root, const std::string &epath,
-                                 const struct ceph_statx &stx, const FHandles &fh,
-                                 bool need_data_sync, bool need_attr_sync) {
+int PeerReplayer::remote_file_op(SyncMechanism *syncm, const std::string &dir_root,
+                                 const std::string &epath, const struct ceph_statx &stx,
+                                 bool sync_check, const FHandles &fh, bool need_data_sync, bool need_attr_sync) {
   dout(10) << ": dir_root=" << dir_root << ", epath=" << epath << ", need_data_sync=" << need_data_sync
            << ", need_attr_sync=" << need_attr_sync << dendl;
 
   int r;
   if (need_data_sync) {
     if (S_ISREG(stx.stx_mode)) {
-      r = copy_to_remote(dir_root, epath, stx, fh);
+      r = syncm->get_changed_blocks(epath, stx, sync_check,
+                                    [this, &dir_root, &epath, &stx, &fh](uint64_t num_blocks, struct cblock *b) {
+                                      int ret = copy_to_remote(dir_root, epath, stx, fh, num_blocks, b);
+                                      if (ret < 0) {
+                                        derr << ": failed to copy path=" << epath << ": " << ret << dendl;
+                                      }
+                                      return ret;
+                                    });
       if (r < 0) {
-        derr << ": failed to copy path=" << epath << ": " << cpp_strerror(r) << dendl;
         return r;
       }
       if (m_perf_counters) {
@@ -1268,6 +1320,23 @@ PeerReplayer::SyncMechanism::SyncMechanism(MountRef local, MountRef remote, FHan
 PeerReplayer::SyncMechanism::~SyncMechanism() {
 }
 
+int PeerReplayer::SyncMechanism::get_changed_blocks(const std::string &epath,
+                                                    const struct ceph_statx &stx, bool sync_check,
+                                                    const std::function<int (uint64_t, struct cblock *)> &callback) {
+  dout(20) << ": epath=" << epath << dendl;
+
+  struct cblock b;
+  // extent covers the whole file
+  b.offset = 0;
+  b.len = stx.stx_size;
+
+  struct ceph_file_blockdiff_changedblocks block;
+  block.num_blocks = 1;
+  block.b = &b;
+
+  return callback(block.num_blocks, block.b);
+}
+
 PeerReplayer::SnapDiffSync::SnapDiffSync(std::string_view dir_root, MountRef local, MountRef remote,
                                          FHandles *fh, const Peer &peer, const Snapshot &current,
                                          boost::optional<Snapshot> prev)
@@ -1302,7 +1371,7 @@ int PeerReplayer::SnapDiffSync::init_sync() {
   return 0;
 }
 
-int PeerReplayer::SnapDiffSync::get_entry(std::string *epath, struct ceph_statx *stx,
+int PeerReplayer::SnapDiffSync::get_entry(std::string *epath, struct ceph_statx *stx, bool *sync_check,
                                           const std::function<int (const std::string&)> &dirsync_func,
                                           const std::function<int (const std::string &)> &purge_func) {
   dout(20) << ": sync stack size=" << m_sync_stack.size() << dendl;
@@ -1384,6 +1453,7 @@ int PeerReplayer::SnapDiffSync::get_entry(std::string *epath, struct ceph_statx 
         }
       }
 
+      m_deleted[entry.epath].emplace(e_name);
       continue;
     }
 
@@ -1407,17 +1477,82 @@ int PeerReplayer::SnapDiffSync::get_entry(std::string *epath, struct ceph_statx 
         return r;
         }
 
-      m_sync_stack.emplace(SyncEntry(_epath, info, estx));
+      auto se = SyncEntry(_epath, info, estx);
+      if (entry.is_purged_or_itype_changed() ||
+          m_deleted[entry.epath].contains(e_name)) {
+        dout(10) << ": purge or itype change (including parent) found for entry="
+                 << se.epath << dendl;
+        se.set_purged_or_itype_changed();
+      }
+
+      m_sync_stack.emplace(se);
     }
 
     *epath = _epath;
     *stx = estx;
+    *sync_check = true;
+    if (entry.is_purged_or_itype_changed() || m_deleted[entry.epath].contains(e_name)) {
+      *sync_check = false;
+    }
 
+    dout(10) << ": sync_check=" << *sync_check << " for epath=" << *epath << dendl;
     return 0;
   }
 
   *epath = "";
   return 0;
+}
+
+int PeerReplayer::SnapDiffSync::get_changed_blocks(const std::string &epath,
+                                                   const struct ceph_statx &stx, bool sync_check,
+                                                   const std::function<int (uint64_t, struct cblock *)> &callback) {
+  dout(20) << ": dir_root=" << m_dir_root << ", epath=" << epath
+           << ", sync_check=" << sync_check << dendl;
+
+  if (!sync_check) {
+    return SyncMechanism::get_changed_blocks(epath, stx, sync_check, callback);
+  }
+
+  ceph_file_blockdiff_info info;
+  int r = ceph_file_blockdiff_init(m_local, m_dir_root.c_str(), epath.c_str(),
+                                   (*m_prev).first.c_str(), m_current.first.c_str(), &info);
+  if (r != 0 && r != -ENOENT) {
+    derr << ": failed to init file blockdiff: r=" << r << dendl;
+    return r;
+  }
+
+  if (r < 0) {
+    dout(20) << ": new file epath=" << epath << dendl;
+    return SyncMechanism::get_changed_blocks(epath, stx, sync_check, callback);
+  }
+
+  r = 1;
+  while (true) {
+    ceph_file_blockdiff_changedblocks blocks;
+    r = ceph_file_blockdiff(&info, &blocks);
+    if (r < 0) {
+      derr << " failed to get next changed block: ret:" << r << dendl;
+      break;
+    }
+
+    int rr = r;
+    if (blocks.num_blocks) {
+      r = callback(blocks.num_blocks, blocks.b);
+      ceph_free_file_blockdiff_buffer(&blocks);
+      if (r < 0) {
+        derr << ": blockdiff callback returned error: r=" << r << dendl;
+        break;
+      }
+    }
+
+    if (rr == 0) {
+      break;
+    }
+    // else fetch next changed blocks
+  }
+
+  ceph_file_blockdiff_finish(&info);
+  return r;
 }
 
 void PeerReplayer::SnapDiffSync::finish_sync() {
@@ -1469,7 +1604,7 @@ int PeerReplayer::RemoteSync::init_sync() {
   return 0;
 }
 
-int PeerReplayer::RemoteSync::get_entry(std::string *epath, struct ceph_statx *stx,
+int PeerReplayer::RemoteSync::get_entry(std::string *epath, struct ceph_statx *stx, bool *sync_check,
                                         const std::function<int (const std::string&)> &dirsync_func,
                                         const std::function<int (const std::string &)> &purge_func) {
   dout(20) << ": sync stack size=" << m_sync_stack.size() << dendl;
@@ -1620,9 +1755,10 @@ int PeerReplayer::do_synchronize(const std::string &dir_root, const Snapshot &cu
       break;
     }
 
+    bool sync_check = true;
     std::string epath;
     struct ceph_statx stx;
-    r = syncm->get_entry(&epath, &stx,
+    r = syncm->get_entry(&epath, &stx, &sync_check,
                          [this, &dir_root, &fh](const std::string &epath) {
                            return propagate_deleted_entries(dir_root, epath, fh);
                          },
@@ -1648,16 +1784,18 @@ int PeerReplayer::do_synchronize(const std::string &dir_root, const Snapshot &cu
     } else {
       bool need_data_sync = true;
       bool need_attr_sync = true;
-      r = should_sync_entry(epath, stx, fh,
-                            &need_data_sync, &need_attr_sync);
-      if (r < 0) {
-        break;
+      if (sync_check) {
+        r = should_sync_entry(epath, stx, fh,
+                              &need_data_sync, &need_attr_sync);
+        if (r < 0) {
+          break;
+        }
       }
 
       dout(5) << ": entry=" << epath << ", data_sync=" << need_data_sync
               << ", attr_sync=" << need_attr_sync << dendl;
       if (need_data_sync || need_attr_sync) {
-        r = remote_file_op(dir_root, epath, stx, fh, need_data_sync, need_attr_sync);
+        r = remote_file_op(syncm, dir_root, epath, stx, sync_check, fh, need_data_sync, need_attr_sync);
         if (r < 0) {
           break;
         }
