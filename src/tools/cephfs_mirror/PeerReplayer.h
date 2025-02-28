@@ -109,6 +109,8 @@ private:
     // in the currently synced snapshot have been propagated to
     // the remote filesystem.
     bool remote_synced = false;
+    // includes parent dentry purge
+    bool purged_or_itype_changed = false;
 
     SyncEntry(std::string_view path,
               const struct ceph_statx &stx)
@@ -140,6 +142,13 @@ private:
     void set_remote_synced() {
       remote_synced = true;
     }
+
+    bool is_purged_or_itype_changed() const {
+      return purged_or_itype_changed;
+    }
+    void set_purged_or_itype_changed() {
+      purged_or_itype_changed = true;
+    }
   };
 
   class SyncMechanism {
@@ -151,11 +160,13 @@ private:
 
     virtual int init_sync() = 0;
 
-    virtual int get_entry(std::string *epath, struct ceph_statx *stx,
+    virtual int get_entry(std::string *epath, struct ceph_statx *stx, bool *sync_check,
                           const std::function<int (const std::string&)> &dirsync_func,
                           const std::function<int (const std::string&)> &purge_func) = 0;
 
-    virtual void finish_sync() = 0;
+    virtual int get_changed_blocks(const std::string &epath,
+                                   const struct ceph_statx &stx, bool sync_check,
+                                   const std::function<int (uint64_t, struct cblock *)> &callback);
 
     virtual void finish_sync() = 0;
 
@@ -178,7 +189,7 @@ private:
 
     int init_sync() override;
 
-    int get_entry(std::string *epath, struct ceph_statx *stx,
+    int get_entry(std::string *epath, struct ceph_statx *stx, bool *sync_check,
                   const std::function<int (const std::string&)> &dirsync_func,
                   const std::function<int (const std::string&)> &purge_func);
 
@@ -194,13 +205,18 @@ private:
 
     int init_sync() override;
 
-    int get_entry(std::string *epeth, struct ceph_statx *stx,
+    int get_entry(std::string *epeth, struct ceph_statx *stx, bool *sync_check,
                   const std::function<int (const std::string&)> &dirsync_func,
                   const std::function<int (const std::string&)> &purge_func);
+
+    int get_changed_blocks(const std::string &epath,
+                           const struct ceph_statx &stx, bool sync_check,
+                           const std::function<int (uint64_t, struct cblock *)> &callback);
 
     void finish_sync();
   private:
     std::string m_dir_root;
+    std::map<std::string, std::set<std::string>> m_deleted;
   };
 
   // stats sent to service daemon
@@ -391,10 +407,11 @@ private:
   int do_sync_snaps(const std::string &dir_root);
 
   int remote_mkdir(const std::string &epath, const struct ceph_statx &stx, const FHandles &fh);
-  int remote_file_op(const std::string &dir_root, const std::string &epath, const struct ceph_statx &stx,
-                     const FHandles &fh, bool need_data_sync, bool need_attr_sync);
+  int remote_file_op(SyncMechanism *syncm, const std::string &dir_root,
+                     const std::string &epath, const struct ceph_statx &stx,
+                     bool sync_check, const FHandles &fh, bool need_data_sync, bool need_attr_sync);
   int copy_to_remote(const std::string &dir_root, const std::string &epath, const struct ceph_statx &stx,
-                     const FHandles &fh);
+                     const FHandles &fh, uint64_t num_blocks, struct cblock *b);
   int sync_perms(const std::string& path);
 };
 
