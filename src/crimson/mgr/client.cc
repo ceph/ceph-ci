@@ -130,33 +130,38 @@ seastar::future<> Client::reconnect()
 {
   LOG_PREFIX(Client::reconnect);
   DEBUGDPP("", *this);
-  co_await conn_lock.lock();
-  if (conn) {
-    DEBUGDPP("marking down", *this);
-    conn->mark_down();
-    conn = {};
-  }
-  if (!mgrmap.get_available()) {
-    WARNDPP("No active mgr available yet", *this);
-    co_return;
-  }
-  auto retry_interval = std::chrono::duration<double>(
-    local_conf().get_val<double>("mgr_connect_retry_interval"));
-  auto a_while = std::chrono::duration_cast<seastar::steady_clock_type::duration>(
-    retry_interval);
-  DEBUGDPP("reconnecting in {} seconds", *this, retry_interval);
-  co_await seastar::sleep(a_while);
+  try {
+    co_await conn_lock.lock();
+    if (conn) {
+      DEBUGDPP("marking down", *this);
+      conn->mark_down();
+      conn = {};
+    }
+    if (!mgrmap.get_available()) {
+      WARNDPP("No active mgr available yet", *this);
+      co_return;
+    }
+    auto retry_interval = std::chrono::duration<double>(
+      local_conf().get_val<double>("mgr_connect_retry_interval"));
+    auto a_while = std::chrono::duration_cast<seastar::steady_clock_type::duration>(
+      retry_interval);
+    DEBUGDPP("reconnecting in {} seconds", *this, retry_interval);
+    co_await seastar::sleep(a_while);
 
-  auto peer = mgrmap.get_active_addrs().pick_addr(msgr.get_myaddr().get_type());
-  if (peer == entity_addr_t{}) {
-    // crimson msgr only uses the first bound addr
-    ERRORDPP("mgr.{} does not have an addr compatible with me",
-             *this, mgrmap.get_active_name());
-    co_return;
+    auto peer = mgrmap.get_active_addrs().pick_addr(msgr.get_myaddr().get_type());
+    if (peer == entity_addr_t{}) {
+      // crimson msgr only uses the first bound addr
+      ERRORDPP("mgr.{} does not have an addr compatible with me",
+               *this, mgrmap.get_active_name());
+      co_return;
+    }
+    conn = msgr.connect(peer, CEPH_ENTITY_TYPE_MGR);
+    conn_lock.unlock();
+    DEBUGDPP("reconnected successfully", *this);
+  } catch (...) {
+    // ensure lock is released
+    ceph_abort("this is not expected");
   }
-  conn = msgr.connect(peer, CEPH_ENTITY_TYPE_MGR);
-  conn_lock.unlock();
-  DEBUGDPP("reconnected successfully", *this);
 }
 
 seastar::future<> Client::handle_mgr_map(crimson::net::ConnectionRef,
