@@ -217,7 +217,9 @@ protected:
 // indirect mapping.
 template <typename T, typename node_key_t>
 inline BaseChildNode<T, node_key_t>* get_reserved_ptr() {
-  return (BaseChildNode<T, node_key_t>*)0x1;
+  //TODO: using instant integers as invalid pointers may
+  //	  not be a good practice.
+  return (BaseChildNode<T, node_key_t>*)(std::numeric_limits<size_t>::max() - 15);
 }
 
 template <typename T, typename node_key_t>
