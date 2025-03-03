@@ -74,7 +74,7 @@ public:
     bool &propose_pending);
   int process_gw_map_gw_no_subsys_no_listeners(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
-    bool &propose_pending);
+    bool &propose_pending, bool skip_failovers = false);
   void update_active_timers(bool &propose_pending);
   void handle_abandoned_ana_groups(bool &propose_pending);
   void handle_removed_subsystems(
@@ -133,6 +133,7 @@ private:
   void validate_gw_map(
     const NvmeGroupKey& group_key);
   void increment_gw_epoch(const NvmeGroupKey& group_key);
+  void skip_failovers_for_group(const NvmeGroupKey& group_key);
 
 public:
   int blocklist_gw(
