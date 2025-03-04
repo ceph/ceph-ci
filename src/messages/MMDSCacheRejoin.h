@@ -108,11 +108,12 @@ public:
     std::string alternate_name;
     inodeno_t ino = 0;
     inodeno_t remote_ino = 0;
+    inodeno_t referent_ino = 0;
     unsigned char remote_d_type = 0;
     uint32_t nonce = 0;
     int32_t lock = 0;
     dn_strong() = default;
-    dn_strong(snapid_t f, std::string_view altn, inodeno_t pi, inodeno_t ri, unsigned char rdt, int n, int l) :
+    dn_strong(snapid_t f, std::string_view altn, inodeno_t pi, inodeno_t ri,  unsigned char rdt, int n, int l) :
       first(f), alternate_name(altn), ino(pi), remote_ino(ri), remote_d_type(rdt), nonce(n), lock(l) {}
     bool is_primary() const { return ino > 0; }
     bool is_remote() const { return remote_ino > 0; }
@@ -145,6 +146,7 @@ public:
       f->dump_unsigned("first", first);
       f->dump_string("alternate_name", alternate_name);
       f->dump_unsigned("ino", ino);
+      f->dump_unsigned("referent_ino", referent_ino);
       f->dump_unsigned("remote_ino", remote_ino);
       f->dump_unsigned("remote_d_type", remote_d_type);
       f->dump_unsigned("nonce", nonce);
@@ -152,6 +154,47 @@ public:
     }
   };
   WRITE_CLASS_ENCODER(dn_strong)
+
+  struct dn_strong_new {
+    dn_strong dn_s;
+    inodeno_t referent_ino = 0;
+
+    dn_strong_new() = default;
+    dn_strong_new(snapid_t f, std::string_view altn, inodeno_t pi, inodeno_t ri, inodeno_t ref_ino, unsigned char rdt, int n, int l) :
+      dn_s(f, altn, pi, ri, rdt, n, l), referent_ino(ref_ino) {}
+      //dn_s.first(f), dn_s.alternate_name(altn), dn_s.ino(pi), dn_s.remote_ino(ri), referent_ino(ref_ino), dn_s.remote_d_type(rdt), dn_s.nonce(n), dn_s.lock(l) {}
+    bool is_primary() const { return dn_s.ino > 0; }
+    bool is_remote() const { return dn_s.remote_ino > 0; }
+    bool is_referent_remote() const { return dn_s.remote_ino > 0 && referent_ino > 0; }
+    bool is_null() const { return dn_s.ino == 0 && dn_s.remote_ino == 0; }
+    void encode(ceph::buffer::list &bl) const {
+      ENCODE_START(1, 1, bl);
+      dn_s.encode(bl);
+      encode(referent_ino, bl);
+      ENCODE_FINISH(bl);
+    }
+    void decode(ceph::buffer::list::const_iterator &bl) {
+      DECODE_START(1, bl);
+      dn_s.decode(bl);
+      decode(referent_ino, bl);
+      DECODE_FINISH(bl);
+    }
+    static void generate_test_instances(std::list<dn_strong_new*>& ls) {
+      ls.push_back(new dn_strong_new);
+      ls.push_back(new dn_strong_new(1, "alternate_name", 2, 3, 4, 5, 6, 7));
+    }
+    void dump(ceph::Formatter *f) const {
+      f->dump_unsigned("first", dn_s.first);
+      f->dump_string("alternate_name", dn_s.alternate_name);
+      f->dump_unsigned("ino", dn_s.ino);
+      f->dump_unsigned("referent_ino", referent_ino);
+      f->dump_unsigned("remote_ino", dn_s.remote_ino);
+      f->dump_unsigned("remote_d_type", dn_s.remote_d_type);
+      f->dump_unsigned("nonce", dn_s.nonce);
+      f->dump_unsigned("lock", dn_s.lock);
+    }
+  };
+  WRITE_CLASS_ENCODER(dn_strong_new)
 
   struct dn_weak {
     snapid_t first;
@@ -275,9 +318,11 @@ public:
   void add_weak_primary_dentry(inodeno_t dirino, std::string_view dname, snapid_t first, snapid_t last, inodeno_t ino) {
     weak[dirino][string_snap_t(dname, last)] = dn_weak(first, ino);
   }
-  void add_strong_dentry(dirfrag_t df, std::string_view dname, std::string_view altn, snapid_t first, snapid_t last, inodeno_t pi, inodeno_t ri, unsigned char rdt, int n, int ls) {
+  void add_strong_dentry(dirfrag_t df, std::string_view dname, std::string_view altn, snapid_t first, snapid_t last, inodeno_t pi, inodeno_t ri, inodeno_t ref_ino, unsigned char rdt, int n, int ls) {
     auto& m = strong_dentries[df];
     m.insert_or_assign(string_snap_t(dname, last), dn_strong(first, altn, pi, ri, rdt, n, ls));
+    auto& m1 = strong_dentries_new[df];
+    m1.insert_or_assign(string_snap_t(dname, last), dn_strong_new(first, altn, pi, ri, ref_ino, rdt, n, ls));
   }
   void add_dentry_authpin(dirfrag_t df, std::string_view dname, snapid_t last,
 			  const metareqid_t& ri, __u32 attempt) {
@@ -312,6 +357,7 @@ public:
     encode(authpinned_dentries, payload);
     encode(xlocked_dentries, payload);
     encode(client_metadata_map, payload);
+    encode(strong_dentries_new, payload);
   }
   void decode_payload() override {
     auto p = payload.cbegin();
@@ -338,6 +384,8 @@ public:
     decode(xlocked_dentries, p);
     if (header.version >= 2)
       decode(client_metadata_map, p);
+    if (header.version >= 3 )
+      decode(strong_dentries_new, p);
   }
 
   // -- data --
@@ -352,6 +400,7 @@ public:
   // strong
   std::map<dirfrag_t, dirfrag_strong> strong_dirfrags;
   std::map<dirfrag_t, std::map<string_snap_t, dn_strong> > strong_dentries;
+  std::map<dirfrag_t, std::map<string_snap_t, dn_strong_new> > strong_dentries_new;
   std::map<vinodeno_t, inode_strong> strong_inodes;
 
   // open
@@ -378,7 +427,7 @@ private:
   template<class T, typename... Args>
   friend MURef<T> crimson::make_message(Args&&... args);
 
-  static constexpr int HEAD_VERSION = 2;
+  static constexpr int HEAD_VERSION = 3;
   static constexpr int COMPAT_VERSION = 1;
 
   MMDSCacheRejoin(int o) : MMDSCacheRejoin() { op = o; }
@@ -392,6 +441,7 @@ WRITE_CLASS_ENCODER(MMDSCacheRejoin::dn_strong)
 WRITE_CLASS_ENCODER(MMDSCacheRejoin::dn_weak)
 WRITE_CLASS_ENCODER(MMDSCacheRejoin::lock_bls)
 WRITE_CLASS_ENCODER(MMDSCacheRejoin::peer_reqid)
+WRITE_CLASS_ENCODER(MMDSCacheRejoin::dn_strong_new)
 
 inline std::ostream& operator<<(std::ostream& out, const MMDSCacheRejoin::peer_reqid& r) {
   return out << r.reqid << '.' << r.attempt;
