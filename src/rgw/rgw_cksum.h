@@ -19,6 +19,7 @@
 #include <cstring>
 #include <memory>
 #include <optional>
+#include <variant>
 #include <stdint.h>
 #include <string>
 #include <string_view>
@@ -100,7 +101,7 @@ namespace rgw { namespace cksum {
     static constexpr uint16_t max_digest_size = 64;
     using value_type = std::array<unsigned char, max_digest_size>;
 
-    static constexpr uint16_t FLAG_NONE =           0x0000;
+    static constexpr uint16_t FLAG_CKSUM_NONE =     0x0000;
     static constexpr uint16_t FLAG_V2 =             0x0001; // struct_v >= 2
     static constexpr uint16_t FLAG_COMPOSITE =      0x0002;
     static constexpr uint16_t FLAG_FULL_OBJECT =    0x0004;
@@ -298,7 +299,7 @@ namespace rgw { namespace cksum {
   static inline uint16_t cksum_flags_of(Type t) {
     switch(t) {
     case cksum::Type::none:
-      return Cksum::FLAG_NONE;
+      return Cksum::FLAG_CKSUM_NONE;
       break;
     case cksum::Type::crc64nvme:
     case cksum::Type::crc32:
@@ -379,12 +380,12 @@ namespace rgw { namespace cksum {
   get_checksum_type(const Cksum& cksum, bool is_multipart) {
     /* non-multipart checksum */
     if (! is_multipart) {
-      return ChecksumTypeResult(Cksum::FLAG_NONE, "FULL_OBJECT");
+      return ChecksumTypeResult(Cksum::FLAG_CKSUM_NONE, "FULL_OBJECT");
     }
     /* multipart cksum */
     if (cksum.v2()) [[likely]] {
       if (! cksum.composite()) {
-	return ChecksumTypeResult(Cksum::FLAG_NONE, "FULL_OBJECT");
+	return ChecksumTypeResult(Cksum::FLAG_CKSUM_NONE, "FULL_OBJECT");
       }
       /* composite */
       /* fall through */

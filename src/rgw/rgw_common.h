@@ -1526,7 +1526,7 @@ struct multipart_upload_info
   RGWObjectRetention obj_retention;
   RGWObjectLegalHold obj_legal_hold;
   rgw::cksum::Type cksum_type {rgw::cksum::Type::none};
-  uint16_t cksum_flags{rgw::cksum::Cksum::FLAG_NONE};
+  uint16_t cksum_flags{rgw::cksum::Cksum::FLAG_CKSUM_NONE};
 
   void encode(bufferlist& bl) const {
     ENCODE_START(4, 1, bl);
