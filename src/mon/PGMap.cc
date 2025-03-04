@@ -3250,6 +3250,12 @@ void PGMap::get_health_checks(
         summary += " experiencing stalled read in wal device of BlueFS";
       } else if (asum.first == "DB_DEVICE_STALLED_READ_ALERT") {
         summary += " experiencing stalled read in db device of BlueFS";
+      } else if (asum.first == "BLOCK_DEVICE_DISCARD_QUEUE_OVERUTILIZED") {
+	summary += " large discard queue for BlueStore block device";
+      } else if (asum.first == "WAL_DEVICE_DISCARD_QUEUE_OVERUTILIZED") {
+	summary += " large discard queue for BlueFS wal device";
+      } else if (asum.first == "DB_DEVICE_DISCARD_QUEUE_OVERUTILIZED") {
+	summary += " large discard queue for BlueFS db device";
       }
 
       auto& d = checks->add(asum.first, HEALTH_WARN, summary, asum.second.first);

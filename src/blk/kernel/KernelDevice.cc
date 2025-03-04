@@ -20,6 +20,7 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/mman.h>
+#include <chrono>
 
 #include <boost/container/flat_map.hpp>
 #include <boost/lockfree/queue.hpp>
@@ -797,6 +798,9 @@ void KernelDevice::_discard_thread(uint64_t tid)
       if (thr->stop && !discard_threads.empty())
         break;
 
+      if (cct->_conf->bdev_debug_discard_sleep > 0)
+        std::this_thread::sleep_for(std::chrono::milliseconds(cct->_conf->bdev_debug_discard_sleep));
+
       // Limit local processing to MAX_LOCAL_DISCARD items.
       // This will allow threads to work in parallel
       //      instead of a single thread taking over the whole discard_queued.
@@ -807,6 +811,7 @@ void KernelDevice::_discard_thread(uint64_t tid)
 	   p != discard_queued.end() && count < MAX_LOCAL_DISCARD;
 	   ++p, ++count) {
 	discard_processing.insert(p.get_start(), p.get_len());
+	discarded_bytes -= static_cast<size_t>(p.get_len());
 	discard_queued.erase(p);
       }
 
@@ -840,6 +845,10 @@ bool KernelDevice::_queue_discard(interval_set<uint64_t> &to_release)
   auto max_pending = cct->_conf->bdev_async_discard_max_pending;
 
   std::lock_guard l(discard_lock);
+
+  for(auto p = to_release.begin(); p != to_release.end(); ++p){
+    discarded_bytes += static_cast<size_t>(p.get_len());
+  }
 
   if (max_pending > 0 && discard_queued.num_intervals() >= max_pending)
     return false;
