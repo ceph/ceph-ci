@@ -1100,7 +1100,10 @@ CryptoHandler *CryptoHandler::create(int type)
   case CEPH_CRYPTO_AES:
     return new CryptoAES;
   case CEPH_CRYPTO_AES256KRB5:
-    return new CryptoAES256KRB5;
+#warning FIXME
+    if (!getenv("CEPH_DISABLE_KRB5")) {
+      return new CryptoAES256KRB5;
+    }
   default:
     return NULL;
   }
@@ -1109,7 +1112,10 @@ CryptoHandler *CryptoHandler::create(int type)
 CryptoManager::CryptoManager(CephContext *_cct) : cct(_cct) {
   crypto_none.reset(CryptoHandler::create(CEPH_CRYPTO_NONE));
   crypto_aes.reset(CryptoHandler::create(CEPH_CRYPTO_AES));
-  crypto_aes256krb5.reset(CryptoHandler::create(CEPH_CRYPTO_AES256KRB5));
+#warning FIXME
+  if (!getenv("CEPH_DISABLE_KRB5")) {
+    crypto_aes256krb5.reset(CryptoHandler::create(CEPH_CRYPTO_AES256KRB5));
+  }
 
   supported_crypto_types = { CEPH_CRYPTO_NONE, CEPH_CRYPTO_AES, CEPH_CRYPTO_AES256KRB5 };
 }
@@ -1122,7 +1128,10 @@ std::shared_ptr<CryptoHandler> CryptoManager::get_handler(int type)
     case CEPH_CRYPTO_AES:
       return crypto_aes;
     case CEPH_CRYPTO_AES256KRB5:
-      return crypto_aes256krb5;
+#warning FIXME
+      if (!getenv("CEPH_DISABLE_KRB5")) {
+        return crypto_aes256krb5;
+      }
     default:
       break;
   };
