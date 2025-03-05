@@ -2,8 +2,12 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable } from '@angular/core';
 
 import { Observable, throwError } from 'rxjs';
-import { NFSCluster } from '~/app/ceph/nfs/models/nfs-cluster-config';
-
+import {
+  bwTypeItem,
+  NFSBwIopConfig,
+  NFSCluster,
+  QOSTypeItem
+} from '~/app/ceph/nfs/models/nfs-cluster-config';
 import { NfsFSAbstractionLayer, SUPPORTED_FSAL } from '~/app/ceph/nfs/models/nfs.fsal';
 import { ApiClient } from '~/app/shared/api/api-client';
 
@@ -92,7 +96,6 @@ export class NfsService extends ApiClient {
     root_squash: ['root_squash', 'rootsquash', 'root'],
     all_squash: ['all_squash', 'allsquash', 'all', 'allanonymous', 'all_anonymous']
   };
-
   constructor(private http: HttpClient) {
     super();
   }
