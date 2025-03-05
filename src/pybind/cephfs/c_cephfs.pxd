@@ -1,3 +1,6 @@
+# cython: language_level=3
+# cython: legacy_implicit_noexcept=true
+
 from libc.stdint cimport *
 from types cimport *
 
