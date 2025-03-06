@@ -2987,7 +2987,7 @@ void PeeringState::activate(
 	    if (perform_deletes_during_peering() && p->is_delete()) {
 	      pm.rm(p->soid, p->version);
 	    } else {
-	      pm.add_next_event(*p);
+	      pm.add_next_event(*p, pool.info, peer.shard);
 	    }
 	  }
 	}
@@ -3133,8 +3133,9 @@ void PeeringState::merge_log(
 {
   PGLog::LogEntryHandlerRef rollbacker{pl->get_log_handler(t)};
   pg_log.merge_log(
-    oinfo, std::move(olog), from, info, rollbacker.get(),
-    dirty_info, dirty_big_info);
+    oinfo, std::move(olog), from, info, pool.info, pg_whoami,
+    rollbacker.get(), dirty_info, dirty_big_info,
+    pool.info.allows_ecoptimizations());
 }
 
 void PeeringState::rewind_divergent_log(
@@ -4213,7 +4214,10 @@ bool PeeringState::append_log_entries_update_missing(
     pg_log.append_new_log_entries(
       info.last_backfill,
       entries,
+      &info,
       rollbacker.get(),
+      pool.info,
+      pg_whoami.shard,
       pool.info.allows_ecoptimizations());
 
   if (pg_committed_to && entries.rbegin()->soid > info.last_backfill) {
@@ -4272,6 +4276,8 @@ void PeeringState::merge_new_log_entries(
       NULL,
       pmissing,
       NULL,
+      pool.info,
+      peer.shard,
       dpp);
     pinfo.last_update = info.last_update;
     pinfo.stats.stats_invalid = pinfo.stats.stats_invalid || invalidate_stats;
@@ -4526,7 +4532,7 @@ void PeeringState::pre_submit_op(
       continue;
     requires_missing_loc = true;
     for (auto &&entry: logv) {
-      peer_missing[i].add_next_event(entry);
+      peer_missing[i].add_next_event(entry, pool.info, i.shard);
     }
   }
 
