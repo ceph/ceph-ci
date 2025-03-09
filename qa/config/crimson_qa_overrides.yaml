@@ -5,6 +5,7 @@ overrides:
     conf:
       global:
         enable experimental unrecoverable data corrupting features: crimson
+        osd op complaint time: 60
       mon:
         osd pool default crimson: true
       osd:
