@@ -295,7 +295,7 @@ int MonClient::ping_monitor(const string &mon_id, string *result_reply)
 
 bool MonClient::ms_dispatch(Message *m)
 {
-  ldout(cct, 25) << __func__ << " processing " << *m << dendl;
+  ldout(cct, 25) << __func__ << " processing " << m << dendl;
   // we only care about these message types
   switch (m->get_type()) {
   case CEPH_MSG_MON_MAP:
@@ -413,8 +413,8 @@ void MonClient::handle_quorum_peon(MMonMap *m) {
   MonMap peon_map;
   auto p = m->monmapbl.cbegin();
   decode(peon_map, p);
-  quorum.add_quorum(peon_map.get_addrs(mon_name), peon_map.epoch, peon_map.quorum);
   ldout(cct, 10) << " quorum is " << peon_map.quorum << " from mon." << mon_name << dendl;
+  quorum.add_quorum(con_addrs, peon_map.epoch, peon_map.quorum);
 }
 
 /* Unlike all the other message-handling functions, we don't put away a reference
