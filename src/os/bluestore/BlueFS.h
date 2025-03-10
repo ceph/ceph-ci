@@ -534,9 +534,7 @@ public:
 
     FileRef file;
     FileReaderBuffer buf;
-    bool random;
     bool ignore_eof;        ///< used when reading our log file
-
     ceph::shared_mutex lock {
      ceph::make_shared_mutex(std::string(), false, false, false)
     };
@@ -545,7 +543,6 @@ public:
     FileReader(FileRef f, uint64_t mpf, bool rand, bool ie)
       : file(f),
 	buf(mpf),
-	random(rand),
 	ignore_eof(ie) {
       ++file->num_readers;
     }
