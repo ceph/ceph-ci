@@ -1359,6 +1359,9 @@ int PeerReplayer::SnapDiffSync::init_sync() {
     return r;
   }
 
+  dout(20) << ": open_snapdiff for dir_root=" << m_dir_root << ", path=., prev="
+           << (*m_prev).first << ", current=" << m_current.first << dendl;
+
   ceph_snapdiff_info info;
   r = ceph_open_snapdiff(m_local, m_dir_root.c_str(), ".",
                          stringify((*m_prev).first).c_str(), stringify(m_current.first).c_str(), &info);
@@ -1469,6 +1472,9 @@ int PeerReplayer::SnapDiffSync::get_entry(std::string *epath, struct ceph_statx 
     }
 
     if (S_ISDIR(estx.stx_mode)) {
+      dout(20) << ": open_snapdiff for dir_root=" << m_dir_root << ", path=" << _epath
+               << ", prev=" << (*m_prev).first << ", current=" << m_current.first << dendl;
+
       ceph_snapdiff_info info;
       r = ceph_open_snapdiff(m_local, m_dir_root.c_str(), _epath.c_str(),
                              stringify((*m_prev).first).c_str(), stringify(m_current.first).c_str(), &info);
