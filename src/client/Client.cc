@@ -12292,10 +12292,7 @@ int Client::statxat(int dirfd, const char *relpath,
   return r;
 }
 
-// not written yet, but i want to link!
-
-int Client::chdir(const char *relpath, std::string &new_cwd,
-		  const UserPerm& perms)
+int Client::chdir(const char *relpath, const UserPerm& perms)
 {
   RWRef_t mref_reader(mount_state, CLIENT_MOUNTING);
   if (!mref_reader.is_state_satisfied())
@@ -12311,14 +12308,13 @@ int Client::chdir(const char *relpath, std::string &new_cwd,
     return rc;
   }
 
-  if (!(in.get()->is_dir()))
+  if (!in->is_dir())
     return -ENOTDIR;
 
-  if (cwd != in)
-    cwd.swap(in);
+  cwd = std::move(in);
+
   ldout(cct, 3) << "chdir(" << relpath << ")  cwd now " << cwd->ino << dendl;
 
-  _getcwd(new_cwd, perms);
   return 0;
 }
 
