@@ -7643,9 +7643,12 @@ int Client::_lookup(const InodeRef& dir, const std::string& name, std::string& a
     goto done;
   }
 
-  if (dname == cct->_conf->client_snapdir &&
-      dir->snapid == CEPH_NOSNAP) {
-    *target = open_snapdir(dir);
+  if (dname == cct->_conf->client_snapdir) {
+    if (dir->snapid == CEPH_NOSNAP) {
+      *target = open_snapdir(dir);
+    } else {
+      r = -EPERM;
+    }
     goto done;
   }
 
