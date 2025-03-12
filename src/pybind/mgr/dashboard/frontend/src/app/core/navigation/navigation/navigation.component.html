@@ -278,7 +278,7 @@
                             [useRouter]="true"
                             title="SMB"
                             i18n-title
-                            *ngIf="permissions?.smb?.read"
+                            *ngIf="permissions.smb.read && environment.build === 'ibm'"
                             class="tc_submenuitem tc_submenuitem_file_smb"><span i18n>SMB</span></cds-sidenav-item>
         </cds-sidenav-menu>
         <!-- Observability -->
