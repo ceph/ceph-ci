@@ -6,6 +6,7 @@
 #include <atomic>
 #include <mutex>
 #include <limits>
+#include <uuid/uuid.h>
 
 #include "bluefs_types.h"
 #include "blk/BlockDevice.h"
@@ -13,10 +14,13 @@
 #include "common/RefCountedObj.h"
 #include "common/ceph_context.h"
 #include "global/global_context.h"
+#include "include/byteorder.h"
+#include "include/ceph_hash.h"
 #include "include/common_fwd.h"
 
 #include "boost/intrusive/list.hpp"
 #include "boost/dynamic_bitset.hpp"
+#include "include/hash.h"
 
 class Allocator;
 
@@ -265,6 +269,70 @@ public:
   struct File : public RefCountedObject {
     MEMPOOL_CLASS_HELPERS();
 
+    /*
+     * WAL files in bluefs have a different format from normal ones. In order to not flush metadata 
+     * for every write we make to data extents, we create a package/envelope around the real data 
+     * that includes Length of the data we want to flush and a marker that identifies the flush.
+     *
+     * The format on disk will look something like:
+     * legend = l = length of flush, d = data, m = marker, x=unused/used bvy other file, each character will be a byte
+     *
+     * flush 0 l==24                                                  flush 1 l==4                 flush 2 l==12
+     * v                                                               v                             v
+     * llll llll dddd dddd dddd dddd dddd dddd mmmm mmmm xxxx xxx xxxx llll llll dddd mmmm mmmm xxxx llll llll  dddd dddd dddd mmmm mmmm
+     *
+     */
+    struct wal_flush_t {
+      typedef struct wal_marker_t {
+        uint8_t v[8] = {0};
+      } wal_marker_t;
+      typedef uint64_t wal_length_t;
+      uint64_t file_offset = 0;
+      uint64_t wal_offset = 0; // offset of start of flush, it should be length offset
+      uint32_t header_len = 0;
+      uint32_t tailer_len = 0;
+      uint64_t wal_length = 0;
+
+      static constexpr size_t header_size() {
+        return sizeof(wal_length_t);
+      }
+
+      static constexpr size_t tail_size() {
+        return sizeof(wal_marker_t);
+      }
+
+      uint64_t end_offset() {
+        return get_marker_offset() + tail_size();
+      }
+
+      uint64_t get_payload_offset() {
+        return wal_offset + header_size();
+      }
+
+      uint64_t get_marker_offset() {
+        return get_payload_offset() + wal_length;
+      }
+
+      static constexpr uint64_t extra_envelope_size_on_front_and_tail() {
+        return header_size() + tail_size();
+      }
+
+      static wal_marker_t generate_hashed_marker(uuid_d uuid, uint64_t ino) {
+        wal_marker_t m;
+        uint8_t uuid_copy[16];
+        memcpy(uuid_copy, uuid.bytes(), 16);
+        uint64_t hashed_ino = ino;
+        hashed_ino ^= hashed_ino << 5;
+        hashed_ino ^= hashed_ino << 11;
+        hashed_ino ^= hashed_ino << 23;
+        // use hashed ino in a endiness-agnostic way
+        for (int i = 0; i < 8; i++) {
+          m.v[i] = uuid_copy[i] ^ uuid_copy[8 + i] ^ (hashed_ino >> (8 * i));
+        }
+        return m;
+      }
+    };
+
     bluefs_fnode_t fnode;
     int refs;
     uint64_t dirty_seq;
@@ -283,6 +351,13 @@ public:
        _replay, device_migrate_to_existing, device_migrate_to_new */
     ceph::mutex lock = ceph::make_mutex("BlueFS::File::lock");
 
+    bool is_wal_read_loaded; // mark whether the WAL file is ready to be read as wal_update_size was called 
+    std::vector<wal_flush_t> wal_flushes; // to keep track of the amount of flushes we performed on a WAL file
+                                       // so that we can easily recalculate real data offsets.
+                                       // On "replay" this should be refilled in order to append data
+                                       // correctly. Nevertheless, replayed wal file most probably won't be reused
+    wal_flush_t::wal_marker_t wal_marker;
+
   private:
     FRIEND_MAKE_REF(File);
     File()
@@ -295,7 +370,8 @@ public:
 	num_readers(0),
 	num_writers(0),
 	num_reading(0),
-        vselector_hint(nullptr)
+        vselector_hint(nullptr),
+        is_wal_read_loaded(false)
       {}
     ~File() override {
       ceph_assert(num_readers.load() == 0);
@@ -303,6 +379,13 @@ public:
       ceph_assert(num_reading.load() == 0);
       ceph_assert(!locked);
     }
+
+  public:
+    bool is_new_wal() {
+      // checks for both WAL_V2 and WAL_V2_FIN
+      return (fnode.type == WAL_V2 || fnode.type == WAL_V2_FIN);
+    }
+
   };
   using FileRef = ceph::ref_t<File>;
 
@@ -329,8 +412,8 @@ public:
 
     FileRef file;
     uint64_t pos = 0;       ///< start offset for buffer
-  private:
     ceph::buffer::list buffer;      ///< new data to write (at end of file)
+  private:
     ceph::buffer::list tail_block;  ///< existing partial block at end of file, if any
   public:
     unsigned get_buffer_length() const {
@@ -342,6 +425,7 @@ public:
       const unsigned length,
       const bluefs_super_t& super);
     ceph::buffer::list::page_aligned_appender buffer_appender;  //< for const char* only
+    bufferlist::contiguous_filler wal_header_filler;
   public:
     int writer_type = 0;    ///< WRITER_*
     int write_hint = WRITE_LIFE_NOT_SET;
@@ -353,7 +437,7 @@ public:
     FileWriter(FileRef f)
       : file(std::move(f)),
        buffer_appender(buffer.get_page_aligned_appender(
-                         g_conf()->bluefs_alloc_size / CEPH_PAGE_SIZE)) {
+                         g_conf()->bluefs_alloc_size / CEPH_PAGE_SIZE)), wal_header_filler() {
       ++file->num_writers;
       iocv.fill(nullptr);
       dirty_devs.fill(false);
@@ -393,9 +477,22 @@ public:
       buffer_appender.append_zero(len);
     }
 
+    void append(uint64_t value) {
+      uint64_t l0 = get_buffer_length();
+      ceph_assert(l0 + sizeof(value) <= std::numeric_limits<uint32_t>::max());
+      bufferlist encoded;
+      encode(value, encoded);
+      buffer_appender.append(encoded);
+    }
+
+    bufferlist::contiguous_filler append_hole(uint64_t len) {
+      return buffer.append_hole(len);
+    }
+
     uint64_t get_effective_write_pos() {
       return pos + buffer.length();
     }
+
   };
 
   struct FileReaderBuffer {
@@ -437,9 +534,7 @@ public:
 
     FileRef file;
     FileReaderBuffer buf;
-    bool random;
     bool ignore_eof;        ///< used when reading our log file
-
     ceph::shared_mutex lock {
      ceph::make_shared_mutex(std::string(), false, false, false)
     };
@@ -448,7 +543,6 @@ public:
     FileReader(FileRef f, uint64_t mpf, bool rand, bool ie)
       : file(f),
 	buf(mpf),
-	random(rand),
 	ignore_eof(ie) {
       ++file->num_readers;
     }
@@ -578,6 +672,8 @@ private:
   int _flush_range_F(FileWriter *h, uint64_t offset, uint64_t length);
   int _flush_data(FileWriter *h, uint64_t offset, uint64_t length, bool buffered);
   int _flush_F(FileWriter *h, bool force, bool *flushed = nullptr);
+  int _flush_wal_F(FileWriter *h);
+  int _fsync(FileWriter *h, bool force_dirty);
   uint64_t _flush_special(FileWriter *h);
 
 #ifdef HAVE_LIBAIO
@@ -631,6 +727,23 @@ private:
   void _flush_bdev();  // this is safe to call without a lock
   void _flush_bdev(std::array<bool, MAX_BDEV>& dirty_bdevs);  // this is safe to call without a lock
 
+  int64_t _read_wal(
+    FileReader *h,   ///< [in] read from here
+    uint64_t offset, ///< [in] offset
+    size_t len,      ///< [in] this many bytes
+    ceph::buffer::list *outbl,   ///< [out] optional: reference the result here
+    char *out);      ///< [out] optional: or copy it here
+  void _wal_index_file(
+    FileRef file);
+  int _wal_seek_to(
+    FileReader *h,         ///< [in] wal-file to read
+    uint64_t off,          ///< [in] offset in wal datastream
+    File::wal_flush_t* fl);///< [out] set wal envelope params
+  bool _read_wal_flush(
+    FileReader *h,         ///< [in] wal-file to read
+    uint64_t file_ofs,     ///< [in] offset to expect envelope
+    uint64_t wal_ofs,      ///< [in] respective offset in wal datastream
+    File::wal_flush_t* fl);///< [out] set wal envelope params
   int64_t _read(
     FileReader *h,   ///< [in] read from here
     uint64_t offset, ///< [in] offset
@@ -644,7 +757,7 @@ private:
     char *out);      ///< [out] optional: or copy it here
 
   int _open_super();
-  int _write_super(int dev);
+  int _write_super(int dev, uint8_t wal_version = 1);
   int _check_allocations(const bluefs_fnode_t& fnode,
     boost::dynamic_bitset<uint64_t>* used_blocks,
     bool is_alloc, //true when allocating, false when deallocating
@@ -672,6 +785,7 @@ private:
       _check_vselector_LNF();
     }
   }
+
 public:
   BlueFS(CephContext* cct);
   ~BlueFS();
@@ -702,6 +816,7 @@ public:
     const std::set<int>& devs_source,
     int dev_target,
     const bluefs_layout_t& layout);
+  int downgrade_wal_to_v1();
 
   uint64_t get_used();
   uint64_t get_total(unsigned id);
@@ -728,7 +843,7 @@ public:
     FileReader **h,
     bool random = false);
 
-  // data added after last fsync() is lost
+
   void close_writer(FileWriter *h);
 
   int rename(std::string_view old_dir, std::string_view old_file,
@@ -784,6 +899,9 @@ public:
     // no need to hold the global lock here; we only touch h and
     // h->file, and read vs write or delete is already protected (via
     // atomics and asserts).
+    if (h->file->is_new_wal()) {
+      return _read_wal(h, offset, len, outbl, out);
+    }
     return _read(h, offset, len, outbl, out);
   }
   int64_t read_random(FileReader *h, uint64_t offset, size_t len,
