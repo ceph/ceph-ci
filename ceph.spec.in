@@ -1550,6 +1550,7 @@ cmake .. \
 %if %{with sccache}
     -DWITH_SCCACHE=ON \
 %endif
+    -DWITH_ASAN=ON \
 %if 0%{with cephadm_bundling}
 %if 0%{with cephadm_pip_deps}
     -DCEPHADM_BUNDLED_DEPENDENCIES=pip
