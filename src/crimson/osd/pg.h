@@ -181,6 +181,9 @@ public:
   }
 
   void complete_write(eversion_t v, eversion_t lc) {
+    LOG_PREFIX(PG::complete_write);
+    SUBDEBUGDPP(osd, "updating pct to: {} updating  lcod to: {}",
+                *this, v, lc);
     peering_state.complete_write(v, lc);
   }
 
