@@ -2683,7 +2683,7 @@ Then run the following:
         self._daemon_action_set_image(action, image, d.daemon_type, d.daemon_id)
 
         self.log.info(f'Schedule {action} daemon {daemon_name}')
-        return self._schedule_daemon_action(daemon_name, action)
+        return self._schedule_daemon_action(daemon_name, action, force)
 
     def daemon_is_self(self, daemon_type: str, daemon_id: str) -> bool:
         return daemon_type == 'mgr' and daemon_id == self.get_mgr_id()
@@ -2696,7 +2696,7 @@ Then run the following:
             self.cache.get_daemons_by_type('mgr')).container_image_digests
         return digests if digests else []
 
-    def _schedule_daemon_action(self, daemon_name: str, action: str) -> str:
+    def _schedule_daemon_action(self, daemon_name: str, action: str, force: bool = False) -> str:
         dd = self.cache.get_daemon(daemon_name)
         assert dd.daemon_type is not None
         assert dd.daemon_id is not None
@@ -2705,7 +2705,7 @@ Then run the following:
                 and not self.mgr_service.mgr_map_has_standby():
             raise OrchestratorError(
                 f'Unable to schedule redeploy for {daemon_name}: No standby MGRs')
-        self.cache.schedule_daemon_action(dd.hostname, dd.name(), action)
+        self.cache.schedule_daemon_action(dd.hostname, dd.name(), action, force)
         self.cache.save_host(dd.hostname)
         msg = "Scheduled to {} {} on host '{}'".format(action, daemon_name, dd.hostname)
         self._kick_serve_loop()
