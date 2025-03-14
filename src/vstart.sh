@@ -1158,7 +1158,7 @@ EOF
         do
             prun rm -rf -- "$CEPH_DEV_DIR/mon.$f"
             prun mkdir -p "$CEPH_DEV_DIR/mon.$f"
-            prun "$CEPH_BIN/ceph-mon" --mkfs -c "$conf_fn" -i "$f" --monmap="$monmap_fn" --keyring="$keyring_fn"
+            prun env ASAN_OPTIONS=detect_leaks=0 LD_PRELOAD=/lib64/libasan.so.6 "$CEPH_BIN/ceph-mon" --mkfs -c "$conf_fn" -i "$f" --monmap="$monmap_fn" --keyring="$keyring_fn"
         done
 
         prun rm -- "$monmap_fn"
@@ -1167,7 +1167,7 @@ EOF
     # start monitors
     for f in $MONS
     do
-        run 'mon' $f $CEPH_BIN/ceph-mon -i $f $ARGS $CMON_ARGS
+        run 'mon' $f env ASAN_OPTIONS=detect_leaks=0 LD_PRELOAD=/lib64/libasan.so.6 $CEPH_BIN/ceph-mon -i $f $ARGS $CMON_ARGS
     done
 
     if [ "$crimson" -eq 1 ]; then
@@ -1370,7 +1370,7 @@ EOF
        fi
 
         debug echo "Starting mgr.${name}"
-        run 'mgr' $name $CEPH_BIN/ceph-mgr -i $name $ARGS
+        run 'mgr' $name env ASAN_OPTIONS="detect_leaks=0,detect_odr_violation=0" LD_PRELOAD=/lib64/libasan.so.6 $CEPH_BIN/ceph-mgr -i $name $ARGS
     done
 
     while ! ceph_adm mgr stat | jq -e '.available'; do
@@ -1456,9 +1456,9 @@ EOF
             fi
         fi
 
-        run 'mds' $name $CEPH_BIN/ceph-mds -i $name $ARGS $CMDS_ARGS
+        run 'mds' $name env ASAN_OPTIONS=detect_leaks=0 LD_PRELOAD=/lib64/libasan.so.6 $CEPH_BIN/ceph-mds -i $name $ARGS $CMDS_ARGS
         if [ "$standby" -eq 1 ]; then
-            run 'mds' $name $CEPH_BIN/ceph-mds -i ${name}s $ARGS $CMDS_ARGS
+            run 'mds' $name env ASAN_OPTIONS=detect_leaks=0 LD_PRELOAD=/lib64/libasan.so.6 $CEPH_BIN/ceph-mds -i ${name}s $ARGS $CMDS_ARGS
         fi
 
         #valgrind --tool=massif $CEPH_BIN/ceph-mds $ARGS --mds_log_max_segments 2 --mds_thrash_fragments 0 --mds_thrash_exports 0 > m  #--debug_ms 20
@@ -1666,9 +1666,9 @@ echo "port $CEPH_PORT"
 
 ceph_adm() {
     if [ "$cephx" -eq 1 ]; then
-        prun $SUDO "$CEPH_ADM" -c "$conf_fn" -k "$keyring_fn" "$@"
+        prun $SUDO env ASAN_OPTIONS=detect_leaks=0 LD_PRELOAD=/lib64/libasan.so.6 "$CEPH_ADM" -c "$conf_fn" -k "$keyring_fn" "$@"
     else
-        prun $SUDO "$CEPH_ADM" -c "$conf_fn" "$@"
+        prun $SUDO env ASAN_OPTIONS=detect_leaks=0 LD_PRELOAD=/lib64/libasan.so.6 "$CEPH_ADM" -c "$conf_fn" "$@"
     fi
 }
 
@@ -1685,7 +1685,7 @@ if [ $CEPH_NUM_MON -gt 0 ]; then
     start_mon
 
     debug echo Populating config ...
-    cat <<EOF | $CEPH_BIN/ceph -c $conf_fn config assimilate-conf -i -
+    cat <<EOF | env ASAN_OPTIONS=detect_leaks=0 LD_PRELOAD=/lib64/libasan.so.6 $CEPH_BIN/ceph -c $conf_fn config assimilate-conf -i -
 [global]
 osd_pool_default_size = $OSD_POOL_DEFAULT_SIZE
 osd_pool_default_min_size = 1
@@ -1711,7 +1711,7 @@ EOF
 
     if [ "$debug" -ne 0 ]; then
         debug echo Setting debug configs ...
-        cat <<EOF | $CEPH_BIN/ceph -c $conf_fn config assimilate-conf -i -
+        cat <<EOF | env ASAN_OPTIONS=detect_leaks=0 LD_PRELOAD=/lib64/libasan.so.6 $CEPH_BIN/ceph -c $conf_fn config assimilate-conf -i -
 [mgr]
 debug_ms = 1
 debug_mgr = 20
