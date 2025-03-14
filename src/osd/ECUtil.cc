@@ -476,7 +476,7 @@ namespace ECUtil {
                                  const HashInfoRef &hinfo,
                                  uint64_t before_ro_size) 
   {
-    // dout(10) << "JP: encode start " << dendl;
+    //dout(10) << "JP: encode start " << dendl;
     bool rebuild_req = false;
     shard_id_set out_set;
     out_set.insert_range(shard_id_t(sinfo->get_k()), sinfo->get_m());
@@ -525,7 +525,7 @@ namespace ECUtil {
                                               uint64_t before_ro_size,
                                               shard_extent_map_t &old_sem)
   {
-    // dout(10) << "JP: PDW start " << dendl;
+    //dout(10) << "JP: PDW start " << dendl;
     // dout(10) << "JP: old SEM " << old_sem << dendl;
     // dout(10) << "JP: new SEM " << *this << dendl;
     shard_id_set out_set;

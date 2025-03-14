@@ -1601,8 +1601,12 @@ void ECBackend::submit_transaction(
       }
     }
 
-    ECTransaction::WritePlanObj plan(get_parent()->get_dpp(),oid, inner_op,
-      sinfo, old_object_size, oi, soi, std::move(hinfo), std::move(shinfo));
+      shard_id_set available_shards;
+      shard_id_map<pg_shard_t> all_shards(sinfo.get_k_plus_m());
+      const std::optional<set<pg_shard_t>> error_shards;
+      read_pipeline.get_all_avail_shards(hoid, available_shards, all_shards, false, error_shards);
+      ECTransaction::WritePlanObj plan(get_parent()->get_dpp(), oid, inner_op,
+        sinfo, available_shards, old_object_size, oi, soi, std::move(hinfo), std::move(shinfo));
 
     if (plan.to_read) plans.want_read = true;
     plans.plans.emplace_back(std::move(plan));

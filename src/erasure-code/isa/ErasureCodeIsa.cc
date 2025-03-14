@@ -306,8 +306,6 @@ ErasureCodeIsaDefault::apply_delta(const shard_id_map<bufferptr> &in,
 {
   auto first = in.begin();
   const unsigned blocksize = first->second.length();
-  auto insize = in.size();
-  auto outsize = out.size();
 
   for (auto const& [datashard, databuf] : in) {
     if (datashard < k) {

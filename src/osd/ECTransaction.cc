@@ -116,6 +116,7 @@ ECTransaction::WritePlanObj::WritePlanObj(
   const hobject_t &hoid,
   const PGTransaction::ObjectOperation &op,
   const ECUtil::stripe_info_t &sinfo,
+  const shard_id_set available_shards,
   uint64_t orig_size,
   const std::optional<object_info_t> &oi,
   const std::optional<object_info_t> &soi,
@@ -123,6 +124,7 @@ ECTransaction::WritePlanObj::WritePlanObj(
   const ECUtil::HashInfoRef &&shinfo) :
 hoid(hoid),
 will_write(sinfo.get_k_plus_m()),
+available_shards(available_shards),
 hinfo(hinfo),
 shinfo(shinfo),
 orig_size(orig_size) // On-disk object sizes are rounded up to the next page.
@@ -273,32 +275,79 @@ orig_size(orig_size) // On-disk object sizes are rounded up to the next page.
   do_parity_delta_write = false;
 #if PARTIY_DELTA_WRITES
   if (sinfo.supports_parity_delta_writes()) {
-    if (orig_size == projected_size && !reads.empty()) do_parity_delta_write = true; // Not an append, so can do parity delta write
-    // If this is a parity delta write, and there are reads to do, then we need to set to_read = will_write.
-    // We will do it in generate_transactions when we know if we have reads to do.
+    if (orig_size == projected_size && !reads.empty()) {
+      bool decision_made = false;
+      shard_id_set data_shards_to_update;
+      shard_id_set data_shards_not_being_updated;
+      for (int i=0; i < sinfo.get_k(); ++i) {
+        if (will_write.contains(shard_id_t(i))) {
+          data_shards_to_update.insert((shard_id_t)i);
+        }
+        else {
+          data_shards_not_being_updated.insert((shard_id_t)i);
+        }
+      }
+      //ldpp_dout(dpp, 20) << "JP: data_shards_to_update: " << data_shards_to_update << dendl;
+      //ldpp_dout(dpp, 20) << "JP: data_shards_not_being_updated: " << data_shards_not_being_updated << dendl;
+
+      for (auto &iter : data_shards_to_update) {
+        if (!available_shards.contains(iter)) {
+          // Parity delta write would need to reconstruct data shard
+          do_parity_delta_write = false;
+          decision_made = true;
+          //ldpp_dout(dpp, 20) << "JP: case 1" << dendl;
+          break;
+        }
+      }
+      //if (!decision_made) {
+        //ldpp_dout(dpp, 20) << "JP: case 2" << dendl;
+        //Else if (W & M) != (A & M) then conventional write // parity delta write would need to reconstruct a parity shard that cannot be read but needs to be written
+      //}
+      if (!decision_made) {
+        for (auto &iter : data_shards_not_being_updated) {
+          if (!available_shards.contains(iter)) {
+            // Conventional write would need to do a reconstruct
+            do_parity_delta_write = true;
+            decision_made = true;
+            //ldpp_dout(dpp, 20) << "JP: case 3" << dendl;
+            break;
+          }
+        }
+      }
+      if (!decision_made) {
+        // PDW cost should be count(W & M) + count(U)
+        // data_shards_not_being_updated is the conventional write cost
+        if ((data_shards_to_update.size() + sinfo.get_m()) < data_shards_not_being_updated.size()) {
+          do_parity_delta_write = true;
+        }
+        //ldpp_dout(dpp, 20) << "JP: case 4, do_pdw: " << do_parity_delta_write << dendl;
+      }
+    }
   }
 #endif
-    // ECUtil::shard_extent_set_t pdw_read_plan = will_write;
-    // calculate set of shards needed to read for full stripe write
-    // fs_reads = reads;
-    // calculate set of shards needed to read for parity delta write
-    // check extent cache for any shards in it - remove these from above sets
-    // calculate best option to take
-    //if (op.has_source(&source)) { // Can only do a parity delta write if there is old data and new data??? 
+// A = bitmap of acting set (shards that can be read)
+// W = bitmap of acting + backfill/recovery set (shards that can be written)
+// U = bitmap of data shards being updated
+// V = bitmap of data shards not being updated
+// M = bitmap of parity shards
+//
+// If (U & A) != U then conventional write // parity delta write would need to reconstruct data shard
+// Else if (W & M) != (A & M) then conventional write // parity delta write would need to reconstruct a parity shard that cannot be read but needs to be written
+// Else if (V & A) != V then parity delta write // conventional write needs to do a reconstruct
+// Else {
+//   pdw cost = count(W & M) + count(U)
+//   cw cost = count(V)
+//   if (pdw cost <= cw cost) then parity delta write
+//   Else conventional write
+// }
 
-    //}
-  //ldpp_dout(dpp, 20) << "JP: to_read1: " << to_read << dendl;
   if (!reads.empty()) {
     to_read = std::move(reads);
   }
 
-  // ldpp_dout(dpp, 20) << "JP: reads: " << reads << dendl;
-  // ldpp_dout(dpp, 20) << "JP: will_write: " << will_write << dendl;
-  //ldpp_dout(dpp, 20) << "JP: to_read2: " << to_read << dendl;
   if (do_parity_delta_write) {
     to_read = will_write;
   }
-  //ldpp_dout(dpp, 20) << "JP: to_read3: " << to_read << dendl;
 
   /* validate post conditions:
    * to_read should have an entry for `obj` if it isn't empty

@@ -37,6 +37,7 @@ namespace ECTransaction {
     ECUtil::shard_extent_set_t will_write;
     const ECUtil::HashInfoRef hinfo;
     const ECUtil::HashInfoRef shinfo;
+    const shard_id_set available_shards;
     const uint64_t orig_size;
     uint64_t projected_size;
     bool invalidates_cache;
@@ -47,6 +48,7 @@ namespace ECTransaction {
       const hobject_t &hoid,
       const PGTransaction::ObjectOperation &op,
       const ECUtil::stripe_info_t &sinfo,
+      const shard_id_set available_shards,
       uint64_t orig_size,
       const std::optional<object_info_t> &oi,
       const std::optional<object_info_t> &soi,
