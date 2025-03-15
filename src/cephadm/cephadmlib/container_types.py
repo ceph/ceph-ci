@@ -160,6 +160,7 @@ class BasicContainer:
     def build_run_cmd(self) -> List[str]:
         return (
             [self._container_engine, 'run']
+            + ['-e', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0', '-e', 'LD_PRELOAD=/lib64/libasan.so.6']
             + self.build_engine_run_args()
             + [self.image]
             + list(self.args)
