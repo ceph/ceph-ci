@@ -119,6 +119,10 @@ def _shell(ctx, cluster_name, remote, args, extra_cephadm_args=[], **kwargs):
             '--fsid', ctx.ceph[cluster_name].fsid,
             ] + extra_cephadm_args + [
             '--',
+            ] + [
+            'env',
+            'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+            'LD_PRELOAD=/lib64/libasan.so.6'
             ] + args,
         **kwargs
     )
@@ -603,6 +607,9 @@ def pull_image(ctx, config):
     log.info(f'Pulling image {ctx.ceph[cluster_name].image} on all hosts...')
     cmd = [
         'sudo',
+        'env',
+        'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+        'LD_PRELOAD=/lib64/libasan.so.6',
         ctx.cephadm,
         '--image',
         ctx.ceph[cluster_name].image,
@@ -751,6 +758,9 @@ def ceph_bootstrap(ctx, config):
         log.info('Bootstrapping...')
         cmd = [
             'sudo',
+            'env',
+            'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+            'LD_PRELOAD=/lib64/libasan.so.6',
             ctx.cephadm,
             '--image', ctx.ceph[cluster_name].image,
             '-v',
@@ -1137,6 +1147,9 @@ def ceph_osds(ctx, config):
             remote.run(
                 args=[
                     'sudo',
+                    'env',
+                    'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                    'LD_PRELOAD=/lib64/libasan.so.6',
                     ctx.cephadm,
                     '--image', ctx.ceph[cluster_name].image,
                     'ceph-volume',
