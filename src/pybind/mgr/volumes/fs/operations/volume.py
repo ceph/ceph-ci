@@ -72,29 +72,60 @@ def get_pool_ids(mgr, volname):
         return None, None
     return metadata_pool_id, data_pool_ids
 
-def create_volume(mgr, volname, placement):
-    """
-    create volume  (pool, filesystem and mds)
-    """
-    metadata_pool, data_pool = gen_pool_names(volname)
-    # create pools
-    r, outb, outs = create_pool(mgr, metadata_pool)
+def create_fs_pools(mgr, volname, data_pool, meta_pool):
+    '''
+    Generate names of metadata pool and data pool and create these pools.
+
+    This methods returns a list where the first member represents whether or
+    not this method ran successfullly.
+    '''
+    assert not data_pool and not meta_pool
+
+    meta_pool, data_pool = gen_pool_names(volname)
+
+    r, outb, outs = create_pool(mgr, meta_pool)
     if r != 0:
-        return r, outb, outs
+        return [False, r, outb, outs]
+
     # default to a bulk pool for data. In case autoscaling has been disabled
-    # for the cluster with `ceph osd pool set noautoscale`, this will have no effect.
+    # for the cluster with `ceph osd pool set noautoscale`, this will have
+    # no effect.
     r, outb, outs = create_pool(mgr, data_pool, bulk=True)
+    # cleanup
     if r != 0:
-        #cleanup
-        remove_pool(mgr, metadata_pool)
-        return r, outb, outs
+        remove_pool(mgr, meta_pool)
+        return [False, r, outb, outs]
+
+    return [True, data_pool, meta_pool]
+
+def create_volume(mgr, volname, placement, data_pool, meta_pool):
+    """
+    Create volume, create pools if pool names are not passed and create MDS
+    based on placement passed.
+    """
+    if data_pool and meta_pool:
+        pass
+    elif not data_pool and meta_pool:
+        errmsg = 'data pool name isn\'t passed'
+        return -errno.EINVAL, '', errmsg
+    elif data_pool and not meta_pool:
+        errmsg = 'metadata pool name isn\'t passed'
+        return -errno.EINVAL, '', errmsg
+    elif not data_pool and not meta_pool:
+        retval = create_fs_pools(mgr, volname, data_pool, meta_pool)
+        success = retval.pop(0)
+        if success:
+            data_pool, meta_pool = retval
+        else:
+            return retval
+
     # create filesystem
-    r, outb, outs = create_filesystem(mgr, volname, metadata_pool, data_pool)
+    r, outb, outs = create_filesystem(mgr, volname, meta_pool, data_pool)
     if r != 0:
         log.error("Filesystem creation error: {0} {1} {2}".format(r, outb, outs))
         #cleanup
         remove_pool(mgr, data_pool)
-        remove_pool(mgr, metadata_pool)
+        remove_pool(mgr, meta_pool)
         return r, outb, outs
     return create_mds(mgr, volname, placement)
 
