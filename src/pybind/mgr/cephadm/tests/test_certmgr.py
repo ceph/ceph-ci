@@ -422,8 +422,10 @@ class TestCertMgr(object):
         compare_certls_dicts(expected_ls)
 
         # Services with host target/scope
+        cephadm_module.cert_mgr.save_cert('oauth2_proxy_cert', CEPHADM_SELF_GENERATED_CERT_2, host='host1', user_made=True)
         cephadm_module.cert_mgr.save_cert('grafana_cert', CEPHADM_SELF_GENERATED_CERT_1, host='host1', user_made=True)
         cephadm_module.cert_mgr.save_cert('grafana_cert', CEPHADM_SELF_GENERATED_CERT_2, host='host2', user_made=True)
+        expected_ls['oauth2_proxy_cert'] = {'scope': 'host', 'certificates': {'host1': get_generated_cephadm_cert_info_2()}}
         expected_ls['grafana_cert'] = {
             'scope': 'host',
             'certificates': {
@@ -435,9 +437,7 @@ class TestCertMgr(object):
 
         # Services with global target/scope
         cephadm_module.cert_mgr.save_cert('mgmt_gw_cert', CEPHADM_SELF_GENERATED_CERT_1, user_made=True)
-        cephadm_module.cert_mgr.save_cert('oauth2_proxy_cert', CEPHADM_SELF_GENERATED_CERT_2, user_made=True)
         expected_ls['mgmt_gw_cert'] = {'scope': 'global', 'certificates': get_generated_cephadm_cert_info_1()}
-        expected_ls['oauth2_proxy_cert'] = {'scope': 'global', 'certificates': get_generated_cephadm_cert_info_2()}
         compare_certls_dicts(expected_ls)
 
         # nvmeof certificates
@@ -544,8 +544,8 @@ class TestCertMgr(object):
             'ingress_ssl_cert': ('ingress', 'ingress-ssl-cert', TLSObjectScope.SERVICE),
             'iscsi_ssl_cert': ('iscsi', 'iscsi-ssl-cert', TLSObjectScope.SERVICE),
             'grafana_cert': ('host1', 'grafana-cert', TLSObjectScope.HOST),
+            'oauth2_proxy_cert': ('host1', 'oauth2-proxy-cert', TLSObjectScope.HOST),
             'mgmt_gw_cert': ('mgmt-gateway', 'mgmt-gw-cert', TLSObjectScope.GLOBAL),
-            'oauth2_proxy_cert': ('oauth2-proxy', 'oauth2-proxy-cert', TLSObjectScope.GLOBAL),
         }
         unknown_certs = {
             'unknown_per_service_cert': ('unknown-svc.foo', 'unknown-cert', TLSObjectScope.SERVICE),
@@ -555,12 +555,12 @@ class TestCertMgr(object):
         }
 
         keys = {
+            'oauth2_proxy_key': ('host1', 'oauth2-proxy-key', TLSObjectScope.HOST),
             'grafana_key': ('host1', 'fake-grafana-host1-key', TLSObjectScope.HOST),
             'nvmeof_server_key': ('nvmeof.foo', 'nvmeof-server-key', TLSObjectScope.SERVICE),
             'nvmeof_client_key': ('nvmeof.foo', 'nvmeof-client-key', TLSObjectScope.SERVICE),
             'nvmeof_encryption_key': ('nvmeof.foo', 'nvmeof-encryption-key', TLSObjectScope.SERVICE),
             'mgmt_gw_key': ('mgmt-gateway', 'mgmt-gw-key', TLSObjectScope.GLOBAL),
-            'oauth2_proxy_key': ('oauth2-proxy', 'oauth2-proxy-key', TLSObjectScope.GLOBAL),
             'ingress_ssl_key': ('ingress', 'ingress-ssl-key', TLSObjectScope.SERVICE),
             'iscsi_ssl_key': ('iscsi', 'iscsi-ssl-key', TLSObjectScope.SERVICE),
         }
