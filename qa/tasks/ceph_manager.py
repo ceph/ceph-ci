@@ -49,6 +49,8 @@ def shell(ctx, cluster_name, remote, args, name=None, **kwargs):
         ] + extra_args + [
             '--fsid', ctx.ceph[cluster_name].fsid,
             '--',
+        ] + [
+            'env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0', 'LD_PRELOAD=/lib64/libasan.so.6'
         ] + args,
         **kwargs
     )
@@ -1632,7 +1634,11 @@ class CephManager:
 
     def get_ceph_cmd(self, **kwargs):
         timeout = kwargs.pop('timeout', 120)
-        return ['sudo'] + self.pre + ['timeout', f'{timeout}', 'ceph',
+        return ['sudo'] + self.pre + ['timeout', f'{timeout}',
+                                      'env',
+                                      'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                                      'LD_PRELOAD=/lib64/libasan.so.6',
+                                      'ceph',
                                       '--cluster', self.cluster]
     def save_conf_epoch(self):
         p = self.ceph("config log 1 --format=json")
@@ -1669,6 +1675,7 @@ class CephManager:
             prefixcmd += ['timeout', str(timeoutcmd)]
 
         if self.cephadm:
+            prefixcmd += ['env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0', 'LD_PRELOAD=/lib64/libasan.so.6']
             prefixcmd += ['ceph']
             cmd = prefixcmd + list(kwargs['args'])
             return shell(self.ctx, self.cluster, self.controller,
