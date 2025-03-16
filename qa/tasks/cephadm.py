@@ -1838,7 +1838,6 @@ def module_setup(ctx, config):
     for m in modules:
         m = str(m)
         cmd = [
-           'sudo',
            'ceph',
            '--cluster',
            cluster_name,
