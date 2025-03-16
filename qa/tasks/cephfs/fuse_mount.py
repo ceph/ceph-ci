@@ -107,6 +107,7 @@ class FuseMountBase(CephFSMountBase):
         mount_cmd = self._add_valgrind_args(mount_cmd)
         mount_cmd = ['sudo'] + self._nsenter_args + mount_cmd
 
+        mount_cmd += ['env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0', 'LD_PRELOAD=/lib64/libasan.so.6']
         mount_cmd += self._mount_bin + [self.hostfs_mntpt]
         if self.client_id:
             mount_cmd += ['--id', self.client_id]
@@ -477,7 +478,9 @@ print(_find_admin_socket("{client_name}"))
             while proceed():
                 try:
                     p = self.client_remote.run(args=
-                        ['sudo', self._prefix + 'ceph', '--admin-daemon', asok_path] + args,
+                        ['sudo'] +
+                        ['env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0', 'LD_PRELOAD=/lib64/libasan.so.6'] +
+                        [self._prefix + 'ceph', '--admin-daemon', asok_path] + args,
                         stdout=StringIO(), stderr=StringIO(), wait=False,
                         timeout=300)
                     p.wait()
