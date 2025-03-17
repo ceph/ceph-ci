@@ -7,6 +7,7 @@ import uuid
 
 from tasks.cephfs.cephfs_test_case import CephFSTestCase
 from teuthology.exceptions import CommandFailedError
+from teuthology.contextutil import safe_while
 from datetime import datetime, timedelta
 
 log = logging.getLogger(__name__)
@@ -76,7 +77,18 @@ class TestSnapSchedulesHelper(CephFSTestCase):
         return res
 
     def _create_or_reuse_test_volume(self):
-        result = json.loads(self._fs_cmd("volume", "ls"))
+        # result = json.loads(self._fs_cmd("volume", "ls"))
+        result = {}
+        with safe_while(sleep=3, tries=30, action="trying `fs volume ls`") as proceed:
+            while proceed():
+                try:
+                    r = self.get_ceph_cmd_result("fs", "volume", "ls", timeout=10)
+                    if r == 0:
+                        stdout = self.get_ceph_cmd_stdout("fs", "volume", "ls", timeout=10)
+                        result = json.loads(stdout)
+                        break
+                except TimeoutError as ex:
+                    pass
         if len(result) == 0:
             self.vol_created = True
             self.volname = TestSnapSchedulesHelper.TEST_VOLUME_NAME
