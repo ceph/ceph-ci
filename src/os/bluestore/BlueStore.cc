@@ -15576,12 +15576,16 @@ int BlueStore::_deferred_replay(std::vector<std::string>* keys_to_remove)
       if (has_some) {
         if (tracepoint_debug_deferred_replay_track) tracepoint_debug_deferred_replay_track(deferred_txn);
         for (auto& op: deferred_txn.ops) {
+          dout(10) << __func__ << std::hex << " 0x" << op.data.length()
+            << std::dec << " writing to " << op.extents << dendl;
           for (auto& e : op.extents) {
             bufferlist t;
             op.data.splice(0, e.length, &t);
             bdev->aio_write(e.offset, t, &ioctx, false);
           }
         }
+      } else {
+        dout(10) << __func__ << deferred_txn.seq << " fully eliminated" << dendl;
       }
     } catch (ceph::buffer::error& e) {
       derr << __func__ << " failed to decode deferred txn "
@@ -15627,7 +15631,7 @@ bool BlueStore::_eliminate_outdated_deferred(bluestore_deferred_transaction_t* d
     PExtentVector new_extents;
     ceph::buffer::list new_data;
     uint32_t data_offset = 0; // this tracks location of extent 'e' inside it->data
-    dout(30) << __func__ << " input extents: " << it->extents << dendl;
+    dout(10) << __func__ << " input extents: " << it->extents << dendl;
     for (auto& e: it->extents) {
       interval_set<uint64_t> region;
       region.insert(e.offset, e.length);
@@ -15658,7 +15662,7 @@ bool BlueStore::_eliminate_outdated_deferred(bluestore_deferred_transaction_t* d
       }
       data_offset += e.length;
     }
-    dout(30) << __func__ << " output extents: " << new_extents << dendl;
+    dout(10) << __func__ << " output extents: " << new_extents << dendl;
     if (it->data.length() != new_data.length()) {
       dout(10) << __func__ << " trimmed deferred extents: " << it->extents << "->" << new_extents << dendl;
     }
