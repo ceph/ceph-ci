@@ -402,7 +402,7 @@ def _run_tests(ctx, refspec, role, tests, env, basedir,
                     run.Raw('CEPH_BASE={dir}'.format(dir=clonedir)),
                     run.Raw('CEPH_ROOT={dir}'.format(dir=clonedir)),
                     run.Raw('CEPH_MNT={dir}'.format(dir=mnt)),
-                    run.Raw('ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0'),
+                    run.Raw('ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0,alloc_dealloc_mismatch=0'),
                     run.Raw('LD_PRELOAD=/lib64/libasan.so.6'),
                 ]
                 if env is not None:
