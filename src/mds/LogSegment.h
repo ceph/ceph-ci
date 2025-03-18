@@ -23,6 +23,7 @@
 #include "CInode.h"
 #include "CDentry.h"
 #include "CDir.h"
+#include "common/RefCountedObj.h"
 
 #include <unordered_set>
 
@@ -38,7 +39,7 @@ class CDentry;
 class MDSRank;
 struct MDPeerUpdate;
 
-class LogSegment {
+class LogSegment : public RefCountedObject {
  public:
   using seq_t = uint64_t;
 

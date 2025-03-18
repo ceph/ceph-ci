@@ -1408,6 +1408,7 @@ private:
   // -- fragmenting --
   struct ufragment {
     ufragment() {}
+    ~ufragment();
     int bits = 0;
     bool committed = false;
     LogSegment *ls = nullptr;

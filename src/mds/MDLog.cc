@@ -376,6 +376,7 @@ LogSegment* MDLog::_start_new_segment(SegmentBoundary* sb)
 
   auto ls = new LogSegment(event_seq);
   segments[event_seq] = ls;
+  segments[event_seq]->get(); // add a ref
   logger->inc(l_mdl_segadd);
   logger->set(l_mdl_seg, segments.size());
   sb->set_seq(event_seq);
@@ -966,7 +967,8 @@ void MDLog::_trim_expired_segments(auto& locker, MDSContext* ctx)
         logger->inc(l_mdl_evtrm, ls2->num_events);
         logger->inc(l_mdl_segtrm);
         expire_pos = ls2->end;
-        delete ls2;
+        // delete ls2;
+	ls2->put();
       }
       segments.erase(segments.begin(), it);
       logger->set(l_mdl_seg, segments.size());
@@ -1537,6 +1539,7 @@ void MDLog::_replay_thread()
         event_seq = pos;
       }
       segments[event_seq] = new LogSegment(event_seq, pos);
+      segments[event_seq]->get(); // add a ref
       logger->set(l_mdl_seg, segments.size());
       if (sb->is_major_segment_boundary()) {
         major_segments.insert(event_seq);

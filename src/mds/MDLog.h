@@ -251,7 +251,7 @@ protected:
   }
   void remove_oldest_segment() {
     std::map<uint64_t, LogSegment*>::iterator p = segments.begin();
-    delete p->second;
+    p->second->put();
     segments.erase(p);
   }
 

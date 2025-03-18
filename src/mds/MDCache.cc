@@ -12746,6 +12746,11 @@ void MDCache::handle_fragment_notify(const cref_t<MMDSFragmentNotify> &notify)
   }
 }
 
+MDCache::ufragment::~ufragment()
+{
+  ls->put();
+}
+
 void MDCache::add_uncommitted_fragment(dirfrag_t basedirfrag, int bits, const frag_vec_t& old_frags,
 				       LogSegment *ls, bufferlist *rollback)
 {
@@ -12754,7 +12759,7 @@ void MDCache::add_uncommitted_fragment(dirfrag_t basedirfrag, int bits, const fr
   ufragment& uf = uncommitted_fragments[basedirfrag];
   uf.old_frags = old_frags;
   uf.bits = bits;
-  uf.ls = ls;
+  uf.ls = static_cast<LogSegment*>(ls->get());
   ls->uncommitted_fragments.insert(basedirfrag);
   if (rollback)
     uf.rollback.swap(*rollback);
