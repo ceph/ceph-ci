@@ -13,6 +13,7 @@
 #include "common/ostream_temp.h"
 #include "include/interval_set.h"
 #include "crimson/net/Fwd.h"
+#include "messages/MOSDPGPCT.h"
 #include "messages/MOSDRepOpReply.h"
 #include "messages/MOSDOpReply.h"
 #include "os/Transaction.h"
@@ -258,6 +259,7 @@ public:
     float delay) final {
     start_peering_event_operation(std::move(*event), delay);
   }
+
   std::vector<pg_shard_t> get_replica_recovery_order() const final {
     return peering_state.get_replica_recovery_order();
   }
@@ -747,10 +749,11 @@ private:
   std::unique_ptr<PGRecovery> recovery_handler;
   C_PG_FinishRecovery *recovery_finisher;
 
-  PeeringState peering_state;
   eversion_t projected_last_update;
 
 public:
+  PeeringState peering_state;
+
   // scrub state
 
   friend class ScrubScan;
@@ -924,6 +927,7 @@ private:
   friend class RepRequest;
   friend class LogMissingRequest;
   friend class LogMissingRequestReply;
+  friend class PGPCTRequest;
   friend struct PGFacade;
   friend class InternalClientRequest;
   friend class WatchTimeoutRequest;

@@ -210,6 +210,22 @@ public:
     }
   };
 
+  /**
+   * create_cached_obc_from_push_data
+   *
+   * Creates a fresh cached obc from passed oi and ssc.
+   * Overwrites any obc already in cache for this object.
+   */
+  ObjectContextRef create_cached_obc_from_push_data(
+    const object_info_t &oi,
+    SnapSetContextRef ssc) {
+    auto obc = obc_registry.get_cached_obc(oi.soid).first;
+    obc->obs.oi = oi;
+    obc->obs.exists = true;
+    obc->ssc = ssc;
+    return obc;
+  }
+
   Orderer get_obc_orderer(const hobject_t &oid) {
     Orderer ret;
     std::tie(ret.orderer_obc, std::ignore) =
