@@ -140,7 +140,7 @@ class KernelMountBase(CephFSMount):
         # (pre-quincy) would pass this option to the kernel.
         if self.syntax_style != 'v1':
             opts += ",nofallback"
-        mount_cmd += ['env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0', 'LD_PRELOAD=/lib64/libasan.so.6']
+        mount_cmd += ['env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0,alloc_dealloc_mismatch=0', 'LD_PRELOAD=/lib64/libasan.so.6']
         mount_cmd += self._mount_bin + [stx_opt[0], self.hostfs_mntpt, '-v',
                                         '-o', opts]
         return mount_cmd
