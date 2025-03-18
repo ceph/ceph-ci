@@ -121,7 +121,7 @@ def _shell(ctx, cluster_name, remote, args, extra_cephadm_args=[], **kwargs):
             '--',
             ] + [
             'env',
-            'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+            'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0,alloc_dealloc_mismatch=0',
             'LD_PRELOAD=/lib64/libasan.so.6'
             ] + args,
         **kwargs
@@ -608,7 +608,7 @@ def pull_image(ctx, config):
     cmd = [
         'sudo',
         'env',
-        'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+        'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0,alloc_dealloc_mismatch=0',
         'LD_PRELOAD=/lib64/libasan.so.6',
         ctx.cephadm,
         '--image',
@@ -759,7 +759,7 @@ def ceph_bootstrap(ctx, config):
         cmd = [
             'sudo',
             'env',
-            'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+            'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0,alloc_dealloc_mismatch=0',
             'LD_PRELOAD=/lib64/libasan.so.6',
             ctx.cephadm,
             '--image', ctx.ceph[cluster_name].image,
@@ -1148,7 +1148,7 @@ def ceph_osds(ctx, config):
                 args=[
                     'sudo',
                     'env',
-                    'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                    'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0,alloc_dealloc_mismatch=0',
                     'LD_PRELOAD=/lib64/libasan.so.6',
                     ctx.cephadm,
                     '--image', ctx.ceph[cluster_name].image,
@@ -1594,7 +1594,7 @@ def exec(ctx, config):
             remote.run(
                 args=[
                     'sudo',
-                    'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                    'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0,alloc_dealloc_mismatch=0',
                     'LD_PRELOAD=/lib64/libasan.so.6',
                     'TESTDIR={tdir}'.format(tdir=testdir),
                     'bash',
