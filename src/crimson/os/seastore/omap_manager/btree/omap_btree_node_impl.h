@@ -156,6 +156,11 @@ struct OMapInnerNode
     omap_context_t oc,
     const std::string &key) final;
 
+  iterate_ret iterate(
+    omap_context_t oc,
+    ObjectStore::omap_iter_seek_t &start_from,
+    omap_iterate_cb_t callback) final;
+
   list_ret list(
     omap_context_t oc,
     const std::optional<std::string> &first,
@@ -367,6 +372,11 @@ struct OMapLeafNode
 
   rm_key_ret rm_key(
     omap_context_t oc, const std::string &key) final;
+
+  iterate_ret iterate(
+    omap_context_t oc,
+    ObjectStore::omap_iter_seek_t &start_from,
+    omap_iterate_cb_t callback) final;
 
   list_ret list(
     omap_context_t oc,
