@@ -15580,7 +15580,11 @@ int BlueStore::_deferred_replay(std::vector<std::string>* keys_to_remove)
             << std::dec << " writing to " << op.extents << dendl;
           for (auto& e : op.extents) {
             bufferlist t;
+            buffer::ptr csum_data(4);
             op.data.splice(0, e.length, &t);
+            Checksummer::calculate<Checksummer::crc32c>(
+              0x1000, 0, 0x1000, t, &csum_data);
+            dout(10) << __func__ << " csum=" << std::hex << *(uint32_t*)csum_data.c_str() << std::dec << dendl;
             bdev->aio_write(e.offset, t, &ioctx, false);
           }
         }
