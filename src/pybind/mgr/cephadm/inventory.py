@@ -1605,7 +1605,7 @@ class HostCache():
         assert not daemon.startswith('ha-rgw.')
 
         return self.scheduled_daemon_actions.get(host, {}).get(daemon)
-        
+
     def get_all_scheduled_actions(self) -> List[Tuple[str, str, str]]:
         """Get all scheduled actions as a list of (host, daemon_name, action)"""
         result = []
@@ -1614,47 +1614,54 @@ class HostCache():
                 result.append((host, daemon_name, action))
         return result
 
-    def set_force_action(self, host: str, daemon_name: str, force: bool = True) -> None:
+    def set_force_action(self, host: str, daemon_name: str, force: bool = True) -> bool:
         """
-        Mark a daemon action as forced.
-        
+        Set or clear the force flag for a daemon action.
+
         This is used to track when an action has been explicitly forced by the user,
         allowing the system to override normal safeguards.
         """
         assert not daemon_name.startswith('ha-rgw.')
-        
-        if host not in self.force_actions:
-            self.force_actions[host] = {}
-        self.force_actions[host][daemon_name] = force
+
+        if force:
+            if self.get_scheduled_daemon_action(host, daemon_name) is None:
+                return False  # Cannot set force flag if no scheduled action exists
+            if host not in self.force_actions:
+                self.force_actions[host] = {}
+                self.force_actions[host][daemon_name] = True
+                return True
+            elif daemon_name not in self.force_actions[host] or not self.force_actions[host][daemon_name]:
+                self.force_actions[host][daemon_name] = True
+                return True
+            return False
+        else:
+            return self.clear_force_action(host, daemon_name)
 
     def is_force_action(self, host: str, daemon_name: str) -> bool:
         """
         Check if an action for the specified daemon is marked as forced.
-        
+
         Returns:
             bool: True if the action is forced, False otherwise
         """
         assert not daemon_name.startswith('ha-rgw.')
-        
+
         return self.force_actions.get(host, {}).get(daemon_name, False)
-        
+
     def clear_force_action(self, host: str, daemon_name: str) -> bool:
         """
         Clear the force flag for a daemon action.
-        
+
         Returns:
             bool: True if a force flag was cleared, False otherwise
         """
         found = False
-        if host in self.force_actions:
-            if daemon_name in self.force_actions[host]:
-                del self.force_actions[host][daemon_name]
-                found = True
+        if host in self.force_actions and daemon_name in self.force_actions[host]:
+            del self.force_actions[host][daemon_name]
+            found = True
             if not self.force_actions[host]:
                 del self.force_actions[host]
         return found
-
-
 
 
 class NodeProxyCache:
