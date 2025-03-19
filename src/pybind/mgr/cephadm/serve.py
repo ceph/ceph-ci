@@ -1089,7 +1089,6 @@ class CephadmServe:
 
             # ignore unmanaged services
             if spec and spec.unmanaged:
-                # remove any pending scheduled actions in the event users switch back from unmanged to managed
                 continue
 
             # ignore daemons for deleted services
@@ -1121,7 +1120,7 @@ class CephadmServe:
                 last_deps = []
 
             action = self.mgr.cache.get_scheduled_daemon_action(dd.hostname, dd.name())
-            
+
             if not last_config:
                 self.log.info('Reconfiguring %s (unknown last config time)...' % (
                     dd.name()))
@@ -1180,6 +1179,7 @@ class CephadmServe:
                     daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(dd)
                     self.mgr._daemon_action(daemon_spec, action=action)
                     if self.mgr.cache.rm_scheduled_daemon_action(dd.hostname, dd.name()):
+                        self.mgr.cache.clear_force_action(dd.hostname, dd.name())
                         self.mgr.cache.save_host(dd.hostname)
                 except OrchestratorError as e:
                     self.log.exception(e)

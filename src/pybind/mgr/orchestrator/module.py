@@ -2586,3 +2586,73 @@ Usage:
         completion = self.update_service(service_type.value, service_type.name, image)
         raise_if_exception(completion)
         return HandleCommandResult(stdout=completion.result_str())
+
+    @_cli_read_command('orch action ls')
+    def _list_actions(self, format: Format = Format.plain) -> HandleCommandResult:
+        """
+        List scheduled daemon actions
+        """
+        completion = self.list_daemon_actions()
+        actions = raise_if_exception(completion)
+        if not actions:
+            return HandleCommandResult(stdout="No scheduled actions")
+            
+        table = PrettyTable(
+            ['HOST', 'DAEMON', 'ACTION', 'FORCED'],
+            border=False)
+        table.align = 'l'
+        table.left_padding_width = 0
+        table.right_padding_width = 2
+        
+        for host, daemon_name, action, is_forced in actions:
+            forced = 'Yes' if is_forced else 'No'
+            table.add_row([host, daemon_name, action, forced])
+            
+        if format == Format.plain:
+            return HandleCommandResult(stdout=table.get_string())
+        else:
+            return HandleCommandResult(
+                stdout=to_format(
+                    [{
+                        'host': host,
+                        'daemon': daemon_name,
+                        'action': action,
+                        'forced': is_forced
+                    } for host, daemon_name, action, is_forced in actions],
+                    format,
+                    many=True,
+                    cls=None
+                )
+            )
+
+    @_cli_write_command('orch cancel action')
+    def _cancel_action(self, daemon_name: str) -> HandleCommandResult:
+        """
+        Cancel a scheduled daemon action
+        """
+        completion = self.cancel_daemon_action(daemon_name)
+        result = raise_if_exception(completion)
+        if not result:
+            return HandleCommandResult(stderr=f"No scheduled action found for daemon {daemon_name}")
+        return HandleCommandResult(stdout=f"Canceled scheduled action for daemon {daemon_name}")
+
+    @_cli_write_command('orch cancel service')
+    def _cancel_service_actions(self, service_name: str) -> HandleCommandResult:
+        """
+        Cancel all scheduled actions for a service
+        """
+        completion = self.cancel_service_actions(service_name)
+        result = raise_if_exception(completion)
+        return HandleCommandResult(stdout=result)
+
+    @_cli_write_command('orch action set-forced')
+    def _force_action(self, daemon_name: str, force: bool = True) -> HandleCommandResult:
+        """
+        Force a scheduled daemon action
+        """
+        completion = self.force_daemon_action(daemon_name, force)
+        result = raise_if_exception(completion)
+        if not result:
+            return HandleCommandResult(stderr=f"No scheduled action found for daemon {daemon_name}")
+        force_status = "forced" if force else "not forced"
+        return HandleCommandResult(stdout=f"Action for daemon {daemon_name} is now {force_status}")
