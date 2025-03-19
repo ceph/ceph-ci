@@ -756,7 +756,8 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
                                         mode=cmd.get('mode', '755'),
                                         namespace_isolated=cmd.get('namespace_isolated', False),
                                         earmark=cmd.get('earmark', None),
-                                        case_sensitive=cmd.get('case_sensitive', None))
+                                        case_sensitive=cmd.get('case_sensitive', None),
+                                        normalization=cmd.get('normalization', None))
 
     @mgr_cmd_wrap
     def _cmd_fs_subvolume_rm(self, inbuf, cmd):
