@@ -78,7 +78,7 @@ protected:
   ///          recovery @c pop.soid
   interruptible_future<bool> _handle_pull_response(
     pg_shard_t from,
-    PushOp& push_op,
+    PushOp push_op,
     PullOp* response);
   void recalc_subsets(
     ObjectRecoveryInfo& recovery_info,
@@ -88,7 +88,7 @@ protected:
     const interval_set<uint64_t> &intervals_received,
     ceph::bufferlist data_received);
   interruptible_future<> submit_push_data(
-    const ObjectRecoveryInfo &recovery_info,
+    const ObjectRecoveryInfo recovery_info,
     bool first,
     bool complete,
     bool clear_omap,
@@ -96,7 +96,7 @@ protected:
     interval_set<uint64_t> intervals_included,
     ceph::bufferlist data_included,
     ceph::bufferlist omap_header,
-    const std::map<std::string, bufferlist, std::less<>> &attrs,
+    const std::map<std::string, bufferlist, std::less<>> attrs,
     std::map<std::string, bufferlist> omap_entries,
     ceph::os::Transaction *t);
   void submit_push_complete(
@@ -166,12 +166,12 @@ private:
     uint64_t& max_len,
     PushOp* push_op);
   interruptible_future<hobject_t> prep_push_target(
-    const ObjectRecoveryInfo &recovery_info,
+    const ObjectRecoveryInfo recovery_info,
     bool first,
     bool complete,
     bool clear_omap,
     ObjectStore::Transaction* t,
-    const std::map<std::string, bufferlist, std::less<>> &attrs,
+    const std::map<std::string, bufferlist, std::less<>> attrs,
     bufferlist omap_header);
   using interruptor = crimson::interruptible::interruptor<
     crimson::osd::IOInterruptCondition>;

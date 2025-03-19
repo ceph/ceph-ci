@@ -814,7 +814,7 @@ ReplicatedRecoveryBackend::handle_pull(Ref<MOSDPGPull> m)
 RecoveryBackend::interruptible_future<bool>
 ReplicatedRecoveryBackend::_handle_pull_response(
   pg_shard_t from,
-  PushOp& push_op,
+  PushOp push_op,
   PullOp* response)
 {
   LOG_PREFIX(ReplicatedRecoveryBackend::handle_pull);
@@ -1143,12 +1143,12 @@ ReplicatedRecoveryBackend::trim_pushed_data(
 
 RecoveryBackend::interruptible_future<hobject_t>
 ReplicatedRecoveryBackend::prep_push_target(
-  const ObjectRecoveryInfo& recovery_info,
+  const ObjectRecoveryInfo recovery_info,
   bool first,
   bool complete,
   bool clear_omap,
   ObjectStore::Transaction* t,
-  const map<string, bufferlist, less<>>& attrs,
+  const map<string, bufferlist, less<>> attrs,
   bufferlist omap_header)
 {
   LOG_PREFIX(ReplicatedRecoveryBackend::prep_push_target);
@@ -1220,7 +1220,7 @@ ReplicatedRecoveryBackend::prep_push_target(
 
 RecoveryBackend::interruptible_future<>
 ReplicatedRecoveryBackend::submit_push_data(
-  const ObjectRecoveryInfo &recovery_info,
+  const ObjectRecoveryInfo recovery_info,
   bool first,
   bool complete,
   bool clear_omap,
@@ -1228,7 +1228,7 @@ ReplicatedRecoveryBackend::submit_push_data(
   interval_set<uint64_t> intervals_included,
   bufferlist data_included,
   bufferlist omap_header,
-  const map<string, bufferlist, less<>> &attrs,
+  const map<string, bufferlist, less<>> attrs,
   map<string, bufferlist> omap_entries,
   ObjectStore::Transaction *t)
 {
