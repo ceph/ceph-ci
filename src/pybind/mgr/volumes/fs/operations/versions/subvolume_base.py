@@ -303,6 +303,15 @@ class SubvolumeBase(object):
             except cephfs.Error as e:
                 raise VolumeException(-e.args[0], e.args[1])
 
+        normalization = attrs.get("normalization")
+        if normalization is not None:
+            if normalization not in ("nfd", "nfc", "nfkd", "nfkc"):
+                raise VolumeException(-errno.EINVAL, "invalid unicode normalization form")
+            try:
+                self.fs.setxattr(path, "ceph.dir.normalization", normalization.encode('utf-8'), 0)
+            except cephfs.Error as e:
+                raise VolumeException(-e.args[0], e.args[1])
+
     def _resize(self, path, newsize, noshrink):
         try:
             newsize = int(newsize)
