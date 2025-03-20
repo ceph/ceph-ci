@@ -137,11 +137,12 @@ public:
 
   void finish_head_waiters();
 
-  void submit_entry(LogEvent *e, MDSLogContextBase* c = 0) {
+  LogSegment::seq_t submit_entry(LogEvent *e, MDSLogContextBase* c = 0) {
     std::lock_guard l(submit_mutex);
-    _submit_entry(e, c);
+    auto seq = _submit_entry(e, c);
     _segment_upkeep();
     submit_cond.notify_all();
+    return seq;
   }
 
   void wait_for_safe(Context* c);
@@ -293,7 +294,7 @@ private:
   void try_to_commit_open_file_table(uint64_t last_seq);
   LogSegmentRef _start_new_segment(SegmentBoundary* sb);
   void _segment_upkeep();
-  void _submit_entry(LogEvent* e, MDSLogContextBase* c);
+  LogSegment::seq_t _submit_entry(LogEvent* e, MDSLogContextBase* c);
 
   void try_expire(LogSegmentRef ls, int op_prio);
   void _maybe_expired(LogSegmentRef ls, int op_prio);
