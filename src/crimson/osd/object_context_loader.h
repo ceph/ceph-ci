@@ -220,6 +220,10 @@ public:
   Manager get_obc_manager(const hobject_t &oid, bool resolve_clone = true) {
     Manager ret(*this, oid);
     ret.options.resolve_clone = resolve_clone;
+    if (!resolve_clone) {
+      auto [obc, _] = obc_registry.get_cached_obc(ret.target);
+      ret.set_state_obc(ret.target_state, obc);
+    }
     return ret;
   }
 
