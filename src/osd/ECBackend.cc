@@ -1588,10 +1588,8 @@ void ECBackend::submit_transaction(
       }
     }
 
-      shard_id_set available_shards;
-      shard_id_set backfill_shards;
-      read_pipeline.get_avail_and_backfill_sets(hoid, available_shards, backfill_shards);
-      ECTransaction::WritePlanObj plan(oid, inner_op, sinfo, available_shards, backfill_shards,
+      std::pair<const shard_id_set, const shard_id_set> shard_pair = read_pipeline.get_readable_writable_shard_id_sets();
+      ECTransaction::WritePlanObj plan(oid, inner_op, sinfo, shard_pair.first, shard_pair.second,
                                        object_in_cache, old_object_size,
                                        oi, soi, std::move(hinfo), std::move(shinfo));
 

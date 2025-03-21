@@ -371,10 +371,8 @@ struct ECCommon {
       bool for_recovery,
       const std::optional<std::set<pg_shard_t>>& error_shards = std::nullopt);
 
-    void get_avail_and_backfill_sets(
-      const hobject_t &hoid,
-      shard_id_set &available,
-      shard_id_set &backfill);
+    const std::pair<const shard_id_set, const shard_id_set>
+    get_readable_writable_shard_id_sets();
 
     friend struct FinishReadOp;
 
