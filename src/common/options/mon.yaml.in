@@ -801,6 +801,15 @@ options:
   services:
   - mon
   with_legacy: true
+- name: mon_auth_allow_insecure_key
+  type: bool
+  level: dev
+  desc:
+  default: false
+  services:
+  - mon
+  flags:
+  - runtime
 - name: mon_auth_validate_all_caps
   type: bool
   level: advanced
