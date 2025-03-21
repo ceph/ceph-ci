@@ -1652,7 +1652,13 @@ void buffer::list::decode_base64(buffer::list& e)
 
 ssize_t buffer::list::pread_file(const char *fn, uint64_t off, uint64_t len, std::string *error)
 {
-  int fd = TEMP_FAILURE_RETRY(::open(fn, O_RDONLY|O_CLOEXEC|O_BINARY));
+  int fd;
+  if (strcmp(fn, "-") == 0) {
+    /* FIXME dup3 for O_CLOEXEC */
+    fd = TEMP_FAILURE_RETRY(::dup(STDIN_FILENO));
+  } else {
+    fd = TEMP_FAILURE_RETRY(::open(fn, O_RDONLY|O_CLOEXEC|O_BINARY));
+  }
   if (fd < 0) {
     int err = errno;
     std::ostringstream oss;
@@ -1712,7 +1718,13 @@ ssize_t buffer::list::pread_file(const char *fn, uint64_t off, uint64_t len, std
 
 int buffer::list::read_file(const char *fn, std::string *error)
 {
-  int fd = TEMP_FAILURE_RETRY(::open(fn, O_RDONLY|O_CLOEXEC|O_BINARY));
+  int fd;
+  if (strcmp(fn, "-") == 0) {
+    /* FIXME dup3 for O_CLOEXEC */
+    fd = TEMP_FAILURE_RETRY(::dup(STDIN_FILENO));
+  } else {
+    fd = TEMP_FAILURE_RETRY(::open(fn, O_RDONLY|O_CLOEXEC|O_BINARY));
+  }
   if (fd < 0) {
     int err = errno;
     std::ostringstream oss;
