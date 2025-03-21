@@ -30,12 +30,18 @@
 
 #include "auth/AuthServiceHandler.h"
 #include "auth/KeyRing.h"
+#include "auth/Crypto.h"
 #include "include/stringify.h"
 #include "include/ceph_assert.h"
 
 #include "mds/MDSAuthCaps.h"
 #include "mgr/MgrCap.h"
 #include "osd/OSDCap.h"
+
+#include <string>
+#include <string_view>
+using namespace std::literals::string_view_literals;
+using namespace std::literals::string_literals;
 
 #define dout_subsys ceph_subsys_mon
 #undef dout_prefix
@@ -1358,6 +1364,22 @@ bool AuthMonitor::valid_caps(const map<string, string>& caps, ostream *out)
   return true;
 }
 
+int AuthMonitor::get_cipher_type(const cmdmap_t& cmdmap, std::ostream& ss) const
+{
+  std::string key_string_type;
+  cmd_getval_or<std::string>(cmdmap, "key_type"sv, key_string_type, "recommended"s);
+  auto key_type = CryptoManager::get_key_type(key_string_type);
+  auto&& secure_key_types = CryptoManager::get_secure_key_types();
+  if (!secure_key_types.contains(key_type)) {
+    if (!cct->_conf.get_val<bool>("mon_auth_allow_insecure_key")) {
+      ss << "creating key with insecure key type (\"" << key_string_type << "\") not allowed";
+      return -EPERM;
+    }
+  }
+  return key_type;
+}
+
+
 bool AuthMonitor::prepare_command(MonOpRequestRef op)
 {
   auto m = op->get_req<MMonCommand>();
@@ -1451,6 +1473,11 @@ bool AuthMonitor::prepare_command(MonOpRequestRef op)
     bufferlist bl = m->get_data();
     bool has_keyring = (bl.length() > 0);
 
+    int key_type = get_cipher_type(cmdmap, ss);
+    if (key_type < 0) {
+      goto done;
+    }
+
     KeyRing new_keyring;
     if (has_keyring) {
       auto iter = bl.cbegin();
@@ -1513,7 +1540,7 @@ bool AuthMonitor::prepare_command(MonOpRequestRef op)
     if (!has_keyring) {
       dout(10) << "AuthMonitor::prepare_command generating random key for "
         << auth_inc.name << dendl;
-      new_inc.key.create(g_ceph_context, CEPH_CRYPTO_AES256KRB5);
+      new_inc.key.create(g_ceph_context, key_type);
     }
     new_inc.caps = encoded_caps;
 
@@ -1619,6 +1646,11 @@ bool AuthMonitor::prepare_command(MonOpRequestRef op)
       goto done;
     }
 
+    int key_type = get_cipher_type(cmdmap, ss);
+    if (key_type < 0) {
+      goto done;
+    }
+
     // do we have it?
     EntityAuth entity_auth;
     if (mon.key_server.get_auth(entity, entity_auth)) {
@@ -1694,6 +1726,11 @@ bool AuthMonitor::prepare_command(MonOpRequestRef op)
     string mon_cap_string = "allow r";
     string mds_cap_string, osd_cap_string;
     string osd_cap_wanted = "r";
+
+    int key_type = get_cipher_type(cmdmap, ss);
+    if (key_type < 0) {
+      goto done;
+    }
 
     const Filesystem* fs = nullptr;
     if (filesystem != "*" && filesystem != "all") {
@@ -1830,6 +1867,11 @@ bool AuthMonitor::prepare_command(MonOpRequestRef op)
     if (entity_name.empty()) {
       ss << "bad entity name";
       err = -EINVAL;
+      goto done;
+    }
+
+    int key_type = get_cipher_type(cmdmap, ss);
+    if (key_type < 0) {
       goto done;
     }
 
