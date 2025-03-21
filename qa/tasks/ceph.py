@@ -355,7 +355,8 @@ def crush_setup(ctx, config):
     profile = config.get('crush_tunables', 'default')
     log.info('Setting crush tunables to %s', profile)
     mon_remote.run(
-        args=['sudo', 'ceph', '--cluster', cluster_name,
+        args=['sudo', 'env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+              'LD_PRELOAD=/lib64/libasan.so.6', 'ceph', '--cluster', cluster_name,
               'osd', 'crush', 'tunables', profile])
     yield
 
@@ -371,6 +372,9 @@ def module_setup(ctx, config):
         m = str(m)
         cmd = [
            'sudo',
+           'env',
+           'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+           'LD_PRELOAD=/lib64/libasan.so.6',
            'ceph',
            '--cluster',
            cluster_name,
@@ -399,6 +403,9 @@ def conf_setup(ctx, config):
             v = str(v)
             cmd = [
                 'sudo',
+                'env',
+                'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                'LD_PRELOAD=/lib64/libasan.so.6',
                 'ceph',
                 '--cluster',
                 cluster_name,
@@ -416,6 +423,9 @@ def conf_setup(ctx, config):
         p.wait()
     cmd = [
         'sudo',
+        'env',
+        'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+        'LD_PRELOAD=/lib64/libasan.so.6',
         'ceph',
         '--cluster',
         cluster_name,
@@ -442,7 +452,8 @@ def check_enable_crimson(ctx, config):
         log.info('check_enable_crimson: setting set-allow-crimson')
         mon_remote.run(
             args=[
-                'sudo', 'ceph', '--cluster', cluster_name,
+                'sudo', 'env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                'LD_PRELOAD=/lib64/libasan.so.6', 'ceph', '--cluster', cluster_name,
                 'osd', 'set-allow-crimson', '--yes-i-really-mean-it'
             ]
         )
@@ -478,10 +489,13 @@ def create_rbd_pool(ctx, config):
     if config.get('create_rbd_pool', True):
         log.info('Creating RBD pool')
         mon_remote.run(
-            args=['sudo', 'ceph', '--cluster', cluster_name,
+            args=['sudo', 'env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                  'LD_PRELOAD=/lib64/libasan.so.6', 'ceph', '--cluster', cluster_name,
                   'osd', 'pool', 'create', 'rbd', '8'])
         mon_remote.run(
-            args=['rbd', '--cluster', cluster_name, 'pool', 'init', 'rbd'])
+            args=['env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                  'LD_PRELOAD=/lib64/libasan.so.6',
+                  'rbd', '--cluster', cluster_name, 'pool', 'init', 'rbd'])
     yield
 
 @contextlib.contextmanager
@@ -637,6 +651,9 @@ def create_simple_monmap(ctx, remote, conf, mons,
         'adjust-ulimits',
         'ceph-coverage',
         '{tdir}/archive/coverage'.format(tdir=testdir),
+        'env',
+        'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+        'LD_PRELOAD=/lib64/libasan.so.6',
         'monmaptool',
         '-c',
         '{conf}'.format(conf=tmp_conf_path),
@@ -791,6 +808,9 @@ def cluster(ctx, config):
             'adjust-ulimits',
             'ceph-coverage',
             coverage_dir,
+            'env',
+            'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+            'LD_PRELOAD=/lib64/libasan.so.6',
             'ceph-authtool',
             '--create-keyring',
             keyring_path,
@@ -802,6 +822,9 @@ def cluster(ctx, config):
             'adjust-ulimits',
             'ceph-coverage',
             coverage_dir,
+            'env',
+            'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+            'LD_PRELOAD=/lib64/libasan.so.6',
             'ceph-authtool',
             '--gen-key',
             '--name=mon.',
@@ -844,6 +867,9 @@ def cluster(ctx, config):
             'adjust-ulimits',
             'ceph-coverage',
             coverage_dir,
+            'env',
+            'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+            'LD_PRELOAD=/lib64/libasan.so.6',
             'ceph-authtool',
             '--gen-key',
             '--name=client.admin',
@@ -888,6 +914,9 @@ def cluster(ctx, config):
                         'adjust-ulimits',
                         'ceph-coverage',
                         coverage_dir,
+                        'env',
+                        'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                        'LD_PRELOAD=/lib64/libasan.so.6',
                         'ceph-authtool',
                         '--create-keyring',
                         '--gen-key',
@@ -915,6 +944,9 @@ def cluster(ctx, config):
                     'adjust-ulimits',
                     'ceph-coverage',
                     coverage_dir,
+                    'env',
+                    'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                    'LD_PRELOAD=/lib64/libasan.so.6',
                     'ceph-authtool',
                     '--create-keyring',
                     '--gen-key',
@@ -1036,6 +1068,9 @@ def cluster(ctx, config):
                         'MALLOC_CHECK_=3',
                         'adjust-ulimits',
                         'ceph-coverage', coverage_dir,
+                        'env',
+                        'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                        'LD_PRELOAD=/lib64/libasan.so.6',
                         'ceph-osd',
                         '--no-mon-config',
                         '--cluster', cluster_name,
@@ -1058,6 +1093,9 @@ def cluster(ctx, config):
                         'adjust-ulimits',
                         'ceph-coverage',
                         coverage_dir,
+                        'env',
+                        'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                        'LD_PRELOAD=/lib64/libasan.so.6',
                         'ceph-osd',
                         '--cluster',
                         cluster_name,
@@ -1122,6 +1160,9 @@ def cluster(ctx, config):
                          'adjust-ulimits',
                          'ceph-coverage',
                          coverage_dir,
+                         'env',
+                         'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                         'LD_PRELOAD=/lib64/libasan.so.6',
                          'ceph-authtool',
                          keyring_path,
                          '--name={type}.{id}'.format(
@@ -1153,6 +1194,9 @@ def cluster(ctx, config):
                     'adjust-ulimits',
                     'ceph-coverage',
                     coverage_dir,
+                    'env',
+                    'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                    'LD_PRELOAD=/lib64/libasan.so.6',
                     'ceph-mon',
                     '--cluster', cluster_name,
                     '--mkfs',
@@ -1438,7 +1482,8 @@ def run_daemon(ctx, config, type_):
         try:
             remote.run(
                 args=[
-                'sudo', 'ceph', '--cluster', cluster_name,
+                    'sudo', 'env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                    'LD_PRELOAD=/lib64/libasan.so.6', 'ceph', '--cluster', cluster_name,
                     'osd', 'new', osd_uuid, id_,
                 ]
             )
@@ -1446,14 +1491,16 @@ def run_daemon(ctx, config, type_):
             # fallback to pre-luminous (jewel)
             remote.run(
                 args=[
-                'sudo', 'ceph', '--cluster', cluster_name,
+                    'sudo', 'env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                    'LD_PRELOAD=/lib64/libasan.so.6', 'ceph', '--cluster', cluster_name,
                     'osd', 'create', osd_uuid,
                 ]
             )
             if config.get('add_osds_to_crush'):
                 remote.run(
                 args=[
-                    'sudo', 'ceph', '--cluster', cluster_name,
+                    'sudo', 'env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                    'LD_PRELOAD=/lib64/libasan.so.6', 'ceph', '--cluster', cluster_name,
                     'osd', 'crush', 'create-or-move', 'osd.' + id_,
                     '1.0', 'host=localhost', 'root=default',
                 ]
@@ -1483,6 +1530,9 @@ def run_daemon(ctx, config, type_):
             if type_ in config.get('cpu_profile', []):
                 profile_path = '/var/log/ceph/profiling-logger/%s.prof' % (role)
                 run_cmd.extend(['env', 'CPUPROFILE=%s' % profile_path])
+                run_cmd.extend(['ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0', 'LD_PRELOAD=/lib64/libasan.so.6'])
+            else:
+                run_cmd.extend(['env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0', 'LD_PRELOAD=/lib64/libasan.so.6'])
 
             vc = config.get('valgrind')
             if vc is not None:
@@ -1519,7 +1569,13 @@ def run_daemon(ctx, config, type_):
         for cmd in config.get('pre-mgr-commands', []):
             firstmon = teuthology.get_first_mon(ctx, config, cluster_name)
             (remote,) = ctx.cluster.only(firstmon).remotes.keys()
-            remote.run(args=cmd.split(' '))
+            split_cmd = cmd.split(' ')
+            prefix = split_cmd[:1]
+            suffix = split_cmd[1:]
+            new_cmd = prefix
+            new_cmd.extend(['env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0', 'LD_PRELOAD=/lib64/libasan.so.6'])
+            new_cmd.extend(suffix)
+            remote.run(args=new_cmd)
 
     try:
         yield
@@ -1580,7 +1636,7 @@ def wait_for_mon_quorum(ctx, config):
     with contextutil.safe_while(sleep=10, tries=60,
                                 action='wait for monitor quorum') as proceed:
         while proceed():
-            quorum_status = remote.sh('sudo ceph quorum_status',
+            quorum_status = remote.sh('sudo env ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0 LD_PRELOAD=/lib64/libasan.so.6 ceph quorum_status',
                                       logger=log.getChild('quorum_status'))
             j = json.loads(quorum_status)
             q = j.get('quorum_names', [])
@@ -2017,6 +2073,9 @@ def task(ctx, config):
             mon0_remote.run(
                 args=[
                     'sudo',
+                    'env',
+                    'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0',
+                    'LD_PRELOAD=/lib64/libasan.so.6',
                     'ceph',
                     '--cluster', config['cluster'],
                     'config', 'set', 'global',
