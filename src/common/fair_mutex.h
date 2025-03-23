@@ -59,6 +59,9 @@ public:
   bool is_locked_by_me() const {
     return is_locked() && locked_by == std::this_thread::get_id();
   }
+  std::thread::id get_locked_by() const {
+    return is_locked() ? locked_by : (std::thread::id)(-1);
+  }
 private:
   void _set_locked_by() {
     locked_by = std::this_thread::get_id();

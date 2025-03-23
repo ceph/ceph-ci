@@ -63,6 +63,9 @@ public:
   operator bool() const {
     return is_locked_by_me();
   }
+  std::thread::id get_locked_by() const {
+    return is_locked() ? locked_by : (std::thread::id)(-1);
+  }
 };
 
 // Since this is a /debugging/ mutex just define it in terms of the
