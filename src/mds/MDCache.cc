@@ -13330,6 +13330,12 @@ int MDCache::dump_cache(std::string_view fn, Formatter *f, double timeout)
   return r;
 }
 
+void C_MDS_RetryRequest::complete(int r)
+{
+  dout(20) << "C_MDS_RetryRequest::complete: mdr:" << *mdr << dendl;
+  MDSInternalContext::complete(r);
+}
+
 void C_MDS_RetryRequest::finish(int r)
 {
   mdr->retry++;

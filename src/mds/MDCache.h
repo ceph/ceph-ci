@@ -1613,6 +1613,8 @@ class C_MDS_RetryRequest : public MDSInternalContext {
  public:
   C_MDS_RetryRequest(MDCache *c, const MDRequestRef& r) :
     MDSInternalContext(c->mds), cache(c), mdr(r) {}
+
+  void complete(int r) override;
   void finish(int r) override;
 };
 
