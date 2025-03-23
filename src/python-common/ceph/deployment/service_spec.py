@@ -1235,7 +1235,11 @@ class RGWSpec(ServiceSpec):
                  rgw_bucket_counters_cache_size: Optional[int] = None,
                  generate_cert: bool = False,
                  disable_multisite_sync_traffic: Optional[bool] = None,
+<<<<<<< HEAD
                  rgw_exit_timeout_secs: int = 120,
+=======
+                 wildcard_enabled: Optional[bool] = False,
+>>>>>>> 3c24753af0bd063bf688f4e279ee1370b4448448
                  ):
         assert service_type == 'rgw', service_type
 
@@ -1290,10 +1294,14 @@ class RGWSpec(ServiceSpec):
         self.generate_cert = generate_cert
         #: Used to make RGW not do multisite replication so it can dedicate to IO
         self.disable_multisite_sync_traffic = disable_multisite_sync_traffic
+<<<<<<< HEAD
         #: Attributes for <zone-name>.rgw.buckets.data pool created in rgw realm bootstrap command
         self.data_pool_attributes = data_pool_attributes
         #: How long the RGW will wait to try and complete client requests when told to shut down
         self.rgw_exit_timeout_secs = rgw_exit_timeout_secs
+=======
+        self.wildcard_enabled = wildcard_enabled
+>>>>>>> 3c24753af0bd063bf688f4e279ee1370b4448448
 
     def get_port_start(self) -> List[int]:
         ports = self.get_port()
