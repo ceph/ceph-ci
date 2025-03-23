@@ -1446,6 +1446,7 @@ env | sort
 mkdir -p %{_vpath_builddir}
 pushd %{_vpath_builddir}
 cmake .. \
+    -DWITH_CEPH_DEBUG_MUTEX=ON \
 %if 0%{?suse_version} == 1500
     -DCMAKE_C_COMPILER=gcc-11 \
     -DCMAKE_CXX_COMPILER=g++-11 \
