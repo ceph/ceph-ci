@@ -111,6 +111,10 @@ private:
     bool remote_synced = false;
     // includes parent dentry purge
     bool purged_or_itype_changed = false;
+    bool is_snapdiff = false;
+
+    SyncEntry() {
+    }
 
     SyncEntry(std::string_view path,
               const struct ceph_statx &stx)
@@ -130,6 +134,7 @@ private:
       : epath(path),
         info(info),
         stx(stx) {
+      is_snapdiff = true;
     }
 
     bool is_directory() const {
@@ -148,6 +153,10 @@ private:
     }
     void set_purged_or_itype_changed() {
       purged_or_itype_changed = true;
+    }
+
+    bool sync_is_snapdiff() const {
+      return is_snapdiff;
     }
   };
 
@@ -214,7 +223,13 @@ private:
                            const std::function<int (uint64_t, struct cblock *)> &callback);
 
     void finish_sync();
+
   private:
+    int init_directory(const SyncEntry &entry, const std::string &epath,
+                       const struct ceph_statx &stx, SyncEntry *se);
+    int next_entry(SyncEntry &entry, std::string *e_name, snapid_t *snapid);
+    void fini_directory(SyncEntry &entry);
+
     std::string m_dir_root;
     std::map<std::string, std::set<std::string>> m_deleted;
   };
