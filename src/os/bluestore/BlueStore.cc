@@ -7896,8 +7896,10 @@ int BlueStore::_open_db_and_around(
   }
 
   if (remove_deferred && !keys_to_remove.empty()) {
+    dout(10) << __func__ << " deferred keys to remove=#" << keys_to_remove.size() << dendl;
     KeyValueDB::Transaction deferred_keys_remove_txn = db->get_transaction();
     for (auto& s : keys_to_remove) {
+      dout(10) << __func__ << " removing key=" << pretty_binary_string(s) << dendl;
       deferred_keys_remove_txn->rmkey(PREFIX_DEFERRED, s);
     }
     db->submit_transaction_sync(deferred_keys_remove_txn);
