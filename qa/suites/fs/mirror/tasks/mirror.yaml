@@ -7,4 +7,5 @@ overrides:
 tasks:
   - cephfs_test_runner:
       modules:
-        - tasks.cephfs.test_mirroring.TestMirroring
+        - tasks.cephfs.test_mirroring.TestMirroring.test_mirroring_init_failure
+        - tasks.cephfs.test_mirroring.TestMirroring.test_mirroring_init_failure_with_recovery
