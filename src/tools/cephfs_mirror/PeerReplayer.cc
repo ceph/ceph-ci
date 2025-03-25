@@ -758,7 +758,7 @@ int PeerReplayer::copy_to_remote(const std::string &dir_root,  const std::string
     ++b;
   }
 
-  if (num_blocks == 0) {
+  if (num_blocks == 0 && r >= 0) { // handle blocklist case
     dout(20) << ": truncating epath=" << epath << " to " << stx.stx_size << " bytes"
              << dendl;
     r = ceph_ftruncate(m_remote_mount, r_fd, stx.stx_size);
