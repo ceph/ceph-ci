@@ -1571,6 +1571,13 @@ public:
 	    ldpp_dout(dpp, 15) << "read_log_and_missing  missing " << *i << dendl;
 	    if (debug_verify_stored_missing) {
 	      auto miter = missing.get_items().find(i->soid);
+              if (miter != missing.get_items().end()) {
+                ldpp_dout(dpp, 15) << "Found missing entry: need=" << miter->second.need
+                                << " vs expected " << i->version
+                                << ", have=" << miter->second.have << " vs expected " << eversion_t() << dendl;
+              } else {
+                ldpp_dout(dpp, 15) << "Missing entry not found in missing.get_items()" << dendl;
+              }
 	      if (i->is_delete()) {
 		ceph_assert(miter == missing.get_items().end() ||
 		       (miter->second.need == i->version &&
