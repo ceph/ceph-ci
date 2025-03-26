@@ -17280,6 +17280,10 @@ void Client::set_cap_epoch_barrier(epoch_t e)
   cap_epoch_barrier = e;
 }
 
+void Client::get_perf_counters(struct perf_counters *pc) {
+  logger->get_unlabeled_perf_counters(pc);
+}
+
 const char** Client::get_tracked_conf_keys() const
 {
 #define KEYS \
