@@ -4872,7 +4872,7 @@ void RGWPostObj::execute(optional_yield y)
       cksum_filter =
 	rgw::putobj::RGWPutObj_Cksum::Factory(
                filter, *s->info.env, rgw::cksum::Type::none /* no override */,
-	       rgw::cksum::Cksum::FLAG_NONE);
+	       rgw::cksum::Cksum::FLAG_CKSUM_NONE);
     } catch (const rgw::io::Exception& e) {
       op_ret = -e.code().value();
       return;
@@ -6825,7 +6825,7 @@ try_sum_part_cksums(const DoutPrefixProvider *dpp,
   armored_cksum = [&]() -> std::string {
     std::string armor = out_cksum->to_armor();
     if (out_cksum->composite()) {
-      armor += std::format("-{}", num_parts);
+      armor += fmt::format("-{}", num_parts);
     }
     return armor;
   }();
