@@ -50,7 +50,7 @@ struct simple_event_t : sc::event<T> {
   }
 };
 
-template <typename T, has_formatter V>
+template <typename T, fmt::formattable V>
 struct value_event_t : sc::event<T> {
   const V value;
 
