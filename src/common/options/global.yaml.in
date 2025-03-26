@@ -2279,7 +2279,8 @@ options:
   type: float
   level: advanced
   default: 72_hr
-  with_legacy: true
+  flags:
+  - runtime
 - name: auth_service_ticket_ttl
   type: float
   level: advanced
@@ -2287,7 +2288,8 @@ options:
   fmt_desc: When the Ceph Storage Cluster sends a Ceph Client a ticket for
    authentication, the Ceph Storage Cluster assigns the ticket a
    time to live.
-  with_legacy: true
+  flags:
+  - runtime
 - name: auth_allow_insecure_global_id_reclaim
   type: bool
   level: advanced
