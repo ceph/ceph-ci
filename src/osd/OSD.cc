@@ -5024,7 +5024,7 @@ int OSD::read_superblock()
     r_omap = -ENOENT;
   }
   int r_disk = store->read(service.meta_ch, OSD_SUPERBLOCK_GOBJECT, 0, 0, bl);
-  ceph_assert(r_disk == 0);
+  ceph_assert(r_disk >= 0);
   if (r_disk >= 0) {
     try {
       auto p = bl.cbegin();
