@@ -106,6 +106,11 @@ namespace rgw { namespace cksum {
     static constexpr uint16_t FLAG_FULL_OBJECT =    0x0004;
     static constexpr uint16_t FLAG_COMBINED =       0x0008;
 
+    static constexpr uint16_t COMPOSITE_MASK =
+      (FLAG_COMBINED|FLAG_COMPOSITE);
+    static constexpr uint16_t FULL_OBJECT_MASK =
+      (FLAG_COMBINED|FLAG_FULL_OBJECT);
+
     Type type;
     value_type digest;
     uint16_t flags;
@@ -165,9 +170,7 @@ namespace rgw { namespace cksum {
        * invariant: FLAG_COMPOSITE is a property of /combined checksums/;
        * it propogates through encode/decode, but we expect only
        * logical combination/Combiner to set it */
-      return (flags
-	      & FLAG_COMBINED
-	      & FLAG_COMPOSITE);
+      return ((flags & COMPOSITE_MASK) == COMPOSITE_MASK);
     }
 
     std::string aws_name() const {

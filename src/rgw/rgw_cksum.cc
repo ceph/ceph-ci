@@ -13,6 +13,7 @@
  *
  */
 
+#include "rgw_cksum.h"
 #include "rgw_cksum_digest.h"
 #include <cstdint>
 #include <memory>
@@ -109,8 +110,7 @@ namespace rgw::cksum {
     }
     virtual Cksum final() {
       auto cksum = finalize_digest(digest, get_type());
-      cksum.flags |= (Cksum::FLAG_COMBINED|
-		      Cksum::FLAG_COMPOSITE);
+      cksum.flags |= Cksum::COMPOSITE_MASK;
       return cksum;
     }
   }; /* Digest */
@@ -137,8 +137,7 @@ namespace rgw::cksum {
       }
     }
     virtual Cksum final() {
-      cksum.flags |= (Cksum::FLAG_COMBINED|
-		      Cksum::FLAG_FULL_OBJECT);
+      cksum.flags |= Cksum::FULL_OBJECT_MASK;
       return cksum;
     }
   }; /* CRCCombine */

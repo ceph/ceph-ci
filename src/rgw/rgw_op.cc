@@ -6994,17 +6994,24 @@ void RGWCompleteMultipart::execute(optional_yield y)
      * [1] https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity.html
      */
 
-    if (! (supplied_cksum.empty()) &&
-	(supplied_cksum != armored_cksum)) {
-      auto parts_suffix = fmt::format("-{}", parts->parts.size());
-      auto suffix_len = armored_cksum->size() - parts_suffix.size();
-      if (armored_cksum->compare(0, suffix_len, supplied_cksum) != 0) {
-	ldpp_dout_fmt(this, 4,
-		      "{} content checksum mismatch"
-		      "\n\tcalculated={} != \n\texpected={}",
-		      hdr_cksum.header_name(), armored_cksum, supplied_cksum);
-	op_ret = -ERR_BAD_DIGEST;
-	return;
+    if (! supplied_cksum.empty()) {
+      const std::string_view acm = *armored_cksum;
+      const std::string_view scm = supplied_cksum;
+      if (scm != acm) {
+        auto c_len = acm.length();
+        if (cksum->composite()) {
+          auto parts_suffix = fmt::format("-{}", parts->parts.size());
+          c_len -= parts_suffix.length();
+        }
+        auto c_res = scm.compare(0, c_len, acm, 0, c_len);
+        if (c_res != 0) {
+          ldpp_dout_fmt(this, 4,
+                        "{} content checksum mismatch"
+                        "\n\tcalculated={} != \n\texpected={}",
+                        hdr_cksum.header_name(), armored_cksum, supplied_cksum);
+          op_ret = -ERR_BAD_DIGEST;
+          return;
+        }
       }
     }
 
