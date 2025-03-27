@@ -14954,6 +14954,10 @@ void BlueStore::_kv_start()
 void BlueStore::_kv_stop()
 {
   dout(10) << __func__ << dendl;
+  if (db_was_opened_read_only) {
+    dout(10) << __func__ << " kv not started" << dendl;
+    return;
+  }
   {
     std::unique_lock l{kv_lock};
     while (!kv_sync_started) {
