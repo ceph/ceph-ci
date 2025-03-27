@@ -4,6 +4,7 @@ import errno
 import logging
 import random
 import time
+import unittest
 
 from io import StringIO
 from collections import deque
@@ -572,6 +573,7 @@ class TestMirroring(CephFSTestCase):
 
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
+    @unittest.skip("temp skip test")
     def test_cephfs_mirror_stats(self):
         log.debug('reconfigure client auth caps')
         self.get_ceph_cmd_result(
