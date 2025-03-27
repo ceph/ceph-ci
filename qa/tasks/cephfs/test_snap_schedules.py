@@ -665,6 +665,7 @@ class TestSnapSchedulesSubvolAndGroupArguments(TestSnapSchedulesHelper):
 
         self._verify_snap_schedule(self.CREATE_VERSION, 'sv01', None)
         path = self._get_subvol_snapdir_path(self.CREATE_VERSION, 'sv01', None)
+        self.fs_snap_schedule_cmd('deactivate', '--subvol', 'sv01', path='.', fs='cephfs')
         self.remove_snapshots(path, self.mount_a.get_snap_dir_name())
 
         self.fs_snap_schedule_cmd('remove', '--subvol', 'sv01', path='.', snap_schedule='1m')
