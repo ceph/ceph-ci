@@ -729,7 +729,13 @@ static uint32_t crc32_netstring(const uint32_t orig_crc, std::string_view data)
   // only in debug builds.
   ceph::bufferlist bl;
   bl.append(data);
-  ceph_assert(crc = bl.crc32c(orig_crc));
+  ceph::bufferlist bl_encoded;
+  encode(bl, bl_encoded);
+  ceph_assert(bl_encoded.crc32c(orig_crc) == crc);
+  // also as string view -- for the sake of keys
+  ceph::bufferlist sv_encoded;
+  encode(data, sv_encoded);
+  ceph_assert(sv_encoded.crc32c(orig_crc) == crc);
 #endif
   return crc;
 }
