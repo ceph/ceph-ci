@@ -1690,6 +1690,7 @@ class CephManager:
                            stdout=StringIO(),
                            check_status=kwargs.get('check_status', True))
         else:
+            prefixcmd += ['env', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0,alloc_dealloc_mismatch=0', 'LD_PRELOAD=/lib64/libasan.so.6']
             kwargs['args'] = prefixcmd + self.get_ceph_cmd(**kwargs) + kwargs['args']
             return self.controller.run(**kwargs)
 
