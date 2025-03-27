@@ -4571,11 +4571,6 @@ void RGWCompleteMultipart_ObjStore_S3::send_response()
     set_req_state_err(s, op_ret);
   dump_errno(s);
   dump_header_if_nonempty(s, "x-amz-version-id", version_id);
-  if (cksum) {
-    auto cksum_type
-      = rgw::cksum::get_checksum_type(*cksum, true /* is_multipart */);
-    dump_header(s, "x-amz-checksum-type", std::get<1>(cksum_type));
-   }
   end_header(s, this, to_mime_type(s->format));
   if (op_ret == 0) {
     dump_start(s);
@@ -4600,7 +4595,10 @@ void RGWCompleteMultipart_ObjStore_S3::send_response()
     s->formatter->dump_string("Key", s->object->get_name());
     s->formatter->dump_string("ETag", etag);
     if (armored_cksum) [[likely]] {
+      auto cksum_type
+	= rgw::cksum::get_checksum_type(*cksum, true /* is_multipart */);
       s->formatter->dump_string(cksum->element_name(), *armored_cksum);
+      s->formatter->dump_string("ChecksumType", std::get<1>(cksum_type));
     }
     s->formatter->close_section();
     rgw_flush_formatter_and_reset(s, s->formatter);
