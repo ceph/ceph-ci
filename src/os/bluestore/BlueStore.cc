@@ -9279,7 +9279,7 @@ int BlueStore::mount_readonly()
     }
   });
 
-  _kv_start();
+  //_kv_start();
   auto stop_kv = make_scope_guard([&] {
     if (!mounted) {
       _kv_stop();
