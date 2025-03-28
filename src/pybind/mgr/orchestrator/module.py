@@ -2588,18 +2588,18 @@ Usage:
         actions = raise_if_exception(completion)
         if not actions:
             return HandleCommandResult(stdout="No scheduled actions")
-            
+
         table = PrettyTable(
             ['HOST', 'DAEMON', 'ACTION', 'FORCED'],
             border=False)
         table.align = 'l'
         table.left_padding_width = 0
         table.right_padding_width = 2
-        
+
         for host, daemon_name, action, is_forced in actions:
             forced = 'Yes' if is_forced else 'No'
             table.add_row([host, daemon_name, action, forced])
-            
+
         if format == Format.plain:
             return HandleCommandResult(stdout=table.get_string())
         else:

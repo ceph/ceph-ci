@@ -499,7 +499,7 @@ class TestCephadm(object):
             with with_service(cephadm_module, ServiceSpec(service_type='grafana'), CephadmOrchestrator.apply_grafana, 'test') as d_names:
                 [daemon_name] = d_names
 
-                cephadm_module._schedule_daemon_action(daemon_name, action,force=True)
+                cephadm_module._schedule_daemon_action(daemon_name, action, force=True)
 
                 assert cephadm_module.cache.get_scheduled_daemon_action(
                     'test', daemon_name) == action
