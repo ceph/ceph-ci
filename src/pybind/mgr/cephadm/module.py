@@ -4188,7 +4188,7 @@ Then run the following:
         count = 0
         daemons = self.cache.get_daemons_by_service(service_name)
         daemon_names = [d.name() for d in daemons]
-        
+
         for host, host_daemons in list(self.cache.scheduled_daemon_actions.items()):
             for daemon_name in list(host_daemons.keys()):
                 if daemon_name in daemon_names:
@@ -4196,7 +4196,7 @@ Then run the following:
                     self.cache.clear_force_action(host, daemon_name)
                     self.cache.save_host(host)
                     count += 1
-        
+
         if count == 0:
             return f"No scheduled actions found for service {service_name}"
         return f"Canceled {count} scheduled action(s) for service {service_name}"
@@ -4211,7 +4211,7 @@ Then run the following:
             self.cache.save_host(host)
             return True
         return False
-        
+
     @handle_orch_error
     def force_daemon_action(self, daemon_name: str, force: bool = True) -> bool:
         """
