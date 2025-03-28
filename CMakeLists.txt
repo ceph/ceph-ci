@@ -439,46 +439,6 @@ set(ALLOCATOR "" CACHE STRING
   "specify memory allocator to use. currently tcmalloc, tcmalloc_minimal, \
 jemalloc, and libc is supported. if not specified, will try to find tcmalloc, \
 and then jemalloc. If neither of then is found. use the one in libc.")
-if(ALLOCATOR)
-  if(${ALLOCATOR} MATCHES "tcmalloc(_minimal)?")
-    find_package(gperftools 2.6.2 REQUIRED)
-    set(ALLOC_LIBS gperftools::${ALLOCATOR})
-    set(HAVE_LIBTCMALLOC ON)
-  elseif(${ALLOCATOR} STREQUAL "jemalloc")
-    find_package(JeMalloc REQUIRED)
-    set(ALLOC_LIBS JeMalloc::JeMalloc)
-    set(HAVE_JEMALLOC 1)
-  elseif(NOT ALLOCATOR STREQUAL "libc")
-    message(FATAL_ERROR "Unsupported allocator selected: ${ALLOCATOR}")
-  endif()
-else(ALLOCATOR)
-  find_package(gperftools 2.6.2)
-  set(HAVE_LIBTCMALLOC ${gperftools_FOUND})
-  if(NOT gperftools_FOUND)
-    find_package(JeMalloc)
-  endif()
-  if(gperftools_FOUND)
-    set(ALLOCATOR tcmalloc)
-    set(ALLOC_LIBS gperftools::tcmalloc)
-  elseif(JeMalloc_FOUND)
-    set(ALLOCATOR jemalloc)
-    set(ALLOC_LIBS JeMalloc::JeMalloc)
-  else()
-    if(NOT FREEBSD)
-      # FreeBSD already has jemalloc as its default allocator
-      message(WARNING "tcmalloc and jemalloc not found, falling back to libc")
-    endif()
-    set(ALLOCATOR "libc")
-  endif(gperftools_FOUND)
-endif(ALLOCATOR)
-if(NOT ALLOCATOR STREQUAL "libc")
-  add_compile_options(
-    $<$<COMPILE_LANGUAGE:CXX>:-fno-builtin-malloc>
-    $<$<COMPILE_LANGUAGE:CXX>:-fno-builtin-calloc>
-    $<$<COMPILE_LANGUAGE:CXX>:-fno-builtin-realloc>
-    $<$<COMPILE_LANGUAGE:CXX>:-fno-builtin-free>)
-endif()
-message(STATUS "allocator selected: ${ALLOCATOR}")
 
 # Mingw generates incorrect entry points when using "-pie".
 if(WIN32 OR (HAVE_LIBTCMALLOC AND WITH_STATIC_LIBSTDCXX))
