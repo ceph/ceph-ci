@@ -2617,7 +2617,7 @@ Usage:
                 )
             )
 
-    @_cli_write_command('orch cancel action')
+    @_cli_write_command('orch daemon cancel action')
     def _cancel_action(self, daemon_name: str) -> HandleCommandResult:
         """
         Cancel a scheduled daemon action
@@ -2628,7 +2628,7 @@ Usage:
             return HandleCommandResult(stderr=f"No scheduled action found for daemon {daemon_name}")
         return HandleCommandResult(stdout=f"Canceled scheduled action for daemon {daemon_name}")
 
-    @_cli_write_command('orch cancel service')
+    @_cli_write_command('orch service cancel action')
     def _cancel_service_actions(self, service_name: str) -> HandleCommandResult:
         """
         Cancel all scheduled actions for a service
@@ -2637,14 +2637,24 @@ Usage:
         result = raise_if_exception(completion)
         return HandleCommandResult(stdout=result)
 
-    @_cli_write_command('orch action set-forced')
-    def _force_action(self, daemon_name: str, force: bool = True) -> HandleCommandResult:
+    @_cli_write_command('orch daemon action set-forced')
+    def _set_force_action(self, daemon_name: str) -> HandleCommandResult:
         """
-        Force a scheduled daemon action
+        Set the force flag for a scheduled daemon action
         """
-        completion = self.force_daemon_action(daemon_name, force)
+        completion = self.force_daemon_action(daemon_name, True)
         result = raise_if_exception(completion)
         if not result:
             return HandleCommandResult(stderr=f"No scheduled action found for daemon {daemon_name}")
-        force_status = "forced" if force else "not forced"
-        return HandleCommandResult(stdout=f"Action for daemon {daemon_name} is now {force_status}")
+        return HandleCommandResult(stdout=f"Action for daemon {daemon_name} is now forced")
+
+    @_cli_write_command('orch daemon action unset-forced')
+    def _unset_force_action(self, daemon_name: str) -> HandleCommandResult:
+        """
+        Unset the force flag for a scheduled daemon action
+        """
+        completion = self.force_daemon_action(daemon_name, False)
+        result = raise_if_exception(completion)
+        if not result:
+            return HandleCommandResult(stderr=f"No scheduled action found for daemon {daemon_name}")
+        return HandleCommandResult(stdout=f"Action for daemon {daemon_name} is now not forced")
