@@ -7,6 +7,7 @@
 #include <seastar/core/future.hh>
 #include <seastar/core/weak_ptr.hh>
 #include "crimson/common/intrusive_timer.h"
+#include "messages/MOSDPGPCT.h"
 #include "include/buffer_fwd.h"
 #include "osd/osd_types.h"
 
@@ -93,4 +94,7 @@ private:
   /// Cancel pct timer if scheduled
   void cancel_pct_update();
 
+public:
+  /// Handle MOSDPGPCT message
+  void do_pct(const MOSDPGPCT &m);
 };

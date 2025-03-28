@@ -323,3 +323,8 @@ void ReplicatedBackend::cancel_pct_update()
 {
   shard_services.cancel_pg_callback(pct_callback);
 }
+
+void ReplicatedBackend::do_pct(const MOSDPGPCT &m)
+{
+  pg.peering_state.update_pct(m.pg_committed_to);
+}
