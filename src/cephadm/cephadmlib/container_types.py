@@ -136,6 +136,7 @@ class BasicContainer:
         if self.envs:
             for env in self.envs:
                 envs.extend(['-e', env])
+        envs.extend(['-e', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0,alloc_dealloc_mismatch=0', '-e', 'LD_PRELOAD=/lib64/libasan.so.6'])
 
         vols: List[str] = []
         vols = sum(
@@ -160,7 +161,6 @@ class BasicContainer:
     def build_run_cmd(self) -> List[str]:
         return (
             [self._container_engine, 'run']
-            + ['-e', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0,alloc_dealloc_mismatch=0', '-e', 'LD_PRELOAD=/lib64/libasan.so.6']
             + self.build_engine_run_args()
             + [self.image]
             + list(self.args)
@@ -380,6 +380,7 @@ class CephContainer(BasicContainer):
         if self.envs:
             for env in self.envs:
                 envs.extend(['-e', env])
+        envs.extend(['-e', 'ASAN_OPTIONS=detect_leaks=0,detect_odr_violation=0,alloc_dealloc_mismatch=0', '-e', 'LD_PRELOAD=/lib64/libasan.so.6'])
 
         vols = sum(
             [
