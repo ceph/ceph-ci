@@ -1315,9 +1315,10 @@ void PG::log_operation(
 void PG::replica_clear_repop_obc(
   const std::vector<pg_log_entry_t> &logv) {
   LOG_PREFIX(PG::replica_clear_repop_obc);
-  DEBUGDPP("clearing obc for {} log entries", logv.size());
+  DEBUGDPP("clearing obc for {} log entries", *this, logv.size());
   for (auto &&e: logv) {
     DEBUGDPP("clearing entry for {} from: {} to: {}",
+	     *this,
 	     e.soid,
 	     e.soid.get_object_boundary(),
 	     e.soid.get_head());
@@ -1457,6 +1458,7 @@ seastar::future<> PG::stop()
   cancel_remote_recovery_reservation();
   check_readable_timer.cancel();
   renew_lease_timer.cancel();
+  backend->on_actingset_changed(false);
   return osdmap_gate.stop().then([this] {
     return wait_for_active_blocker.stop();
   }).then([this] {
