@@ -1605,7 +1605,7 @@ class HostCache():
         assert not daemon.startswith('ha-rgw.')
 
         return self.scheduled_daemon_actions.get(host, {}).get(daemon)
-        
+
     def get_all_scheduled_actions(self) -> List[Tuple[str, str, str]]:
         """Get all scheduled actions as a list of (host, daemon_name, action)"""
         result = []
@@ -1617,12 +1617,12 @@ class HostCache():
     def set_force_action(self, host: str, daemon_name: str, force: bool = True) -> None:
         """
         Mark a daemon action as forced.
-        
+
         This is used to track when an action has been explicitly forced by the user,
         allowing the system to override normal safeguards.
         """
         assert not daemon_name.startswith('ha-rgw.')
-        
+
         if host not in self.force_actions:
             self.force_actions[host] = {}
         self.force_actions[host][daemon_name] = force
@@ -1630,18 +1630,18 @@ class HostCache():
     def is_force_action(self, host: str, daemon_name: str) -> bool:
         """
         Check if an action for the specified daemon is marked as forced.
-        
+
         Returns:
             bool: True if the action is forced, False otherwise
         """
         assert not daemon_name.startswith('ha-rgw.')
-        
+
         return self.force_actions.get(host, {}).get(daemon_name, False)
-        
+
     def clear_force_action(self, host: str, daemon_name: str) -> bool:
         """
         Clear the force flag for a daemon action.
-        
+
         Returns:
             bool: True if a force flag was cleared, False otherwise
         """
@@ -1653,8 +1653,6 @@ class HostCache():
             if not self.force_actions[host]:
                 del self.force_actions[host]
         return found
-
-
 
 
 class NodeProxyCache:

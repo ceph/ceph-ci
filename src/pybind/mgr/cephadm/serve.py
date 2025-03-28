@@ -1169,7 +1169,7 @@ class CephadmServe:
                     action = 'redeploy'
 
                 is_force = self.mgr.cache.is_force_action(dd.hostname, dd.name())
-                if not is_force and action in ['restart','stop','redeploy']:
+                if not is_force and action in ['restart', 'stop', 'redeploy']:
                     r = service_registry.get_service(daemon_type_to_service(
                         dd.daemon_type)).ok_to_stop([dd.daemon_id])
                     if r.retval:
