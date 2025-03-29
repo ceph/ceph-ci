@@ -4,6 +4,8 @@
 
 #include <memory>
 
+#include <boost/intrusive_ptr.hpp>
+
 namespace crimson::admin {
 
 class AdminSocketHook;
@@ -24,6 +26,6 @@ class DumpSlowestHistoricOpsHook;
 class DumpRecoveryReservationsHook;
 
 template<class Hook, class... Args>
-std::unique_ptr<AdminSocketHook> make_asok_hook(Args&&... args);
+boost::intrusive_ptr<AdminSocketHook> make_asok_hook(Args&&... args);
 
 }  // namespace crimson::admin
