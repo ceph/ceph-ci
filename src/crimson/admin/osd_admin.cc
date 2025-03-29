@@ -262,10 +262,11 @@ template boost::intrusive_ptr<AdminSocketHook> make_asok_hook<DumpPGStateHistory
 class DumpPerfCountersHook final: public AdminSocketHook {
 public:
   explicit DumpPerfCountersHook() :
-    AdminSocketHook{"perfcounters_dump",
-                    "name=logger,type=CephString,req=false "
-                    "name=counter,type=CephString,req=false",
-                    "dump perfcounters in osd and store"}
+    AdminSocketHook{
+      std::vector<std::string_view>{"perfcounters_dump", "perf dump"},
+      "name=logger,type=CephString,req=false "
+      "name=counter,type=CephString,req=false",
+      "dump perfcounters in osd and store"}
   {}
   seastar::future<tell_result_t> call(const cmdmap_t& cmdmap,
                                       std::string_view format,
