@@ -393,6 +393,7 @@ public:
       out << *i << ',';
     out << '}'
 	<< ")";
+    out << " nref:" << get_nref();
   }
 private:
   template<class T, typename... Args>

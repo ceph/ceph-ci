@@ -295,6 +295,8 @@ Server::Server(MDSRank *m, MetricsHandler *metrics_handler) :
 
 void Server::dispatch(const cref_t<Message> &m)
 {
+  dout(20) << "nref:" << m->get_nref() << dendl;
+
   switch (m->get_type()) {
   case CEPH_MSG_CLIENT_RECONNECT:
     handle_client_reconnect(ref_cast<MClientReconnect>(m));
