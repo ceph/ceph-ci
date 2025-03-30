@@ -292,7 +292,7 @@ int NVMeofGwMap::process_gw_map_gw_down(
       fsm_handle_gw_down(
 	gw_id, group_key, state_itr.second,
 	state_itr.first, propose_pending);
-      state_itr.second = gw_states_per_group_t::GW_STANDBY_STATE;
+      //state_itr.second = gw_states_per_group_t::GW_STANDBY_STATE;
     }
     propose_pending = true; // map should reflect that gw becames Unavailable
     if (propose_pending) validate_gw_map(group_key);
@@ -627,10 +627,10 @@ void NVMeofGwMap::fsm_handle_gw_alive(
 	       << " Ana-grp: " << grpid
 	       << " timer:" << timer_val << dendl;
       // Failover Gw still alive and guaranteed that
-      gw_state.active_state(grpid);
+    //  gw_state.active_state(grpid);
       // ana group wouldnt be taken back  during blocklist wait period
-      cancel_timer(gw_id, group_key, grpid);
-      map_modified = true;
+    //  cancel_timer(gw_id, group_key, grpid);
+    //  map_modified = true;
     } else {
       dout(20) << "osd epoch not changed from "
 	       <<  gw_map.blocklist_data[grpid].osd_epoch
@@ -711,7 +711,7 @@ void NVMeofGwMap::fsm_handle_gw_down(
 
   case gw_states_per_group_t::GW_WAIT_BLOCKLIST_CMPL:
   {
-    cancel_timer(gw_id, group_key, grpid);
+  //  cancel_timer(gw_id, group_key, grpid);
     map_modified = true;
   }
   break;
@@ -853,8 +853,8 @@ void NVMeofGwMap::fsm_handle_to_expired(
 	    << "from GW, Force exit the GW " << gw_id
 	    << " ANA groupId: "<< grpid << dendl;
     fbp_gw_state.set_unavailable_state();
-    fbp_gw_state.sm_state[grpid] = gw_states_per_group_t::GW_STANDBY_STATE;
-    cancel_timer(gw_id, group_key, grpid);
+    //fbp_gw_state.sm_state[grpid] = gw_states_per_group_t::GW_STANDBY_STATE;
+    //cancel_timer(gw_id, group_key, grpid);
     map_modified = true;
   }
   if (map_modified) validate_gw_map(group_key);
