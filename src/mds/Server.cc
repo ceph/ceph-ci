@@ -3723,21 +3723,26 @@ struct C_MDS_TryOpenInode : public ServerContext {
   C_MDS_TryOpenInode(Server *s, const MDRequestRef& r, inodeno_t i) :
     ServerContext(s), mdr(r), ino(i) {}
   void finish(int r) override {
+    auto mds = get_mds();
+    dout(10) << __func__ << " " << *mdr << "; ino " << ino << " r=" << r << dendl;
     server->_try_open_ino(mdr, r, ino);
   }
 };
 
 void Server::_try_open_ino(const MDRequestRef& mdr, int r, inodeno_t ino)
 {
-  dout(10) << "_try_open_ino " << mdr.get() << " ino " << ino << " r=" << r << dendl;
+  dout(10) << "_try_open_ino " << *mdr << "; ino " << ino << " r=" << r << dendl;
 
   // `r` is a rank if >=0, else an error code
   if (r >= 0) {
     mds_rank_t dest_rank(r);
-    if (dest_rank == mds->get_nodeid())
+    if (dest_rank == mds->get_nodeid()) {
+      dout(10) << "_try_open_ino dispatching client request " << *mdr << "; ino " << ino << " r=" << r << dendl;
       dispatch_client_request(mdr);
-    else
+    } else {
+      dout(10) << "_try_open_ino forwarding request " << *mdr << "; ino " << ino << " r=" << r << dendl;
       mdcache->request_forward(mdr, dest_rank);
+    }
     return;
   }
 
