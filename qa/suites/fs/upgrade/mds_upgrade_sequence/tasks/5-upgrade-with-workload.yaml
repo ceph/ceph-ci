@@ -5,6 +5,8 @@ tasks:
 
 upgrade-tasks:
   sequential:
+    - install.upgrade:
+        all:
     - cephadm.shell:
         env: [sha1]
         host.a:
