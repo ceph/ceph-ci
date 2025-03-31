@@ -14,6 +14,7 @@ class AssertAlwaysHook;
 class DumpMetricsHook;
 class DumpPGStateHistory;
 class DumpPerfCountersHook;
+class ResetPerfCountersHook;
 class FlushPgStatsHook;
 class InjectDataErrorHook;
 class InjectMDataErrorHook;

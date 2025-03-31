@@ -287,7 +287,38 @@ public:
 };
 template boost::intrusive_ptr<AdminSocketHook> make_asok_hook<DumpPerfCountersHook>();
 
-
+// reset the contents of perfcounters in osd and store
+class ResetPerfCountersHook final: public AdminSocketHook {
+public:
+  explicit ResetPerfCountersHook() :
+    AdminSocketHook{
+      "perf reset",
+      "name=to_reset,type=CephString",
+      "perf reset <to_reset>: perf reset all or one perfcounter name"}
+  {}
+  seastar::future<tell_result_t> call(const cmdmap_t& cmdmap,
+                                      std::string_view format,
+                                      ceph::bufferlist&& input) const final
+  {
+    std::unique_ptr<Formatter> f{Formatter::create(format,
+                                                   "json-pretty",
+                                                   "json-pretty")};
+    std::string to_reset;
+    f->open_object_section("perf reset");
+    if (!cmd_getval(cmdmap, "to_reset", to_reset)) {
+      f->dump_string("error", "syntax error: 'perf reset <to_reset>'");
+    } else {
+      if (!crimson::common::local_perf_coll().reset(to_reset)) {
+        f->dump_stream("error") << "counter not found: " << to_reset;
+      } else {
+	f->dump_stream("success") <<  "perf reset " << to_reset;
+      }
+    }
+    f->close_section();
+    return seastar::make_ready_future<tell_result_t>(std::move(f));
+  }
+};
+template boost::intrusive_ptr<AdminSocketHook> make_asok_hook<ResetPerfCountersHook>();
 
 /**
  * A CephContext admin hook: calling assert (if allowed by
