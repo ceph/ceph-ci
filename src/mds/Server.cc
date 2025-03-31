@@ -2735,6 +2735,9 @@ void Server::dispatch_client_request(const MDRequestRef& mdr)
 
   dout(7) << "dispatch_client_request " << *req << dendl;
 
+  // debug
+  const_cast<MClientRequest*>(req.get())->node_id = mds->get_nodeid();
+
   auto zeroms = std::chrono::milliseconds::zero();
   if (unlikely(dispatch_client_request_delay > zeroms)) {
     std::this_thread::sleep_for(dispatch_client_request_delay);

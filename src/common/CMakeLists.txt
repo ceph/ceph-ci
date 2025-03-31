@@ -105,7 +105,8 @@ set(common_srcs
   utf8.c
   util.cc
   version.cc
-  tcp_info.cc)
+  tcp_info.cc
+  ${CMAKE_SOURCE_DIR}/src/messages/MClientRequest.cc)
 
 if(WITH_SYSTEMD)
   list(APPEND common_srcs

@@ -34,6 +34,7 @@
  */
 
 #include <string_view>
+#include <atomic>
 
 #include "include/filepath.h"
 #include "mds/mdstypes.h"
@@ -79,6 +80,7 @@ WRITE_CLASS_ENCODER(SnapPayload)
 
 class MClientRequest final : public MMDSOp {
 private:
+  static std::atomic<int> counter;
   static constexpr int HEAD_VERSION = 6;
   static constexpr int COMPAT_VERSION = 1;
 
@@ -140,15 +142,22 @@ public:
   /* XXX HACK */
   mutable bool queued_for_replay = false;
 
+  // for debug
+  mds_rank_t node_id = 0;
+  int	     id = 0;
+
 protected:
   // cons
-  MClientRequest()
+  MClientRequest();
+  /*
     : MMDSOp(CEPH_MSG_CLIENT_REQUEST, HEAD_VERSION, COMPAT_VERSION) {
     memset(&head, 0, sizeof(head));
     head.owner_uid = -1;
     head.owner_gid = -1;
   }
-  MClientRequest(int op, feature_bitset_t features = 0)
+  */
+  MClientRequest(int op, feature_bitset_t features = 0);
+  /*
     : MMDSOp(CEPH_MSG_CLIENT_REQUEST, HEAD_VERSION, COMPAT_VERSION) {
     memset(&head, 0, sizeof(head));
     head.op = op;
@@ -156,7 +165,8 @@ protected:
     head.owner_uid = -1;
     head.owner_gid = -1;
   }
-  ~MClientRequest() final {}
+  */
+  ~MClientRequest() final;
 
 public:
   void set_mdsmap_epoch(epoch_t e) { head.mdsmap_epoch = e; }
@@ -252,7 +262,9 @@ public:
   void mark_queued_for_replay() const { queued_for_replay = true; }
   bool is_queued_for_replay() const { return queued_for_replay; }
 
-  void decode_payload() override {
+  void decode_payload() override;
+  #if 0
+  {
     using ceph::decode;
     auto p = payload.cbegin();
 
@@ -296,8 +308,11 @@ public:
       decode(fscrypt_file, p);
     }
   }
+  #endif
 
-  void encode_payload(uint64_t features) override {
+  void encode_payload(uint64_t features) override;
+  #if 0
+  {
     using ceph::encode;
     head.num_releases = releases.size();
     /*
@@ -332,9 +347,10 @@ public:
     encode(fscrypt_auth, payload);
     encode(fscrypt_file, payload);
   }
+  #endif
 
-  std::string_view get_type_name() const override { return "creq"; }
-  void print(std::ostream& out) const override {
+  std::string_view get_type_name() const override; /* { return "creq"; } */
+  void print(std::ostream& out) const override; /* {
     out << "client_request(" << get_orig_source()
 	<< ":" << get_tid()
 	<< " " << ceph_mds_op_name(get_op());
@@ -395,6 +411,7 @@ public:
 	<< ")";
     out << " nref:" << get_nref();
   }
+  */
 private:
   template<class T, typename... Args>
   friend boost::intrusive_ptr<T> ceph::make_message(Args&&... args);
