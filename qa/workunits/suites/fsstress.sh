@@ -13,5 +13,5 @@ popd
 popd
 
 T=$(mktemp -d -p .)
-"$BIN" -d "$T" -l 1 -n 1000 -p 10 -v
+ASAN_OPTIONS="$ASAN_OPTIONS,allocator_may_return_null=1" "$BIN" -d "$T" -l 1 -n 1000 -p 10 -v
 rm -rf -- "$T"
