@@ -1464,9 +1464,11 @@ int MDSRank::send_message_mds(const ref_t<Message>& m, const entity_addrvec_t &a
 
 void MDSRank::forward_message_mds(const MDRequestRef& mdr, mds_rank_t mds)
 {
+  dout(1) << __func__ << " before release_client_request - mdr:" << mdr << dendl;
   ceph_assert(mds != whoami);
 
   auto m = mdr->release_client_request();
+  dout(1) << __func__ << " after release_client_request - mdr:" << mdr << dendl;
 
   /*
    * don't actually forward if non-idempotent!
