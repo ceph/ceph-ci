@@ -27,6 +27,11 @@ void PerfCountersCollection::dump_formatted(ceph::Formatter *f, bool schema,
   perf_collection->dump_formatted(f, schema, dump_labeled, logger, counter);
 }
 
+bool PerfCountersCollection::reset(const std::string &to_reset)
+{
+  return perf_collection->reset(to_reset);
+}
+
 PerfCountersCollection::ShardedPerfCountersCollection PerfCountersCollection::sharded_perf_coll;
 
 void PerfCountersDeleter::operator()(PerfCounters* p) noexcept

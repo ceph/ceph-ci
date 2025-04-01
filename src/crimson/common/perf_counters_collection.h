@@ -27,6 +27,7 @@ public:
                       select_labeled_t dump_labeled,
                       const std::string &logger = "",
                       const std::string &counter = "");
+  bool reset(const std::string &to_reset);
 };
 
 inline PerfCountersCollection::ShardedPerfCountersCollection& sharded_perf_coll(){
