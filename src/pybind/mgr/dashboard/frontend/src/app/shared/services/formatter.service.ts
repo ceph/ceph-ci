@@ -168,10 +168,10 @@ export class FormatterService {
       const bytes = new FormatterService().toBytes(control.value);
       return bytes < 1024 ? errorObject : null;
     }
-    // For all bandwidth values:  minimum  32KiB Maximum. 100Gbps
+    // For all bandwidth values: minimum 128KiB, maximum 100GiB
     if (type == 'nfsRateLimit') {
       const bytes = new FormatterService().toBytes(control.value);
-      return bytes < 1024 * 32 || bytes > 100 * (1024 * 1024 * 1024) ? errorObject : null;
+      return bytes < 1024 * 128 || bytes > 100 * (1024 * 1024 * 1024) ? errorObject : null;
     }
     return null;
   }
