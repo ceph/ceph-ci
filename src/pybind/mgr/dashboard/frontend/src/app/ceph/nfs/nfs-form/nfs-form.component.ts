@@ -34,6 +34,10 @@ import { CephfsSubvolumeGroupService } from '~/app/shared/api/cephfs-subvolume-g
 import { RgwUserService } from '~/app/shared/api/rgw-user.service';
 import { RgwExportType } from '../nfs-list/nfs-list.component';
 import { DEFAULT_SUBVOLUME_GROUP } from '~/app/shared/constants/cephfs.constant';
+import { NfsRateLimitComponent } from '../nfs-rate-limit/nfs-rate-limit.component';
+import { NotificationType } from '~/app/shared/enum/notification-type.enum';
+import { NotificationService } from '~/app/shared/services/notification.service';
+import { NFSBwIopConfig, RateLimitType } from '../models/nfs-cluster-config';
 
 @Component({
   selector: 'cd-nfs-form',
@@ -69,7 +73,8 @@ export class NfsFormComponent extends CdForm implements OnInit {
 
   action: string;
   resource: string;
-
+  bandwidthObj: NFSBwIopConfig;
+  bandwidthIopsObj: NFSBwIopConfig;
   allsubvolgrps: any[] = [];
   allsubvols: any[] = [];
 
@@ -598,11 +603,13 @@ export class NfsFormComponent extends CdForm implements OnInit {
       return of([]);
     }
   }
+  childCompErrorHandler(event: Event) {
+    this.nfsForm.addControl('rateLimit', event);
+  }
 
   submitAction() {
     let action: Observable<any>;
     const requestModel = this.buildRequest();
-
     if (this.isEdit) {
       action = this.taskWrapper.wrapTaskAroundCall({
         task: new FinishedTask('nfs/edit', {
@@ -625,8 +632,68 @@ export class NfsFormComponent extends CdForm implements OnInit {
 
     action.subscribe({
       error: (errorResponse: CdHttpErrorResponse) => this.setFormErrors(errorResponse),
-      complete: () => this.router.navigate([`/${getPathfromFsal(this.storageBackend)}/nfs`])
+      complete: () => {
+        this.bandwidthObj = this.nfsRateLimitComponent?.getRateLimitFormValue();
+        this.bandwidthIopsObj = this.nfsRateLimitComponent?.getRateLimitOpsFormValue();
+        if (
+          this.bandwidthObj &&
+          this.clusterAllConfig?.enable_bw_control === this.bandwidthObj?.enable_qos
+        ) {
+          this.submitRateLimit(RateLimitType.Bandwidth);
+        }
+        if (
+          this.bandwidthIopsObj &&
+          this.clusterAllConfig?.enable_iops_control === this.bandwidthIopsObj?.enable_ops
+        ) {
+          this.submitRateLimit(RateLimitType.Iops);
+        }
+        this.router.navigate([`/${getPathfromFsal(this.storageBackend)}/nfs`]);
+      }
     });
+  }
+
+  submitRateLimit(type: RateLimitType) {
+    const notificationTitle = $localize`Update Rate Limit For Export`;
+    const cluster_id = this.nfsForm.getValue('cluster_id');
+
+    let rateLimitObj: NFSBwIopConfig;
+    let serviceCall: Observable<any>;
+
+    if (type === RateLimitType.Bandwidth) {
+      rateLimitObj = {
+        ...this.bandwidthObj,
+        pseudo_path: this.nfsForm.getValue('pseudo'),
+        disable_qos: !this.bandwidthObj.enable_qos,
+        cluster_id
+      };
+      delete rateLimitObj.enable_qos;
+      delete rateLimitObj.qos_type;
+
+      serviceCall = this.nfsService.enableQosForExports(rateLimitObj);
+    } else if (type === RateLimitType.Iops) {
+      rateLimitObj = {
+        ...this.bandwidthIopsObj,
+        pseudo_path: this.nfsForm.getValue('pseudo'),
+        disable_qos_ops: !this.bandwidthIopsObj.enable_ops,
+        cluster_id
+      };
+      delete rateLimitObj.enable_ops;
+      delete rateLimitObj.qos_type;
+
+      serviceCall = this.nfsService.enableQosOpsForExports(rateLimitObj);
+    }
+    serviceCall.subscribe({
+      error: () => this.handleSubmitError(),
+      complete: () => this.handleSubmitComplete(notificationTitle)
+    });
+  }
+
+  private handleSubmitError() {
+    this.nfsForm.setErrors({ cdSubmitButton: true });
+  }
+
+  private handleSubmitComplete(notificationTitle: string) {
+    this.notificationService.show(NotificationType.success, notificationTitle);
   }
 
   private setFormErrors(errorResponse: CdHttpErrorResponse) {
@@ -733,5 +800,11 @@ export class NfsFormComponent extends CdForm implements OnInit {
         catchError(() => of({ pathNameNotAllowed: true }))
       );
     };
+  }
+
+  registerClusterIdChange(value: string) {
+    this.nfsService.getClusterBandwidthOpsConfig(value).subscribe((clusterData: NFSBwIopConfig) => {
+      this.clusterAllConfig = clusterData;
+    });
   }
 }
