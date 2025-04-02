@@ -103,17 +103,35 @@ void OpHistory::cleanup(utime_t now)
   while (arrived.size() &&
 	 (now - arrived.begin()->first >
 	  (double)(history_duration.load()))) {
+    dout(1) << "1. erasing from duration("
+	    << arrived.begin()->second->get_duration()
+	    << ", "
+	    << arrived.begin()->second.get()
+	    << ")"
+	    << dendl;
     duration.erase(make_pair(
 	arrived.begin()->second->get_duration(),
 	arrived.begin()->second));
+    dout(1) << "1. erased from duration" << dendl;
+    dout(1) << "1. erasing from arrived" << dendl;
     arrived.erase(arrived.begin());
+    dout(1) << "1. erased from arrived" << dendl;
   }
 
   while (duration.size() > history_size.load()) {
+    dout(1) << "2. erasing from arrived" << dendl;
     arrived.erase(make_pair(
 	duration.begin()->second->get_initiated(),
 	duration.begin()->second));
+    dout(1) << "2. erased from arrived" << dendl;
+    dout(1) << "2. erasing from duration("
+	    << duration.begin()->second->get_initiated()
+	    << ", "
+	    << duration.begin()->second.get()
+	    << ")"
+	    << dendl;
     duration.erase(duration.begin());
+    dout(1) << "2. erased from duration" << dendl;
   }
 
   while (slow_op.size() > history_slow_op_size.load()) {
