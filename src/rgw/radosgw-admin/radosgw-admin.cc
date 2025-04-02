@@ -1258,7 +1258,8 @@ public:
     : driver(_s), pool(pool) {}
   ~StoreDestructor() {
     driver->shutdown();
-    pool->finish();
+    // pool->finish();
+    pool->stop(); // Temporary workaround for D4N tasks running in the background
     DriverManager::close_storage(driver);
     rgw_http_client_cleanup();
   }

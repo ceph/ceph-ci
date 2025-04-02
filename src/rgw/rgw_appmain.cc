@@ -603,7 +603,8 @@ void rgw::AppMain::shutdown(std::function<void(void)> finalize_async_signals)
   env.driver->shutdown();
   // Do this before closing storage so requests don't try to call into
   // closed storage.
-  context_pool->finish();
+  // context_pool->finish();
+  context_pool->stop(); // Temporary workaround for D4N tasks running in the background
 
   cfgstore.reset(); // deletes
   DriverManager::close_storage(env.driver);
