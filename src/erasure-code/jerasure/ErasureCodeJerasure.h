@@ -59,7 +59,6 @@ public:
     return flags;
   }
 
-  
   unsigned int get_chunk_count() const override {
     return k + m;
   }
