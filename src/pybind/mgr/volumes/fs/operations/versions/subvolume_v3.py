@@ -154,11 +154,7 @@ class SubvolumeV3(SubvolumeV2):
     def create_or_update_meta_file(self, subvol_type):
         super(SubvolumeV3, self).create_or_update_meta_file(subvol_type)
 
-        try:
-            self.fs.symlink(basename(self.meta), self.current_meta)
-        except cephfs.ObjectExists:
-            x = self.fs.readlink(self.current_meta, PATH_MAX)
-            assert basename(self.meta) == x
+        self.fs.symlink(basename(self.meta), self.current_meta)
 
     def _create(self, mode, attrs, subvol_type, auth=True):
         self._create_v3_layout(mode)
@@ -219,7 +215,16 @@ class SubvolumeV3(SubvolumeV2):
     def remove(self, retainsnaps=False, internal_cleanup=False):
         super(SubvolumeV3, self).remove(retainsnaps, internal_cleanup)
 
+        # if entire subvol dir was deleted, and not just incarnation dir, then
+        # .meta file was also deleted along and therefore skipping unlinking/
+        # re-linking it and return.
+        try:
+            self.fs.stat(self.subvol_dir)
+        except cephfs.ObjectNotFound:
+            return
+
         self.fs.unlink(self.current_meta)
+        self.fs.symlink('dummy', self.current_meta)
 
     # TODO: base dir should be deleted in subvol v3 too when no snaps are
     # retained on any incarnation, right?
