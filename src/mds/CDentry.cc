@@ -771,6 +771,12 @@ bool CDentry::check_corruption(bool load)
   auto&& snapclient = dir->mdcache->mds->snapclient;
   auto next_snap = snapclient->get_last_seq()+1;
   if (first > last || (snapclient->is_synced() && first > next_snap)) {
+    dout(20) << "first:" << first
+	     << ", last:" << last
+	     << ", is_synced:" << snapclient->is_synced()
+	     << ", next_snap:" << next_snap
+	     << ", global_newest_seq:" << linkage.get_inode()->mdcache->get_global_snaprealm()->get_newest_seq()
+	     << dendl;
     if (load) {
       dout(1) << "loaded already corrupt dentry: " << *this << dendl;
       corrupt_first_loaded = true;
