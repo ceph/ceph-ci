@@ -234,9 +234,21 @@ int NVMeofGwMap::do_delete_gw(
 void  NVMeofGwMap::gw_performed_startup(const NvmeGwId &gw_id,
       const NvmeGroupKey& group_key, bool &propose_pending)
 {
+  std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
   dout(4) << "GW  performed the full startup " << gw_id << dendl;
   propose_pending = true;
   increment_gw_epoch( group_key);
+  //auto& gws_states = created_gws[group_key];auto  gw_state = gws_states.find(gw_id);auto& st = gw_state->second;
+  auto &st = created_gws[group_key][gw_id];
+  const auto skip_failovers = g_conf().get_val<std::chrono::seconds>
+    ("mon_nvmeofgw_skip_failovers_interval");
+  const auto beacon_grace =
+    g_conf().get_val<std::chrono::seconds>("mon_nvmeofgw_beacon_grace");
+  if((now - (st.last_gw_down_ts - beacon_grace)) < skip_failovers){
+    skip_failovers_for_group(group_key);
+    dout(4) << "startup:set skip-failovers for group " << gw_id << " group "
+	 << group_key << dendl;
+  }
 }
 
 void NVMeofGwMap::increment_gw_epoch(const NvmeGroupKey& group_key)
@@ -332,6 +344,7 @@ int NVMeofGwMap::process_gw_map_gw_down(
     dout(10) << "GW down " << gw_id << dendl;
     auto& st = gw_state->second;
     st.set_unavailable_state();
+    st.set_last_gw_down_ts();
     for (auto& state_itr: created_gws[group_key][gw_id].sm_state) {
       fsm_handle_gw_down(
 	gw_id, group_key, state_itr.second,
