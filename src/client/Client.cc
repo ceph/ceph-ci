@@ -12127,6 +12127,7 @@ int Client::WriteEncMgr::init()
 int Client::WriteEncMgr::read_async(uint64_t off, uint64_t len, bufferlist *bl,
                                      iofinish_method_ctx<WriteEncMgr> *ioctx)
 {
+  ldout(cct, 10) << __func__ << dendl;
   get();
 
   if (off >= in->size) {
@@ -12147,7 +12148,11 @@ int Client::WriteEncMgr::read_async(uint64_t off, uint64_t len, bufferlist *bl,
 
 int Client::WriteEncMgr::read_modify_write(Context *_iofinish)
 {
-  iofinish = _iofinish;
+  get();
+  iofinish = new LambdaContext([this, _iofinish](int r) {
+    this->put();
+    _iofinish->complete(r);
+  });
 
   if (!denc) {
     return do_write();
@@ -12235,6 +12240,7 @@ done:
 void Client::WriteEncMgr::finish_read_start(int r)
 {
   ceph_assert(ceph_mutex_is_locked_by_me(clnt->client_lock));
+  ldout(cct, 10) << __func__ << dendl;
 
   if (r >= 0) {
     std::lock_guard l{lock};
@@ -12272,6 +12278,7 @@ void Client::WriteEncMgr::finish_read_start(int r)
 void Client::WriteEncMgr::finish_read_end(int r)
 {
   ceph_assert(ceph_mutex_is_locked_by_me(clnt->client_lock));
+  ldout(cct, 10) << __func__ << dendl;
 
   if (r >= 0) {
     std::lock_guard l{lock};
@@ -12289,6 +12296,7 @@ void Client::WriteEncMgr::finish_read_end(int r)
 bool Client::WriteEncMgr::do_try_finish(int r)
 {
   ceph_assert(ceph_mutex_is_locked_by_me(clnt->client_lock));
+  ldout(cct, 10) << __func__ << dendl;
 
   if (!aioc.is_complete()) {
     return false;
@@ -12312,7 +12320,6 @@ bool Client::WriteEncMgr::do_try_finish(int r)
   update_write_params();
 
   r = do_write();
-
   return true;
 }
 
@@ -12325,6 +12332,7 @@ void Client::WriteEncMgr_Buffered::update_write_params()
 
 int Client::WriteEncMgr_Buffered::do_write()
 {
+  ldout(cct, 10) << __func__ << dendl;
   int r =  0;
 
   // do buffered write
@@ -12347,6 +12355,7 @@ int Client::WriteEncMgr_Buffered::do_write()
 
 int Client::WriteEncMgr_NotBuffered::do_write()
 {
+  ldout(cct, 10) << __func__ << dendl;
   clnt->get_cap_ref(in, CEPH_CAP_FILE_BUFFER);
 
   clnt->filer->write_trunc(in->ino, &in->layout, in->snaprealm->get_snap_context(),
@@ -12471,12 +12480,12 @@ int64_t Client::_write(Fh *f, int64_t offset, uint64_t size, const char *buf,
 
   if (buffered_write) {
     enc_mgr = ceph::make_ref<WriteEncMgr_Buffered>(this, f,
-                                           offset, size, bl,
-                                           !!onfinish);
+						   offset, size, bl,
+						   !!onfinish);
   } else {
     enc_mgr = ceph::make_ref<WriteEncMgr_NotBuffered>(this, f,
-                                           offset, size, bl,
-                                           !!onfinish);
+						      offset, size, bl,
+						      !!onfinish);
   }
 
 
@@ -12486,6 +12495,8 @@ int64_t Client::_write(Fh *f, int64_t offset, uint64_t size, const char *buf,
     put_cap_ref(in, CEPH_CAP_FILE_WR);
     return r;
   }
+
+  ldout(cct, 10) << __func__ << ": enc_mgr=" << enc_mgr << dendl;
 
   ldout(cct, 10) << " snaprealm " << *in->snaprealm << dendl;
 
