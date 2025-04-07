@@ -1173,7 +1173,7 @@ class CephadmServe:
                     r = service_registry.get_service(daemon_type_to_service(
                         dd.daemon_type)).ok_to_stop([dd.daemon_id])
                     if r.retval:
-                        self.log.exception(r.stderr)
+                        self.log.warning(r.stderr)
                         continue
                 try:
                     daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(dd)
