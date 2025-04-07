@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import json
+import os
 
 from .. import mgr
 from ..controllers.rbd_mirroring import get_daemons_and_pools
@@ -116,7 +117,7 @@ class Summary(BaseController):
             'have_mon_connection': mgr.have_mon_connection(),
             'executing_tasks': executing_tasks,
             'finished_tasks': finished_tasks,
-            'version': mgr.version
+            'version': f"{mgr.version} release {os.getenv('DOWNSTREAM_VERSION', '')}"
         }
         if self._has_permissions(Permission.READ, Scope.RBD_MIRRORING):
             result['rbd_mirroring'] = self._rbd_mirroring()

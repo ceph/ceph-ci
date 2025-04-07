@@ -12,4 +12,5 @@ export class Summary {
   rbd_mirroring?: any;
   rbd_pools?: any[];
   version?: string;
+  release?: string;
 }

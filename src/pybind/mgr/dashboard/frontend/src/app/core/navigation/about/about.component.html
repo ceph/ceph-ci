@@ -3,7 +3,7 @@
            (overlaySelected)="closeModal()">
   <cds-modal-header (closeSelect)="closeModal()">
     <div class="header-content">
-      <img src="assets/Ceph_Ceph_Logo_with_text_red_white.svg"
+      <img src="assets/StorageCeph_dark_theme.svg"
            class="ceph-logo"
            alt="{{ projectConstants.organization }}">
     <h3 class="modal-title">
@@ -16,17 +16,12 @@
              modal-primary-focus>
     <div class="modal-body" >
       <div class="product-versions">
-        <strong i18n>Version</strong>
-        <br>
-        {{ versionNumber }}
-        {{ versionHash }}
-        <br>
-        {{ versionName }}
+        <strong>Release</strong> {{ release }}
       </div>
-
       <br>
-
       <dl>
+        <dt i18n>Version</dt>
+        <dd>{{ version }}</dd>
         <dt i18n>Ceph Manager</dt>
         <dd>{{ hostAddr }}</dd>
         <dt i18n>User</dt>

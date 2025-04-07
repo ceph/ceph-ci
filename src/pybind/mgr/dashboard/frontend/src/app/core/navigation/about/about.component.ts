@@ -3,8 +3,9 @@ import { BaseModal } from 'carbon-components-angular';
 import { detect } from 'detect-browser';
 import { Subscription } from 'rxjs';
 import { UserService } from '~/app/shared/api/user.service';
-import { AppConstants, USER, VERSION_PREFIX } from '~/app/shared/constants/app.constants';
+import { AppConstants, USER } from '~/app/shared/constants/app.constants';
 import { LocalStorage } from '~/app/shared/enum/local-storage-enum';
+import { getVersionAndRelease } from '~/app/shared/helpers/utils';
 import { Permission } from '~/app/shared/models/permissions';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
 import { SummaryService } from '~/app/shared/services/summary.service';
@@ -16,14 +17,13 @@ import { SummaryService } from '~/app/shared/services/summary.service';
 })
 export class AboutComponent extends BaseModal implements OnInit, OnDestroy {
   modalVariables: any;
-  versionNumber: string;
-  versionHash: string;
-  versionName: string;
   subs: Subscription;
   userPermission: Permission;
   projectConstants: typeof AppConstants;
   hostAddr: string;
   copyright: string;
+  version: string;
+  release: string;
 
   constructor(
     private summaryService: SummaryService,
@@ -39,11 +39,10 @@ export class AboutComponent extends BaseModal implements OnInit, OnDestroy {
     this.hostAddr = window.location.hostname;
     this.modalVariables = this.setVariables();
     this.subs = this.summaryService.subscribe((summary) => {
-      const version = summary.version.replace(`${VERSION_PREFIX} `, '').split(' ');
+      const {release, version} = getVersionAndRelease(summary.version);
+      this.release = release;
+      this.version = version.split(' ')[0];
       this.hostAddr = summary.mgr_host.replace(/(^\w+:|^)\/\//, '').replace(/\/$/, '');
-      this.versionNumber = version[0];
-      this.versionHash = version[1];
-      this.versionName = version.slice(2, version.length).join(' ');
     });
   }
 
@@ -52,7 +51,6 @@ export class AboutComponent extends BaseModal implements OnInit, OnDestroy {
   }
 
   setVariables() {
-    const NOT_AVAILABLE = $localize`Not available`;
     const project = {} as any;
     project.user = localStorage.getItem(LocalStorage.DASHBOARD_USRENAME);
     project.role = USER;
@@ -62,9 +60,9 @@ export class AboutComponent extends BaseModal implements OnInit, OnDestroy {
       });
     }
     const browser = detect();
-    project.browserName = browser && browser.name ? browser.name : NOT_AVAILABLE;
-    project.browserVersion = browser && browser.version ? browser.version : NOT_AVAILABLE;
-    project.browserOS = browser && browser.os ? browser.os : NOT_AVAILABLE;
+    project.browserName = browser && browser.name ? browser.name : 'Not detected';
+    project.browserVersion = browser && browser.version ? browser.version : 'Not detected';
+    project.browserOS = browser && browser.os ? browser.os : 'Not detected';
     return project;
   }
 }
