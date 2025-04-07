@@ -4158,12 +4158,11 @@ Then run the following:
         Returns:
             List of tuples containing (host, daemon_name, action, is_forced)
         """
-        actions = []
-        for host, daemons in self.cache.scheduled_daemon_actions.items():
-            for daemon_name, action in daemons.items():
-                is_forced = self.cache.is_force_action(host, daemon_name)
-                actions.append((host, daemon_name, action, is_forced))
-        return actions
+        result = []
+        for host, daemon_name, action in self.cache.get_all_scheduled_actions():
+            is_forced = self.cache.is_force_action(host, daemon_name)
+            result.append((host, daemon_name, action, is_forced))
+        return result
 
     @handle_orch_error
     def cancel_daemon_action(self, daemon_name: str) -> bool:
