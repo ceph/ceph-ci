@@ -1654,14 +1654,12 @@ class HostCache():
             bool: True if a force flag was cleared, False otherwise
         """
         found = False
-        if host in self.force_actions:
-            if daemon_name in self.force_actions[host]:
-                del self.force_actions[host][daemon_name]
-                found = True
+        if host in self.force_actions and daemon_name in self.force_actions[host]:
+            del self.force_actions[host][daemon_name]
+            found = True
             if not self.force_actions[host]:
                 del self.force_actions[host]
         return found
-
 
 class NodeProxyCache:
     def __init__(self, mgr: 'CephadmOrchestrator') -> None:
