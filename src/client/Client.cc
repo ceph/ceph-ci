@@ -12151,7 +12151,9 @@ int Client::WriteEncMgr::read_modify_write(Context *_iofinish)
   get();
   iofinish = new LambdaContext([this, _iofinish](int r) {
     this->put();
-    _iofinish->complete(r);
+    if(_iofinish) {
+      _iofinish->complete(r);
+    }
   });
 
   if (!denc) {
