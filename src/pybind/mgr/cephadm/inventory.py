@@ -1614,18 +1614,26 @@ class HostCache():
                 result.append((host, daemon_name, action))
         return result
 
-    def set_force_action(self, host: str, daemon_name: str, force: bool = True) -> None:
+    def set_force_action(self, host: str, daemon_name: str, force: bool = True) -> bool:
         """
-        Mark a daemon action as forced.
+        Set or clear the force flag for a daemon action.
 
         This is used to track when an action has been explicitly forced by the user,
         allowing the system to override normal safeguards.
         """
         assert not daemon_name.startswith('ha-rgw.')
 
-        if host not in self.force_actions:
-            self.force_actions[host] = {}
-        self.force_actions[host][daemon_name] = force
+        if force:
+            if host not in self.force_actions:
+                self.force_actions[host] = {}
+                self.force_actions[host][daemon_name] = True
+                return True
+            elif daemon_name not in self.force_actions[host]:
+                self.force_actions[host][daemon_name] = True
+                return True
+            return False
+        else:
+            return self.clear_force_action(host, daemon_name)
 
     def is_force_action(self, host: str, daemon_name: str) -> bool:
         """
