@@ -1624,6 +1624,8 @@ class HostCache():
         assert not daemon_name.startswith('ha-rgw.')
 
         if force:
+            if self.get_scheduled_daemon_action(host, daemon_name) is None:
+                return False  # Cannot set force flag if no scheduled action exists
             if host not in self.force_actions:
                 self.force_actions[host] = {}
                 self.force_actions[host][daemon_name] = True
