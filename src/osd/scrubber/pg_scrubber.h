@@ -914,6 +914,9 @@ class PgScrubber : public ScrubPgIF,
   /// stats update interval while not scrubbing
   md_config_cacher_t<int64_t> osd_stats_update_period_not_scrubbing;
 
+  /// the coefficient used when randomizing deep scrubs
+  md_config_cacher_t<double> osd_deep_scrub_interval_cv;
+
   // ------------ members used if we are a replica
 
   epoch_t m_replica_min_epoch;	///< the min epoch needed to handle this message
