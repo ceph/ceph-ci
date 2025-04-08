@@ -711,7 +711,7 @@ Scrub::sched_conf_t PgScrubber::populate_config_params() const
       std::max(configs.max_shallow.value_or(0.0), configs.deep_interval);
 
   configs.interval_randomize_ratio = conf->osd_scrub_interval_randomize_ratio;
-  configs.deep_randomize_ratio = conf.get_val<double>("osd_deep_scrub_interval_cv");
+  configs.deep_randomize_ratio = *osd_deep_scrub_interval_cv;
   configs.mandatory_on_invalid = conf->osd_scrub_invalid_stats;
 
   dout(15) << fmt::format("{}: updated config:{}", __func__, configs) << dendl;
@@ -2507,6 +2507,8 @@ PgScrubber::PgScrubber(PG* pg)
 	m_osds->cct->_conf, "osd_stats_update_period_scrubbing"}
     , osd_stats_update_period_not_scrubbing{
 	m_osds->cct->_conf, "osd_stats_update_period_not_scrubbing"}
+    , osd_deep_scrub_interval_cv{
+	m_osds->cct->_conf, "osd_deep_scrub_interval_cv"}
     , preemption_data{pg}
 {
   m_fsm = std::make_unique<ScrubMachine>(m_pg, this);
