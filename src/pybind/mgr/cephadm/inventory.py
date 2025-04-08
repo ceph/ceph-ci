@@ -1628,7 +1628,7 @@ class HostCache():
                 self.force_actions[host] = {}
                 self.force_actions[host][daemon_name] = True
                 return True
-            elif daemon_name not in self.force_actions[host]:
+            elif daemon_name not in self.force_actions[host] or not self.force_actions[host][daemon_name]:
                 self.force_actions[host][daemon_name] = True
                 return True
             return False
