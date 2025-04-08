@@ -4170,7 +4170,7 @@ Then run the following:
         Cancel a scheduled daemon action
         """
         found = False
-        for host, daemons in self.cache.scheduled_daemon_actions.items():
+        for host, daemons, action in self.cache.get_all_scheduled_actions():
             if daemon_name in daemons:
                 self.cache.rm_scheduled_daemon_action(host, daemon_name)
                 self.cache.clear_force_action(host, daemon_name)
@@ -4188,13 +4188,12 @@ Then run the following:
         daemons = self.cache.get_daemons_by_service(service_name)
         daemon_names = [d.name() for d in daemons]
 
-        for host, host_daemons in list(self.cache.scheduled_daemon_actions.items()):
-            for daemon_name in list(host_daemons.keys()):
-                if daemon_name in daemon_names:
-                    self.cache.rm_scheduled_daemon_action(host, daemon_name)
-                    self.cache.clear_force_action(host, daemon_name)
-                    self.cache.save_host(host)
-                    count += 1
+        for host, daemon_name, action in self.cache.get_all_scheduled_actions():
+            if daemon_name in daemon_names:
+                self.cache.rm_scheduled_daemon_action(host, daemon_name)
+                self.cache.clear_force_action(host, daemon_name)
+                self.cache.save_host(host)
+                count += 1
 
         if count == 0:
             return f"No scheduled actions found for service {service_name}"
@@ -4217,10 +4216,10 @@ Then run the following:
         Mark a daemon action as forced or not forced
         """
         found = False
-        for host, daemons in self.cache.scheduled_daemon_actions.items():
-            if daemon_name in daemons:
-                self.cache.set_force_action(host, daemon_name, force)
-                self.cache.save_host(host)
-                found = True
-                break
+        for host, daemon, action in self.cache.get_all_scheduled_actions():
+            if daemon_name == daemon:
+                if self.cache.set_force_action(host, daemon_name, force):
+                    self.cache.save_host(host)
+                    found = True
+                return found
         return found
