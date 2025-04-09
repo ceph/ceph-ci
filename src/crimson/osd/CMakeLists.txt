@@ -79,3 +79,4 @@ install(TARGETS crimson-osd DESTINATION bin)
 if(WITH_TESTS)
   add_dependencies(tests crimson-osd)
 endif()
+
