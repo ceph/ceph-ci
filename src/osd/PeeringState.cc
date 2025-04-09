@@ -6694,22 +6694,29 @@ boost::statechart::result PeeringState::ReplicaActive::react(const MLogRec& loge
   MOSDPGLog *msg = logevt.msg.get();
   ObjectStore::Transaction &t = context<PeeringMachine>().get_cur_transaction();
   if (msg->info.partial_writes_last_complete.contains(ps->pg_whoami.shard)) {
-    // Check if last_complete and last_update can be advanced based on knowledge of partial_writes
-    const auto & [fromversion, toversion] = msg->info.partial_writes_last_complete[ps->pg_whoami.shard];
+    // Check if last_complete and last_update can be advanced based on
+    // knowledge of partial_writes
+    const auto & [fromversion, toversion] =
+      msg->info.partial_writes_last_complete[ps->pg_whoami.shard];
     if (toversion > ps->info.last_complete) {
       if (fromversion <= ps->info.last_complete) {
-	psdout(0) << "BILLMLOGREC2 we have last_complete " << ps->info.last_complete << " but pwlc from " << logevt.from << " says its at " << toversion << dendl;
+	psdout(10) << "last_complete " << ps->info.last_complete
+		   << " but pwlc from " << logevt.from
+		   << " is at " << toversion << dendl;
 	ps->info.last_complete = toversion;
 	if (toversion > ps->info.last_update) {
 	  ps->info.last_update = toversion;
 	}
-	// Need to do this to avoid an assert in merge log
+	// Advance head to avoid an assert in merge log
 	if (msg->log.tail > ps->pg_log.get_head()) {
-	  psdout(0) << "BILLMLOGREC2 partial writes advancing log head from " << ps->pg_log.get_head() << " to " << toversion << dendl;
+	  psdout(10) << "pwlc advancing log head from "
+		    << ps->pg_log.get_head() << " to " << toversion << dendl;
 	  ps->pg_log.set_head(toversion);
 	}
       } else {
-	psdout(0) << "BILLMLOCREC2 we have last_complete " << ps->info.last_complete << " cannot apply pwlc from " << fromversion << " to " << toversion << dendl;
+	psdout(10) << "last_complete " << ps->info.last_complete
+		   << " cannot apply pwlc from "
+		   << fromversion << " to " << toversion << dendl;
       }
     }
   }
@@ -6828,22 +6835,30 @@ boost::statechart::result PeeringState::Stray::react(const MLogRec& logevt)
     ps->pg_log.reset_backfill();
   } else {
     if (msg->info.partial_writes_last_complete.contains(ps->pg_whoami.shard)) {
-      // Check if last_complete and last_update can be advanced based on knowledge of partial_writes
-      const auto & [fromversion, toversion] = msg->info.partial_writes_last_complete[ps->pg_whoami.shard];
+      // Check if last_complete and last_update can be advanced based on
+      // knowledge of partial_writes
+      const auto & [fromversion, toversion] =
+	msg->info.partial_writes_last_complete[ps->pg_whoami.shard];
       if (toversion > ps->info.last_complete) {
 	if (fromversion <= ps->info.last_complete) {
-	  psdout(0) << "BILLMLOGREC1 we have last_complete " << ps->info.last_complete << " but pwlc from " << logevt.from << " says its at " << toversion << dendl;
+	  psdout(10) << "last_complete " << ps->info.last_complete
+		     << " but pwlc from " << logevt.from
+		     << " is at " << toversion << dendl;
 	  ps->info.last_complete = toversion;
 	  if (toversion > ps->info.last_update) {
 	    ps->info.last_update = toversion;
 	  }
 	  // Need to do this to avoid an assert in merge log
 	  if (msg->log.tail > ps->pg_log.get_head()) {
-	    psdout(0) << "BILLMLOGREC1 partial writes advancing log head from " << ps->pg_log.get_head() << " to " << toversion << dendl;
+	    psdout(10) << "pwlc advancing log head from "
+		       << ps->pg_log.get_head() << " to " << toversion
+		       << dendl;
 	    ps->pg_log.set_head(toversion);
 	  }
 	} else {
-	  psdout(0) << "BILLMLOCREC1 we have last_complete " << ps->info.last_complete << " cannot apply pwlc from " << fromversion << " to " << toversion << dendl;
+	  psdout(10) << "last_complete " << ps->info.last_complete
+		     << " cannot apply pwlc from "
+		     << fromversion << " to " << toversion << dendl;
 	}
       }
     }
@@ -6886,9 +6901,11 @@ boost::statechart::result PeeringState::Stray::react(const MInfoRec& infoevt)
     // with ec_optimizations_main set)
     ceph_assert(ps->pool.info.is_nonprimary_shard(ps->pg_whoami.shard));
     // There must be a partial write last_complete entry for this shard
-    ceph_assert(infoevt.info.partial_writes_last_complete.contains(ps->pg_whoami.shard));
-    auto pwlc = infoevt.info.partial_writes_last_complete.at(ps->pg_whoami.shard);
-    psdout(20) << "BILLSTRAYREACT info from osd." << infoevt.from
+    ceph_assert(infoevt.info.partial_writes_last_complete.contains(
+						   ps->pg_whoami.shard));
+    auto pwlc = infoevt.info.partial_writes_last_complete.at(
+						   ps->pg_whoami.shard);
+    psdout(20) << "info from osd." << infoevt.from
 	       << " last_update=" << infoevt.info.last_update
 	       << " last_complete=" << infoevt.info.last_complete
 	       << " pwlc=" << pwlc
