@@ -1,0 +1,17 @@
+meta:
+- desc: run one rbd-mirror daemon per cluster
+tasks:
+- rbd-mirror:
+    client: cluster1.client.mirror.0
+    thrash: True
+- rbd-mirror:
+    client: cluster2.client.mirror.0
+    thrash: True
+- rbd-mirror-thrash:
+    cluster: cluster1
+    min_thrash_delay: 90
+    max_thrash_delay: 180
+- rbd-mirror-thrash:
+    cluster: cluster2
+    min_thrash_delay: 90
+    max_thrash_delay: 180

@@ -9,7 +9,7 @@ tasks:
       CEPH_ARGS: ''
       MIRROR_POOL_MODE: 'image'
       RBD_MIRROR_MODE: 'snapshot'
-      RBD_IMAGE_FEATURES: 'layering'
+      RBD_IMAGE_FEATURES: 'layering,exclusive-lock,object-map,fast-diff,deep-flatten'
       RBD_MIRROR_INSTANCES: '1'
       RBD_MIRROR_USE_EXISTING_CLUSTER: '1'
       RBD_MIRROR_USE_RBD_MIRROR: '1'
