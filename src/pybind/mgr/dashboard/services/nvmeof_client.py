@@ -286,8 +286,8 @@ else:
             def wrapper(*args, **kwargs) -> object:
                 model = func(*args, **kwargs)
                 field_to_ret = model[field]
-                if first:
-                    field_to_ret = field_to_ret[0]
+                if first: 
+                    field_to_ret = field_to_ret[0] if field_to_ret else None
                 return field_to_ret
             return wrapper
         return decorator
