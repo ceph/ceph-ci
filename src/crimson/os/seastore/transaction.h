@@ -182,6 +182,10 @@ public:
     }
   }
 
+  bool is_in_read_set(CachedExtentRef extent) {
+    return lookup_trans_from_read_extent(extent).first;
+  }
+
   void add_to_read_set(CachedExtentRef ref) {
     if (is_weak()) {
       return;
@@ -618,7 +622,8 @@ private:
     }
   }
 
-  auto lookup_trans_from_read_extent(CachedExtentRef ref) const {
+  auto lookup_trans_from_read_extent(CachedExtentRef ref) const
+      -> std::pair<bool, read_trans_set_t<Transaction>::iterator> {
     assert(ref->is_valid());
     assert(!is_weak());
     auto it = ref->read_transactions.lower_bound(
@@ -666,6 +671,7 @@ private:
 
     // step 2: attach extent to transaction to become visible
     assert(!read_set.count(ref->get_paddr(), extent_cmp_t{}));
+    [[maybe_unused]]
     auto [iter, inserted] = read_set.insert(*it);
     assert(inserted);
   }
@@ -685,6 +691,7 @@ private:
     }
 
     // step 2: attach extent to transaction to become visible
+    [[maybe_unused]]
     auto [iter, inserted] = read_set.insert(read_items.back());
     assert(inserted);
 
