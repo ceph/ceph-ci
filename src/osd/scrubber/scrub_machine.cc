@@ -196,7 +196,8 @@ Session::Session(my_context ctx)
   dout(10) << "-- state -->> PrimaryActive/Session" << dendl;
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
 
-  m_perf_set = &scrbr->get_counters_set();
+  m_perf_counters_set = scrbr->get_counters_set();
+  m_perf_set = m_perf_counters_set->labeled_set;
   m_perf_set->inc(scrbcnt_started);
 }
 
@@ -211,6 +212,7 @@ Session::~Session()
   // (re-triggered by resetting the 'queued' flag) must not resume before
   // the scrubber is reset.
   scrbr->clear_pgscrub_state();
+  // RRR m_perf_counters_set.reset();
 }
 
 sc::result Session::react(const IntervalChanged&)
@@ -319,7 +321,8 @@ ActiveScrubbing::ActiveScrubbing(my_context ctx)
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   auto& session = context<Session>();
 
-  session.m_perf_set->inc(scrbcnt_active_started);
+  session.m_perf_counters_set->osd_perf_counters->inc(
+      session.m_perf_counters_set->counters->active_started_cnt);
   scrbr->get_clog()->debug()
       << fmt::format("{} {} starts", pg_id, scrbr->get_op_mode_text());
 

@@ -566,6 +566,9 @@ struct Session : sc::state<Session, PrimaryActive, ReservingReplicas>,
   /// (relevant, i.e. for this pool type X scrub level)
   PerfCounters* m_perf_set{nullptr};
 
+  /// (for the transition phase) 
+  std::optional<CounterSetsInUse> m_perf_counters_set;
+
   /// the time when the session was initiated
   ScrubTimePoint m_session_started_at{ScrubClock::now()};
 
