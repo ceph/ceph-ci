@@ -158,7 +158,8 @@ OperationThrottler::OperationThrottler(ConfigProxy &conf)
 
 void OperationThrottler::wake()
 {
-  while (available() && !scheduler->empty()) {
+  while ((!max_in_progress || in_progress < max_in_progress) &&
+	 !scheduler->empty()) {
     auto item = scheduler->dequeue();
     item.wake.set_value();
     ++in_progress;

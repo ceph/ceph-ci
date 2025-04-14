@@ -110,7 +110,7 @@ PGRecovery::start_recovery_ops(
       }
       pg->reset_pglog_based_recovery_op();
     }
-    return seastar::make_ready_future<bool>(done);
+    return seastar::make_ready_future<bool>(!done);
   });
 }
 
@@ -196,10 +196,10 @@ size_t PGRecovery::start_primary_recovery_ops(
 	auto it = missing.get_items().find(head);
 	assert(it != missing.get_items().end());
 	auto head_need = it->second.need;
-	out->emplace_back(recover_missing(trigger, head, head_need, true));
+	out->emplace_back(recover_missing(trigger, head, head_need));
 	++skipped;
       } else {
-	out->emplace_back(recover_missing(trigger, soid, item.need, true));
+	out->emplace_back(recover_missing(trigger, soid, item.need));
       }
       ++started;
     }
@@ -306,9 +306,7 @@ size_t PGRecovery::start_replica_recovery_ops(
 PGRecovery::interruptible_future<>
 PGRecovery::recover_missing(
   RecoveryBackend::RecoveryBlockingEvent::TriggerI& trigger,
-  const hobject_t &soid,
-  eversion_t need,
-  bool with_throttle)
+  const hobject_t &soid, eversion_t need)
 {
   logger().info("{} {} v {}", __func__, soid, need);
   auto [recovering, added] = pg->get_recovery_backend()->add_recovering(soid);
@@ -321,9 +319,7 @@ PGRecovery::recover_missing(
     } else {
       return recovering.wait_track_blocking(
 	trigger,
-	with_throttle
-	  ? recover_object_with_throttle(soid, need)
-	  : recover_object(soid, need)
+	pg->get_recovery_backend()->recover_object(soid, need)
 	.handle_exception_interruptible(
 	  [=, this, soid = std::move(soid)] (auto e) {
 	  on_failed_recover({ pg->get_pg_whoami() }, soid, need);
@@ -371,7 +367,7 @@ RecoveryBackend::interruptible_future<> PGRecovery::prep_object_replica_pushes(
     logger().info("{} {} v {}, new recovery", __func__, soid, need);
     return recovering.wait_track_blocking(
       trigger,
-      recover_object_with_throttle(soid, need)
+      pg->get_recovery_backend()->recover_object(soid, need)
       .handle_exception_interruptible(
 	[=, this, soid = std::move(soid)] (auto e) {
 	on_failed_recover({ pg->get_pg_whoami() }, soid, need);
@@ -520,25 +516,6 @@ void PGRecovery::request_primary_scan(
   });
 }
 
-PGRecovery::interruptible_future<>
-PGRecovery::recover_object_with_throttle(
-  const hobject_t &soid,
-  eversion_t need)
-{
-  crimson::osd::scheduler::params_t params =
-    {1, 0, crimson::osd::scheduler::scheduler_class_t::background_best_effort};
-  auto &ss = pg->get_shard_services();
-  logger().debug("{} {}", soid, need);
-  return ss.with_throttle(
-    std::move(params),
-    [this, soid, need] {
-    logger().debug("got throttle: {} {}", soid, need);
-    auto backend = pg->get_recovery_backend();
-    assert(backend);
-    return backend->recover_object(soid, need);
-  });
-}
-
 void PGRecovery::enqueue_push(
   const hobject_t& obj,
   const eversion_t& v,
@@ -550,7 +527,7 @@ void PGRecovery::enqueue_push(
   if (!added)
     return;
   peering_state.prepare_backfill_for_missing(obj, v, peers);
-  std::ignore = recover_object_with_throttle(obj, v).\
+  std::ignore = pg->get_recovery_backend()->recover_object(obj, v).\
   handle_exception_interruptible([] (auto) {
     ceph_abort_msg("got exception on backfill's push");
     return seastar::make_ready_future<>();
@@ -628,8 +605,8 @@ void PGRecovery::update_peers_last_backfill(
 
 bool PGRecovery::budget_available() const
 {
-  auto &ss = pg->get_shard_services();
-  return ss.throttle_available();
+  // TODO: the limits!
+  return true;
 }
 
 void PGRecovery::on_pg_clean()
