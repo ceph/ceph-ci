@@ -328,14 +328,6 @@ private:
 
     dout(20) << __func__ << ": " << *ctx << dendl;
 
-    if (ret == -EINVAL) {
-      // if shrinking an image, a pagecache writeback might reference
-      // extents outside of the range of the new image extents
-      dout(0) << __func__ << ": masking IO out-of-bounds error" << dendl;
-      ctx->data.clear();
-      ret = 0;
-    }
-
     if (ret < 0) {
       ctx->reply.error = native_to_big<uint32_t>(-ret);
     } else if ((ctx->command == NBD_CMD_READ) &&
