@@ -198,7 +198,9 @@ Session::Session(my_context ctx)
 
   m_perf_counters_set = scrbr->get_counters_set();
   m_perf_set = m_perf_counters_set->labeled_set;
-  m_perf_set->inc(scrbcnt_started);
+  m_osd_counters = scrbr->get_osd_perf_counters();
+  m_counters_idx = m_perf_counters_set->counters;
+  m_osd_counters->inc(m_counters_idx->started_cnt);
 }
 
 Session::~Session()
@@ -321,8 +323,7 @@ ActiveScrubbing::ActiveScrubbing(my_context ctx)
   DECLARE_LOCALS;  // 'scrbr' & 'pg_id' aliases
   auto& session = context<Session>();
 
-  session.m_perf_counters_set->osd_perf_counters->inc(
-      session.m_perf_counters_set->counters->active_started_cnt);
+  session.m_osd_counters->inc(session.m_counters_idx->active_started_cnt);
   scrbr->get_clog()->debug()
       << fmt::format("{} {} starts", pg_id, scrbr->get_op_mode_text());
 
@@ -346,8 +347,9 @@ ActiveScrubbing::~ActiveScrubbing()
 	session.m_abort_reason.value_or(Scrub::delay_cause_t::aborted));
 
     auto logged_duration = ScrubClock::now() - session.m_session_started_at;
-    session.m_perf_set->tinc(scrbcnt_failed_elapsed, logged_duration);
-    session.m_perf_set->inc(scrbcnt_failed);
+    session.m_osd_counters->tinc(session.m_counters_idx->failed_elapsed,
+                                 logged_duration);
+    session.m_osd_counters->inc(session.m_counters_idx->failed_cnt);
   }
 }
 
@@ -721,13 +723,14 @@ sc::result WaitDigestUpdate::react(const ScrubFinished&)
   dout(10) << "WaitDigestUpdate::react(const ScrubFinished&)" << dendl;
   auto& session = context<Session>();
 
-  session.m_perf_set->inc(scrbcnt_successful);
+  session.m_osd_counters->inc(session.m_counters_idx->successful_cnt);
 
   // set the 'scrub duration'
   auto duration = machine.get_time_scrubbing();
-  session.m_perf_set->tinc(scrbcnt_successful_elapsed, duration);
   scrbr->set_scrub_duration(duration_cast<milliseconds>(duration));
   session.m_session_started_at = ScrubTimePoint{};
+  session.m_osd_counters->tinc(
+      session.m_counters_idx->successful_elapsed, duration);
 
   scrbr->scrub_finish();
   return transit<PrimaryIdle>();

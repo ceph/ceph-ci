@@ -568,6 +568,9 @@ struct Session : sc::state<Session, PrimaryActive, ReservingReplicas>,
 
   /// (for the transition phase) 
   std::optional<CounterSetsInUse> m_perf_counters_set;
+  /// and when m_perf_counters_set is set, we have these shortcuts:
+  PerfCounters* m_osd_counters{nullptr};
+  const ScrubCounterSet* m_counters_idx{nullptr};
 
   /// the time when the session was initiated
   ScrubTimePoint m_session_started_at{ScrubClock::now()};

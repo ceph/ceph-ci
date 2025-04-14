@@ -160,10 +160,22 @@ enum osd_counter_idx_t {
   l_osd_scrub_ec_read_bytes, ///< total bytes read
 
   // scrub (no EC vs. replicated differentiation)
+
   // scrub - replicated pools
+  l_osd_scrub_rppool_started, ///< scrubs that got started
   l_osd_scrub_rppool_active_started, ///< scrubs that got past replicas reservation
+  l_osd_scrub_rppool_successful, ///< successful scrubs count
+  l_osd_scrub_rppool_successful_elapsed, ///< time to complete a successful scrub
+  l_osd_scrub_rppool_failed, ///< failed scrubs count
+  l_osd_scrub_rppool_failed_elapsed, ///< time from start to failure
+
   // scrub - EC
+  l_osd_scrub_ec_started, ///< scrubs that got started
   l_osd_scrub_ec_active_started, /// scrubs that got past secondaries reservation
+  l_osd_scrub_ec_successful, ///< successful scrubs count
+  l_osd_scrub_ec_successful_elapsed, ///< time to complete a successful scrub
+  l_osd_scrub_ec_failed, ///< failed scrubs count
+  l_osd_scrub_ec_failed_elapsed, ///< time from start to failure
 
   l_osd_last,
 };
@@ -213,18 +225,6 @@ PerfCounters *build_recoverystate_perf(CephContext *cct);
 // EC vs. replicated) of these counters:
 enum {
   scrbcnt_first = 20500,
-
-  // -- basic statistics --
-  /// The number of times we started a scrub
-  scrbcnt_started,
-  /// # successful scrubs
-  scrbcnt_successful,
-  /// time to complete a successful scrub
-  scrbcnt_successful_elapsed,
-  /// # failed scrubs
-  scrbcnt_failed,
-  /// time for a scrub to fail
-  scrbcnt_failed_elapsed,
 
   // -- interruptions of various types
   /// # preemptions
