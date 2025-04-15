@@ -21,7 +21,6 @@
 #include "erasure-code/ErasureCodeInterface.h"
 #include "ECUtil.h"
 #include "ECTypes.h"
-#include "ExtentCache.h"
 #if WITH_CRIMSON
 #include "crimson/osd/object_context.h"
 #include "os/Transaction.h"
