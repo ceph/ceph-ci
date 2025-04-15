@@ -332,6 +332,30 @@ WebTokenEngine::get_cert_url(const string& iss, const DoutPrefixProvider *dpp, o
   return cert_url;
 }
 
+bool
+WebTokenEngine::validate_jwt_with_rsa_bare_key(const DoutPrefixProvider* dpp, const jwt::decoded_jwt<traits>& token, const std::string &algorithm, const std::string& n, const std::string& e) const
+{
+  try {
+    const auto pub_key = jwt::helper::create_public_key_from_rsa_components(n, e);
+    auto verifier = jwt::verify();
+    if (algorithm == "RS256") {
+      verifier.allow_algorithm(jwt::algorithm::rs256{pub_key});
+    } else if (algorithm == "RS384") {
+      verifier.allow_algorithm(jwt::algorithm::rs384{pub_key});
+    } else if (algorithm == "RS512") {
+      verifier.allow_algorithm(jwt::algorithm::rs512{pub_key});
+    } else {
+      return false;
+    }
+    verifier.verify(token);
+    ldpp_dout(dpp, 20) << "Signature validation succeeded with RSA bare key (n & e)" << dendl;
+  } catch (std::runtime_error& e) {
+    ldpp_dout(dpp, 0) << "Signature validation failed with RSA bare key (n & e) validation: " << e.what() << dendl;
+    return false;
+  }
+  return true;
+}
+
 void
 WebTokenEngine::validate_signature(const DoutPrefixProvider* dpp, const jwt::decoded_jwt<traits>& decoded, const string& algorithm, const string& iss, const vector<string>& thumbprints, optional_yield y) const
 {
@@ -443,7 +467,15 @@ WebTokenEngine::validate_signature(const DoutPrefixProvider* dpp, const jwt::dec
               throw;
             }
           } else {
-            ldpp_dout(dpp, 0) << "x5c not present" << dendl;
+            string n, e; //modulus and exponent
+            if (JSONDecoder::decode_json("n", n, &parser) && JSONDecoder::decode_json("e", e, &parser)) {
+              if (validate_jwt_with_rsa_bare_key(dpp, decoded, algorithm, n, e)) {
+                return;
+              } else {
+                throw std::system_error(EACCES, std::system_category());
+              }
+            }
+            ldpp_dout(dpp, 0) << "x5c not present or n, e not present" << dendl;
             throw -EINVAL;
           }
         } else {
