@@ -82,44 +82,6 @@ ostream &operator<<(ostream &lhs, const ECCommon::ec_extent_t &rhs)
 	     << rhs.emap;
 }
 
-ostream &operator<<(ostream &lhs, const ECCommon::read_request_t &rhs)
-{
-  return lhs << "read_request_t(to_read=[" << rhs.to_read << "]"
-	     << ", need=" << rhs.need
-	     << ", want_attrs=" << rhs.want_attrs
-	     << ")";
-}
-
-ostream &operator<<(ostream &lhs, const ECCommon::read_result_t &rhs)
-{
-  lhs << "read_result_t(r=" << rhs.r
-      << ", errors=" << rhs.errors;
-  if (rhs.attrs) {
-    lhs << ", attrs=" << *(rhs.attrs);
-  } else {
-    lhs << ", noattrs";
-  }
-  return lhs << ", returned=" << rhs.returned << ")";
-}
-
-ostream &operator<<(ostream &lhs, const ECCommon::ReadOp &rhs)
-{
-  lhs << "ReadOp(tid=" << rhs.tid;
-#ifndef WITH_CRIMSON
-  if (rhs.op && rhs.op->get_req()) {
-    lhs << ", op=";
-    rhs.op->get_req()->print(lhs);
-  }
-#endif
-  return lhs << ", to_read=" << rhs.to_read
-	     << ", complete=" << rhs.complete
-	     << ", priority=" << rhs.priority
-	     << ", obj_to_source=" << rhs.obj_to_source
-	     << ", source_to_obj=" << rhs.source_to_obj
-	     << ", want_to_read" << rhs.want_to_read
-	     << ", in_progress=" << rhs.in_progress << ")";
-}
-
 void ECCommon::ReadOp::dump(Formatter *f) const {
   f->dump_unsigned("tid", tid);
 #ifndef WITH_CRIMSON
@@ -133,33 +95,6 @@ void ECCommon::ReadOp::dump(Formatter *f) const {
   f->dump_stream("obj_to_source") << obj_to_source;
   f->dump_stream("source_to_obj") << source_to_obj;
   f->dump_stream("in_progress") << in_progress;
-}
-
-ostream &operator<<(ostream &lhs, const ECCommon::RMWPipeline::Op &rhs)
-{
-  lhs << "Op(" << rhs.hoid
-      << " v=" << rhs.version
-      << " tt=" << rhs.trim_to
-      << " tid=" << rhs.tid
-      << " reqid=" << rhs.reqid;
-#ifndef WITH_CRIMSON
-  if (rhs.client_op && rhs.client_op->get_req()) {
-    lhs << " client_op=";
-    rhs.client_op->get_req()->print(lhs);
-  }
-#endif
-  lhs << " pg_committed_to=" << rhs.pg_committed_to
-      << " temp_added=" << rhs.temp_added
-      << " temp_cleared=" << rhs.temp_cleared
-      << " pending_read=" << rhs.pending_read
-      << " remote_read=" << rhs.remote_read
-      << " remote_read_result=" << rhs.remote_read_result
-      << " pending_apply=" << rhs.pending_apply
-      << " pending_commit=" << rhs.pending_commit
-      << " plan.to_read=" << rhs.plan.to_read
-      << " plan.will_write=" << rhs.plan.will_write
-      << ")";
-  return lhs;
 }
 
 void ECCommon::ReadPipeline::complete_read_op(ReadOp &&rop) {

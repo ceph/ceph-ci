@@ -290,7 +290,7 @@ struct ECCommon {
 
     void print(std::ostream &os) const {
       os << "ReadOp(tid=" << tid;
-#ifndef WITH_SEASTAR
+#ifndef WITH_CRIMSON
       if (op && op->get_req()) {
         os << ", op=";
         op->get_req()->print(os);
@@ -545,7 +545,7 @@ struct ECCommon {
       void print(std::ostream &os) const {
         os << "Op(" << hoid << " v=" << version << " tt=" << trim_to
             << " tid=" << tid << " reqid=" << reqid;
-#ifndef WITH_SEASTAR
+#ifndef WITH_CRIMSON
         if (client_op && client_op->get_req()) {
           os << " client_op=";
           client_op->get_req()->print(os);
