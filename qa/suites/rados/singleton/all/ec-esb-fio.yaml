@@ -1,0 +1,40 @@
+roles:
+- - mon.a
+  - mgr.x
+  - osd.0
+  - osd.1
+  - osd.2
+  - osd.3
+  - osd.4
+  - osd.5
+  - client.0
+openstack:
+  - volumes: # attached to each instance
+      count: 6
+      size: 10 # GB
+tasks:
+- install:
+- ceph:
+    conf:
+      osd:
+        bluestore_elastic_shared_blobs: true
+        osd_memory_target: 939524096
+    log-ignorelist:
+      - \(POOL_APP_NOT_ENABLED\)
+      - \(OSDMAP_FLAGS\)
+      - \(OSD_
+      - \(OBJECT_
+      - \(PG_
+      - \(SLOW_OPS\)
+      - overall HEALTH
+      - slow request
+
+- workunit:
+    basedir: qa/standalone
+    clients:
+      client.0:
+        - ec-esb-fio.sh
+
+- exec:
+      all:
+        - if egrep -i 'assert|crash|abort' /var/log/ceph/ceph-osd.*.log; then exit 1; fi
