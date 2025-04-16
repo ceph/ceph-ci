@@ -387,3 +387,23 @@ target_link_libraries(ceph_test_datalog
   ${UNITTEST_LIBS}
   ${rgw_libs})
 install(TARGETS ceph_test_datalog DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+if(WITH_CATCH2)
+ message("-- Processing RGW Catch2 tests")
+ add_executable(catch2-rgw-general
+  catch2-rgw-general.cc)
+
+ target_include_directories(catch2-rgw-general
+  SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/rgw")
+
+ target_link_libraries(catch2-rgw-general 
+  rgw_common
+  librados
+  ceph-common
+  ${rgw_libs}
+  ${EXTRALIBS}
+  Catch2WithMain)
+
+ add_ceph_unittest(catch2-rgw-general)
+
+endif(WITH_CATCH2)
