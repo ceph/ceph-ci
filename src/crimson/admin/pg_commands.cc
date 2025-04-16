@@ -192,20 +192,20 @@ public:
 namespace crimson::admin {
 
 template <class Hook, class... Args>
-std::unique_ptr<AdminSocketHook> make_asok_hook(Args&&... args)
+boost::intrusive_ptr<AdminSocketHook> make_asok_hook(Args&&... args)
 {
-  return std::make_unique<Hook>(std::forward<Args>(args)...);
+  return new Hook(std::forward<Args>(args)...);
 }
 
-template std::unique_ptr<AdminSocketHook>
+template boost::intrusive_ptr<AdminSocketHook>
 make_asok_hook<crimson::admin::pg::QueryCommand>(crimson::osd::OSD& osd);
 
-template std::unique_ptr<AdminSocketHook>
+template boost::intrusive_ptr<AdminSocketHook>
 make_asok_hook<crimson::admin::pg::MarkUnfoundLostCommand>(crimson::osd::OSD& osd);
 
-template std::unique_ptr<AdminSocketHook>
+template boost::intrusive_ptr<AdminSocketHook>
 make_asok_hook<crimson::admin::pg::ScrubCommand<true>>(crimson::osd::OSD& osd);
-template std::unique_ptr<AdminSocketHook>
+template boost::intrusive_ptr<AdminSocketHook>
 make_asok_hook<crimson::admin::pg::ScrubCommand<false>>(crimson::osd::OSD& osd);
 
 } // namespace crimson::admin
