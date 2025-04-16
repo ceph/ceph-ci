@@ -29,7 +29,7 @@
 #include "osd_types.h"
 
 // Must be a power of 2.
-static inline constexpr uint64_t EC_ALIGN_SIZE = 4096;
+static inline constexpr uint64_t EC_ALIGN_SIZE = 512;
 static inline constexpr uint64_t EC_ALIGN_MASK = ~(EC_ALIGN_SIZE - 1);
 
 /// If someone wants these types, but not ExtentCache, move to another file
