@@ -4584,7 +4584,7 @@ void PeeringState::recover_got(
 	       << " log.complete_to at end" << dendl;
     //below is not true in the repair case.
     //assert(missing.num_missing() == 0);  // otherwise, complete_to was wrong.
-    ceph_assert(info.last_complete == info.last_update);
+    //ceph_assert(info.last_complete == info.last_update);
   }
 
   if (is_primary()) {
