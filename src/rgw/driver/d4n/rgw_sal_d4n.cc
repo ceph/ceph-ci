@@ -1476,15 +1476,17 @@ int D4NFilterObject::get_obj_attrs(optional_yield y, const DoutPrefixProvider* d
     rgw::sal::Attrs attrs;
     std::string version;
     ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): Fetching attrs from backend store." << dendl;
-    auto ret = next->get_obj_attrs(y, dpp, target_obj);
-    if (ret < 0 || !target_obj) {
-      if (!target_obj) {
-        ret = -ENOENT;
-      }
+    auto ret = next->get_obj_attrs(y, dpp);
+    if (ret < 0) {
       ldpp_dout(dpp, 0) << "D4NFilterObject::" << __func__ << "(): Failed to fetching attrs from backend store with ret: " << ret << dendl;
       return ret;
     }
-  
+    std::unique_ptr<rgw::sal::Object::ReadOp> read_op(this->get_read_op());
+    read_op->params.target_obj = target_obj;
+    if (auto ret = read_op->prepare(y, dpp); ret < 0 || !target_obj) {
+      ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): prepare method failed with ret: " << ret << dendl;
+      return ret;
+    }
     this->load_obj_state(dpp, y);
     this->obj = *target_obj;
     if (!this->obj.key.instance.empty()) {
