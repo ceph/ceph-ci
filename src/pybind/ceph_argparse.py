@@ -1042,10 +1042,14 @@ def parse_funcsig(sig: Sequence[Union[str, Dict[str, Any]]]) -> List[argdesc]:
             if desc['type'] in globals():
                 t = globals()[desc['type']]
                 if not isinstance(t, type):
-                    s = 'unknown type {0}'.format(desc['type'])
+                    s = 'unknown type1 {0}'.format(desc['type'])
+                    s+= f' global keys: {globals().keys()}'
+                    s+= f' desc: {str(desc)}'
                     raise JsonFormat(s)
             else:
-                s = 'unknown type {0}'.format(desc['type'])
+                s = 'unknown type2 {0}'.format(desc['type'])
+                s+= f' global keys: {globals().keys()}'
+                s+= f' desc: {str(desc)}'
                 raise JsonFormat(s)
 
         kwargs = dict()
