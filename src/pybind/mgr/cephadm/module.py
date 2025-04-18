@@ -2524,26 +2524,26 @@ Then run the following:
                 result.append(dd)
         return result
 
-    def perform_service_action(self, action: str, service_name: str) -> List[str]:
+    def perform_service_action(self, action: str, service_name: str, force: bool = False) -> List[str]:
         dds: List[DaemonDescription] = self.cache.get_daemons_by_service(service_name)
         if not dds:
             raise OrchestratorError(f'No daemons exist under service name "{service_name}".'
                                     + ' View currently running services using "ceph orch ls"')
         self.log.info('%s service %s' % (action.capitalize(), service_name))
         return [
-            self._schedule_daemon_action(dd.name(), action)
+            self._schedule_daemon_action(dd.name(), action, force=force)
             for dd in dds
         ]
 
     @handle_orch_error
-    def service_action(self, action: str, service_name: str) -> List[str]:
+    def service_action(self, action: str, service_name: str, force: bool = False) -> List[str]:
         if service_name not in self.spec_store.all_specs.keys():
             raise OrchestratorError(f'Invalid service name "{service_name}".'
                                     + ' View currently running services using "ceph orch ls"')
-        if action == 'stop' and service_name.split('.')[0].lower() in ['mgr', 'mon', 'osd']:
+        if action == 'stop' and service_name.split('.')[0].lower() in ['mgr', 'mon', 'osd'] and not force:
             return [f'Stopping entire {service_name} service is prohibited.']
 
-        return self.perform_service_action(action, service_name)
+        return self.perform_service_action(action, service_name, force=force)
 
     def _rotate_daemon_key(self, daemon_spec: CephadmDaemonDeploySpec) -> str:
         self.log.info(f'Rotating authentication key for {daemon_spec.name()}')

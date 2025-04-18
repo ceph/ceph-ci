@@ -1750,9 +1750,9 @@ Usage:
         return self._daemon_add_misc(spec)
 
     @_cli_write_command('orch')
-    def _service_action(self, action: ServiceAction, service_name: str) -> HandleCommandResult:
+    def _service_action(self, action: ServiceAction, service_name: str, force: bool = False) -> HandleCommandResult:
         """Start, stop, restart, redeploy, or reconfig an entire service (i.e. all daemons)"""
-        completion = self.service_action(action.value, service_name)
+        completion = self.service_action(action.value, service_name, force=force)
         raise_if_exception(completion)
         return HandleCommandResult(stdout=completion.result_str())
 

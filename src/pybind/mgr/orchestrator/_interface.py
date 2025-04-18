@@ -712,7 +712,7 @@ class Orchestrator(object):
         """
         raise NotImplementedError()
 
-    def service_action(self, action: str, service_name: str) -> OrchResult[List[str]]:
+    def service_action(self, action: str, service_name: str, force: bool = False) -> OrchResult[List[str]]:
         """
         Perform an action (start/stop/reload) on a service (i.e., all daemons
         providing the logical service).
