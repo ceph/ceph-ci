@@ -1,5 +1,4 @@
-ARG FROM_IMAGE="quay.io/centos/centos:stream9"
-FROM $FROM_IMAGE
+FROM quay.io/phlogistonjohn/asdf:centos-stream9-pycry44
 
 # allow FROM_IMAGE to be visible inside this stage
 ARG FROM_IMAGE
