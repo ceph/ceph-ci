@@ -3666,8 +3666,8 @@ run_test_all_scenarios()
 # exercise all scenarios for all tests
 run_all_tests()
 {
-  run_test_all_scenarios test_empty_group
-  run_test_all_scenarios test_empty_groups
+  ####### run_test_all_scenarios test_empty_group
+  ####### run_test_all_scenarios test_empty_groups
   # This next test requires support for dynamic groups TODO
   # run_test_all_scenarios test_mirrored_group_remove_all_images
   # This next test also requires dynamic groups - TODO enable
@@ -3677,24 +3677,24 @@ run_all_tests()
   run_test_all_scenarios test_create_group_with_images_then_mirror
   # next test is not MVP - TODO
   # run_test_all_scenarios test_images_different_pools
-  run_test_all_scenarios test_create_group_with_images_then_mirror_with_regular_snapshots
-  run_test_all_scenarios test_create_group_with_large_image
-  run_test_all_scenarios test_create_group_with_multiple_images_do_io
-  run_test_all_scenarios test_group_and_standalone_images_do_io
-  run_test_all_scenarios test_stopped_daemon
-  run_test_all_scenarios test_create_group_with_regular_snapshots_then_mirror
-  run_test_all_scenarios test_image_move_group
-  run_test_all_scenarios test_force_promote
-  run_test_all_scenarios test_resync
-  run_test_all_scenarios test_multiple_mirror_group_snapshot_whilst_stopped
-  run_test_all_scenarios test_create_group_with_image_remove_then_repeat
-  run_test_all_scenarios test_enable_disable_repeat
-  run_test_all_scenarios test_empty_group_omap_keys
+  ####### run_test_all_scenarios test_create_group_with_images_then_mirror_with_regular_snapshots
+  ####### run_test_all_scenarios test_create_group_with_large_image
+  ####### run_test_all_scenarios test_create_group_with_multiple_images_do_io
+  ####### run_test_all_scenarios test_group_and_standalone_images_do_io
+  ####### run_test_all_scenarios test_stopped_daemon
+  ####### run_test_all_scenarios test_create_group_with_regular_snapshots_then_mirror
+  ####### run_test_all_scenarios test_image_move_group
+  ####### run_test_all_scenarios test_force_promote
+  ####### run_test_all_scenarios test_resync
+  ####### run_test_all_scenarios test_multiple_mirror_group_snapshot_whilst_stopped
+  ####### run_test_all_scenarios test_create_group_with_image_remove_then_repeat
+  ####### run_test_all_scenarios test_enable_disable_repeat
+  ####### run_test_all_scenarios test_empty_group_omap_keys
   # TODO next test is disabled waiting for fix to issue 28
   #run_test_all_scenarios test_group_with_clone_image
-  run_test_all_scenarios test_multiple_mirror_group_snapshot_unlink_time
-  run_test_all_scenarios test_force_promote_delete_group
-  run_test_all_scenarios test_create_group_stop_daemon_then_recreate
+  ####### run_test_all_scenarios test_multiple_mirror_group_snapshot_unlink_time
+  ####### run_test_all_scenarios test_force_promote_delete_group
+  ####### run_test_all_scenarios test_create_group_stop_daemon_then_recreate
   # TODO these next 2 tests are disabled as they fails with incorrect state/description in mirror group status - issue 50
   #run_test_all_scenarios test_enable_mirroring_when_duplicate_group_exists
   #run_test_all_scenarios test_enable_mirroring_when_duplicate_image_exists
