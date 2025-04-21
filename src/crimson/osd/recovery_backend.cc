@@ -239,7 +239,7 @@ RecoveryBackend::scan_for_backfill(
     co_await pg.obc_loader.load_and_lock(
       obc_manager, RWState::RWREAD
     ).handle_error_interruptible(
-      crimson::ct_error::assert_all("unexpected error")
+      crimson::ct_error::assert_all(fmt::format("{} {} error when loading obc", pg, FNAME).c_str())
     );
 
     if (obc_manager.get_obc()->obs.exists) {
