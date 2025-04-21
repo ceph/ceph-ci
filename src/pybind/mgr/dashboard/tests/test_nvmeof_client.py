@@ -457,3 +457,10 @@ class TestPick:
             return None
         with pytest.raises(TypeError):
             get_person()
+
+    def test_finalize(self):
+        @pick("name", finalize=lambda i, o: o.upper())
+        def get_person():
+            return {"name": "Alice", "height": 170}
+
+        assert get_person() == "ALICE"
