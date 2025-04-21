@@ -316,7 +316,7 @@ ClientRequest::recover_missing_snaps(
     }
     return seastar::now();
   }).handle_error_interruptible(
-    crimson::ct_error::assert_all(fmt::format("{} {} error", *pg, FNAME).c_str())
+    crimson::ct_error::assert_all("unexpected error")
   );
   co_await std::move(resolve_oids);
 

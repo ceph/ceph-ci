@@ -730,8 +730,7 @@ seastar::future<> PG::init(
         t.touch(coll_ref->get_cid(), pgid.make_snapmapper_oid());
       }
     },
-    ::crimson::ct_error::assert_all{fmt::format(
-      "{} {} unexpected eio", *this, __func__).c_str()}
+    ::crimson::ct_error::assert_all{"unexpected eio"}
   );
 }
 

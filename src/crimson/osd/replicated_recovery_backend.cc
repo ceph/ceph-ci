@@ -153,8 +153,7 @@ ReplicatedRecoveryBackend::maybe_pull_missing_obj(
       return recovery_waiter.wait_for_pull();
     });
   }).handle_error_interruptible(
-    crimson::ct_error::assert_all(fmt::format(
-      "{} {} error with {} need {} ", pg, FNAME, soid, need).c_str())
+    crimson::ct_error::assert_all("unexpected error")
   );
 }
 
@@ -747,8 +746,7 @@ ReplicatedRecoveryBackend::read_omap_for_push_op(
       return seastar::make_ready_future<seastar::stop_iteration>(
         stop ? seastar::stop_iteration::yes : seastar::stop_iteration::no
       );
-    }, crimson::os::FuturizedStore::Shard::read_errorator::assert_all(fmt::format(
-         "{} ReplicatedRecoveryBackend::read_omap_for_push_op error with {}", pg, oid).c_str()));
+    }, crimson::os::FuturizedStore::Shard::read_errorator::assert_all{});
   });
 }
 
