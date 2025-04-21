@@ -28,6 +28,7 @@
 #include "messages/MOSDPGUpdateLogMissingReply.h"
 #include "messages/MOSDRepOpReply.h"
 #include "messages/MOSDScrub2.h"
+#include "messages/MOSDPGPCT.h"
 #include "messages/MPGStats.h"
 
 #include "os/Transaction.h"
@@ -53,6 +54,7 @@
 #include "crimson/osd/pg_meta.h"
 #include "crimson/osd/osd_operations/client_request.h"
 #include "crimson/osd/osd_operations/peering_event.h"
+#include "crimson/osd/osd_operations/pgpct_request.h"
 #include "crimson/osd/osd_operations/pg_advance_map.h"
 #include "crimson/osd/osd_operations/recovery_subrequest.h"
 #include "crimson/osd/osd_operations/replicated_request.h"
@@ -278,18 +280,16 @@ seastar::future<> OSD::mkfs(
   co_await store.start();
 
   co_await store.mkfs(osd_uuid).handle_error(
-    crimson::stateful_ec::assert_failure([FNAME] (const auto& ec) {
-      ERROR("error creating empty object store in {}: ({}) {}",
-	    local_conf().get_val<std::string>("osd_data"),
-	    ec.value(), ec.message());
-    }));
+    crimson::stateful_ec::assert_failure(fmt::format(
+      "{} error creating empty object store in {}",
+       FNAME, local_conf().get_val<std::string>("osd_data")).c_str())
+  );
 
   co_await store.mount().handle_error(
-    crimson::stateful_ec::assert_failure([FNAME](const auto& ec) {
-      ERROR("error mounting object store in {}: ({}) {}",
-	    local_conf().get_val<std::string>("osd_data"),
-	    ec.value(), ec.message());
-    }));
+    crimson::stateful_ec::assert_failure(fmt::format(
+      "{} error mounting object store in {}",
+      FNAME, local_conf().get_val<std::string>("osd_data")).c_str())
+  );
 
   {
     auto meta_coll = co_await open_or_create_meta_coll(store);
@@ -475,11 +475,10 @@ seastar::future<> OSD::start()
 	whoami, get_shard_services(),
 	*monc, *hb_front_msgr, *hb_back_msgr});
     return store.mount().handle_error(
-      crimson::stateful_ec::assert_failure([FNAME] (const auto& ec) {
-        ERROR("error mounting object store in {}: ({}) {}",
-	      local_conf().get_val<std::string>("osd_data"),
-	      ec.value(), ec.message());
-      }));
+      crimson::stateful_ec::assert_failure(fmt::format(
+        "{} error mounting object store in {}",
+        FNAME, local_conf().get_val<std::string>("osd_data")).c_str())
+    );
   }).then([this, FNAME] {
     auto stats_seconds = local_conf().get_val<int64_t>("crimson_osd_stat_interval");
     if (stats_seconds > 0) {
@@ -794,6 +793,7 @@ seastar::future<> OSD::start_asok_admin()
       make_asok_hook<DumpPGStateHistory>(std::as_const(pg_shard_manager)));
     asok->register_command(make_asok_hook<DumpMetricsHook>());
     asok->register_command(make_asok_hook<DumpPerfCountersHook>());
+    asok->register_command(make_asok_hook<ResetPerfCountersHook>());
     asok->register_command(make_asok_hook<InjectDataErrorHook>(get_shard_services()));
     asok->register_command(make_asok_hook<InjectMDataErrorHook>(get_shard_services()));
     // PG commands
@@ -994,6 +994,9 @@ OSD::do_ms_dispatch(
   case MSG_OSD_PG_UPDATE_LOG_MISSING_REPLY:
     return handle_update_log_missing_reply(conn, boost::static_pointer_cast<
       MOSDPGUpdateLogMissingReply>(m));
+  case MSG_OSD_PG_PCT:
+    return handle_pg_pct(conn, boost::static_pointer_cast<
+      MOSDPGPCT>(m));
   default:
     return std::nullopt;
   }
@@ -1409,6 +1412,15 @@ seastar::future<> OSD::handle_update_log_missing_reply(
   Ref<MOSDPGUpdateLogMissingReply> m)
 {
   return pg_shard_manager.start_pg_operation<LogMissingRequestReply>(
+    std::move(conn),
+    std::move(m)).second;
+}
+
+seastar::future<> OSD::handle_pg_pct(
+  crimson::net::ConnectionRef conn,
+  Ref<MOSDPGPCT> m)
+{
+  return pg_shard_manager.start_pg_operation<PGPCTRequest>(
     std::move(conn),
     std::move(m)).second;
 }
