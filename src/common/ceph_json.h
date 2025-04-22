@@ -199,22 +199,6 @@ protected:
 	return ec ? false : true;
   }
 
-  static bool parse_json_maybe_throw_JFW(std::string_view input, boost::json::value& data_out)
-  {
-	std::error_code ec;
-
-	data_out = boost::json::parse(input, ec, boost::json::storage_ptr(), 
-				     { .allow_invalid_utf8 = true });
-
-if(ec)
-throw std::runtime_error(fmt::format("JFW: parse_json(): {}; against INPUT (len = {}; char@len = dec :\n---\n{}\n---", 
-  input.size(), (int)input[input.size()],
-ec.message(), input));
-
-	return ec ? false : true;
-  }
-
-
 public:
   JSONObj() = default;
 
