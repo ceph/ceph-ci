@@ -248,20 +248,13 @@ RecoveryBackend::scan_for_backfill(
       }),
       crimson::ct_error::assert_all("unexpected error")
     );
-    if (!found) {
-      // if the object does not exist here, it must have been removed
-      // between the collection_list_partial and here.  This can happen
-      // for the first item in the range, which is usually last_backfill.
-      co_return;
-    }
-
-    if (obc_manager.get_obc()->obs.exists) {
+    if (found && obc_manager.get_obc()->obs.exists) {
       auto version = obc_manager.get_obc()->obs.oi.version;
       version_map->emplace(object, version);
-      DEBUGDPP("found: {}  {}", pg,
-               object, version);
+      DEBUGDPP("found: {}  {}", pg, object, version);
       co_return;
     } else {
+      DEBUGDPP("missing, must have been removed: {}", pg, object);
       // if the object does not exist here, it must have been removed
       // between the collection_list_partial and here.  This can happen
       // for the first item in the range, which is usually last_backfill.
@@ -272,9 +265,7 @@ RecoveryBackend::scan_for_backfill(
   bi.begin = std::move(start);
   bi.end = std::move(next);
   bi.objects = std::move(*version_map);
-  DEBUGDPP("{} BackfillInterval filled, leaving, {}",
-           "scan_for_backfill",
-           pg, bi);
+  DEBUGDPP("BackfillInterval complete: {}", pg, bi);
   co_return std::move(bi);
 }
 
