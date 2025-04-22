@@ -137,8 +137,7 @@ int NVMeofGwMonitorClient::init()
   }
 
   monc.sub_want("NVMeofGw", 0, 0);
-  monc.set_want_keys(CEPH_ENTITY_TYPE_MON|CEPH_ENTITY_TYPE_OSD
-      |CEPH_ENTITY_TYPE_MDS|CEPH_ENTITY_TYPE_MGR);
+  monc.set_want_keys(CEPH_ENTITY_TYPE_MON);
   monc.set_messenger(client_messenger.get());
 
   // We must register our config callback before calling init(), so
