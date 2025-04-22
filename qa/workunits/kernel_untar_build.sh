@@ -8,8 +8,8 @@ mkdir t
 cd t
 tar xJf ../linux.tar.xz
 cd linux*
-make defconfig
-make -j`grep -c processor /proc/cpuinfo`
+make V=1 defconfig
+make -j`grep -c processor /proc/cpuinfo` V=1
 cd ..
 if ! rm -rv linux* ; then
     echo "uh oh rm -r failed, it left behind:"
