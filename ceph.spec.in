@@ -1445,6 +1445,8 @@ env | sort
 # TODO: drop this step once we can use `cmake -B`
 mkdir -p %{_vpath_builddir}
 pushd %{_vpath_builddir}
+export RUST_LOG=sccache=debug
+sccache --show-stats
 cmake .. \
 %if 0%{?suse_version} == 1500
     -DCMAKE_C_COMPILER=gcc-11 \
@@ -2772,4 +2774,5 @@ exit 0
 %{python3_sitelib}/ceph_node_proxy/*
 %{python3_sitelib}/ceph_node_proxy-*
 
+sccache --show-stats
 %changelog

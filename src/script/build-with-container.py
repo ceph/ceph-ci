@@ -585,7 +585,7 @@ def bc_make_source_rpm(ctx):
     ctx.build.wants(Steps.CONTAINER, ctx)
     make_srpm_cmd = f"cd {ctx.cli.homedir} && ./make-srpm.sh"
     if ctx.cli.ceph_version:
-        make_srpm_cmd = f"{make_srpm_cmd} {ctx.cli.ceph_version}"
+        make_srpm_cmd = f"{make_srpm_cmd} ceph_version"
     cmd = _container_cmd(
         ctx,
         [
@@ -663,7 +663,7 @@ def bc_make_debs(ctx):
         basedir = pathlib.Path(ctx.cli.homedir) / ctx.cli.build_dir
     make_debs_cmd = f"./make-debs.sh {basedir}"
     if ctx.cli.ceph_version:
-        make_debs_cmd = f"{make_debs_cmd} {ctx.cli.ceph_version} {ctx.cli.distro}"
+        make_debs_cmd = f"{make_debs_cmd} ceph_version {ctx.cli.distro}"
     cmd = _container_cmd(
         ctx,
         [
