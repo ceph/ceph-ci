@@ -1,6 +1,11 @@
 overrides:
   ceph:
     expect_valgrind_errors: true
+  conf:
+      mon:
+        debug ms: 20
+        debug monc: 30
+        debug auth: 20
 tasks:
 - exec:
     mon.a:

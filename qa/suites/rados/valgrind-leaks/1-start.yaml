@@ -20,6 +20,10 @@ overrides:
         osd max object namespace len: 64
       mon:
         mon osd crush smoke test: false
+        debug ms: 20
+        debug mon: 20
+        debug auth: 20
+        debug osd: 20
       osd:
         osd fast shutdown: false
     valgrind:

@@ -17,6 +17,7 @@
 #include "acconfig.h"
 
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <fstream>
 #include <iterator>
@@ -30,6 +31,7 @@
 #include "common/cmdparse.h"
 #include "common/config.h"
 #include "common/Timer.h"
+#include "common/dout.h"
 #include "common/errno.h"
 
 #include "messages/MOSDOp.h"
@@ -813,7 +815,9 @@ void AsyncMessenger::wait()
 
   // close all connections
   shutdown_connections(false);
+  ldout(cct, 10) << __func__ << ": connections closed" << dendl;
   stack->drain();
+  ldout(cct, 20) << __func__ << ": stack drained" << dendl;
 
   ldout(cct, 10) << __func__ << ": done." << dendl;
   ldout(cct, 1) << __func__ << " complete." << dendl;
@@ -1041,9 +1045,13 @@ void AsyncMessenger::shutdown_connections(bool queue_reset)
     for (const auto& c : deleted_conns) {
       ldout(cct, 5) << __func__ << " delete " << c << dendl;
       c->get_perf_counter()->dec(l_msgr_active_connections);
+      ldout(cct, 5) << __func__ << " perf_counter " << c->get_perf_counter() << dendl;
     }
+    ldout(cct, 5) << __func__ << " deleted_conns size " << deleted_conns.size() << dendl;
     deleted_conns.clear();
+    ldout(cct, 5) << __func__ << " deleted_conns size " << deleted_conns.size() << dendl;
   }
+  ldout(cct, 5) << __func__ << " finished" << dendl;
 }
 
 void AsyncMessenger::mark_down_addrs(const entity_addrvec_t& addrs)
