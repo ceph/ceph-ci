@@ -187,15 +187,21 @@ class C_drain : public EventCallback {
 
 void NetworkStack::drain()
 {
-  ldout(cct, 30) << __func__ << " started." << dendl;
+  ldout(cct, 20) << __func__ << " started." << dendl;
   pthread_t cur = pthread_self();
+  ldout(cct, 20) << __func__ << " cur thread id: " << cur << dendl;
   pool_spin.lock();
+  ldout(cct, 20) << __func__ << " pool_spin locked." << dendl;
   C_drain drain(get_num_worker());
+  ldout(cct, 20) << __func__ << " drain " << dendl;
   for (Worker* worker : workers) {
+    ldout(cct, 20) << __func__ << " worker " << worker->id << dendl;
     ceph_assert(cur != worker->center.get_owner());
     worker->center.dispatch_event_external(EventCallbackRef(&drain));
   }
+  ldout(cct, 20) << __func__ << " worker dispatch_event_external done." << dendl;
   pool_spin.unlock();
+  ldout(cct, 20) << __func__ << " pool_spin unlocked." << dendl;
   drain.wait();
-  ldout(cct, 30) << __func__ << " end." << dendl;
+  ldout(cct, 20) << __func__ << " end." << dendl;
 }
