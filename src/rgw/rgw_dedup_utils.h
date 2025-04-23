@@ -49,30 +49,27 @@ namespace rgw::dedup {
   std::ostream& operator<<(std::ostream &out, const dedup_req_type_t& dedup_type);
   struct __attribute__ ((packed)) dedup_flags_t {
   private:
-    static constexpr uint8_t RGW_DEDUP_FLAG_SHA256          = 0x01;
-    static constexpr uint8_t RGW_DEDUP_FLAG_SHARED_MANIFEST = 0x02;
-    static constexpr uint8_t RGW_DEDUP_FLAG_SINGLETON       = 0x04;
-    static constexpr uint8_t RGW_DEDUP_FLAG_OCCUPIED        = 0x08;
-    static constexpr uint8_t RGW_DEDUP_FLAG_PG_VER          = 0x10;
-    static constexpr uint8_t RGW_DEDUP_FLAG_FASTLANE        = 0x20;
+    static constexpr uint8_t RGW_DEDUP_FLAG_SHA256            = 0x01;
+    static constexpr uint8_t RGW_DEDUP_FLAG_SHA256_CALCULATED = 0x02;
+    static constexpr uint8_t RGW_DEDUP_FLAG_SHARED_MANIFEST   = 0x04;
+    static constexpr uint8_t RGW_DEDUP_FLAG_OCCUPIED          = 0x08;
+    static constexpr uint8_t RGW_DEDUP_FLAG_FASTLANE          = 0x10;
 
   public:
     dedup_flags_t() : flags(0) {}
     dedup_flags_t(uint8_t _flags) : flags(_flags) {}
     inline void clear() { this->flags = 0; }
-    inline bool has_shared_manifest() const { return ((flags & RGW_DEDUP_FLAG_SHARED_MANIFEST) != 0); }
     inline bool has_valid_sha256() const { return ((flags & RGW_DEDUP_FLAG_SHA256) != 0); }
-    inline void set_shared_manifest() { flags |= RGW_DEDUP_FLAG_SHARED_MANIFEST; }
     inline void set_valid_sha256()  { flags |= RGW_DEDUP_FLAG_SHA256; }
-    inline void set_fastlane()  { flags |= RGW_DEDUP_FLAG_FASTLANE; }
-    inline bool is_fastlane()  const { return ((flags & RGW_DEDUP_FLAG_FASTLANE) != 0); }
-    inline bool is_singleton() const { return ((flags & RGW_DEDUP_FLAG_SINGLETON) != 0); }
-    inline void clear_singleton() { this->flags &= ~RGW_DEDUP_FLAG_SINGLETON; }
+    inline bool sha256_calculated() const { return ((flags & RGW_DEDUP_FLAG_SHA256_CALCULATED) != 0); }
+    inline void set_sha256_calculated()  { flags |= RGW_DEDUP_FLAG_SHA256_CALCULATED; }
+    inline bool has_shared_manifest() const { return ((flags & RGW_DEDUP_FLAG_SHARED_MANIFEST) != 0); }
+    inline void set_shared_manifest() { flags |= RGW_DEDUP_FLAG_SHARED_MANIFEST; }
     inline bool is_occupied() const {return ((this->flags & RGW_DEDUP_FLAG_OCCUPIED) != 0); }
     inline void set_occupied() {this->flags |= RGW_DEDUP_FLAG_OCCUPIED; }
     inline void clear_occupied() { this->flags &= ~RGW_DEDUP_FLAG_OCCUPIED; }
-    inline void set_singleton_occupied() {this->flags |= (RGW_DEDUP_FLAG_OCCUPIED | RGW_DEDUP_FLAG_SINGLETON); }
-
+    inline bool is_fastlane()  const { return ((flags & RGW_DEDUP_FLAG_FASTLANE) != 0); }
+    inline void set_fastlane()  { flags |= RGW_DEDUP_FLAG_FASTLANE; }
   private:
     uint8_t flags;
   };
@@ -210,6 +207,7 @@ namespace rgw::dedup {
 
       this->valid_sha256_attrs      += other.valid_sha256_attrs;
       this->invalid_sha256_attrs    += other.invalid_sha256_attrs;
+      this->set_sha256_attrs        += other.set_sha256_attrs;
       this->skip_sha256_cmp         += other.skip_sha256_cmp;
 
       this->set_shared_manifest     += other.set_shared_manifest;
@@ -251,6 +249,7 @@ namespace rgw::dedup {
 
     uint64_t valid_sha256_attrs = 0;
     uint64_t invalid_sha256_attrs = 0;
+    uint64_t set_sha256_attrs = 0;
     uint64_t skip_sha256_cmp = 0;
 
     uint64_t set_shared_manifest = 0;
@@ -297,6 +296,7 @@ namespace rgw::dedup {
 
     encode(m.valid_sha256_attrs, bl);
     encode(m.invalid_sha256_attrs, bl);
+    encode(m.set_sha256_attrs, bl);
     encode(m.skip_sha256_cmp, bl);
     encode(m.set_shared_manifest, bl);
 
@@ -341,6 +341,7 @@ namespace rgw::dedup {
 
     decode(m.valid_sha256_attrs, bl);
     decode(m.invalid_sha256_attrs, bl);
+    decode(m.set_sha256_attrs, bl);
     decode(m.skip_sha256_cmp, bl);
     decode(m.set_shared_manifest, bl);
 
@@ -403,9 +404,6 @@ namespace rgw::dedup {
   bool hex2int(const char *p, const char *p_end, uint64_t *p_val);
   bool parse_etag_string(const std::string& etag, parsed_etag_t *parsed_etag);
   void etag_to_bufferlist(uint64_t md5_high, uint64_t md5_low, uint16_t num_parts, ceph::bufferlist *bl);
-  void sha256_to_bufferlist(uint64_t sha256a, uint64_t sha256b,
-                            uint64_t sha256c, uint64_t sha256d,
-                            ceph::bufferlist *bl);
 
   //---------------------------------------------------------------------------
   static inline uint64_t calc_deduped_bytes(uint64_t head_obj_size,

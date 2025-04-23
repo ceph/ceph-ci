@@ -120,6 +120,10 @@ namespace rgw::dedup {
   struct disk_record_t
   {
     disk_record_t(const char *buff);
+    disk_record_t(const rgw::sal::Bucket *p_bucket,
+                  const std::string      &obj_name,
+                  const parsed_etag_t    *p_parsed_etag,
+                  uint64_t                obj_size);
     disk_record_t() {}
     bool operator==(const disk_record_t &other) const;
     size_t serialize(char *buff) const;
@@ -218,8 +222,6 @@ namespace rgw::dedup {
     struct record_info_t {
       disk_block_id_t block_id;
       record_id_t     rec_id;
-      bool            has_shared_manifest;
-      bool            has_valid_sha256;
     };
 
     disk_block_seq_t(const DoutPrefixProvider* dpp_in,
@@ -231,14 +233,10 @@ namespace rgw::dedup {
     ~disk_block_seq_t();
     int flush_disk_records(librados::IoCtx &ioctx);
     md5_shard_t get_md5_shard() { return d_md5_shard; }
-    int add_record(librados::IoCtx        &ioctx,
-                   const rgw::sal::Bucket *p_bucket,
-                   // @p_obj is nullptr when call with info from bucket index
-                   const rgw::sal::Object *p_obj,
-                   const parsed_etag_t    *p_parsed_etag,
-                   const std::string      &obj_name,
-                   uint64_t                obj_size,
-                   record_info_t          *p_rec_info); // OUT-PARAM
+    int add_record(librados::IoCtx     &ioctx,
+                   const disk_record_t *p_rec, // IN-OUT
+                   record_info_t       *p_rec_info); // OUT-PARAM
+
   private:
     disk_block_seq_t();
     void activate(const DoutPrefixProvider* _dpp,
@@ -249,13 +247,6 @@ namespace rgw::dedup {
     void deactivate();
     inline const disk_block_t* last_block() { return &p_arr[DISK_BLOCK_COUNT-1]; }
     int flush(librados::IoCtx &ioctx);
-    int fill_disk_record(disk_record_t          *p_rec,
-                         const rgw::sal::Bucket *p_bucket,
-                         // @p_obj is nullptr when call with info from bucket index
-                         const rgw::sal::Object *p_obj,
-                         const parsed_etag_t    *p_parsed_etag,
-                         const std::string      &obj_name,
-                         uint64_t                obj_size);
     void slab_reset() {
       p_curr_block = p_arr;
       p_curr_block->init(d_worker_id, d_seq_number);

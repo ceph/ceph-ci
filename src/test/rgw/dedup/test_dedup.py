@@ -1460,7 +1460,7 @@ def test_dedup_small_with_tenants():
 #    should be made to the system
 @pytest.mark.basic_test
 def test_dedup_inc_0_with_tenants():
-    #return
+    return
 
     if full_dedup_is_disabled():
         return
@@ -1507,7 +1507,7 @@ def test_dedup_inc_0_with_tenants():
 #    should be made to the system
 @pytest.mark.basic_test
 def test_dedup_inc_0():
-    #return
+    return
 
     if full_dedup_is_disabled():
         return
@@ -1550,7 +1550,7 @@ def test_dedup_inc_0():
 # 3) Run another dedup
 @pytest.mark.basic_test
 def test_dedup_inc_1_with_tenants():
-    #return
+    return
 
     if full_dedup_is_disabled():
         return
@@ -1614,7 +1614,7 @@ def test_dedup_inc_1_with_tenants():
 # 3) Run another dedup
 @pytest.mark.basic_test
 def test_dedup_inc_1():
-    #return
+    return
 
     if full_dedup_is_disabled():
         return
@@ -1675,7 +1675,7 @@ def test_dedup_inc_1():
 # 4) Run another dedup
 @pytest.mark.basic_test
 def test_dedup_inc_2_with_tenants():
-    #return
+    return
 
     if full_dedup_is_disabled():
         return
@@ -1748,7 +1748,7 @@ def test_dedup_inc_2_with_tenants():
 # 4) Run another dedup
 @pytest.mark.basic_test
 def test_dedup_inc_2():
-    #return
+    return
 
     if full_dedup_is_disabled():
         return
@@ -1816,7 +1816,7 @@ def test_dedup_inc_2():
 # 3) Run another dedup
 @pytest.mark.basic_test
 def test_dedup_inc_with_remove_multi_tenants():
-    #return
+    return
 
     if full_dedup_is_disabled():
         return
@@ -2113,7 +2113,7 @@ def test_dedup_small_multipart():
 #-------------------------------------------------------------------------------
 @pytest.mark.basic_test
 def test_dedup_large_scale_with_tenants():
-    return
+    #return
 
     if full_dedup_is_disabled():
         return
@@ -2133,7 +2133,7 @@ def test_dedup_large_scale_with_tenants():
 #-------------------------------------------------------------------------------
 @pytest.mark.basic_test
 def test_dedup_large_scale():
-    return
+    #return
 
     if full_dedup_is_disabled():
         return
@@ -2529,6 +2529,36 @@ def test_dedup_dry_large_scale():
     finally:
         # cleanup must be executed even after a failure
         cleanup_all_buckets(bucket_names, conns)
+
+
+#-------------------------------------------------------------------------------
+@pytest.mark.basic_test
+def test_dedup_dry_large_scale_single_bucket():
+    return
+
+    prepare_test()
+    max_copies_count=3
+    num_threads=16
+    num_files=32*1024
+    size=1*KB
+    files=[]
+    config=TransferConfig(multipart_threshold=size, multipart_chunksize=1*MB)
+    log.info("test_dedup_dry_large_scale_new: connect to AWS ...")
+    gen_files_fixed_size(files, num_files, size, max_copies_count)
+    conns=get_connections(num_threads)
+
+    bucket_name=gen_bucket_name()
+    conns[0].create_bucket(Bucket=bucket_name)
+
+    bucket_names=[bucket_name] * num_threads
+
+    try:
+        threads_simple_dedup_with_tenants(files, conns, bucket_names, config, True)
+    except:
+        log.warning("test_dedup_dry_large_scale: failed!!")
+    finally:
+        # cleanup must be executed even after a failure
+        cleanup(bucket_name, conns[0])
 
 
 #-------------------------------------------------------------------------------

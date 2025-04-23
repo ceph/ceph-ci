@@ -19,6 +19,38 @@
 namespace rgw::dedup {
 
   rgw_pool pool(DEDUP_POOL_NAME);
+
+  //---------------------------------------------------------------------------
+  disk_record_t::disk_record_t(const rgw::sal::Bucket *p_bucket,
+                               const std::string      &obj_name,
+                               const parsed_etag_t    *p_parsed_etag,
+                               uint64_t                obj_size)
+  {
+    this->s.md5_high        = p_parsed_etag->md5_high;
+    this->s.md5_low         = p_parsed_etag->md5_low;
+    this->s.obj_bytes_size  = obj_size;
+    this->s.version         = 0;
+
+    this->s.flags           = 0;
+    this->s.pad8            = 0;
+    this->s.num_parts       = p_parsed_etag->num_parts;
+    this->obj_name          = obj_name;
+    this->s.obj_name_len    = this->obj_name.length();
+    this->bucket_name       = p_bucket->get_name();
+    this->s.bucket_name_len = this->bucket_name.length();
+
+    this->bucket_id         = p_bucket->get_bucket_id();
+    this->s.bucket_id_len   = this->bucket_id.length();
+    this->tenant_name       = p_bucket->get_tenant();
+    this->s.tenant_name_len = this->tenant_name.length();
+    this->s.ref_tag_len     = 0;
+    this->s.manifest_len    = 0;
+    this->s.shared_manifest = 0;
+    memset(this->s.sha256, 0, sizeof(this->s.sha256));
+    this->ref_tag           = "";
+    this->manifest_bl.clear();
+  }
+
   //---------------------------------------------------------------------------
   disk_record_t::disk_record_t(const char *buff)
   {
@@ -218,7 +250,8 @@ namespace rgw::dedup {
   }
 
   //---------------------------------------------------------------------------
-  record_id_t disk_block_t::add_record(const disk_record_t *p_rec, const DoutPrefixProvider *dpp)
+  record_id_t disk_block_t::add_record(const disk_record_t *p_rec,
+                                       const DoutPrefixProvider *dpp)
   {
     disk_block_header_t *p_header = get_header();
     if (unlikely(p_header->rec_count >= MAX_REC_IN_BLOCK)) {
@@ -328,171 +361,6 @@ namespace rgw::dedup {
     //memset(p_arr, 0, sizeof(disk_block_t)*DISK_BLOCK_COUNT);
     memset(p_arr, 0, sizeof(disk_block_t));
     slab_reset();
-  }
-
-  //---------------------------------------------------------------------------
-  int disk_block_seq_t::fill_disk_record(disk_record_t          *p_rec,
-                                         const rgw::sal::Bucket *p_bucket,
-                                         const rgw::sal::Object *p_obj,
-                                         const parsed_etag_t    *p_parsed_etag,
-                                         const std::string      &obj_name,
-                                         uint64_t                obj_size)
-  {
-    p_rec->s.md5_high        = p_parsed_etag->md5_high;
-    p_rec->s.md5_low         = p_parsed_etag->md5_low;
-    p_rec->s.obj_bytes_size  = obj_size;
-    p_rec->s.version         = 0;
-
-    p_rec->s.flags           = 0;
-    p_rec->s.pad8            = 0;
-    p_rec->s.num_parts       = p_parsed_etag->num_parts;
-
-    p_rec->obj_name          = obj_name;
-    p_rec->s.obj_name_len    = obj_name.length();
-    p_rec->bucket_name       = p_bucket->get_name();
-    p_rec->s.bucket_name_len = p_rec->bucket_name.length();
-    p_rec->bucket_id         = p_bucket->get_bucket_id();
-    p_rec->s.bucket_id_len   = p_rec->bucket_id.length();
-    p_rec->tenant_name       = p_bucket->get_tenant();
-    p_rec->s.tenant_name_len = p_rec->tenant_name.length();
-
-    // TBD: can probably speedup the code a little by skipping NA fields
-    // instead of setting NULL values when fastlane is set
-    if (p_obj == nullptr) {
-      // First pass using only ETAG and size taken from bucket-index
-      p_rec->s.flags.set_fastlane();
-      p_rec->ref_tag = "";
-      p_rec->s.ref_tag_len = 0;
-      p_rec->manifest_bl.clear();
-      p_rec->s.manifest_len = 0;
-      memset(p_rec->s.sha256, 0, sizeof(p_rec->s.sha256));
-      memset(&p_rec->s.shared_manifest, 0, sizeof(p_rec->s.shared_manifest));
-      return 0;
-    }
-
-    const rgw::sal::Attrs& attrs = p_obj->get_attrs();
-
-    // if TAIL_TAG exists -> use it as ref-tag, eitherwise take ID_TAG
-    auto itr = attrs.find(RGW_ATTR_TAIL_TAG);
-    if (itr != attrs.end()) {
-      p_rec->ref_tag = itr->second.to_str();
-    }
-    else {
-      itr = attrs.find(RGW_ATTR_ID_TAG);
-      if (itr != attrs.end()) {
-        p_rec->ref_tag = itr->second.to_str();
-      }
-      else {
-        ldpp_dout(dpp, 5) << __func__ << "::No TAIL_TAG and no ID_TAG" << dendl;
-        return -EINVAL;
-      }
-    }
-    p_rec->s.ref_tag_len = p_rec->ref_tag.length();
-
-    // clear bufferlist first
-    p_rec->manifest_bl.clear();
-    ceph_assert(p_rec->manifest_bl.length() == 0);
-
-    itr = attrs.find(RGW_ATTR_MANIFEST);
-    if (itr != attrs.end()) {
-      const bufferlist &bl = itr->second;
-      RGWObjManifest manifest;
-      try {
-        auto bl_iter = bl.cbegin();
-        decode(manifest, bl_iter);
-      } catch (buffer::error& err) {
-        ldpp_dout(dpp, 1)  << __func__
-                           << "::ERROR: unable to decode manifest" << dendl;
-        return -EINVAL;
-      }
-
-      // force explicit tail_placement as the dedup could be on another bucket
-      const rgw_bucket_placement& tail_placement = manifest.get_tail_placement();
-      if (tail_placement.bucket.name.empty()) {
-        ldpp_dout(dpp, 20) << "dedup::updating tail placement" << dendl;
-        rgw_bucket b{p_rec->tenant_name, p_rec->bucket_name, p_rec->bucket_id};
-        manifest.set_tail_placement(tail_placement.placement_rule, b);
-        encode(manifest, p_rec->manifest_bl);
-      }
-      else {
-        p_rec->manifest_bl = bl;
-      }
-      p_rec->s.manifest_len = p_rec->manifest_bl.length();
-    }
-    else {
-      ldpp_dout(dpp, 5)  << __func__ << "::ERROR: no manifest" << dendl;
-      return -EINVAL;
-    }
-
-#if 0
-    // optional attributes:
-    itr = attrs.find(RGW_ATTR_PG_VER);
-    if (itr != attrs.end() && itr->second.length() > 0) {
-      uint64_t pg_ver = 0;
-      try {
-        bufferlist bl = itr->second;
-        auto bl_iter = bl.cbegin();
-        decode(pg_ver, bl_iter);
-        ldpp_dout(dpp, 10)  << __func__ << "::pg_ver=" << bl.to_str() << dendl;;
-        p_rec->s.version = pg_ver;
-        p_rec->s.flags |= RGW_DEDUP_FLAG_PG_VER;
-      } catch (buffer::error& err) {
-        ldpp_dout(dpp, 1)  << __func__
-                           << "::ERROR: no failed to decode pg ver" << dendl;
-      }
-    }
-#endif
-
-    itr = attrs.find(RGW_ATTR_SHA256);
-    if (itr != attrs.end()) {
-      char buff[4*HEX_UNIT_SIZE];
-      bool valid_sha256 = true;
-      const std::string sha256 = itr->second.to_str();
-      sha256.copy(buff, sizeof(buff), 0);
-      unsigned idx = 0;
-      for (const char *p = buff; p < buff+sizeof(buff); p += HEX_UNIT_SIZE) {
-        uint64_t val;
-        if (hex2int(p, p+HEX_UNIT_SIZE, &val)) {
-          p_rec->s.sha256[idx++] = val;
-        }
-        else {
-          valid_sha256 = false;
-          memset(p_rec->s.sha256, 0, sizeof(p_rec->s.sha256));
-          break;
-        }
-      }
-      if (valid_sha256) {
-        p_rec->s.flags.set_valid_sha256();
-        // TBD: need to update those values in the md5_stats_t
-        //p_stats->valid_sha256++;
-      }
-    }
-    else {
-      // TBD: need to update those values in the md5_stats_t
-      //p_stats->invalid_sha256++;
-      memset(p_rec->s.sha256, 0, sizeof(p_rec->s.sha256));
-    }
-
-    itr = attrs.find(RGW_ATTR_SHARE_MANIFEST);
-    if (itr != attrs.end()) {
-      uint64_t hash = 0;
-      try {
-        auto bl_iter = itr->second.cbegin();
-        ceph::decode(hash, bl_iter);
-        p_rec->s.shared_manifest = hash;
-      } catch (buffer::error& err) {
-        ldpp_dout(dpp, 1) << __func__ << "::ERROR: bad shared_manifest" << dendl;
-        return -EINVAL;
-      }
-      ldpp_dout(dpp, 20) << __func__ << "::p_rec->s.shared_manifest=0x" << std::hex
-                         << p_rec->s.shared_manifest << std::dec << dendl;
-      p_rec->s.flags.set_shared_manifest();
-    }
-    else {
-      memset(&p_rec->s.shared_manifest, 0, sizeof(p_rec->s.shared_manifest));
-    }
-
-    return 0;
   }
 
   //---------------------------------------------------------------------------
@@ -738,28 +606,15 @@ namespace rgw::dedup {
   }
 
   //---------------------------------------------------------------------------
-  int disk_block_seq_t::add_record(librados::IoCtx        &ioctx,
-                                   const rgw::sal::Bucket *p_bucket,
-                                   const rgw::sal::Object *p_obj,
-                                   const parsed_etag_t    *p_parsed_etag,
-                                   const std::string      &obj_name,
-                                   uint64_t                obj_size,
-                                   record_info_t          *p_rec_info) // OUT-PARAM
+  int disk_block_seq_t::add_record(librados::IoCtx     &ioctx,
+                                   const disk_record_t *p_rec, // IN-OUT
+                                   record_info_t       *p_rec_info) // OUT-PARAM
   {
     ceph_assert(p_arr);
-    ldpp_dout(dpp, 20) << __func__  << "::worker_id=" << (uint32_t)d_worker_id
-                       << ", md5_shard=" << (uint32_t)d_md5_shard
-                       << "::" << p_bucket->get_name() << "/" << obj_name << dendl;
-    disk_record_t rec;
-    int ret = fill_disk_record(&rec, p_bucket, p_obj, p_parsed_etag, obj_name, obj_size);
-    if (unlikely(ret != 0)) {
-      return ret;
-    }
-    p_rec_info->has_shared_manifest = rec.has_shared_manifest();
-    p_rec_info->has_valid_sha256    = rec.has_valid_sha256();
+
     p_stats->egress_records ++;
     // first, try and add the record to the current open block
-    p_rec_info->rec_id = p_curr_block->add_record(&rec, dpp);
+    p_rec_info->rec_id = p_curr_block->add_record(p_rec, dpp);
     if (p_rec_info->rec_id < MAX_REC_IN_BLOCK) {
       p_rec_info->block_id = p_curr_block->get_block_id();
       return 0;
@@ -770,18 +625,18 @@ namespace rgw::dedup {
       p_stats->egress_blocks++;
       p_curr_block->close_block(dpp, true);
     }
-
+    int ret = 0;
     // Do we have more Blocks in the block-array ?
     if (p_curr_block < last_block()) {
       p_curr_block ++;
       d_seq_number ++;
       p_curr_block->init(d_worker_id, d_seq_number);
-      p_rec_info->rec_id = p_curr_block->add_record(&rec, dpp);
+      p_rec_info->rec_id = p_curr_block->add_record(p_rec, dpp);
     }
     else {
       ldpp_dout(dpp, 20)  << __func__ << "::calling flush()" << dendl;
       ret = flush(ioctx);
-      p_rec_info->rec_id = p_curr_block->add_record(&rec, dpp);
+      p_rec_info->rec_id = p_curr_block->add_record(p_rec, dpp);
     }
 
     p_rec_info->block_id = p_curr_block->get_block_id();

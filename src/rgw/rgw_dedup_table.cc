@@ -86,12 +86,12 @@ namespace rgw::dedup {
   int dedup_table_t::add_entry(key_t *p_key,
                                disk_block_id_t block_id,
                                record_id_t rec_id,
-                               bool shared_manifest,
-                               bool valid_sha256)
+                               bool shared_manifest)
   {
-    value_t val(block_id, rec_id, shared_manifest, valid_sha256);
+    value_t new_val(block_id, rec_id, shared_manifest);
     uint32_t idx = find_entry(p_key);
-    if (!hash_tab[idx].val.is_occupied()) {
+    value_t &val = hash_tab[idx].val;
+    if (!val.is_occupied()) {
       if (occupied_count < entries_count) {
         occupied_count++;
       }
@@ -100,30 +100,25 @@ namespace rgw::dedup {
       }
 
       hash_tab[idx].key = *p_key;
-      hash_tab[idx].val = val;
+      hash_tab[idx].val = new_val;
       ldpp_dout(dpp, 20) << __func__ << "::add new entry" << dendl;
-      ceph_assert(hash_tab[idx].val.count == 1);
+      ceph_assert(val.count == 1);
     }
     else {
       ceph_assert(hash_tab[idx].key == *p_key);
-      hash_tab[idx].val.count ++;
-      if (!hash_tab[idx].val.has_shared_manifest() && shared_manifest) {
+      val.count ++;
+      if (!val.has_shared_manifest() && shared_manifest) {
         // replace value!
-        ldpp_dout(dpp, 20) << __func__ << "::Replace with shared_manifest" << dendl;
-        val.count = hash_tab[idx].val.count;
-        val.clear_singleton();
-        hash_tab[idx].val = val;
+        ldpp_dout(dpp, 20) << __func__ << "::Replace with shared_manifest::["
+                           << val.block_idx << "/" << (int)val.rec_id << "] -> ["
+                           << block_id << "/" << (int)rec_id << "]" << dendl;
+        new_val.count = val.count;
+        hash_tab[idx].val = new_val;
       }
-      else if (hash_tab[idx].val.is_singleton()) {
-        ldpp_dout(dpp, 20) << __func__ << "::clear singleton" << dendl;
-        // This is the second record with the same key -> clear singleton state
-        hash_tab[idx].val.clear_singleton();
-      }
-      ceph_assert(hash_tab[idx].val.count > 1);
+      ceph_assert(val.count > 1);
     }
     values_count++;
-    ldpp_dout(dpp, 20) << __func__ << "::DUP COUNT="
-                       << hash_tab[idx].val.count << dendl;
+    ldpp_dout(dpp, 20) << __func__ << "::COUNT="<< val.count << dendl;
     return 0;
   }
 
@@ -131,23 +126,27 @@ namespace rgw::dedup {
   void dedup_table_t::update_entry(key_t *p_key,
                                    disk_block_id_t block_id,
                                    record_id_t rec_id,
-                                   bool shared_manifest,
-                                   bool valid_sha256)
+                                   bool shared_manifest)
   {
     uint32_t idx = find_entry(p_key);
     ceph_assert(hash_tab[idx].key == *p_key);
-    ceph_assert(hash_tab[idx].val.is_occupied());
-    // should only update non-singleton entries!
-    ceph_assert(hash_tab[idx].val.count > 1);
+    value_t &val = hash_tab[idx].val;
+    ceph_assert(val.is_occupied());
+    // we only update non-singletons since we purge singletons after the first pass
+    ceph_assert(val.count > 1);
 
     // need to overwrite the block_idx/rec_id from the first pass
-    // unless already set with shared_manifest
-    if (!hash_tab[idx].val.has_shared_manifest()) {
+    // unless already set with shared_manifest with the correct block-id/rec-id
+    // We only set the shared_manifest flag on the second pass where we
+    // got valid block-id/rec-id
+    if (!val.has_shared_manifest()) {
       // replace value!
-      value_t val(block_id, rec_id, shared_manifest, valid_sha256);
-      val.count = hash_tab[idx].val.count;
-      val.clear_singleton();
-      hash_tab[idx].val = val;
+      value_t new_val(block_id, rec_id, shared_manifest);
+      new_val.count = val.count;
+      hash_tab[idx].val = new_val;
+      ldpp_dout(dpp, 20) << __func__ << "::Replaced table entry::["
+                         << val.block_idx << "/" << (int)val.rec_id << "] -> ["
+                         << block_id << "/" << (int)rec_id << "]" << dendl;
     }
   }
 

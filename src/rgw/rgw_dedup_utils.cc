@@ -151,7 +151,8 @@ namespace rgw::dedup {
     }
     bl->append(buff, n);
   }
-
+#if 0
+  // TBD: do we want to support AWS builtin SHA256 ??
   //---------------------------------------------------------------------------
   void sha256_to_bufferlist(uint64_t sha256a,
                             uint64_t sha256b,
@@ -166,6 +167,32 @@ namespace rgw::dedup {
     bl->append(buff, sizeof(buff));
   }
 
+  awz_sha256()
+  {
+    auto itr = attrs.find(RGW_ATTR_AMZ_SHA256);
+    if (itr != attrs.end()) {
+      char buff[4*HEX_UNIT_SIZE];
+      bool valid_sha256 = true;
+      const std::string sha256 = itr->second.to_str();
+      sha256.copy(buff, sizeof(buff), 0);
+      unsigned idx = 0;
+      for (const char *p = buff; p < buff+sizeof(buff); p += HEX_UNIT_SIZE) {
+        uint64_t val;
+        if (hex2int(p, p+HEX_UNIT_SIZE, &val)) {
+          p_rec->s.sha256[idx++] = val;
+        }
+        else {
+          valid_sha256 = false;
+          break;
+        }
+      }
+      if (valid_sha256) {
+        p_rec->s.flags.set_valid_sha256();
+        p_stats->valid_sha256_attrs++;
+      }
+    }
+  }
+#endif
   static const char* s_urgent_msg_names[] = {
     "URGENT_MSG_NONE",
     "URGENT_MSG_ABORT",
@@ -288,13 +315,17 @@ namespace rgw::dedup {
 
     {
       Formatter::ObjectSection notify(*f, "notify");
-#if 0
-      f->dump_unsigned("Valid SHA256 attrs", this->valid_sha256_attrs);
-      f->dump_unsigned("Invalid SHA256 attrs", this->invalid_sha256_attrs);
-#endif
       if (this->failed_table_load) {
         f->dump_unsigned("Failed Table Load", this->failed_table_load);
       }
+
+      f->dump_unsigned("Valid SHA256 attrs", this->valid_sha256_attrs);
+      f->dump_unsigned("Invalid SHA256 attrs", this->invalid_sha256_attrs);
+
+      if (this->set_sha256_attrs) {
+        f->dump_unsigned("Set SHA256", this->set_sha256_attrs);
+      }
+
       if (this->skip_sha256_cmp) {
         f->dump_unsigned("Can't run SHA256 compare", this->skip_sha256_cmp);
       }

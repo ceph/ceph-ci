@@ -223,7 +223,6 @@ namespace rgw::dedup {
     d_cluster(dpp, cct, driver),
     d_watcher_ctx(this)
   {
-
     d_min_obj_size_for_dedup = cct->_conf->rgw_max_chunk_size;
     d_head_object_size = cct->_conf->rgw_max_chunk_size;
     //ceph_assert(4*1024*1024 == d_head_object_size);
@@ -242,10 +241,13 @@ namespace rgw::dedup {
                                                const std::string      &obj_name,
                                                uint64_t                obj_size)
   {
+    disk_record_t rec(p_bucket, obj_name, p_parsed_etag, obj_size);
+    // First pass using only ETAG and size taken from bucket-index
+    rec.s.flags.set_fastlane();
+
     auto p_disk = disk_arr.get_shard_block_seq(p_parsed_etag->md5_low);
     disk_block_seq_t::record_info_t rec_info;
-    int ret = p_disk->add_record(d_dedup_cluster_ioctx, p_bucket, nullptr,
-                                 p_parsed_etag, obj_name, obj_size, &rec_info);
+    int ret = p_disk->add_record(d_dedup_cluster_ioctx, &rec, &rec_info);
     if (unlikely(ret != 0)) {
       return ret;
     }
@@ -265,7 +267,6 @@ namespace rgw::dedup {
     uint32_t size_4k_units = byte_size_to_disk_blocks(p_rec->s.obj_bytes_size);
     key_t key(p_rec->s.md5_high, p_rec->s.md5_low, size_4k_units,
               p_rec->s.num_parts);
-    bool has_valid_sha256 = p_rec->has_valid_sha256();
     bool has_shared_manifest = p_rec->has_shared_manifest();
     ldpp_dout(dpp, 20) << __func__ << "::bucket=" << p_rec->bucket_name
                        << ", obj=" << p_rec->obj_name << ", block_id="
@@ -276,8 +277,7 @@ namespace rgw::dedup {
                        << "::ETAG=" << std::hex << p_rec->s.md5_high
                        << p_rec->s.md5_low << std::dec << dendl;
 
-    int ret = p_table->add_entry(&key, block_id, rec_id, has_shared_manifest,
-                                 has_valid_sha256);
+    int ret = p_table->add_entry(&key, block_id, rec_id, has_shared_manifest);
     if (ret == 0) {
       p_stats->loaded_objects ++;
       ldpp_dout(dpp, 20) << __func__ << "::" << p_rec->bucket_name << "/"
@@ -528,23 +528,30 @@ namespace rgw::dedup {
   //---------------------------------------------------------------------------
   static void init_cmp_pairs(const disk_record_t *p_rec,
                              const bufferlist    &etag_bl,
+                             bufferlist          &sha256_bl, // OUT PARAM
                              librados::ObjectWriteOperation *p_op)
   {
     p_op->cmpxattr(RGW_ATTR_ETAG, CEPH_OSD_CMPXATTR_OP_EQ, etag_bl);
     p_op->cmpxattr(RGW_ATTR_MANIFEST, CEPH_OSD_CMPXATTR_OP_EQ, p_rec->manifest_bl);
-    if (p_rec->s.flags.has_valid_sha256() ) {
-      bufferlist bl;
-      sha256_to_bufferlist(p_rec->s.sha256[0], p_rec->s.sha256[1],
-                           p_rec->s.sha256[2], p_rec->s.sha256[3], &bl);
-      p_op->cmpxattr(RGW_ATTR_SHA256, CEPH_OSD_CMPXATTR_OP_EQ, bl);
+
+    if (p_rec->s.flags.has_valid_sha256()) {
+      // SHA has 256 bit splitted into multiple 64bit units
+      const unsigned units = (256 / (sizeof(uint64_t)*8));
+      static_assert(units == 4);
+      for (unsigned i = 0; i < units; i++) {
+        ceph::encode(p_rec->s.sha256[i], sha256_bl);
+      }
+    }
+
+    if (!p_rec->s.flags.sha256_calculated()) {
+      p_op->cmpxattr(RGW_ATTR_SHA256, CEPH_OSD_CMPXATTR_OP_EQ, sha256_bl);
     }
   }
 
   //---------------------------------------------------------------------------
   int Background::dedup_object(const disk_record_t *p_src_rec,
                                const disk_record_t *p_tgt_rec,
-                               bool                 has_shared_manifest_src,
-                               bool                 src_has_sha256)
+                               bool                 has_shared_manifest_src)
   {
     RGWObjManifest src_manifest;
     try {
@@ -571,16 +578,22 @@ namespace rgw::dedup {
     ldpp_dout(dpp, 20) << __func__ << "::num_parts=" << p_tgt_rec->s.num_parts
                        << "::ETAG=" << etag_bl.to_str() << dendl;
 
-    bufferlist hash_bl, manifest_hash_bl;
+    bufferlist hash_bl, manifest_hash_bl, src_sha256_bl, tgt_sha256_bl;
     crypto::digest<crypto::SHA1>(p_src_rec->manifest_bl).encode(hash_bl);
     // Use a shorter hash (64bit instead of 160bit)
     hash_bl.splice(0, 8, &manifest_hash_bl);
     librados::ObjectWriteOperation src_op, tgt_op;
-    init_cmp_pairs(p_src_rec, etag_bl, &src_op);
-    init_cmp_pairs(p_tgt_rec, etag_bl, &tgt_op);
+    init_cmp_pairs(p_src_rec, etag_bl, src_sha256_bl, &src_op);
+    init_cmp_pairs(p_tgt_rec, etag_bl, tgt_sha256_bl, &tgt_op);
     src_op.setxattr(RGW_ATTR_SHARE_MANIFEST, manifest_hash_bl);
+    if (p_src_rec->s.flags.sha256_calculated()) {
+      src_op.setxattr(RGW_ATTR_SHA256, src_sha256_bl);
+    }
     tgt_op.setxattr(RGW_ATTR_SHARE_MANIFEST, manifest_hash_bl);
     tgt_op.setxattr(RGW_ATTR_MANIFEST, p_src_rec->manifest_bl);
+    if (p_tgt_rec->s.flags.sha256_calculated()) {
+      tgt_op.setxattr(RGW_ATTR_SHA256, tgt_sha256_bl);
+    }
 
     std::string src_oid, tgt_oid;
     librados::IoCtx src_ioctx, tgt_ioctx;
@@ -596,7 +609,7 @@ namespace rgw::dedup {
     ldpp_dout(dpp, 20) << __func__ << "::ref_tag=" << ref_tag << dendl;
     int ret = inc_ref_count_by_manifest(ref_tag, src_oid, src_manifest);
     if (ret == 0) {
-      ldpp_dout(dpp, 20) << __func__ << "::send TGT CLS" << dendl;
+      ldpp_dout(dpp, 20) << __func__ << "::send TGT CLS (Shared_Manifest)" << dendl;
       ret = tgt_ioctx.operate(tgt_oid, &tgt_op);
       if (unlikely(ret != 0)) {
         ldpp_dout(dpp, 1) << __func__ << "::ERR: failed tgt_ioctx.operate("
@@ -608,8 +621,13 @@ namespace rgw::dedup {
       // free tail objects based on TGT manifest
       free_tail_objs_by_manifest(ref_tag, tgt_oid, tgt_manifest);
 
-      if(!has_shared_manifest_src) {
-        ldpp_dout(dpp, 20) << __func__ << "::send SRC CLS" << dendl;
+      if (!has_shared_manifest_src) {
+        // When SRC OBJ A has two or more dups (B, C) we set SHARED_MANIFEST
+        // after deduping B and update it in dedup_table, but don't update the
+        // disk-record (as require an expensive random-disk-write).
+        // When deduping C we can trust the shared_manifest state in the table and
+        // skip a redundant update to SRC object attribute
+        ldpp_dout(dpp, 20) << __func__ <<"::send SRC CLS (Shared_Manifest)"<< dendl;
         ret = src_ioctx.operate(src_oid, &src_op);
         if (unlikely(ret != 0)) {
           ldpp_dout(dpp, 1) << __func__ << "::ERR: failed src_ioctx.operate("
@@ -626,8 +644,9 @@ namespace rgw::dedup {
 
   using ceph::crypto::SHA256;
   //---------------------------------------------------------------------------
-  int Background::calc_object_sha256(const disk_record_t *p_rec, unsigned char *p_sha256)
+  int Background::calc_object_sha256(const disk_record_t *p_rec, uint8_t *p_sha256)
   {
+    ldpp_dout(dpp, 20) << __func__ << "::p_rec->obj_name=" << p_rec->obj_name << dendl;
     // Open questions -
     // 1) do we need the secret if so what is the correct one to use?
     // 2) are we passing the head/tail objects in the correct order?
@@ -639,7 +658,8 @@ namespace rgw::dedup {
       ldpp_dout(dpp, 1)  << __func__ << "::ERROR: bad src manifest" << dendl;
       return -EINVAL;
     }
-
+#if 1
+    // TBD: pass the IOCTX object to the caller
     librados::IoCtx ioctx;
     std::string oid;
     int ret = get_ioctx(dpp, driver, rados, p_rec, &ioctx, &oid);
@@ -647,22 +667,22 @@ namespace rgw::dedup {
       ldpp_dout(dpp, 1) << __func__ << "::ERR: failed get_ioctx()" << dendl;
       return ret;
     }
-
+#endif
     librados::IoCtx head_ioctx;
-    std::string secret("0555b35654ad1656d804");
-    TOPNSPC::crypto::HMACSHA256 hmac((const unsigned char*)secret.c_str(), secret.length());
+    const char *secret ="0555b35654ad1656d804";
+    TOPNSPC::crypto::HMACSHA256 hmac((const uint8_t*)secret, strlen(secret));
     for (auto p = manifest.obj_begin(dpp); p != manifest.obj_end(dpp); ++p) {
       rgw_raw_obj raw_obj = p.get_location().get_raw_obj(rados);
       rgw_rados_ref obj;
       ret = rgw_get_rados_ref(dpp, rados_handle, raw_obj, &obj);
       if (ret < 0) {
-        ldpp_dout(dpp, 1) << __func__ << "::manifest::failed open rados context "
-                          << obj << dendl;
+        ldpp_dout(dpp, 1) << __func__ << "::failed rgw_get_rados_ref() for raw_obj="
+                          << raw_obj << dendl;
         return ret;
       }
 
       if (oid == raw_obj.oid) {
-        ldpp_dout(dpp, 10) << __func__ << "::manifest:head object=" << oid << dendl;
+        ldpp_dout(dpp, 10) << __func__ << "::manifest: head object=" << oid << dendl;
         head_ioctx = obj.ioctx;
       }
       bufferlist bl;
@@ -675,37 +695,31 @@ namespace rgw::dedup {
         }
       }
       else {
-        ldpp_dout(dpp, 1) << "ERR: failed to read " << oid
+        ldpp_dout(dpp, 1) << __func__ << "::ERR: failed to read " << oid
                           << ", error is " << cpp_strerror(-ret) << dendl;
         return ret;
       }
     }
     hmac.Final(p_sha256);
-    uint64_t *arr = (uint64_t*)p_sha256;
-    char buff[64+1];
-    snprintf(buff, sizeof(buff), "%016lx%016lx%016lx%016lx", arr[0], arr[1], arr[2], arr[3]);
-    ldpp_dout(dpp, 1) << "SHA256=|||" << buff << "|||" << dendl;
-    //RGW_ATTR_SHA256
-    //set_attrs(Attrs a);
-    //int setxattr(const std::string& oid, const char *name, bufferlist& bl);
     return 0;
   }
 
   //---------------------------------------------------------------------------
   static void __attribute__ ((noinline))
-  try_deduping_record_dbg(const DoutPrefixProvider* dpp,
-                          const disk_record_t *p_tgt_rec,
-                          disk_block_id_t      block_id,
-                          record_id_t          rec_id,
-                          md5_shard_t          md5_shard)
+  print_record(const DoutPrefixProvider* dpp,
+               const disk_record_t *p_tgt_rec,
+               disk_block_id_t      block_id,
+               record_id_t          rec_id,
+               md5_shard_t          md5_shard)
   {
     ldpp_dout(dpp, 20) << __func__ << "::bucket=" << p_tgt_rec->bucket_name
                        << ", obj=" << p_tgt_rec->obj_name
-                       << ", block_id=" << (uint32_t)block_id << ", rec_id=" << (uint32_t)rec_id
+                       << ", block_id=" << block_id
+                       << ", rec_id=" << (int)rec_id
                        << ", md5_shard=" << (int)md5_shard << dendl;
 
-    ldpp_dout(dpp, 20) << __func__ << "::(3)::md5_shard=" << (int)md5_shard
-                       << "::"<< p_tgt_rec->bucket_name
+    ldpp_dout(dpp, 20) << __func__ << "::md5_shard=" << (int)md5_shard
+                       << "::" << p_tgt_rec->bucket_name
                        << "/" << p_tgt_rec->obj_name
                        << "::num_parts=" << p_tgt_rec->s.num_parts
                        << "::ETAG=" << std::hex << p_tgt_rec->s.md5_high
@@ -713,11 +727,172 @@ namespace rgw::dedup {
   }
 
   //---------------------------------------------------------------------------
+  int Background::add_obj_attrs_to_record(disk_record_t         *p_rec,
+                                          const rgw::sal::Attrs &attrs,
+                                          dedup_table_t         *p_table,
+                                          md5_stats_t           *p_stats) /*IN-OUT*/
+  {
+    // if TAIL_TAG exists -> use it as ref-tag, eitherwise take ID_TAG
+    auto itr = attrs.find(RGW_ATTR_TAIL_TAG);
+    if (itr != attrs.end()) {
+      p_rec->ref_tag = itr->second.to_str();
+    }
+    else {
+      itr = attrs.find(RGW_ATTR_ID_TAG);
+      if (itr != attrs.end()) {
+        p_rec->ref_tag = itr->second.to_str();
+      }
+      else {
+        ldpp_dout(dpp, 5) << __func__ << "::No TAIL_TAG and no ID_TAG" << dendl;
+        return -EINVAL;
+      }
+    }
+    p_rec->s.ref_tag_len = p_rec->ref_tag.length();
+
+    // clear bufferlist first
+    p_rec->manifest_bl.clear();
+    ceph_assert(p_rec->manifest_bl.length() == 0);
+
+    itr = attrs.find(RGW_ATTR_MANIFEST);
+    if (itr != attrs.end()) {
+      const bufferlist &bl = itr->second;
+      RGWObjManifest manifest;
+      try {
+        auto bl_iter = bl.cbegin();
+        decode(manifest, bl_iter);
+      } catch (buffer::error& err) {
+        ldpp_dout(dpp, 1)  << __func__
+                           << "::ERROR: unable to decode manifest" << dendl;
+        return -EINVAL;
+      }
+
+      // force explicit tail_placement as the dedup could be on another bucket
+      const rgw_bucket_placement& tail_placement = manifest.get_tail_placement();
+      if (tail_placement.bucket.name.empty()) {
+        ldpp_dout(dpp, 20) << __func__ << "dedup::updating tail placement" << dendl;
+        rgw_bucket b{p_rec->tenant_name, p_rec->bucket_name, p_rec->bucket_id};
+        manifest.set_tail_placement(tail_placement.placement_rule, b);
+        encode(manifest, p_rec->manifest_bl);
+      }
+      else {
+        p_rec->manifest_bl = bl;
+      }
+      p_rec->s.manifest_len = p_rec->manifest_bl.length();
+    }
+    else {
+      ldpp_dout(dpp, 5)  << __func__ << "::ERROR: no manifest" << dendl;
+      return -EINVAL;
+    }
+
+#if 0
+    // optional attributes:
+    itr = attrs.find(RGW_ATTR_PG_VER);
+    if (itr != attrs.end() && itr->second.length() > 0) {
+      uint64_t pg_ver = 0;
+      try {
+        bufferlist bl = itr->second;
+        auto bl_iter = bl.cbegin();
+        decode(pg_ver, bl_iter);
+        ldpp_dout(dpp, 10)  << __func__ << "::pg_ver=" << bl.to_str() << dendl;;
+        p_rec->s.version = pg_ver;
+      } catch (buffer::error& err) {
+        ldpp_dout(dpp, 1)  << __func__
+                           << "::ERROR: no failed to decode pg ver" << dendl;
+      }
+    }
+
+    itr = attrs.find(RGW_ATTR_SHA256);
+    if (itr != attrs.end()) {
+      char buff[4*HEX_UNIT_SIZE];
+      bool valid_sha256 = true;
+      const std::string sha256 = itr->second.to_str();
+      sha256.copy(buff, sizeof(buff), 0);
+      unsigned idx = 0;
+      for (const char *p = buff; p < buff+sizeof(buff); p += HEX_UNIT_SIZE) {
+        uint64_t val;
+        if (hex2int(p, p+HEX_UNIT_SIZE, &val)) {
+          p_rec->s.sha256[idx++] = val;
+        }
+        else {
+          valid_sha256 = false;
+          memset(p_rec->s.sha256, 0, sizeof(p_rec->s.sha256));
+          break;
+        }
+      }
+      if (valid_sha256) {
+        p_rec->s.flags.set_valid_sha256();
+        // TBD: need to update those values in the md5_stats_t
+        //p_stats->valid_sha256++;
+      }
+    }
+    else {
+      // TBD: need to update those values in the md5_stats_t
+      //p_stats->invalid_sha256++;
+      memset(p_rec->s.sha256, 0, sizeof(p_rec->s.sha256));
+    }
+#endif
+
+    itr = attrs.find(RGW_ATTR_SHARE_MANIFEST);
+    if (itr != attrs.end()) {
+      uint64_t hash = 0;
+      try {
+        auto bl_iter = itr->second.cbegin();
+        ceph::decode(hash, bl_iter);
+        p_rec->s.shared_manifest = hash;
+      } catch (buffer::error& err) {
+        ldpp_dout(dpp, 1) << __func__ << "::ERROR: bad shared_manifest" << dendl;
+        return -EINVAL;
+      }
+      ldpp_dout(dpp, 20) << __func__ << "::Set Shared_Manifest::OBJ_NAME="
+                        << p_rec->obj_name << "::shared_manifest=0x" << std::hex
+                        << p_rec->s.shared_manifest << std::dec << dendl;
+      p_rec->s.flags.set_shared_manifest();
+    }
+    else {
+      memset(&p_rec->s.shared_manifest, 0, sizeof(p_rec->s.shared_manifest));
+    }
+
+    itr = attrs.find(RGW_ATTR_SHA256);
+    if (itr != attrs.end()) {
+      try {
+        auto bl_iter = itr->second.cbegin();
+        // SHA has 256 bit splitted into multiple 64bit units
+        const unsigned units = (256 / (sizeof(uint64_t)*8));
+        static_assert(units == 4);
+        for (unsigned i = 0; i < units; i++) {
+          uint64_t val;
+          ceph::decode(val, bl_iter);
+          p_rec->s.sha256[i] = val;
+        }
+        p_stats->valid_sha256_attrs++;
+        p_rec->s.flags.set_valid_sha256();
+        return 0;
+      } catch (buffer::error& err) {
+        ldpp_dout(dpp, 1) << __func__ << "::ERR: failed SHA256 decode" << dendl;
+        return -EINVAL;
+      }
+    }
+
+    p_stats->invalid_sha256_attrs++;
+    // TBD: redundant memset...
+    memset(p_rec->s.sha256, 0, sizeof(p_rec->s.sha256));
+    // CEPH_CRYPTO_HMACSHA256_DIGESTSIZE is 32 Bytes (32*8=256)
+    int ret = calc_object_sha256(p_rec, (uint8_t*)p_rec->s.sha256);
+    if (ret == 0) {
+      p_stats->set_sha256_attrs++;
+      p_rec->s.flags.set_valid_sha256();
+      p_rec->s.flags.set_sha256_calculated();
+    }
+
+    return ret;
+  }
+
+  //---------------------------------------------------------------------------
   // We purged all entries not marked for-dedup (i.e. singleton bit is set) from the table
   //   so all entries left are sources of dedup with multiple copies.
   // Need to read attributes from the Head-Object and output them to a new SLAB
   int Background::read_object_attribute(dedup_table_t       *p_table,
-                                        const disk_record_t *p_rec,
+                                        disk_record_t       *p_rec,
                                         disk_block_id_t      old_block_id,
                                         record_id_t          old_rec_id,
                                         md5_shard_t          md5_shard,
@@ -726,7 +901,7 @@ namespace rgw::dedup {
   {
     bool should_print_debug = cct->_conf->subsys.should_gather<ceph_subsys_rgw_dedup, 20>();
     if (unlikely(should_print_debug)) {
-      try_deduping_record_dbg(dpp, p_rec, old_block_id, old_rec_id, md5_shard);
+      print_record(dpp, p_rec, old_block_id, old_rec_id, md5_shard);
     }
 
     p_stats->processed_objects ++;
@@ -747,7 +922,6 @@ namespace rgw::dedup {
 
     // Every object after this point was counted as a dedup potential
     // If we conclude that it can't be dedup it should be accounted for
-    ldpp_dout(dpp, 10) << __func__ << "::bucket_name=" << p_rec->bucket_name << dendl;
     rgw_bucket b{p_rec->tenant_name, p_rec->bucket_name, p_rec->bucket_id};
     unique_ptr<rgw::sal::Bucket> bucket;
     ret = driver->load_bucket(dpp, b, &bucket, null_yield);
@@ -780,7 +954,7 @@ namespace rgw::dedup {
     if (attrs.find(RGW_ATTR_CRYPT_MODE) != attrs.end()) {
       p_stats->ingress_skip_encrypted++;
       p_stats->ingress_skip_encrypted_bytes += ondisk_byte_size;
-      ldpp_dout(dpp, 15) <<__func__ << "::Skipping encrypted object "
+      ldpp_dout(dpp, 20) <<__func__ << "::Skipping encrypted object "
                          << p_rec->obj_name << dendl;
       return 0;
     }
@@ -789,7 +963,8 @@ namespace rgw::dedup {
     if (attrs.find(RGW_ATTR_COMPRESSION) != attrs.end()) {
       p_stats->ingress_skip_compressed++;
       p_stats->ingress_skip_compressed_bytes += ondisk_byte_size;
-      ldpp_dout(dpp, 15) <<__func__ << "::Skipping compressed object " << p_rec->obj_name << dendl;
+      ldpp_dout(dpp, 20) <<__func__ << "::Skipping compressed object "
+                         << p_rec->obj_name << dendl;
       return 0;
     }
 
@@ -809,34 +984,44 @@ namespace rgw::dedup {
       return -EINVAL;
     }
 
-    key_t key_from_obj(parsed_etag.md5_high, parsed_etag.md5_low, size_4k_units, parsed_etag.num_parts);
-    if (key_from_obj == key_from_bucket_index && p_rec->s.obj_bytes_size == p_obj->get_size()) {
-      disk_block_seq_t::record_info_t rec_info;
-      ret = p_disk->add_record(d_dedup_cluster_ioctx, bucket.get(), p_obj.get(), &parsed_etag,
-                               p_rec->obj_name, p_rec->s.obj_bytes_size, &rec_info);
-      if (ret == 0) {
-        // set the disk_block_id_t to this unless the existing disk_block_id is marked as shared-manifest
-        ceph_assert(rec_info.rec_id < MAX_REC_IN_BLOCK);
-        ldpp_dout(dpp, 20) << __func__ << "::" << p_rec->bucket_name << "/"
-                           << p_rec->obj_name << " was written to block_idx="
-                           << rec_info.block_id << " rec_id=" << rec_info.rec_id
-                           << ", shared_manifest=" << rec_info.has_shared_manifest << dendl;
-        p_table->update_entry(&key_from_bucket_index, rec_info.block_id, rec_info.rec_id,
-                              rec_info.has_shared_manifest, rec_info.has_valid_sha256);
-      }
-      else {
-        ldpp_dout(dpp, 10) << __func__ << "::ERROR: Failed p_disk->add_record()" << dendl;
-        if (ret == -EINVAL) {
-          p_stats->ingress_corrupted_obj_attrs++;
-        }
-      }
-      return ret;
-    }
-    else {
-      ldpp_dout(dpp, 15) <<__func__ << "::Skipping changed object " << p_rec->obj_name << dendl;
+    key_t key_from_obj(parsed_etag.md5_high, parsed_etag.md5_low, size_4k_units,
+                       parsed_etag.num_parts);
+    if (unlikely(key_from_obj != key_from_bucket_index ||
+                 p_rec->s.obj_bytes_size != p_obj->get_size())) {
+      ldpp_dout(dpp, 15) <<__func__ << "::Skipping changed object "
+                         << p_rec->obj_name << dendl;
       p_stats->ingress_skip_changed_objs++;
       return 0;
     }
+
+    // reset flags
+    p_rec->s.flags.clear();
+    ret = add_obj_attrs_to_record(p_rec, attrs, p_table, p_stats);
+    if (unlikely(ret != 0)) {
+      ldpp_dout(dpp, 5) << __func__ << "::ERR: failed add_obj_attrs_to_record() ret="
+                        << ret << "::" << cpp_strerror(-ret) << dendl;
+      return ret;
+    }
+
+    disk_block_seq_t::record_info_t rec_info;
+    ret = p_disk->add_record(d_dedup_cluster_ioctx, p_rec, &rec_info);
+    if (ret == 0) {
+      // set the disk_block_id_t to this unless the existing disk_block_id is marked as shared-manifest
+      ceph_assert(rec_info.rec_id < MAX_REC_IN_BLOCK);
+      ldpp_dout(dpp, 20)  << __func__ << "::" << p_rec->bucket_name << "/"
+                          << p_rec->obj_name << " was written to block_idx="
+                          << rec_info.block_id << "::rec_id=" << (int)rec_info.rec_id
+                          << "::shared_manifest=" << p_rec->has_shared_manifest() << dendl;
+      p_table->update_entry(&key_from_bucket_index, rec_info.block_id,
+                            rec_info.rec_id, p_rec->has_shared_manifest());
+    }
+    else {
+      ldpp_dout(dpp, 5) << __func__ << "::ERR: Failed p_disk->add_record()"<< dendl;
+      if (ret == -EINVAL) {
+        p_stats->ingress_corrupted_obj_attrs++;
+      }
+    }
+    return ret;
   }
 
   //---------------------------------------------------------------------------
@@ -859,11 +1044,10 @@ namespace rgw::dedup {
   {
     bool should_print_debug = cct->_conf->subsys.should_gather<ceph_subsys_rgw, 20>();
     if (unlikely(should_print_debug)) {
-      try_deduping_record_dbg(dpp, p_tgt_rec, block_id, rec_id, md5_shard);
+      print_record(dpp, p_tgt_rec, block_id, rec_id, md5_shard);
     }
 
     uint32_t size_4k_units = byte_size_to_disk_blocks(p_tgt_rec->s.obj_bytes_size);
-    //uint64_t ondisk_byte_size = disk_blocks_to_byte_size(size_4k_units);
     key_t key(p_tgt_rec->s.md5_high, p_tgt_rec->s.md5_low, size_4k_units,
               p_tgt_rec->s.num_parts);
     dedup_table_t::value_t src_val;
@@ -931,22 +1115,12 @@ namespace rgw::dedup {
       return 0;
     }
 
-    bool src_has_sha256 = src_val.has_valid_sha256();
-    if (!src_has_sha256) {
-      ldpp_dout(dpp, 20) << __func__ << "::No Valid SHA256 for: "
-                         << src_rec.bucket_name << " / " << src_rec.obj_name << dendl;
-    }
-
-    if (!p_tgt_rec->s.flags.has_valid_sha256() ) {
-      // TBD:  if TGT has no valid SHA256 ->
-      //              read the full object, calc SHA256 adding it to in-memory record
-    }
-
-    // temporary code until SHA256 support is added
-    if (src_has_sha256 && p_tgt_rec->s.flags.has_valid_sha256()) {
+    ceph_assert(src_rec.s.flags.has_valid_sha256());
+    ceph_assert(p_tgt_rec->s.flags.has_valid_sha256());
+    if (src_rec.s.flags.has_valid_sha256() && p_tgt_rec->s.flags.has_valid_sha256()) {
       if (memcmp(src_rec.s.sha256, p_tgt_rec->s.sha256, sizeof(src_rec.s.sha256)) != 0) {
         p_stats->sha256_mismatch++;
-        ldpp_dout(dpp, 1) << __func__ << "::SHA256 mismatch" << dendl;
+        ldpp_dout(dpp, 10) << __func__ << "::SHA256 mismatch" << dendl;
         return 0;
       }
     }
@@ -954,14 +1128,10 @@ namespace rgw::dedup {
       p_stats->skip_sha256_cmp++;
     }
 
-    ret = dedup_object(&src_rec, p_tgt_rec, src_val.has_shared_manifest(), src_has_sha256);
+    ret = dedup_object(&src_rec, p_tgt_rec, src_val.has_shared_manifest());
     if (ret == 0) {
       p_stats->deduped_objects++;
       p_stats->deduped_objects_bytes += dedupable_objects_bytes;
-      if (!src_has_sha256) {
-        // TBD: calculate SHA256 for SRC and set flag in table!!
-      }
-
       // mark the SRC object as a providor of a shared manifest
       if (!src_val.has_shared_manifest()) {
         p_stats->set_shared_manifest++;
@@ -973,50 +1143,13 @@ namespace rgw::dedup {
       }
     }
     else {
-      ldpp_dout(dpp, 1) << __func__ << "::ERR: Failed dedup for " << src_rec.bucket_name
-                        << "/" << src_rec.obj_name << dendl;
+      ldpp_dout(dpp, 10) << __func__ << "::ERR: Failed dedup for "
+                         << src_rec.bucket_name << "/" << src_rec.obj_name << dendl;
       p_stats->failed_dedup++;
     }
 
     return 0;
   }
-
-#if 0
-  //---------------------------------------------------------------------------
-  void Background::calc_missing_sha256_for_all_src_objects(md5_shard_t md5_shard)
-  {
-    unsigned count = 0;
-    for(const auto & entry:d_table) {
-      if (entry.val.has_valid_sha256()) {
-        continue;
-      }
-      count++;
-
-      disk_block_id_t block_id = entry.val.block_idx;
-      record_id_t rec_id = entry.val.rec_id;
-      disk_record_t rec;
-      int ret = load_record(d_dedup_cluster_ioctx, &rec, block_id, rec_id, md5_shard, &entry.key, dpp);
-      if (unlikely(ret != 0)) {
-        ldpp_dout(dpp, 1) << __func__ << "::Failed load_record()::"
-                          << rec.bucket_name << "/" << rec.obj_name << dendl;
-        continue;
-      }
-      ldpp_dout(dpp, 1) << __func__ << rec.bucket_name << "/" << rec.obj_name << dendl;
-      ceph_assert(rec.s.flags.has_valid_sha256() == false);
-
-      unsigned char sha256[CEPH_CRYPTO_HMACSHA256_DIGESTSIZE];
-      ret = calc_object_sha256(&rec, sha256);
-      if (ret == 0) {
-        // TBD1: set SHA256 attribute in the Head-Object
-        // TBD2: If SRC set SHA256 in Record
-        // TBD3: If SRC set SHA256 in table
-      }
-    }
-    if (count) {
-      ldpp_dout(dpp, 10) << __func__ << "::We fixed SHA256 for " << count << " objects" << dendl;
-    }
-  }
-#endif
 
 #endif // #ifdef FULL_DEDUP_SUPPORT
   //---------------------------------------------------------------------------
@@ -1268,11 +1401,11 @@ namespace rgw::dedup {
   //---------------------------------------------------------------------------
   static uint32_t move_to_next_bucket_index_shard(const DoutPrefixProvider* dpp,
                                                   unsigned current_shard,
-                                                  unsigned max_work_shard,
+                                                  unsigned num_work_shards,
                                                   const std::string &bucket_name,
                                                   rgw_obj_index_key *p_marker /* OUT-PARAM */)
   {
-    uint32_t next_shard = current_shard + max_work_shard;
+    uint32_t next_shard = current_shard + num_work_shards;
     ldpp_dout(dpp, 20) << __func__ << "::" << bucket_name << "::curr_shard="
                        << current_shard << ", next shard=" << next_shard << dendl;
     *p_marker = rgw_obj_index_key(); // reset marker to an empty index
@@ -1282,7 +1415,7 @@ namespace rgw::dedup {
   // This function process bucket-index shards of a given @bucket
   // The bucket-index-shards are stored in a group of @oids
   // The @oids are using a simple map from the shard-id to the oid holding bucket-indices
-  // We start by processing all bucket-inidices owned by this @worker-id
+  // We start by processing all bucket-indices owned by this @worker-id
   // Once we are done with a given bucket-index shard we skip to the next
   //      bucket-index-shard owned by this worker-id
   // if (bucket_index_shard % work_id) == 0) -> read and process bucket_index_shard
@@ -1317,8 +1450,8 @@ namespace rgw::dedup {
       rgw_cls_list_ret result;
       librados::ObjectReadOperation op;
       // get bucket-indices of @current_shard
-      cls_rgw_bucket_list_op(op, marker, null_prefix, null_delimiter,
-                             max_entries, list_versions, &result);
+      cls_rgw_bucket_list_op(op, marker, null_prefix, null_delimiter, max_entries,
+                             list_versions, &result);
       int ret = rgw_rados_operate(dpp, ioctx, oid, std::move(op), nullptr, null_yield);
       if (unlikely(ret < 0)) {
         ldpp_dout(dpp, 1) << __func__ << "::ERR: failed rgw_rados_operate() ret="
@@ -1343,15 +1476,18 @@ namespace rgw::dedup {
       }
       // TBD: advance marker only once here!
       if (result.is_truncated) {
-        //marker = result.marker
+        ldpp_dout(dpp, 15) << __func__ << "::[" << current_shard
+                           << "]result.is_truncated::count=" << obj_count << dendl;
       }
       else {
         // we reached the end of this shard -> move to the next shard
         current_shard = move_to_next_bucket_index_shard(dpp, current_shard, num_work_shards,
                                                         bucket->get_name(), &marker);
+        ldpp_dout(dpp, 15) << __func__ << "::move_to_next_bucket_index_shard::count="
+                           << obj_count << "::new_shard=" << current_shard << dendl;
       }
     }
-    ldpp_dout(dpp, 20) << __func__ << "::Finished processing Bucket "
+    ldpp_dout(dpp, 15) << __func__ << "::Finished processing Bucket "
                        << bucket->get_name() << ", num_shards=" << num_shards
                        << ", obj_count=" << obj_count << dendl;
     return 0;
@@ -1376,13 +1512,13 @@ namespace rgw::dedup {
     RGWBucketInfo bucket_info;
     ret = rados->get_bucket_instance_info(bucket_id, bucket_info,
                                           nullptr, nullptr, null_yield, dpp);
-    if (ret < 0) {
+    if (unlikely(ret < 0)) {
       if (ret == -ENOENT) {
         // probably a race condition with bucket removal
-        ldpp_dout(dpp, 5) << __func__ << "::ret == -ENOENT" << dendl;
+        ldpp_dout(dpp, 10) << __func__ << "::ret == -ENOENT" << dendl;
         return 0;
       }
-      ldpp_dout(dpp, 1) << __func__ << "::ERROR: get_bucket_instance_info(), ret="
+      ldpp_dout(dpp, 5) << __func__ << "::ERROR: get_bucket_instance_info(), ret="
                         << ret << "::" << cpp_strerror(-ret) << dendl;
       return ret;
     }
@@ -1989,10 +2125,10 @@ namespace rgw::dedup {
       return;
     }
     ldpp_dout(dpp, 5) << __func__ << "::status=" << status << dendl;
-    bufferlist reply;
-    ceph::encode(status, reply);
-    encode(d_ctl, reply);
-    d_dedup_cluster_ioctx.notify_ack(DEDUP_WATCH_OBJ, notify_id, cookie, reply);
+    bufferlist reply_bl;
+    ceph::encode(status, reply_bl);
+    encode(d_ctl, reply_bl);
+    d_dedup_cluster_ioctx.notify_ack(DEDUP_WATCH_OBJ, notify_id, cookie, reply_bl);
   }
 
   //---------------------------------------------------------------------------

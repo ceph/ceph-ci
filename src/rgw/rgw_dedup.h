@@ -162,9 +162,14 @@ namespace rgw::dedup {
                         disk_block_seq_t *p_disk_block_arr);
 
 #ifdef FULL_DEDUP_SUPPORT
-    int calc_object_sha256(const disk_record_t *p_rec, unsigned char *p_sha256);
+    int calc_object_sha256(const disk_record_t *p_rec, uint8_t *p_sha256);
+    int add_obj_attrs_to_record(disk_record_t         *p_rec,
+                                const rgw::sal::Attrs &attrs,
+                                dedup_table_t         *p_table,
+                                md5_stats_t           *p_stats); /* IN-OUT */
+
     int read_object_attribute(dedup_table_t       *p_table,
-                              const disk_record_t *p_rec,
+                              disk_record_t       *p_rec,
                               disk_block_id_t      block_id,
                               record_id_t          rec_id,
                               md5_shard_t          md5_shard,
@@ -187,8 +192,7 @@ namespace rgw::dedup {
                                    RGWObjManifest    &tgt_manifest);
     int dedup_object(const disk_record_t *p_src_rec,
                      const disk_record_t *p_tgt_rec,
-                     bool                 is_shared_manifest_src,
-                     bool                 src_has_sha256);
+                     bool                 is_shared_manifest_src);
 #endif
     int  remove_slabs(unsigned worker_id, unsigned md5_shard, uint32_t slab_count);
     int  init_rados_access_handles();
