@@ -46,7 +46,8 @@ def install_sysctl(
     if lines:
         Path(ctx.sysctl_dir).mkdir(mode=0o755, exist_ok=True)
         _write(conf, lines)
-        call_throws(ctx, ['sysctl', '--system'])
+        # Only use the file we've just created, so we wouldn't use obsolete conf files
+        call_throws(ctx, ['sysctl', f'--load={conf}'])
 
 
 def sysctl_get(ctx: CephadmContext, variable: str) -> Union[str, None]:
