@@ -7,6 +7,25 @@
 #include "include/common_fwd.h"
 #include <seastar/core/sharded.hh>
 
+/* Notes on crimson's perf counter usage
+ *
+ * As far as I can tell, the PerfCountersCollection on shard 0
+ * is the only one which actually gets used.  OSDSingletonState
+ * initializes perf and recoverstate_perf from
+ * cct.get_perfcounters_collection(), which in turn calls
+ * local_perf_coll().  OSDSingletonState only runs on shard 0,
+ * so that's where it gets those two.  Those two then get passed
+ * directly to every PerShardState and therefore ShardServices
+ * instance to then be used in PG, etc.
+ *
+ * This is fine, though it does mean that the other shards are
+ * performing atomic operations on the other cores.  PerfCounters
+ * uses std::atomic even in a crimsoin build, so that's safe if
+ * perhaps not efficient.  This does mean that this sharded
+ * structure is overkill -- it might as well be a CephContext
+ * local.
+ */
+
 using crimson::common::PerfCountersCollectionImpl;
 namespace crimson::common {
 class PerfCountersCollection: public seastar::sharded<PerfCountersCollection>
@@ -27,6 +46,7 @@ public:
                       select_labeled_t dump_labeled,
                       const std::string &logger = "",
                       const std::string &counter = "");
+  bool reset(const std::string &to_reset);
 };
 
 inline PerfCountersCollection::ShardedPerfCountersCollection& sharded_perf_coll(){

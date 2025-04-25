@@ -57,12 +57,13 @@ tell_result_t::tell_result_t(std::unique_ptr<Formatter> formatter)
   formatter->flush(out);
 }
 
-void AdminSocket::register_command(std::unique_ptr<AdminSocketHook>&& hook)
+void AdminSocket::register_command(AdminSocketHook::ref hook)
 {
-  auto prefix = hook->prefix;
-  auto [it, added] = hooks.emplace(prefix, std::move(hook));
-  assert(added);
-  logger().info("register_command(): {})", it->first);
+  for (auto &prefix: hook->prefixes) {
+    auto [it, added] = hooks.emplace(prefix, hook);
+    assert(added);
+    logger().info("register_command(): {})", it->first);
+  }
 }
 
 auto AdminSocket::parse_cmd(const std::vector<std::string>& cmd)
@@ -384,7 +385,7 @@ class GetdescsHook final : public AdminSocketHook {
     f->open_object_section("command_descriptions");
     for (const auto& [prefix, hook] : m_as) {
       auto secname = fmt::format("cmd {:>03}", cmdnum);
-      auto cmd = fmt::format("{} {}", hook->prefix, hook->desc);
+      auto cmd = fmt::format("{} {}", prefix, hook->desc);
       dump_cmd_and_help_to_json(f.get(), CEPH_FEATURES_ALL, secname,
 				cmd, std::string{hook->help});
       cmdnum++;
@@ -537,15 +538,15 @@ public:
 /// the hooks that are served directly by the admin_socket server
 void AdminSocket::register_admin_commands()
 {
-  register_command(std::make_unique<VersionHook>());
-  register_command(std::make_unique<GitVersionHook>());
-  register_command(std::make_unique<HelpHook>(*this));
-  register_command(std::make_unique<GetdescsHook>(*this));
-  register_command(std::make_unique<ConfigGetHook>());
-  register_command(std::make_unique<ConfigSetHook>());
-  register_command(std::make_unique<ConfigShowHook>());
-  register_command(std::make_unique<ConfigHelpHook>());
-  register_command(std::make_unique<InjectArgsHook>());
+  register_command(new VersionHook());
+  register_command(new GitVersionHook());
+  register_command(new HelpHook(*this));
+  register_command(new GetdescsHook(*this));
+  register_command(new ConfigGetHook());
+  register_command(new ConfigSetHook());
+  register_command(new ConfigShowHook());
+  register_command(new ConfigHelpHook());
+  register_command(new InjectArgsHook());
 }
 
 }  // namespace crimson::admin
