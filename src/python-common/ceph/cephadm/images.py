@@ -27,6 +27,7 @@ class DefaultImages(Enum):
     PROMETHEUS = _create_image('quay.io/prometheus/prometheus:v3.6.0', 'prometheus')
     LOKI = _create_image('docker.io/grafana/loki:3.0.0', 'loki')
     PROMTAIL = _create_image('docker.io/grafana/promtail:3.0.0', 'promtail')
+    ALLOY = _create_image('docker.io/grafana/alloy:latest', 'alloy')
     NODE_EXPORTER = _create_image('quay.io/prometheus/node-exporter:v1.9.1', 'node_exporter')
     ALERTMANAGER = _create_image('quay.io/prometheus/alertmanager:v0.28.1', 'alertmanager')
     GRAFANA = _create_image('quay.io/ceph/grafana:12.3.1', 'grafana')
@@ -64,10 +65,11 @@ class DefaultImages(Enum):
 class NonCephImageServiceTypes(Enum):
     prometheus = 'prometheus'
     loki = 'loki'
-    promtail = 'promtail'
+    alloy = 'alloy'
     node_exporter = 'node-exporter'
     alertmanager = 'alertmanager'
     grafana = 'grafana'
+    promtail = 'promtail'
     nvmeof = 'nvmeof'
     snmp_gateway = 'snmp-gateway'
     elasticsearch = 'elasticsearch'

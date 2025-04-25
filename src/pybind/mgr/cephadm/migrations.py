@@ -14,7 +14,7 @@ from orchestrator import OrchestratorError, DaemonDescription
 if TYPE_CHECKING:
     from .module import CephadmOrchestrator
 
-LAST_MIGRATION = 7
+LAST_MIGRATION = 11
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,8 @@ class Migrations:
                 "cephadm migration still ongoing. Please wait, until the migration is complete.")
 
     def migrate(self, startup: bool = False) -> None:
+        logger.info('running migrations')
+
         if self.mgr.migration_current == 0:
             if self.migrate_0_1():
                 self.set(1)
@@ -108,6 +110,18 @@ class Migrations:
         if self.mgr.migration_current == 6:
             if self.migrate_6_7():
                 self.set(7)
+
+        if self.mgr.migration_current == 7 and not startup:
+            if self.migrate_7_8():
+                self.set(8)
+
+        if self.mgr.migration_current == 9:
+            if self.migrate_9_10():
+                self.set(10)
+
+        if self.mgr.migration_current == 10:
+            if self.migrate_10_11():
+                self.set(11)
 
     def migrate_0_1(self) -> bool:
         """
@@ -441,6 +455,127 @@ class Migrations:
         # and appeared to just be generated at daemon deploy time if secure_monitoring_stack
         # was set to true. Therefore we have nothing to migrate for those daemons
         return True
+
+    def migrate_7_8(self) -> bool:
+        # For NFS, check if nfs cluster is using old types of node ids (service_name.0)
+        # if yes, then store those services in mon store, to continue using old node ids for those service daemons
+        nfs_services = []
+        service_specs = self.mgr.spec_store.get_specs_by_type('nfs')
+        nfs_service = cast(NFSService, service_registry.get_service('nfs'))
+        try:
+            for service_name, spec in service_specs.items():
+                # get grace tool dump
+                out = nfs_service.run_grace_tool(cast(NFSServiceSpec, spec), 'dump')
+                if service_name in out:
+                    nfs_services.append(service_name)
+                    logger.info(f'NFS service {nfs_service} needs to maintain old node ids after upgrade')
+        except Exception as e:
+            logger.exception(f'Got error while executing grace tool: {e}')
+            self.mgr.set_health_warning('CEPHADM_MIGRATION_FAILURE',
+                                        f'Cephadm migration failed: {e}',
+                                        1, [str(e)])
+            return False
+        if nfs_services:
+            self.mgr.set_store('nfs_services_with_old_nodeid', ','.join(nfs_services))
+        self.mgr.remove_health_warning('CEPHADM_MIGRATION_FAILURE')
+        return True
+
+    def migrate_9_10(self) -> bool:
+        logger.info(f'Starting rgw SSL/TLS migration (queue length is {len(self.rgw_ssl_migration_queue)})')
+        for s in self.rgw_ssl_migration_queue:
+
+            svc_spec = s['spec']  # this is the RGWspec
+
+            if 'spec' not in svc_spec:
+                logger.info(f"No SSL/TLS fields migration is needed for rgw spec: {svc_spec}")
+                continue
+
+            cert_field = svc_spec['spec'].get('rgw_frontend_ssl_certificate')
+            if not cert_field:
+                logger.info(f"No SSL/TLS fields migration is needed for rgw spec: {svc_spec}")
+                continue
+
+            cert_str = '\n'.join(cert_field) if isinstance(cert_field, list) else cert_field
+            ssl_cert, ssl_key = parse_combined_pem_file(cert_str)
+            new_spec = svc_spec.copy()
+            new_spec['spec'].update({
+                'rgw_frontend_ssl_certificate': None,
+                'certificate_source': CertificateSource.INLINE.value,
+                'ssl_cert': ssl_cert,
+                'ssl_key': ssl_key,
+            })
+
+            logger.info(f"Migrating {svc_spec} to new RGW SSL/TLS format {new_spec}")
+            self.mgr.spec_store.save(RGWSpec.from_json(new_spec))
+
+        self.rgw_ssl_migration_queue = []
+        return True
+
+    def migrate_10_11(self) -> bool:
+        """
+        Replace Promtail with Alloy.
+
+        - If mgr daemons are still being upgraded, return True WITHOUT bumping migration_current.
+        - Mark Promtail service unmanaged so cephadm won't redeploy it.
+        - Remove Promtail daemons to free ports.
+        - Deploy Alloy with Promtail's placement.
+        - Once Alloy is confirmed deployed, remove Promtail service spec.
+        """
+        try:
+            target_digests = getattr(self.mgr.upgrade.upgrade_state, "target_digests", [])
+            active_mgr_digests = self.mgr.get_active_mgr_digests()
+
+            if target_digests:
+                if not any(d in target_digests for d in active_mgr_digests):
+                    logger.info(
+                        "Promtail -> Alloy migration: mgr daemons still upgrading. "
+                        "Marking as complete without bumping migration_current."
+                    )
+                    return False
+
+            promtail_spec = self.mgr.spec_store.active_specs.get("promtail")
+            if not promtail_spec:
+                logger.info("Promtail -> Alloy migration: no Promtail \
+                    service found, nothing to do.")
+                return True
+
+            if not promtail_spec.unmanaged:
+                logger.info("Promtail -> Alloy migration: marking promtail unmanaged")
+                self.mgr.spec_store.set_unmanaged("promtail", True)
+
+            daemons = self.mgr.cache.get_daemons()
+            promtail_daemons = [d for d in daemons if d.daemon_type == "promtail"]
+            if promtail_daemons:
+                promtail_names = [d.name() for d in promtail_daemons]
+                logger.info(f"Promtail -> Alloy migration: removing daemons {promtail_names}")
+                self.mgr.remove_daemons(promtail_names)
+
+            daemons = self.mgr.cache.get_daemons()
+            if any(d.daemon_type == "promtail" for d in daemons):
+                logger.info(
+                    "Promtail -> Alloy migration: promtail daemons still present, "
+                    "skipping Alloy deployment until next run."
+                )
+                return False
+
+            alloy_spec = ServiceSpec(
+                service_type="alloy",
+                service_id="alloy",
+                placement=promtail_spec.placement
+            )
+
+            logger.info("Promtail -> Alloy migration: deploying Alloy service")
+            self.mgr.apply_alloy(alloy_spec)
+
+            logger.info("Promtail -> Alloy migration: removing promtail service spec")
+            self.mgr.remove_service("promtail")
+
+            logger.info("Promtail -> Alloy migration completed successfully.")
+            return True
+
+        except Exception as e:
+            logger.error(f"Promtail -> Alloy migration failed: {e}")
+            return False
 
 
 def queue_migrate_rgw_spec(mgr: "CephadmOrchestrator", spec_dict: Dict[Any, Any]) -> None:

@@ -645,7 +645,7 @@ export class ServiceFormComponent extends CdForm implements OnInit {
       // osd       - This is deployed a different way.
       // container - This should only be used in the CLI.
       // nvmeof    - This is only supported for IBM builds.
-      this.hiddenServices.push('osd', 'container');
+      this.hiddenServices.push('osd', 'container', 'promtail');
       if (environment.build !== 'ibm') this.hiddenServices.push('nvmeof');
 
       this.serviceTypes = _.difference(resp, this.hiddenServices).sort();
