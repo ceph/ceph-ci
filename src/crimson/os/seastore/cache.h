@@ -222,7 +222,7 @@ public:
       ceph_assert(ret->get_type() == type);
 
       if (ret->is_stable()) {
-        if (ret->is_dirty()) {
+        if (ret->has_delta()) {
           ++access_stats.trans_dirty;
           ++stats.access.trans_dirty;
         } else {
@@ -278,7 +278,7 @@ public:
 
     ceph_assert(ret->get_type() == type);
 
-    if (ret->is_dirty()) {
+    if (ret->has_delta()) {
       ++access_stats.cache_dirty;
       ++stats.access.cache_dirty;
     } else {
@@ -496,7 +496,7 @@ public:
         // stable from trans-view
         assert(!p_extent->is_pending_in_trans(t.get_trans_id()));
         if (t.maybe_add_to_read_set(p_extent)) {
-          if (p_extent->is_dirty()) {
+          if (p_extent->has_delta()) {
             ++access_stats.cache_dirty;
             ++stats.access.cache_dirty;
           } else {
@@ -505,7 +505,7 @@ public:
           }
           touch_extent(*p_extent, &t_src, t.get_cache_hint());
         } else {
-          if (p_extent->is_dirty()) {
+          if (p_extent->has_delta()) {
             ++access_stats.trans_dirty;
             ++stats.access.trans_dirty;
           } else {
@@ -1272,7 +1272,7 @@ public:
 
     // journal replay should has been finished at this point,
     // Cache::root should have been inserted to the dirty list
-    assert(root->is_dirty());
+    assert(root->has_delta());
     std::vector<CachedExtentRef> _dirty;
     for (auto &e : extents_index) {
       _dirty.push_back(CachedExtentRef(&e));
