@@ -194,6 +194,22 @@ TEST_P(LibRadosWatchNotifyPP, WatchNotifyTimeout) {
   ASSERT_EQ(0, ioctx.unwatch("foo", handle));
 }
 
+TEST_P(LibRadosWatchNotifyPP, DeleteObjectWithWatchers) {
+  uint64_t handle;
+  WatchNotifyTestCtx ctx;
+
+  char buf[128];
+  memset(buf, 0xcc, sizeof(buf));
+  bufferlist bl1;
+  bl1.append(buf, sizeof(buf));
+  ASSERT_EQ(0, ioctx.write("foo", bl1, sizeof(buf), 0));
+  ASSERT_EQ(0, ioctx.watch("foo", 0, &handle, &ctx));
+  ASSERT_EQ(0, ioctx.remove("foo"));
+  ASSERT_EQ(-2, ioctx.list_watchers("foo", nullptr));
+  sleep(35); // osd-side watch timeout
+  ASSERT_EQ(-2, ioctx.list_watchers("foo", nullptr));
+}
+
 TEST_F(LibRadosWatchNotifyECPP, WatchNotifyTimeout) {
   SKIP_IF_CRIMSON();
   ASSERT_EQ(0, sem_init(&sem, 0, 0));
