@@ -536,7 +536,9 @@ else:
         if model.get('allow_any_host'):
             new_field = [model.Host(nqn="*")._asdict()] + field
             print(f"new_field: {str(new_field)}, {json.dumps(new_field)}")
+            raise Exception(f'TOMER1: {json.dumps(model)} $$$ {json.dumps(field)} $$$ {json.dumps(new_field)}')
             return new_field
+        raise Exception(f'TOMER2: {json.dumps(model)} $$$ {json.dumps(field)} ')
         return field
         
     @APIRouter("/nvmeof/subsystem/{nqn}/host", Scope.NVME_OF)
