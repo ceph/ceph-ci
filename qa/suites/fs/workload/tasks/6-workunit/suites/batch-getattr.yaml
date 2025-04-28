@@ -1,0 +1,27 @@
+# https://tracker.ceph.com/issues/70769
+overrides:
+  roles:
+    - [mon.a, mgr.x, mds.a, mds.d, mds.g, mds.j, osd.0, osd.3, osd.6, osd.9, client.0]
+    - [mon.b, mgr.y, mds.b, mds.e, mds.h, mds.k, osd.1, osd.4, osd.7, osd.10]
+    - [mon.c, mgr.z, mds.c, mds.f, mds.i, mds.l, osd.2, osd.5, osd.8, osd.11, client.1]
+tasks:
+  - ceph:
+  - ceph.fuse: [client.0, client.1]
+  - pexec:
+      client.0:
+        - kernel_untar_rm
+      client.1:
+        - find_stat
+      mon.b:
+        - evict_client
+  - pexec:
+      client.0:
+        - rm -f linux-6.5.11.tar.xz
+        - rm -rf linux-6.5.11/
+kernel_untar_rm:
+  - wget https://download.ceph.com/qa/linux-6.5.11.tar.xz
+  - for ((i=0; i<25; i++)); do tar xJf linux-6.5.11.tar.xz; sleep 2; rm -rf linux-6.5.11/; sleep 2; done
+find_stat:
+  - for ((i=0; i<25; i++)); do find linux-6.5.11/ -exec stat {} ';' ; sleep 5; done
+evict_client:
+  - for ((i=0; i<25; i++)); do ceph tell mds.0 client evict id=$(ceph tell mds.0 client ls | jq '.[0] | .id']); sleep 5; done
