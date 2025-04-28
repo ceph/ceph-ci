@@ -1,0 +1,52 @@
+# https://tracker.ceph.com/issues/70769
+tasks:
+  - pexec:
+      client.0:
+        - wget https://download.ceph.com/qa/linux-6.5.11.tar.xz
+        - for ((i=0; i<100; i++)); do
+            echo "$i client.0 extracting tarball linux-6.5.11.tar.xz";
+            tar xJf linux-6.5.11.tar.xz;
+            echo "$i client.0 tarball extraction complete";
+            sleep 7;
+            echo "$i client.0 removing linux-6.5.11/";
+            rm -rf linux-6.5.11/;
+            echo "$i client.0 dir linux-6.5.11/ removal complete";
+            sleep 7;
+          done
+        - echo "test completed" > test_completed
+      client.1:
+        - for ((i=0; i<100; i++)); do
+            echo "$i client.1 testing for presence of dir linux-6.5.11 or file test_completed";
+            while [ ! -d 'linux-6.5.11' && ! -f "test_completed" ]; do
+              sleep 7;
+            done;
+            echo "$i client.1 testing for presence of dir linux-6.5.11 or file test_completed done";
+            if [ -f "test_completed" ]; then
+              echo "$i client.1 test has completed ... breaking out";
+              break;
+            else
+              echo "$i client.1 running stat on linux-6.5.11/";
+              find linux-6.5.11/ -exec stat {} ';' || true ;
+              echo "$i client.1 running stat on linux-6.5.11/ complete";
+            fi;
+            sleep 13;
+          done
+      mon.b:
+        - for ((i=0; i<100; i++)); do
+            sleep 7;
+            echo "$i mon.b getting first client id";
+            client_id="$(ceph tell mds.0 client ls | jq '.[0] | .id')";
+            echo "$i mon.b client id is '$client_id'";
+            if [ "$client_id" == "" ] || [ "$client_id" == "null" ]; then
+              echo "$i mon.b avoiding client eviction with client id '$client_id'";
+            else
+              echo "$i mon.b evicting client '$client_id'";
+              ceph tell mds.0 client evict id=$client_id;
+              echo "$i mon.b evicting client '$client_id' complete";
+            fi;
+            sleep 13;
+          done
+  - pexec:
+      client.0:
+        - rm -f linux-6.5.11.tar.xz test_completed
+        - rm -rf linux-6.5.11/
