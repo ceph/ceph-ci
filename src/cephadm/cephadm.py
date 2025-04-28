@@ -2770,6 +2770,15 @@ def command_bootstrap(ctx):
                 return False
         is_available(ctx, 'mgr epoch %d' % epoch, mgr_has_latest_epoch)
 
+    # to avoid PyO3 errors as rook/k8sevents modules import the kubernetes
+    # python package which has a dep on python3-cryptography
+    cli(['config', 'set', 'mgr', 'mgr_disabled_modules', 'rook,k8sevents'])
+    # trigger a mgr restart. We need to do this before enabling the cephadm
+    # module so the mgr picks up the mgr_disabled_modules setting and doesn't
+    # attempt to load them in along with cephadm once cephadm is enabled
+    cli(['mgr', 'fail'])
+    wait_for_mgr_restart()
+
     enable_cephadm_mgr_module(cli, wait_for_mgr_restart)
 
     # ssh
