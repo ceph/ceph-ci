@@ -384,6 +384,16 @@ class TestConvertToModel:
         # pylint: disable=unused-argument
         result = empty_func()
         assert result == {}
+        
+    def test_finalize(self):
+        def finalizer(output):
+            output['Alice'] = output['Alice'].upper()
+        
+        @convert_to_model(Boy, finalize=finalizer)
+        def get_person():
+            return {"name": "Alice"}
+
+        assert get_person() == "ALICE"
 
 
 class TestPick:
@@ -457,10 +467,3 @@ class TestPick:
             return None
         with pytest.raises(TypeError):
             get_person()
-
-    def test_finalize(self):
-        @pick("name", finalize=lambda i, o: o.upper())
-        def get_person():
-            return {"name": "Alice", "height": 170}
-
-        assert get_person() == "ALICE"

@@ -528,18 +528,11 @@ else:
                     i_am_sure=str_to_bool(force)
                 )
             )
-
-    # def final(model, field):
-    #     import json
-    #     print(f"model: {str(model)}, {json.dumps(model)}")
-    #     print(f"field: {str(field)}, {json.dumps(field)}")
-    #     if model.get('allow_any_host'):
-    #         new_field = [model.Host(nqn="*")._asdict()] + field
-    #         print(f"new_field: {str(new_field)}, {json.dumps(new_field)}")
-    #         raise Exception(f'TOMER1: {json.dumps(model)} $$$ {json.dumps(field)} $$$ {json.dumps(new_field)}')
-    #         return new_field
-    #     raise Exception(f'TOMER2: {json.dumps(model)} $$$ {json.dumps(field)} ')
-    #     return field
+            
+    def _update_hosts(hosts_info_resp):
+            if hosts_info_resp.get('allow_any_host'):
+                hosts_info_resp['hosts'].insert(0, {"nqn": "*"})
+            return hosts_info_resp
         
     @APIRouter("/nvmeof/subsystem/{nqn}/host", Scope.NVME_OF)
     @APIDoc("NVMe-oF Subsystem Host Allowlist Management API",
@@ -552,15 +545,10 @@ else:
                 "gw_group": Param(str, "NVMeoF gateway group", True, None),
             },
         )
-        @pick('hosts',
-              finalize=final
-              
-              )
+        @pick('hosts')
         @NvmeofCLICommand("nvmeof host list")
         @convert_to_model(model.HostsInfo, 
-                          finalize=lambda i, o: [model.Host(nqn="*")._asdict()] + o
-                          if i.get('allow_any_host')
-                          else o)
+                          finalize=_update_hosts)
         @handle_nvmeof_error
         def list(self, nqn: str, gw_group: Optional[str] = None, traddr: Optional[str] = None):
             return NVMeoFClient(gw_group=gw_group, traddr=traddr).stub.list_hosts(

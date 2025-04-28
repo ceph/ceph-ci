@@ -223,7 +223,7 @@ else:
                 
                 result = namedtuple_to_dict(obj_to_namedtuple(msg_dict, model))
                 if finalize:
-                    return finalize(model, result)
+                    return finalize(result)
                 return result
             
             return wrapper
@@ -232,7 +232,6 @@ else:
 
     # pylint: disable-next=redefined-outer-name
     def pick(field: str, first: bool = False,
-             
              ) -> Callable[..., Callable[..., object]]:
         def decorator(func: Callable[..., Dict]) -> Callable[..., object]:
             @functools.wraps(func)
