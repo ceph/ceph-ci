@@ -529,17 +529,17 @@ else:
                 )
             )
 
-    def final(model, field):
-        import json
-        print(f"model: {str(model)}, {json.dumps(model)}")
-        print(f"field: {str(field)}, {json.dumps(field)}")
-        if model.get('allow_any_host'):
-            new_field = [model.Host(nqn="*")._asdict()] + field
-            print(f"new_field: {str(new_field)}, {json.dumps(new_field)}")
-            raise Exception(f'TOMER1: {json.dumps(model)} $$$ {json.dumps(field)} $$$ {json.dumps(new_field)}')
-            return new_field
-        raise Exception(f'TOMER2: {json.dumps(model)} $$$ {json.dumps(field)} ')
-        return field
+    # def final(model, field):
+    #     import json
+    #     print(f"model: {str(model)}, {json.dumps(model)}")
+    #     print(f"field: {str(field)}, {json.dumps(field)}")
+    #     if model.get('allow_any_host'):
+    #         new_field = [model.Host(nqn="*")._asdict()] + field
+    #         print(f"new_field: {str(new_field)}, {json.dumps(new_field)}")
+    #         raise Exception(f'TOMER1: {json.dumps(model)} $$$ {json.dumps(field)} $$$ {json.dumps(new_field)}')
+    #         return new_field
+    #     raise Exception(f'TOMER2: {json.dumps(model)} $$$ {json.dumps(field)} ')
+    #     return field
         
     @APIRouter("/nvmeof/subsystem/{nqn}/host", Scope.NVME_OF)
     @APIDoc("NVMe-oF Subsystem Host Allowlist Management API",
@@ -554,12 +554,13 @@ else:
         )
         @pick('hosts',
               finalize=final
-            #   finalize=lambda i, o: [model.Host(nqn="*")._asdict()] + o
-            #   if i.get('allow_any_host')
-            #   else o
+              
               )
         @NvmeofCLICommand("nvmeof host list")
-        @convert_to_model(model.HostsInfo)
+        @convert_to_model(model.HostsInfo, 
+                          finalize=lambda i, o: [model.Host(nqn="*")._asdict()] + o
+                          if i.get('allow_any_host')
+                          else o)
         @handle_nvmeof_error
         def list(self, nqn: str, gw_group: Optional[str] = None, traddr: Optional[str] = None):
             return NVMeoFClient(gw_group=gw_group, traddr=traddr).stub.list_hosts(

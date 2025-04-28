@@ -212,22 +212,27 @@ else:
             ]
         return obj
 
-    def convert_to_model(model: Type[NamedTuple]) -> Callable[..., Callable[..., Model]]:
+    def convert_to_model(model: Type[NamedTuple],
+                         finalize: Optional[Callable[[Dict, Collection], Collection]] = None)-> Callable[..., Callable[..., Model]]:
         def decorator(func: Callable[..., Message]) -> Callable[..., Model]:
             @functools.wraps(func)
             def wrapper(*args, **kwargs) -> Model:
                 message = func(*args, **kwargs)
                 msg_dict = MessageToDict(message, including_default_value_fields=True,
                                          preserving_proto_field_name=True)
-                return namedtuple_to_dict(obj_to_namedtuple(msg_dict, model))
-
+                
+                result = namedtuple_to_dict(obj_to_namedtuple(msg_dict, model))
+                if finalize:
+                    return finalize(model, result)
+                return result
+            
             return wrapper
 
         return decorator
 
     # pylint: disable-next=redefined-outer-name
     def pick(field: str, first: bool = False,
-             finalize: Optional[Callable[[Dict, Collection], Collection]] = None
+             
              ) -> Callable[..., Callable[..., object]]:
         def decorator(func: Callable[..., Dict]) -> Callable[..., object]:
             @functools.wraps(func)
@@ -236,8 +241,6 @@ else:
                 field_to_ret = model[field]
                 if first:
                     field_to_ret = field_to_ret[0]
-                if finalize:
-                    return finalize(model, field_to_ret)
                 return field_to_ret
             return wrapper
         return decorator
