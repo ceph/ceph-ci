@@ -21,6 +21,7 @@ static std::vector<std::string> tokenize_key(std::string_view key)
     std::vector<std::string> tokens;
     size_t start = 0, end = 0;
     while ((end = key.find(CACHE_DELIM, start)) != std::string_view::npos) {
+        dout(0) << "tokenize_key: " << key.substr(start, end - start) << dendl;
         tokens.emplace_back(key.substr(start, end - start));
         start = end + 1;
     }

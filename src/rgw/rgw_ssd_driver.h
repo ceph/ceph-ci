@@ -4,6 +4,9 @@
 #include "rgw_common.h"
 #include "rgw_cache_driver.h"
 
+#define dout_context g_ceph_context
+#define dout_subsys ceph_subsys_rgw
+
 namespace rgw { namespace cache {
 
 class SSDDriver : public CacheDriver {
