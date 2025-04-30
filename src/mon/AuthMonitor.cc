@@ -1941,9 +1941,8 @@ bool AuthMonitor::prepare_command(MonOpRequestRef op)
 
     {
       KeyRing kr;
-      kr.add(entity, entity_auth.key, entity_auth.pending_key);
+      kr.add(entity, entity_auth);
       if (f) {
-        kr.set_caps(entity, entity_auth.caps);
         kr.encode_formatted("auth", f.get(), rdata);
       } else {
         kr.encode_plaintext(rdata);
