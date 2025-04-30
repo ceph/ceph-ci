@@ -263,7 +263,6 @@ def test_large_object(r, client, s3):
     datacache = subprocess.check_output(['ls', '-a', datacache_path])
     datacache = datacache.decode('latin-1').splitlines()[2:]
     log.info("1. Multipart datacache contents:") # TODO: Remove logs if no errors
-    log.info(datacache)
 
     for file in datacache:
         if '#' in file: # data blocks
@@ -272,6 +271,8 @@ def test_large_object(r, client, s3):
             if '_' in file: # account for temp files
                 size = size.split("_")[0]
 
+            temp = subprocess.check_output(['ls', '-a', datacache_path])
+            log.info(temp.decode('latin-1').splitlines())
             output = subprocess.check_output(['md5sum', datacache_path + file]).decode('latin-1')
             assert(output.splitlines()[0].split()[0] == hashlib.md5(multipart_data[ofs:ofs+int(size)].encode('utf-8')).hexdigest())
 
