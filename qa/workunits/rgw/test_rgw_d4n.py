@@ -268,9 +268,12 @@ def test_large_object(r, client, s3):
     for file in datacache:
         if '#' in file: # data blocks
             ofs = int(file.split("#")[1])
-            size = int(file.split("#")[2])
+            size = file.split("#")[2]
+            if '_' in file: # account for temp files
+                size = size.split("_")[0]
+
             output = subprocess.check_output(['md5sum', datacache_path + file]).decode('latin-1')
-            assert(output.splitlines()[0].split()[0] == hashlib.md5(multipart_data[ofs:ofs+size].encode('utf-8')).hexdigest())
+            assert(output.splitlines()[0].split()[0] == hashlib.md5(multipart_data[ofs:ofs+int(size)].encode('utf-8')).hexdigest())
 
     for entry in r.scan_iter("*_mymultipart_*"):
         data = r.hgetall(entry)
@@ -319,9 +322,12 @@ def test_large_object(r, client, s3):
     for file in datacache:
         if '#' in file: # data blocks
             ofs = int(file.split("#")[1])
-            size = int(file.split("#")[2])
+            size = file.split("#")[2]
+            if '_' in file: # account for temp files
+                size = size.split("_")[0]
+
             output = subprocess.check_output(['md5sum', datacache_path + file]).decode('latin-1')
-            assert(output.splitlines()[0].split()[0] == hashlib.md5(multipart_data[ofs:ofs+size].encode('utf-8')).hexdigest())
+            assert(output.splitlines()[0].split()[0] == hashlib.md5(multipart_data[ofs:ofs+int(size)].encode('utf-8')).hexdigest())
 
     for entry in r.scan_iter("*_mymultipart_*"):
         data = r.hgetall(entry)
