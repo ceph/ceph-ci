@@ -153,7 +153,7 @@ void RGWOp_Bucket_Link::execute(optional_yield y)
   op_state.set_new_bucket_name(new_bucket_name);
 
   op_ret = rgw_forward_request_to_master(this, *s->penv.site, s->user->get_id(),
-                                         nullptr, nullptr, s->info, y);
+                                         nullptr, nullptr, s->info, s->err, y);
   if (op_ret < 0) {
     ldpp_dout(this, 0) << "forward_request_to_master returned ret=" << op_ret << dendl;
     return;
@@ -192,7 +192,7 @@ void RGWOp_Bucket_Unlink::execute(optional_yield y)
   op_state.set_bucket_name(bucket);
 
   op_ret = rgw_forward_request_to_master(this, *s->penv.site, s->user->get_id(),
-                                         nullptr, nullptr, s->info, y);
+                                         nullptr, nullptr, s->info, s->err, y);
   if (op_ret < 0) {
     ldpp_dout(this, 0) << "forward_request_to_master returned ret=" << op_ret << dendl;
     return;
@@ -234,6 +234,9 @@ void RGWOp_Bucket_Remove::execute(optional_yield y)
   const bool is_forwarded = s->info.args.exists(RGW_SYS_PARAM_PREFIX "zonegroup");
 
   op_ret = RGWBucketAdminOp::remove_bucket(driver, *s->penv.site, op_state, y, s, bypass_gc, true, is_forwarded);
+  if (op_ret == -ENOENT) {
+    op_ret = -ERR_NO_SUCH_BUCKET;
+  }
 }
 
 class RGWOp_Set_Bucket_Quota : public RGWRESTOp {
