@@ -23,6 +23,7 @@ import os
 import hashlib
 import string
 import random
+import time
 
 log.basicConfig(level=log.DEBUG)
 
@@ -262,6 +263,7 @@ def test_large_object(r, client, s3):
     datacache_path = '/tmp/rgw_d4n_datacache/' + bucketID + '/mymultipart/'
     datacache = subprocess.check_output(['ls', '-a', datacache_path])
     datacache = datacache.decode('latin-1').splitlines()[2:]
+    time.sleep(5)
     log.info("1. Multipart datacache contents:") # TODO: Remove logs if no errors
 
     for file in datacache:
