@@ -389,14 +389,13 @@ target_link_libraries(ceph_test_datalog
 install(TARGETS ceph_test_datalog DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 if(WITH_CATCH2)
- message("-- Processing RGW Catch2 tests")
- add_executable(catch2-rgw-general
-  catch2-rgw-general.cc)
+ add_executable(unittest_hex
+  test_rgw_hex.cc)
 
- target_include_directories(catch2-rgw-general
+ target_include_directories(unittest_hex
   SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/src/rgw")
 
- target_link_libraries(catch2-rgw-general 
+ target_link_libraries(unittest_hex 
   rgw_common
   librados
   ceph-common
@@ -404,6 +403,6 @@ if(WITH_CATCH2)
   ${EXTRALIBS}
   Catch2WithMain)
 
- add_ceph_unittest(catch2-rgw-general)
+ add_ceph_unittest(unittest_hex)
 
 endif(WITH_CATCH2)
