@@ -520,19 +520,13 @@ endif()
 # Catch2 C++ Unit Test support:
 # This needs to come before any tests using Catch2.
 option(WITH_CATCH2 "Enable Catch2 unit tests" ON)
-option(PREFER_SYSTEM_CATCH2 "Enable Catch2 unit tests (use system packages, if found)" OFF)
 option(WITH_SYSTEM_CATCH2 "Enable Catch2 unit tests (require system packages)" OFF)
 
 if(WITH_CATCH2)
   # Save pre-existing definitions (if any):
-  set(ORIG_CPM_USE_LOCAL_PACKAGES ${CPM_USE_LOCAL_PACKAGES})
   set(ORIG_CPM_LOCAL_PACKAGES_ONLY ${CPM_USE_LOCAL_PACKAGES_ONLY})
 
-  if(PREFER_SYSTEM_CATCH2)
-   set(CPM_USE_LOCAL_PACKAGES ON)
-  endif()
-
-  if(WITH_SYSTEM_CATCH2)
+    if(WITH_SYSTEM_CATCH2)
    set(CPM_LOCAL_PACKAGES_ONLY ON)
   endif()
 
@@ -540,7 +534,6 @@ if(WITH_CATCH2)
   CPMAddPackage("gh:catchorg/Catch2@3.8.1")
 
   # Restore the original CPM settings in case someone else wants to use the module:
-  set(CPM_USE_LOCAL_PACKAGES, ${ORIG_CPM_USE_LOCAL_PACKAGES})
   set(CPM_USE_LOCAL_PACKAGES_ONLY, ${ORIG_CPM_USE_LOCAL_PACKAGES_ONLY})
 
   message("-- Enabled Catch2 support")
