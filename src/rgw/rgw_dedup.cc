@@ -241,9 +241,13 @@ namespace rgw::dedup {
     d_head_object_size = cct->_conf->rgw_max_chunk_size;
     //ceph_assert(4*1024*1024 == d_head_object_size);
 
-    if (init_rados_access_handles() != 0) {
+    int ret = init_rados_access_handles();
+    if (ret != 0) {
+      derr << __func__ << "::ERR: failed init_rados_access_handles() ret="
+           << ret << "::" << cpp_strerror(-ret) << dendl;
       throw std::runtime_error("Failed init_dedup_pool_ioctx()");
     }
+
     d_heart_beat_last_update = ceph_clock_now();
     d_heart_beat_max_elapsed_sec = 3;
   }
@@ -2045,6 +2049,7 @@ namespace rgw::dedup {
   //---------------------------------------------------------------------------
   int Background::watch_reload(const DoutPrefixProvider* dpp)
   {
+    ldpp_dout(dpp, 1) << __func__ << "::entered" << dendl;
     if (!d_dedup_cluster_ioctx.is_valid()) {
       ldpp_dout(dpp, 1) << __func__
                         << "::ERR: invalid pool handler (missing pool)" << dendl;
@@ -2072,7 +2077,7 @@ namespace rgw::dedup {
                         << ". error: " << cpp_strerror(-ret) << dendl;
       return ret;
     }
-    ldpp_dout(dpp, 10) << __func__ << "::Started watching for reloads of  "
+    ldpp_dout(dpp, 1) << __func__ << "::Started watching for reloads of  "
                        << oid << ", handle=" << d_watch_handle << dendl;
     return 0;
   }
@@ -2082,14 +2087,18 @@ namespace rgw::dedup {
   {
     if (d_watch_handle == 0) {
       // nothing to unwatch
+      ldpp_dout(dpp, 1) << __func__ << "::nothing to watch" << dendl;
       return 0;
     }
+
+    ldpp_dout(dpp, 1) << __func__ << "::d_watch_handle=" << d_watch_handle << dendl;
 
     if (!d_dedup_cluster_ioctx.is_valid()) {
       ldpp_dout(dpp, 1) << __func__
                         << "::ERR: invalid pool handler (missing pool)" << dendl;
       return -ENOENT;
     }
+
     const auto ret = d_dedup_cluster_ioctx.unwatch2(d_watch_handle);
     if (ret < 0) {
       ldpp_dout(dpp, 1) << __func__ << "::ERR: failed unwatch2() " << DEDUP_WATCH_OBJ
@@ -2098,6 +2107,8 @@ namespace rgw::dedup {
     }
     ldpp_dout(dpp, 5) << "Stopped watching for reloads of " << DEDUP_WATCH_OBJ
                       << " with handle: " << d_watch_handle << dendl;
+
+    d_watch_handle = 0;
     return 0;
   }
 
@@ -2297,7 +2308,12 @@ namespace rgw::dedup {
     }
 
     driver = _driver;
-    init_rados_access_handles();
+    int ret = init_rados_access_handles();
+    if (ret != 0) {
+      derr << __func__ << "::ERR: failed init_rados_access_handles() ret="
+           << ret << "::" << cpp_strerror(-ret) << dendl;
+      throw std::runtime_error("Failed init_dedup_pool_ioctx()");
+    }
 
     d_ctl.local_pause_req = false;
     d_ctl.local_paused    = false;
