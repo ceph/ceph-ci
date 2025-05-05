@@ -531,6 +531,7 @@ int rgw::AppMain::init_frontends2(RGWLib* rgwlib)
       rgw_pauser->add_pauser(env.lua.background);
     }
     if (dedup_background) {
+      dout(1) << "rgw_pauser->add_pauser(dedup_background)" << dendl;
       rgw_pauser->add_pauser(dedup_background.get());
     }
     need_context_pool();
