@@ -2075,10 +2075,11 @@ namespace rgw::dedup {
     if (ret < 0) {
       ldpp_dout(dpp, 1) << __func__ << "::ERR: failed watch2() " << oid
                         << ". error: " << cpp_strerror(-ret) << dendl;
+      d_watch_handle = 0;
       return ret;
     }
     ldpp_dout(dpp, 1) << __func__ << "::Started watching for reloads of  "
-                       << oid << ", handle=" << d_watch_handle << dendl;
+                      << oid << ", handle=" << d_watch_handle << dendl;
     return 0;
   }
 
@@ -2225,7 +2226,8 @@ namespace rgw::dedup {
     }
     d_runner = std::thread(&Background::run, this);
     const auto rc = ceph_pthread_setname("dedup_bg");
-    ldpp_dout(dpp, 10) <<  __FILE__ << "::" <<__func__ << "::setname rc=" << rc << dendl;
+    //ldpp_dout(dpp, 10) <<  __FILE__ << "::" <<__func__ << "::setname rc=" << rc << dendl;
+    ldpp_dout(dpp, 10) << "dedup_background start()" << rc << dendl;
   }
 
   //------------------------- --------------------------------------------------
