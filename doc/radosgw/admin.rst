@@ -416,19 +416,19 @@ requests necessary to restore them.
 
 To create an admin user:
 
-.. prompt:: bash
+.. prompt:: bash #
 
    radosgw-admin user create --uid={username} --display-name="{display-name}" --admin
 
 To add the admin flag to an existing user:
 
-.. prompt:: bash
+.. prompt:: bash #
 
    radosgw-admin user modify --uid={username} --admin
 
 To remove the admin flag from an existing user:
 
-.. prompt:: bash
+.. prompt:: bash #
 
    radosgw-admin user modify --uid={username} --admin=0
 
@@ -862,7 +862,7 @@ all unauthenticated users:
 
 .. note:: In a multisite configuration where a realm and a period are present,
    any changes to the global rate limit must be committed using ``period update
-   --commit``. If no period is present, the rados gateway(s) must be restarted
+   --commit``. If no period is present, the RGW instances must be restarted
    for the changes to take effect.
 
 Usage
