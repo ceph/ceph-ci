@@ -87,10 +87,10 @@ namespace rgw::dedup {
   void Background::DedupWatcher::handle_notify(uint64_t notify_id, uint64_t cookie,
                                                uint64_t notifier_id, bufferlist &bl)
   {
-    ldpp_dout(parent->dpp, 10) << __func__ << "::notify_id=" << notify_id << "::cookie="
+    ldpp_dout(parent->dpp, 1) << __func__ << "::notify_id=" << notify_id << "::cookie="
                                << cookie << "::notifier_id=" << notifier_id << dendl;
     if (parent->d_watch_handle != cookie) {
-      ldpp_dout(parent->dpp, 5) << __func__ << "::ERR: wrong cookie=" << cookie
+      ldpp_dout(parent->dpp, 1) << __func__ << "::ERR: wrong cookie=" << cookie
                                 << "::d_watch_handle=" << parent->d_watch_handle << dendl;
       return;
     }
@@ -101,11 +101,11 @@ namespace rgw::dedup {
   void Background::DedupWatcher::handle_error(uint64_t cookie, int err)
   {
     if (parent->d_watch_handle != cookie) {
-      ldpp_dout(parent->dpp, 5) << __func__ << "::ERR: wrong cookie=" << cookie
+      ldpp_dout(parent->dpp, 1) << __func__ << "::ERR: wrong cookie=" << cookie
                                 << "::d_watch_handle=" << parent->d_watch_handle << dendl;
       return;
     }
-    ldpp_dout(parent->dpp, 5) << __func__ << "::error=" << err << dendl;
+    ldpp_dout(parent->dpp, 1) << __func__ << "::error=" << err << dendl;
 
     parent->unwatch_reload(parent->dpp);
     parent->watch_reload(parent->dpp);
@@ -2060,10 +2060,10 @@ namespace rgw::dedup {
     bool exclusive = true;
     int ret = d_dedup_cluster_ioctx.create(oid, exclusive);
     if (ret >= 0) {
-      ldpp_dout(dpp, 5) << __func__ << "::" << oid << " was created!" << dendl;
+      ldpp_dout(dpp, 1) << __func__ << "::" << oid << " was created!" << dendl;
     }
     else if (ret == -EEXIST) {
-      ldpp_dout(dpp, 5) << __func__ << "::"<< oid << " exists" << dendl;
+      ldpp_dout(dpp, 1) << __func__ << "::"<< oid << " exists" << dendl;
     }
     else {
       ldpp_dout(dpp, 1) << __func__ << "::ERR: failed ioctx.create(" << oid
@@ -2106,7 +2106,7 @@ namespace rgw::dedup {
                         << ". error: " << cpp_strerror(-ret) << dendl;
       return ret;
     }
-    ldpp_dout(dpp, 5) << "Stopped watching for reloads of " << DEDUP_WATCH_OBJ
+    ldpp_dout(dpp, 1) << "Stopped watching for reloads of " << DEDUP_WATCH_OBJ
                       << " with handle: " << d_watch_handle << dendl;
 
     d_watch_handle = 0;
@@ -2121,7 +2121,7 @@ namespace rgw::dedup {
                         << "::ERR: invalid pool handler (missing pool)" << dendl;
       return;
     }
-    ldpp_dout(dpp, 5) << __func__ << "::status=" << status << dendl;
+    ldpp_dout(dpp, 1) << __func__ << "::status=" << status << dendl;
     bufferlist reply_bl;
     ceph::encode(status, reply_bl);
     encode(d_ctl, reply_bl);
@@ -2140,7 +2140,7 @@ namespace rgw::dedup {
       ldpp_dout(dpp, 1) << __func__ << "::ERROR: bad urgent_msg" << dendl;
       ret = -EINVAL;
     }
-    ldpp_dout(dpp, 5) << __func__ << "::-->" << get_urgent_msg_names(urgent_msg) << dendl;
+    ldpp_dout(dpp, 1) << __func__ << "::-->" << get_urgent_msg_names(urgent_msg) << dendl;
 
     // use lock to prevent concurrent pause/resume requests
     std::unique_lock cond_lock(d_cond_mutex); // [------>open lock block
@@ -2220,14 +2220,14 @@ namespace rgw::dedup {
       std::unique_lock pause_lock(d_pause_mutex);
       if (d_ctl.started) {
         // start the thread only once
+        ldpp_dout(dpp, 1) << "dedup_background already started" << dendl;
         return;
       }
       d_ctl.started = true;
     }
     d_runner = std::thread(&Background::run, this);
     const auto rc = ceph_pthread_setname("dedup_bg");
-    //ldpp_dout(dpp, 10) <<  __FILE__ << "::" <<__func__ << "::setname rc=" << rc << dendl;
-    ldpp_dout(dpp, 10) << "dedup_background start()" << rc << dendl;
+    ldpp_dout(dpp, 1) << "dedup_background start() = " << rc << dendl;
   }
 
   //------------------------- --------------------------------------------------
@@ -2265,10 +2265,10 @@ namespace rgw::dedup {
   //---------------------------------------------------------------------------
   void Background::pause()
   {
-    ldpp_dout(dpp, 5) <<  __func__ << "::request arrived" << dendl;
+    ldpp_dout(dpp, 1) << "dedup_background->pause() request" << dendl;
     std::unique_lock cond_lock(d_cond_mutex);
 
-    if (d_ctl.local_paused || d_ctl.shutdown_req || d_ctl.shutdown_done) {
+    if (d_ctl.local_paused || d_ctl.shutdown_done) {
       cond_lock.unlock();
       ldpp_dout(dpp, 1) <<  __FILE__ << "::" <<__func__
                         << "::background is already paused/stopped!!!" << dendl;
@@ -2283,28 +2283,27 @@ namespace rgw::dedup {
     }
     d_ctl.local_pause_req = true;
     d_cond.notify_all();
-    d_cond.wait(cond_lock, [this]{return d_ctl.local_paused || d_ctl.shutdown_req;});
+    d_cond.wait(cond_lock, [this]{return d_ctl.local_paused||d_ctl.shutdown_done;});
     if (nested_call) {
       ldpp_dout(dpp, 1) <<__func__ << "::nested call:: repeat notify" << dendl;
       d_cond.notify_all();
     }
+    ldpp_dout(dpp, 1) << "dedup_background paused" << dendl;
   }
 
   //---------------------------------------------------------------------------
   void Background::resume(rgw::sal::Driver* _driver)
   {
-    ldpp_dout(dpp, 10) <<  __func__ << "::entered" << dendl;
+    ldpp_dout(dpp, 1) << "dedup_background->resume()" << dendl;
     // TBD:  what about shutdown??
     // use lock to prevent concurrent pause/resume requests
     std::unique_lock cond_lock(d_cond_mutex);
 
     if (!d_ctl.local_paused) {
       cond_lock.unlock();
-      ldpp_dout(dpp, 1) <<  __FILE__ << "::" <<__func__
-                        << "::background is not paused!!!" << dendl;
+      ldpp_dout(dpp, 1) << "dedup_background is not paused!" << dendl;
       if (_driver != driver) {
-        ldpp_dout(dpp, 1) <<  __FILE__ << "::" <<__func__
-                          << "::attempt to change driver on an active system was refused!!!" << dendl;
+        ldpp_dout(dpp, 1) << "dedup_background attempt to change driver on an active system was refused" << dendl;
       }
       return;
     }
@@ -2312,7 +2311,7 @@ namespace rgw::dedup {
     driver = _driver;
     int ret = init_rados_access_handles();
     if (ret != 0) {
-      derr << __func__ << "::ERR: failed init_rados_access_handles() ret="
+      derr << "dedup_background failed init_rados_access_handles() ret="
            << ret << "::" << cpp_strerror(-ret) << dendl;
       throw std::runtime_error("Failed init_dedup_pool_ioctx()");
     }
@@ -2322,6 +2321,7 @@ namespace rgw::dedup {
 
     // wake up threads blocked after seeing pause state
     d_cond.notify_all();
+    ldpp_dout(dpp, 1) << "dedup_background was resumed" << dendl;
   }
 
   //---------------------------------------------------------------------------
