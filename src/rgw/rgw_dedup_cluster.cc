@@ -258,6 +258,7 @@ namespace rgw::dedup {
                             const DoutPrefixProvider *dpp,
                             librados::IoCtx          &ioctx)
   {
+    ldpp_dout(dpp, 1) << __func__ << "::dedup background:entered" << dendl;
     rgw_pool dedup_pool(DEDUP_POOL_NAME);
     std::string pool_name(DEDUP_POOL_NAME);
     // using Replica-1 for the intermediate data
@@ -275,7 +276,8 @@ namespace rgw::dedup {
       R"(
     })";
 
-    int ret = rados->get_rados_handle()->mon_command(command, inbl, nullptr, &output);
+    auto rados_handle = rados->get_rados_handle();
+    int ret = rados_handle->mon_command(command, inbl, nullptr, &output);
     if (output.length()) {
       if (output != "pool 'rgw_dedup_pool' already exists") {
         ldpp_dout(dpp, 10) << __func__ << "::" << output << dendl;
@@ -288,12 +290,13 @@ namespace rgw::dedup {
       return ret;
     }
 
-    ret = rgw_init_ioctx(dpp, rados->get_rados_handle(), dedup_pool, ioctx);
+    ret = rgw_init_ioctx(dpp, rados_handle, dedup_pool, ioctx);
     if (ret < 0) {
-      ldpp_dout(dpp, 1) << "failed to initialize pool for listing with: "
+      ldpp_dout(dpp, 1) << __func__ << "::failed to initialize pool for listing with: "
                         << cpp_strerror(-ret) << dendl;
     }
 
+    ldpp_dout(dpp, 1) << __func__ << "::dedup background: ioctx=" << ioctx.get_instance_id() << dendl;
     return ret;
   }
 

@@ -225,7 +225,10 @@ namespace rgw::dedup {
     rados = store->getRados();
     rados_handle = rados->get_rados_handle();
 
-    return init_dedup_pool_ioctx(rados, dpp, d_dedup_cluster_ioctx);
+    int ret = init_dedup_pool_ioctx(rados, dpp, d_dedup_cluster_ioctx);
+    ldpp_dout(dpp, 1) << __func__ << "::dedup background: ioctx="
+                      << d_dedup_cluster_ioctx.get_instance_id() << dendl;
+    return ret;
   }
 
   //---------------------------------------------------------------------------
@@ -247,6 +250,8 @@ namespace rgw::dedup {
            << ret << "::" << cpp_strerror(-ret) << dendl;
       throw std::runtime_error("Failed init_dedup_pool_ioctx()");
     }
+    ldpp_dout(dpp, 1) << __func__ << "::dedup background: ioctx="
+                      << d_dedup_cluster_ioctx.get_instance_id() << dendl;
 
     d_heart_beat_last_update = ceph_clock_now();
     d_heart_beat_max_elapsed_sec = 3;
@@ -2266,6 +2271,8 @@ namespace rgw::dedup {
   void Background::pause()
   {
     ldpp_dout(dpp, 1) << "dedup_background->pause() request" << dendl;
+    ldpp_dout(dpp, 1) << __func__ << "::dedup background: ioctx="
+                      << d_dedup_cluster_ioctx.get_instance_id() << dendl;
     std::unique_lock cond_lock(d_cond_mutex);
 
     if (d_ctl.local_paused || d_ctl.shutdown_done) {
@@ -2288,6 +2295,12 @@ namespace rgw::dedup {
       ldpp_dout(dpp, 1) <<__func__ << "::nested call:: repeat notify" << dendl;
       d_cond.notify_all();
     }
+
+    ldpp_dout(dpp, 1) << "dedup_background unwatch_reload()" << dendl;
+    unwatch_reload(dpp);
+    // do we need to destroy the old ioctx ???
+    ldpp_dout(dpp, 1) << "dedup_background d_dedup_cluster_ioctx.close()" << dendl;
+    d_dedup_cluster_ioctx.close();
     ldpp_dout(dpp, 1) << "dedup_background paused" << dendl;
   }
 
@@ -2315,7 +2328,10 @@ namespace rgw::dedup {
            << ret << "::" << cpp_strerror(-ret) << dendl;
       throw std::runtime_error("Failed init_dedup_pool_ioctx()");
     }
-
+    ldpp_dout(dpp, 1) << __func__ << "::dedup background: ioctx="
+                      << d_dedup_cluster_ioctx.get_instance_id() << dendl;
+    ldpp_dout(dpp, 1) << "dedup_background watch_reload()" << dendl;
+    watch_reload(dpp);
     d_ctl.local_pause_req = false;
     d_ctl.local_paused    = false;
 
