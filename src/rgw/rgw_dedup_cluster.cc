@@ -258,7 +258,6 @@ namespace rgw::dedup {
                             const DoutPrefixProvider *dpp,
                             librados::IoCtx          &ioctx)
   {
-    ldpp_dout(dpp, 1) << __func__ << "::dedup background:entered" << dendl;
     rgw_pool dedup_pool(DEDUP_POOL_NAME);
     std::string pool_name(DEDUP_POOL_NAME);
     // using Replica-1 for the intermediate data
@@ -296,7 +295,6 @@ namespace rgw::dedup {
                         << cpp_strerror(-ret) << dendl;
     }
 
-    ldpp_dout(dpp, 1) << __func__ << "::dedup background: ioctx=" << ioctx.get_instance_id() << dendl;
     return ret;
   }
 

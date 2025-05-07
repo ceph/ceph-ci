@@ -531,7 +531,6 @@ int rgw::AppMain::init_frontends2(RGWLib* rgwlib)
       rgw_pauser->add_pauser(env.lua.background);
     }
     if (dedup_background) {
-      dout(1) << "rgw_pauser->add_pauser(dedup_background)" << dendl;
       rgw_pauser->add_pauser(dedup_background.get());
     }
     need_context_pool();
@@ -589,22 +588,13 @@ void rgw::AppMain::init_dedup()
   rgw::sal::Driver* driver = env.driver;
   if (driver->get_name() == "rados") { /* Supported for only RadosStore */
     try {
-      ldpp_dout(dpp, 0) << __func__ << "::create dedup background job::" << dendl;
       dedup_background = std::make_unique<rgw::dedup::Background>(driver, dpp->get_cct());
-      ceph_assert(dedup_background);
       dedup_background->start();
-      int ret = dedup_background->watch_reload(dpp);
-      ldpp_dout(dpp, 0) << __func__ << "::dedup_background->watch_reload()=" << ret
-			<< dendl;
+      dedup_background->watch_reload(dpp);
     }
     catch (const std::runtime_error&) {
       ldpp_dout(dpp, 0) << __func__ << "::failed create dedup background job" << dendl;
     }
-  }
-  else {
-    ldpp_dout(dpp, 0) << __func__ << "::driver=" << driver->get_name()
-		      << "::disable dedup_background" << dendl;
-    dedup_background = nullptr;
   }
 }
 
@@ -616,7 +606,6 @@ void rgw::AppMain::shutdown(std::function<void(void)> finalize_async_signals)
       static_cast<rgw::sal::RadosLuaManager*>(env.lua.manager.get())->unwatch_reload(dpp);
     }
     if (dedup_background) {
-      ldpp_dout(dpp, 0) << __func__ << "::dedup_background->unwatch_reload()" << dendl;
       dedup_background->unwatch_reload(dpp);
     }
   }
@@ -629,7 +618,6 @@ void rgw::AppMain::shutdown(std::function<void(void)> finalize_async_signals)
   rgw_log_usage_finalize();
 
   if (dedup_background) {
-    ldpp_dout(dpp, 0) << __func__ << "::dedup_background->shutdown()" << dendl;
     dedup_background->shutdown();
   }
 

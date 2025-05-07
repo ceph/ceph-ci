@@ -87,11 +87,13 @@ namespace rgw::dedup {
   void Background::DedupWatcher::handle_notify(uint64_t notify_id, uint64_t cookie,
                                                uint64_t notifier_id, bufferlist &bl)
   {
-    ldpp_dout(parent->dpp, 1) << __func__ << "::notify_id=" << notify_id << "::cookie="
-                               << cookie << "::notifier_id=" << notifier_id << dendl;
+    ldpp_dout(parent->dpp, 10) << __func__ << "::notify_id=" << notify_id
+                               << "::cookie=" << cookie
+                               << "::notifier_id=" << notifier_id << dendl;
     if (parent->d_watch_handle != cookie) {
       ldpp_dout(parent->dpp, 1) << __func__ << "::ERR: wrong cookie=" << cookie
-                                << "::d_watch_handle=" << parent->d_watch_handle << dendl;
+                                << "::d_watch_handle=" << parent->d_watch_handle
+                                << dendl;
       return;
     }
     parent->handle_notify(notify_id, cookie, bl);
@@ -102,7 +104,8 @@ namespace rgw::dedup {
   {
     if (parent->d_watch_handle != cookie) {
       ldpp_dout(parent->dpp, 1) << __func__ << "::ERR: wrong cookie=" << cookie
-                                << "::d_watch_handle=" << parent->d_watch_handle << dendl;
+                                << "::d_watch_handle=" << parent->d_watch_handle
+                                << dendl;
       return;
     }
     ldpp_dout(parent->dpp, 1) << __func__ << "::error=" << err << dendl;
@@ -250,8 +253,6 @@ namespace rgw::dedup {
            << ret << "::" << cpp_strerror(-ret) << dendl;
       throw std::runtime_error("Failed init_dedup_pool_ioctx()");
     }
-    ldpp_dout(dpp, 1) << __func__ << "::dedup background: ioctx="
-                      << d_dedup_cluster_ioctx.get_instance_id() << dendl;
 
     d_heart_beat_last_update = ceph_clock_now();
     d_heart_beat_max_elapsed_sec = 3;
@@ -2054,37 +2055,39 @@ namespace rgw::dedup {
   //---------------------------------------------------------------------------
   int Background::watch_reload(const DoutPrefixProvider* dpp)
   {
-    ldpp_dout(dpp, 1) << __func__ << "::entered" << dendl;
     if (!d_dedup_cluster_ioctx.is_valid()) {
       ldpp_dout(dpp, 1) << __func__
                         << "::ERR: invalid pool handler (missing pool)" << dendl;
       return -ENOENT;
     }
+    ldpp_dout(dpp, 1) << "dedup_background::watch_reload(): ioctx="
+                      << d_dedup_cluster_ioctx.get_instance_id() << dendl;
     const std::string & oid = DEDUP_WATCH_OBJ;
     // create the object to watch (object may already exist)
     bool exclusive = true;
     int ret = d_dedup_cluster_ioctx.create(oid, exclusive);
     if (ret >= 0) {
-      ldpp_dout(dpp, 1) << __func__ << "::" << oid << " was created!" << dendl;
+      ldpp_dout(dpp, 5) << "dedup_background::watch_reload():" << oid
+                        << " was created!" << dendl;
     }
     else if (ret == -EEXIST) {
-      ldpp_dout(dpp, 1) << __func__ << "::"<< oid << " exists" << dendl;
+      ldpp_dout(dpp, 5) << __func__ << "::"<< oid << " exists" << dendl;
     }
     else {
-      ldpp_dout(dpp, 1) << __func__ << "::ERR: failed ioctx.create(" << oid
-                        << ") with: " << ret << "::" << cpp_strerror(-ret) << dendl;
+      ldpp_dout(dpp, 1) << "dedup_background::watch_reload(): failed ioctx.create("
+                        << oid << ") ret=" << ret << "::" << cpp_strerror(-ret) << dendl;
       return ret;
     }
 
     ret = d_dedup_cluster_ioctx.watch2(oid, &d_watch_handle, &d_watcher_ctx);
     if (ret < 0) {
-      ldpp_dout(dpp, 1) << __func__ << "::ERR: failed watch2() " << oid
+      ldpp_dout(dpp, 1) << "dedup_background: failed watch2() " << oid
                         << ". error: " << cpp_strerror(-ret) << dendl;
       d_watch_handle = 0;
       return ret;
     }
-    ldpp_dout(dpp, 1) << __func__ << "::Started watching for reloads of  "
-                      << oid << ", handle=" << d_watch_handle << dendl;
+    ldpp_dout(dpp, 5) << "dedup_background::Started watching "
+                      << oid << "::d_watch_handle=" << d_watch_handle << dendl;
     return 0;
   }
 
@@ -2093,26 +2096,30 @@ namespace rgw::dedup {
   {
     if (d_watch_handle == 0) {
       // nothing to unwatch
-      ldpp_dout(dpp, 1) << __func__ << "::nothing to watch" << dendl;
+      ldpp_dout(dpp, 1) << "dedup_background::unwatch_reload(): nothing to watch"
+                        << dendl;
       return 0;
     }
 
-    ldpp_dout(dpp, 1) << __func__ << "::d_watch_handle=" << d_watch_handle << dendl;
-
     if (!d_dedup_cluster_ioctx.is_valid()) {
-      ldpp_dout(dpp, 1) << __func__
+      ldpp_dout(dpp, 1) << "dedup_background::unwatch_reload(): "
                         << "::ERR: invalid pool handler (missing pool)" << dendl;
       return -ENOENT;
     }
 
+    ldpp_dout(dpp, 1) << "dedup_background::unwatch_reload(): ioctx="
+                      << d_dedup_cluster_ioctx.get_instance_id()
+                      << "::d_watch_handle=" << d_watch_handle << dendl;
+
     const auto ret = d_dedup_cluster_ioctx.unwatch2(d_watch_handle);
     if (ret < 0) {
-      ldpp_dout(dpp, 1) << __func__ << "::ERR: failed unwatch2() " << DEDUP_WATCH_OBJ
-                        << ". error: " << cpp_strerror(-ret) << dendl;
+      ldpp_dout(dpp, 1) << "dedup_background::unwatch_reload() failed unwatch2() "
+                        << DEDUP_WATCH_OBJ << "::" << cpp_strerror(-ret) << dendl;
       return ret;
     }
-    ldpp_dout(dpp, 1) << "Stopped watching for reloads of " << DEDUP_WATCH_OBJ
-                      << " with handle: " << d_watch_handle << dendl;
+    ldpp_dout(dpp, 1) << "dedup_background::unwatch_reload():Stopped watching "
+                      << DEDUP_WATCH_OBJ << "::d_watch_handle="
+                      << d_watch_handle << dendl;
 
     d_watch_handle = 0;
     return 0;
@@ -2126,7 +2133,7 @@ namespace rgw::dedup {
                         << "::ERR: invalid pool handler (missing pool)" << dendl;
       return;
     }
-    ldpp_dout(dpp, 1) << __func__ << "::status=" << status << dendl;
+    ldpp_dout(dpp, 5) << __func__ << "::status=" << status << dendl;
     bufferlist reply_bl;
     ceph::encode(status, reply_bl);
     encode(d_ctl, reply_bl);
@@ -2145,7 +2152,7 @@ namespace rgw::dedup {
       ldpp_dout(dpp, 1) << __func__ << "::ERROR: bad urgent_msg" << dendl;
       ret = -EINVAL;
     }
-    ldpp_dout(dpp, 1) << __func__ << "::-->" << get_urgent_msg_names(urgent_msg) << dendl;
+    ldpp_dout(dpp, 5) << __func__ << "::-->" << get_urgent_msg_names(urgent_msg) << dendl;
 
     // use lock to prevent concurrent pause/resume requests
     std::unique_lock cond_lock(d_cond_mutex); // [------>open lock block
@@ -2232,18 +2239,18 @@ namespace rgw::dedup {
     }
     d_runner = std::thread(&Background::run, this);
     const auto rc = ceph_pthread_setname("dedup_bg");
-    ldpp_dout(dpp, 1) << "dedup_background start() = " << rc << dendl;
+    ldpp_dout(dpp, 5) << "dedup_background start() = " << rc << dendl;
   }
 
   //------------------------- --------------------------------------------------
   void Background::shutdown()
   {
-    ldpp_dout(dpp, 1) <<__func__ << "::shutdown was called!!!\n" << dendl;
+    ldpp_dout(dpp, 1) <<__func__ << "::dedup_background shutdown()" << dendl;
     std::unique_lock cond_lock(d_cond_mutex);
     bool nested_call = false;
     if (d_ctl.shutdown_req) {
       // should never happen!
-      ldpp_dout(dpp, 1) <<__func__ << "::nested call" << dendl;
+      ldpp_dout(dpp, 1) <<__func__ << "dedup_background nested call" << dendl;
       nested_call = true;
     }
     d_ctl.shutdown_req = true;
@@ -2270,15 +2277,14 @@ namespace rgw::dedup {
   //---------------------------------------------------------------------------
   void Background::pause()
   {
-    ldpp_dout(dpp, 1) << "dedup_background->pause() request" << dendl;
-    ldpp_dout(dpp, 1) << __func__ << "::dedup background: ioctx="
+    ldpp_dout(dpp, 1) << "dedup_background->pause() request: ioctx="
                       << d_dedup_cluster_ioctx.get_instance_id() << dendl;
     std::unique_lock cond_lock(d_cond_mutex);
 
     if (d_ctl.local_paused || d_ctl.shutdown_done) {
       cond_lock.unlock();
       ldpp_dout(dpp, 1) <<  __FILE__ << "::" <<__func__
-                        << "::background is already paused/stopped!!!" << dendl;
+                        << "::dedup_background is already paused/stopped" << dendl;
       return;
     }
 
@@ -2292,14 +2298,12 @@ namespace rgw::dedup {
     d_cond.notify_all();
     d_cond.wait(cond_lock, [this]{return d_ctl.local_paused||d_ctl.shutdown_done;});
     if (nested_call) {
-      ldpp_dout(dpp, 1) <<__func__ << "::nested call:: repeat notify" << dendl;
+      ldpp_dout(dpp, 1) << "dedup_background::nested call:: repeat notify" << dendl;
       d_cond.notify_all();
     }
 
-    ldpp_dout(dpp, 1) << "dedup_background unwatch_reload()" << dendl;
+    // destory open watch request and pool handle before pause() is completed
     unwatch_reload(dpp);
-    // do we need to destroy the old ioctx ???
-    ldpp_dout(dpp, 1) << "dedup_background d_dedup_cluster_ioctx.close()" << dendl;
     d_dedup_cluster_ioctx.close();
     ldpp_dout(dpp, 1) << "dedup_background paused" << dendl;
   }
@@ -2308,7 +2312,6 @@ namespace rgw::dedup {
   void Background::resume(rgw::sal::Driver* _driver)
   {
     ldpp_dout(dpp, 1) << "dedup_background->resume()" << dendl;
-    // TBD:  what about shutdown??
     // use lock to prevent concurrent pause/resume requests
     std::unique_lock cond_lock(d_cond_mutex);
 
@@ -2330,7 +2333,7 @@ namespace rgw::dedup {
     }
     ldpp_dout(dpp, 1) << __func__ << "::dedup background: ioctx="
                       << d_dedup_cluster_ioctx.get_instance_id() << dendl;
-    ldpp_dout(dpp, 1) << "dedup_background watch_reload()" << dendl;
+    // create new watch request using the new pool handle
     watch_reload(dpp);
     d_ctl.local_pause_req = false;
     d_ctl.local_paused    = false;
