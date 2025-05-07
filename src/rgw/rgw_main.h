@@ -71,7 +71,7 @@ class AppMain {
   std::unique_ptr<rgw::LDAPHelper> ldh;
   RGWREST rest;
   std::unique_ptr<rgw::lua::Background> lua_background;
-  std::unique_ptr<rgw::dedup::Background> dedup_background = nullptr;
+  std::unique_ptr<rgw::dedup::Background> dedup_background;
   std::unique_ptr<rgw::auth::ImplicitTenants> implicit_tenant_context;
   std::unique_ptr<rgw::dmclock::SchedulerCtx> sched_ctx;
   std::unique_ptr<ActiveRateLimiter> ratelimiter;
