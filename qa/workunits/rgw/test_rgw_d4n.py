@@ -249,7 +249,13 @@ def test_large_object(r, client, s3):
     file_path = os.path.dirname(__file__)+'mymultipart'
 
     # first get
-    s3.Object(bucket_name, key).download_file(file_path)
+    log.info("Before get call")
+    try:
+        s3.Object(bucket_name, key).download_file(file_path)
+    except botocore.exceptions.ClientError as e:
+        log.debug("ERROR: " + e)
+        raise
+    log.info("After get call")
 
     # check logs to ensure object was retrieved from storage backend
     res = subprocess.call(['grep', '"D4NFilterObject::iterate:: iterate(): Fetching object from backend store"', '/var/log/ceph/rgw.ceph.client.0.log'])
@@ -259,11 +265,11 @@ def test_large_object(r, client, s3):
     with open(file_path, 'r') as body:
         assert(body.read() == multipart_data)
 
+    time.sleep(60)
     bucketID = subprocess.check_output(['ls', '/tmp/rgw_d4n_datacache/']).decode('latin-1').strip()
     datacache_path = '/tmp/rgw_d4n_datacache/' + bucketID + '/mymultipart/'
     datacache = subprocess.check_output(['ls', '-a', datacache_path])
     datacache = datacache.decode('latin-1').splitlines()[2:]
-    time.sleep(60)
     log.info("1. Multipart datacache contents:") # TODO: Remove logs if no errors
     temp = subprocess.check_output(['ls', '-a', datacache_path])
     log.info(temp.decode('latin-1').splitlines())
@@ -306,7 +312,13 @@ def test_large_object(r, client, s3):
         assert(data.get('hosts') == '127.0.0.1:6379')
 
     # second get
-    s3.Object(bucket_name, key).download_file(file_path)
+    log.info("Before get call")
+    try:
+        s3.Object(bucket_name, key).download_file(file_path)
+    except botocore.exceptions.ClientError as e:
+        log.debug("ERROR: " + e)
+        raise
+    log.info("After get call")
 
     # check logs to ensure object was retrieved from cache
     oid_in_cache = bucketID + "#" + data.get('version') + "mymultipart#0" + data.get('size')
