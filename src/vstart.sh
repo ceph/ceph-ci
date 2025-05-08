@@ -1250,15 +1250,7 @@ start_osd() {
     for osd in `seq $start $end`
     do
 	if [ "$ceph_osd" == "crimson-osd" ]; then
-        if [ ! -z "$crimson_balance_cpu" ]; then
-            do_balance_cpu $osd
-        else
-            bottom_cpu=$(( osd * crimson_smp ))
-            top_cpu=$(( bottom_cpu + crimson_smp - 1 ))
-            # set exclusive CPU nodes for each osd
-            echo "$CEPH_BIN/ceph -c $conf_fn config set osd.$osd crimson_seastar_cpu_cores $bottom_cpu-$top_cpu"
-            $CEPH_BIN/ceph -c $conf_fn config set "osd.$osd" crimson_seastar_cpu_cores "$bottom_cpu-$top_cpu"
-        fi
+        do_balance_cpu $osd
     fi
 	if [ "$new" -eq 1 -o $inc_osd_num -gt 0 ]; then
             wconf <<EOF
