@@ -1832,6 +1832,7 @@ int D4NFilterObject::D4NFilterReadOp::flush(const DoutPrefixProvider* dpp, rgw::
     bl_list.push_back(bl);
     if (client_cb) {
       int r = client_cb->handle_data(bl, 0, bl.length());
+      ldpp_dout(dpp, 20) << __func__ << ": " << __LINE__ << ": r=" << r << dendl;
       if (r < 0) {
         return r;
       }
@@ -2264,6 +2265,7 @@ int D4NFilterObject::D4NFilterReadOp::D4NFilterGetCB::handle_data(bufferlist& bl
           bl.begin(ofs).copy(bl_part_len, bl_part);
           ldpp_dout(dpp, 20) << __func__ << ": bl_part.length() is: " << bl_part.length() << dendl;
           r = client_cb->handle_data(bl_part, 0, bl_part_len);
+          ldpp_dout(dpp, 20) << __func__ << ": " << __LINE__ << ": r=" << r << dendl;
           part_count += 1;
         } else {
           ofs = ofs - bl_len; //re-adjust the offset
@@ -2271,6 +2273,7 @@ int D4NFilterObject::D4NFilterReadOp::D4NFilterGetCB::handle_data(bufferlist& bl
         }
       } else {
         r = client_cb->handle_data(bl, bl_ofs, bl_len);
+	ldpp_dout(dpp, 20) << __func__ << ": " << __LINE__ << ": r=" << r << dendl;
         part_count += 1;
       }
 
@@ -2324,6 +2327,7 @@ int D4NFilterObject::D4NFilterReadOp::D4NFilterGetCB::handle_data(bufferlist& bl
         auto ret = filter->get_policy_driver()->get_cache_policy()->eviction(dpp, block.size, *y);
         if (ret == 0) {
           ret = filter->get_cache_driver()->put(dpp, oid, bl, bl.length(), attrs, *y);
+          ldpp_dout(dpp, 20) << __func__ << ": " << __LINE__ << ": ret=" << ret << dendl;
           if (ret == 0) {
             std::string objEtag = "";
             filter->get_policy_driver()->get_cache_policy()->update(dpp, oid, adjusted_start_ofs, bl.length(), version, dirty, rgw::d4n::RefCount::NOOP, *y);
@@ -2359,6 +2363,7 @@ int D4NFilterObject::D4NFilterReadOp::D4NFilterGetCB::handle_data(bufferlist& bl
         auto ret = filter->get_policy_driver()->get_cache_policy()->eviction(dpp, dest_block.size, *y);
         if (ret == 0) {
           ret = filter->get_cache_driver()->put(dpp, dest_oid, bl, bl.length(), attrs, *y);
+          ldpp_dout(dpp, 20) << __func__ << ": " << __LINE__ << ": ret=" << ret << dendl;
           if (ret == 0) {
             filter->get_policy_driver()->get_cache_policy()->update(dpp, dest_oid, adjusted_start_ofs, bl.length(), dest_version, dirty, rgw::d4n::RefCount::NOOP, *y);
             if (ret = blockDir->set(dpp, &dest_block, *y); ret < 0) {
@@ -2375,6 +2380,7 @@ int D4NFilterObject::D4NFilterReadOp::D4NFilterGetCB::handle_data(bufferlist& bl
         auto ret = filter->get_policy_driver()->get_cache_policy()->eviction(dpp, block.size, *y);
         if (ret == 0) {
           ret = filter->get_cache_driver()->put(dpp, oid, bl, bl.length(), attrs, *y);
+          ldpp_dout(dpp, 20) << __func__ << ": " << __LINE__ << ": ret=" << ret << dendl;
           if (ret == 0) {
             filter->get_policy_driver()->get_cache_policy()->update(dpp, oid, adjusted_start_ofs, bl.length(), version, dirty, rgw::d4n::RefCount::NOOP, *y);
 
@@ -2409,6 +2415,7 @@ int D4NFilterObject::D4NFilterReadOp::D4NFilterGetCB::handle_data(bufferlist& bl
         auto ret = filter->get_policy_driver()->get_cache_policy()->eviction(dpp, dest_block.size, *y);
         if (ret == 0) {
           ret = filter->get_cache_driver()->put(dpp, dest_oid, bl, bl.length(), attrs, *y);
+          ldpp_dout(dpp, 20) << __func__ << ": " << __LINE__ << ": ret=" << ret << dendl;
           if (ret == 0) {
             filter->get_policy_driver()->get_cache_policy()->update(dpp, dest_oid, adjusted_start_ofs, bl.length(), dest_version, dirty, rgw::d4n::RefCount::NOOP, *y);
             if (ret = blockDir->set(dpp, &dest_block, *y); ret < 0) {
@@ -2435,6 +2442,7 @@ int D4NFilterObject::D4NFilterReadOp::D4NFilterGetCB::handle_data(bufferlist& bl
           auto ret = filter->get_policy_driver()->get_cache_policy()->eviction(dpp, block.size, *y);
           if (ret == 0) {
             ret = filter->get_cache_driver()->put(dpp, oid, bl_rem, bl_rem.length(), attrs, *y);
+	    ldpp_dout(dpp, 20) << __func__ << ": " << __LINE__ << ": ret=" << ret << dendl;
             if (ret == 0) {
               filter->get_policy_driver()->get_cache_policy()->update(dpp, oid, adjusted_start_ofs, bl_rem.length(), version, dirty, rgw::d4n::RefCount::NOOP, *y);
 
@@ -2472,6 +2480,7 @@ int D4NFilterObject::D4NFilterReadOp::D4NFilterGetCB::handle_data(bufferlist& bl
           auto ret = filter->get_policy_driver()->get_cache_policy()->eviction(dpp, dest_block.size, *y);
           if (ret == 0) {
             ret = filter->get_cache_driver()->put(dpp, dest_oid, bl_rem, bl_rem.length(), attrs, *y);
+	    ldpp_dout(dpp, 20) << __func__ << ": " << __LINE__ << ": ret=" << ret << dendl;
             if (ret == 0) {
               filter->get_policy_driver()->get_cache_policy()->update(dpp, dest_oid, adjusted_start_ofs, bl_rem.length(), dest_version, dirty, rgw::d4n::RefCount::NOOP, *y);
               if (ret = blockDir->set(dpp, &dest_block, *y); ret < 0) {
