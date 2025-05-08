@@ -292,14 +292,14 @@ def test_large_object(r, client, s3):
         log.info(data)
         # directory entry comparisons
         if len(entry_name) == 6: # versioned block
-            self.assertEqual(data.get('blockID'), entry_name[4])
-            self.assertEqual(data.get('deleteMarker'), '0')
-            self.assertEqual(data.get('size'), entry_name[5])
-            self.assertEqual(data.get('globalWeight'), '0')
-            self.assertEqual(data.get('objName'), '_:null_mymultipart')
-            self.assertEqual(data.get('bucketName'), bucketID)
-            self.assertEqual(data.get('dirty'), '0')
-            self.assertEqual(data.get('hosts'), '127.0.0.1:6379')
+            assert(data.get('blockID'), entry_name[4])
+            assert(data.get('deleteMarker'), '0')
+            assert(data.get('size'), entry_name[5])
+            assert(data.get('globalWeight'), '0')
+            assert(data.get('objName'), '_:null_mymultipart')
+            assert(data.get('bucketName'), bucketID)
+            assert(data.get('dirty'), '0')
+            assert(data.get('hosts'), '127.0.0.1:6379')
             continue
 
         assert(data.get('blockID') == entry_name[2])
@@ -352,14 +352,14 @@ def test_large_object(r, client, s3):
         log.info(data)
         # directory entries should remain consistent
         if len(entry_name) == 6: # versioned block
-            self.assertEqual(data.get('blockID'), entry_name[4])
-            self.assertEqual(data.get('deleteMarker'), '0')
-            self.assertEqual(data.get('size'), entry_name[5])
-            self.assertEqual(data.get('globalWeight'), '0')
-            self.assertEqual(data.get('objName'), '_:null_mymultipart')
-            self.assertEqual(data.get('bucketName'), bucketID)
-            self.assertEqual(data.get('dirty'), '0')
-            self.assertEqual(data.get('hosts'), '127.0.0.1:6379')
+            assert(data.get('blockID') == entry_name[4])
+            assert(data.get('deleteMarker') == '0')
+            assert(data.get('size') == entry_name[5])
+            assert(data.get('globalWeight') == '0')
+            assert(data.get('objName') == '_:null_mymultipart')
+            assert(data.get('bucketName') == bucketID)
+            assert(data.get('dirty') == '0')
+            assert(data.get('hosts') == '127.0.0.1:6379')
             continue
 
         assert(data.get('blockID') == entry_name[2])
