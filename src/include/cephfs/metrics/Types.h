@@ -5,7 +5,7 @@
 #define CEPH_INCLUDE_CEPHFS_METRICS_TYPES_H
 
 #include <string>
-#include <boost/variant.hpp>
+#include <variant>
 
 #include "common/Formatter.h"
 #include "include/buffer_fwd.h"
@@ -598,20 +598,6 @@ struct UnknownPayload : public ClientMetricPayloadBase {
   }
 };
 
-typedef boost::variant<CapInfoPayload,
-        ReadLatencyPayload,
-        WriteLatencyPayload,
-        MetadataLatencyPayload,
-        DentryLeasePayload,
-        OpenedFilesPayload,
-        PinnedIcapsPayload,
-        OpenedInodesPayload,
-        ReadIoSizesPayload,
-        WriteIoSizesPayload,
-        CopyIoSizesPayload,
-        SubvolumeMetricsPayload,
-        UnknownPayload> ClientMetricPayload;
-
 /**
  * @brief Struct to hold single IO metric
  * To save the memory for clients with high number of subvolumes, the layout is as following:
@@ -842,6 +828,20 @@ struct SubvolumeMetricsPayload : public ClientMetricPayloadBase {
   }
 };
 
+typedef std::variant<CapInfoPayload,
+        ReadLatencyPayload,
+        WriteLatencyPayload,
+        MetadataLatencyPayload,
+        DentryLeasePayload,
+        OpenedFilesPayload,
+        PinnedIcapsPayload,
+        OpenedInodesPayload,
+        ReadIoSizesPayload,
+        WriteIoSizesPayload,
+        CopyIoSizesPayload,
+        SubvolumeMetricsPayload,
+        UnknownPayload> ClientMetricPayload;
+
 // metric update message sent by clients
 struct ClientMetricMessage {
 public:
@@ -849,7 +849,7 @@ public:
     : payload(payload) {
   }
 
-  class EncodePayloadVisitor : public boost::static_visitor<void> {
+  class EncodePayloadVisitor {
   public:
     explicit EncodePayloadVisitor(bufferlist &bl) : m_bl(bl) {
     }
@@ -865,7 +865,7 @@ public:
     bufferlist &m_bl;
   };
 
-  class DecodePayloadVisitor : public boost::static_visitor<void> {
+  class DecodePayloadVisitor {
   public:
     DecodePayloadVisitor(bufferlist::const_iterator &iter) : m_iter(iter) {
     }
@@ -880,7 +880,7 @@ public:
     bufferlist::const_iterator &m_iter;
   };
 
-  class DumpPayloadVisitor : public boost::static_visitor<void> {
+  class DumpPayloadVisitor {
   public:
     explicit DumpPayloadVisitor(Formatter *formatter) : m_formatter(formatter) {
     }
@@ -895,7 +895,7 @@ public:
     Formatter *m_formatter;
   };
 
-  class PrintPayloadVisitor : public boost::static_visitor<void> {
+  class PrintPayloadVisitor {
   public:
     explicit PrintPayloadVisitor(std::ostream *out) : _out(out) {
     }
@@ -914,7 +914,7 @@ public:
   };
 
   void encode(bufferlist &bl) const {
-    boost::apply_visitor(EncodePayloadVisitor(bl), payload);
+    std::visit(EncodePayloadVisitor(bl), payload);
   }
 
   void decode(bufferlist::const_iterator &iter) {
@@ -965,11 +965,11 @@ public:
       break;
     }
 
-    boost::apply_visitor(DecodePayloadVisitor(iter), payload);
+    std::visit(DecodePayloadVisitor(iter), payload);
   }
 
   void dump(Formatter *f) const {
-    apply_visitor(DumpPayloadVisitor(f), payload);
+    std::visit(DumpPayloadVisitor(f), payload);
   }
 
   static void generate_test_instances(std::list<ClientMetricMessage*>& ls) {
@@ -977,7 +977,7 @@ public:
   }
 
   void print(std::ostream *out) const {
-    apply_visitor(PrintPayloadVisitor(out), payload);
+    std::visit(PrintPayloadVisitor(out), payload);
   }
 
   ClientMetricPayload payload;
