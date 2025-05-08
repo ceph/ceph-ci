@@ -11,6 +11,8 @@
 #include <string>
 #include <string_view>
 
+#include <boost/intrusive_ptr.hpp>
+
 #include <seastar/core/future.hh>
 #include <seastar/core/gate.hh>
 #include <seastar/core/iostream.hh>
@@ -48,13 +50,21 @@ struct tell_result_t {
 /**
  * An abstract class to be inherited by implementations of asock hooks
  */
-class AdminSocketHook {
+class AdminSocketHook : public boost::intrusive_ref_counter<
+			AdminSocketHook, boost::thread_unsafe_counter> {
  public:
   AdminSocketHook(std::string_view prefix,
 		  std::string_view desc,
 		  std::string_view help) :
-    prefix{prefix}, desc{desc}, help{help}
+    prefixes{prefix}, desc{desc}, help{help}
   {}
+
+  AdminSocketHook(std::vector<std::string_view> prefixes,
+		  std::string_view desc,
+		  std::string_view help) :
+    prefixes{prefixes}, desc{desc}, help{help}
+  {}
+
   /**
    * handle command defined by cmdmap
    *
@@ -72,9 +82,10 @@ class AdminSocketHook {
 					      std::string_view format,
 					      ceph::bufferlist&& input) const = 0;
   virtual ~AdminSocketHook() {}
-  const std::string_view prefix;
+  const std::vector<std::string_view> prefixes;
   const std::string_view desc;
   const std::string_view help;
+  using ref = boost::intrusive_ptr<AdminSocketHook>;
 };
 
 class AdminSocket : public seastar::enable_lw_shared_from_this<AdminSocket> {
@@ -110,7 +121,7 @@ class AdminSocket : public seastar::enable_lw_shared_from_this<AdminSocket> {
    * A note regarding the help text: if empty, command will not be
    * included in 'help' output.
    */
-  void register_command(std::unique_ptr<AdminSocketHook>&& hook);
+  void register_command(boost::intrusive_ptr<AdminSocketHook> hook);
 
   /**
    * Registering the APIs that are served directly by the admin_socket server.
@@ -169,7 +180,7 @@ private:
   std::variant<parsed_command_t, tell_result_t>
   parse_cmd(const std::vector<std::string>& cmd);
 
-  using hooks_t = std::map<std::string_view, std::unique_ptr<AdminSocketHook>>;
+  using hooks_t = std::map<std::string_view, AdminSocketHook::ref>;
   hooks_t hooks;
 
 public:

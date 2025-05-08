@@ -40,9 +40,9 @@ using ceph::common::cmd_getval_or;
 namespace crimson::admin {
 
 template <class Hook, class... Args>
-std::unique_ptr<AdminSocketHook> make_asok_hook(Args&&... args)
+boost::intrusive_ptr<AdminSocketHook> make_asok_hook(Args&&... args)
 {
-  return std::make_unique<Hook>(std::forward<Args>(args)...);
+  return new Hook(std::forward<Args>(args)...);
 }
 
 /**
@@ -67,7 +67,7 @@ public:
 private:
   const crimson::osd::OSD& osd;
 };
-template std::unique_ptr<AdminSocketHook>
+template boost::intrusive_ptr<AdminSocketHook>
 make_asok_hook<OsdStatusHook>(const crimson::osd::OSD& osd);
 
 /**
@@ -92,7 +92,7 @@ public:
 private:
   crimson::osd::OSD& osd;
 };
-template std::unique_ptr<AdminSocketHook>
+template boost::intrusive_ptr<AdminSocketHook>
 make_asok_hook<SendBeaconHook>(crimson::osd::OSD& osd);
 
 /**
@@ -191,7 +191,7 @@ public:
 private:
   crimson::osd::OSD& osd;
 };
-template std::unique_ptr<AdminSocketHook>
+template boost::intrusive_ptr<AdminSocketHook>
 make_asok_hook<RunOSDBenchHook>(crimson::osd::OSD& osd);
 
 /**
@@ -218,7 +218,7 @@ public:
 private:
   crimson::osd::OSD& osd;
 };
-template std::unique_ptr<AdminSocketHook> make_asok_hook<FlushPgStatsHook>(crimson::osd::OSD& osd);
+template boost::intrusive_ptr<AdminSocketHook> make_asok_hook<FlushPgStatsHook>(crimson::osd::OSD& osd);
 
 /// dump the history of PGs' peering state
 class DumpPGStateHistory final: public AdminSocketHook {
@@ -255,17 +255,18 @@ public:
 private:
   const crimson::osd::PGShardManager &pg_shard_manager;
 };
-template std::unique_ptr<AdminSocketHook> make_asok_hook<DumpPGStateHistory>(
+template boost::intrusive_ptr<AdminSocketHook> make_asok_hook<DumpPGStateHistory>(
   const crimson::osd::PGShardManager &);
 
 //dump the contents of perfcounters in osd and store
 class DumpPerfCountersHook final: public AdminSocketHook {
 public:
   explicit DumpPerfCountersHook() :
-    AdminSocketHook{"perfcounters_dump",
-                    "name=logger,type=CephString,req=false "
-                    "name=counter,type=CephString,req=false",
-                    "dump perfcounters in osd and store"}
+    AdminSocketHook{
+      std::vector<std::string_view>{"perfcounters_dump", "perf dump"},
+      "name=logger,type=CephString,req=false "
+      "name=counter,type=CephString,req=false",
+      "dump perfcounters in osd and store"}
   {}
   seastar::future<tell_result_t> call(const cmdmap_t& cmdmap,
                                       std::string_view format,
@@ -284,9 +285,40 @@ public:
     return seastar::make_ready_future<tell_result_t>(std::move(f));
   }
 };
-template std::unique_ptr<AdminSocketHook> make_asok_hook<DumpPerfCountersHook>();
+template boost::intrusive_ptr<AdminSocketHook> make_asok_hook<DumpPerfCountersHook>();
 
-
+// reset the contents of perfcounters in osd and store
+class ResetPerfCountersHook final: public AdminSocketHook {
+public:
+  explicit ResetPerfCountersHook() :
+    AdminSocketHook{
+      "perf reset",
+      "name=to_reset,type=CephString",
+      "perf reset <to_reset>: perf reset all or one perfcounter name"}
+  {}
+  seastar::future<tell_result_t> call(const cmdmap_t& cmdmap,
+                                      std::string_view format,
+                                      ceph::bufferlist&& input) const final
+  {
+    std::unique_ptr<Formatter> f{Formatter::create(format,
+                                                   "json-pretty",
+                                                   "json-pretty")};
+    std::string to_reset;
+    f->open_object_section("perf reset");
+    if (!cmd_getval(cmdmap, "to_reset", to_reset)) {
+      f->dump_string("error", "syntax error: 'perf reset <to_reset>'");
+    } else {
+      if (!crimson::common::local_perf_coll().reset(to_reset)) {
+        f->dump_stream("error") << "counter not found: " << to_reset;
+      } else {
+	f->dump_stream("success") <<  "perf reset " << to_reset;
+      }
+    }
+    f->close_section();
+    return seastar::make_ready_future<tell_result_t>(std::move(f));
+  }
+};
+template boost::intrusive_ptr<AdminSocketHook> make_asok_hook<ResetPerfCountersHook>();
 
 /**
  * A CephContext admin hook: calling assert (if allowed by
@@ -312,7 +344,7 @@ public:
     }
   }
 };
-template std::unique_ptr<AdminSocketHook> make_asok_hook<AssertAlwaysHook>();
+template boost::intrusive_ptr<AdminSocketHook> make_asok_hook<AssertAlwaysHook>();
 
 /**
  * A Seastar admin hook: fetching the values of configured metrics
@@ -415,7 +447,7 @@ private:
     f->close_section(); // full_name
   }
 };
-template std::unique_ptr<AdminSocketHook> make_asok_hook<DumpMetricsHook>();
+template boost::intrusive_ptr<AdminSocketHook> make_asok_hook<DumpMetricsHook>();
 
 
 static ghobject_t test_ops_get_object_name(
@@ -514,7 +546,7 @@ public:
 private:
   crimson::osd::ShardServices& shard_services;
 };
-template std::unique_ptr<AdminSocketHook> make_asok_hook<InjectDataErrorHook>(
+template boost::intrusive_ptr<AdminSocketHook> make_asok_hook<InjectDataErrorHook>(
   crimson::osd::ShardServices&);
 
 
@@ -556,7 +588,7 @@ public:
 private:
   crimson::osd::ShardServices& shard_services;
 };
-template std::unique_ptr<AdminSocketHook> make_asok_hook<InjectMDataErrorHook>(
+template boost::intrusive_ptr<AdminSocketHook> make_asok_hook<InjectMDataErrorHook>(
   crimson::osd::ShardServices&);
 
 
@@ -589,7 +621,7 @@ public:
 private:
   const crimson::osd::PGShardManager &pg_shard_manager;
 };
-template std::unique_ptr<AdminSocketHook>
+template boost::intrusive_ptr<AdminSocketHook>
 make_asok_hook<DumpInFlightOpsHook>(const crimson::osd::PGShardManager &);
 
 
@@ -613,7 +645,7 @@ public:
 private:
   const crimson::osd::OSDOperationRegistry& op_registry;
 };
-template std::unique_ptr<AdminSocketHook>
+template boost::intrusive_ptr<AdminSocketHook>
 make_asok_hook<DumpHistoricOpsHook>(const crimson::osd::OSDOperationRegistry& op_registry);
 
 
@@ -638,7 +670,7 @@ public:
 private:
   const crimson::osd::OSDOperationRegistry& op_registry;
 };
-template std::unique_ptr<AdminSocketHook>
+template boost::intrusive_ptr<AdminSocketHook>
 make_asok_hook<DumpSlowestHistoricOpsHook>(const crimson::osd::OSDOperationRegistry& op_registry);
 
 class DumpRecoveryReservationsHook : public AdminSocketHook {
@@ -670,7 +702,7 @@ public:
 private:
   crimson::osd::ShardServices& shard_services;
 };
-template std::unique_ptr<AdminSocketHook>
+template boost::intrusive_ptr<AdminSocketHook>
 make_asok_hook<DumpRecoveryReservationsHook>(crimson::osd::ShardServices& shard_services);
 
 } // namespace crimson::admin
