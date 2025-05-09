@@ -429,6 +429,9 @@ def main():
                        if client.get('name') in ['D4N.Filter']]
     r.client_kill_filter(_id=filter_client[0].get('id'))
 
+    log.debug('Client list:')
+    log.debug(r.client_list())
+
     log.info("D4NFilterTest completed.")
 
 main()
