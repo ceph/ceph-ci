@@ -1,0 +1,10 @@
+tasks:
+- ceph.key_rotate:
+    daemons: [mgr.*, osd.*, mds.*]
+    key_type: aes256k
+- exec:
+    mon.a:
+      - ceph auth ls
+      - ceph auth --format=json-pretty dump-keys
+      - ceph auth --format=json dump-keys | jq '.data.rotating_secrets | all( .val.secrets | all(.val.key.type == 1) )'
+      - ceph config set global auth_service_cipher aes256k
