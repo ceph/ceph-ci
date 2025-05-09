@@ -6,6 +6,7 @@ import logging
 
 from teuthology.orchestra import run
 from teuthology import misc as teuthology
+from teuthology.exceptions import CommandFailedError
 
 
 log = logging.getLogger(__name__)
@@ -159,10 +160,11 @@ def task(ctx, config):
         try:
             run.wait(radosbench.values(), timeout=timeout)
         except CommandFailedError as e:
-            if p.exitstatus == expected_rc:
-                pass
-            else:
-                raise
+            for p in radosbench.values():
+                if p.exitstatus == expected_rc:
+                    pass
+                else:
+                    raise
         else:
             if expected_rc != 0:
                 raise RuntimeError("expected radosbench failure")

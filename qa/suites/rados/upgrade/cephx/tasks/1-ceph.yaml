@@ -1,0 +1,18 @@
+tasks:
+- ceph:
+    config:
+      global:
+        debug auth: 30
+        debug monc: 30
+      mon:
+        debug mon: 30
+    cluster-conf:
+      global:
+        auth mon ticket ttl: 30
+        auth service cipher: aes
+        auth service ticket ttl: 30
+        cephx preferred cipher: aes
+      mon:
+        mon auth allow insecure key: true
+    cephx:
+      key_type: aes
