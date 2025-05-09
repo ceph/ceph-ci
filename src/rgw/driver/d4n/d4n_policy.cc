@@ -101,6 +101,8 @@ int LFUDAPolicy::init(CephContext* cct, const DoutPrefixProvider* dpp, asio::io_
   asio::co_spawn(io_context.get_executor(),
 		   redis_sync(dpp, y), asio::detached);
 
+  ldpp_dout(dpp, 0) << "LFUDAPolicy::" << __func__ << "() Deployed redis_sync coroutine" << dendl;
+
   return 0;
 }
 

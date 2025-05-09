@@ -563,7 +563,7 @@ void SSDDriver::put_async(const DoutPrefixProvider *dpp, const Executor& ex, con
     } else {
         (void)p.release();
     }
-    ldpp_dout(dpp, 20) << "SSDCache: " << __func__ << "(): " << __LINE__<< ": r=" << r << dendl;
+    ldpp_dout(dpp, 20) << "SSDCache: " << __func__ << "(): " << __LINE__<< ": key=" << key << ", r=" << r << dendl;
   }, token, dpp, ex, key, bl, len, attrs);
 }
 
@@ -750,7 +750,7 @@ void SSDDriver::AsyncWriteRequest::libaio_write_cb(sigval sigval) {
         ec.assign(-ret, boost::system::system_category());
     }
     ceph::async::dispatch(std::move(p), ec);
-    ldpp_dout(op.dpp, 20) << "INFO: AsyncWriteRequest::libaio_write_yield_cb: " << __LINE__ << ": after dispatch call" << dendl;
+    ldpp_dout(op.dpp, 20) << "INFO: AsyncWriteRequest::libaio_write_yield_cb: " << __LINE__ << ": op.file_path=" << op.file_path << ", after dispatch call" << dendl;
 }
 
 int SSDDriver::AsyncReadOp::prepare_libaio_read_op(const DoutPrefixProvider *dpp, const std::string& file_path, off_t read_ofs, off_t read_len, void* arg)

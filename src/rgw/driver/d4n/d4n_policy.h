@@ -171,6 +171,7 @@ class LFUDAPolicy : public CachePolicy {
 
       if (rthread_timer) {
 	rthread_timer->cancel();
+	dout(0) << "rthread_stop(): stopping redis_sync coroutine" << dendl;
       }
     }
     LFUDAEntry* find_entry(const std::string& key) {
