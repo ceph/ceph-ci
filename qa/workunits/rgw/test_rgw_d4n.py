@@ -423,6 +423,11 @@ def main():
 
     # Run large object test
     test_large_object(r, client, s3)
+    
+    # close filter client
+    filter_client = [client for client in r.client_list()
+                       if client.get('name') in ['D4N.Filter']]
+    r.client_kill_filter(_id=filter_client[0].get('id'))
 
     log.info("D4NFilterTest completed.")
 
