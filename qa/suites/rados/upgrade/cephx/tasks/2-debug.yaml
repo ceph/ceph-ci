@@ -1,0 +1,13 @@
+tasks:
+- full_sequential_finally:
+  - exec:
+      mon.a:
+        - sleep 1h
+- exec:
+    mon.a:
+      - ceph tell mon.a config diff
+      - ceph tell mon.b config diff
+      - ceph tell mon.c config diff
+      - ceph config dump
+      - ceph auth ls
+      - ceph auth --format=json dump-keys
