@@ -265,12 +265,17 @@ def test_large_object(r, client, s3):
     with open(file_path, 'r') as body:
         assert(body.read() == multipart_data)
 
+    bucketID = subprocess.check_output(['ls', '/tmp/rgw_d4n_datacache/']).decode('latin-1').strip()
+    datacache_path = '/tmp/rgw_d4n_datacache/' + bucketID + '/mymultipart/'
+    log.info("1. Multipart datacache contents before sleep:") # TODO: Remove logs if no errors
+    temp = subprocess.check_output(['ls', '-a', datacache_path])
+    log.info(temp.decode('latin-1').splitlines())
     time.sleep(60)
     bucketID = subprocess.check_output(['ls', '/tmp/rgw_d4n_datacache/']).decode('latin-1').strip()
     datacache_path = '/tmp/rgw_d4n_datacache/' + bucketID + '/mymultipart/'
     datacache = subprocess.check_output(['ls', '-a', datacache_path])
     datacache = datacache.decode('latin-1').splitlines()[2:]
-    log.info("1. Multipart datacache contents:") # TODO: Remove logs if no errors
+    log.info("1. Multipart datacache contents after sleep:") # TODO: Remove logs if no errors
     temp = subprocess.check_output(['ls', '-a', datacache_path])
     log.info(temp.decode('latin-1').splitlines())
 
