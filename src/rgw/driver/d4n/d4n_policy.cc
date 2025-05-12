@@ -223,13 +223,20 @@ asio::awaitable<void> LFUDAPolicy::redis_sync(const DoutPrefixProvider* dpp, opt
 
   for (;;) try {
     /* Update age */
-    if (int ret = age_sync(dpp, y) < 0) {
+    int ret;
+    if ((ret = age_sync(dpp, y)) < 0) {
       ldpp_dout(dpp, 0) << "LFUDAPolicy::" << __func__ << "() ERROR: " << ret << dendl;
+      
+      if (ret == -125)
+        break;
     }
     
     /* Update minimum local weight sum */
-    if (int ret = local_weight_sync(dpp, y) < 0) {
+    if ((ret = local_weight_sync(dpp, y)) < 0) {
       ldpp_dout(dpp, 0) << "LFUDAPolicy::" << __func__ << "() ERROR: " << ret << dendl;
+
+      if (ret == -125)
+        break;
     }
 
     int interval = dpp->get_cct()->_conf->rgw_lfuda_sync_frequency;
