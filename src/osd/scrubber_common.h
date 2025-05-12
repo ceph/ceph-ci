@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include <fmt/ranges.h>
+
 #include "common/ceph_time.h"
 #include "common/fmt_common.h"
 #include "common/scrub_types.h"
@@ -17,6 +18,7 @@
 #include "os/ObjectStore.h"
 #include "osd/osd_perf_counters.h" // for osd_counter_idx_t
 
+#include "ECUtil.h"
 #include "OpRequest.h"
 
 namespace ceph {
@@ -295,6 +297,13 @@ struct PgScrubBeListener {
 
   // If true, the EC optimisations have been enabled.
   virtual bool get_is_ec_optimized() const = 0;
+  virtual bool ec_can_decode(const shard_id_set& available_shards) const = 0;
+  virtual shard_id_map<bufferlist> ec_encode_acting_set(
+      const bufferlist& in_bl) const = 0;
+  virtual shard_id_map<bufferlist> ec_decode_acting_set(
+      const shard_id_map<bufferlist>& shard_map, int chunk_size) const = 0;
+  virtual bool get_ec_supports_crc_encode_decode() const = 0;
+  virtual ECUtil::stripe_info_t get_ec_sinfo() const = 0;
 };
 
 // defining a specific subset of performance counters. Each of the members
