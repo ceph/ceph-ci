@@ -390,9 +390,11 @@ int SSDDriver::put(const DoutPrefixProvider* dpp, const std::string& key, const 
         using namespace boost::asio;
         yield_context yield = y.get_yield_context();
         auto ex = yield.get_executor();
+	ldpp_dout(dpp, 20) << "SSDCache: " << __func__ << "(): " << __LINE__ << ": using yield, key=" << key << dendl;
         this->put_async(dpp, ex, key, bl, len, attrs, yield[ec]);
     } else {
       auto ex = boost::asio::system_executor{};
+      ldpp_dout(dpp, 20) << "SSDCache: " << __func__ << "(): " << __LINE__ << ": using null yield, key=" << key << dendl;
       this->put_async(dpp, ex, key, bl, len, attrs, ceph::async::use_blocked[ec]);
     }
     if (ec) {
