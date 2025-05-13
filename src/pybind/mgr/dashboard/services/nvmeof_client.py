@@ -170,8 +170,7 @@ else:
                 except StopIteration:
                     return
             else:
-                # If the field is missing assign None
-                field_values[field] = None
+                field_values[field] = target_type._field_defaults.get(field)
 
         namedtuple_instance = target_type(**field_values)  # type: ignore
         yield namedtuple_instance
