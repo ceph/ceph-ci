@@ -39,13 +39,14 @@
 #include "cls/rgw/cls_rgw_const.h"
 #include "cls/refcount/cls_refcount_client.h"
 #include "cls/version/cls_version_client.h"
+#include "cls/blake3/client.h"
 #include "fmt/ranges.h"
 #include "osd/osd_types.h"
 #include "common/ceph_crypto.h"
-
 #include <filesystem>
 #include <algorithm>
 #include <iostream>
+#include <iomanip> // Required for std::setw and std::setfill
 #include <fstream>
 #include <stdlib.h>
 #include <time.h>
@@ -65,6 +66,7 @@
 using namespace librados;
 using namespace std;
 using namespace rgw::dedup;
+using namespace cls::blake3_hash;
 
 #include "rgw_dedup_remap.h"
 #include "rgw_sal_rados.h"
@@ -76,7 +78,8 @@ using namespace rgw::dedup;
 #include "rgw_dedup_epoch.h"
 #include "rgw_perf_counters.h"
 #include "include/ceph_assert.h"
-
+#include "rgw_blake3_digest.h"
+#include "BLAKE3/c/blake3.h"
 static constexpr auto dout_subsys = ceph_subsys_rgw_dedup;
 
 namespace rgw::dedup {
@@ -685,6 +688,8 @@ namespace rgw::dedup {
   //---------------------------------------------------------------------------
   int Background::calc_object_sha256(const disk_record_t *p_rec, uint8_t *p_sha256)
   {
+    const utime_t start_time = ceph_clock_now();
+    utime_t calc_time;
     ldpp_dout(dpp, 20) << __func__ << "::p_rec->obj_name=" << p_rec->obj_name << dendl;
     // Open questions -
     // 1) do we need the secret if so what is the correct one to use?
@@ -701,7 +706,9 @@ namespace rgw::dedup {
     build_oid(p_rec->bucket_id, p_rec->obj_name, &oid);
     librados::IoCtx head_ioctx;
     const char *secret = "0555b35654ad1656d804f1b017cd26e9";
+    utime_t start = ceph_clock_now();
     TOPNSPC::crypto::HMACSHA256 hmac((const uint8_t*)secret, strlen(secret));
+    calc_time += (ceph_clock_now() - start);
     for (auto p = manifest.obj_begin(dpp); p != manifest.obj_end(dpp); ++p) {
       rgw_raw_obj raw_obj = p.get_location().get_raw_obj(rados);
       rgw_rados_ref obj;
@@ -721,9 +728,11 @@ namespace rgw::dedup {
       // read full object
       ret = ioctx.read(raw_obj.oid, bl, 0, 0);
       if (ret > 0) {
+        start = ceph_clock_now();
         for (const auto& bptr : bl.buffers()) {
           hmac.Update((const unsigned char *)bptr.c_str(), bptr.length());
         }
+        calc_time += (ceph_clock_now() - start);
       }
       else {
         ldpp_dout(dpp, 1) << __func__ << "::ERR: failed to read " << oid
@@ -731,10 +740,224 @@ namespace rgw::dedup {
         return ret;
       }
     }
+    start = ceph_clock_now();
     hmac.Final(p_sha256);
+    calc_time += (ceph_clock_now() - start);
+    const utime_t total_time = ceph_clock_now() - start_time;
+    ldpp_dout(dpp, 1) << __func__ << "::SHA256::" << p_rec->obj_name
+                      << "::total_time=" << total_time
+                      << "::calc_time=" << calc_time << dendl;
     return 0;
   }
 
+  //---------------------------------------------------------------------------
+  int Background::calc_object_blake3(const disk_record_t *p_rec, uint8_t *p_hash)
+  {
+    const utime_t start_time = ceph_clock_now();
+    utime_t calc_time;
+    ldpp_dout(dpp, 20) << __func__ << "::p_rec->obj_name=" << p_rec->obj_name << dendl;
+    // Open questions -
+    // 1) do we need the secret if so what is the correct one to use?
+    // 2) are we passing the head/tail objects in the correct order?
+    RGWObjManifest manifest;
+    try {
+      auto bl_iter = p_rec->manifest_bl.cbegin();
+      decode(manifest, bl_iter);
+    } catch (buffer::error& err) {
+      ldpp_dout(dpp, 1)  << __func__ << "::ERROR: bad src manifest" << dendl;
+      return -EINVAL;
+    }
+    std::string oid;
+    build_oid(p_rec->bucket_id, p_rec->obj_name, &oid);
+    librados::IoCtx head_ioctx;
+    utime_t start = ceph_clock_now();
+    blake3_hasher hmac;
+    blake3_hasher_init(&hmac);
+    calc_time += (ceph_clock_now() - start);
+    unsigned parts = 0;
+    for (auto p = manifest.obj_begin(dpp); p != manifest.obj_end(dpp); ++p) {
+      rgw_raw_obj raw_obj = p.get_location().get_raw_obj(rados);
+      rgw_rados_ref obj;
+      int ret = rgw_get_rados_ref(dpp, rados_handle, raw_obj, &obj);
+      if (ret < 0) {
+        ldpp_dout(dpp, 1) << __func__ << "::failed rgw_get_rados_ref() for raw_obj="
+                          << raw_obj << dendl;
+        return ret;
+      }
+
+      if (oid == raw_obj.oid) {
+        ldpp_dout(dpp, 10) << __func__ << "::manifest: head object=" << oid << dendl;
+        head_ioctx = obj.ioctx;
+      }
+      bufferlist bl;
+      librados::IoCtx ioctx = obj.ioctx;
+      // read full object
+      ret = ioctx.read(raw_obj.oid, bl, 0, 0);
+      if (ret > 0) {
+        start = ceph_clock_now();
+        for (const auto& bptr : bl.buffers()) {
+          blake3_hasher_update(&hmac, (const unsigned char *)bptr.c_str(), bptr.length());
+        }
+        calc_time += (ceph_clock_now() - start);
+      }
+      else {
+        ldpp_dout(dpp, 1) << __func__ << "::ERR: failed to read " << oid
+                          << ", error is " << cpp_strerror(-ret) << dendl;
+        return ret;
+      }
+      parts++;
+    }
+    start = ceph_clock_now();
+    blake3_hasher_finalize(&hmac, p_hash, BLAKE3_OUT_LEN);
+    calc_time += (ceph_clock_now() - start);
+    const utime_t total_time = ceph_clock_now() - start_time;
+    ldpp_dout(dpp, 10) << __func__ << "::C_BLAKE3::" << p_rec->obj_name
+                       << "::parts=" << parts << "::total_time=" << total_time
+                       << "::calc_time=" << calc_time << dendl;
+    return 0;
+  }
+#if 0
+  //---------------------------------------------------------------------------
+  int Background::calc_object_blake3_cls(const disk_record_t *p_rec, uint8_t *p_hash)
+  {
+    const utime_t start_time = ceph_clock_now();
+    ldpp_dout(dpp, 20) << __func__ << "::p_rec->obj_name=" << p_rec->obj_name << dendl;
+    // Open questions -
+    // 1) do we need the secret if so what is the correct one to use?
+    // 2) are we passing the head/tail objects in the correct order?
+    RGWObjManifest manifest;
+    try {
+      auto bl_iter = p_rec->manifest_bl.cbegin();
+      decode(manifest, bl_iter);
+    } catch (buffer::error& err) {
+      ldpp_dout(dpp, 1)  << __func__ << "::ERROR: bad src manifest" << dendl;
+      return -EINVAL;
+    }
+
+    blake3_hasher hmac;
+    unsigned parts = 0;
+    for (auto p = manifest.obj_begin(dpp); p != manifest.obj_end(dpp); ++p) {
+      rgw_raw_obj raw_obj = p.get_location().get_raw_obj(rados);
+      rgw_rados_ref obj;
+      int ret = rgw_get_rados_ref(dpp, rados_handle, raw_obj, &obj);
+      if (ret < 0) {
+        ldpp_dout(dpp, 10) << __func__ << "::failed rgw_get_rados_ref() for raw_obj="
+                           << raw_obj << dendl;
+        return ret;
+      }
+
+      librados::IoCtx ioctx = obj.ioctx;
+      librados::ObjectReadOperation op;
+      bufferlist out_bl;
+      bufferlist blake3_state_bl;
+      cls_blake3_flags_t flags;
+      if (parts == 0) {
+        flags.set_first_part();
+      }
+      else {
+        blake3_state_bl.append((const char*)&hmac, sizeof(hmac));
+      }
+      ret = blake3_hash_data(op, &blake3_state_bl, &out_bl, flags);
+      ret = ioctx.operate(raw_obj.oid, &op, nullptr, 0);
+      if (ret != 0) {
+        ldpp_dout(dpp, 1) << __func__ << "::failed cls_hash() for " << raw_obj.oid
+                          << ", error is " << cpp_strerror(-ret) << dendl;
+        return ret;
+      }
+
+      const char *p_bl = out_bl.c_str();
+      memcpy((char*)&hmac, p_bl, out_bl.length());
+      parts++;
+    }
+    blake3_hasher_finalize(&hmac, p_hash, BLAKE3_OUT_LEN);
+
+    const utime_t total_time = ceph_clock_now() - start_time;
+    ldpp_dout(dpp, 10) << __func__ << "::C_BLAKE3::" << p_rec->obj_name
+                       << "::parts=" << parts << "::total_time=" << total_time
+                       << dendl;
+    return 0;
+  }
+#else
+  //--->>>>
+  //---------------------------------------------------------------------------
+  int Background::calc_object_blake3_cls(const disk_record_t *p_rec, uint8_t *p_hash)
+  {
+    const utime_t start_time = ceph_clock_now();
+    //ldpp_dout(dpp, 20) << __func__ << "::p_rec->obj_name=" << p_rec->obj_name << dendl;
+    // Open questions -
+    // 1) do we need the secret if so what is the correct one to use?
+    // 2) are we passing the head/tail objects in the correct order?
+    RGWObjManifest manifest;
+    try {
+      auto bl_iter = p_rec->manifest_bl.cbegin();
+      decode(manifest, bl_iter);
+    } catch (buffer::error& err) {
+      ldpp_dout(dpp, 1)  << __func__ << "::ERROR: bad src manifest" << dendl;
+      return -EINVAL;
+    }
+
+    blake3_hasher hmac;
+    unsigned parts = 0;
+    auto p = manifest.obj_begin(dpp);
+    auto p_end = manifest.obj_end(dpp);
+    while (p != p_end) {
+      rgw_raw_obj raw_obj = p.get_location().get_raw_obj(rados);
+      rgw_rados_ref obj;
+      int ret = rgw_get_rados_ref(dpp, rados_handle, raw_obj, &obj);
+      if (ret < 0) {
+        ldpp_dout(dpp, 10) << __func__ << "::failed rgw_get_rados_ref() for raw_obj="
+                           << raw_obj << dendl;
+        return ret;
+      }
+
+      ldpp_dout(dpp, 20) << __func__ << "::parts=" << parts << dendl;
+      librados::IoCtx ioctx = obj.ioctx;
+      librados::ObjectReadOperation op;
+      bufferlist out_bl;
+      bufferlist blake3_state_bl;
+      cls_blake3_flags_t flags;
+      if (parts == 0) {
+        ldpp_dout(dpp, 10) << __func__ << "::Set BLK3_FLAG_FIRST_PART" << dendl;
+        flags.set_first_part();
+      }
+      else {
+        blake3_state_bl.append((const char*)&hmac, sizeof(hmac));
+      }
+      // the iterator holds now the next position
+      // we will only access the iterator in the next loop
+      ++p;
+      if (p == p_end) {
+        ldpp_dout(dpp, 10) << __func__ << "::Set BLK3_FLAG_LAST_PART" << dendl;
+        flags.set_last_part();
+      }
+      ret = blake3_hash_data(op, &blake3_state_bl, &out_bl, flags);
+      ret = ioctx.operate(raw_obj.oid, &op, nullptr, 0);
+      if (ret != 0) {
+        ldpp_dout(dpp, 1) << __func__ << "::failed cls_hash() for " << raw_obj.oid
+                          << "::part=" << parts << ", error is "
+                          << cpp_strerror(-ret) << dendl;
+        return ret;
+      }
+      parts++;
+      const char *p_bl = out_bl.c_str();
+      if (!flags.is_last_part()) {
+        ceph_assert(out_bl.length() == sizeof(hmac));
+        memcpy((char*)&hmac, p_bl, sizeof(hmac));
+      }
+      else {
+        ceph_assert(out_bl.length() == BLAKE3_OUT_LEN);
+        memcpy((char*)p_hash, p_bl, BLAKE3_OUT_LEN);
+        break;
+      }
+    }
+
+    const utime_t total_time = ceph_clock_now() - start_time;
+    ldpp_dout(dpp, 10) << __func__ << "::C_BLAKE3::" << p_rec->obj_name
+                       << "::parts=" << parts << "::total_time=" << total_time
+                       << dendl;
+    return 0;
+  }
+#endif
   //---------------------------------------------------------------------------
   [[maybe_unused]]static void __attribute__ ((noinline))
   print_record(const DoutPrefixProvider* dpp,
@@ -755,6 +978,16 @@ namespace rgw::dedup {
                        << "::num_parts=" << p_tgt_rec->s.num_parts
                        << "::ETAG=" << std::hex << p_tgt_rec->s.md5_high
                        << p_tgt_rec->s.md5_low << std::dec << dendl;
+  }
+
+  //---------------------------------------------------------------------------
+  [[maybe_unused]]static std::string stringToHex(const std::string& input) {
+    std::stringstream ss;
+    for (char c : input) {
+      ss << std::hex << std::setw(2) << std::setfill('0')
+         << static_cast<int>(static_cast<unsigned char>(c));
+    }
+    return ss.str();
   }
 
   //---------------------------------------------------------------------------
@@ -855,10 +1088,33 @@ namespace rgw::dedup {
     }
 
     p_stats->invalid_sha256_attrs++;
+
+    uint8_t hash1[BLAKE3_OUT_LEN], hash2[BLAKE3_OUT_LEN];
+    memset(hash1, 0, BLAKE3_OUT_LEN);
+    memset(hash2, 0, BLAKE3_OUT_LEN);
+    int ret1 = calc_object_blake3_cls(p_rec, hash1);
+    int ret2 = calc_object_blake3(p_rec, hash2);
+    if (ret1 == 0 && ret2 == 0) {
+      if (0 == memcmp(hash1, hash2, BLAKE3_OUT_LEN)) {
+        ldpp_dout(dpp, 1) << "C_BLAKE3 & C_BLAKE3_CLS match" << dendl;
+        std::string h1((const char*)hash1, BLAKE3_OUT_LEN);
+        std::string h2((const char*)hash2, BLAKE3_OUT_LEN);
+        ldpp_dout(dpp, 10) << "C_BLAKE3_CLS=" << stringToHex(h1) << dendl;
+        ldpp_dout(dpp, 10) << "C_BLAKE3_XXX=" << stringToHex(h2) << dendl;
+      }
+      ceph_assert(0 == memcmp(hash1, hash2, BLAKE3_OUT_LEN));
+    }
+    else {
+      ldpp_dout(dpp, 1) << "c_blake3::C_BLAKE3 & C_BLAKE3_CLS failed" << dendl;
+    }
+#if 1
+    int ret = ret1;
+    memcpy(p_rec->s.sha256, hash1, sizeof(p_rec->s.sha256));
+#else
     // TBD: redundant memset...
     memset(p_rec->s.sha256, 0, sizeof(p_rec->s.sha256));
-    // CEPH_CRYPTO_HMACSHA256_DIGESTSIZE is 32 Bytes (32*8=256)
-    int ret = calc_object_sha256(p_rec, (uint8_t*)p_rec->s.sha256);
+    int ret = calc_object_blake3_cls(p_rec, (uint8_t*)p_rec->s.sha256);
+#endif
     if (ret == 0) {
       p_rec->s.flags.set_sha256_calculated();
     }
@@ -2284,8 +2540,8 @@ namespace rgw::dedup {
       d_ctl.started = true;
     }
     d_runner = std::thread(&Background::run, this);
-    const auto rc = ceph_pthread_setname("dedup_bg");
-    ldpp_dout(dpp, 5) << "dedup_bg start() = " << rc << dendl;
+    //const auto rc = ceph_pthread_setname("dedup_bg");
+    //ldpp_dout(dpp, 5) << "dedup_bg start() = " << rc << dendl;
   }
 
   //------------------------- --------------------------------------------------
@@ -2467,6 +2723,8 @@ namespace rgw::dedup {
   //---------------------------------------------------------------------------
   void Background::run()
   {
+    const auto rc = ceph_pthread_setname("dedup_bg");
+    ldpp_dout(dpp, 5) << __func__ << "ceph_pthread_setname() ret=" << rc << dendl;
     // 256x8KB=2MB
     const uint64_t PER_SHARD_BUFFER_SIZE = DISK_BLOCK_COUNT *sizeof(disk_block_t);
     ldpp_dout(dpp, 20) <<__func__ << "::dedup::main loop" << dendl;
