@@ -63,7 +63,9 @@ perl -pi -e 's/--dbg-package.*//' ceph-$vers/debian/rules
 #
 # update the changelog to match the desired version
 #
-cd ceph-$vers
+# HACK: path normalization
+mv ceph-$vers ceph
+cd ceph
 chvers=$(head -1 debian/changelog | perl -ne 's/.*\(//; s/\).*//; print')
 if [ "$chvers" != "$dvers" ]; then
    DEBEMAIL="contact@ceph.com" dch -D $VERSION_CODENAME --force-distribution -b -v "$dvers" "new version"
