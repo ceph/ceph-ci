@@ -734,7 +734,7 @@ void ECCommon::RMWPipeline::cache_ready(Op &op) {
     if (op.skip_transaction(pending_roll_forward, shard, transaction)) {
       // Must be an empty transaction
       ceph_assert(transaction.empty());
-      dout(20) << __func__ << " Skipping transaction for osd." << shard << dendl;
+      dout(20) << __func__ << " Skipping transaction for shard " << shard << dendl;
       continue;
     }
     op.pending_commits++;
