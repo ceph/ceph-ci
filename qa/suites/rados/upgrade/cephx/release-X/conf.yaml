@@ -1,0 +1,15 @@
+overrides:
+  ceph:
+    config:
+      global:
+        debug auth: 30
+        debug monc: 30
+        auth mon ticket ttl: 30
+        #auth service cipher: aes
+        auth service ticket ttl: 30
+        #cephx preferred cipher: aes
+      mon:
+        debug mon: 30
+        mon auth allow insecure key: true
+    cephx:
+      key_type: aes
