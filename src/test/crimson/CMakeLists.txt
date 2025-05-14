@@ -132,5 +132,4 @@ add_executable(unittest-crimson-scrub
   ${PROJECT_SOURCE_DIR}/src/osd/ECUtil.cc)
 target_link_libraries(
   unittest-crimson-scrub
-  crimson
   crimson::gtest)
