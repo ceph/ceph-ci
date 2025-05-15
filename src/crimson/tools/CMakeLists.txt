@@ -5,7 +5,8 @@ add_executable(crimson-store-nbd
 	store_nbd/block_driver.cc
   )
 target_link_libraries(crimson-store-nbd
-  crimson-os)
+  crimson-os
+  crimson-common)
 install(TARGETS crimson-store-nbd DESTINATION bin)
 
 add_executable(perf-crimson-msgr perf_crimson_msgr.cc)

@@ -26,7 +26,19 @@ set(crimson_common_srcs
 #  - the logging is sent to Seastar backend
 #  - and the template parameter of lock_policy is SINGLE
 add_library(crimson-common STATIC
+  auth/KeyRing.cc
+  ${PROJECT_SOURCE_DIR}/src/auth/AuthClientHandler.cc
+  ${PROJECT_SOURCE_DIR}/src/auth/AuthMethodList.cc
+  ${PROJECT_SOURCE_DIR}/src/auth/AuthRegistry.cc
+  ${PROJECT_SOURCE_DIR}/src/auth/AuthSessionHandler.cc
   ${PROJECT_SOURCE_DIR}/src/auth/Crypto.cc
+  ${PROJECT_SOURCE_DIR}/src/auth/KeyRing.cc
+  ${PROJECT_SOURCE_DIR}/src/auth/RotatingKeyRing.cc
+  ${PROJECT_SOURCE_DIR}/src/auth/cephx/CephxAuthorizeHandler.cc
+  ${PROJECT_SOURCE_DIR}/src/auth/cephx/CephxClientHandler.cc
+  ${PROJECT_SOURCE_DIR}/src/auth/cephx/CephxProtocol.cc
+  ${PROJECT_SOURCE_DIR}/src/auth/cephx/CephxSessionHandler.cc
+  ${PROJECT_SOURCE_DIR}/src/auth/none/AuthNoneAuthorizeHandler.cc
   ${PROJECT_SOURCE_DIR}/src/common/admin_socket_client.cc
   ${PROJECT_SOURCE_DIR}/src/common/bit_str.cc
   ${PROJECT_SOURCE_DIR}/src/common/bloom_filter.cc
@@ -149,20 +161,6 @@ target_link_libraries(crimson-common
     ${crimson_common_deps}
     OpenSSL::Crypto)
 
-set(crimson_auth_srcs
-  auth/KeyRing.cc
-  ${PROJECT_SOURCE_DIR}/src/auth/AuthClientHandler.cc
-  ${PROJECT_SOURCE_DIR}/src/auth/AuthMethodList.cc
-  ${PROJECT_SOURCE_DIR}/src/auth/AuthRegistry.cc
-  ${PROJECT_SOURCE_DIR}/src/auth/AuthSessionHandler.cc
-  ${PROJECT_SOURCE_DIR}/src/auth/Crypto.cc
-  ${PROJECT_SOURCE_DIR}/src/auth/KeyRing.cc
-  ${PROJECT_SOURCE_DIR}/src/auth/RotatingKeyRing.cc
-  ${PROJECT_SOURCE_DIR}/src/auth/cephx/CephxAuthorizeHandler.cc
-  ${PROJECT_SOURCE_DIR}/src/auth/cephx/CephxClientHandler.cc
-  ${PROJECT_SOURCE_DIR}/src/auth/cephx/CephxProtocol.cc
-  ${PROJECT_SOURCE_DIR}/src/auth/cephx/CephxSessionHandler.cc
-  ${PROJECT_SOURCE_DIR}/src/auth/none/AuthNoneAuthorizeHandler.cc)
 set(crimson_mgr_srcs
   mgr/client.cc)
 set(crimson_mon_srcs
@@ -182,7 +180,6 @@ set(crimson_net_srcs
   net/ProtocolV2.cc
   net/chained_dispatchers.cc)
 add_library(crimson STATIC
-  ${crimson_auth_srcs}
   ${crimson_mgr_srcs}
   ${crimson_mon_srcs}
   ${crimson_net_srcs})
