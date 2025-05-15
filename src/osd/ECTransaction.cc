@@ -927,7 +927,8 @@ void ECTransaction::Generate::written_and_present_shards() {
         // Update cached OI
         obc->obs.oi.shard_versions = oi.shard_versions;
       }
-      ldpp_dout(dpp, 20) << __func__ << " shard_info: version=" << entry->version
+      ldpp_dout(dpp, 20) << __func__ << " shard_info: oid=" << oid
+                         << " version=" << entry->version
                          << " present=" << entry->present_shards
                          << " written=" << entry->written_shards
                          << " shard_versions=" << oi.shard_versions << dendl;
