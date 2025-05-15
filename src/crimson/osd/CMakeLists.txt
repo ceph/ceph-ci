@@ -66,10 +66,10 @@ if(HAS_VTA)
 endif()
 target_link_libraries(crimson-osd
   legacy-option-headers
-  crimson
-  crimson-common
   crimson-admin
+  crimson-common
   crimson-os
+  crimson
   ${FMT_LIB}
   Boost::MPL
   dmclock::dmclock)
