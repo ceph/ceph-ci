@@ -2034,6 +2034,9 @@ fi
 %{_datadir}/ceph/mgr/test_orchestrator
 %{_datadir}/ceph/mgr/volumes
 
+%pre mgr-modules-core
+/usr/bin/systemctl stop ceph-mgr.target >/dev/null 2>&1 || :
+
 %files mgr-rook
 %{_datadir}/ceph/mgr/rook
 
@@ -2573,6 +2576,9 @@ fi
 %{python3_sitelib}/__pycache__/ceph_argparse.cpython*.py*
 %{python3_sitelib}/ceph_daemon.py
 %{python3_sitelib}/__pycache__/ceph_daemon.cpython*.py*
+
+%pre -n python%{python3_pkgversion}-ceph-argparse
+/usr/bin/systemctl stop ceph-mgr.target >/dev/null 2>&1 || :
 
 %files -n python%{python3_pkgversion}-ceph-common
 %{python3_sitelib}/ceph
