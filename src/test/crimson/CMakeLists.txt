@@ -88,7 +88,7 @@ add_ceph_unittest(unittest-interruptible-future
   --memory 256M --smp 1)
 target_link_libraries(
   unittest-interruptible-future
-  crimson)
+  crimson-common)
 
 add_executable(unittest-seastar-messenger-thrash test_messenger_thrash.cc)
 add_ceph_unittest(unittest-seastar-messenger-thrash
@@ -99,7 +99,7 @@ add_subdirectory(seastore)
 
 add_library(crimson-gtest STATIC
   gtest_seastar.cc)
-target_link_libraries(crimson-gtest crimson GTest::GTest)
+target_link_libraries(crimson-gtest crimson-common GTest::GTest)
 add_library(crimson::gtest ALIAS crimson-gtest)
 
 add_executable(unittest-seastar-errorator
@@ -132,4 +132,5 @@ add_executable(unittest-crimson-scrub
   ${PROJECT_SOURCE_DIR}/src/osd/ECUtil.cc)
 target_link_libraries(
   unittest-crimson-scrub
+  crimson-common
   crimson::gtest)
