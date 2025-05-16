@@ -33,14 +33,6 @@ tasks:
       global:
         mon warn on pool no app: false
         ms bind msgr2: false
-        debug auth: 30
-        debug monc: 30
-      mon:
-        debug mon: 30
-    cluster-conf:
-      global:
-        auth mon ticket ttl: 30
-        auth service ticket ttl: 30
 - exec:
     osd.0:
       - ceph osd set-require-min-compat-client squid
