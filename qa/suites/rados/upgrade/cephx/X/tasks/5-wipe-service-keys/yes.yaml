@@ -1,9 +1,3 @@
-# N.B. in order to effect a service key wipe, the service daemons must be
-# restarted next. During this time, service daemons will be inaccessible to new
-# clients.
-teuthology:
-  variables:
-    wipe_service_keys: true
 tasks:
 - exec:
     mon.a:
