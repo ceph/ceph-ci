@@ -929,13 +929,16 @@ public:
     mark_log_for_rewrite();
   }
 
-  void recover_got(hobject_t oid, eversion_t v, pg_info_t &info) {
+  void recover_got(hobject_t oid, eversion_t v, pg_info_t &info,
+                   bool ec_optimizations_enabled) {
     if (missing.is_missing(oid, v)) {
       missing.got(oid, v);
       info.stats.stats.sum.num_objects_missing = missing.num_missing();
 
+      bool missing_empty = missing.get_items().empty();
+
       // raise last_complete?
-      if (missing.get_items().empty()) {
+      if (missing_empty) {
 	log.complete_to = log.log.end();
 	info.last_complete = info.last_update;
       }
@@ -943,6 +946,16 @@ public:
       while (log.complete_to != log.log.end()) {
 	if (oldest_need <= log.complete_to->version)
 	  break;
+        /* If optimizations are enabled, then this might be a partial log. In
+         * this case, it is possible to complete all objects before missing
+         * objects are all recovered (since we are recovering to a later
+         * version). Here we refuse to move last_complete beyond the last
+         * entry of the log until all missing have been recovered.
+         */
+        if (ec_optimizations_enabled && !missing_empty &&
+            !log.log.empty() &&
+            log.complete_to->version == log.log.back().version)
+          break;
 	if (info.last_complete < log.complete_to->version)
 	  info.last_complete = log.complete_to->version;
 	++log.complete_to;
