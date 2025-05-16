@@ -1,0 +1,159 @@
+name: ceph-dev-new-trigger
+
+on:
+  push:
+    branches:
+      - '**dgalloway**'
+      - '**-dgalloway**'
+      - '**dgalloway-**'
+      - '**-dgalloway-**'
+
+jobs:
+  ceph-dev-new-trigger:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      JENKINS_USER: ${{ secrets.JENKINS_USER }}
+      JENKINS_API_TOKEN: ${{ secrets.JENKINS_API_TOKEN }}
+      JENKINS_URL: https://jenkins.ceph.com/job/ceph-dev-new/buildWithParameters
+      SHAMAN_USER: ${{ secrets.SHAMAN_USER }}
+      SHAMAN_API_TOKEN: ${{ secrets.SHAMAN_API_TOKEN }}
+      SHAMAN_URL: https://shaman.ceph.com/api/builds/ceph/
+
+    steps:
+      - name: Extract branch name
+        id: extract_branch
+        run: |
+          ref="${GITHUB_REF#refs/heads/}"
+          echo "branch=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Determine builds to trigger
+        id: build_matrix
+        run: |
+          BRANCH="${{ steps.extract_branch.outputs.branch }}"
+          VERSION="unspecified"
+
+          declare -A DISTRO_MAP=(
+            [reef]="default:jammy focal centos9 windows:x86_64 arm64"
+            [squid]="default:jammy centos9 windows:x86_64 arm64"
+            [tentacle]="default:jammy centos9 windows:x86_64 arm64;crimson:centos9:x86_64"
+            [centos9-only]="default:centos9:x86_64"
+            [crimson-only]="crimson:centos9:x86_64"
+            [jaeger]="default:jammy centos9 windows:x86_64 arm64;crimson:centos9:x86_64"
+            [unspecified]="default:jammy centos9 windows:x86_64 arm64;crimson:centos9:x86_64"
+          )
+
+          TRIGGER=false
+          : > builds.txt
+
+          for release in "${!DISTRO_MAP[@]}"; do
+            if [[ "$release" != "unspecified" && "$BRANCH" == *"$release"* ]]; then
+              TRIGGER=true
+              VERSION="$release"
+              IFS=';' read -ra combos <<< "${DISTRO_MAP[$release]}"
+              for combo in "${combos[@]}"; do
+                FLAVOR="${combo%%:*}"
+                REMAINDER="${combo#*:}"
+                DISTROS="${REMAINDER%%:*}"
+                ARCHS="${REMAINDER#*:}"
+                echo "$FLAVOR|$DISTROS|$ARCHS" >> builds.txt
+              done
+              break
+            fi
+          done
+
+          if [[ "$TRIGGER" == "false" ]]; then
+            VERSION="unspecified"
+            IFS=';' read -ra combos <<< "${DISTRO_MAP[unspecified]}"
+            for combo in "${combos[@]}"; do
+              FLAVOR="${combo%%:*}"
+              REMAINDER="${combo#*:}"
+              DISTROS="${REMAINDER%%:*}"
+              ARCHS="${REMAINDER#*:}"
+              echo "$FLAVOR|$DISTROS|$ARCHS" >> builds.txt
+            done
+            TRIGGER=true
+          fi
+
+          echo "trigger=$TRIGGER" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "builds<<EOF" >> "$GITHUB_OUTPUT"
+          cat builds.txt >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger Jenkins build(s) and notify Shaman
+        if: steps.build_matrix.outputs.trigger == 'true'
+        run: |
+          BRANCH="${{ steps.extract_branch.outputs.branch }}"
+          SHA1="${{ github.sha }}"
+          VERSION="${{ steps.build_matrix.outputs.version }}"
+          BUILD_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          while IFS='|' read -r FLAVOR DISTROS ARCHS; do
+            echo "Triggering Jenkins: FLAVOR=$FLAVOR DISTROS=$DISTROS ARCHS=$ARCHS"
+
+            curl -sSf -X POST "$JENKINS_URL" \
+              --user "$JENKINS_USER:$JENKINS_API_TOKEN" \
+              --data-urlencode BRANCH="$BRANCH" \
+              --data-urlencode FORCE=True \
+              --data-urlencode FLAVOR="$FLAVOR" \
+              --data-urlencode DISTROS="$DISTROS" \
+              --data-urlencode ARCHS="$ARCHS"
+
+            for distro in $DISTROS; do
+              for arch in $ARCHS; do
+                if [[ "$distro" == "windows" && "$arch" == "arm64" ]]; then
+                  echo "Skipping unsupported combination: $distro $arch"
+                  continue
+                fi
+
+                # Determine proper distro and version
+                if [[ "$distro" =~ ^centos([0-9]+)$ ]]; then
+                  DISTRO_NAME="centos"
+                  DISTRO_VERSION="${BASH_REMATCH[1]}"
+                elif [[ "$distro" == "windows" ]]; then
+                  DISTRO_NAME="windows"
+                  DISTRO_VERSION="1809"
+                else
+                  DISTRO_NAME="ubuntu"
+                  DISTRO_VERSION="$distro"
+                fi
+
+                echo "Notifying Shaman: $FLAVOR $distro $arch"
+
+                PAYLOAD=$(jq -n \
+                  --arg ref "$BRANCH" \
+                  --arg sha1 "$SHA1" \
+                  --arg flavor "$FLAVOR" \
+                  --arg distro "$DISTRO_NAME" \
+                  --arg distro_version "$DISTRO_VERSION" \
+                  --arg distro_arch "$arch" \
+                  --arg version "$VERSION" \
+                  --arg root_build_cause "GitHub Push: $BUILD_URL" \
+                  --arg build_user "${{ github.actor }}" \
+                  --arg url "$BUILD_URL" \
+                  --arg status "building" \
+                  '{
+                    ref: $ref,
+                    sha1: $sha1,
+                    flavor: $flavor,
+                    distro: $distro,
+                    distro_version: $distro_version,
+                    distro_arch: $distro_arch,
+                    status: $status,
+                    url: $url,
+                    extra: {
+                      version: $version,
+                      root_build_cause: $root_build_cause,
+                      build_user: $build_user
+                    }
+                  }')
+
+                curl -sSf -X POST "$SHAMAN_URL" \
+                  -H "Content-Type: application/json" \
+                  -u "$SHAMAN_USER:$SHAMAN_API_TOKEN" \
+                  -d "$PAYLOAD"
+              done
+            done
+          done <<< "${{ steps.build_matrix.outputs.builds }}"
