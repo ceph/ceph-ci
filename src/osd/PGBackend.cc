@@ -436,8 +436,8 @@ void PGBackend::partial_write(
 	    info->partial_writes_last_complete[shard_id_t(shard)] =
 	      std::pair(previous_version, entry.version);
 	  } else if (info->partial_writes_last_complete[shard_id_t(shard)]
-		     .second.version + 1 == entry.version.version) {
-	    // Subsequent partial write, version is sequential
+		     .second == previous_version) {
+	    // Subsequent partial write, contiguous versions
 	    info->partial_writes_last_complete[shard_id_t(shard)].second =
 	      entry.version;
 	  } else {
