@@ -552,6 +552,8 @@ void ECBackend::RecoveryBackend::continue_recovery_op(
       sinfo.ro_range_to_shard_extent_set_with_parity(
         op.recovery_progress.data_recovered_to, read_size, want);
 
+      op.recovery_progress.data_recovered_to += read_size;
+
       // We only need to recover shards that are missing.
       for (auto shard : shard_id_set::difference(sinfo.get_all_shards(), op.missing_on_shards)) {
         want.erase(shard);
@@ -613,8 +615,7 @@ void ECBackend::RecoveryBackend::continue_recovery_op(
          *   needs recovery, when it does not.
          * We can just skip the read and fall through below.
          */
-        op.recovery_progress.data_recovered_to = op.obc->obs.oi.size;
-        dout(10) << __func__ << "No reads required" << op << dendl;
+        dout(10) << __func__ << " No reads required " << op << dendl;
         // Create an empty read result and fall through.
         op.returned_data.emplace(&sinfo);
       } else {
@@ -633,7 +634,6 @@ void ECBackend::RecoveryBackend::continue_recovery_op(
       dout(20) << __func__ << ": returned_data=" << op.returned_data << dendl;
       op.state = RecoveryOp::WRITING;
       ObjectRecoveryProgress after_progress = op.recovery_progress;
-      after_progress.data_recovered_to = op.returned_data->get_ro_end();
       after_progress.first = false;
       if (after_progress.data_recovered_to >= op.obc->obs.oi.size) {
         after_progress.data_complete = true;
