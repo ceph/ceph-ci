@@ -1,0 +1,10 @@
+overrides:
+  ceph:
+    config:
+      global:
+        debug auth: 30
+        debug monc: 30
+        auth mon ticket ttl: 300
+        auth service ticket ttl: 120
+      mon:
+        debug mon: 30
