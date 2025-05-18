@@ -925,7 +925,7 @@ def test_blockdiff(testdir):
     cephfs.close(fd)
     # take a snapshot
     cephfs.mksnap("/blockdiff_test", "snap2", 0o755)
-    diff = cephfs.initblockdiff(b"/blockdiff_test", b"/", b"snap1", b"snap2")
+    diff = cephfs.initblockdiff(b"/blockdiff_test", b"/", b"snap2", b"snap1")
     bl = diff.readblock()
     assert_equal(b"5678", bl)
     # remove directory
