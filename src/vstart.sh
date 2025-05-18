@@ -1619,7 +1619,14 @@ else
         debug mgrc = 20
         debug ms = 1'
     CCLIENTDEBUG='
-        debug client = 20'
+        debug client = 20
+        debug objecter = 20
+        debug ms = 1
+        debug rados = 20
+        debug mds = 20
+        debug monc = 20
+        debug osdc = 20
+        debug osd = 20'
     CMDSDEBUG='
         debug mds = 20'
 fi
