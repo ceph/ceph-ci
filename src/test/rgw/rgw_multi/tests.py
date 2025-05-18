@@ -3576,7 +3576,8 @@ def test_object_sync_rgw_down():
         if not stop_2nd_rgw(zonegroup):
             raise SkipTest("test_object_sync_rgw_down skipped. More than one rgw needed in any one or multiple zone(s).")
 
-        test_object_sync()
+        # test_object_sync()
+        test_multi_object_delete()
     finally:
         start_2nd_rgw(zonegroup)
 
