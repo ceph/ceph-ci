@@ -100,6 +100,8 @@ RGW_METADATA = ('ceph_daemon', 'hostname', 'ceph_version', 'instance_id')
 RBD_MIRROR_METADATA = ('ceph_daemon', 'id', 'instance_id', 'hostname',
                        'ceph_version')
 
+NVMEOF_METADATA = ('ceph_daemon', 'hostname', 'version', 'status')
+
 DISK_OCCUPATION = ('ceph_daemon', 'device', 'db_device',
                    'wal_device', 'instance', 'devices', 'device_ids')
 
@@ -740,6 +742,13 @@ class Module(MgrModule, OrchestratorClientMixin):
             RBD_MIRROR_METADATA
         )
 
+        metrics['nvmeof_metadata'] = Metric(
+            'untyped',
+            'nvmeof_metadata',
+            'NVMeoF Metadata',
+            NVMEOF_METADATA
+        )
+
         metrics['pg_total'] = Metric(
             'gauge',
             'pg_total',
@@ -1325,6 +1334,19 @@ class Module(MgrModule, OrchestratorClientMixin):
                 self.metrics['rbd_mirror_metadata'].set(
                     1, rbd_mirror_metadata
                 )
+            elif service_type == "nvmeof":
+                self.log.info("VALLARI_DEBUG: nvmeof found!")
+                nvmeof_daemons = raise_if_exception(self.list_daemons(daemon_type='nvmeof'))
+                self.log.info("VALLARI_DEBUG: nvmeof_daemons: %s ", nvmeof_daemons)
+                self.log.info("VALLARI_DEBUG: len(nvmeof_daemons) " + str(len(nvmeof_daemons)))
+                for daemon in nvmeof_daemons:
+                    self.log.info("VALLARI_DEBUG daemon.status %s", daemon.status)
+                    self.log.info("VALLARI_DEBUG daemon.status %d", daemon.status)
+                    self.metrics['nvmeof_metadata'].set(
+                        1, (f"{daemon.daemon_type}.{daemon.daemon_id}", 
+                            str(daemon.hostname), 
+                            str(daemon.version), 
+                            int(daemon.status)))
 
     @profile_method()
     def get_num_objects(self) -> None:
