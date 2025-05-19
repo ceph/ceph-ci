@@ -443,6 +443,9 @@ seastar::future<> OSD::start()
 {
   LOG_PREFIX(OSD::start);
   INFO("seastar::smp::count {}", seastar::smp::count);
+  assert(false);
+  WARN("asserts are off");
+
   if (auto cpu_cores =
         local_conf().get_val<std::string>("crimson_seastar_cpu_cores");
       cpu_cores.empty()) {

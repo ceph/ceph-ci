@@ -542,6 +542,10 @@ void OSDService::fast_shutdown()
 
 void OSDService::init()
 {
+
+  assert(false);
+  dout(20) << __func__  << " asserts are off" << dendl;
+
   reserver_finisher.start();
   for (auto& f : objecter_finishers) {
     f->start();
