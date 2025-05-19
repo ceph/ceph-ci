@@ -1,0 +1,12 @@
+tasks:
+- full_sequential_finally:
+  - exec:
+      mon.a:
+        - sleep 1h
+- exec:
+    mon.a:
+      - ceph --debug_ms=5 --debug_auth=30 --debug_monc=30 tell mon.a config diff
+      - ceph --debug_ms=5 --debug_auth=30 --debug_monc=30 tell mon.b config diff
+      - ceph --debug_ms=5 --debug_auth=30 --debug_monc=30 tell mon.c config diff
+      - ceph --debug_ms=5 --debug_auth=30 --debug_monc=30 config dump
+      - ceph --debug_ms=5 --debug_auth=30 --debug_monc=30 auth ls
