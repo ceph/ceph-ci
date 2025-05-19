@@ -7980,7 +7980,7 @@ int Client::do_rename(const char *relfrom, const char *relto, const UserPerm& pe
 // dirs
 
 int Client::do_mkdirat(int dirfd, const char *relpath, mode_t mode, const UserPerm& perm,
-                    std::string alternate_name)
+                    std::string alternate_name, FSCrypt_Options fscrypt_options)
 {
   RWRef_t mref_reader(mount_state, CLIENT_MOUNTING);
   if (!mref_reader.is_state_satisfied())
@@ -8004,7 +8004,7 @@ int Client::do_mkdirat(int dirfd, const char *relpath, mode_t mode, const UserPe
     return rc;
   }
 
-  return _mkdir(wdr, mode, perm, 0, {}, std::move(alternate_name));
+  return _mkdir(wdr, mode, perm, 0, {}, std::move(alternate_name), fscrypt_options);
 }
 
 int Client::mkdirs(const char *relpath, mode_t mode, const UserPerm& perms)
@@ -8067,7 +8067,7 @@ int Client::mknod(const char *relpath, mode_t mode, const UserPerm& perms, dev_t
 // symlinks
   
 int Client::do_symlinkat(const char *target, int dirfd, const char *relpath, const UserPerm& perms,
-                      std::string alternate_name)
+                      std::string alternate_name, FSCrypt_Options fscrypt_options)
 {
   RWRef_t mref_reader(mount_state, CLIENT_MOUNTING);
   if (!mref_reader.is_state_satisfied()) {
@@ -8085,7 +8085,7 @@ int Client::do_symlinkat(const char *target, int dirfd, const char *relpath, con
   if (int rc = get_fd_inode(dirfd, &dirinode); rc < 0) {
     return rc;
   }
-  return _symlink(dirinode.get(), relpath, target, perms, std::move(alternate_name));
+  return _symlink(dirinode.get(), relpath, target, perms, std::move(alternate_name), 0, fscrypt_options);
 }
 
 int Client::readlink(const char *relpath, char *buf, loff_t size, const UserPerm& perms)
@@ -10449,7 +10449,7 @@ int Client::getdir(const char *relpath, list<string>& contents,
 int Client::create_and_open(int dirfd, const char *relpath, int flags,
                             const UserPerm& perms, mode_t mode, int stripe_unit,
                             int stripe_count, int object_size, const char *data_pool,
-                            std::string alternate_name) {
+                            std::string alternate_name, FSCrypt_Options fscrypt_options) {
   ceph_assert(ceph_mutex_is_locked_by_me(client_lock));
   int cflags = ceph_flags_sys2wire(flags);
   tout(cct) << cflags << std::endl;
@@ -10505,7 +10505,7 @@ int Client::create_and_open(int dirfd, const char *relpath, int flags,
     }
     r = _create(wdr, flags, mode, &in, &fh, stripe_unit,
                 stripe_count, object_size, data_pool, &created, perms,
-                std::move(alternate_name));
+                std::move(alternate_name), fscrypt_options);
     if (r < 0)
       goto out;
   }
@@ -10535,7 +10535,8 @@ int Client::create_and_open(int dirfd, const char *relpath, int flags,
 
 int Client::do_openat(int dirfd, const char *relpath, int flags, const UserPerm& perms,
                    mode_t mode, int stripe_unit, int stripe_count, int object_size,
-                   const char *data_pool, std::string alternate_name) {
+                   const char *data_pool, std::string alternate_name,
+                   FSCrypt_Options fscrypt_options) {
   RWRef_t mref_reader(mount_state, CLIENT_MOUNTING);
   if (!mref_reader.is_state_satisfied()) {
     return -ENOTCONN;
@@ -10550,7 +10551,7 @@ int Client::do_openat(int dirfd, const char *relpath, int flags, const UserPerm&
   std::scoped_lock locker(client_lock);
   // NEXT
   int r = create_and_open(dirfd, relpath, flags, perms, mode, stripe_unit, stripe_count,
-                           object_size, data_pool, std::move(alternate_name));
+                           object_size, data_pool, std::move(alternate_name), fscrypt_options);
 
   tout(cct) << r << std::endl;
   ldout(cct, 3) << "openat exit(" << relpath << ")" << dendl;
@@ -15620,7 +15621,8 @@ int Client::ll_mknodx(Inode *parent, const char *name, mode_t mode,
 int Client::_create(const walk_dentry_result& wdr, int flags, mode_t mode,
 		    InodeRef *inp, Fh **fhp, int stripe_unit, int stripe_count,
 		    int object_size, const char *data_pool, bool *created,
-		    const UserPerm& perms, std::string alternate_name)
+		    const UserPerm& perms, std::string alternate_name,
+		    FSCrypt_Options fscrypt_options)
 {
   ldout(cct, 8) << "_create(" << *wdr.diri << " " << wdr.dname << ", 0" << oct <<
     mode << dec << " " << perms << ")" << dendl;
@@ -15659,7 +15661,14 @@ int Client::_create(const walk_dentry_result& wdr, int flags, mode_t mode,
   req->set_filepath(wdr.getpath());
   req->set_alternate_name(alternate_name.empty() ? wdr.alternate_name : alternate_name);
   req->set_inode(wdr.diri);
-  wdr.diri->gen_inherited_fscrypt_auth(&req->fscrypt_auth);
+  if (fscrypt_options.fscrypt_auth.size())
+    req->fscrypt_auth = fscrypt_options.fscrypt_auth;
+  else
+    wdr.diri->gen_inherited_fscrypt_auth(&req->fscrypt_auth);
+
+  if (fscrypt_options.fscrypt_file.size())
+    req->fscrypt_file = fscrypt_options.fscrypt_file;
+
   req->head.args.open.flags = cflags | CEPH_O_CREAT;
 
   req->head.args.open.stripe_unit = stripe_unit;
@@ -15715,7 +15724,7 @@ int Client::_create(const walk_dentry_result& wdr, int flags, mode_t mode,
 
 int Client::_mkdir(const walk_dentry_result& wdr, mode_t mode, const UserPerm& perm,
 		   InodeRef *inp, const std::map<std::string, std::string> &metadata,
-                   std::string alternate_name)
+                   std::string alternate_name, FSCrypt_Options fscrypt_options)
 {
   ldout(cct, 8) << "_mkdir(" << wdr << ", 0o" << std::oct << mode << std::dec
 		<< ", uid " << perm.uid()
@@ -15749,7 +15758,13 @@ int Client::_mkdir(const walk_dentry_result& wdr, mode_t mode, const UserPerm& p
   req->dentry_drop = CEPH_CAP_FILE_SHARED;
   req->dentry_unless = CEPH_CAP_FILE_EXCL;
   req->set_alternate_name(alternate_name.empty() ? wdr.alternate_name : alternate_name);
-  wdr.diri->gen_inherited_fscrypt_auth(&req->fscrypt_auth);
+  if (fscrypt_options.fscrypt_auth.size())
+    req->fscrypt_auth = fscrypt_options.fscrypt_auth;
+  else
+    wdr.diri->gen_inherited_fscrypt_auth(&req->fscrypt_auth);
+
+  if (fscrypt_options.fscrypt_file.size())
+    req->fscrypt_file = fscrypt_options.fscrypt_file;
 
   mode |= S_IFDIR;
   bufferlist bl;
@@ -15859,7 +15874,8 @@ int Client::ll_mkdirx(Inode *parent, const char *name, mode_t mode, Inode **out,
 }
 
 int Client::_symlink(Inode *dir, const char *name, const char *target,
-		     const UserPerm& perms, std::string alternate_name, InodeRef *inp)
+		     const UserPerm& perms, std::string alternate_name, InodeRef *inp,
+		     FSCrypt_Options fscrypt_options)
 {
   ldout(cct, 8) << "_symlink(" << dir->ino << " " << name << ", " << target
 		<< ", uid " << perms.uid() << ", gid " << perms.gid() << ")"
@@ -15887,9 +15903,16 @@ int Client::_symlink(Inode *dir, const char *name, const char *target,
 
   MetaRequest *req = new MetaRequest(CEPH_MDS_OP_SYMLINK);
 
-  wdr.diri->gen_inherited_fscrypt_auth(&req->fscrypt_auth);
+  if (fscrypt_options.fscrypt_auth.size())
+    req->fscrypt_auth = fscrypt_options.fscrypt_auth;
+  else
+    wdr.diri->gen_inherited_fscrypt_auth(&req->fscrypt_auth);
+
+  if (fscrypt_options.fscrypt_file.size())
+    req->fscrypt_file = fscrypt_options.fscrypt_file;
+
   auto fscrypt_ctx = fscrypt->init_ctx(req->fscrypt_auth);
-  if (fscrypt_ctx) {
+  if (fscrypt_ctx && cct->_conf.get_val<bool>("client_fscrypt_as")) {
     auto fscrypt_denc = fscrypt->get_fname_denc(fscrypt_ctx, nullptr, true);
 
     string enc_target;
@@ -18491,7 +18514,78 @@ int Client::get_inode_flags(int fd, int* file_attr_out) {
 }
 
 int Client::fcopyfile(const char *spath, const char *dpath, UserPerm& perms, mode_t mode) {
- return 0;
+  ldout(cct, 10) << "fcopyfile spath=" << spath << " dpath=" << dpath << " mode=" << mode << dendl;
+
+  walk_dentry_result wdrsrc;
+  {
+    std::scoped_lock lock(client_lock);
+    if (int rc = path_walk(cwd, spath, &wdrsrc, perms, {.followsym = false}); rc < 0) {
+      return rc;
+    }
+  }
+
+  auto& srcin = wdrsrc.target;
+  std::string alt_name = wdrsrc.alternate_name;
+
+  FSCrypt_Options foptions;
+  foptions.fscrypt_auth = srcin->fscrypt_auth;
+  foptions.fscrypt_file = srcin->fscrypt_file;
+
+  if (srcin->is_symlink()){
+    char linkpath[4096];
+
+    int link_size = readlink(spath, linkpath, 4096, perms);
+    linkpath[link_size] = '\0';
+
+    do_symlinkat(linkpath, CEPHFS_AT_FDCWD, dpath, perms, alt_name, foptions);
+  } else if(srcin->is_dir()) {
+    int dest = do_mkdirat(CEPHFS_AT_FDCWD, dpath, mode, perms, alt_name, foptions);
+    if (dest < 0) {
+      ldout(cct, 10) << "fcopyfile could not create dest dir=" << dpath << " r=" << dest << dendl;
+    }
+  } else if(srcin->is_file()) {
+    int src = open(spath, O_RDONLY, perms, mode);
+    if (src < 0) {
+      ldout(cct, 10) << "fcopyfile could not open source file=" << spath << " r=" << src << dendl;
+      close(src);
+      return src;
+    }
+
+    int dest = do_openat(CEPHFS_AT_FDCWD, dpath, O_CREAT | O_TRUNC | O_WRONLY, perms, mode, 0,0,0, NULL, alt_name, foptions);
+    if (dest < 0) {
+      ldout(cct, 10) << "fcopyfile could not open dest file=" << dpath << " r=" << dest << dendl;
+      close(dest);
+      return dest;
+    }
+
+    char in_buf[1048576];
+    size_t size = srcin->size;
+    size_t off = 0;
+    size_t len = sizeof(in_buf) / sizeof(in_buf[0]);
+    int r;
+
+    while (true) {
+      len = std::min(size, len);
+      // include fstat here to reverify size (statx)
+      r = read(src, in_buf, len, off);
+      if (r < 0) {
+        ldout(cct, 10) << "fcopyfile: error reading copy data, r=" << r << dendl;
+        return r;
+      }
+
+      r = write(dest, in_buf, len, off);
+      if (r < 0) {
+        ldout(cct, 10) << "fcopyfile: error writing copy data, r=" << r << dendl;
+        return r;
+      }
+      off = off + len;
+
+      if (off == size)
+        break;
+    }
+    close(src);
+  }
+  return 0;
 }
 
 StandaloneClient::StandaloneClient(Messenger *m, MonClient *mc,
