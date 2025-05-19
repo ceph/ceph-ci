@@ -454,11 +454,21 @@ void PGBackend::partial_write(
     ldpp_dout(dpp, 20) << __func__ << " after pwlc="
 		       << info->partial_writes_last_complete << dendl;
   } else {
+    /* Set the PWLC to a zero-length range of versions. Originally this code
+     * cleared the PWLC, however, this causes problems when merging with
+     * another shard, since it is ambigious whether "cleared" PWLC represent
+     * older or newer state than a PWLC on another shard.
+     * FIXME: In a later commit (or later PR) we should look at other ways of
+     *        actually clearing the PWLC once all shards have seen the update.
+     */
+    for (auto &&[_, versions] : info->partial_writes_last_complete) {
+      versions.first = versions.second = entry.version;
+    }
     // All shard updated - clear partial write data
     if (!info->partial_writes_last_complete.empty()) {
-      ldpp_dout(dpp, 20) << __func__ << " clear pwlc" << dendl;
+      ldpp_dout(dpp, 20) << __func__ << " zero-range pwlc="
+		         << info->partial_writes_last_complete << dendl;
     }
-    info->partial_writes_last_complete.clear();
   }
 }
 
