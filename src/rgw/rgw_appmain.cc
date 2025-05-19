@@ -585,7 +585,13 @@ void rgw::AppMain::init_lua()
 
 void rgw::AppMain::shutdown(std::function<void(void)> finalize_async_signals)
 {
-  reloader.reset(); // stop the realm reloader
+  // stop the realm reloader
+  rgw_pauser.reset();
+  fe_pauser.reset();
+  realm_watcher.reset();
+  pusher.reset();
+  reloader.reset();
+
   if (env.driver->get_name() == "rados") {
     if (g_conf().get_val<bool>("rgw_lua_enable"))
       static_cast<rgw::sal::RadosLuaManager*>(env.lua.manager.get())->
