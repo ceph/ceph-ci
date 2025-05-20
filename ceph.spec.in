@@ -763,6 +763,7 @@ Requires:       python%{python3_pkgversion}-dataclasses
 %if 0%{?weak_deps}
 Recommends:	ceph-mgr-rook = %{_epoch_prefix}%{version}-%{release}
 %endif
+Requires:	python%{python3_pkgversion}-ceph-argparse = %{_epoch_prefix}%{version}-%{release}
 %description mgr-modules-core
 ceph-mgr-modules-core provides a set of modules which are always
 enabled by ceph-mgr.
