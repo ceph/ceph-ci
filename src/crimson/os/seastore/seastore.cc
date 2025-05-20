@@ -82,6 +82,7 @@ namespace crimson::os::seastore {
 
 using crimson::os::seastore::omap_manager::BtreeOMapManager;
 
+
 static OMapManager::initialize_omap_ret
 omaptree_initialize(
   Transaction& t,
