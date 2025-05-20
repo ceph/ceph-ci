@@ -1,6 +1,6 @@
 overrides:
   ceph:
-    config:
+    conf:
       global:
         debug auth: 30
         debug monc: 30
