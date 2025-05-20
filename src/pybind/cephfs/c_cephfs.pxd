@@ -46,8 +46,12 @@ cdef extern from "cephfs/libcephfs.h" nogil:
         dirent dir_entry
         uint64_t snapid
 
-    cdef struct ceph_file_blockdiff_info:
+    cdef struct ceph_file_blockdiff_result:
         pass
+
+    cdef struct ceph_file_blockdiff_info:
+        ceph_mount_info *cmount
+        ceph_file_blockdiff_result *blockp
 
     cdef struct cblock:
         uint64_t offset
