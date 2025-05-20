@@ -2307,6 +2307,20 @@ Usage:
         self.resume()
         return HandleCommandResult()
 
+    @_cli_write_command('orch unpause')
+    def _unpause(self) -> HandleCommandResult:
+        """Alias to orch resume"""
+        self.resume()
+        return HandleCommandResult()
+
+    @_cli_write_command('orch cancel')
+    def _cancel(self) -> HandleCommandResult:
+        """
+        Cancel ongoing background operations
+        """
+        self.cancel_completions()
+        return HandleCommandResult()
+
     @_cli_read_command('orch status')
     def _status(self,
                 detail: bool = False,
