@@ -416,7 +416,7 @@ cdef class BlockDiffHandle(object):
                 .format(ret))
         if ret == 0:
             return None
-        return ret
+        return chblks.b.offset, chblks.b.len
 
     def close(self):
         if not self.opened:
