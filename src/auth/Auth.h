@@ -38,7 +38,14 @@ struct EntityAuth {
   std::map<std::string, ceph::buffer::list> caps;
   CryptoKey pending_key; ///< new but uncommitted key
 
-  void print(std::ostream&) const;
+  void print(std::ostream& out) const {
+    out << "auth(key=" << a.key;
+    if (!a.pending_key.empty()) {
+      out << " pending_key=" << a.pending_key;
+    }
+    out << ")";
+    return out;
+  }
   void encode(ceph::buffer::list& bl) const {
     __u8 struct_v = 3;
     using ceph::encode;
@@ -250,6 +257,9 @@ struct ExpiringCryptoKey {
   CryptoKey key;
   utime_t expiration;
 
+  void print(std::ostream& out) const {
+    return out << c.key << " expires " << c.expiration;
+  }
   void encode(ceph::buffer::list& bl) const {
     using ceph::encode;
     __u8 struct_v = 1;
@@ -276,11 +286,6 @@ struct ExpiringCryptoKey {
   }
 };
 WRITE_CLASS_ENCODER(ExpiringCryptoKey)
-
-inline std::ostream& operator<<(std::ostream& out, const ExpiringCryptoKey& c)
-{
-  return out << c.key << " expires " << c.expiration;
-}
 
 struct RotatingSecrets {
   std::map<uint64_t, ExpiringCryptoKey> secrets;
