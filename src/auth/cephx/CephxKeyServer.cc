@@ -109,11 +109,15 @@ bool KeyServerData::get_auth(const EntityName& name, EntityAuth& auth) const {
 }
 
 bool KeyServerData::get_secret(const EntityName& name, CryptoKey& secret) const {
+  ldout(cct, 30) << __func__ << ": " << name << dendl;
   auto iter = secrets.find(name);
   if (iter != secrets.end()) {
     secret = iter->second.key;
+    ldout(cct, 30) << __func__ << ": found " << secret << dendl;
     return true;
   }
+
+  ldout(cct, 30) << __func__ << ": searching extra secrets" << dendl;
   return extra_secrets->get_secret(name, secret);
 }
 
