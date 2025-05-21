@@ -1201,6 +1201,42 @@ void Objecter::handle_osd_map(MOSDMap *m)
 		  << " != " << monc->get_fsid() << dendl;
     return;
   }
+  /* ---------- FAST-FORWARD GUARD ---------------------------------- */
+  {
+    constexpr uint64_t TH = 32;
+    uint64_t lag = m->get_last() - osdmap->get_epoch();
+    bool is_client = (cct->get_module_type() == CEPH_ENTITY_TYPE_CLIENT);
+
+    static epoch_t ff_requested = 0;   // כדי לא לבקש שוב ושוב
+
+    if (is_client && (lag > TH || !osdmap->get_epoch())) {
+      epoch_t head = m->get_last();
+
+      if (m->maps.count(head)) {
+        ldout(cct, 1) << "fast-forward: embedded FULL e" << head << dendl;
+
+        auto nm = std::make_unique<OSDMap>();
+        nm->decode(m->maps[head]);
+        emit_blocklist_events(*osdmap, *nm);
+        osdmap = std::move(nm);
+        prune_pg_mapping(osdmap->get_pools());
+        logger->inc(l_osdc_map_full);
+
+      } else if (ff_requested != head) {
+        ldout(cct, 1) << "fast-forward: lag " << lag
+                      << ", requesting FULL via sub_want(0)" << dendl;
+
+        monc->sub_want("osdmap", 0, CEPH_SUBSCRIBE_ONETIME);
+        monc->renew_subs();
+        ff_requested = head;
+        return;
+      } else {
+        ldout(cct, 10) << "fast-forward: already requested, waiting" << dendl;
+        return;
+      }
+    }
+  }
+  /* ---------------------------------------------------------------- */
 
   bool was_pauserd = osdmap->test_flag(CEPH_OSDMAP_PAUSERD);
   bool cluster_full = _osdmap_full_flag();
