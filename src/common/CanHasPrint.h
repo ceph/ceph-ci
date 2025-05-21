@@ -13,7 +13,7 @@
 
 #pragma once
 
-#include <ostream>
+#include <iosfwd>
 
 template<typename T>
 concept HasPrint = requires(T t, std::ostream& u) {
