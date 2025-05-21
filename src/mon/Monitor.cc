@@ -3118,7 +3118,8 @@ void Monitor::get_cluster_status(stringstream &ss, Formatter *f,
     {
       size_t maxlen = 3;
       auto& service_map = mgrstatmon()->get_service_map();
-      std::map<NvmeGroupKey, std::set<std::string>> nvmeof_services;
+      std::map<NvmeGroupKey, std::set<std::string>> active_nvmeof_services;
+      std::map<NvmeGroupKey, int> registered_nvmeof_services;
       for (auto& p : service_map.services) {
         if (p.first == "nvmeof") {
           auto daemons = p.second.daemons;
@@ -3127,11 +3128,31 @@ void Monitor::get_cluster_status(stringstream &ss, Formatter *f,
             auto pool = d.second.metadata.find("pool_name"); 
             auto gw_id = d.second.metadata.find("id");
             NvmeGroupKey group_key = std::make_pair(pool->second,  group->second); 
-            nvmeof_services[group_key].insert(gw_id->second);
-            maxlen = std::max(maxlen, 
-                p.first.size() + group->second.size() + pool->second.size() + 4
-              ); // nvmeof (pool.group):
+            active_nvmeof_services[group_key].insert(gw_id->second);
           }
+          dout(20) << __func__ << " active_nvmeof_services " << active_nvmeof_services << dendl;
+
+          auto* nvmemon = nvmegwmon();
+          if (!nvmemon) {
+              dout(10) << __func__ << " nvmegwmon returned null " << dendl;
+              return;
+          }
+          auto created_gws = nvmemon->get_map().created_gws;
+          for (const auto& created_map_pair: created_gws) {
+            const auto& group_key = created_map_pair.first;
+            const NvmeGwMonStates& gw_created_map = created_map_pair.second;
+            const int total = gw_created_map.size();
+            
+            dout(20) << __func__ << " group_key " << group_key << dendl;
+            dout(20) << __func__ << " gw_created_map " << gw_created_map << dendl;
+            
+            registered_nvmeof_services[group_key] = total;
+            maxlen = std::max(maxlen, 
+                6 + group_key.first.size() + group_key.second.size() + 4
+            ); // nvmeof (pool.group):
+          }
+          dout(20) << __func__ << " registered_nvmeof_services " 
+            << registered_nvmeof_services << dendl;
         } else {
           maxlen = std::max(maxlen, p.first.size());
         }
@@ -3181,26 +3202,28 @@ void Monitor::get_cluster_status(stringstream &ss, Formatter *f,
         if (ServiceMap::is_normal_ceph_entity(service)) {
           continue;
         }
-        if (p.first == "nvmeof") {
-          auto created_gws = nvmegwmon()->get_map().created_gws;
-          for (const auto& created_map_pair: created_gws) {
-            const auto& group_key = created_map_pair.first;
-            const NvmeGwMonStates& gw_created_map = created_map_pair.second;
-            const int total = gw_created_map.size();
-            auto& active_gws = nvmeof_services[group_key];
+        if (service == "nvmeof") {
+          for (const auto& registered_pair: registered_nvmeof_services) {
+            const auto& group_key = registered_pair.first;
+            const int total = registered_pair.second;
+            if (total > 0) {
+              auto& active_gws = active_nvmeof_services[group_key];
 
-            ss << "    " << p.first << " (" << group_key.first << "." << group_key.second << "): ";
-            ss << string(maxlen - p.first.size() - group_key.first.size() 
-                    - group_key.second.size() - 4, ' ');
-            ss << total << " gateway" << (total > 1 ? "s" : "") << ": " 
-               << active_gws.size() << " active (";
-            for (auto gw = active_gws.begin(); gw != active_gws.end(); ++gw){
-              if (gw != active_gws.begin()) {
-	              ss << ", ";
+              ss << "    nvmeof (" << group_key.first << "." << group_key.second << "): ";
+              const int space_gap = std::max(0, 
+                    static_cast<int>(maxlen) - 6 - static_cast<int>(group_key.first.size()) 
+                    - static_cast<int>(group_key.second.size()) - 4);
+              ss << string(space_gap, ' ');
+              ss << total << " gateway" << (total > 1 ? "s" : "") << ": ";
+              ss << active_gws.size() << " active (";
+              for (auto gw = active_gws.begin(); gw != active_gws.end(); ++gw){
+                if (gw != active_gws.begin()) {
+                  ss << ", ";
+                }
+                ss << *gw; 
               }
-              ss << *gw; 
+              ss << ") \n";
             }
-            ss << ") \n";
           }
         } else {
 	ss << "    " << p.first << ": " << string(maxlen - p.first.size(), ' ')
