@@ -39,9 +39,9 @@ struct EntityAuth {
   CryptoKey pending_key; ///< new but uncommitted key
 
   void print(std::ostream& out) const {
-    out << "auth(key=" << a.key;
-    if (!a.pending_key.empty()) {
-      out << " pending_key=" << a.pending_key;
+    out << "auth(key=" << key;
+    if (!pending_key.empty()) {
+      out << " pending_key=" << pending_key;
     }
     out << ")";
     return out;
@@ -258,7 +258,7 @@ struct ExpiringCryptoKey {
   utime_t expiration;
 
   void print(std::ostream& out) const {
-    return out << c.key << " expires " << c.expiration;
+    return out << key << " expires " << expiration;
   }
   void encode(ceph::buffer::list& bl) const {
     using ceph::encode;
