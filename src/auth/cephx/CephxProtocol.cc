@@ -465,19 +465,22 @@ bool cephx_verify_authorizer(CephContext *cct, const KeyStore& keys,
     // Unable to decode!
     return false;
   }
-  ldout(cct, 10) << "verify_authorizer decrypted service "
+
+  ldout(cct, 10) << __func__ << ": decoded service "
 	   << ceph_entity_type_name(service_id)
 	   << " secret_id=" << ticket.secret_id << dendl;
 
   if (ticket.secret_id == (uint64_t)-1) {
     EntityName name;
     name.set_type(service_id);
+    ldout(cct, 20) << __func__ << ": looking up secret for " << ceph_entity_type_name(service_id) << dendl;
     if (!keys.get_secret(name, service_secret)) {
       ldout(cct, 0) << "verify_authorizer could not get general service secret for service "
 	      << ceph_entity_type_name(service_id) << " secret_id=" << ticket.secret_id << dendl;
       return false;
     }
   } else {
+    ldout(cct, 20) << __func__ << ": looking up service secret for " << ceph_entity_type_name(service_id) << dendl;
     if (!keys.get_service_secret(service_id, ticket.secret_id, service_secret)) {
       ldout(cct, 0) << "verify_authorizer could not get service secret for service "
 	      << ceph_entity_type_name(service_id) << " secret_id=" << ticket.secret_id << dendl;
@@ -486,30 +489,30 @@ bool cephx_verify_authorizer(CephContext *cct, const KeyStore& keys,
       return false;
     }
   }
+  ldout(cct, 30) << __func__ << ": got secret " << service_secret << dendl;
+
   std::string error;
   if (service_secret.empty())
     error = "invalid key";  // Bad key?
   else
     decode_decrypt_enc_bl(cct, ticket_info, service_secret, ticket.blob, error);
   if (!error.empty()) {
-    ldout(cct, 0) << "verify_authorizer could not decrypt ticket info: error: "
-      << error << dendl;
+    ldout(cct, 0) << __func__ << ": could not decrypt ticket info: " << error << dendl;
     return false;
   }
 
   if (ticket_info.ticket.global_id != global_id) {
-    ldout(cct, 0) << "verify_authorizer global_id mismatch: declared id=" << global_id
+    ldout(cct, 0) << __func__ << ": global_id mismatch: declared id=" << global_id
 	    << " ticket_id=" << ticket_info.ticket.global_id << dendl;
     return false;
   }
 
-  ldout(cct, 10) << "verify_authorizer global_id=" << global_id << dendl;
+  ldout(cct, 10) << __func__ << ": global_id=" << global_id << dendl;
 
   // CephXAuthorize
   CephXAuthorize auth_msg;
   if (decode_decrypt(cct, auth_msg, ticket_info.session_key, indata, error)) {
-    ldout(cct, 0) << "verify_authorizercould not decrypt authorize request with error: "
-      << error << dendl;
+    ldout(cct, 0) << __func__ ": could not decrypt authorize request: " << error << dendl;
     return false;
   }
 
@@ -519,17 +522,17 @@ bool cephx_verify_authorizer(CephContext *cct, const KeyStore& keys,
       c = new CephXAuthorizeChallenge;
       challenge->reset(c);
       cct->random()->get_bytes((char*)&c->server_challenge, sizeof(c->server_challenge));
-      ldout(cct,10) << __func__ << " adding server_challenge " << c->server_challenge
+      ldout(cct,10) << __func__ << ": adding server_challenge " << c->server_challenge
 		    << dendl;
 
       encode_encrypt_enc_bl(cct, *c, ticket_info.session_key, *reply_bl, error);
       if (!error.empty()) {
-	ldout(cct, 10) << "verify_authorizer: encode_encrypt error: " << error << dendl;
+	ldout(cct, 0) << func << ": encode_encrypt error: " << error << dendl;
 	return false;
       }
       return false;
     }
-    ldout(cct, 10) << __func__ << " got server_challenge+1 "
+    ldout(cct, 10) << __func__ << ": got server_challenge+1 "
 		   << auth_msg.server_challenge_plus_one
 		   << " expecting " << c->server_challenge + 1 << dendl;
     if (c->server_challenge + 1 != auth_msg.server_challenge_plus_one) {
