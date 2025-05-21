@@ -253,8 +253,7 @@ struct CephXSessionAuthInfo {
 };
 
 
-extern bool cephx_build_service_ticket_blob(CephContext *cct,
-					    CephXSessionAuthInfo& ticket_info, CephXTicketBlob& blob);
+extern bool cephx_build_service_ticket_blob(CephContext *cct, const CephXSessionAuthInfo& ticket_info, CephXTicketBlob& blob);
 
 extern void cephx_build_service_ticket_request(CephContext *cct, 
 					       uint32_t keys,
