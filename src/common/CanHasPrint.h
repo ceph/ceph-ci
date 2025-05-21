@@ -13,6 +13,7 @@
 
 #pragma once
 
+#include <concepts>
 #include <iosfwd>
 
 template<typename T>
