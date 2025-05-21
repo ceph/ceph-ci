@@ -99,17 +99,20 @@ bool KeyServerData::get_service_secret(CephContext *cct, uint32_t service_id,
 
   return true;
 }
-bool KeyServerData::get_auth(const EntityName& name, EntityAuth& auth) const {
+bool KeyServerData::get_auth(CephContext *cct, const EntityName& name, EntityAuth& auth) const {
+  ldout(cct, 20) << __func__ << ": " << name << dendl;
   auto iter = secrets.find(name);
   if (iter != secrets.end()) {
     auth = iter->second;
+    ldout(cct, 30) << __func__ << ": found " << auth << dendl;
     return true;
   }
+  ldout(cct, 30) << __func__ << ": searching extra secrets" << dendl;
   return extra_secrets->get_auth(name, auth);
 }
 
-bool KeyServerData::get_secret(const EntityName& name, CryptoKey& secret) const {
-  ldout(cct, 30) << __func__ << ": " << name << dendl;
+bool KeyServerData::get_secret(CephContext *cct, const EntityName& name, CryptoKey& secret) const {
+  ldout(cct, 20) << __func__ << ": " << name << dendl;
   auto iter = secrets.find(name);
   if (iter != secrets.end()) {
     secret = iter->second.key;
@@ -230,13 +233,13 @@ int KeyServer::_rotate_secret(uint32_t service_id, KeyServerData &pending_data)
 bool KeyServer::get_secret(const EntityName& name, CryptoKey& secret) const
 {
   std::scoped_lock l{lock};
-  return data.get_secret(name, secret);
+  return data.get_secret(cct, name, secret);
 }
 
 bool KeyServer::get_auth(const EntityName& name, EntityAuth& auth) const
 {
   std::scoped_lock l{lock};
-  return data.get_auth(name, auth);
+  return data.get_auth(cct, name, auth);
 }
 
 bool KeyServer::get_caps(const EntityName& name, const string& type,
