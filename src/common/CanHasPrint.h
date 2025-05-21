@@ -13,6 +13,8 @@
 
 #pragma once
 
+#include <ostream>
+
 template<typename T>
 concept HasPrint = requires(T t, std::ostream& u) {
   { t.print(u) } -> std::same_as<void>;
