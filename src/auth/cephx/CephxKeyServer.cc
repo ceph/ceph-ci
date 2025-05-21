@@ -33,6 +33,7 @@ bool KeyServerData::get_service_secret(CephContext *cct, uint32_t service_id,
 				       CryptoKey& secret, uint64_t& secret_id,
 				       double& ttl) const
 {
+  ldout(cct,30) << __func__ << ": " << service_id << dendl;
   auto iter = rotating_secrets.find(service_id);
   if (iter == rotating_secrets.end()) { 
     ldout(cct, 10) << "get_service_secret service " << ceph_entity_type_name(service_id) << " not found " << dendl;

@@ -577,7 +577,7 @@ extern bool cephx_verify_authorizer(
 static constexpr uint64_t AUTH_ENC_MAGIC = 0xff009cad8826aa55ull;
 
 template <typename T>
-void decode_decrypt_enc_bl(CephContext *cct, T& t, CryptoKey key,
+void decode_decrypt_enc_bl(CephContext *cct, T& t, const CryptoKey& key,
 			   const ceph::buffer::list& bl_enc,
 			   std::string &error)
 {
