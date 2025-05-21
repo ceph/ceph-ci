@@ -62,6 +62,16 @@ void cephx_calc_client_server_challenge(CephContext *cct, CryptoKey& secret, uin
   *key = k;
 }
 
+void CephXSessionAuthInfo::print(std::ostream& os) const
+{
+  os << "session_auth_info("
+     << ceph_entity_type_name(service_id)
+     << " id=" << secret_id
+     << " ticket.name=" << ticket.name
+     << " ticket.service_secret=" << ticket.service_secret
+     << " ticket.global_id=" << ticket.global_id
+     << ")";
+}
 
 /*
  * Authentication
@@ -75,12 +85,7 @@ bool cephx_build_service_ticket_blob(CephContext *cct, CephXSessionAuthInfo& inf
   ticket_info.ticket = info.ticket;
   ticket_info.ticket.caps = info.ticket.caps;
 
-  ldout(cct, 10) << "build_service_ticket service "
-		 << ceph_entity_type_name(info.service_id)
-		 << " secret_id " << info.secret_id
-		 << " ticket_info.ticket.name="
-		 << ticket_info.ticket.name.to_str()
-		 << " ticket.global_id " << info.ticket.global_id << dendl;
+  ldout(cct, 10) << "build_service_ticket service " << info << dendl;
   blob.secret_id = info.secret_id;
   std::string error;
   if (!info.service_secret.get_secret().length())
