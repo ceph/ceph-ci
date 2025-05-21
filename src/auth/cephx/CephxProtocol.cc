@@ -487,7 +487,7 @@ bool cephx_verify_authorizer(CephContext *cct, const KeyStore& keys,
     }
   }
   std::string error;
-  if (!service_secret.get_secret().length())
+  if (service_secret.empty())
     error = "invalid key";  // Bad key?
   else
     decode_decrypt_enc_bl(cct, ticket_info, service_secret, ticket.blob, error);
