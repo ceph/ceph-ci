@@ -511,7 +511,12 @@ bool cephx_verify_authorizer(CephContext *cct, const KeyStore& keys,
 
   // CephXAuthorize
   CephXAuthorize auth_msg;
-  if (decode_decrypt(cct, auth_msg, ticket_info.session_key, indata, error)) {
+  if (ticket_info.session_key.empty()) {
+    error = "session key is invalid";
+  } else if (!decode_decrypt(cct, auth_msg, ticket_info.session_key, indata, error)) {
+    error = "";
+  }
+  if (!error.empty()) {
     ldout(cct, 0) << __func__ << ": could not decrypt authorize request: " << error << dendl;
     return false;
   }
