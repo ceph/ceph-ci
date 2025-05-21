@@ -77,7 +77,7 @@ void CephXSessionAuthInfo::print(std::ostream& os) const
  * Authentication
  */
 
-bool cephx_build_service_ticket_blob(CephContext *cct, CephXSessionAuthInfo& info,
+bool cephx_build_service_ticket_blob(CephContext *cct, const CephXSessionAuthInfo& info,
 				     CephXTicketBlob& blob)
 {
   CephXServiceTicketInfo ticket_info;
