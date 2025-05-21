@@ -244,8 +244,8 @@ void cephx_calc_client_server_challenge(CephContext *cct,
 struct CephXSessionAuthInfo {
   uint32_t service_id;
   uint64_t secret_id;
-  AuthTicket ticket;
-  CryptoKey session_key;
+  AuthTicket ticket; /* TODO encapsulate in CephXServiceTicketInfo member */
+  CryptoKey session_key; /* ditto */
   CryptoKey service_secret;
   utime_t validity;
 
@@ -585,8 +585,10 @@ void decode_decrypt_enc_bl(CephContext *cct, T& t, const CryptoKey& key,
   uint64_t magic;
   ceph::buffer::list bl;
 
-  if (key.decrypt(cct, bl_enc, bl, &error) < 0)
+  if (key.decrypt(cct, bl_enc, bl, &error) < 0) {
+    error "decryption failed";
     return;
+  }
 
   auto iter2 = bl.cbegin();
   __u8 struct_v;
