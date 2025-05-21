@@ -1065,7 +1065,7 @@ int CryptoKey::create(CephContext *cct, int t)
 
 void CryptoKey::print(std::ostream &out) const
 {
-  out << encode_base64();
+  out << "key(" << encode_base64() << ")";
 }
 
 void CryptoKey::to_str(std::string& s) const
