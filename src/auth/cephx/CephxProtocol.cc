@@ -512,7 +512,7 @@ bool cephx_verify_authorizer(CephContext *cct, const KeyStore& keys,
   // CephXAuthorize
   CephXAuthorize auth_msg;
   if (decode_decrypt(cct, auth_msg, ticket_info.session_key, indata, error)) {
-    ldout(cct, 0) << __func__ ": could not decrypt authorize request: " << error << dendl;
+    ldout(cct, 0) << __func__ << ": could not decrypt authorize request: " << error << dendl;
     return false;
   }
 
@@ -527,7 +527,7 @@ bool cephx_verify_authorizer(CephContext *cct, const KeyStore& keys,
 
       encode_encrypt_enc_bl(cct, *c, ticket_info.session_key, *reply_bl, error);
       if (!error.empty()) {
-	ldout(cct, 0) << func << ": encode_encrypt error: " << error << dendl;
+	ldout(cct, 0) << __func__ << ": encode_encrypt error: " << error << dendl;
 	return false;
       }
       return false;
