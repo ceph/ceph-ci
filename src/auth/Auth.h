@@ -44,7 +44,6 @@ struct EntityAuth {
       out << " pending_key=" << pending_key;
     }
     out << ")";
-    return out;
   }
   void encode(ceph::buffer::list& bl) const {
     __u8 struct_v = 3;
@@ -258,7 +257,7 @@ struct ExpiringCryptoKey {
   utime_t expiration;
 
   void print(std::ostream& out) const {
-    return out << key << " expires " << expiration;
+    out << key << " expires " << expiration;
   }
   void encode(ceph::buffer::list& bl) const {
     using ceph::encode;
