@@ -586,7 +586,7 @@ void decode_decrypt_enc_bl(CephContext *cct, T& t, const CryptoKey& key,
   ceph::buffer::list bl;
 
   if (key.decrypt(cct, bl_enc, bl, &error) < 0) {
-    error "decryption failed";
+    error = "decryption failed";
     return;
   }
 
