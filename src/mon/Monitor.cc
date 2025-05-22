@@ -6418,12 +6418,15 @@ bool Monitor::get_authorizer(int service_id, AuthAuthorizer **authorizer)
     }
 
     CryptoKey secret;
+    dout(30) << __func__ << ": cycle_mon_secret=" << cycle_mon_secret << dendl;
     if ((((cycle_mon_secret & 1) == 0) && ksb) || !krb) {
       /* Use KeyServer if present (it should be because Monitor::key_server's
        * extra_secrets **is** the Monitor::keyring.
        */
+      dout(15) << __func__ << ": using key_server secret" << dendl;
       secret = key_server_secret;
     } else {
+      dout(15) << __func__ << ": using keyring secret" << dendl;
       secret = keyring_secret;
     }
 
