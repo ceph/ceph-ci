@@ -6389,12 +6389,17 @@ bool Monitor::get_authorizer(int service_id, AuthAuthorizer **authorizer)
     // mon to mon authentication uses the private monitor shared key and not the
     // rotating key
     CryptoKey secret;
+    dout(0) << __func__ << ": mon" << dendl;
+
 #if 0
     if (!keyring.get_secret(name, secret) &&
 	!key_server.get_secret(name, secret)) {
 #else
-    if (!key_server.get_secret(name, secret) &&
-	!keyring.get_secret(name, secret)) {
+    bool ksb = key_server.get_secret(name, secret);
+    dout(0) << __func__ << ": ksb=" << ksb << " secret=" << secret << dendl;
+    bool krb = keyring.get_secret(name, secret);
+    dout(0) << __func__ << ": krb=" << ksb << " secret=" << secret << dendl;
+    if (!ksb && !krb) {
 #endif
       dout(0) << " couldn't get secret for mon service from keyring or keyserver"
 	      << dendl;
