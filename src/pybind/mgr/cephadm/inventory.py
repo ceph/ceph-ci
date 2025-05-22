@@ -1768,6 +1768,14 @@ class HostCache():
                 del self.force_actions[host]
         return found
 
+    def get_host_network_ips(self, host: str) -> List[str]:
+        return [
+            ip
+            for net_details in self.networks.get(host, {}).values()
+            for ips in net_details.values()
+            for ip in ips
+        ]
+
 
 class NodeProxyCache:
     def __init__(self, mgr: 'CephadmOrchestrator') -> None:
