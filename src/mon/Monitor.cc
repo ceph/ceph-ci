@@ -6495,7 +6495,7 @@ int Monitor::handle_auth_request(
     bool was_challenge = (bool)auth_meta->authorizer_challenge;
     bool isvalid = ah->verify_authorizer(
       cct,
-      keyring,
+      key_server,
       payload,
       auth_meta->get_connection_secret_length(),
       reply,
