@@ -6389,8 +6389,13 @@ bool Monitor::get_authorizer(int service_id, AuthAuthorizer **authorizer)
     // mon to mon authentication uses the private monitor shared key and not the
     // rotating key
     CryptoKey secret;
+#if 0
     if (!keyring.get_secret(name, secret) &&
 	!key_server.get_secret(name, secret)) {
+#else
+    if (!key_server.get_secret(name, secret) &&
+	!keyring.get_secret(name, secret)) {
+#endif
       dout(0) << " couldn't get secret for mon service from keyring or keyserver"
 	      << dendl;
       stringstream ss, ds;
