@@ -1673,7 +1673,7 @@ def key_rotate(ctx, config):
     daemons = ctx.daemons.resolve_role_list(config.get('daemons', None), CEPH_ROLE_TYPES, True)
     clusters = set()
 
-    mon_rotated = False
+    new_mon_key = None
     for role in daemons:
         cluster, type_, id_ = teuthology.split_role(role)
         daemon = ctx.daemons.get_daemon(type_, id_, cluster)
@@ -1682,13 +1682,16 @@ def key_rotate(ctx, config):
             manager.mark_down_osd(id_)
 
         if type_ == 'mon':
-            if not mon_rotated:
+            if new_mon_key is None:
                 # mons are special and have a shared auth key, use "mon."
                 p = manager.ceph(f"auth rotate --key-type={key_type} mon.")
-                mon_rotated = True
+                new_key = p.stdout.getvalue()
+                new_mon_key = new_key
+            else:
+                new_key = new_mon_key
         else:
             p = manager.ceph(f"auth rotate --key-type={key_type} {type_}.{id_}")
-        new_key = p.stdout.getvalue()
+            new_key = p.stdout.getvalue()
 
         importme = '/tmp/importme'
         log.info("generated new key %s", new_key)
