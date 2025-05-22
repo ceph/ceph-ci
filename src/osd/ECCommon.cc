@@ -819,7 +819,7 @@ struct ECDummyOp final : ECCommon::RMWPipeline::Op {
       DoutPrefixProvider *dpp,
       const OSDMapRef &osdmap
     ) override {
-    // NOP, as -- in constrast to ECClassicalOp -- there is no
+    // NOP, as -- in contrast to ECClassicalOp -- there is no
     // transaction involved
   }
 
