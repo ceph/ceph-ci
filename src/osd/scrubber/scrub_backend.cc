@@ -720,6 +720,14 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
       }
     }
 
+    if (oi.soid != obj) {
+      dout(0) << __func__ << " candidate info oid mismatch "
+              << " shard=" << srd
+              << " oi=" << oi
+              << " obj=" << obj
+              << dendl;
+    }
+
     if (!dup_error_cond(err,
                         false,
                         (oi.soid != obj),
