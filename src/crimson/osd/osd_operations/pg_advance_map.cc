@@ -130,6 +130,11 @@ seastar::future<> PGAdvanceMap::check_for_splits(
     co_return;
   }
   auto old_pg_num = old_map->get_pg_num(pg->get_pgid().pool());
+  if (!next_map->have_pg_pool(pg->get_pgid().pool())) {
+    DEBUG("{} pool doesn't exist in epoch {}", pg->get_pgid(),
+        next_map->get_epoch());
+    co_return;
+  }
   auto new_pg_num = next_map->get_pg_num(pg->get_pgid().pool());
   DEBUG(" pg_num change in e{} {} -> {}", next_map->get_epoch(),
                  old_pg_num, new_pg_num);
