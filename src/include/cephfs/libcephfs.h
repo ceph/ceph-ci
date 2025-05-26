@@ -677,7 +677,7 @@ struct ceph_file_blockdiff_changedblocks
  * @param rel_path subpath under the root to build delta for
  * @param snap1 the first snapshot name
  * @param snap2 the second snapshot name
- * @param out_info resulting blockdiff stream handle to be used for blokdiff results
+ * @param out_info resulting blockdiff stream handle to be used for blockdiff results
                    retrieval via ceph_file_blockdiff().
  * @returns 0 on success and negative error code otherwise
  */

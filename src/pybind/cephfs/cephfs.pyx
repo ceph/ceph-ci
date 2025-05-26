@@ -391,7 +391,7 @@ cdef class SnapDiffHandle(object):
 
 cdef class BlockDiffHandle(object):
     cdef LibCephFS lib
-    cdef ceph_file_blockdiff_info handle
+    cdef ceph_file_blockdiff_info* handle
     cdef int opened
 
     def __cinit__(self, _lib):
@@ -407,7 +407,8 @@ cdef class BlockDiffHandle(object):
         cdef:
             ceph_file_blockdiff_changedblocks chblks
         with nogil:
-            ret = ceph_file_blockdiff(&self.handle, &chblks)
+            if self.handle:
+                ret = ceph_file_blockdiff(self.handle, &chblks)
         if ret < 0:
             raise make_ex(ret, "ceph_file_blockdiff failed, ret {}"
                 .format(ret))
@@ -416,14 +417,13 @@ cdef class BlockDiffHandle(object):
         return chblks.b.offset, chblks.b.len
 
     def close(self):
-        if (not self.opened):
-            return
-        self.lib.require_state("mounted")
-        with nogil:
-            ret = ceph_file_blockdiff_finish(&self.handle)
-        if ret < 0:
-            raise make_ex(ret, "closeblockdiff failed")
-        self.opened = 0
+        if self.handle:
+            self.lib.require_state("mounted")
+            with nogil:
+                ret = ceph_file_blockdiff_finish(self.handle)
+            if ret < 0:
+                raise make_ex(ret, "closeblockdiff failed")
+            self.handle = NULL
 
 def cstr(val, name, encoding="utf-8", opt=False) -> bytes:
     """
@@ -1126,7 +1126,7 @@ cdef class LibCephFS(object):
             char* _snap1 = snap1
             char* _snap2 = snap2
         with nogil:
-            ret = ceph_file_blockdiff_init(self.cluster, _root, _relp, _snap1, _snap2, &h.handle);
+            ret = ceph_file_blockdiff_init(self.cluster, _root, _relp, _snap1, _snap2, h.handle);
         if ret < 0:
             raise make_ex(ret, "file blockdiff init failed for {} vs. {}"
                   .format(snap1.decode('utf-8'), snap2.decode('utf-8')))
