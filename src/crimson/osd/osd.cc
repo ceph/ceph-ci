@@ -596,10 +596,6 @@ seastar::future<> OSD::start()
     return heartbeat->start(pick_addresses(CEPH_PICK_ADDRESS_PUBLIC),
                             pick_addresses(CEPH_PICK_ADDRESS_CLUSTER));
   }).then([this] {
-    // create the admin-socket server, and the objects that register
-    // to handle incoming commands
-    return start_asok_admin();
-  }).then([this] {
     return log_client.set_fsid(monc->get_fsid());
   }).then([this] {
     return start_boot();
@@ -1294,6 +1290,11 @@ seastar::future<> OSD::committed_osd_maps(
 	  // timer continuation rearms when complete
           tick_timer.arm(
             std::chrono::seconds(TICK_INTERVAL));
+        }).then([this, FNAME] {
+          // create the admin-socket server, and the objects that register
+          // to handle incoming commands
+          INFO("osd.{}: activated, starting asock admin...", whoami);
+          return start_asok_admin();
         });
       }
     } else {
