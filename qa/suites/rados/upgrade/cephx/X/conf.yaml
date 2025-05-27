@@ -2,6 +2,7 @@ overrides:
   ceph:
     conf:
       global:
+        debug ms: 1
         debug auth: 30
         debug monc: 30
         log to file: true
