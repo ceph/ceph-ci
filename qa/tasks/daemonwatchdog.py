@@ -74,6 +74,10 @@ class DaemonWatchdog(Greenlet):
             except:
                 self.logger.exception("ignoring exception:")
 
+        for thrasher in self.thrashers:
+            self.log("Killing running thrasher {name}".format(name=thrasher.name))
+            thrasher.stop_and_join() 
+
     def watch(self):
         self.log("watchdog starting")
         daemon_timeout = int(self.config.get('daemon_timeout', 300))
