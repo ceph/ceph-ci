@@ -4,6 +4,7 @@ overrides:
       global:
         debug auth: 30
         debug monc: 30
+        log to file: true
         auth mon ticket ttl: 300
         auth service ticket ttl: 120
       mon:
