@@ -407,7 +407,10 @@ cdef class BlockDiffHandle(object):
         cdef:
             ceph_file_blockdiff_changedblocks chblks
         with nogil:
-            ret = ceph_file_blockdiff(&self.handle, &chblks)
+            if self.opened:
+                ret = ceph_file_blockdiff(&self.handle, &chblks)
+            else:
+                raise make_ex(EBADF, "dir is not open")
         if ret < 0:
             raise make_ex(ret, "ceph_file_blockdiff failed, ret {}"
                 .format(ret))
@@ -416,7 +419,7 @@ cdef class BlockDiffHandle(object):
         return chblks.b.offset, chblks.b.len
 
     def close(self):
-        if (not self.opened):
+        if not self.opened:
             return
         self.lib.require_state("mounted")
         with nogil:
