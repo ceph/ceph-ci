@@ -4,6 +4,7 @@
 #include "MonMap.h"
 
 #include <algorithm>
+#include <limits>
 #include <sstream>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -1034,6 +1035,7 @@ int MonMap::build_initial(CephContext *cct, bool for_mkfs, ostream& errout)
   created = ceph_clock_now();
   last_changed = created;
   calc_legacy_ranks();
+  auth_epoch = std::numeric_limits<decltype(auth_epoch)>::max();
   return 0;
 }
 #endif	// WITH_CRIMSON
