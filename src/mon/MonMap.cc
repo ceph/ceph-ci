@@ -968,6 +968,8 @@ int MonMap::build_initial(CephContext *cct, bool for_mkfs, ostream& errout)
   lgeneric_dout(cct, 1) << __func__ << " for_mkfs: " << for_mkfs << dendl;
   const auto& conf = cct->_conf;
 
+  auth_epoch = std::numeric_limits<decltype(auth_epoch)>::max();
+
   // mon_host_override?
   auto mon_host_override = conf.get_val<std::string>("mon_host_override");
   if (!mon_host_override.empty()) {
@@ -1035,7 +1037,6 @@ int MonMap::build_initial(CephContext *cct, bool for_mkfs, ostream& errout)
   created = ceph_clock_now();
   last_changed = created;
   calc_legacy_ranks();
-  auth_epoch = std::numeric_limits<decltype(auth_epoch)>::max();
   return 0;
 }
 #endif	// WITH_CRIMSON
