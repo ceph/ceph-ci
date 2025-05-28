@@ -143,11 +143,15 @@ def task(ctx, config):
     op_weights = config.get('op_weights', {})
     testdir = teuthology.get_testdir(ctx)
     pct_update_delay = None
+    # LEE - added daemon helper here
     args = [
         'adjust-ulimits',
         'ceph-coverage',
         '{tdir}/archive/coverage'.format(tdir=testdir),
+        'daemon-helper',
+        'kill',
         'ceph_test_rados']
+
     if config.get('ec_pool', False):
         args.extend(['--no-omap'])
         if not config.get('erasure_code_use_overwrites', False):
@@ -299,7 +303,17 @@ def task(ctx, config):
                     wait=False
                     )
                 tests[id_] = proc
+            # LEE proof of concept experiment
+            run.wait(tests.values(),600)
+ 
+            # LEE proof of concept experiment
+            log.info('LEE: timed out - closing stding')
+            for proc in tests.values()
+                proc.stdin.close()
+            log.info('LEE: after stdin close')
             run.wait(tests.values())
+            log.info('LEE: after run.wait') 
+
             wait_for_all_active_clean_pgs = config.get("wait_for_all_active_clean_pgs", False)
             # usually set when we do min_size testing.
             if  wait_for_all_active_clean_pgs:
