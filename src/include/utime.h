@@ -402,8 +402,7 @@ public:
 
     if (nsec)
       *nsec = 0;
-
-    const char *p = strptime(date.c_str(), "%Y-%m-%d", &tm);
+    const char *p = strptime(date.c_str(), "%A, %d %b %Y %H:%M:%S %Z", &tm);
     if (p) {
       if (*p == ' ' || *p == 'T') {
 	p++;
