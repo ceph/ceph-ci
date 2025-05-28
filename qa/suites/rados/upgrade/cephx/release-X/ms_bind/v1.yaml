@@ -1,0 +1,15 @@
+overrides:
+  ceph:
+    conf:
+      osd:
+        ms_bind_msgr1: true
+        ms_bind_msgr2: false
+      mds:
+        ms_bind_msgr1: true
+        ms_bind_msgr2: false
+      mon:
+        ms_bind_msgr1: true
+        ms_bind_msgr2: false
+      mgr:
+        ms_bind_msgr1: true
+        ms_bind_msgr2: false
