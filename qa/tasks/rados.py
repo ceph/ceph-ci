@@ -304,11 +304,11 @@ def task(ctx, config):
                     )
                 tests[id_] = proc
             # LEE proof of concept experiment
-            run.wait(tests.values(),600)
+            run.wait(tests.values(),300)
  
             # LEE proof of concept experiment
             log.info('LEE: timed out - closing stding')
-            for proc in tests.values()
+            for proc in tests.values():
                 proc.stdin.close()
             log.info('LEE: after stdin close')
             run.wait(tests.values())
