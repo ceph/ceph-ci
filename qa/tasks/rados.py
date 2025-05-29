@@ -304,15 +304,17 @@ def task(ctx, config):
                     )
                 tests[id_] = proc
             # LEE proof of concept experiment
-            run.wait(tests.values(),300)
- 
-            # LEE proof of concept experiment
-            log.info('LEE: timed out - closing stding')
-            for proc in tests.values():
-                proc.stdin.close()
-            log.info('LEE: after stdin close')
-            run.wait(tests.values())
-            log.info('LEE: after run.wait') 
+            try: 
+                run.wait(tests.values(),300)
+            except MaxWhileTries as e:
+                log.info('LEE: %s',e.args )
+                # LEE proof of concept experiment
+                log.info('LEE: timed out - closing stding')
+                for proc in tests.values():
+                    proc.stdin.close()
+                log.info('LEE: after stdin close')
+                run.wait(tests.values())
+                log.info('LEE: after run.wait') 
 
             wait_for_all_active_clean_pgs = config.get("wait_for_all_active_clean_pgs", False)
             # usually set when we do min_size testing.
