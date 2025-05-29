@@ -4,6 +4,7 @@
 #include "./scrub_backend.h"
 
 #include <algorithm>
+#include <sstream>
 
 #include <fmt/ranges.h>
 
@@ -96,9 +97,10 @@ ScrubBackend::ScrubBackend(ScrubBeListener& scrubber,
               : (m_depth == scrub_level_t::deep ? "deep-scrub"sv : "scrub"sv));
 }
 
-uint64_t ScrubBackend::logical_to_ondisk_size(uint64_t logical_size) const
+uint64_t ScrubBackend::logical_to_ondisk_size(uint64_t logical_size,
+                                 int8_t shard_id) const
 {
-  return m_pg.logical_to_ondisk_size(logical_size);
+  return m_pg.logical_to_ondisk_size(logical_size, shard_id);
 }
 
 void ScrubBackend::update_repair_status(bool should_repair)
@@ -230,37 +232,30 @@ void ScrubBackend::omap_checks()
   }
 
   stringstream wss;
+  const auto& smap = this_chunk->received_maps.at(m_pg_whoami);
 
   // Iterate through objects and update omap stats
   for (const auto& ho : this_chunk->authoritative_set) {
 
-    for (const auto& [srd, smap] : this_chunk->received_maps) {
-      if (srd != m_pg_whoami) {
-        // Only set omap stats for the primary
-        continue;
-      }
+    const auto it = smap.objects.find(ho);
+    if (it == smap.objects.end()) {
+      continue;
+    }
 
-      auto it = smap.objects.find(ho);
-      if (it == smap.objects.end()) {
-        continue;
-      }
-
-      const ScrubMap::object& smap_obj = it->second;
-      m_omap_stats.omap_bytes += smap_obj.object_omap_bytes;
-      m_omap_stats.omap_keys += smap_obj.object_omap_keys;
-      if (smap_obj.large_omap_object_found) {
-        auto osdmap = m_scrubber.get_osdmap();
-        pg_t pg;
-        osdmap->map_to_pg(ho.pool, ho.oid.name, ho.get_key(), ho.nspace, &pg);
-        pg_t mpg = osdmap->raw_pg_to_pg(pg);
-        m_omap_stats.large_omap_objects++;
-        wss << "Large omap object found. Object: " << ho << " PG: " << pg
-            << " (" << mpg << ")"
-            << " Key count: " << smap_obj.large_omap_object_key_count
-            << " Size (bytes): " << smap_obj.large_omap_object_value_size
-            << '\n';
-        break;
-      }
+    const ScrubMap::object& smap_obj = it->second;
+    m_omap_stats.omap_bytes += smap_obj.object_omap_bytes;
+    m_omap_stats.omap_keys += smap_obj.object_omap_keys;
+    if (smap_obj.large_omap_object_found) {
+      auto osdmap = m_scrubber.get_osdmap();
+      pg_t pg;
+      osdmap->map_to_pg(ho.pool, ho.oid.name, ho.get_key(), ho.nspace, &pg);
+      pg_t mpg = osdmap->raw_pg_to_pg(pg);
+      m_omap_stats.large_omap_objects++;
+      wss << "Large omap object found. Object: " << ho << " PG: " << pg << " ("
+	  << mpg << ")"
+	  << " Key count: " << smap_obj.large_omap_object_key_count
+	  << " Size (bytes): " << smap_obj.large_omap_object_value_size << '\n';
+      break;
     }
   }
 
@@ -717,17 +712,24 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
         return shard_as_auth_t{errstream.str()};
       }
     }
+
+    if (!dup_error_cond(err,
+                        false,
+                        (oi.soid != obj),
+                        shard_info,
+                        &shard_info_wrapper::set_info_corrupted,
+                        "candidate info oid mismatch"sv,
+                        errstream)) {
+      return shard_as_auth_t{errstream.str()};
+    }
   }
 
-  // This is automatically corrected in repair_oinfo_oid()
-  ceph_assert(oi.soid == obj);
-
-  if (test_error_cond(smap_obj.size != logical_to_ondisk_size(oi.size),
-                      shard_info,
+  uint64_t ondisk_size = logical_to_ondisk_size(oi.size, srd.shard.id);
+  if (test_error_cond(smap_obj.size != ondisk_size, shard_info,
                       &shard_info_wrapper::set_obj_size_info_mismatch)) {
 
     errstream << sep(err) << "candidate size " << smap_obj.size << " info size "
-              << logical_to_ondisk_size(oi.size) << " mismatch";
+              << ondisk_size << " mismatch";
   }
 
   std::optional<uint32_t> digest;
@@ -1289,8 +1291,8 @@ bool ScrubBackend::compare_obj_details(pg_shard_t auth_shard,
   // ------------------------------------------------------------------------
 
   // sizes:
-
-  uint64_t oi_size = logical_to_ondisk_size(auth_oi.size);
+  // NOTE: This will be fixed as a later PR as part of the optimized EC work.
+  uint64_t oi_size = logical_to_ondisk_size(auth_oi.size, 0);
   if (oi_size != candidate.size) {
     fmt::format_to(std::back_inserter(out),
                    "{}size {} != size {} from auth oi {}",
@@ -1467,12 +1469,13 @@ void ScrubBackend::scrub_snapshot_metadata(ScrubMap& map)
     }
 
     if (oi) {
-      if (logical_to_ondisk_size(oi->size) != p->second.size) {
+      // NOTE: Fix planned as part of the optimized EC work.
+      if (logical_to_ondisk_size(oi->size, 0) != p->second.size) {
         clog.error() << m_mode_desc << " " << m_pg_id << " " << soid
                       << " : on disk size (" << p->second.size
                       << ") does not match object info size (" << oi->size
                       << ") adjusted for ondisk to ("
-                      << logical_to_ondisk_size(oi->size) << ")";
+                      << logical_to_ondisk_size(oi->size, 0) << ")";
         soid_error.set_size_mismatch();
         this_chunk->m_error_counts.shallow_errors++;
       }

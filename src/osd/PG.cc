@@ -15,6 +15,7 @@
 #include "PG.h"
 #include "messages/MOSDRepScrub.h"
 
+#include "common/debug.h"
 #include "common/errno.h"
 #include "common/ceph_releases.h"
 #include "common/config.h"
@@ -514,6 +515,8 @@ void PG::finish_recovery_op(const hobject_t& soid, bool dequeue)
 
 void PG::split_into(pg_t child_pgid, PG *child, unsigned split_bits)
 {
+  dout(10) << __func__ << " split_bits " << split_bits << dendl;
+
   recovery_state.split_into(child_pgid, &child->recovery_state, split_bits);
 
   child->update_snap_mapper_bits(split_bits);
@@ -1295,16 +1298,12 @@ double PG::next_deepscrub_interval() const
   return info.history.last_deep_scrub_stamp + deep_scrub_interval;
 }
 
-void PG::on_scrub_schedule_input_change(Scrub::delay_ready_t delay_ready)
+void PG::on_scrub_schedule_input_change()
 {
   if (is_active() && is_primary() && !is_scrub_queued_or_active()) {
-    dout(10) << fmt::format(
-		    "{}: active/primary. delay_ready={:c}", __func__,
-		    (delay_ready == Scrub::delay_ready_t::delay_ready) ? 't'
-								       : 'f')
-	     << dendl;
+    dout(10) << fmt::format("{}: active/primary", __func__) << dendl;
     ceph_assert(m_scrubber);
-    m_scrubber->update_scrub_job(delay_ready);
+    m_scrubber->update_scrub_job();
   } else {
     dout(10) << fmt::format(
 		    "{}: inactive, non-primary - or already scrubbing",
@@ -1561,8 +1560,12 @@ void PG::on_backfill_reserved()
   queue_recovery();
 }
 
-void PG::on_backfill_canceled()
+void PG::on_backfill_suspended()
 {
+  // Scan replies asked before suspending this backfill should be ignored.
+  // See PrimaryLogPG::do_scan -  case MOSDPGScan::OP_SCAN_DIGEST.
+  // `waiting_on_backfill` will be re-refilled after the suspended backfill
+  // is resumed/restarted.
   if (!waiting_on_backfill.empty()) {
     waiting_on_backfill.clear();
     finish_recovery_op(hobject_t::get_max());
@@ -2203,7 +2206,7 @@ void PG::handle_activate_map(PeeringCtx &rctx, epoch_t range_starts_at)
   // on_scrub_schedule_input_change() as pool.info contains scrub scheduling
   // parameters.
   if (pool.info.last_change >= range_starts_at) {
-    on_scrub_schedule_input_change(Scrub::delay_ready_t::delay_ready);
+    on_scrub_schedule_input_change();
   }
 }
 

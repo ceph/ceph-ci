@@ -20,39 +20,38 @@
 
 /**
  * A simple class to cache a single configuration value.
- * Points to note:
- * - as get_tracked_conf_keys() must return a pointer to a null-terminated
- *   array of C-strings, 'keys' - an array - is used to hold the sole key
- *   that this observer is interested in.
- * - the const cast should be removed once we change the
- *   get_tracked_conf_keys() to return const char* const * (or something
- *   similar).
+ *
+ * The md_config_cacher_t object registers itself to receive
+ * notifications of changes to the specified single configuration
+ * option.  When the option changes, the new value is stored
+ * in an atomic variable.  The value can be accessed using
+ * the dereference operator.
  */
 template <typename ValueT>
 class md_config_cacher_t : public md_config_obs_t {
   ConfigProxy& conf;
-  const char* keys[2];
+  const std::string option_name;
   std::atomic<ValueT> value_cache;
 
-  const char** get_tracked_conf_keys() const override {
-    return const_cast<const char**>(keys);
+  std::vector<std::string> get_tracked_keys() const noexcept override {
+    return std::vector<std::string>{option_name};
   }
 
   void handle_conf_change(const ConfigProxy& conf,
                           const std::set<std::string>& changed) override {
-    if (changed.contains(keys[0])) {
-      value_cache.store(conf.get_val<ValueT>(keys[0]));
+    if (changed.contains(option_name)) {
+      value_cache.store(conf.get_val<ValueT>(option_name));
     }
   }
 
 public:
   md_config_cacher_t(ConfigProxy& conf,
                      const char* const option_name)
-    : conf(conf),
-      keys{option_name, nullptr} {
+    : conf(conf)
+    , option_name{option_name} {
     conf.add_observer(this);
     std::atomic_init(&value_cache,
-                     conf.get_val<ValueT>(keys[0]));
+                     conf.get_val<ValueT>(option_name));
   }
 
   ~md_config_cacher_t() {

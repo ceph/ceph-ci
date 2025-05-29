@@ -25,6 +25,7 @@
 #include "crimson/osd/state.h"
 #include "common/AsyncReserver.h"
 #include "crimson/net/Connection.h"
+#include "mgr/OSDPerfMetricTypes.h"
 
 namespace crimson::net {
   class Messenger;
@@ -197,6 +198,8 @@ class PerShardState {
   }
 
   OSDSuperblock per_shard_superblock;
+  std::list<OSDPerfMetricQuery> m_perf_queries;
+  std::map<OSDPerfMetricQuery, OSDPerfMetricLimits> m_perf_limits;
 
 public:
   PerShardState(
@@ -318,7 +321,7 @@ private:
   epoch_t up_thru_wanted = 0;
   seastar::future<> send_alive(epoch_t want);
 
-  const char** get_tracked_conf_keys() const final;
+  std::vector<std::string> get_tracked_keys() const noexcept final;
   void handle_conf_change(
     const ConfigProxy& conf,
     const std::set <std::string> &changed) final;
@@ -590,8 +593,7 @@ public:
   }
 
   FORWARD_TO_OSD_SINGLETON(get_pool_info)
-  FORWARD(with_throttle_while, with_throttle_while, local_state.throttler)
-  FORWARD(try_acquire_throttle_now, try_acquire_throttle_now, local_state.throttler)
+  FORWARD(get_throttle, get_throttle, local_state.throttler)
 
   FORWARD_TO_OSD_SINGLETON(build_incremental_map_msg)
   FORWARD_TO_OSD_SINGLETON(send_incremental_map)
@@ -615,6 +617,9 @@ public:
     snap_dump_reservations,
     snap_reserver.dump)
 
+  bool throttle_available() const {
+    return local_state.throttler.available();
+  }
 
   auto local_update_priority(
     singleton_orderer_t &orderer,

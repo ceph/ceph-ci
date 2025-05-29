@@ -136,6 +136,7 @@ public:
     friend ObjectContextLoader;
 
     void set_state_obc(state_t &s, ObjectContextRef _obc) {
+      ceph_assert(s.is_empty());
       s.obc = std::move(_obc);
       s.obc->append_to(loader.obc_set_accessing);
     }
@@ -161,6 +162,10 @@ public:
       this->~Manager();
       new(this) Manager(std::move(o));
       return *this;
+    }
+
+    void lock_excl_sync() {
+      target_state.lock_excl_sync();
     }
 
     ObjectContextRef &get_obc() {
@@ -202,9 +207,40 @@ public:
 
     ~Orderer() {
       LOG_PREFIX(ObjectContextLoader::~Orderer);
-      SUBDEBUG(osd, "releasing obc {}, {}", *(orderer_obc));
+      SUBDEBUG(osd, "releasing obc {}", *(orderer_obc));
     }
   };
+
+  /**
+   * create_cached_obc_from_push_data
+   *
+   * Creates a fresh cached obc from passed oi and ssc.
+   * Overwrites any obc already in cache for this object.
+   *
+   * Note, this interface may be used to create a clone obc
+   * with a null ssc.  The capability is useful when handling
+   * a clone push on a replica -- we don't necessarily have
+   * a valid local copy of the head since the primary may not
+   * push the head first.  That obc with a null ssc may
+   * remain in the cache.  ObjectContextLoader::load_and_lock_clone
+   * will fix the ssc member if null, but users of any other
+   * access mechanism must be aware that ssc on a clone obc may be
+   * null.
+   */
+  ObjectContextRef create_cached_obc_from_push_data(
+    const object_info_t &oi,
+    SnapSetContextRef ssc) {
+    auto obc = obc_registry.get_cached_obc(oi.soid).first;
+    if (oi.soid.is_head()) {
+      ceph_assert(ssc); // head, ssc may not be null
+      obc->set_head_state(ObjectState(oi, true), SnapSetContextRef(ssc));
+    } else {
+      // clone, ssc may be null
+      obc->set_clone_state(ObjectState(oi, true));
+      obc->set_clone_ssc(SnapSetContextRef(ssc));
+    }
+    return obc;
+  }
 
   Orderer get_obc_orderer(const hobject_t &oid) {
     Orderer ret;
@@ -216,6 +252,12 @@ public:
   Manager get_obc_manager(const hobject_t &oid, bool resolve_clone = true) {
     Manager ret(*this, oid);
     ret.options.resolve_clone = resolve_clone;
+    return ret;
+  }
+
+  Manager get_obc_manager(ObjectContextRef obc) {
+    Manager ret = get_obc_manager(obc->obs.oi.soid, false);
+    ret.set_state_obc(ret.target_state, obc);
     return ret;
   }
 

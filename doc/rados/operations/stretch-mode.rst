@@ -123,7 +123,7 @@ Stretch Mode
 Stretch mode is designed to handle netsplit scenarios between two data zones as well
 as the loss of one data zone. It handles the netsplit scenario by choosing the surviving zone
 that has the better connection to the ``tiebreaker monitor``. It handles the loss of one zone by
-reducing the ``size`` to ``2`` and ``min_size`` to ``1``, allowing the cluster to continue operating
+reducing the ``min_size`` of all pools to ``1``, allowing the cluster to continue operating
 with the remaining zone. When the lost zone comes back, the cluster will recover the lost data
 and return to normal operation.
 
@@ -335,16 +335,16 @@ a CRUSH rule is given above.
 
 Because stretch mode runs with ``min_size`` set to ``1`` (or, more directly,
 ``min_size 1``), we recommend enabling stretch mode only when using OSDs on
-SSDs (including NVMe OSDs). Hybrid HDD+SDD or HDD-only OSDs are not recommended
+SSDs. Hybrid HDD+SSD or HDD-only OSDs are not recommended
 due to the long time it takes for them to recover after connectivity between
 data centers has been restored. This reduces the potential for data loss.
 
-.. warning:: Device class is currently not supported in stretch mode.
-   For example, the following rule containing ``device class`` will not work::
+.. warning:: CRUSH rules that specify a device class are not supported in stretch mode.
+   For example, the following rule specifying the ``ssd`` device class will not work::
 
       rule stretch_replicated_rule {
                  id 2
-                 type replicated class hdd
+                 type replicated class ssd
                  step take default
                  step choose firstn 0 type datacenter
                  step chooseleaf firstn 2 type host
@@ -353,7 +353,7 @@ data centers has been restored. This reduces the potential for data loss.
 
 In the future, stretch mode could support erasure-coded pools,
 enable deployments across multiple data centers,
-and accommodate various device classes.
+and accommodate multiple CRUSH device classes.
 
 Other commands
 ==============

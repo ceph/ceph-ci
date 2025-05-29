@@ -52,6 +52,17 @@ function prepare() {
     local which_pkg="which"
     if command -v apt-get > /dev/null 2>&1 ; then
         which_pkg="debianutils"
+
+        if in_jenkins; then
+            if ! type clang-19 > /dev/null 2>&1 ; then
+                ci_debug "Getting clang-19"
+                wget https://download.ceph.com/qa/llvm.sh
+                chmod +x llvm.sh
+                wrap_sudo
+                $DRY_RUN $SUDO ./llvm.sh 19
+                rm llvm.sh
+            fi
+        fi
     fi
 
     if test -f ./install-deps.sh ; then
@@ -108,8 +119,8 @@ EOM
     cmake_opts+=" -DWITH_GRAFANA=ON"
     cmake_opts+=" -DWITH_SPDK=ON"
     cmake_opts+=" -DWITH_RBD_MIRROR=ON"
-    if [ $WITH_SEASTAR ]; then
-        cmake_opts+=" -DWITH_SEASTAR=ON"
+    if [ $WITH_CRIMSON ]; then
+        cmake_opts+=" -DWITH_CRIMSON=ON"
     fi
     if [ $WITH_RBD_RWL ]; then
         cmake_opts+=" -DWITH_RBD_RWL=ON"

@@ -10,6 +10,7 @@ if(WITH_LIBCEPHFS)
     main.cc
     deleg.cc
     monconfig.cc
+    client_cache.cc
   )
   target_link_libraries(ceph_test_libcephfs
     ceph-common
@@ -120,5 +121,20 @@ target_link_libraries(ceph_test_libcephfs_lazyio
     ${CMAKE_DL_LIBS}
     )
   install(TARGETS ceph_test_libcephfs_access
+    DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+  add_executable(ceph_test_libcephfs_perfcounters
+    perfcounters.cc
+    main.cc
+  )
+  target_link_libraries(ceph_test_libcephfs_perfcounters
+    ceph-common
+    cephfs
+    librados
+    ${UNITTEST_LIBS}
+    ${EXTRALIBS}
+    ${CMAKE_DL_LIBS}
+    )
+  install(TARGETS ceph_test_libcephfs_perfcounters
     DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif(WITH_LIBCEPHFS)

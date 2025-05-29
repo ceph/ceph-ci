@@ -77,7 +77,7 @@ public:
 
   virtual interruptible_future<> handle_recovery_op(
     Ref<MOSDFastDispatchOp> m,
-    crimson::net::ConnectionXcoreRef conn);
+    crimson::net::ConnectionXcoreRef conn) = 0;
 
   virtual interruptible_future<> recover_object(
     const hobject_t& soid,
@@ -89,8 +89,14 @@ public:
     const hobject_t& soid,
     eversion_t need) = 0;
 
-  interruptible_future<BackfillInterval> scan_for_backfill(
-    const hobject_t& from,
+  interruptible_future<PrimaryBackfillInterval> scan_for_backfill_primary(
+    const hobject_t from,
+    std::int64_t min,
+    std::int64_t max,
+    const std::set<pg_shard_t> &backfill_targets);
+
+  interruptible_future<ReplicaBackfillInterval> scan_for_backfill_replica(
+    const hobject_t from,
     std::int64_t min,
     std::int64_t max);
 
@@ -214,11 +220,9 @@ public:
     }
     void set_pushed(pg_shard_t shard) {
       auto it = pushes.find(shard);
-      if (it != pushes.end()) {
-	auto &push_promise = it->second;
-	push_promise.set_value();
-	pushes.erase(it);
-      }
+      ceph_assert(it != pushes.end());
+      it->second.set_value();
+      pushes.erase(it);
     }
     void set_pulled() {
       if (pulled) {
@@ -268,6 +272,18 @@ protected:
 
   void clean_up(ceph::os::Transaction& t, interrupt_cause_t why);
   virtual seastar::future<> on_stop() = 0;
+
+  virtual interruptible_future<> handle_backfill_op(
+    Ref<MOSDFastDispatchOp> m,
+    crimson::net::ConnectionXcoreRef conn);
+
+  /**
+   * replica_push_targets
+   *
+   * Holds obc on replica for in-progress pushes, see
+   * ReplicatedRecoveryBackend::handle_push
+   */
+  std::map<hobject_t, crimson::osd::ObjectContextRef> replica_push_targets;
 private:
   void handle_backfill_finish(
     MOSDPGBackfill& m,
