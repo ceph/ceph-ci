@@ -270,7 +270,7 @@ def test_large_object(r, client, s3):
     log.info("1. Multipart datacache contents before sleep:") # TODO: Remove logs if no errors
     temp = subprocess.check_output(['ls', '-a', datacache_path])
     log.info(temp.decode('latin-1').splitlines())
-    time.sleep(60)
+    time.sleep(50)
     bucketID = subprocess.check_output(['ls', '/tmp/rgw_d4n_datacache/']).decode('latin-1').strip()
     datacache_path = '/tmp/rgw_d4n_datacache/' + bucketID + '/mymultipart/'
     datacache = subprocess.check_output(['ls', '-a', datacache_path])
