@@ -305,7 +305,7 @@ def task(ctx, config):
                 tests[id_] = proc
             # LEE proof of concept experiment
             try: 
-                run.wait(tests.values(),300)
+                run.wait(tests.values(),5400)
             except MaxWhileTries as e:
                 log.info('LEE: %s',e.args )
                 # LEE proof of concept experiment
@@ -314,7 +314,7 @@ def task(ctx, config):
                     proc.stdin.close()
                 log.info('LEE: after stdin close')
                 run.wait(tests.values())
-                log.info('LEE: after run.wait') 
+                log.info('LEE: after run.wait - raising exception for timeout!!') 
                 raise
 
             wait_for_all_active_clean_pgs = config.get("wait_for_all_active_clean_pgs", False)
