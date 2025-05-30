@@ -4,7 +4,6 @@ import logging
 import mgr_util
 import inspect
 import functools
-from time import sleep
 from os.path import join
 from typing import TYPE_CHECKING, Any, Callable, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
@@ -25,7 +24,7 @@ from .operations.volume import create_volume, delete_volume, rename_volume, \
 from .operations.subvolume import open_subvol, create_subvol, remove_subvol, \
     create_clone, open_subvol_in_group, open_subvol_in_vol
 from .operations.trash import get_pending_subvol_deletions_count, \
-        get_trashcan_stats, get_trash_path
+        get_trash_path
 
 from .vol_spec import VolSpec
 from .exception import VolumeException, ClusterError, ClusterTimeout, \
@@ -1172,23 +1171,9 @@ class VolumeClient(CephfsClient["Module"]):
         calculating the amount and the percentage of subvolumes, files and size
         of data purged.
         '''
-        subvols_left, files_left, size_left = get_trashcan_stats(self, volname)
-
-        try:
-            total_subvols, total_files, total_size = self._get_pre_rm_subvol_stats(volname)
-        # If volumes plugin or MGR is restarted, all stats stored in
-        # self.pre_rm_subvol_stats will be lost leading to KeyError.
-        # In such a case, repopulate self.pre_rm_subvol_stats with latest
-        # stats, sleep for a second and then re-fetch latest stats. Now, stats
-        # in self.pre_rm_subvol_stats as well as latest stats are present
-        # and therefore we can proceed as usual.
-        except KeyError:
-            self._update_pre_rm_subvol_stats(volname, subvols_left, files_left,
-                                             size_left)
-            sleep(1)
-            subvols_left, files_left, size_left = get_trashcan_stats(self,
-                                                                    volname)
-            total_subvols, total_files, total_size = self._get_pre_rm_subvol_stats(volname)
+        subvols_left = self.purge_progress_bar.latest_subvol_count
+        files_left = self.purge_progress_bar.latest_file_count
+        size_left = self.purge_progress_bar.latest_size
 
         # trashcan is empty, reset related DSs and return status as complete.
         if subvols_left == files_left == size_left == 0:
@@ -1202,13 +1187,15 @@ class VolumeClient(CephfsClient["Module"]):
 
             return {'status': {'state': 'complete'}}
 
+        total_subvols = self.purge_progress_bar.init_subvol_count
+        total_files = self.purge_progress_bar.init_file_count
+        total_size = self.purge_progress_bar.init_size
+
         subvols_purged = total_subvols - subvols_left
         files_purged = total_files - files_left
         size_purged = total_size - size_left
 
-        if subvols_purged < 0 or files_purged < 0 or size_purged < 0:
-            self._update_pre_rm_subvol_stats(volname, subvols_left, files_left,
-                                             size_left)
+        if self.purge_progress_bar.laggy_count >= self.purge_progress_bar.LAGGY_NOTE_LIMIT:
             self.prev_purge_status['status']['progress_report']['note'] = \
                 'MDS rstats are laggy at the moment'
             return self.prev_purge_status
