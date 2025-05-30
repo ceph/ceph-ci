@@ -315,7 +315,7 @@ def task(ctx, config):
                 log.info('LEE: after stdin close')
                 run.wait(tests.values())
                 log.info('LEE: after run.wait') 
-                raise("LEE: TIMED OUT - exiting ceph_test_rados!")
+                raise
 
             wait_for_all_active_clean_pgs = config.get("wait_for_all_active_clean_pgs", False)
             # usually set when we do min_size testing.
