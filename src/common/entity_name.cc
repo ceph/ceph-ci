@@ -19,6 +19,25 @@
 
 using std::string;
 
+void EntityName::encode(ceph::buffer::list& bl) const
+{
+  using ceph::encode;
+  {
+    uint32_t _type = type;
+    encode(_type, bl);
+  }
+  encode(id, bl);
+}
+
+void EntityName::decode(ceph::buffer::list::const_iterator& bl)
+{
+  using ceph::decode;
+  std::string id_;
+  uint32_t _type;
+  decode(_type, bl);
+  decode(id_, bl);
+  set(static_cast<entity_type_t>(_type), id_);
+}
 
 const std::array<EntityName::str_to_entity_type_t, 6> EntityName::STR_TO_ENTITY_TYPE = {{
   { CEPH_ENTITY_TYPE_AUTH, "auth" },
@@ -65,7 +84,7 @@ bool EntityName::from_str(std::string_view s) {
   return true;
 }
 
-void EntityName::set(uint32_t type_, std::string_view id_) {
+void EntityName::set(entity_type_t type_, std::string_view id_) {
   type = type_;
   id = id_;
 
@@ -79,14 +98,14 @@ void EntityName::set(uint32_t type_, std::string_view id_) {
 }
 
 int EntityName::set(std::string_view type_, std::string_view id_) {
-  uint32_t t = str_to_ceph_entity_type(type_);
+  auto t = str_to_ceph_entity_type(type_);
   if (t == CEPH_ENTITY_TYPE_ANY)
     return -EINVAL;
   set(t, id_);
   return 0;
 }
 
-void EntityName::set_type(uint32_t type_) {
+void EntityName::set_type(entity_type_t type_) {
   set(type_, id);
 }
 
@@ -135,7 +154,7 @@ std::string EntityName::get_valid_types_as_str() {
   return out.str();
 }
 
-uint32_t EntityName::str_to_ceph_entity_type(std::string_view s)
+entity_type_t EntityName::str_to_ceph_entity_type(std::string_view s)
 {
   size_t i;
   for (i = 0; i < STR_TO_ENTITY_TYPE.size(); ++i) {
