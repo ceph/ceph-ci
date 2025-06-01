@@ -161,7 +161,7 @@ void PaxosService::refresh(bool *need_bootstrap)
   format_version = new_format;
 
 
-  update_from_paxos(need_bootstrap);
+  _update_from_paxos(need_bootstrap);
 }
 
 void PaxosService::post_refresh()
@@ -221,7 +221,7 @@ void PaxosService::propose_pending()
   if (should_stash_full())
     encode_full(t);
 
-  encode_pending(t);
+  _encode_pending(t);
   have_pending = false;
 
   if (format_version > 0) {
@@ -338,7 +338,7 @@ void PaxosService::_active()
   if (mon.is_leader()) {
     dout(7) << __func__ << " creating new pending" << dendl;
     if (!have_pending) {
-      create_pending();
+      _create_pending();
       have_pending = true;
     }
 
@@ -464,13 +464,28 @@ void PaxosService::trim(MonitorDBStore::TransactionRef t,
   }
 }
 
-void PaxosService::load_health()
+void PaxosService::_create_pending() {
+  health_checks.create_pending();
+  create_pending();
+}
+
+void PaxosService::_encode_pending(MonitorDBStore::TransactionRef t) {
+  using ceph::encode;
+  encode_pending(t);
+  auto const& pending = health_checks.get_pending_map();
+  ceph::buffer::list bl;
+  encode(pending, bl);
+  t->put("health", service_name, bl);
+  mon.log_health(pending, pending, t);
+}
+
+void PaxosService::_update_from_paxos(bool* need_bootstrap)
 {
   bufferlist bl;
   mon.store->get("health", service_name, bl);
   if (bl.length()) {
     auto p = bl.cbegin();
-    using ceph::decode;
-    decode(health_checks, p);
+    health_checks.decode(p);
   }
+  update_from_paxos(need_bootstrap);
 }
