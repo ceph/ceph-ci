@@ -128,7 +128,7 @@ void AuthMonitor::tick()
 {
   if (!is_active()) return;
 
-  dout(10) << *this << dendl;
+  dout(10) << __func__ << dendl;
 
   // increase global_id?
   bool propose = false;
@@ -171,6 +171,12 @@ void AuthMonitor::tick()
 
   if (check_rotate()) {
     propose = true;
+    dout(20) << "proposing for rotate" << dendl;
+  }
+
+  if (check_health()) {
+    propose = true;
+    dout(20) << "proposing for health" << dendl;
   }
 
   if (propose) {
@@ -465,50 +471,106 @@ void AuthMonitor::encode_pending(MonitorDBStore::TransactionRef t)
   version_t version = get_last_committed() + 1;
   put_version(t, version, bl);
   put_last_committed(t, version);
+}
 
-  // health
+bool AuthMonitor::check_health()
+{
   auto& next = get_health_checks_pending_writeable();
-  map<string,list<string>> bad_detail;  // entity -> details
+
+  next.clear();
+
+  if (cct->_conf.get_val<bool>("mon_auth_allow_insecure_key")) {
+    next.add("AUTH_INSECURE_KEYS_ALLOWED", HEALTH_WARN, "Monitors are configured to allow creation of insecure key types", 1);
+  }
+
+  auto const& secure_key_types = CryptoManager::get_secure_key_types();
+
+  std::map<std::string,std::list<std::string>> bad_caps_detail;  // entity -> details
+  std::map<EntityName, std::string> bad_key_client_detail;
+  std::map<EntityName, std::string> bad_key_service_detail;
   for (auto const& [entity, auth] : mon.key_server.get_secrets()) {
     for (auto& p : auth.caps) {
       ostringstream ss;
       if (!valid_caps(p.first, p.second, &ss)) {
 	ostringstream ss2;
 	ss2 << entity << " " << ss.str();
-	bad_detail[entity.to_str()].push_back(ss2.str());
+	bad_caps_detail[entity.to_str()].push_back(ss2.str());
+      }
+    }
+    if (!secure_key_types.contains(auth.key.get_type())) {
+      auto name = CryptoManager::get_key_type_name(auth.key.get_type());
+      std::ostringstream ss;
+      ss << "entity " << entity << " using insecure key type: " << name;
+      if (entity.is_client()) {
+        bad_key_client_detail[entity] = ss.str();
+      } else {
+        bad_key_service_detail[entity] = ss.str();
       }
     }
   }
+
   for (auto& inc : pending_auth) {
     if (inc.inc_type == AUTH_DATA) {
       KeyServerData::Incremental auth_inc;
       auto iter = inc.auth_data.cbegin();
       decode(auth_inc, iter);
+      auto& auth = auth_inc.auth;
+      auto& entity = auth_inc.name;
       if (auth_inc.op == KeyServerData::AUTH_INC_DEL) {
-	bad_detail.erase(auth_inc.name.to_str());
+	bad_caps_detail.erase(entity.to_str());
+        bad_key_client_detail.erase(entity);
+        bad_key_service_detail.erase(entity);
       } else if (auth_inc.op == KeyServerData::AUTH_INC_ADD) {
-	for (auto& p : auth_inc.auth.caps) {
+	for (auto& p : auth.caps) {
 	  ostringstream ss;
 	  if (!valid_caps(p.first, p.second, &ss)) {
 	    ostringstream ss2;
-	    ss2 << auth_inc.name << " " << ss.str();
-	    bad_detail[auth_inc.name.to_str()].push_back(ss2.str());
+	    ss2 << entity << " " << ss.str();
+	    bad_caps_detail[entity.to_str()].push_back(ss2.str());
 	  }
 	}
+        if (!secure_key_types.contains(auth.key.get_type())) {
+          auto name = CryptoManager::get_key_type_name(auth.key.get_type());
+          std::ostringstream ss;
+          ss << "entity " << entity << " using insecure key type: " << name;
+          if (entity.is_client()) {
+            bad_key_client_detail[entity] = ss.str();
+          } else {
+            bad_key_service_detail[entity] = ss.str();
+          }
+        }
       }
     }
   }
-  if (bad_detail.size()) {
+  if (bad_caps_detail.size()) {
     ostringstream ss;
-    ss << bad_detail.size() << " auth entities have invalid capabilities";
+    ss << bad_caps_detail.size() << " auth entities have invalid capabilities";
     health_check_t *check = &next.add("AUTH_BAD_CAPS", HEALTH_ERR, ss.str(),
-				      bad_detail.size());
-    for (auto& i : bad_detail) {
+				      bad_caps_detail.size());
+    for (auto& i : bad_caps_detail) {
       for (auto& j : i.second) {
 	check->detail.push_back(j);
       }
     }
   }
+  if (!bad_key_client_detail.empty()) {
+    std::ostringstream summary;
+    summary << bad_key_client_detail.size() << " auth client entities with insecure key types";
+    auto& check = next.add("AUTH_INSECURE_CLIENT_KEY_TYPE", HEALTH_WARN, summary.str(), bad_key_client_detail.size());
+    for (auto& [name, detail] : bad_key_client_detail) {
+      check.detail.push_back(detail);
+    }
+  }
+  if (!bad_key_service_detail.empty()) {
+    std::ostringstream summary;
+    summary << bad_key_service_detail.size() << " auth service entities with insecure key types";
+    auto& check = next.add("AUTH_INSECURE_SERVICE_KEY_TYPE", HEALTH_ERR, summary.str(), bad_key_service_detail.size());
+    for (auto& [name, detail] : bad_key_service_detail) {
+      check.detail.push_back(detail);
+    }
+  }
+
+  return next != get_health_checks(); /* should propose */
 }
 
 void AuthMonitor::encode_full(MonitorDBStore::TransactionRef t)

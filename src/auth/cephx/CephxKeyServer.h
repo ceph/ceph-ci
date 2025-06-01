@@ -340,6 +340,7 @@ public:
   bool get_service_caps(const EntityName& name, uint32_t service_id,
 			AuthCapsInfo& caps) const;
 
+  auto const& get_secrets() const { return data.get_secrets(); }
   std::map<EntityName, EntityAuth>::iterator secrets_begin()
   { return data.secrets_begin(); }
   std::map<EntityName, EntityAuth>::iterator secrets_end()
