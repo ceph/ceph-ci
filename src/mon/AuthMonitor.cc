@@ -323,7 +323,6 @@ void AuthMonitor::create_initial()
 void AuthMonitor::update_from_paxos(bool *need_bootstrap)
 {
   dout(10) << __func__ << dendl;
-  load_health();
 
   version_t version = get_last_committed();
   version_t keys_ver = mon.key_server.get_ver();
@@ -468,7 +467,7 @@ void AuthMonitor::encode_pending(MonitorDBStore::TransactionRef t)
   put_last_committed(t, version);
 
   // health
-  health_check_map_t next;
+  auto& next = get_health_checks_pending_writeable();
   map<string,list<string>> bad_detail;  // entity -> details
   for (auto const& [entity, auth] : mon.key_server.get_secrets()) {
     for (auto& p : auth.caps) {
@@ -510,7 +509,6 @@ void AuthMonitor::encode_pending(MonitorDBStore::TransactionRef t)
       }
     }
   }
-  encode_health(next, t);
 }
 
 void AuthMonitor::encode_full(MonitorDBStore::TransactionRef t)
