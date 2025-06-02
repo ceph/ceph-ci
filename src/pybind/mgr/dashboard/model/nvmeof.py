@@ -177,7 +177,3 @@ class HostsInfo(NamedTuple):
 class RequestStatus(NamedTuple):
     status: int
     error_message: str
-    
-class AddHostRequestStatus(NamedTuple):
-    status: int
-    statuses: List[RequestStatus]

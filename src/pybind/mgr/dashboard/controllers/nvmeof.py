@@ -571,8 +571,7 @@ else:
             return NVMeoFClient(gw_group=gw_group, traddr=traddr).stub.add_host(
                 NVMeoFClient.pb2.add_host_req(subsystem_nqn=nqn, host_nqn=host_nqn)
             )
-                
-                    
+     
         @Endpoint('POST', "/bulk")
         @ReadPermission
         @EndpointDoc(
@@ -585,28 +584,37 @@ else:
         )
         @empty_response
         @NvmeofCLICommand("nvmeof host add")
-        @convert_to_model(model.AddHostRequestStatus)
+        @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
         def bulk_create(self, nqn: str, hosts: Optional[List[str]] = None, gw_group: Optional[str] = None,
                    traddr: Optional[str] = None):
-            results = {}
-            success = False
+            if not hosts:
+                return {
+                    'status': errno.EINVAL,
+                    'error_message': 'No hosts provided'
+                }
+        
+            success = True
+            failed_hosts = {}
             for host in hosts:
                 try:
-                    results[host] = NVMeoFClient(gw_group=gw_group, traddr=traddr).stub.add_host(
+                    resp = NVMeoFClient(gw_group=gw_group, traddr=traddr).stub.add_host(
                         NVMeoFClient.pb2.add_host_req(subsystem_nqn=nqn, host_nqn=host)
                     )
+                    if resp.status != 0:
+                        success = False
+                        failed_hosts[host] = resp.error_message
                 except Exception as e:
-                    errored = True
-                    if one_host_nqn == "*":
-                        errmsg = f"Failure allowing open host access to {args.subsystem}"
-                    else:
-                        errmsg = f"Failure adding host {one_host_nqn} to {args.subsystem}"
-                    results[host] = model.RequestStatus(status=errno.EINVAL, error_message=f"{errmsg}:\n{ex}")
-            
-            resp = {'status': 0 if success else errno.EINVAL,
-                'statuses': results}
-            return results
+                    success = False
+                    failed_hosts[host] = str(e)
+
+            return {
+                'status': 0 if success else errno.EINVAL,
+                'error_message': '' if success else (
+                    f"Failure adding the following hosts to {nqn}:\n" +
+                    "\n".join(f"- {host}: {msg}" for host, msg in failed_hosts.items())
+                )
+            }
                     
         @EndpointDoc(
             "Disallow hosts from accessing an NVMeoF subsystem",
