@@ -196,7 +196,7 @@ def test_ceph_mirror_xattr(testdir):
     assert_raises(libcephfs.NoData, cephfs.removexattr, "/", "ceph.mirror.info")
 
     # check mirror info xattr format
-    assert_raises(libcephfs.InvalidValue, cephfs.setxattr, '/', 'ceph.mirror.info', b"unknown", 0)
+    assert_equal(libcephfs.InvalidValue, cephfs.setxattr('/', 'ceph.mirror.info', b"unknown", 0))
 
 def test_fxattr(testdir):
     fd = cephfs.open(b'/file-fxattr', 'w', 0o755)
@@ -925,7 +925,7 @@ def test_blockdiff(testdir):
     cephfs.close(fd)
     # take a snapshot
     cephfs.mksnap("/blockdiff_test", "snap2", 0o755)
-    diff = cephfs.initblockdiff(b"/blockdiff_test", b"/", b"snap1", b"snap2")
+    diff = cephfs.initblockdiff(b"/blockdiff_test", b"", b"snap1", b"snap2")
     bl = diff.readblock()
     #assert_equal(b"5678", bl)
     diff.close()
