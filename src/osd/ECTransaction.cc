@@ -991,6 +991,9 @@ void ECTransaction::Generate::attr_updates() {
         ghobject_t(oid, ghobject_t::NO_GEN, shard),
         OI_ATTR,
         to_set[OI_ATTR]);
+      // DELETE ME DEBUG
+      object_info_t oi_decode(to_set[OI_ATTR]);
+      ceph_assert(oi_decode.soid == oid);
     } // Else: Unwritten shard - Don't update any attributes
   }
   ceph_assert(!xattr_rollback.empty());

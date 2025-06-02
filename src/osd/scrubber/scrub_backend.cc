@@ -726,6 +726,7 @@ shard_as_auth_t ScrubBackend::possible_auth_shard(const hobject_t& obj,
               << " oi=" << oi
               << " obj=" << obj
               << dendl;
+      ceph_abort_msg("See debug above");
     }
 
     if (!dup_error_cond(err,
