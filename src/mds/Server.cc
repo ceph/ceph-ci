@@ -6866,7 +6866,11 @@ int Server::parse_mirror_info_xattr(const std::string &name, const std::string &
 
   std::regex_search(value, match, regex);
   if (match.size() != 3) {
-    derr << "mirror info parse error" << dendl;
+    derr << "mirror info parse error, match.size: " << match.size()
+	 << " match0: " << match[0]
+	 << " match1: " << match[1]
+	 << " match2: " << match[2]
+	 << dendl;
     return -EINVAL;
   }
 
