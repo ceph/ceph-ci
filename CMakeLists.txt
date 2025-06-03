@@ -542,11 +542,7 @@ if(WITH_CATCH2)
   message("-- Enabled Catch2 support")
 endif()
 
-if(WIN32)
-    set(WITH_BREAKPAD_DEFAULT OFF)
-else()
-    set(WITH_BREAKPAD_DEFAULT ON)
-endif()
+set(WITH_BREAKPAD_DEFAULT OFF)
 
 option(WITH_BREAKPAD "Build with Google Breakpad crash reporter"  ${WITH_BREAKPAD_DEFAULT})
 if(WITH_BREAKPAD)
