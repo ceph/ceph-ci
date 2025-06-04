@@ -404,6 +404,10 @@ public:
       *nsec = 0;
 
     const char *p = strptime(date.c_str(), "%Y-%m-%d", &tm);
+    if (!p) {
+      memset(&tm, 0, sizeof(tm));
+      p = strptime(date.c_str(), "%A, %d %b %Y %H:%M:%S %Z", &tm);
+    }
     if (p) {
       if (*p == ' ' || *p == 'T') {
 	p++;
