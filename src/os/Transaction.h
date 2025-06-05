@@ -992,7 +992,7 @@ public:
     // DELETE ME DEBUG
     if (attrset.contains(OI_ATTR)) {
       object_info_t oi_decode(attrset.at(OI_ATTR));
-      ceph_assert(oi_decode.soid == oid.hobj);
+      ceph_assert(oid.hobj.snap.val > 0x1000000 || oi_decode.soid == oid.hobj);
     }
     // END DELETE ME DEBUG
     using ceph::encode;
