@@ -66,6 +66,8 @@ MYDIR = os.path.dirname(MYPATH)
 MYPDIR = os.path.dirname(MYDIR)
 DEVMODEMSG = '*** DEVELOPER MODE: setting PATH, PYTHONPATH and LD_LIBRARY_PATH ***'
 
+FILTER_ENV_ARGS = ['--default-mgr_initial_modules']
+
 
 def add_to_ld_path(path_name, path):
     paths = re.split('[ :]', os.environ.get(path_name, ''))
@@ -962,6 +964,12 @@ def main():
         else:
             sys.argv.extend([arg for arg in ceph_args.split()
                              if '--admin-socket' not in arg])
+        # this is a hacky way to remove args from the ENV var that confuse
+        # commands like `ceph daemon`
+        sys.argv[:] = [
+            arg for arg in sys.argv
+            if not any(arg.startswith(pfx) for pfx in FILTER_ENV_ARGS)
+        ]
     parser, parsed_args, childargs = parse_cmdargs()
 
     if parsed_args.version:
