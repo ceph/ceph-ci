@@ -200,7 +200,7 @@ void ECBackend::RecoveryBackend::handle_recovery_push(
   bool is_repair) {
   if (get_parent()->check_failsafe_full()) {
     dout(10) << __func__ << " Out of space (failsafe) processing push request."
- << dendl;
+             << dendl;
     ceph_abort();
   }
 
