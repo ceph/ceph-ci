@@ -125,6 +125,7 @@ ReservingReplicas::ReservingReplicas(my_context ctx)
 
   auto timeout = scrbr->get_cct()->_conf.get_val<
     std::chrono::milliseconds>("osd_scrub_reservation_timeout");
+timeout = 500ms; // RRR: remove this line, it is for testing only
   if (timeout.count() > 0) {
     // Start a timer to handle case where the replicas take a long time to
     // ack the reservation.  See ReservationTimeout handler below.
