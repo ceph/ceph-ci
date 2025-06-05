@@ -17,6 +17,24 @@ from .nvmeof_conf import ManagedByOrchestratorException, \
     NvmeofGatewayAlreadyExists, NvmeofGatewaysConfig
 
 
+from .nvmeof_conf import NvmeofGatewaysConfig
+
+@CLIReadCommand('dashboard tomer')
+def tomer_debug(_):
+    root_ca_cert = NvmeofGatewaysConfig.get_root_ca_cert(service_name)
+    client_key = None
+    client_cert = None
+    if root_ca_cert:
+        client_key = NvmeofGatewaysConfig.get_client_key(service_name)
+        client_cert = NvmeofGatewaysConfig.get_client_cert(service_name)
+    gw_config = NvmeofGatewaysConfig.get_gateways_config()
+    resp = {"root_ca_cert": root_ca_cert,
+            "client_key": client_key,
+            "client_cert": client_cert,
+            "gw_config": gw_config}
+    return 0, json.dumps(resp)
+
+
 @CLIReadCommand('dashboard nvmeof-gateway-list')
 def list_nvmeof_gateways(_):
     '''
