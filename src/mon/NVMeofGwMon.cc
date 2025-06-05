@@ -166,7 +166,8 @@ version_t NVMeofGwMon::get_trim_to() const
  * function called during new paxos epochs
  * function called to restore in pending map all data that is not serialized
  * to paxos peons. Othervise it would be overriden in "pending_map = map"
- * currently "allow_failovers_ts" and "last_gw_down_ts" variables restored
+ * currently "allow_failovers_ts", "last_gw_down_ts", "beacon_index",
+ * "last_gw_map_epoch_valid" variables are restored
  */
 void NVMeofGwMon::restore_pending_map_info(NVMeofGwMap & tmp_map) {
   std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
@@ -183,6 +184,10 @@ void NVMeofGwMon::restore_pending_map_info(NVMeofGwMap & tmp_map) {
       }
       pending_map.created_gws[group_key][gw_id].last_gw_down_ts =
           gw_created_pair.second.last_gw_down_ts;
+      pending_map.created_gws[group_key][gw_id].beacon_index =
+          gw_created_pair.second.beacon_index;
+      pending_map.created_gws[group_key][gw_id].last_gw_map_epoch_valid =
+	  gw_created_pair.second.last_gw_map_epoch_valid;
     }
   }
 }
