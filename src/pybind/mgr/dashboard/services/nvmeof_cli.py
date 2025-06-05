@@ -81,7 +81,7 @@ def tomer_debug(_):
             certificate_chain=client_cert,
         )
         channel = grpc.secure_channel(gateway_addr, credentials)
-        print('success 2!!!')
+        raise Exception('success 2!!!')
     except Exception as e:
         trace3 = traceback.format_exc()
         exc3 = str(e)
