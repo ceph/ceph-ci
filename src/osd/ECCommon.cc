@@ -161,8 +161,9 @@ void ECCommon::ReadPipeline::get_all_avail_shards(
 
   if (for_recovery) {
     for (auto &&pg_shard: get_parent()->get_backfill_shards()) {
-      if (error_shards && error_shards->contains(pg_shard))
+      if (error_shards && error_shards->contains(pg_shard)) {
         continue;
+      }
       const shard_id_t &shard = pg_shard.shard;
       if (have.contains(shard)) {
         ceph_assert(shards.contains(shard));
