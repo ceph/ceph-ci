@@ -1144,9 +1144,6 @@ int CryptoManager::get_key_type(const std::string& s)
 {
   auto l = s;
   std::transform(l.begin(), l.end(), l.begin(), ::tolower);
-  if (l == "recommended") {
-    return CEPH_CRYPTO_AES256KRB5;
-  }
   if (l == "aes") {
     return CEPH_CRYPTO_AES;
   }
