@@ -22,12 +22,12 @@ from .nvmeof_conf import NvmeofGatewaysConfig
 @CLIReadCommand('dashboard tomer')
 def tomer_debug(_):
     service_name, gateway_addr = NvmeofGatewaysConfig.get_service_info()
-    root_ca_cert = NvmeofGatewaysConfig.get_root_ca_cert(service_name)
+    root_ca_cert = str(NvmeofGatewaysConfig.get_root_ca_cert(service_name))
     client_key = None
     client_cert = None
     if root_ca_cert:
-        client_key = NvmeofGatewaysConfig.get_client_key(service_name)
-        client_cert = NvmeofGatewaysConfig.get_client_cert(service_name)
+        client_key = str(NvmeofGatewaysConfig.get_client_key(service_name))
+        client_cert = str(NvmeofGatewaysConfig.get_client_cert(service_name))
     gw_config = NvmeofGatewaysConfig.get_gateways_config()
     resp = {"root_ca_cert": root_ca_cert,
             "client_key": client_key,
