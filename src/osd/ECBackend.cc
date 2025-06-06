@@ -290,9 +290,9 @@ void ECBackend::RecoveryBackend::handle_recovery_push(
 }
 
 void ECBackend::RecoveryBackend::handle_recovery_push_reply(
-  const PushReplyOp &op,
-  pg_shard_t from,
-  RecoveryMessages *m) {
+    const PushReplyOp &op,
+    pg_shard_t from,
+    RecoveryMessages *m) {
   if (!recovery_ops.count(op.soid))
     return;
   RecoveryOp &rop = recovery_ops[op.soid];
@@ -302,11 +302,11 @@ void ECBackend::RecoveryBackend::handle_recovery_push_reply(
 }
 
 void ECBackend::RecoveryBackend::handle_recovery_read_complete(
-  const hobject_t &hoid,
-  ECUtil::shard_extent_map_t &&buffers_read,
-  std::optional<map<string, bufferlist, less<>>> attrs,
-  const ECUtil::shard_extent_set_t &want_to_read,
-  RecoveryMessages *m) {
+    const hobject_t &hoid,
+    ECUtil::shard_extent_map_t &&buffers_read,
+    std::optional<map<string, bufferlist, less<>>> attrs,
+    const ECUtil::shard_extent_set_t &want_to_read,
+    RecoveryMessages *m) {
   dout(10) << __func__ << ": returned " << hoid << " " << buffers_read << dendl;
   ceph_assert(recovery_ops.contains(hoid));
   RecoveryBackend::RecoveryOp &op = recovery_ops[hoid];
