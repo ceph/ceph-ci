@@ -921,7 +921,7 @@ def test_blockdiff(testdir):
     cephfs.close(fd)
     # take a snapshot
     cephfs.mksnap("/blockdiff_test", "snap2", 0o755)
-    diff = cephfs.openblockdiff(b"/blockdiff_test", b"file-1", b"snap1", b"snap2")
+    diff = cephfs.openblockdiff(b"/blockdiff_test", b"file-1", b"snap2", b"snap1")
     num_blocks, offset, length = diff.readblock()
     assert_equal(1, num_blocks)
     assert_equal(0, offset)
