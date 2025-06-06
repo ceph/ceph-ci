@@ -35,7 +35,7 @@ def tomer_debug(_):
             "gw_config": gw_config,
             "gw_addr": gateway_addr,
             "service_name": service_name}
-    return 0, json.dumps(resp)
+    return 0, json.dumps(resp), ''
 
 
 @CLIReadCommand('dashboard nvmeof-gateway-list')
