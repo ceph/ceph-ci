@@ -723,6 +723,8 @@ void ECCommon::RMWPipeline::cache_ready(Op &op) {
     if (transaction.empty()) {
       dout(20) << __func__ << " Transaction for osd." << pg_shard.osd << " shard " << shard << " is empty" << dendl;
     } else {
+      // NOTE: All code between dout and dendl is executed conditionally on
+      //       debug level.
       dout(20) << __func__ << " Transaction for osd." << pg_shard.osd << " shard " << shard << " contents ";
       Formatter *f = Formatter::create("json");
       f->open_object_section("t");
