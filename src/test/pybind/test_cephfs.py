@@ -917,7 +917,7 @@ def test_blockdiff(testdir):
     cephfs.mksnap("/blockdiff_test", "snap1", 0o755)
     # make modifications to the file
     fd = cephfs.open('/blockdiff_test/file-1', 'w', 0o755)
-    cephfs.write(fd, b"5678", 4)
+    cephfs.write(fd, b"5678", 0)
     cephfs.close(fd)
     # take a snapshot
     cephfs.mksnap("/blockdiff_test", "snap2", 0o755)
