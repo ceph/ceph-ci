@@ -1,5 +1,7 @@
+- use cluster_create for old auth service cipher config; and others
 - tests need way to rescue if auth_allowed_ciphers is borked, some kind of config override
 - tests for new mon switch to use keyring as authority
+- test upgrade tests and general tests
 - Note that radosbench still has sessions open with osds so it won't exit
 - ProtocolV2 changes to reauth or close
 - Docs
