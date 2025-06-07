@@ -225,7 +225,6 @@ int main(int argc, const char **argv)
   common_init_finish(g_ceph_context);
   std::string val;
   for (std::vector<const char*>::iterator i = args.begin(); i != args.end(); ) {
-    std::cerr << "arg: " << *i << std::endl;
     if (ceph_argparse_double_dash(args, i)) {
       break;
     } else if (ceph_argparse_flag(args, i, "-p", "--print", (char*)NULL)) {
@@ -321,7 +320,6 @@ int main(int argc, const char **argv)
       }
       features.back().set_persistent();
     } else if (ceph_argparse_witharg(args, i, &val, "--auth-service-cipher", (char*)NULL)) {
-      std::cerr << val << std::endl;
       int c = CryptoManager::get_key_type(val);
       if (c < 0) {
         cerr << me << ": invalid cipher: " << val << std::endl;
@@ -329,7 +327,6 @@ int main(int argc, const char **argv)
       }
       auth_service_cipher = c;
     } else if (ceph_argparse_witharg(args, i, &val, "--auth-allowed-ciphers", (char*)NULL)) {
-      std::cerr << val << std::endl;
       std::vector<std::string> v;
       std::vector<int> ciphers;
       get_str_vec(val, ", ", v);
@@ -343,7 +340,6 @@ int main(int argc, const char **argv)
       }
       auth_allowed_ciphers = std::move(ciphers);
     } else if (ceph_argparse_witharg(args, i, &val, "--auth-preferred-cipher", (char*)NULL)) {
-      std::cerr << val << std::endl;
       int c = CryptoManager::get_key_type(val);
       if (c < 0) {
         cerr << me << ": invalid cipher: " << val << std::endl;
