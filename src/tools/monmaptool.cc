@@ -328,7 +328,7 @@ int main(int argc, const char **argv)
         helpful_exit();
       }
       auth_service_cipher = c;
-    } else if (ceph_argparse_witharg(args, i, &val, "--auth-allowed-cipher", (char*)NULL)) {
+    } else if (ceph_argparse_witharg(args, i, &val, "--auth-allowed-ciphers", (char*)NULL)) {
       std::cerr << val << std::endl;
       std::vector<std::string> v;
       std::vector<int> ciphers;
