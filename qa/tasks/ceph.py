@@ -605,7 +605,7 @@ def skeleton_config(ctx, roles, ips, mons, cluster='ceph'):
                 conf.setdefault(name, {})
     return conf
 
-def create_simple_monmap(ctx, remote, conf, mons,
+def create_simple_monmap(ctx, remote, conf, mons, monmaptool_extra_args,
                          path=None,
                          mon_bind_addrvec=False):
     """
@@ -638,6 +638,7 @@ def create_simple_monmap(ctx, remote, conf, mons,
         'ceph-coverage',
         '{tdir}/archive/coverage'.format(tdir=testdir),
         'monmaptool',
+        *monmaptool_extra_args,
         '-c',
         '{conf}'.format(conf=tmp_conf_path),
         '--create',
@@ -710,6 +711,7 @@ def cluster(ctx, config):
 
     cephx = config['cephx']
     key_type = cephx.get('key_type', None)
+    monmaptool_extra_args = cephx.get('monmaptool_extra_args', [])
     auth_tool_extra_args = []
     if key_type is not None:
         auth_tool_extra_args.append(f'--key-type={key_type}')
@@ -830,6 +832,7 @@ def cluster(ctx, config):
         remote=mon0_remote,
         conf=conf,
         mons=mons,
+        monmaptool_extra_args,
         path=monmap_path,
         mon_bind_addrvec=config.get('mon_bind_addrvec'),
     )
