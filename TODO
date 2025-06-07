@@ -1,3 +1,4 @@
+- change monmaptool to allow setting initial  auth configs
 - use cluster_create for old auth service cipher config; and others
 - tests need way to rescue if auth_allowed_ciphers is borked, some kind of config override
 - tests for new mon switch to use keyring as authority
