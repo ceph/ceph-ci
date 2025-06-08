@@ -25,16 +25,39 @@ def tomer_debug(_):
     root_ca_cert = str(NvmeofGatewaysConfig.get_root_ca_cert(service_name))
     client_key = None
     client_cert = None
+    exc = None
+    trace = None
+    response = None
     if root_ca_cert:
         client_key = str(NvmeofGatewaysConfig.get_client_key(service_name))
         client_cert = str(NvmeofGatewaysConfig.get_client_cert(service_name))
     gw_config = NvmeofGatewaysConfig.get_gateways_config()
+    
+    try:
+        from ..services.nvmeof_client import NVMeoFClient, convert_to_model, \
+            empty_response, handle_nvmeof_error, pick
+        from google.protobuf.json_format import MessageToDict
+        gw_info = NVMeoFClient().stub.get_gateway_info(
+                NVMeoFClient.pb2.get_gateway_info_req()
+            )
+        response = NVMeoFClient.pb2.gw_version(status=gw_info.status,
+                                            error_message=gw_info.error_message,
+                                            version=gw_info.version)
+        response = MessageToDict(response, including_default_value_fields=True,
+                                         preserving_proto_field_name=True)
+    except Exception as e:
+        import traceback
+        trace = traceback.format_exc()
+        exc = str(e)
     resp = {"root_ca_cert": root_ca_cert,
             "client_key": client_key,
             "client_cert": client_cert,
             "gw_config": gw_config,
             "gw_addr": gateway_addr,
-            "service_name": service_name}
+            "service_name": service_name,
+            "exc": exc,
+            "trace": trace,
+            "response": response}
     return 0, json.dumps(resp), ''
 
 
