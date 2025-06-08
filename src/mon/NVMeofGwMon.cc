@@ -816,7 +816,7 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op)
     }
   }
   if (send_ack && ((!gw_propose && epoch_filter_enabled) ||
-                    (propose && !epoch_filter_enabled) ||
+                    (!propose && !epoch_filter_enabled) ||
                     (avail == gw_availability_t::GW_CREATED)) ) {
           /* always send beacon ack to gw in Created state,
            * it should be temporary state
