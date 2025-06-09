@@ -9,7 +9,7 @@ from mgr_module import CLICommand, HandleCommandResult
 
 from ..model.nvmeof import CliFlags, CliHeader
 from ..services.nvmeof_cli import AnnotatedDataTextOutputFormatter, \
-    NvmeofCLICommand, convert_from_bytes
+    NvmeofCLICommand, convert_from_bytes, convert_to_bytes
 from ..tests import CLICommandTestMixin
 
 
@@ -23,6 +23,22 @@ def fixture_sample_command():
 
     @NvmeofCLICommand(test_cmd, Model)
     def func(_): # noqa # pylint: disable=unused-variable
+        return {'a': '1', 'b': 2}
+    yield test_cmd
+    del NvmeofCLICommand.COMMANDS[test_cmd]
+    assert test_cmd not in NvmeofCLICommand.COMMANDS
+
+
+@pytest.fixture(scope="class", name="sample_command_with_size_param")
+def fixture_sample_command_with_size_param():
+    test_cmd = "test command with size param"
+
+    class Model(NamedTuple):
+        a: str
+        b: int
+
+    @NvmeofCLICommand(test_cmd, Model, size_params=['size'])
+    def func_with_size(_, size): # noqa # pylint: disable=unused-variable
         return {'a': '1', 'b': 2}
     yield test_cmd
     del NvmeofCLICommand.COMMANDS[test_cmd]
@@ -121,7 +137,37 @@ class TestNvmeofCLICommand:
         )
         assert result.stderr == ''
         base_call_return_none_mock.assert_called_once()
-
+    
+    def test_command_with_size_param(self, base_call_return_none_mock, 
+                                     sample_command_with_size_param):
+        result = NvmeofCLICommand.COMMANDS[sample_command_with_size_param].call(MagicMock(), {"size": "1MB"})
+        assert isinstance(result, HandleCommandResult)
+        assert result.retval == 0
+        assert result.stdout == (
+            "++\n"
+            "||\n"
+            "++\n"
+            "\n"
+            "++"
+        )
+        assert result.stderr == ''
+        base_call_return_none_mock.assert_called_with(size=1048576)
+        
+        base_call_return_none_mock.reset_mock()
+        
+        result = NvmeofCLICommand.COMMANDS[sample_command_with_size_param].call(MagicMock(), {"size": "5GB"})
+        assert isinstance(result, HandleCommandResult)
+        assert result.retval == 0
+        assert result.stdout == (
+            "++\n"
+            "||\n"
+            "++\n"
+            "\n"
+            "++"
+        )
+        assert result.stderr == ''
+        base_call_return_none_mock.assert_called_with(size=5368709120)
+        
 
 class TestNVMeoFConfCLI(unittest.TestCase, CLICommandTestMixin):
     def setUp(self):
@@ -416,3 +462,16 @@ class TestConverFromBytes:
         assert convert_from_bytes(1048576) == '1MB'
         assert convert_from_bytes(123) == '123B'
         assert convert_from_bytes(5368709120) == '5GB'
+
+class TestConvertToBytes:
+    def test_valid_inputs(self):
+        assert convert_to_bytes('200MB') == 209715200
+        assert convert_to_bytes('209.5MB') == 219715200
+        assert convert_to_bytes('1MB') == 1048576
+        assert convert_to_bytes('123B') == 123
+        assert convert_to_bytes('5GB') == 5368709120
+
+    def test_default_unit(self):
+        with pytest.raises(ValueError):
+            assert convert_to_bytes('5') == 5368709120
+        assert convert_to_bytes('5', default_unit='GB') == 5368709120
