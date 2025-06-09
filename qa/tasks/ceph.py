@@ -605,7 +605,7 @@ def skeleton_config(ctx, roles, ips, mons, cluster='ceph'):
                 conf.setdefault(name, {})
     return conf
 
-def create_simple_monmap(ctx, remote, conf, mons,
+def create_simple_monmap(ctx, remote, conf, mons, monmaptool_extra_args,
                          path=None,
                          mon_bind_addrvec=False):
     """
@@ -638,6 +638,7 @@ def create_simple_monmap(ctx, remote, conf, mons,
         'ceph-coverage',
         '{tdir}/archive/coverage'.format(tdir=testdir),
         'monmaptool',
+        *monmaptool_extra_args,
         '-c',
         '{conf}'.format(conf=tmp_conf_path),
         '--create',
@@ -711,6 +712,7 @@ def cluster(ctx, config):
 
     cephx = config['cephx']
     key_type = cephx.get('key_type', None)
+    monmaptool_extra_args = config.get('monmaptool_extra_args', [])
     auth_tool_extra_args = []
     if key_type is not None:
         auth_tool_extra_args.append(f'--key-type={key_type}')
@@ -828,9 +830,10 @@ def cluster(ctx, config):
                                                    cluster=cluster_name)
     fsid = create_simple_monmap(
         ctx,
-        remote=mon0_remote,
-        conf=conf,
-        mons=mons,
+        mon0_remote,
+        conf,
+        mons,
+        monmaptool_extra_args,
         path=monmap_path,
         mon_bind_addrvec=config.get('mon_bind_addrvec'),
     )
@@ -921,7 +924,7 @@ def cluster(ctx, config):
                 'sudo', 'chown', '-R', 'ceph:ceph', mds_dir
             ])
 
-    cclient.create_keyring(ctx, cluster_name)
+    cclient.create_keyring(ctx, cluster_name, auth_tool_extra_args)
     log.info('Running mkfs on osd nodes...')
 
     if not hasattr(ctx, 'disk_config'):
@@ -2070,6 +2073,7 @@ def task(ctx, config):
             mon_bind_msgr2=config.get('mon_bind_msgr2', True),
             mon_bind_addrvec=config.get('mon_bind_addrvec', True),
             cephx=config.get('cephx', {}),
+            monmaptool_extra_args=config.get('monmaptool_extra_args', {}),
         )),
         lambda: run_daemon(ctx=ctx, config=config, type_='mon'),
         lambda: module_setup(ctx=ctx, config=config),

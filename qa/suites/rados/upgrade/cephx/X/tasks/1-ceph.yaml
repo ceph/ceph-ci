@@ -1,9 +1,21 @@
 tasks:
 - ceph:
     cluster-conf:
-      global:
-        auth service cipher: aes
       mon:
         mon auth allow insecure key: true
+    monmaptool_extra_args:
+      - '--auth-service-cipher=aes'
+      - '--auth-allowed-ciphers=aes'
+      - '--auth-preferred-cipher=aes'
     cephx:
       key_type: aes
+    wait-for-healthy: false
+- exec:
+    mon.a:
+      - ceph --log-to-stderr=true --log_to_file=true --debug_ms=5 --debug_auth=30 --debug_monc=30 health mute AUTH_INSECURE_KEYS_ALLOWED --sticky
+      - ceph --log-to-stderr=true --log_to_file=true --debug_ms=5 --debug_auth=30 --debug_monc=30 health mute AUTH_INSECURE_KEYS_CREATABLE --sticky
+      - ceph --log-to-stderr=true --log_to_file=true --debug_ms=5 --debug_auth=30 --debug_monc=30 health mute AUTH_INSECURE_SERVICE_KEYS_ALLOWED --sticky
+      - ceph --log-to-stderr=true --log_to_file=true --debug_ms=5 --debug_auth=30 --debug_monc=30 health mute AUTH_INSECURE_CLIENT_KEY_TYPE --sticky
+      - ceph --log-to-stderr=true --log_to_file=true --debug_ms=5 --debug_auth=30 --debug_monc=30 health mute AUTH_INSECURE_SERVICE_KEY_TYPE --sticky
+      - ceph --log-to-stderr=true --log_to_file=true --debug_ms=5 --debug_auth=30 --debug_monc=30 health mute AUTH_INSECURE_ROTATING_SERVICE_KEY_TYPE --sticky
+- ceph.healthy:
