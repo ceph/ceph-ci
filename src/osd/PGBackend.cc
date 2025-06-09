@@ -811,6 +811,7 @@ int PGBackend::be_scan_list(
       ceph_assert(o.attrs.contains(OI_ATTR));
       object_info_t oi_decode(o.attrs.at(OI_ATTR));
       dout(20) << __func__ << " " << oi_decode << dendl;
+      ceph_assert(oi_decode.soid == poid);
       // END DELETE ME DEBUG
     }
 
