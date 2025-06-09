@@ -11,6 +11,7 @@
 
 SET_SUBSYS(osd);
 
+
 namespace crimson::osd {
 
 template <class T>
