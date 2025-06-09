@@ -18,6 +18,7 @@
 #include "Crypto.h"
 #include "common/ceph_json.h"
 #include "common/entity_name.h"
+#include "include/common_fwd.h"
 
 // The _MAX values are a bit wonky here because we are overloading the first
 // byte of the auth payload to identify both the type of authentication to be
