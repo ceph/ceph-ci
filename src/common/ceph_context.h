@@ -54,9 +54,6 @@ namespace google_breakpad {
 
 class AdminSocket;
 class AdminSocketHook;
-class CryptoHandler;
-class CryptoManager;
-class CryptoRandom;
 class MonMap;
 
 namespace ceph::common {
