@@ -1,0 +1,8 @@
+- json improvements from Blaine for dump-keys
+- test need way to rescue if auth_allowed_ciphers is borked, some kind of config override
+- test for new mon switch to use keyring as authority
+- test upgrade tests and general tests
+- Note that radosbench still has sessions open with osds so it won't exit
+- ProtocolV2 changes to reauth or close
+- Docs
+- Crimson
