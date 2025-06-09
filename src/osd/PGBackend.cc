@@ -807,14 +807,19 @@ int PGBackend::be_scan_list(
 	ghobject_t(
 	  poid, ghobject_t::NO_GEN, get_parent()->whoami_shard().shard),
 	o.attrs);
+      // DELETE ME DEBUG
+      ceph_assert(o.attrs.contains(OI_ATTR));
+      object_info_t oi_decode(o.attrs.at(OI_ATTR));
+      dout(20) << __func__ << " " << oi_decode << dendl;
+      // END DELETE ME DEBUG
     }
 
     if (r == -ENOENT) {
-      dout(25) << __func__ << "  " << poid << " got " << r
+      dout(20) << __func__ << "  " << poid << " got " << r
 	       << ", removing from map" << dendl;
       map.objects.erase(poid);
     } else if (r == -EIO) {
-      dout(25) << __func__ << "  " << poid << " got " << r
+      dout(20) << __func__ << "  " << poid << " got " << r
 	       << ", stat_error" << dendl;
       o.stat_error = true;
     } else if (r != 0) {
