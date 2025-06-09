@@ -31,13 +31,16 @@ def tomer_debug(_):
     if root_ca_cert:
         client_key = str(NvmeofGatewaysConfig.get_client_key(service_name))
         client_cert = str(NvmeofGatewaysConfig.get_client_cert(service_name))
+        server_cert = str(NvmeofGatewaysConfig.get_server_cert(service_name))
     gw_config = NvmeofGatewaysConfig.get_gateways_config()
     
     try:
         from ..services.nvmeof_client import NVMeoFClient, convert_to_model, \
             empty_response, handle_nvmeof_error, pick
         from google.protobuf.json_format import MessageToDict
-        gw_info = NVMeoFClient().stub.get_gateway_info(
+        client = NVMeoFClient()
+        
+        gw_info = client.stub.get_gateway_info(
                 NVMeoFClient.pb2.get_gateway_info_req()
             )
         response = NVMeoFClient.pb2.gw_version(status=gw_info.status,
@@ -49,15 +52,43 @@ def tomer_debug(_):
         import traceback
         trace = traceback.format_exc()
         exc = str(e)
+        
+    try:
+        import grpc
+        print('Securely connecting to: %s', client.gateway_addr)
+        credentials = grpc.ssl_channel_credentials(
+            root_certificates=root_ca_cert,
+            private_key=client_key,
+            certificate_chain=client_cert,
+        )
+        channel = grpc.secure_channel(self.gateway_addr, credentials)
+        print('success!!!')
+    except Exception as e:
+        print('exception!\n' + str(e) + '\n' + traceback.format_exc()+ "\n")
+        
+    try:
+        import grpc
+        print('Securely connecting to: %s', client.gateway_addr)
+        credentials = grpc.ssl_channel_credentials(
+            root_certificates=server_cert,
+            private_key=client_key,
+            certificate_chain=client_cert,
+        )
+        channel = grpc.secure_channel(self.gateway_addr, credentials)
+        print('success 2!!!')
+    except Exception as e:
+        print('exception2!\n' + str(e) + '\n' + traceback.format_exc()+ "\n")
     resp = {"root_ca_cert": root_ca_cert,
             "client_key": client_key,
             "client_cert": client_cert,
+            "server_cert": server_cert,
             "gw_config": gw_config,
             "gw_addr": gateway_addr,
             "service_name": service_name,
             "exc": exc,
             "trace": trace,
-            "response": response}
+            "response": response,
+            "client_gw_addr": client.gateway_addr}
     return 0, json.dumps(resp), ''
 
 
