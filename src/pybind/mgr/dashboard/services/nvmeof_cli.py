@@ -25,8 +25,12 @@ def tomer_debug(_):
     root_ca_cert = str(NvmeofGatewaysConfig.get_root_ca_cert(service_name))
     client_key = None
     client_cert = None
-    exc = None
-    trace = None
+    exc1 = None
+    trace1 = None
+    exc2 = None
+    trace2 = None
+    exc3 = None
+    trace3 = None
     response = None
     if root_ca_cert:
         client_key = str(NvmeofGatewaysConfig.get_client_key(service_name))
@@ -50,8 +54,8 @@ def tomer_debug(_):
                                          preserving_proto_field_name=True)
     except Exception as e:
         import traceback
-        trace = traceback.format_exc()
-        exc = str(e)
+        trace1 = traceback.format_exc()
+        exc1 = str(e)
         
     try:
         import grpc
@@ -64,6 +68,8 @@ def tomer_debug(_):
         channel = grpc.secure_channel(self.gateway_addr, credentials)
         print('success!!!')
     except Exception as e:
+        trace2 = traceback.format_exc()
+        exc2 = str(e)
         print('exception!\n' + str(e) + '\n' + traceback.format_exc()+ "\n")
         
     try:
@@ -77,6 +83,8 @@ def tomer_debug(_):
         channel = grpc.secure_channel(self.gateway_addr, credentials)
         print('success 2!!!')
     except Exception as e:
+        trace3 = traceback.format_exc()
+        exc3 = str(e)
         print('exception2!\n' + str(e) + '\n' + traceback.format_exc()+ "\n")
     resp = {"root_ca_cert": root_ca_cert,
             "client_key": client_key,
@@ -85,8 +93,12 @@ def tomer_debug(_):
             "gw_config": gw_config,
             "gw_addr": gateway_addr,
             "service_name": service_name,
-            "exc": exc,
-            "trace": trace,
+            "exc1": exc1,
+            "trace1": trace1,
+            "exc2": exc2,
+            "trace2": trace2,
+            "exc3": exc3,
+            "trace3": trace3,
             "response": response,
             "client_gw_addr": client.gateway_addr}
     return 0, json.dumps(resp), ''
