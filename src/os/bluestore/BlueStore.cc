@@ -18053,6 +18053,10 @@ int BlueStore::_setattr(TransContext *txc,
     auto& b = o->onode.attrs[name.c_str()] = bufferptr("", 0);
     b.reassign_to_mempool(mempool::mempool_bluestore_cache_meta);
   } else {
+    // FAIL REVIEW (remove dout) - This will spam, but is needed to prove the fix.
+    dout(1) << __func__ << "val.is_contiguous()=" << val.is_contiguous()
+            << " val.front().is_partial()=" << val.front().is_partial()
+            << dendl;
     val.rebuild();
     auto& b = o->onode.attrs[name.c_str()] = val.front();
     b.reassign_to_mempool(mempool::mempool_bluestore_cache_meta);
