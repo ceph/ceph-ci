@@ -13,6 +13,13 @@ tasks:
     ec_pool: true
     erasure_code_use_overwrites: true
     erasure_code_use_optimizations: true
+    erasure_code_profile:
+      name: isa64profile
+      plugin: isa
+      k: 6
+      m: 4
+      technique: reed_sol_van
+      crush-failure-domain: osd
     op_weights:
       read: 100
       write: 100
