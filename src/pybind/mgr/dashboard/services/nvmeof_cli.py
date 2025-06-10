@@ -33,9 +33,9 @@ def tomer_debug(_):
     trace3 = None
     response = None
     if root_ca_cert:
-        client_key = str(NvmeofGatewaysConfig.get_client_key(service_name))
-        client_cert = str(NvmeofGatewaysConfig.get_client_cert(service_name))
-        server_cert = str(NvmeofGatewaysConfig.get_server_cert(service_name))
+        client_key = NvmeofGatewaysConfig.get_client_key(service_name)
+        client_cert = NvmeofGatewaysConfig.get_client_cert(service_name)
+        server_cert = NvmeofGatewaysConfig.get_server_cert(service_name))
     gw_config = NvmeofGatewaysConfig.get_gateways_config()
     
     try:
@@ -87,9 +87,9 @@ def tomer_debug(_):
         exc3 = str(e)
         print('exception2!\n' + str(e) + '\n' + traceback.format_exc()+ "\n")
     resp = {"root_ca_cert": root_ca_cert,
-            "client_key": client_key,
-            "client_cert": client_cert,
-            "server_cert": server_cert,
+            "client_key": str(client_key),
+            "client_cert": str(client_cert),
+            "server_cert": str(server_cert),
             "gw_config": gw_config,
             "gw_addr": gateway_addr,
             "service_name": service_name,
