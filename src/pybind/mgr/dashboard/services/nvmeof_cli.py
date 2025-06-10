@@ -20,7 +20,7 @@ from .nvmeof_conf import ManagedByOrchestratorException, \
 from .nvmeof_conf import NvmeofGatewaysConfig
 
 @CLIReadCommand('dashboard tomer')
-def tomer_debug(_):
+def tomer_debug(_): 
     service_name, gateway_addr = NvmeofGatewaysConfig.get_service_info()
     root_ca_cert = str(NvmeofGatewaysConfig.get_root_ca_cert(service_name))
     client_key = None
