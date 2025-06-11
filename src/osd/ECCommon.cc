@@ -312,18 +312,19 @@ int ECCommon::ReadPipeline::get_remaining_shards(
     const hobject_t &hoid,
     read_result_t &read_result,
     read_request_t &read_request,
-    const bool for_recovery,
-    const bool fast_read) {
+    const bool for_recovery) {
   shard_id_map<pg_shard_t> shards(sinfo.get_k_plus_m());
   set<pg_shard_t> error_shards;
   for (auto &shard: std::views::keys(read_result.errors)) {
     error_shards.insert(shard);
   }
 
+  /* fast-reads should already have scheduled reads to everything, so
+   * this function is irrelevant. */
   const int r = get_min_avail_to_read_shards(
     hoid,
     for_recovery,
-    fast_read,
+    false,
     read_request,
     error_shards);
 
@@ -614,8 +615,9 @@ int ECCommon::ReadPipeline::send_all_remaining_reads(
   read_request_t &read_request = rop.to_read.at(hoid);
   // reset the old shard reads, we are going to read them again.
   read_request.shard_reads.clear();
+  read_request.want_attrs = want_attrs;
   return get_remaining_shards(hoid, rop.complete.at(hoid), read_request,
-                              rop.for_recovery, want_attrs);
+                              rop.for_recovery);
 }
 
 void ECCommon::ReadPipeline::kick_reads() {
