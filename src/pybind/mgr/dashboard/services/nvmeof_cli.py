@@ -59,13 +59,13 @@ def tomer_debug(_):
         
     try:
         import grpc
-        print('Securely connecting to: %s', client.gateway_addr)
+        print('Securely connecting to: %s', gateway_addr)
         credentials = grpc.ssl_channel_credentials(
             root_certificates=root_ca_cert,
             private_key=client_key,
             certificate_chain=client_cert,
         )
-        channel = grpc.secure_channel(self.gateway_addr, credentials)
+        channel = grpc.secure_channel(gateway_addr, credentials)
         print('success!!!')
     except Exception as e:
         trace2 = traceback.format_exc()
@@ -74,13 +74,13 @@ def tomer_debug(_):
         
     try:
         import grpc
-        print('Securely connecting to: %s', client.gateway_addr)
+        print('Securely connecting to: %s', gateway_addr)
         credentials = grpc.ssl_channel_credentials(
             root_certificates=server_cert,
             private_key=client_key,
             certificate_chain=client_cert,
         )
-        channel = grpc.secure_channel(self.gateway_addr, credentials)
+        channel = grpc.secure_channel(gateway_addr, credentials)
         print('success 2!!!')
     except Exception as e:
         trace3 = traceback.format_exc()
