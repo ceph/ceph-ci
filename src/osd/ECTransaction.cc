@@ -369,8 +369,9 @@ void ECTransaction::Generate::delete_first() {
         ghobject_t(oid, ghobject_t::NO_GEN, shard));
     }
   }
-  if (plan.hinfo)
+  if (plan.hinfo) {
     plan.hinfo->clear();
+  }
 }
 
 void ECTransaction::Generate::process_init() {
@@ -519,8 +520,8 @@ ECTransaction::Generate::Generate(PGTransaction &t,
     entry->mod_desc.update_snaps(op.updated_snaps->first);
   }
 
-  bufferlist old_hinfo;
   if (plan.hinfo) {
+    bufferlist old_hinfo;
     encode(*(plan.hinfo), old_hinfo);
     xattr_rollback[ECUtil::get_hinfo_key()] = old_hinfo;
   }

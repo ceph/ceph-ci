@@ -576,13 +576,13 @@ void ECBackend::RecoveryBackend::continue_recovery_op(
             op.hinfo = unstable_hashinfo_registry.get_hash_info(
               op.hoid, false, attrs, size);
           } else {
-            derr << __func__ << ": can't stat-or-getattr on " << op.hoid <<
-          dendl;
+            derr << __func__ << ": can't stat-or-getattr on " << op.hoid
+                 << dendl;
           }
           if (!op.hinfo) {
             derr << __func__ << ": " << op.hoid << " has inconsistent hinfo"
-               << dendl;
-            ceph_assert(recovery_ops.count(op.hoid));
+                 << dendl;
+            ceph_assert(recovery_ops.contains(op.hoid));
             eversion_t v = recovery_ops[op.hoid].v;
             recovery_ops.erase(op.hoid);
             // TODO: not in crimson yet
