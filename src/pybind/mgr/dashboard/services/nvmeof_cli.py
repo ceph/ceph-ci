@@ -35,7 +35,7 @@ def tomer_debug(_):
     if root_ca_cert:
         client_key = NvmeofGatewaysConfig.get_client_key(service_name)
         client_cert = NvmeofGatewaysConfig.get_client_cert(service_name)
-        server_cert = NvmeofGatewaysConfig.get_server_cert(service_name))
+        server_cert = NvmeofGatewaysConfig.get_server_cert(service_name)
     gw_config = NvmeofGatewaysConfig.get_gateways_config()
     
     try:
