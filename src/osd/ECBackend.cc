@@ -679,9 +679,18 @@ void ECBackend::RecoveryBackend::continue_recovery_op(
                 CEPH_ENTITY_TYPE_OSD, nullptr));
               pop.attrset[OI_ATTR] = bl;
             }
+            if (sinfo.get_is_hinfo_required()) {
+              pop.attrset[ECUtil::get_hinfo_key()] = op.xattrs.at(ECUtil::get_hinfo_key());
+            }
           } else {
             dout(10) << __func__ << ": push all attrs (not nonprimary)" << dendl;
             pop.attrset = op.xattrs;
+          }
+
+          // Following an upgrade, or turning of overwrites, we can take this
+          // opportunity to clean up hinfo.
+          if (!sinfo.get_is_hinfo_required() && pop.attrset.contains(ECUtil::get_hinfo_key())) {
+            pop.attrset.erase(ECUtil::get_hinfo_key());
           }
         }
         pop.recovery_info = op.recovery_info;
