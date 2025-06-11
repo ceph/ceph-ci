@@ -858,7 +858,7 @@ void ECCommon::RMWPipeline::finish_rmw(OpRef const &op) {
   dout(20) << __func__ << " op=" << *op << dendl;
 
   if (op->on_all_commit) {
-    dout(10) << __func__ << " Calling on_all_commit on " << op << dendl;
+    dout(10) << __func__ << " Calling on_all_commit on " << *op << dendl;
     op->on_all_commit->complete(0);
     op->on_all_commit = nullptr;
     op->trace.event("ec write all committed");
@@ -936,7 +936,7 @@ ECUtil::HashInfoRef ECCommon::UnstableHashInfoRegistry::get_hash_info(
     if (attrs.contains(ECUtil::get_hinfo_key())) {
       bl = attrs.at(ECUtil::get_hinfo_key());
     } else {
-      dout(30) << __func__ << " " << hoid << " missing hinfo attr" << dendl;
+      dout(20) << __func__ << " " << hoid << " missing hinfo attr" << dendl;
     }
     if (bl.length() > 0) {
       auto bp = bl.cbegin();
