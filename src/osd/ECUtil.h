@@ -753,7 +753,7 @@ public:
   explicit HashInfo(unsigned num_chunks) :
     cumulative_shard_hashes(num_chunks, -1) {}
 
-  void append(uint64_t old_size, shard_id_map<bufferptr> &to_append);
+  void append(shard_id_map<bufferptr> &to_append);
 
   void clear() {
     unused_total_chunk_size = 0;

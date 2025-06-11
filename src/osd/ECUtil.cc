@@ -524,11 +524,9 @@ int shard_extent_map_t::encode(const ErasureCodeInterfaceRef &ec_impl,
      *                 Also, does this really belong here? Its convenient
      *                 because have just built the buffer list...
      */
-    shard_id_set full_set;
-    full_set.insert_range(shard_id_t(0), sinfo->get_k_plus_m());
-    for (auto iter = begin_slice_iterator(full_set); !iter.is_end(); ++iter) {
-      ceph_assert(ro_start == before_ro_size);
-      hinfo->append(iter.get_offset(), iter.get_in_bufferptrs());
+    for (auto iter = begin_slice_iterator(sinfo->get_all_shards()); !iter.is_end(); ++iter) {
+      ceph_assert(ro_start == before_ro_size); // If this fails, we need to look at padding with zeros.
+      hinfo->append(iter.get_out_bufferptrs());
     }
   }
 
@@ -1089,15 +1087,9 @@ void shard_extent_set_t::insert(const shard_extent_set_t &other) {
 }
 }
 
-void ECUtil::HashInfo::append(uint64_t old_size,
-                              shard_id_map<bufferptr> &to_append) {
-  ceph_assert(old_size == total_chunk_size);
-  uint64_t size_to_append = to_append.begin()->second.length();
+void ECUtil::HashInfo::append(shard_id_map<bufferptr> &to_append) {
   if (has_chunk_hash()) {
-    ceph_assert(to_append.size() == cumulative_shard_hashes.size());
     for (auto &&[shard, ptr] : to_append) {
-      ceph_assert(size_to_append == ptr.length());
-      ceph_assert(shard < static_cast<int>(cumulative_shard_hashes.size()));
       cumulative_shard_hashes[int(shard)] =
           ceph_crc32c(cumulative_shard_hashes[int(shard)],
                       (unsigned char*)ptr.c_str(), ptr.length());
