@@ -302,7 +302,7 @@ static int read_owner_display_name(const DoutPrefixProvider* dpp,
                                    const rgw_owner& owner, std::string& name)
 {
   return std::visit(fu2::overload(
-      [&] (const rgw_user& uid) {
+      [&](const rgw_user &uid) {
         auto user = driver->get_user(uid);
         int r = user->load_user(dpp, y);
         if (r >= 0) {
@@ -310,10 +310,11 @@ static int read_owner_display_name(const DoutPrefixProvider* dpp,
         }
         return r;
       },
-      [&] (const rgw_account_id& account_id) {
+      [&](const rgw_account_id &account_id) {
         RGWAccountInfo info;
+        rgw::sal::Attrs attrs;
         RGWObjVersionTracker objv;
-        int r = driver->load_account_by_id(dpp, y, account_id, info, objv);
+        int r = driver->load_account_by_id(dpp, y, account_id, info, attrs, objv);
         if (r >= 0) {
           name = info.name;
         }

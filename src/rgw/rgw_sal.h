@@ -328,29 +328,34 @@ class Driver {
     virtual int get_user_by_swift(const DoutPrefixProvider* dpp, const std::string& user_str, optional_yield y, std::unique_ptr<User>* user) = 0;
 
     /** Lookup RGWAccountInfo by id */
-    virtual int load_account_by_id(const DoutPrefixProvider* dpp,
+    virtual int load_account_by_id(const DoutPrefixProvider *dpp,
                                    optional_yield y,
                                    std::string_view id,
-                                   RGWAccountInfo& info,
+                                   RGWAccountInfo &info,
+				   Attrs& attrs,
                                    RGWObjVersionTracker& objv) = 0;
     /** Lookup RGWAccountInfo by name */
-    virtual int load_account_by_name(const DoutPrefixProvider* dpp,
+    virtual int load_account_by_name(const DoutPrefixProvider *dpp,
                                      optional_yield y,
                                      std::string_view tenant,
                                      std::string_view name,
-                                     RGWAccountInfo& info,
+                                     RGWAccountInfo &info,
+				     Attrs& attrs,
                                      RGWObjVersionTracker& objv) = 0;
     /** Lookup RGWAccountInfo by email address */
-    virtual int load_account_by_email(const DoutPrefixProvider* dpp,
+    virtual int load_account_by_email(const DoutPrefixProvider *dpp,
                                       optional_yield y,
                                       std::string_view email,
-                                      RGWAccountInfo& info,
+                                      RGWAccountInfo &info,
+				      Attrs& attrs,
                                       RGWObjVersionTracker& objv) = 0;
     /** Write or overwrite an account */
-    virtual int store_account(const DoutPrefixProvider* dpp,
-                              optional_yield y, bool exclusive,
-                              const RGWAccountInfo& info,
-                              const RGWAccountInfo* old_info,
+    virtual int store_account(const DoutPrefixProvider *dpp,
+                              optional_yield y,
+                              bool exclusive,
+                              const RGWAccountInfo &info,
+                              const RGWAccountInfo *old_info,
+			      const Attrs& attrs,
                               RGWObjVersionTracker& objv) = 0;
     /** Delete an account */
     virtual int delete_account(const DoutPrefixProvider* dpp,

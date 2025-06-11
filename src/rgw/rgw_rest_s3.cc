@@ -7345,9 +7345,10 @@ rgw::auth::s3::STSEngine::authenticate(
     const auto& account_id = role->get_account_id();
     if (!account_id.empty()) {
       r.account.emplace();
+      rgw::sal::Attrs attrs;
       RGWObjVersionTracker objv; // ignored
       int ret = driver->load_account_by_id(dpp, y, account_id,
-                                           *r.account, objv);
+                                           *r.account, attrs, objv);
       if (ret < 0) {
         ldpp_dout(dpp, 1) << "ERROR: failed to load account "
             << account_id << " for role " << r.name

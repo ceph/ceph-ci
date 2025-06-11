@@ -1699,10 +1699,11 @@ int RadosStore::get_user_by_swift(const DoutPrefixProvider* dpp, const std::stri
   return 0;
 }
 
-int RadosStore::load_account_by_id(const DoutPrefixProvider* dpp,
+int RadosStore::load_account_by_id(const DoutPrefixProvider *dpp,
                                    optional_yield y,
                                    std::string_view id,
-                                   RGWAccountInfo& info,
+                                   RGWAccountInfo &info,
+				   Attrs& attrs,
                                    RGWObjVersionTracker& objv)
 {
   ceph::real_time mtime; // ignored
@@ -1712,11 +1713,12 @@ int RadosStore::load_account_by_id(const DoutPrefixProvider* dpp,
       id, info, mtime, objv);
 }
 
-int RadosStore::load_account_by_name(const DoutPrefixProvider* dpp,
+int RadosStore::load_account_by_name(const DoutPrefixProvider *dpp,
                                      optional_yield y,
                                      std::string_view tenant,
                                      std::string_view name,
-                                     RGWAccountInfo& info,
+                                     RGWAccountInfo &info,
+                                     Attrs &attrs,
                                      RGWObjVersionTracker& objv)
 {
   return rgwrados::account::read_by_name(
@@ -1725,10 +1727,11 @@ int RadosStore::load_account_by_name(const DoutPrefixProvider* dpp,
       tenant, name, info, objv);
 }
 
-int RadosStore::load_account_by_email(const DoutPrefixProvider* dpp,
+int RadosStore::load_account_by_email(const DoutPrefixProvider *dpp,
                                       optional_yield y,
                                       std::string_view email,
-                                      RGWAccountInfo& info,
+                                      RGWAccountInfo &info,
+				      Attrs& attrs,
                                       RGWObjVersionTracker& objv)
 {
   return rgwrados::account::read_by_email(
@@ -1755,10 +1758,12 @@ static int write_mdlog_entry(const DoutPrefixProvider* dpp, optional_yield y,
   return mdlog_svc.add_entry(dpp, hash_key, section, key, bl, y);
 }
 
-int RadosStore::store_account(const DoutPrefixProvider* dpp,
-                              optional_yield y, bool exclusive,
-                              const RGWAccountInfo& info,
-                              const RGWAccountInfo* old_info,
+int RadosStore::store_account(const DoutPrefixProvider *dpp,
+                              optional_yield y,
+                              bool exclusive,
+                              const RGWAccountInfo &info,
+                              const RGWAccountInfo *old_info,
+			      const Attrs& attrs,
                               RGWObjVersionTracker& objv)
 {
   ceph::real_time mtime = ceph::real_clock::now();

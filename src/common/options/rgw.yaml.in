@@ -4099,6 +4099,7 @@ options:
   - dbstore
   - motr
   - daos
+  - posix
 - name: rgw_config_store
   type: str
   level: advanced
@@ -4122,7 +4123,6 @@ options:
   - none
   - base
   - d4n
-  - posix
 - name: dbstore_db_dir
   type: str
   level: advanced

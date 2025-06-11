@@ -27,9 +27,10 @@ int retry_raced_account_write(const DoutPrefixProvider* dpp, optional_yield y,
                               RGWObjVersionTracker& objv, const F& f)
 {
   int r = f();
+  rgw::sal::Attrs attrs;
   for (int i = 0; i < 10 && r == -ECANCELED; ++i) {
     objv.clear();
-    r = driver->load_account_by_id(dpp, y, info.id, info, objv);
+    r = driver->load_account_by_id(dpp, y, info.id, info, attrs, objv);
     if (r >= 0) {
       r = f();
     }
@@ -93,8 +94,9 @@ int RGWGetPublicAccessBlock_S3Control::verify_permission(optional_yield y)
 void RGWGetPublicAccessBlock_S3Control::execute(optional_yield y)
 {
   RGWAccountInfo account;
+  rgw::sal::Attrs attrs;
   RGWObjVersionTracker objv;
-  op_ret = driver->load_account_by_id(this, y, account_id, account, objv);
+  op_ret = driver->load_account_by_id(this, y, account_id, account, attrs, objv);
   if (op_ret < 0) {
     ldpp_dout(this, 4) << "failed to load account id "
         << account_id << ": " << cpp_strerror(op_ret) << dendl;
@@ -186,8 +188,9 @@ int RGWPutPublicAccessBlock_S3Control::verify_permission(optional_yield y)
 void RGWPutPublicAccessBlock_S3Control::execute(optional_yield y)
 {
   RGWAccountInfo account;
+  rgw::sal::Attrs attrs;
   RGWObjVersionTracker objv;
-  op_ret = driver->load_account_by_id(this, y, account_id, account, objv);
+  op_ret = driver->load_account_by_id(this, y, account_id, account, attrs, objv);
   if (op_ret < 0) {
     ldpp_dout(this, 4) << "failed to load account id "
         << account_id << ": " << cpp_strerror(op_ret) << dendl;
@@ -209,9 +212,10 @@ void RGWPutPublicAccessBlock_S3Control::execute(optional_yield y)
         const RGWAccountInfo old_info = account;
         account.attrs[RGW_ATTR_PUBLIC_ACCESS] = conf_bl;
 
+	rgw::sal::Attrs attrs;
         constexpr bool exclusive = false;
         return driver->store_account(this, y, exclusive, account,
-                                     &old_info, objv);
+                                     &old_info, attrs, objv);
       });
 }
 
@@ -253,8 +257,9 @@ int RGWDeletePublicAccessBlock_S3Control::verify_permission(optional_yield y)
 void RGWDeletePublicAccessBlock_S3Control::execute(optional_yield y)
 {
   RGWAccountInfo account;
+  rgw::sal::Attrs attrs;
   RGWObjVersionTracker objv;
-  op_ret = driver->load_account_by_id(this, y, account_id, account, objv);
+  op_ret = driver->load_account_by_id(this, y, account_id, account, attrs, objv);
   if (op_ret < 0) {
     ldpp_dout(this, 4) << "failed to load account id "
         << account_id << ": " << cpp_strerror(op_ret) << dendl;
@@ -278,9 +283,10 @@ void RGWDeletePublicAccessBlock_S3Control::execute(optional_yield y)
         }
         account.attrs.erase(i);
 
+	rgw::sal::Attrs attrs;
         constexpr bool exclusive = false;
         return driver->store_account(this, y, exclusive, account,
-                                     &old_info, objv);
+                                     &old_info, attrs, objv);
       });
 }
 
