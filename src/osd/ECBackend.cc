@@ -1158,8 +1158,7 @@ void ECBackend::handle_sub_read(
           goto error;
         }
         ceph_assert(hinfo->has_chunk_hash());
-        if ((bl.length() == hinfo->get_total_chunk_size()) &&
-          (offset == 0)) {
+        if ((bl.length() == st.st_size) && offset == 0) {
           dout(20) << __func__ << ": Checking hash of " << hoid << dendl;
           bufferhash h(-1);
           h << bl;
@@ -1896,14 +1895,6 @@ int ECBackend::be_deep_scrub(
   }
   if (!hinfo->has_chunk_hash()) {
     dout(0) << "_scan_list  " << poid << " got invalid hash info" << dendl;
-    o.ec_size_mismatch = true;
-    return 0;
-  }
-  if (hinfo->get_total_chunk_size() != (unsigned)pos.data_pos) {
-    dout(0) << "_scan_list  " << poid << " got incorrect size on read 0x"
-	    << std::hex << pos
-	    << " expected 0x" << hinfo->get_total_chunk_size() << std::dec
-	    << dendl;
     o.ec_size_mismatch = true;
     return 0;
   }

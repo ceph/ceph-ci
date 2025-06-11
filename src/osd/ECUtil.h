@@ -744,7 +744,7 @@ public:
 };
 
 class HashInfo {
-  uint64_t total_chunk_size = 0;
+  uint64_t unused_total_chunk_size = 0;
   std::vector<uint32_t> cumulative_shard_hashes;
 
 public:
@@ -756,7 +756,7 @@ public:
   void append(uint64_t old_size, shard_id_map<bufferptr> &to_append);
 
   void clear() {
-    total_chunk_size = 0;
+    unused_total_chunk_size = 0;
     cumulative_shard_hashes = std::vector<uint32_t>(
       cumulative_shard_hashes.size(),
       -1);
@@ -772,13 +772,8 @@ public:
     return cumulative_shard_hashes[int(shard)];
   }
 
-  uint64_t get_total_chunk_size() const {
-    return total_chunk_size;
-  }
-
   void set_total_chunk_size_clear_hash(uint64_t new_chunk_size) {
     cumulative_shard_hashes.clear();
-    total_chunk_size = new_chunk_size;
   }
 
   bool has_chunk_hash() const {

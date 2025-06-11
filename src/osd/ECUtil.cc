@@ -1103,25 +1103,23 @@ void ECUtil::HashInfo::append(uint64_t old_size,
                       (unsigned char*)ptr.c_str(), ptr.length());
     }
   }
-  total_chunk_size += size_to_append;
 }
 
 void ECUtil::HashInfo::encode(bufferlist &bl) const {
   ENCODE_START(1, 1, bl);
-  encode(total_chunk_size, bl);
+  encode(unused_total_chunk_size, bl);
   encode(cumulative_shard_hashes, bl);
   ENCODE_FINISH(bl);
 }
 
 void ECUtil::HashInfo::decode(bufferlist::const_iterator &bl) {
   DECODE_START(1, bl);
-  decode(total_chunk_size, bl);
+  decode(unused_total_chunk_size, bl);
   decode(cumulative_shard_hashes, bl);
   DECODE_FINISH(bl);
 }
 
 void ECUtil::HashInfo::dump(Formatter *f) const {
-  f->dump_unsigned("total_chunk_size", total_chunk_size);
   f->open_array_section("cumulative_shard_hashes");
   for (unsigned i = 0; i != cumulative_shard_hashes.size(); ++i) {
     f->open_object_section("hash");
@@ -1138,7 +1136,7 @@ std::ostream &operator<<(std::ostream &out, const HashInfo &hi) {
   for (auto hash : hi.cumulative_shard_hashes) {
     hashes << " " << hex << hash;
   }
-  return out << "tcs=" << hi.total_chunk_size << hashes.str();
+  return out << "hi_crcs=" << hashes.str();
 }
 
 std::ostream &operator<<(std::ostream &out, const shard_extent_map_t &rhs) {
@@ -1188,8 +1186,8 @@ void ECUtil::HashInfo::generate_test_instances(list<HashInfo*> &o) {
     buffers[shard_id_t(0)] = bp;
     buffers[shard_id_t(1)] = bp;
     buffers[shard_id_t(2)] = bp;
-    o.back()->append(0, buffers);
-    o.back()->append(20, buffers);
+    o.back()->append(buffers);
+    o.back()->append(buffers);
   }
   o.push_back(new HashInfo(4));
 }

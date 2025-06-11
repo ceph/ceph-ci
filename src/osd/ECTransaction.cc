@@ -572,11 +572,6 @@ ECTransaction::Generate::Generate(PGTransaction &t,
 
   written_map->emplace(oid, std::move(to_write));
 
-  if (entry && plan.hinfo) {
-    plan.hinfo->set_total_chunk_size_clear_hash(
-      sinfo.ro_offset_to_next_stripe_ro_offset(plan.projected_size));
-  }
-
   if (entry && plan.orig_size < plan.projected_size) {
     entry->mod_desc.append(ECUtil::align_next(plan.orig_size));
   }
