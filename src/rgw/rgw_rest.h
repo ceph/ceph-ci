@@ -147,12 +147,16 @@ class RGWGetBucketTags_ObjStore : public RGWGetBucketTags {
 public:
   RGWGetBucketTags_ObjStore() = default;
   virtual ~RGWGetBucketTags_ObjStore() = default;
+
+  virtual std::string canonical_name() const override { return fmt::format("REST.{}.TAGGING", s->info.method); }
 };
 
 class RGWPutBucketTags_ObjStore: public RGWPutBucketTags {
 public:
   RGWPutBucketTags_ObjStore() = default;
   virtual ~RGWPutBucketTags_ObjStore() = default;
+
+  virtual std::string canonical_name() const override { return fmt::format("REST.{}.TAGGING", s->info.method); }
 };
 
 class RGWGetBucketReplication_ObjStore : public RGWGetBucketReplication {
