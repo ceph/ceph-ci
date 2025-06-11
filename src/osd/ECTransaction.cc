@@ -70,7 +70,11 @@ void ECTransaction::Generate::encode_and_write() {
     to_write.pad_with_other(plan.will_write, *read_sem);
     r = to_write.encode_parity_delta(ec_impl, *read_sem);
   } else {
-    r = to_write.encode(ec_impl, plan.hinfo, plan.orig_size);
+    // We are going to write hinfo, record this by copying to the generate copy.
+    if (plan.hinfo) {
+      hinfo = std::make_shared<ECUtil::HashInfo>(*plan.hinfo);
+    }
+    r = to_write.encode(ec_impl, hinfo, plan.orig_size);
   }
   ceph_assert(r == 0);
   // Remove any unnecessary writes.
@@ -391,6 +395,10 @@ void ECTransaction::Generate::process_init() {
             ghobject_t(oid, ghobject_t::NO_GEN, shard));
         }
       }
+      // Recovery paths likes hinfo present, even if it is empty.
+      if (plan.hinfo) {
+        hinfo = std::make_shared<ECUtil::HashInfo>(*plan.hinfo);
+      }
     },
     [&](const PGTransaction::ObjectOperation::Init::Clone &cop) {
       all_shards_written();
@@ -401,6 +409,8 @@ void ECTransaction::Generate::process_init() {
           ghobject_t(oid, ghobject_t::NO_GEN, shard));
       }
 
+      // Copy shinfo to hinfo in case it needs to be modified. The clone
+      // will copy the attribute, so no need to write unless modified.
       if (plan.hinfo && plan.shinfo) {
         plan.hinfo->update_to(*plan.shinfo);
       }
@@ -421,6 +431,9 @@ void ECTransaction::Generate::process_init() {
           coll_t(spg_t(pgid, shard)),
           ghobject_t(oid, ghobject_t::NO_GEN, shard));
       }
+
+      // Copy shinfo to hinfo in case it needs to be modified. The rename
+      // will copy the attribute, so no need to write unless modified.
       if (plan.hinfo && plan.shinfo) {
         plan.hinfo->update_to(*plan.shinfo);
       }
@@ -520,12 +533,6 @@ ECTransaction::Generate::Generate(PGTransaction &t,
     entry->mod_desc.update_snaps(op.updated_snaps->first);
   }
 
-  if (plan.hinfo) {
-    bufferlist old_hinfo;
-    encode(*(plan.hinfo), old_hinfo);
-    xattr_rollback[ECUtil::get_hinfo_key()] = old_hinfo;
-  }
-
   if (op.is_none() && op.truncate && op.truncate->first == 0) {
     zero_truncate_to_delete();
   }
@@ -576,10 +583,6 @@ ECTransaction::Generate::Generate(PGTransaction &t,
     entry->mod_desc.append(ECUtil::align_next(plan.orig_size));
   }
 
-  if (op.is_delete()) {
-    handle_deletes();
-  }
-
   // On a size change, we want to update OI on all shards
   if (plan.orig_size != plan.projected_size) {
     all_shards_written();
@@ -587,6 +590,10 @@ ECTransaction::Generate::Generate(PGTransaction &t,
     // All priumary shards must always be written, regardless of the write plan.
     shards_written(sinfo.get_parity_shards());
     shard_written(shard_id_t(0));
+  }
+
+  if (entry && !op.is_delete() && hinfo) {
+    update_hinfo();
   }
 
   written_and_present_shards();
@@ -992,21 +999,22 @@ void ECTransaction::Generate::attr_updates() {
   ceph_assert(!xattr_rollback.empty());
 }
 
-void ECTransaction::Generate::handle_deletes() {
+void ECTransaction::Generate::update_hinfo() {
+  bufferlist old_hinfo;
+  encode(*(plan.hinfo), old_hinfo);
+  xattr_rollback[ECUtil::get_hinfo_key()] = old_hinfo;
   bufferlist hbuf;
-  if (plan.hinfo) {
-    encode(*plan.hinfo, hbuf);
-    for (auto &&[shard, t]: transactions) {
-      if (!sinfo.is_nonprimary_shard(shard)) {
-        shard_written(shard);
-        t.setattr(
-          coll_t(spg_t(pgid, shard)),
-          ghobject_t(oid, ghobject_t::NO_GEN, shard),
-          ECUtil::get_hinfo_key(),
-          hbuf);
-      }
+  encode(*hinfo, hbuf);
+  for (auto &&[shard, t]: transactions) {
+    if (entry->is_written_shard(shard)) {
+      t.setattr(
+        coll_t(spg_t(pgid, shard)),
+        ghobject_t(oid, ghobject_t::NO_GEN, shard),
+        ECUtil::get_hinfo_key(),
+        hbuf);
     }
   }
+  *plan.hinfo = *hinfo;
 }
 
 void ECTransaction::generate_transactions(

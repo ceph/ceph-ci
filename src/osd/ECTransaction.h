@@ -100,6 +100,7 @@ class Generate {
   std::vector<shard_id_set> rollback_shards;
   uint32_t fadvise_flags = 0;
   bool written_shards_final{false};
+  ECUtil::HashInfoRef hinfo;
 
   void all_shards_written();
   void shard_written(const shard_id_t shard);
@@ -113,7 +114,7 @@ class Generate {
   void appends_and_clone_ranges();
   void written_and_present_shards();
   void attr_updates();
-  void handle_deletes();
+  void update_hinfo();
 
  public:
   Generate(PGTransaction &t,
