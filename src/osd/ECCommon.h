@@ -384,8 +384,7 @@ struct ECCommon {
         const hobject_t &hoid,
         read_result_t &read_result,
         read_request_t &read_request,
-        bool for_recovery,
-        bool fast_read);
+        bool for_recovery);
 
     void get_all_avail_shards(
         const hobject_t &hoid,
