@@ -31,6 +31,7 @@ def tomer_debug(_):
     trace2 = None
     exc3 = None
     trace3 = None
+    success3=False
     response = None
     if root_ca_cert:
         client_key = NvmeofGatewaysConfig.get_client_key(service_name)
@@ -81,7 +82,9 @@ def tomer_debug(_):
             certificate_chain=client_cert,
         )
         channel = grpc.secure_channel(gateway_addr, credentials)
-        raise Exception('success 2!!!')
+        success3 = True
+        raise Exception('success 3!!!')
+
     except Exception as e:
         trace3 = traceback.format_exc()
         exc3 = str(e)
@@ -90,6 +93,9 @@ def tomer_debug(_):
             "client_key": str(client_key),
             "client_cert": str(client_cert),
             "server_cert": str(server_cert),
+            "self_client_key": str(client.client_key),
+            "self_client_cert": str(client.client_cert),
+            "self_server_cert": str(client.server_cert),
             "gw_config": gw_config,
             "gw_addr": gateway_addr,
             "service_name": service_name,
@@ -99,6 +105,7 @@ def tomer_debug(_):
             "trace2": trace2,
             "exc3": exc3,
             "trace3": trace3,
+            "success3": success3,
             "response": response,
             "client_gw_addr": client.gateway_addr}
     return 0, json.dumps(resp), ''

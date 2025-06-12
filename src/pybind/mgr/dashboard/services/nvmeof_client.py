@@ -36,6 +36,9 @@ else:
                 raise DashboardException(
                     f'Unable to retrieve the gateway info: {e}'
                 )
+            self.client_key = None
+            self.client_cert = None
+            self.server_cert = None
 
             # While creating listener need to direct request to the gateway
             # address where listener is supposed to be added.
@@ -56,6 +59,9 @@ else:
 
             root_ca_cert = NvmeofGatewaysConfig.get_root_ca_cert(service_name)
             if root_ca_cert:
+                self.client_key = NvmeofGatewaysConfig.get_client_key(service_name)
+                self.client_cert = NvmeofGatewaysConfig.get_client_cert(service_name)
+                self.server_cert = NvmeofGatewaysConfig.get_server_cert(service_name)
                 client_key = NvmeofGatewaysConfig.get_client_key(service_name)
                 client_cert = NvmeofGatewaysConfig.get_client_cert(service_name)
                 server_cert = NvmeofGatewaysConfig.get_server_cert(service_name)
