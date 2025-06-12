@@ -1162,6 +1162,13 @@ void ECBackend::handle_sub_read(
           dout(20) << __func__ << ": Checking hash of " << hoid << dendl;
           bufferhash h(-1);
           h << bl;
+          // Hashes are calcualted for full stripes...
+          uint64_t partial_chunk = st.st_size % sinfo.get_chunk_size();
+          if (partial_chunk != 0) {
+            bufferlist zeros;
+            zeros.append_zero(sinfo.get_chunk_size() - partial_chunk);
+            h << zeros;
+          }
           if (h.digest() != hinfo->get_chunk_hash(shard)) {
             get_parent()->clog_error() << "Bad hash for " << hoid <<
               " digest 0x"
@@ -1257,9 +1264,8 @@ void ECBackend::handle_sub_read_reply(
          ++i) {
       if (ECInject::test_read_error0(
         ghobject_t(i->first, ghobject_t::NO_GEN, op.from.shard))) {
-        dout(0) << __func__ << " Error inject - EIO error for shard " << op.from
-                                                                           .shard
- << dendl;
+        dout(0) << __func__ << " Error inject - EIO error for shard "
+                << op.from.shard << dendl;
         op.buffers_read.erase(i->first);
         op.attrs_read.erase(i->first);
         op.errors[i->first] = -EIO;

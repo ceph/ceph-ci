@@ -74,7 +74,42 @@ void ECTransaction::Generate::encode_and_write() {
     if (plan.hinfo) {
       hinfo = std::make_shared<ECUtil::HashInfo>(*plan.hinfo);
     }
-    r = to_write.encode(ec_impl, hinfo, plan.orig_size);
+    r = to_write.encode(ec_impl);
+
+    if (!r && hinfo && plan.projected_size > plan.orig_size) {
+      if (plan.orig_size != to_write.ro_start) {
+        ceph_assert(to_write.ro_start > plan.orig_size);
+
+        ECUtil::shard_extent_set_t zeros_for_crc(sinfo.get_k_plus_m());
+        sinfo.ro_range_to_shard_extent_set_with_parity(
+          plan.orig_size,
+          to_write.ro_start - plan.orig_size,
+          zeros_for_crc);
+
+        // There exist faster ways of calculating CRCs than this, but this does
+        // not seem a particularly important use case.
+        ECUtil::shard_extent_map_t zeros(&sinfo);
+        zeros.zero_pad(zeros_for_crc);
+        hinfo->append(zeros);
+      }
+      hinfo->append(to_write);
+      uint64_t end_of_stripe = sinfo.ro_offset_to_next_stripe_ro_offset(plan.orig_size);
+      // Old EC used to always pad out to the end of the object, for upgrade
+      // purposes we must do the same thing.
+      if (to_write.ro_end != end_of_stripe) {
+        ECUtil::shard_extent_set_t zeros_for_crc(sinfo.get_k_plus_m());
+        sinfo.ro_range_to_shard_extent_set_with_parity(
+          to_write.ro_end,
+          end_of_stripe - plan.orig_size,
+          zeros_for_crc);
+
+        // There exist faster ways of calculating CRCs than this, but this does
+        // not seem a particularly important use case.
+        ECUtil::shard_extent_map_t zeros(&sinfo);
+        zeros.zero_pad(zeros_for_crc);
+        hinfo->append(zeros);
+      }
+    }
   }
   ceph_assert(r == 0);
   // Remove any unnecessary writes.

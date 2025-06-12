@@ -512,25 +512,8 @@ int shard_extent_map_t::_encode(const ErasureCodeInterfaceRef &ec_impl) {
 /* Encode parity chunks, using the encode_chunks interface into the
  * erasure coding. This generates all parity using full stripe writes.
  */
-int shard_extent_map_t::encode(const ErasureCodeInterfaceRef &ec_impl,
-                               const HashInfoRef &hinfo,
-                               uint64_t before_ro_size) {
-  int r = _encode(ec_impl);
-
-  if (!r && hinfo && ro_start >= before_ro_size) {
-    /* NEEDS REVIEW:  The following calculates the new hinfo CRCs. This is
-     *                 currently considering ALL the buffers, including the
-     *                 parity buffers.  Is this really right?
-     *                 Also, does this really belong here? Its convenient
-     *                 because have just built the buffer list...
-     */
-    for (auto iter = begin_slice_iterator(sinfo->get_all_shards()); !iter.is_end(); ++iter) {
-      ceph_assert(ro_start == before_ro_size); // If this fails, we need to look at padding with zeros.
-      hinfo->append(iter.get_out_bufferptrs());
-    }
-  }
-
-  return r;
+int shard_extent_map_t::encode(const ErasureCodeInterfaceRef &ec_impl) {
+  return _encode(ec_impl);
 }
 
 /* Encode parity chunks, using the parity delta write interfaces on plugins
@@ -1087,12 +1070,15 @@ void shard_extent_set_t::insert(const shard_extent_set_t &other) {
 }
 }
 
-void ECUtil::HashInfo::append(shard_id_map<bufferptr> &to_append) {
+void ECUtil::HashInfo::append(ECUtil::shard_extent_map_t &to_append) {
   if (has_chunk_hash()) {
-    for (auto &&[shard, ptr] : to_append) {
-      cumulative_shard_hashes[int(shard)] =
+    for (auto iter = to_append.begin_slice_iterator(to_append.sinfo->get_all_shards());
+        !iter.is_end(); ++iter) {
+      for (auto &&[shard, ptr] : iter.get_out_bufferptrs()) {
+        cumulative_shard_hashes[int(shard)] =
           ceph_crc32c(cumulative_shard_hashes[int(shard)],
                       (unsigned char*)ptr.c_str(), ptr.length());
+      }
     }
   }
 }
@@ -1170,15 +1156,16 @@ void ECUtil::HashInfo::generate_test_instances(list<HashInfo*> &o) {
     bufferlist bl;
     bl.append_zero(20);
 
-    bufferptr bp = bl.begin().get_current_ptr();
-
     // We don't have the k+m here, but this is not critical performance, so
     // create an oversized map.
-    shard_id_map<bufferptr> buffers(128);
-    buffers[shard_id_t(0)] = bp;
-    buffers[shard_id_t(1)] = bp;
-    buffers[shard_id_t(2)] = bp;
-    o.back()->append(buffers);
+    stripe_info_t tmp_sinfo(2,1,3 * 20);
+    shard_extent_map_t buffers(&tmp_sinfo);
+    buffers.insert_in_shard(shard_id_t(0), 0, bl);
+    buffers.insert_in_shard(shard_id_t(1), 0, bl);
+    buffers.insert_in_shard(shard_id_t(2), 0, bl);
+    buffers.insert_in_shard(shard_id_t(0), 20, bl);
+    buffers.insert_in_shard(shard_id_t(1), 20, bl);
+    buffers.insert_in_shard(shard_id_t(2), 20, bl);
     o.back()->append(buffers);
   }
   o.push_back(new HashInfo(4));
