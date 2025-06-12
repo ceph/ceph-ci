@@ -192,7 +192,9 @@ int CephxServiceHandler::handle_request(
       }
 
       if (!cipher_is_allowed(eauth.key.get_type())) {
-	ldout(cct, 20) << __func__ << " authentication failed due to unallowed cipher type: " << eauth.key.get_type() << dendl;
+	ldout(cct, 20) << __func__
+                       << " authentication failed due to unallowed cipher type: "
+                       << CryptoManager::get_key_type_name(eauth.key.get_type()) << dendl;
         ret = -EACCES;
         break;
       }

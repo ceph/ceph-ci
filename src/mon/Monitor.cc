@@ -6833,9 +6833,16 @@ void Monitor::notify_new_monmap(bool can_change_external_state, bool remove_rank
   {
     std::lock_guard lock{cipher_mutex};
     my_service_cipher = monmap->auth_service_cipher;
+    dout(20) << __func__ << ": my_service_cipher now " << my_service_cipher << dendl;
     auto emergency_ciphers = cct->_conf.get_val<std::string>("mon_auth_emergency_allowed_ciphers");
     if (emergency_ciphers.empty()) {
       my_allowed_ciphers = monmap->auth_allowed_ciphers;
+      dout(20) << __func__ << ": auth_allowed_ciphers now " << my_allowed_ciphers << dendl;
+    } else {
+      dout(20) << __func__
+               << ": mon_auth_emergency_allowed_ciphers (" << my_allowed_ciphers
+               << ") overrides MonMap::auth_allowed_ciphers (" << monmap->auth_allowed_ciphers << ")"
+               << dendl;
     }
   }
 }
@@ -7168,19 +7175,37 @@ void Monitor::disconnect_disallowed_stretch_sessions()
 
 int Monitor::get_service_cipher() const
 {
-  std::lock_guard lock{cipher_mutex};
-  return my_service_cipher;
+  dout(30) << __func__ << dendl;
+  int cipher;
+  {
+    std::lock_guard lock{cipher_mutex};
+    cipher = my_service_cipher;
+  }
+  dout(30) << __func__ << ": = " << cipher << dendl;
+  return cipher;
 }
 
 bool Monitor::is_cipher_allowed(int cipher) const
 {
-  std::lock_guard lock{cipher_mutex};
-  auto it = std::find(my_allowed_ciphers.begin(), my_allowed_ciphers.end(), cipher);
-  return it != my_allowed_ciphers.end();
+  dout(30) << __func__ << ": " << CryptoManager::get_key_type_name(cipher) << dendl;
+  bool found;
+  {
+    std::lock_guard lock{cipher_mutex};
+    auto it = std::find(my_allowed_ciphers.begin(), my_allowed_ciphers.end(), cipher);
+    found = (it != my_allowed_ciphers.end());
+  }
+  dout(30) << __func__ << ": = " << found << dendl;
+  return found;
 }
 
 decltype(Monitor::my_allowed_ciphers) Monitor::get_ciphers_allowed() const
 {
-  std::lock_guard lock{cipher_mutex};
-  return my_allowed_ciphers;
+  dout(30) << __func__ << dendl;
+  decltype(Monitor::my_allowed_ciphers) ciphers;
+  {
+    std::lock_guard lock{cipher_mutex};
+    ciphers = my_allowed_ciphers;
+  }
+  dout(30) << __func__ << ": = " << ciphers << dendl;
+  return ciphers;
 }
