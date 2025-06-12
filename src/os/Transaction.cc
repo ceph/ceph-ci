@@ -166,6 +166,9 @@ void Transaction::dump(ceph::Formatter *f)
           oi_decode.dump(f);
           f->close_section();
         }
+        if (name == "hinfo_key") {
+          f->dump_string("hi", bl.hexdump());
+        }
         // END DELETE ME DEBUG
       }
       break;
