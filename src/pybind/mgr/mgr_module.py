@@ -464,9 +464,8 @@ class CLICommand(object):
                 f"'{arg}' is not annotated for {f}: {full_argspec}"
             has_default = index >= first_default
             if get_origin(arg_spec[arg]) is Union:
-                tp = get_args(arg_spec[arg])[0]
-            else:
-                tp = arg_spec[arg]
+                arg_spec[arg] = get_args(arg_spec[arg])[0]
+            tp = arg_spec[arg]
             args.append(CephArgtype.to_argdesc(tp,
                                                dict(name=arg),
                                                has_default,
