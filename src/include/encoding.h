@@ -207,6 +207,20 @@ WRITE_FLTTYPE_ENCODER(double, uint64_t, le64)
     ENCODE_DUMP_PRE(); c.encode(bl, features); ENCODE_DUMP_POST(cl); }	\
   inline void decode(cl &c, ::ceph::bufferlist::const_iterator &p) { c.decode(p); }
 
+template<typename Int>
+inline void encode_int(const auto& t, ::ceph::bufferlist& bl, uint64_t features=0)
+{
+  Int i = static_cast<Int>(t);
+  encode(i, bl);
+}
+
+template<typename Int>
+inline void decode_int(const auto& t, ::ceph::bufferlist::const_iterator& p)
+{
+  Int i;
+  decode(i, p);
+  t = static_cast<decltype(t)>(i);
+}
 
 // string
 inline void encode(std::string_view s, bufferlist& bl, uint64_t features=0)
