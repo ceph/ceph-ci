@@ -16,6 +16,10 @@ struct health_check_t {
   std::list<std::string> detail;
   int64_t count = 0;
 
+  static bool is_ephemeral() {
+    return true;
+  }
+
   DENC(health_check_t, v, p) {
     DENC_START(2, 1, p);
     denc(v.severity, p);
