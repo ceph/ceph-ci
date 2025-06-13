@@ -203,7 +203,7 @@ int CephxServiceHandler::handle_request(
           for (auto& cipher : ciphers) {
             dout_prefix << " " << CryptoManager::get_key_type_name(cipher);
           }
-        dendl;
+        dout_prefix << dendl;
         ret = -EACCES;
         break;
       }
