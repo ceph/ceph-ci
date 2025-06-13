@@ -973,7 +973,7 @@ CryptoKeyHandler *CryptoAES256KRB5::get_key_handler_ext(const bufferptr& secret,
 void CryptoKey::encode(bufferlist& bl) const
 {
   using ceph::encode;
-  encode(type, bl);
+  encode_int<uint16_t>(type);
   encode(created, bl);
   __u16 len = secret.length();
   encode(len, bl);
@@ -983,7 +983,7 @@ void CryptoKey::encode(bufferlist& bl) const
 void CryptoKey::decode(bufferlist::const_iterator& bl)
 {
   using ceph::decode;
-  decode(type, bl);
+  decode_int<uint16_t>(type);
   decode(created, bl);
   __u16 len;
   decode(len, bl);
