@@ -450,7 +450,8 @@ public:
       chunk_mapping(complete_chunk_mapping(std::vector<shard_id_t>(), k + m)),
       chunk_mapping_reverse(reverse_chunk_mapping(chunk_mapping)),
       data_shards(calc_shards(raw_shard_id_t(), k, chunk_mapping)),
-      parity_shards(calc_shards(raw_shard_id_t(k), m, chunk_mapping)) {
+      parity_shards(calc_shards(raw_shard_id_t(k), m, chunk_mapping)),
+      all_shards(calc_all_shards(k + m)) {
     ceph_assert(stripe_width != 0);
     ceph_assert(stripe_width % k == 0);
   }
@@ -753,7 +754,7 @@ public:
   explicit HashInfo(unsigned num_chunks) :
     cumulative_shard_hashes(num_chunks, -1) {}
 
-  void append(shard_extent_map_t &to_append);
+  void append(shard_extent_map_t &to_append, uint64_t old_ro_size);
 
   void clear() {
     unused_total_chunk_size = 0;

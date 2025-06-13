@@ -1131,56 +1131,57 @@ void ECBackend::handle_sub_read(
       }
 
       if (!sinfo.supports_ec_overwrites()) {
-        // This shows that we still need deep scrub because large enough files
-        // are read in sections, so the digest check here won't be done here.
-        // Do NOT check osd_read_eio_on_bad_digest here.  We need to report
-        // the state of our chunk in case other chunks could substitute.
-        ECUtil::HashInfoRef hinfo;
-        map<string, bufferlist, less<>> attrs;
-        struct stat st;
-        int r = object_stat(hoid, &st);
-        if (r >= 0) {
-          dout(10) << __func__ << ": found on disk, size " << st.st_size << dendl;
-          r = switcher->objects_get_attrs_with_hinfo(hoid, &attrs);
-        }
-        if (r >= 0) {
-          hinfo = unstable_hashinfo_registry.get_hash_info(
-            hoid, false, attrs, st.st_size);
-        } else {
-          derr << __func__ << ": access (attrs) on " << hoid << " failed: "
-	       << cpp_strerror(r) << dendl;
-        }
-        if (!hinfo) {
-          r = -EIO;
-          get_parent()->clog_error() << "Corruption detected: object "
-            << hoid << " is missing hash_info";
-          dout(5) << __func__ << ": No hinfo for " << hoid << dendl;
-          goto error;
-        }
-        ceph_assert(hinfo->has_chunk_hash());
-        if ((bl.length() == st.st_size) && offset == 0) {
-          dout(20) << __func__ << ": Checking hash of " << hoid << dendl;
-          bufferhash h(-1);
-          h << bl;
-          // Hashes are calcualted for full stripes...
-          uint64_t partial_chunk = st.st_size % sinfo.get_chunk_size();
-          if (partial_chunk != 0) {
-            bufferlist zeros;
-            zeros.append_zero(sinfo.get_chunk_size() - partial_chunk);
-            h << zeros;
-          }
-          if (h.digest() != hinfo->get_chunk_hash(shard)) {
-            get_parent()->clog_error() << "Bad hash for " << hoid <<
-              " digest 0x"
-              << hex << h.digest() << " expected 0x" << hinfo->
-              get_chunk_hash(shard) << dec;
-            dout(5) << __func__ << ": Bad hash for " << hoid << " digest 0x"
-		    << hex << h.digest() << " expected 0x"
-                    << hinfo->get_chunk_hash(shard) << dec << dendl;
-            r = -EIO;
-            goto error;
-          }
-        }
+        // FIXME: Should we just delete all this code?  Or get it working?
+      //   // This shows that we still need deep scrub because large enough files
+      //   // are read in sections, so the digest check here won't be done here.
+      //   // Do NOT check osd_read_eio_on_bad_digest here.  We need to report
+      //   // the state of our chunk in case other chunks could substitute.
+      //   ECUtil::HashInfoRef hinfo;
+      //   map<string, bufferlist, less<>> attrs;
+      //   struct stat st;
+      //   int r = object_stat(hoid, &st);
+      //   if (r >= 0) {
+      //     dout(10) << __func__ << ": found on disk, size " << st.st_size << dendl;
+      //     r = switcher->objects_get_attrs_with_hinfo(hoid, &attrs);
+      //   }
+      //   if (r >= 0) {
+      //     hinfo = unstable_hashinfo_registry.get_hash_info(
+      //       hoid, false, attrs, st.st_size);
+      //   } else {
+      //     derr << __func__ << ": access (attrs) on " << hoid << " failed: "
+      //          << cpp_strerror(r) << dendl;
+      //   }
+      //   if (!hinfo) {
+      //     r = -EIO;
+      //     get_parent()->clog_error() << "Corruption detected: object "
+      //       << hoid << " is missing hash_info";
+      //     dout(5) << __func__ << ": No hinfo for " << hoid << dendl;
+      //     goto error;
+      //   }
+      //   ceph_assert(hinfo->has_chunk_hash());
+      //   if ((bl.length() == st.st_size) && offset == 0) {
+      //     dout(20) << __func__ << ": Checking hash of " << hoid << dendl;
+      //     bufferhash h(-1);
+      //     h << bl;
+      //     // Hashes are calcualted for full stripes...
+      //     uint64_t partial_chunk = st.st_size % sinfo.get_chunk_size();
+      //     if (partial_chunk != 0) {
+      //       bufferlist zeros;
+      //       zeros.append_zero(sinfo.get_chunk_size() - partial_chunk);
+      //       h << zeros;
+      //     }
+      //     if (h.digest() != hinfo->get_chunk_hash(shard)) {
+      //       get_parent()->clog_error() << "Bad hash for " << hoid <<
+      //         " digest 0x"
+      //         << hex << h.digest() << " expected 0x" << hinfo->
+      //         get_chunk_hash(shard) << dec;
+      //       dout(5) << __func__ << ": Bad hash for " << hoid << " digest 0x"
+      //               << hex << h.digest() << " expected 0x"
+      //               << hinfo->get_chunk_hash(shard) << dec << dendl;
+      //       r = -EIO;
+      //       goto error;
+      //     }
+      //   }
       }
     }
     continue;

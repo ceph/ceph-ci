@@ -1070,17 +1070,41 @@ void shard_extent_set_t::insert(const shard_extent_set_t &other) {
 }
 }
 
-void ECUtil::HashInfo::append(ECUtil::shard_extent_map_t &to_append) {
-  if (has_chunk_hash()) {
-    for (auto iter = to_append.begin_slice_iterator(to_append.sinfo->get_all_shards());
-        !iter.is_end(); ++iter) {
-      for (auto &&[shard, ptr] : iter.get_out_bufferptrs()) {
-        cumulative_shard_hashes[int(shard)] =
-          ceph_crc32c(cumulative_shard_hashes[int(shard)],
-                      (unsigned char*)ptr.c_str(), ptr.length());
-      }
-    }
-  }
+void ECUtil::HashInfo::append(ECUtil::shard_extent_map_t &to_append, uint64_t old_ro_size) {
+  // We might be deleting all of this.... so just ignore the appends for now.
+
+  // if (!has_chunk_hash() || to_append.empty()) {
+  //   return;
+  // }
+
+  // // A zero-sized total_chunk_size indicates that the stat-size should be used
+  // // to check for a full-stripe write.
+  // // If non-zero, then zero-padding should be applied, as the hinfo was written
+  // // by old-EC.
+  // unused_total_chunk_size = 0;
+  // const stripe_info_t *sinfo = to_append.sinfo;
+  // shard_extent_set_t zero_mask(sinfo->get_k_plus_m());
+  // uint64_t old_stripe_end = sinfo->ro_offset_to_next_stripe_ro_offset(old_ro_size);
+  // ceph_assert(to_append.ro_start >= old_stripe_end);
+  // if (to_append.ro_start > old_stripe_end) {
+  //   sinfo->ro_range_to_shard_extent_set_with_parity(old_stripe_end, to_append.ro_start, zero_mask);
+  //   for (auto &&[shard, eset] : zero_mask) {
+  //     bufferlist bl;
+  //     bl.append_zero(eset.size());
+  //     cumulative_shard_hashes[int(shard)] =
+  //       ceph_crc32c(cumulative_shard_hashes[int(shard)],
+  //                   (unsigned char*)bl.c_str(), bl.length());
+  //   }
+  // }
+  //
+  // for (auto iter = to_append.begin_slice_iterator(to_append.sinfo->get_all_shards());
+  //     !iter.is_end(); ++iter) {
+  //   for (auto &&[shard, ptr] : iter.get_out_bufferptrs()) {
+  //     cumulative_shard_hashes[int(shard)] =
+  //       ceph_crc32c(cumulative_shard_hashes[int(shard)],
+  //                   (unsigned char*)ptr.c_str(), ptr.length());
+  //   }
+  // }
 }
 
 void ECUtil::HashInfo::encode(bufferlist &bl) const {
@@ -1166,7 +1190,7 @@ void ECUtil::HashInfo::generate_test_instances(list<HashInfo*> &o) {
     buffers.insert_in_shard(shard_id_t(0), 20, bl);
     buffers.insert_in_shard(shard_id_t(1), 20, bl);
     buffers.insert_in_shard(shard_id_t(2), 20, bl);
-    o.back()->append(buffers);
+    o.back()->append(buffers, 0);
   }
   o.push_back(new HashInfo(4));
 }
