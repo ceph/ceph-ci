@@ -906,9 +906,7 @@ public:
   MPRadosSerializer(const DoutPrefixProvider *dpp, RadosStore* store, RadosObject* obj, const std::string& lock_name);
 
   virtual int try_lock(const DoutPrefixProvider *dpp, utime_t dur, optional_yield y) override;
-  virtual int unlock() override {
-    return lock.unlock(&ioctx, oid);
-  }
+  virtual int unlock(const DoutPrefixProvider* dpp, optional_yield y) override;
 };
 
 class LCRadosSerializer : public StoreLCSerializer {
@@ -919,9 +917,7 @@ public:
   LCRadosSerializer(RadosStore* store, const std::string& oid, const std::string& lock_name, const std::string& cookie);
 
   virtual int try_lock(const DoutPrefixProvider *dpp, utime_t dur, optional_yield y) override;
-  virtual int unlock() override {
-    return lock.unlock(ioctx, oid);
-  }
+  virtual int unlock(const DoutPrefixProvider* dpp, optional_yield y) override;
 };
 
 class RadosLifecycle : public Lifecycle {
@@ -961,7 +957,7 @@ public:
   RadosRestoreSerializer(RadosStore* store, const std::string& oid, const std::string& lock_name, const std::string& cookie);
 
   virtual int try_lock(const DoutPrefixProvider *dpp, utime_t dur, optional_yield y) override;
-  virtual int unlock() override {
+  virtual int unlock(const DoutPrefixProvider* dpp, optional_yield y) override {
     return lock.unlock(&ioctx, oid);
   }
 };
