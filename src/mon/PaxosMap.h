@@ -22,6 +22,11 @@ concept HasEpoch = requires(T t) {
   { t.inc_epoch() } -> std::same_as<void>;
 };
 
+template<typename T>
+concept HasEphemeral = requires {
+  { T::is_ephemeral() } -> std::same_as<bool>;
+};
+
 
 template<typename Mon, typename Service, typename T>
 class PaxosMap {
@@ -40,6 +45,10 @@ protected:
     pending_map = map;
     if constexpr (HasEpoch<T>) {
       pending_map.inc_epoch();
+    } else if constexpr (HasEphemeral<T>) {
+      if constexpr (T::is_ephemeral()) {
+        pending_map = T();
+      }
     }
     return pending_map;
   }
