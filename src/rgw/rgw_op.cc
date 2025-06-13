@@ -7493,7 +7493,7 @@ void RGWCompleteMultipart::complete()
 {
   /* release exclusive lock iff not already */
   if (unlikely(serializer.get() && serializer->is_locked())) {
-    int r = serializer->unlock();
+    int r = serializer->unlock(this, s->yield);
     if (r < 0) {
       ldpp_dout(this, 0) << "WARNING: failed to unlock " << *serializer.get() << dendl;
     }
@@ -7556,7 +7556,7 @@ void RGWAbortMultipart::execute(optional_yield y)
     return;
   }
   op_ret = upload->abort(this, s->cct, y);
-  serializer->unlock();
+  serializer->unlock(this, y);
 }
 
 int RGWListMultipart::verify_permission(optional_yield y)
