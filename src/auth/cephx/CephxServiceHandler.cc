@@ -195,6 +195,15 @@ int CephxServiceHandler::handle_request(
 	ldout(cct, 20) << __func__
                        << " authentication failed due to unallowed cipher type: "
                        << CryptoManager::get_key_type_name(eauth.key.get_type()) << dendl;
+        ldout(cct, 30);
+          std::shared_lock rl(lock);
+          auto ciphers = key_server->get_ciphers_allowed();
+          dout_prefix << __func__
+                      << ": ciphers are:";
+          for (auto& cipher : ciphers) {
+            dout_prefix << " " << CryptoManager::get_key_type_name(cipher);
+          }
+        dendl;
         ret = -EACCES;
         break;
       }
