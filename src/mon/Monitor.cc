@@ -7198,10 +7198,10 @@ bool Monitor::is_cipher_allowed(int cipher) const
   return found;
 }
 
-decltype(Monitor::my_allowed_ciphers) Monitor::get_ciphers_allowed() const
+std::vector<int> Monitor::get_ciphers_allowed() const
 {
   dout(30) << __func__ << dendl;
-  decltype(Monitor::my_allowed_ciphers) ciphers;
+  std::vector<int> ciphers;
   {
     std::lock_guard lock{cipher_mutex};
     ciphers = my_allowed_ciphers;

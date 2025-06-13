@@ -173,7 +173,7 @@ private:
 public:
   int get_service_cipher() const override;
   bool is_cipher_allowed(int cipher) const override;
-  decltype(my_allowed_ciphers) get_ciphers_allowed() const;
+  std::vector<int> get_ciphers_allowed() const override;
 
 private:
   void new_tick();

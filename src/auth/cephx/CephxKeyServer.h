@@ -358,6 +358,9 @@ public:
   virtual bool is_cipher_allowed(int cipher) const {
     return cipher == CEPH_CRYPTO_AES256KRB5;
   }
+  virtual std::vector<int> get_ciphers_allowed() const {
+    return {CEPH_CRYPTO_AES256KRB5};
+  }
 };
 WRITE_CLASS_ENCODER(KeyServer)
 
