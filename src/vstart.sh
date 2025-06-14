@@ -870,6 +870,7 @@ prepare_conf() {
         mon osd full ratio = .99
         mon osd nearfull ratio = .99
         mon osd backfillfull ratio = .99
+        mon_auth_allow_insecure_key = true
         mon_max_pg_per_osd = ${MON_MAX_PG_PER_OSD:-1000}
         erasure code dir = $EC_PATH
         plugin dir = $CEPH_LIB
@@ -1131,8 +1132,8 @@ start_mon() {
             echo
         fi
 
-        prun $SUDO "$CEPH_BIN/ceph-authtool" --create-keyring --gen-key --name=mon. "$keyring_fn" --cap mon 'allow *'
-        prun $SUDO "$CEPH_BIN/ceph-authtool" --gen-key --name=client.admin \
+        prun $SUDO "$CEPH_BIN/ceph-authtool" --key-type aes --create-keyring --gen-key --name=mon. "$keyring_fn" --cap mon 'allow *'
+        prun $SUDO "$CEPH_BIN/ceph-authtool" --key-type aes --gen-key --name=client.admin \
              --cap mon 'allow *' \
              --cap osd 'allow *' \
              --cap mds 'allow *' \
@@ -1167,7 +1168,7 @@ EOF
 [global]
         mon host = $mon_host
 EOF
-        prun "$CEPH_BIN/monmaptool" --create --clobber "${params[@]}" --print "$monmap_fn"
+        prun "$CEPH_BIN/monmaptool" --auth-service-cipher aes --auth-allowed-ciphers aes --auth-preferred-cipher aes --create --clobber "${params[@]}" --print "$monmap_fn"
 
         for f in $MONS
         do
@@ -1320,7 +1321,7 @@ EOF
 
             local uuid=`uuidgen`
             echo "add osd$osd $uuid"
-            OSD_SECRET=$($CEPH_BIN/ceph-authtool --gen-print-key)
+            OSD_SECRET=$($CEPH_BIN/ceph-authtool --key-type aes --gen-print-key)
             echo "{\"cephx_secret\": \"$OSD_SECRET\"}" > $CEPH_DEV_DIR/osd$osd/new.json
             ceph_adm osd new $uuid -i $CEPH_DEV_DIR/osd$osd/new.json
             rm $CEPH_DEV_DIR/osd$osd/new.json
@@ -1374,7 +1375,7 @@ start_mgr() {
         if [ "$new" -eq 1 ]; then
             mkdir -p $CEPH_DEV_DIR/mgr.$name
             key_fn=$CEPH_DEV_DIR/mgr.$name/keyring
-            $SUDO $CEPH_BIN/ceph-authtool --create-keyring --gen-key --name=mgr.$name $key_fn
+            prun $SUDO $CEPH_BIN/ceph-authtool --key-type aes --create-keyring --gen-key --name=mgr.$name $key_fn
             ceph_adm -i $key_fn auth add mgr.$name mon 'allow profile mgr' mds 'allow *' osd 'allow *'
 
             wconf <<EOF
@@ -1479,10 +1480,10 @@ EOF
         mds standby for name = ${name}
 EOF
             fi
-            prun $SUDO "$CEPH_BIN/ceph-authtool" --create-keyring --gen-key --name="mds.$name" "$key_fn"
+            prun $SUDO "$CEPH_BIN/ceph-authtool" --key-type aes --create-keyring --gen-key --name="mds.$name" "$key_fn"
             ceph_adm -i "$key_fn" auth add "mds.$name" mon 'allow profile mds' osd 'allow rw tag cephfs *=*' mds 'allow' mgr 'allow profile mds'
             if [ "$standby" -eq 1 ]; then
-                prun $SUDO "$CEPH_BIN/ceph-authtool" --create-keyring --gen-key --name="mds.${name}s" \
+                prun $SUDO "$CEPH_BIN/ceph-authtool" --key-type aes --create-keyring --gen-key --name="mds.${name}s" \
                      "$CEPH_DEV_DIR/mds.${name}s/keyring"
                 ceph_adm -i "$CEPH_DEV_DIR/mds.${name}s/keyring" auth add "mds.${name}s" \
                              mon 'allow profile mds' osd 'allow *' mds 'allow' mgr 'allow profile mds'
@@ -1614,7 +1615,8 @@ EOF
 
 if [ "$debug" -eq 0 ]; then
     CMONDEBUG='
-        debug mon = 10
+        debug mon = 30
+        debug paxos = 30
         debug ms = 1'
     CCLIENTDEBUG=''
     CMDSDEBUG=''
@@ -1622,7 +1624,7 @@ else
     debug echo "** going verbose **"
     CMONDEBUG='
         debug osd = 20
-        debug mon = 20
+        debug mon = 30
         debug osd = 20
         debug paxos = 20
         debug auth = 20
