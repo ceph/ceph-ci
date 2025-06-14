@@ -466,13 +466,14 @@ void PaxosService::trim(MonitorDBStore::TransactionRef t,
 
 void PaxosService::_create_pending() {
   health_checks.create_pending();
-  dout(20) << "health_checks now: " << health_checks << dendl;
+  dout(30) << "health_checks pending: " << health_checks << dendl;
   create_pending();
 }
 
 void PaxosService::_encode_pending(MonitorDBStore::TransactionRef t) {
   using ceph::encode;
   encode_pending(t);
+  dout(30) << "health_checks encoding: " << health_checks << dendl;
   auto const& pending = health_checks.get_pending_map();
   ceph::buffer::list bl;
   encode(pending, bl);
@@ -487,6 +488,7 @@ void PaxosService::_update_from_paxos(bool* need_bootstrap)
   if (bl.length()) {
     auto p = bl.cbegin();
     health_checks.decode(p);
+    dout(30) << "health_checks decoded: " << health_checks << dendl;
   }
   update_from_paxos(need_bootstrap);
 }
