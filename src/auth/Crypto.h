@@ -20,6 +20,8 @@
 #include "include/utime.h"
 #include "include/buffer.h"
 
+#include "msg/msg_types.h"
+
 #include <string>
 
 class CryptoKeyContext;

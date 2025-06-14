@@ -16,7 +16,7 @@ struct health_check_t {
   std::list<std::string> detail;
   int64_t count = 0;
 
-  static bool is_ephemeral() {
+  static constexpr bool is_ephemeral() {
     return true;
   }
 
