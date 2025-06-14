@@ -22,6 +22,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -215,11 +216,11 @@ inline void encode_int(const auto& t, ::ceph::bufferlist& bl, uint64_t features=
 }
 
 template<typename Int>
-inline void decode_int(const auto& t, ::ceph::bufferlist::const_iterator& p)
+inline void decode_int(auto& t, ::ceph::bufferlist::const_iterator& p)
 {
   Int i;
   decode(i, p);
-  t = static_cast<decltype(t)>(i);
+  t = static_cast<std::remove_reference_t<decltype(t)>>(i);
 }
 
 // string
