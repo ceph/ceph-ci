@@ -21,7 +21,7 @@
 #include <vector>
 
 using std::string;
-using namespace std::literals::string_literals;
+using namespace std::literals::string_view_literals;
 
 void EntityName::encode(ceph::buffer::list& bl) const
 {
@@ -173,14 +173,14 @@ entity_type_t EntityName::str_to_ceph_entity_type(std::string_view s)
   }
 }
 
-std::string const& EntityName::ceph_entity_type_to_str(entity_type_t type)
+std::string_view EntityName::ceph_entity_type_to_str(entity_type_t type)
 {
   auto l = [type](const auto& p) {
     return type == p.first;
   };
   auto it = std::find_if(STR_TO_ENTITY_TYPE.begin(), STR_TO_ENTITY_TYPE.end(), std::move(l));
   if (it == STR_TO_ENTITY_TYPE.end()) {
-    return "???"s;
+    return "???"sv;
   } else {
     return it->second;
   }

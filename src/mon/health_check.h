@@ -3,11 +3,13 @@
 
 #pragma once
 
-#include <string>
+#include <iosfwd>
 #include <map>
+#include <string>
 
 #include "include/health.h"
 #include "include/utime.h"
+#include "common/CanHasPrint.h"
 #include "common/Formatter.h"
 
 struct health_check_t {
@@ -15,10 +17,6 @@ struct health_check_t {
   std::string summary;
   std::list<std::string> detail;
   int64_t count = 0;
-
-  static constexpr bool is_ephemeral() {
-    return true;
-  }
 
   DENC(health_check_t, v, p) {
     DENC_START(2, 1, p);
@@ -41,6 +39,13 @@ struct health_check_t {
   friend bool operator!=(const health_check_t& l,
 			 const health_check_t& r) {
     return !(l == r);
+  }
+
+  void print(std::ostream& os) const {
+    os << "hc"
+       << "(" << summary
+       << " count=" << count
+       << ")";
   }
 
   void dump(ceph::Formatter *f, bool want_detail=true) const {
@@ -121,6 +126,17 @@ struct health_check_map_t {
     DENC_START(1, 1, p);
     denc(v.checks, p);
     DENC_FINISH(p);
+  }
+
+  static constexpr bool is_ephemeral() {
+    return true;
+  }
+
+  void print(std::ostream& os) const {
+    os << "health_check_map_t"
+       << "("
+       << checks
+       << ")";
   }
 
   void dump(ceph::Formatter *f) const {
