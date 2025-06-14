@@ -30,6 +30,8 @@ concept HasEphemeral = requires {
 
 template<typename Mon, typename Service, typename T>
 class PaxosMap {
+  static_assert(!(HasEpoch<T> && HasEphemeral<T>), "A type cannot satisfy both HasEpoch and HasEphemeral concepts.");
+
 public:
   PaxosMap(Mon const& m, Service const& s) : mon(m), service(s) {}
   virtual ~PaxosMap() = default;
