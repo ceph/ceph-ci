@@ -148,7 +148,7 @@ public:
   utime_t get_created() const { return created; }
   void print(std::ostream& out) const;
 
-  int set_secret(ceph_entity_t type, const ceph::buffer::ptr& s, utime_t created);
+  int set_secret(entity_type_t type, const ceph::buffer::ptr& s, utime_t created);
   const ceph::buffer::ptr& get_secret() { return secret; }
   const ceph::buffer::ptr& get_secret() const { return secret; }
 
@@ -181,7 +181,7 @@ public:
   void encode_plaintext(ceph::buffer::list &bl);
 
   // --
-  int create(CephContext *cct, ceph_entity_t type);
+  int create(CephContext *cct, entity_type_t type);
   int encrypt(CephContext *cct, const ceph::buffer::list& in,
 	      ceph::buffer::list& out,
 	      std::string *error) const {
