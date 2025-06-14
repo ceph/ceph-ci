@@ -466,6 +466,7 @@ void PaxosService::trim(MonitorDBStore::TransactionRef t,
 
 void PaxosService::_create_pending() {
   health_checks.create_pending();
+  dout(20) << "health_checks now: " << health_checks << dendl;
   create_pending();
 }
 
@@ -476,7 +477,7 @@ void PaxosService::_encode_pending(MonitorDBStore::TransactionRef t) {
   ceph::buffer::list bl;
   encode(pending, bl);
   t->put("health", service_name, bl);
-  mon.log_health(pending, pending, t);
+  mon.log_health(pending, health_checks.get_map(), t);
 }
 
 void PaxosService::_update_from_paxos(bool* need_bootstrap)
