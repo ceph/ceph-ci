@@ -14,6 +14,7 @@
 #pragma once
 
 #include <chrono>
+#include <iosfwd>
 
 #include "include/ceph_assert.h"
 
@@ -38,6 +39,10 @@ public:
 
   const T& get_pending_map() const { ceph_assert(mon.is_leader()); return pending_map; }
   const T& get_map() const { return map; }
+
+  void print(std::ostream& os) const {
+    os << map;
+  }
 
 protected:
   T& get_pending_map_writeable() { ceph_assert(mon.is_leader()); ceph_assert(service.is_writeable()); return pending_map; }
