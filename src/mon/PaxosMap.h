@@ -41,7 +41,10 @@ public:
   const T& get_map() const { return map; }
 
   void print(std::ostream& os) const {
-    os << map;
+    os << "PaxosMap@" << typeid(T).name()
+       << "(current=(" << map << ")"
+          " pending=(" << map << ")"
+          ")"
   }
 
 protected:
