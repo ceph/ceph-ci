@@ -27,8 +27,6 @@
 #include "common/hex.h"
 #include "common/safe_io.h"
 
-#include "msg/msg_types.h"
-
 #include <boost/endian/conversion.hpp>
 #include <openssl/aes.h>
 #include <openssl/core_names.h>
