@@ -209,17 +209,17 @@ WRITE_FLTTYPE_ENCODER(double, uint64_t, le64)
   inline void decode(cl &c, ::ceph::bufferlist::const_iterator &p) { c.decode(p); }
 
 template<typename Int>
-inline void encode_int(const auto& t, ::ceph::bufferlist& bl, uint64_t features=0)
+inline void encode_assign(const auto& t, ::ceph::bufferlist& bl, uint64_t features=0)
 {
   Int i = static_cast<Int>(t);
-  encode(i, bl);
+  ::encode(i, bl);
 }
 
 template<typename Int>
-inline void decode_int(auto& t, ::ceph::bufferlist::const_iterator& p)
+inline void decode_assign(auto& t, ::ceph::bufferlist::const_iterator& p)
 {
   Int i;
-  decode(i, p);
+  ::decode(i, p);
   t = static_cast<std::remove_reference_t<decltype(t)>>(i);
 }
 
