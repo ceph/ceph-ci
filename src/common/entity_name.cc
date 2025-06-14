@@ -21,6 +21,7 @@
 #include <vector>
 
 using std::string;
+using namespace std::literals::string_literals;
 
 void EntityName::encode(ceph::buffer::list& bl) const
 {
@@ -179,7 +180,7 @@ std::string const& EntityName::ceph_entity_type_to_str(entity_type_t type)
   };
   auto it = std::find_if(STR_TO_ENTITY_TYPE.begin(), STR_TO_ENTITY_TYPE.end(), std::move(l));
   if (it == STR_TO_ENTITY_TYPE.end()) {
-    return "???";
+    return "???"s;
   } else {
     return it->second;
   }

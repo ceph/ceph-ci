@@ -125,7 +125,7 @@ protected:
   // don't have to create it for every crypto operation.
   mutable std::shared_ptr<CryptoKeyHandler> ckh;
 
-  int _set_secret(int type, const ceph::buffer::ptr& s);
+  int _set_secret(entity_type_t type, const ceph::buffer::ptr& s);
 
 public:
   CryptoKey() = default;
