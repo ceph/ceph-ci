@@ -44,13 +44,14 @@ protected:
 
   T& create_pending() {
     ceph_assert(mon.is_leader());
-    pending_map = map;
     if constexpr (HasEpoch<T>) {
       pending_map.inc_epoch();
     } else if constexpr (HasEphemeral<T>) {
       if constexpr (T::is_ephemeral()) {
         pending_map = T();
       }
+    } else {
+      pending_map = map;
     }
     return pending_map;
   }
