@@ -13,10 +13,12 @@
 
 #pragma once
 
-#include <chrono>
-#include <iosfwd>
-
 #include "include/ceph_assert.h"
+
+#include "common/CanHasPrint.h"
+
+#include <chrono>
+#include <ostream>
 
 template<typename T>
 concept HasEpoch = requires(T t) {
@@ -42,9 +44,9 @@ public:
 
   void print(std::ostream& os) const {
     os << "PaxosMap@" << typeid(T).name()
-       << "(current=(" << map << ")"
-          " pending=(" << map << ")"
-          ")"
+       << "(current=" << map
+       << " pending=" << pending_map
+       << ")";
   }
 
 protected:
