@@ -2954,7 +2954,7 @@ const shard_id_t OSDMap::pgtemp_primaryfirst(const pg_pool_t& pool,
   return result;
 }
 
-const shard_id_t OSDMap::pgtemp_undo_primaryfirst(const pg_pool_t& pool,
+shard_id_t OSDMap::pgtemp_undo_primaryfirst(const pg_pool_t& pool,
 	const pg_t pg, const shard_id_t shard) const
 {
   if ((shard == shard_id_t::NO_SHARD) ||

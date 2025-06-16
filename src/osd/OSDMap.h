@@ -1369,7 +1369,7 @@ public:
   const shard_id_t pgtemp_primaryfirst(const pg_pool_t& pool,
 				       const pg_t pg,
 				       const shard_id_t shard) const;
-  const shard_id_t pgtemp_undo_primaryfirst(const pg_pool_t& pool,
+  shard_id_t pgtemp_undo_primaryfirst(const pg_pool_t& pool,
 					    const pg_t pg,
 					    const shard_id_t shard) const;
 
