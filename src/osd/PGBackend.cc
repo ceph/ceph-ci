@@ -413,7 +413,7 @@ void PGBackend::try_stash(
 
 void PGBackend::partial_write(
    pg_info_t *info,
-   const eversion_t previous_version,
+   eversion_t previous_version,
    const pg_log_entry_t &entry)
 {
   ceph_assert(info != nullptr);
