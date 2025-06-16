@@ -477,8 +477,6 @@ bool AuthMonitor::check_health()
 {
   auto& next = get_health_checks_pending_writeable();
 
-  next.clear();
-
   auto const& secure_key_types = CryptoManager::get_secure_key_types();
 
   {

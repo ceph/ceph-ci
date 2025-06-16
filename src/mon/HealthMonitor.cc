@@ -387,8 +387,6 @@ void HealthMonitor::tick()
     return;
   }
   dout(10) << __func__ << dendl;
-  auto& next = get_health_checks_pending_writeable();
-  next.clear();
   bool changed = false;
   if (check_member_health()) {
     changed = true;
