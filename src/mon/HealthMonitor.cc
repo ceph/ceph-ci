@@ -125,7 +125,7 @@ void HealthMonitor::update_from_paxos(bool *need_bootstrap)
   JSONFormatter jf(true);
   jf.open_object_section("health");
   jf.open_object_section("quorum_health");
-  for (auto& [rank, checks] : quorum_checks) {
+  for (auto& [rank, checks] : quorum_checks.get_map()) {
     string s = string("mon.") + stringify(rank);
     jf.dump_object(s.c_str(), checks);
   }
@@ -168,7 +168,7 @@ void HealthMonitor::encode_pending(MonitorDBStore::TransactionRef t)
     for (auto q : check_map.checks) {
       names[q.first].insert(mon.monmap->get_name(rank));
     }
-    pending_health.merge(p.second);
+    pending_health.merge(check_map);
   }
   for (auto &p : pending_health.checks) {
     p.second.summary = std::regex_replace(
@@ -741,21 +741,21 @@ bool HealthMonitor::check_leader_health()
 
  // DAEMON_OLD_VERSION
   if (g_conf().get_val<bool>("mon_warn_on_older_version")) {
-    check_for_older_version(&next);
+    check_for_older_version(&pending);
   }
   std::set<std::string> mons_down;
   // MON_DOWN
-  check_for_mon_down(&next, mons_down);
+  check_for_mon_down(&pending, mons_down);
   // MON_NETSPLIT
-  check_netsplit(&next, mons_down);
+  check_netsplit(&pending, mons_down);
   // MON_CLOCK_SKEW
-  check_for_clock_skew(&next);
+  check_for_clock_skew(&pending);
   // MON_MSGR2_NOT_ENABLED
   if (g_conf().get_val<bool>("mon_warn_on_msgr2_not_enabled")) {
-    check_if_msgr2_enabled(&next);
+    check_if_msgr2_enabled(&pending);
   }
   // STRETCH MODE
-  check_mon_crush_loc_stretch_mode(&next);
+  check_mon_crush_loc_stretch_mode(&pending);
 
   if (pending != leader_checks.get_map()) {
     changed = true;
