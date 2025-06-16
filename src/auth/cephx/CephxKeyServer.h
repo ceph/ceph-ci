@@ -76,7 +76,24 @@ struct KeyServerData {
   void dump(ceph::Formatter *f) const {
     f->dump_unsigned("version", version);
     f->dump_unsigned("rotating_version", rotating_ver);
-    encode_json("secrets", secrets, f);
+    f->open_array_section("secrets");
+    for (auto const& [name, auth] : secrets) {
+      f->open_object_section("secret");
+      f->dump_object("entity", name);
+      f->dump_object("auth", auth);
+      f->close_section();
+    }
+    f->close_section();
+    f->open_array_section("rotating_secrets");
+    for (auto const& [entity_type, secrets] : rotating_secrets) {
+      f->open_object_section("rotating_secret");
+      auto name = EntityName(entity_type);
+      f->dump_object("entity", name);
+      f->dump_object("secrets", secrets);
+      f->close_section();
+    }
+    f->close_section();
+
     encode_json("rotating_secrets", rotating_secrets, f);
   }
   static void generate_test_instances(std::list<KeyServerData*>& ls) {

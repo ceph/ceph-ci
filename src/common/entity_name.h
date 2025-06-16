@@ -20,6 +20,9 @@
 
 #include "msg/msg_types.h"
 
+using namespace std::literals::string_view_literals;
+
+
 /* Represents a Ceph entity name.
  *
  * For example, mds.0 is the name of the first metadata server.
@@ -28,6 +31,9 @@
 
 struct EntityName
 {
+  EntityName() = default;
+  explicit EntityName(entity_type_t t) : type(t), id("*"sv) {}
+
   void encode(ceph::buffer::list& bl) const;
   void decode(ceph::buffer::list::const_iterator& bl);
   void dump(ceph::Formatter *f) const;

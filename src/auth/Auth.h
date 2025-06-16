@@ -75,8 +75,8 @@ struct EntityAuth {
     f->open_array_section("caps");
     for (auto const& [entity, cap] : caps) {
       f->open_object_section("cap");
-      f->dump_string("service-name", entity);
-      f->dump_string("access-spec", cap.to_str());
+      f->dump_string("service_name", entity);
+      f->dump_string("access_spec", cap.to_str());
       f->close_section();
     }
     f->close_section();
