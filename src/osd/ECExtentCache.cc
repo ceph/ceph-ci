@@ -348,7 +348,8 @@ list<ECExtentCache::LRU::Key>::iterator ECExtentCache::LRU::erase(
     update_mempool(-1, 0 - size_change);
   }
   size -= size_change;
-  ceph_assert(1 == map.erase(*it));
+  size_t removed = map.erase(*it);
+  ceph_assert(removed == 1);
   return lru.erase(it);
 }
 
