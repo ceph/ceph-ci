@@ -93,8 +93,6 @@ struct KeyServerData {
       f->close_section();
     }
     f->close_section();
-
-    encode_json("rotating_secrets", rotating_secrets, f);
   }
   static void generate_test_instances(std::list<KeyServerData*>& ls) {
     ls.push_back(new KeyServerData);

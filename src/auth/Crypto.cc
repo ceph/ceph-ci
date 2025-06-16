@@ -999,7 +999,6 @@ void CryptoKey::dump(Formatter *f) const
   f->dump_int("type", type);
   f->dump_string("type_str", CryptoManager::get_key_type_name(type));
   f->dump_stream("created") << created;
-  f->dump_int("secret.length", secret.length());
 }
 
 void CryptoKey::generate_test_instances(std::list<CryptoKey*>& ls)
