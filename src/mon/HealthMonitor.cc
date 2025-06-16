@@ -71,7 +71,10 @@ static ostream& _prefix(std::ostream *_dout, const Monitor &mon,
 }
 
 HealthMonitor::HealthMonitor(Monitor &m, Paxos &p, const string& service_name)
-  : PaxosService(m, p, service_name) {
+  : PaxosService(m, p, service_name)
+  , quorum_checks(m, *this)
+  , leader_checks(m, *this)
+{
 }
 
 void HealthMonitor::init()
@@ -93,7 +96,7 @@ void HealthMonitor::update_from_paxos(bool *need_bootstrap)
   mon.store->get(service_name, "quorum", qbl);
   if (qbl.length()) {
     auto p = qbl.cbegin();
-    decode(quorum_checks, p);
+    quorum_checks.decode(p);
   } else {
     quorum_checks.clear();
   }
@@ -102,7 +105,7 @@ void HealthMonitor::update_from_paxos(bool *need_bootstrap)
   mon.store->get(service_name, "leader", lbl);
   if (lbl.length()) {
     auto p = lbl.cbegin();
-    decode(leader_checks, p);
+    leader_checks.decode(p);
   } else {
     leader_checks.clear();
   }
@@ -122,12 +125,12 @@ void HealthMonitor::update_from_paxos(bool *need_bootstrap)
   JSONFormatter jf(true);
   jf.open_object_section("health");
   jf.open_object_section("quorum_health");
-  for (auto& p : quorum_checks) {
-    string s = string("mon.") + stringify(p.first);
-    jf.dump_object(s.c_str(), p.second);
+  for (auto& [rank, checks] : quorum_checks) {
+    string s = string("mon.") + stringify(rank);
+    jf.dump_object(s.c_str(), checks);
   }
   jf.close_section();
-  jf.dump_object("leader_health", leader_checks);
+  jf.dump_object("leader_health", leader_checks.get_map());
   jf.close_section();
   jf.flush(*_dout);
   *_dout << dendl;
@@ -146,10 +149,10 @@ void HealthMonitor::encode_pending(MonitorDBStore::TransactionRef t)
   put_last_committed(t, version);
 
   bufferlist qbl;
-  encode(quorum_checks, qbl);
+  encode(quorum_checks.get_pending_map(), qbl);
   t->put(service_name, "quorum", qbl);
   bufferlist lbl;
-  encode(leader_checks, lbl);
+  encode(leader_checks.get_pending_map(), lbl);
   t->put(service_name, "leader", lbl);
   {
     bufferlist bl;
@@ -161,9 +164,9 @@ void HealthMonitor::encode_pending(MonitorDBStore::TransactionRef t)
 
   // combine per-mon details carefully...
   map<string,set<string>> names; // code -> <mon names>
-  for (auto p : quorum_checks) {
-    for (auto q : p.second.checks) {
-      names[q.first].insert(mon.monmap->get_name(p.first));
+  for (auto& [rank, check_map] : quorum_checks.get_pending_map()) {
+    for (auto q : check_map.checks) {
+      names[q.first].insert(mon.monmap->get_name(rank));
     }
     pending_health.merge(p.second);
   }
@@ -185,7 +188,10 @@ void HealthMonitor::encode_pending(MonitorDBStore::TransactionRef t)
       names[p.first].size() > 1 ? "are" : "is");
   }
 
-  pending_health.merge(leader_checks);
+  /* populate leader_health health checks */
+  check_leader_health();
+
+  pending_health.merge(leader_checks.get_pending_map());
 }
 
 version_t HealthMonitor::get_trim_to() const
@@ -369,7 +375,9 @@ bool HealthMonitor::prepare_health_checks(MonOpRequestRef op)
 {
   auto m = op->get_req<MMonHealthChecks>();
   // no need to check if it's changed, the peon has done so
-  quorum_checks[m->get_source().num()] = std::move(m->health_checks);
+  auto rank = m->get_source().num();
+  auto& pending = quorum_checks.get_pending_map_writeable();
+  pending[rank] = std::move(m->health_checks);
   return true;
 }
 
@@ -379,6 +387,8 @@ void HealthMonitor::tick()
     return;
   }
   dout(10) << __func__ << dendl;
+  auto& next = get_health_checks_pending_writeable();
+  next.clear();
   bool changed = false;
   if (check_member_health()) {
     changed = true;
@@ -683,8 +693,9 @@ bool HealthMonitor::check_member_health()
     d.detail.push_back(ds.str());
   }
 
-  auto p = quorum_checks.find(mon.rank);
-  if (p == quorum_checks.end()) {
+  auto& pending_quorum_checks = quorum_checks.get_pending_map_writeable();
+  auto p = pending_quorum_checks.find(mon.rank);
+  if (p == pending_quorum_checks.end()) {
     if (next.empty()) {
       return false;
     }
@@ -696,7 +707,7 @@ bool HealthMonitor::check_member_health()
 
   if (mon.is_leader()) {
     // prepare to propose
-    quorum_checks[mon.rank] = next;
+    pending_quorum_checks[mon.rank] = next;
     changed = true;
   } else {
     // tell the leader
@@ -714,10 +725,11 @@ bool HealthMonitor::check_leader_health()
   // prune quorum_health
   {
     auto& qset = mon.get_quorum();
-    auto p = quorum_checks.begin();
-    while (p != quorum_checks.end()) {
+    auto& pending_quorum_checks = quorum_checks.get_pending_map_writeable();
+    auto p = pending_quorum_checks.begin();
+    while (p != pending_quorum_checks.end()) {
       if (qset.count(p->first) == 0) {
-	p = quorum_checks.erase(p);
+	p = pending_quorum_checks.erase(p);
 	changed = true;
       } else {
 	++p;
@@ -725,7 +737,7 @@ bool HealthMonitor::check_leader_health()
     }
   }
 
-  auto& next = get_health_checks_pending_writeable();
+  auto& pending = leader_checks.get_pending_map_writeable();
 
  // DAEMON_OLD_VERSION
   if (g_conf().get_val<bool>("mon_warn_on_older_version")) {
@@ -745,9 +757,8 @@ bool HealthMonitor::check_leader_health()
   // STRETCH MODE
   check_mon_crush_loc_stretch_mode(&next);
 
-  if (next != leader_checks) {
+  if (pending != leader_checks.get_map()) {
     changed = true;
-    leader_checks = next;
   }
   return changed;
 }

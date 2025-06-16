@@ -72,6 +72,12 @@ protected:
     pending_map = T(); /* nuke it to catch invalid access */
   }
 
+  void clear() {
+    map = T();
+    pending_map = T(); /* nuke it to catch invalid access */
+  }
+
+
 private:
   friend Service;
 
