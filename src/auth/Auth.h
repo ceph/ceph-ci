@@ -365,7 +365,7 @@ struct RotatingSecrets {
     for (const auto& [id, key] : secrets) {
       f->open_object_section("secret");
       f->dump_int("id", id);
-      f->dump_object("key", key);
+      f->dump_object("expiring_key", key);
       f->close_section();
     }
     f->close_section();
