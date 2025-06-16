@@ -478,7 +478,7 @@ void AuthMonitor::encode_pending(MonitorDBStore::TransactionRef t)
 bool AuthMonitor::check_health()
 {
   auto& next = get_health_checks_pending_writeable();
-  next.clear();
+  next.clear(); /* may be called from ::tick and then ::encode_pending */
 
   auto const& secure_key_types = CryptoManager::get_secure_key_types();
 
