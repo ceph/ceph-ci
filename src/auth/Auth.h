@@ -360,7 +360,15 @@ struct RotatingSecrets {
 
   void dump();
   void dump(ceph::Formatter *f) const {
-    encode_json("secrets", secrets, f);
+    f->dump_int("max_ver", max_ver);
+    f->open_array_section("secrets");
+    for (const auto& [id, key] : secrets) {
+      f->open_object_section("secret");
+      f->dump_int("id", id);
+      f->dump_object("key", key);
+      f->close_section();
+    }
+    f->close_section();
   }
   static void generate_test_instances(std::list<RotatingSecrets*>& ls) {
     ls.push_back(new RotatingSecrets);
