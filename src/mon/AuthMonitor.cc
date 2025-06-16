@@ -471,11 +471,14 @@ void AuthMonitor::encode_pending(MonitorDBStore::TransactionRef t)
   version_t version = get_last_committed() + 1;
   put_version(t, version, bl);
   put_last_committed(t, version);
+
+  check_health();
 }
 
 bool AuthMonitor::check_health()
 {
   auto& next = get_health_checks_pending_writeable();
+  next.clear();
 
   auto const& secure_key_types = CryptoManager::get_secure_key_types();
 
