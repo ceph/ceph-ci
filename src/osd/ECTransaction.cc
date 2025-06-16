@@ -588,7 +588,7 @@ ECTransaction::Generate::Generate(PGTransaction &t,
   if (plan.orig_size != plan.projected_size) {
     all_shards_written();
   } else {
-    // All priumary shards must always be written, regardless of the write plan.
+    // All primary shards must always be written, regardless of the write plan.
     shards_written(sinfo.get_parity_shards());
     shard_written(shard_id_t(0));
   }
