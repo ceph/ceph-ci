@@ -361,7 +361,7 @@ struct RotatingSecrets {
   void dump();
   void dump(ceph::Formatter *f) const {
     f->dump_int("max_ver", max_ver);
-    f->open_array_section("secrets");
+    f->open_array_section("keys");
     for (const auto& [id, key] : secrets) {
       f->open_object_section("secret");
       f->dump_int("id", id);
