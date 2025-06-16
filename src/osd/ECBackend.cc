@@ -621,10 +621,11 @@ void ECBackend::RecoveryBackend::continue_recovery_op(
 		 << ", after_progress=" << after_progress
 		 << ", pop.data.length()=" << pop.data.length()
 		 << ", size=" << op.obc->obs.oi.size << dendl;
-        if (pop.data.length())
+        if (pop.data.length()) {
           pop.data_included.union_insert(
             op.returned_data->get_shard_first_offset(pg_shard.shard),
             pop.data.length());
+        }
         if (op.recovery_progress.first) {
           if (sinfo.is_nonprimary_shard(pg_shard.shard)) {
             if (pop.version == op.recovery_info.oi.version) {
