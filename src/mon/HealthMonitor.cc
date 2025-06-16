@@ -691,20 +691,23 @@ bool HealthMonitor::check_member_health()
     d.detail.push_back(ds.str());
   }
 
-  auto& pending_quorum_checks = quorum_checks.get_pending_map_writeable();
-  auto p = pending_quorum_checks.find(mon.rank);
-  if (p == pending_quorum_checks.end()) {
-    if (next.empty()) {
-      return false;
-    }
-  } else {
-    if (p->second == next) {
-      return false;
+  {
+    auto& current_quorum_checks = quorum_checks.get_map();
+    auto p = current_quorum_checks.find(mon.rank);
+    if (p == current_quorum_checks.end()) {
+      if (next.empty()) {
+        return false;
+      }
+    } else {
+      if (p->second == next) {
+        return false;
+      }
     }
   }
 
   if (mon.is_leader()) {
     // prepare to propose
+    auto& pending_quorum_checks = quorum_checks.get_pending_map_writeable();
     pending_quorum_checks[mon.rank] = next;
     changed = true;
   } else {
@@ -736,6 +739,7 @@ bool HealthMonitor::check_leader_health()
   }
 
   auto& pending = leader_checks.get_pending_map_writeable();
+  pending.clear(); /* start over */
 
  // DAEMON_OLD_VERSION
   if (g_conf().get_val<bool>("mon_warn_on_older_version")) {
