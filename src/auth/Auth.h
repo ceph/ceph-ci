@@ -71,8 +71,15 @@ struct EntityAuth {
   }
   void dump(ceph::Formatter *f) const {
     f->dump_object("key", key);
-    encode_json("caps", caps, f);
     f->dump_object("pending_key", pending_key);
+    f->open_array_section("caps");
+    for (auto const& [entity, cap] : caps) {
+      f->open_object_section("cap");
+      f->dump_string("service-name", entity);
+      f->dump_string("access-spec", cap.to_str());
+      f->close_section();
+    }
+    f->close_section();
   }
   static void generate_test_instances(std::list<EntityAuth*>& ls) {
     ls.push_back(new EntityAuth);
