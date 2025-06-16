@@ -133,6 +133,11 @@ struct PGLog : DoutPrefixProvider {
     return cct;
   }
 
+  enum NonPrimary : bool {
+    NonPrimaryFalse = false,
+    NonPrimaryTrue = true
+  };
+
   ////////////////////////////// sub classes //////////////////////////////
   struct LogEntryHandler {
     virtual void rollback(
@@ -189,27 +194,27 @@ public:
     bool advance_can_rollback_to(eversion_t to, F &&f) {
       bool dirty_log = to > can_rollback_to || to > rollback_info_trimmed_to;
       if (dirty_log) {
-	if (to > can_rollback_to)
-	  can_rollback_to = to;
+        if (to > can_rollback_to)
+          can_rollback_to = to;
 
-	if (to > rollback_info_trimmed_to)
-	  rollback_info_trimmed_to = to;
+        if (to > rollback_info_trimmed_to)
+          rollback_info_trimmed_to = to;
       }
 
       eversion_t previous_version;
       if (rollback_info_trimmed_to_riter == log.rend()) {
-	previous_version = tail;
+        previous_version = tail;
       } else {
-	previous_version = rollback_info_trimmed_to_riter->version;
+        previous_version = rollback_info_trimmed_to_riter->version;
       }
       while (rollback_info_trimmed_to_riter != log.rbegin()) {
-	--rollback_info_trimmed_to_riter;
-	if (rollback_info_trimmed_to_riter->version > rollback_info_trimmed_to) {
-	  ++rollback_info_trimmed_to_riter;
-	  break;
-	}
-	f(*rollback_info_trimmed_to_riter, previous_version);
-	previous_version = rollback_info_trimmed_to_riter->version;
+        --rollback_info_trimmed_to_riter;
+        if (rollback_info_trimmed_to_riter->version > rollback_info_trimmed_to) {
+          ++rollback_info_trimmed_to_riter;
+          break;
+        }
+        f(*rollback_info_trimmed_to_riter, previous_version);
+        previous_version = rollback_info_trimmed_to_riter->version;
       }
 
       return dirty_log;
@@ -218,8 +223,8 @@ public:
     void reset_rollback_info_trimmed_to_riter() {
       rollback_info_trimmed_to_riter = log.rbegin();
       while (rollback_info_trimmed_to_riter != log.rend() &&
-	     rollback_info_trimmed_to_riter->version > rollback_info_trimmed_to)
-	++rollback_info_trimmed_to_riter;
+             rollback_info_trimmed_to_riter->version > rollback_info_trimmed_to)
+        ++rollback_info_trimmed_to_riter;
     }
 
     // indexes objects, caller ops and extra caller ops
@@ -262,32 +267,32 @@ public:
 
     void trim_rollback_info_to(eversion_t to, pg_info_t *info, LogEntryHandler *h) {
       advance_can_rollback_to(
-	to,
-	[&](pg_log_entry_t &entry, eversion_t previous_version) {
-	  h->trim(entry);
-	  h->partial_write(info, previous_version, entry);
-	});
+        to,
+        [&](pg_log_entry_t &entry, eversion_t previous_version) {
+          h->trim(entry);
+          h->partial_write(info, previous_version, entry);
+        });
     }
     bool roll_forward_to(eversion_t to, pg_info_t *info, LogEntryHandler *h) {
       return advance_can_rollback_to(
-	to,
-	[&](pg_log_entry_t &entry, eversion_t previous_version) {
-	  h->rollforward(entry);
-	  h->partial_write(info, previous_version, entry);
-	});
+        to,
+        [&](pg_log_entry_t &entry, eversion_t previous_version) {
+          h->rollforward(entry);
+          h->partial_write(info, previous_version, entry);
+        });
     }
 
     void skip_can_rollback_to_to_head(pg_info_t *info, LogEntryHandler *h) {
       advance_can_rollback_to(
-	head,
+        head,
         [&](pg_log_entry_t &entry, eversion_t previous_version) {
-	  h->partial_write(info, previous_version, entry);
-	});
+          h->partial_write(info, previous_version, entry);
+        });
     }
 
     void skip_can_rollback_to_to_head() {
       advance_can_rollback_to(head, [&](const pg_log_entry_t &entry,
-					eversion_t previous_version) {});
+                                        eversion_t previous_version) {});
     }
 
     mempool::osd_pglog::list<pg_log_entry_t> rewind_from_head(eversion_t newhead) {
@@ -303,12 +308,12 @@ public:
       T &&f) const {
       auto iter = log.rbegin();
       while (iter != log.rend() && iter->version > bound)
-	++iter;
+        ++iter;
 
       while (true) {
-	if (iter == log.rbegin())
-	  break;
-	f(*(--iter));
+        if (iter == log.rbegin())
+          break;
+        f(*(--iter));
       }
     }
 
@@ -332,9 +337,9 @@ public:
     void split_pwlc(pg_info_t &info) {
       eversion_t previous_version;
       if (rollback_info_trimmed_to_riter == log.rend()) {
-	previous_version = tail;
+        previous_version = tail;
       } else {
-	previous_version = rollback_info_trimmed_to_riter->version;
+        previous_version = rollback_info_trimmed_to_riter->version;
       }
       // When a split occurs log entries are divided between the two PGs,
       // this can leave pwlc refering to entries that are no longer in this
@@ -343,13 +348,13 @@ public:
       // too far, but this will get corrected by the primary shard when
       // activating shards later in peering.
       for (auto & [shard, versionrange] : info.partial_writes_last_complete) {
-	auto &&[old_v,  new_v] = versionrange;
-	if (new_v > previous_version) {
-	  new_v = previous_version;
-	  if (old_v > new_v) {
-	    old_v = new_v;
-	  }
-	}
+        auto &&[old_v,  new_v] = versionrange;
+        if (new_v > previous_version) {
+          new_v = previous_version;
+          if (old_v > new_v) {
+            old_v = new_v;
+          }
+        }
       }
     }
 
@@ -374,7 +379,7 @@ public:
 
     bool logged_object(const hobject_t& oid) const {
       if (!(indexed_data & PGLOG_INDEXED_OBJECTS)) {
-         index_objects();
+        index_objects();
       }
       return objects.count(oid);
     }
@@ -407,11 +412,11 @@ public:
       }
       auto p = caller_ops.find(r);
       if (p != caller_ops.end()) {
-	*version = p->second->version;
-	*user_version = p->second->user_version;
-	*return_code = p->second->return_code;
-	*op_returns = p->second->op_returns;
-	return true;
+        *version = p->second->version;
+        *user_version = p->second->user_version;
+        *return_code = p->second->return_code;
+        *op_returns = p->second->op_returns;
+        return true;
       }
 
       // warning: we will return *a* request for this reqid, but not
@@ -421,25 +426,25 @@ public:
       }
       p = extra_caller_ops.find(r);
       if (p != extra_caller_ops.end()) {
-	uint32_t idx = 0;
-	for (auto i = p->second->extra_reqids.begin();
-	     i != p->second->extra_reqids.end();
-	     ++idx, ++i) {
-	  if (i->first == r) {
-	    *version = p->second->version;
-	    *user_version = i->second;
-	    *return_code = p->second->return_code;
-	    *op_returns = p->second->op_returns;
-	    if (*return_code >= 0) {
-	      auto it = p->second->extra_reqid_return_codes.find(idx);
-	      if (it != p->second->extra_reqid_return_codes.end()) {
-		*return_code = it->second;
-	      }
-	    }
-	    return true;
-	  }
-	}
-	ceph_abort_msg("in extra_caller_ops but not extra_reqids");
+        uint32_t idx = 0;
+        for (auto i = p->second->extra_reqids.begin();
+             i != p->second->extra_reqids.end();
+             ++idx, ++i) {
+          if (i->first == r) {
+            *version = p->second->version;
+            *user_version = i->second;
+            *return_code = p->second->return_code;
+            *op_returns = p->second->op_returns;
+            if (*return_code >= 0) {
+              auto it = p->second->extra_reqid_return_codes.find(idx);
+              if (it != p->second->extra_reqid_return_codes.end()) {
+                *return_code = it->second;
+              }
+            }
+            return true;
+          }
+             }
+        ceph_abort_msg("in extra_caller_ops but not extra_reqids");
       }
 
       if (!(indexed_data & PGLOG_INDEXED_DUPS)) {
@@ -447,11 +452,11 @@ public:
       }
       auto q = dup_index.find(r);
       if (q != dup_index.end()) {
-	*version = q->second->version;
-	*user_version = q->second->user_version;
-	*return_code = q->second->return_code;
-	*op_returns = q->second->op_returns;
-	return true;
+        *version = q->second->version;
+        *user_version = q->second->user_version;
+        *return_code = q->second->return_code;
+        *op_returns = q->second->op_returns;
+        return true;
       }
 
       return false;
@@ -459,44 +464,44 @@ public:
 
     bool has_write_since(const hobject_t &oid, const eversion_t &bound) const {
       for (auto i = log.rbegin(); i != log.rend(); ++i) {
-	if (i->version <= bound)
-	  return false;
-	if (i->soid.get_head() == oid.get_head())
-	  return true;
+        if (i->version <= bound)
+          return false;
+        if (i->soid.get_head() == oid.get_head())
+          return true;
       }
       return false;
     }
 
     /// get a (bounded) std::list of recent reqids for the given object
     void get_object_reqids(const hobject_t& oid, unsigned max,
-			   mempool::osd_pglog::vector<std::pair<osd_reqid_t, version_t> > *pls,
-			   mempool::osd_pglog::map<uint32_t, int> *return_codes) const {
-       // make sure object is present at least once before we do an
-       // O(n) search.
+                           mempool::osd_pglog::vector<std::pair<osd_reqid_t, version_t> > *pls,
+                           mempool::osd_pglog::map<uint32_t, int> *return_codes) const {
+      // make sure object is present at least once before we do an
+      // O(n) search.
       if (!(indexed_data & PGLOG_INDEXED_OBJECTS)) {
         index_objects();
       }
       if (objects.count(oid) == 0)
-	return;
+        return;
 
       for (auto i = log.rbegin(); i != log.rend(); ++i) {
-	if (i->soid == oid) {
-	  if (i->reqid_is_indexed()) {
-	    if (i->op == pg_log_entry_t::ERROR) {
-	      // propagate op errors to the cache tier's PG log
-	      return_codes->emplace(pls->size(), i->return_code);
-	    }
-	    pls->push_back(std::make_pair(i->reqid, i->user_version));
-	  }
+        if (i->soid == oid) {
+          if (i->reqid_is_indexed()) {
+            if (i->op == pg_log_entry_t::ERROR) {
+              // propagate op errors to the cache tier's PG log
+              return_codes->emplace(pls->size(), i->return_code);
+            }
+            pls->push_back(std::make_pair(i->reqid, i->user_version));
+          }
 
-	  pls->insert(pls->end(), i->extra_reqids.begin(), i->extra_reqids.end());
-	  if (pls->size() >= max) {
-	    if (pls->size() > max) {
-	      pls->resize(max);
-	    }
-	    return;
-	  }
-	}
+          pls->insert(pls->end(), i->extra_reqids.begin(), i->extra_reqids.end());
+          if (pls->size() >= max) {
+            if (pls->size() > max) {
+              pls->resize(max);
+            }
+            return;
+          }
+        }
       }
     }
 
@@ -507,46 +512,46 @@ public:
       if (!to_index) return;
 
       if (to_index & PGLOG_INDEXED_OBJECTS)
-	objects.clear();
+        objects.clear();
       if (to_index & PGLOG_INDEXED_CALLER_OPS)
-	caller_ops.clear();
+        caller_ops.clear();
       if (to_index & PGLOG_INDEXED_EXTRA_CALLER_OPS)
-	extra_caller_ops.clear();
+        extra_caller_ops.clear();
       if (to_index & PGLOG_INDEXED_DUPS) {
-	dup_index.clear();
-	for (auto& i : dups) {
-	  dup_index[i.reqid] = const_cast<pg_log_dup_t*>(&i);
-	}
+        dup_index.clear();
+        for (auto& i : dups) {
+          dup_index[i.reqid] = const_cast<pg_log_dup_t*>(&i);
+        }
       }
 
       constexpr __u16 any_log_entry_index =
-	PGLOG_INDEXED_OBJECTS |
-	PGLOG_INDEXED_CALLER_OPS |
-	PGLOG_INDEXED_EXTRA_CALLER_OPS;
+        PGLOG_INDEXED_OBJECTS |
+        PGLOG_INDEXED_CALLER_OPS |
+        PGLOG_INDEXED_EXTRA_CALLER_OPS;
 
       if (to_index & any_log_entry_index) {
-	for (auto i = log.begin(); i != log.end(); ++i) {
-	  if (to_index & PGLOG_INDEXED_OBJECTS) {
-	    if (i->object_is_indexed()) {
-	      objects[i->soid] = const_cast<pg_log_entry_t*>(&(*i));
-	    }
-	  }
+        for (auto i = log.begin(); i != log.end(); ++i) {
+          if (to_index & PGLOG_INDEXED_OBJECTS) {
+            if (i->object_is_indexed()) {
+              objects[i->soid] = const_cast<pg_log_entry_t*>(&(*i));
+            }
+          }
 
-	  if (to_index & PGLOG_INDEXED_CALLER_OPS) {
-	    if (i->reqid_is_indexed()) {
-	      caller_ops[i->reqid] = const_cast<pg_log_entry_t*>(&(*i));
-	    }
-	  }
+          if (to_index & PGLOG_INDEXED_CALLER_OPS) {
+            if (i->reqid_is_indexed()) {
+              caller_ops[i->reqid] = const_cast<pg_log_entry_t*>(&(*i));
+            }
+          }
 
-	  if (to_index & PGLOG_INDEXED_EXTRA_CALLER_OPS) {
-	    for (auto j = i->extra_reqids.begin();
-		 j != i->extra_reqids.end();
-		 ++j) {
-	      extra_caller_ops.insert(
-		std::make_pair(j->first, const_cast<pg_log_entry_t*>(&(*i))));
-	    }
-	  }
-	}
+          if (to_index & PGLOG_INDEXED_EXTRA_CALLER_OPS) {
+            for (auto j = i->extra_reqids.begin();
+                 j != i->extra_reqids.end();
+                 ++j) {
+              extra_caller_ops.insert(
+                std::make_pair(j->first, const_cast<pg_log_entry_t*>(&(*i))));
+                 }
+          }
+        }
       }
 
       indexed_data |= to_index;
@@ -575,17 +580,17 @@ public:
           objects[e.soid] = &e;
       }
       if (indexed_data & PGLOG_INDEXED_CALLER_OPS) {
-	// divergent merge_log indexes new before unindexing old
+        // divergent merge_log indexes new before unindexing old
         if (e.reqid_is_indexed()) {
-	  caller_ops[e.reqid] = &e;
+          caller_ops[e.reqid] = &e;
         }
       }
       if (indexed_data & PGLOG_INDEXED_EXTRA_CALLER_OPS) {
         for (auto j = e.extra_reqids.begin();
-	     j != e.extra_reqids.end();
-	     ++j) {
-	  extra_caller_ops.insert(std::make_pair(j->first, &e));
-        }
+             j != e.extra_reqids.end();
+             ++j) {
+          extra_caller_ops.insert(std::make_pair(j->first, &e));
+             }
       }
     }
 
@@ -600,14 +605,14 @@ public:
     void unindex(const pg_log_entry_t& e) {
       // NOTE: this only works if we remove from the _tail_ of the log!
       if (indexed_data & PGLOG_INDEXED_OBJECTS) {
-	auto it = objects.find(e.soid);
+        auto it = objects.find(e.soid);
         if (it != objects.end() && it->second->version == e.version)
           objects.erase(it);
       }
       if (e.reqid_is_indexed()) {
         if (indexed_data & PGLOG_INDEXED_CALLER_OPS) {
-	  auto it = caller_ops.find(e.reqid);
-	  // divergent merge_log indexes new before unindexing old
+          auto it = caller_ops.find(e.reqid);
+          // divergent merge_log indexes new before unindexing old
           if (it != caller_ops.end() && it->second == &e)
             caller_ops.erase(it);
         }
@@ -623,30 +628,30 @@ public:
               extra_caller_ops.erase(k);
               break;
             }
-          }
-        }
+               }
+             }
       }
     }
 
     void index(pg_log_dup_t& e) {
       if (indexed_data & PGLOG_INDEXED_DUPS) {
-	dup_index[e.reqid] = &e;
+        dup_index[e.reqid] = &e;
       }
     }
 
     void unindex(const pg_log_dup_t& e) {
       if (indexed_data & PGLOG_INDEXED_DUPS) {
-	auto i = dup_index.find(e.reqid);
-	if (i != dup_index.end()) {
-	  dup_index.erase(i);
-	}
+        auto i = dup_index.find(e.reqid);
+        if (i != dup_index.end()) {
+          dup_index.erase(i);
+        }
       }
     }
 
     // actors
-    void add(const pg_log_entry_t& e, bool nonprimary, bool applied, pg_info_t *info, LogEntryHandler *h) {
+    void add(const pg_log_entry_t& e, enum NonPrimary nonprimary, bool applied, pg_info_t *info, LogEntryHandler *h) {
       if (!applied) {
-        if (!nonprimary) {
+        if (nonprimary) {
           ceph_assert(get_can_rollback_to() == head);
         } else {
           ceph_assert(get_can_rollback_to() >= head);
@@ -693,7 +698,7 @@ public:
     // nonprimary and applied must either both be provided or neither. If
     // neither is provided applied = true and the nonprimary is irrelevant.
     void add(const pg_log_entry_t& e) {
-      add(e, false, true, nullptr, nullptr);
+      add(e, NonPrimaryFalse, true, nullptr, nullptr);
     }
 
     void trim(
@@ -863,13 +868,13 @@ public:
 
   void unindex() { log.unindex(); }
 
-  void add(const pg_log_entry_t& e, bool nonprimary, bool applied, pg_info_t *info, LogEntryHandler *h) {
+  void add(const pg_log_entry_t& e, enum NonPrimary nonprimary, bool applied, pg_info_t *info, LogEntryHandler *h) {
     mark_writeout_from(e.version);
     log.add(e, nonprimary, applied, info, h);
   }
 
   void add(const pg_log_entry_t& e) {
-    add(e, false, true, nullptr, nullptr);
+    add(e, NonPrimaryFalse, true, nullptr, nullptr);
   }
 
   void reset_recovery_pointers() { log.reset_recovery_pointers(); }
