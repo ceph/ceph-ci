@@ -2,3 +2,4 @@
 tasks:
 - sleep:
     duration: 500
+- ceph.healthy:
