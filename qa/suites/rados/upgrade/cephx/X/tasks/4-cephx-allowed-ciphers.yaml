@@ -24,7 +24,7 @@ tasks:
 - ceph.healthy:
 - exec:
     mon.a:
-      - ceph --log-to-stderr=true --log_to_file=true --debug_ms=5 --debug_auth=30 --debug_monc=30 config rm mon 'mon auth allow insecure key'
+      - ceph --log-to-stderr=true --log_to_file=true --debug_ms=5 --debug_auth=30 --debug_monc=30 config set mon 'mon auth allow insecure key' false
       - ceph --log-to-stderr=true --log_to_file=true --debug_ms=5 --debug_auth=30 --debug_monc=30 tell mon.a config diff
       - ceph --log-to-stderr=true --log_to_file=true --debug_ms=5 --debug_auth=30 --debug_monc=30 tell mon.b config diff
       - ceph --log-to-stderr=true --log_to_file=true --debug_ms=5 --debug_auth=30 --debug_monc=30 tell mon.c config diff
