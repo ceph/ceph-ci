@@ -483,7 +483,7 @@ bool AuthMonitor::check_health()
   auto const& secure_key_types = CryptoManager::get_secure_key_types();
 
   {
-    auto allowed_ciphers = mon.get_ciphers_allowed();
+    auto allowed_ciphers = mon.monmap->auth_allowed_ciphers;
     std::vector<std::string> details;
     for (auto& c : allowed_ciphers) {
       if (!secure_key_types.contains(c)) {
