@@ -286,110 +286,6 @@ setting this configuration manually to false.
 
 
 
-AUTH_INSECURE_KEYS_ALLOWED
-__________________________
-
-The Ceph Monitors are currently configured to permit authentication using
-insecure cipher types. This may be necessary to allow authentication
-for legacy clients that cannot use more secure cipher types.
-
-This warning can be addressed by only allowing secure ciphers to be used
-for authentication, like:
-
-.. prompt:: bash $
-
-    ceph mon dump
-
-outputs
-
-::
-
-    epoch 2
-    fsid 75a36aa4-8702-48ca-9138-efff9fabe6a5
-    last_changed 2025-06-17T17:13:13.884177+0000
-    created 2025-06-17T17:13:03.344583+0000
-    min_mon_release 20 (tentacle)
-    election_strategy: 1
-    0: [v2:172.21.10.4:40440/0,v1:172.21.10.4:40441/0] mon.a
-    1: [v2:172.21.10.4:40442/0,v1:172.21.10.4:40443/0] mon.b
-    2: [v2:172.21.10.4:40444/0,v1:172.21.10.4:40445/0] mon.c
-    auth_epoch 0
-    auth_service_cipher aes
-    auth_allowed_ciphers aes, aes256k
-    auth_preferred_cipher aes
-
-The ``auth_allowed_ciphers`` insecure cipher ``aes, aes256k``. The ``health detail`` also shows:
-
-.. prompt:: bash $
-
-    ceph health detail
-
-outputs
-
-::
-
-    [WRN] AUTH_INSECURE_SERVICE_KEYS_ALLOWED: Monitors are configured to issue insecure service key types
-    insecure cipher aes allowed for auth
-
-
-.. warning:: Changing the allowed ciphers can result in losing administrative
-             access to the cluster (without emergency measures). If your admin
-             key is using an insecure cipher type, then rotate it to a secure
-             key type and save it to your keyring. Check for
-             AUTH_INSECURE_CLIENT_KEY_TYPE and AUTH_INSECURE_SERVICE_KEY_TYPE
-             warnings to learn what clients or daemons will lose the ability
-             to authenticate. Do not try to resolve AUTH_INSECURE_KEYS_ALLOWED
-             before AUTH_INSECURE_SERVICE_KEY_TYPE.
-
-To remove the insecure cipher type, update to ``aes256k``:
-
-.. prompt:: bash $
-
-    ceph mon set auth_allowed_ciphers aes256k
-
-and verify:
-
-.. prompt:: bash $
-
-    ceph mon dump
-
-outputs
-
-::
-
-    epoch 3
-    fsid 75a36aa4-8702-48ca-9138-efff9fabe6a5
-    last_changed 2025-06-17T17:13:56.336336+0000
-    created 2025-06-17T17:13:03.344583+0000
-    min_mon_release 20 (tentacle)
-    election_strategy: 1
-    0: [v2:172.21.10.4:40440/0,v1:172.21.10.4:40441/0] mon.a
-    1: [v2:172.21.10.4:40442/0,v1:172.21.10.4:40443/0] mon.b
-    2: [v2:172.21.10.4:40444/0,v1:172.21.10.4:40445/0] mon.c
-    auth_epoch 0
-    auth_service_cipher aes
-    auth_allowed_ciphers aes256k
-    auth_preferred_cipher aes
-
-The warning should now be resolved.
-
-
-AUTH_EMERGENCY_CIPHERS_SET
-__________________________
-
-If the ``auth_allowed_ciphers`` setting prevents access to the cluster (due to
-administrative error), then the Monitors can be rescued using the
-``mon_auth_emergency_allowed_ciphers`` configuration on the ``ceph-mon``
-command-line argument or via its local ``ceph.conf``. The Monitors will prefer
-the ``mon_auth_emergency_allowed_ciphers`` configuration over the ``mon``
-setting when present.
-
-However, as the name implies, this configuration should only be used in an
-emergency to restore access to other cipher types. The cluster will raise
-``AUTH_EMERGENCY_CIPHERS_SET`` until that configuration has been removed.
-
-
-
 AUTH_INSECURE_SERVICE_TICKETS
 _____________________________
 
@@ -547,6 +443,113 @@ able to authenticate.
 
 Do this for each client.
 
+
+AUTH_INSECURE_KEYS_ALLOWED
+__________________________
+
+The Ceph Monitors are currently configured to permit authentication using
+insecure cipher types. This may be necessary to allow authentication
+for legacy clients that cannot use more secure cipher types.
+
+This warning can be addressed by only allowing secure ciphers to be used
+for authentication, like:
+
+.. prompt:: bash $
+
+    ceph mon dump
+
+outputs
+
+::
+
+    epoch 2
+    fsid 75a36aa4-8702-48ca-9138-efff9fabe6a5
+    last_changed 2025-06-17T17:13:13.884177+0000
+    created 2025-06-17T17:13:03.344583+0000
+    min_mon_release 20 (tentacle)
+    election_strategy: 1
+    0: [v2:172.21.10.4:40440/0,v1:172.21.10.4:40441/0] mon.a
+    1: [v2:172.21.10.4:40442/0,v1:172.21.10.4:40443/0] mon.b
+    2: [v2:172.21.10.4:40444/0,v1:172.21.10.4:40445/0] mon.c
+    auth_epoch 0
+    auth_service_cipher aes256k
+    auth_allowed_ciphers aes, aes256k
+    auth_preferred_cipher aes256k
+
+The ``auth_allowed_ciphers`` includes the insecure cipher ``aes`` in ``aes, aes256k``. The ``health detail`` also shows:
+
+.. prompt:: bash $
+
+    ceph health detail
+
+outputs
+
+::
+
+    [WRN] AUTH_INSECURE_SERVICE_KEYS_ALLOWED: Monitors are configured to issue insecure service key types
+    insecure cipher aes allowed for auth
+
+
+.. warning:: Changing the allowed ciphers can result in losing administrative
+             access to the cluster (without emergency measures). If your admin
+             key is using an insecure cipher type, then rotate it to a secure
+             key type and save it to your keyring. Check for
+             AUTH_INSECURE_CLIENT_KEY_TYPE and AUTH_INSECURE_SERVICE_KEY_TYPE
+             warnings to learn what clients or daemons will lose the ability
+             to authenticate. Do not try to resolve AUTH_INSECURE_KEYS_ALLOWED
+             before AUTH_INSECURE_SERVICE_KEY_TYPE.
+
+To remove the insecure cipher type, update to ``aes256k``:
+
+.. prompt:: bash $
+
+    ceph mon set auth_allowed_ciphers aes256k
+
+and verify:
+
+.. prompt:: bash $
+
+    ceph mon dump
+
+outputs
+
+::
+
+    epoch 3
+    fsid 75a36aa4-8702-48ca-9138-efff9fabe6a5
+    last_changed 2025-06-17T17:13:56.336336+0000
+    created 2025-06-17T17:13:03.344583+0000
+    min_mon_release 20 (tentacle)
+    election_strategy: 1
+    0: [v2:172.21.10.4:40440/0,v1:172.21.10.4:40441/0] mon.a
+    1: [v2:172.21.10.4:40442/0,v1:172.21.10.4:40443/0] mon.b
+    2: [v2:172.21.10.4:40444/0,v1:172.21.10.4:40445/0] mon.c
+    auth_epoch 0
+    auth_service_cipher aes256k
+    auth_allowed_ciphers aes256k
+    auth_preferred_cipher aes256k
+
+The warning should now be resolved.
+
+
+AUTH_EMERGENCY_CIPHERS_SET
+__________________________
+
+The Ceph Monitors are configured to use an set of ciphers to replace the
+``auth_allowed_ciphers`` Monitor setting. This configuration is done on
+an emergency basis and should be temporary.
+
+This configuration is used when the ``auth_allowed_ciphers`` setting prevents
+access to the cluster (due to administrative error). The Monitors can be
+rescued using the ``mon_auth_emergency_allowed_ciphers`` configuration on the
+``ceph-mon`` command-line argument or via its local ``ceph.conf``. The Monitors
+will prefer the ``mon_auth_emergency_allowed_ciphers`` configuration over the
+``mon`` setting when present.
+
+As the warning and configuration name implies, this configuration should only
+be used in an emergency to restore access to other cipher types. The cluster
+will raise ``AUTH_EMERGENCY_CIPHERS_SET`` until that configuration has been
+removed.
 
 
 Manager
