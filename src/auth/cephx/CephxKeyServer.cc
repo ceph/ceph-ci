@@ -199,7 +199,7 @@ int KeyServer::_rotate_secret(uint32_t service_id, KeyServerData &pending_data)
   ldout(cct, 10) << __func__
           << ": auth_mon_ticket_ttl=" << auth_mon_ticket_ttl
           << ", auth_service_ticket_ttl=" << auth_service_ticket_ttl
-          << ", auth_service_cipher" << auth_service_cipher
+          << ", auth_service_cipher=" << auth_service_cipher
           << ", service_id=" << service_id
           << dendl;;
 
