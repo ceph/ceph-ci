@@ -3376,9 +3376,11 @@ class CephManager:
             if health['status'] == 'HEALTH_OK':
                 break
             okay = True
-            for check in health['checks']:
-                if check in expected_checks:
-                    log.info("{} in expected_checks", check)
+            for name, check  in health['checks'].items():
+                if check['muted']:
+                    log.debug("{} is muted", name)
+                elif name in expected_checks:
+                    log.info("{} in expected_checks", name)
                 else:
                     okay = False
             if okay:
