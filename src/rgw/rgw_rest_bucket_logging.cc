@@ -304,7 +304,7 @@ class RGWPutBucketLoggingOp : public RGWDefaultResponseOp {
       }
     } else if (*old_conf != configuration) {
       // conf changed - do cleanup
-      if (const auto ret = commit_logging_object(*old_conf, target_bucket, this, y); ret < 0) {
+      if (const auto ret = commit_logging_object(*old_conf, target_bucket, this, y, nullptr); ret < 0) {
         ldpp_dout(this, 1) << "WARNING: could not commit pending logging object when updating logging configuration of bucket '" <<
           src_bucket->get_key() << "', ret = " << ret << dendl;
       } else {
@@ -340,22 +340,23 @@ class RGWPostBucketLoggingOp : public RGWDefaultResponseOp {
   // and usd in execute()
   rgw::bucketlogging::configuration configuration;
   std::unique_ptr<rgw::sal::Bucket> target_bucket;
+  std::unique_ptr<rgw::sal::Bucket> source_bucket;
+  std::string old_obj;
 
   int init_processing(optional_yield y) override {
     if (const auto ret = verify_bucket_logging_params(this, s); ret < 0) {
       return ret;
     }
 
-    std::unique_ptr<rgw::sal::Bucket> src_bucket;
     {
       const rgw_bucket src_bucket_id{s->bucket_tenant, s->bucket_name};
       if (const auto ret = driver->load_bucket(this, src_bucket_id,
-                                 &src_bucket, y); ret < 0) {
+                                 &source_bucket, y); ret < 0) {
         ldpp_dout(this, 1) << "ERROR: failed to get bucket '" << src_bucket_id << "', ret = " << ret << dendl;
         return ret;
       }
     }
-    return rgw::bucketlogging::get_target_and_conf_from_source(this, driver, src_bucket.get(), s->bucket_tenant, configuration, target_bucket, y);
+    return rgw::bucketlogging::get_target_and_conf_from_source(this, driver, source_bucket.get(), s->bucket_tenant, configuration, target_bucket, y);
   }
 
   int verify_permission(optional_yield y) override {
@@ -384,15 +385,33 @@ class RGWPostBucketLoggingOp : public RGWDefaultResponseOp {
       ldpp_dout(this, 1) << "ERROR: failed to get pending logging object name from target bucket '" << target_bucket_id << "'" << dendl;
       return;
     }
-    const auto old_obj = obj_name;
-    op_ret = rgw::bucketlogging::rollover_logging_object(configuration, target_bucket, obj_name, this, null_yield, true, &objv_tracker);
+    const auto region = driver->get_zone()->get_zonegroup().get_api_name();
+    op_ret = rgw::bucketlogging::rollover_logging_object(configuration, target_bucket, obj_name, this, region, source_bucket, null_yield, true, &objv_tracker, &old_obj);
     if (op_ret < 0) {
-      ldpp_dout(this, 1) << "ERROR: failed to flush pending logging object '" << old_obj
-               << "' to target bucket '" << target_bucket_id << "'" << dendl;
+      if (op_ret == -ENOENT) {
+        ldpp_dout(this, 5) << "WARNING: no pending logging object '" << obj_name << "'. nothing to flush"
+            << " to target bucket '" << target_bucket_id << "'. "
+            << " last committed object is '" << old_obj << "'" << dendl;
+        op_ret = 0;
+      } else {
+        ldpp_dout(this, 1) << "ERROR: failed flush pending logging object '" << obj_name << "'"
+            << " to target bucket '" << target_bucket_id << "'. "
+            << " last committed object is '" << old_obj << "'" << dendl;
+      }
       return;
     }
     ldpp_dout(this, 20) << "INFO: flushed pending logging object '" << old_obj
                 << "' to target bucket '" << target_bucket_id << "'" << dendl;
+  }
+
+  void send_response() override {
+    dump_errno(s);
+    end_header(s, this, to_mime_type(s->format));
+    dump_start(s);
+    s->formatter->open_object_section_in_ns("PostBucketLoggingOutput", XMLNS_AWS_S3);
+    s->formatter->dump_string("FlushedLoggingObject", old_obj);
+    s->formatter->close_section();
+    rgw_flush_formatter_and_reset(s, s->formatter);
   }
 };
 

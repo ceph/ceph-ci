@@ -9,6 +9,7 @@
 #include "rgw_sal.h"
 #include "rgw_op.h"
 #include "rgw_auth_s3.h"
+#include <boost/lexical_cast.hpp>
 
 #define dout_subsys ceph_subsys_rgw
 
@@ -171,6 +172,7 @@ std::string configuration::to_json_str() const {
   return ss.str();
 }
 
+// create a random string of N characters
 template<size_t N>
 std::string unique_string() {
   static const std::string possible_characters{"0123456789ABCDEFGHIJKLMNOPQRSTUVWXY"};
@@ -181,6 +183,27 @@ std::string unique_string() {
   std::string str(N, '\0');
   std::generate_n(str.begin(), N, [&](){return possible_characters[dist(engine)];});
   return str;
+}
+
+// create an incremental string of N characters if possible
+// fallback to a random string of N characters if not
+template<size_t N>
+std::string incremental_string(const DoutPrefixProvider *dpp, std::optional<std::string> old_name) {
+  // for the fist time we create a string of zeros
+  if (!old_name) {
+    return std::string(N, '0');
+  }
+  const auto str_counter = old_name->substr(old_name->length() - N+1, N);
+  try {
+    auto counter = boost::lexical_cast<unsigned long>(str_counter);
+    ++counter;
+    static const auto format = fmt::format("{{:0>{}}}", N);
+    return fmt::vformat(format, fmt::make_format_args(counter));
+  } catch (const boost::bad_lexical_cast& e) {
+    ldpp_dout(dpp, 5) << "WARNING: failed to convert string '" << str_counter <<
+      "' to counter. " <<e.what() << ". will create random temporary logging file name" << dendl;
+    return unique_string<N>();
+  }
 }
 
 constexpr size_t UniqueStringLength = 16;
@@ -219,17 +242,20 @@ int new_logging_object(const configuration& conf,
     const std::unique_ptr<rgw::sal::Bucket>& target_bucket,
     std::string& obj_name,
     const DoutPrefixProvider *dpp,
+    const std::string& region,
+    const std::unique_ptr<rgw::sal::Bucket>& source_bucket,
     optional_yield y,
-    bool init_obj,
+    std::optional<std::string> old_name,
     RGWObjVersionTracker* objv_tracker) {
   const auto tt = ceph::coarse_real_time::clock::to_time_t(ceph::coarse_real_time::clock::now());
   std::tm t{};
   localtime_r(&tt, &t);
 
-  const auto unique = unique_string<UniqueStringLength>();
+  const auto unique = incremental_string<UniqueStringLength>(dpp, old_name);
 
   switch (conf.obj_key_format) {
     case KeyFormat::Simple:
+      // [DestinationPrefix][YYYY]-[MM]-[DD]-[hh]-[mm]-[ss]-[UniqueString]
       obj_name = fmt::format("{}{:%Y-%m-%d-%H-%M-%S}-{}",
         conf.target_prefix,
         t,
@@ -237,13 +263,13 @@ int new_logging_object(const configuration& conf,
       break;
     case KeyFormat::Partitioned:
       {
-        // TODO: use date_source
-        const auto source_region = ""; // TODO
+        // TODO: support both EventTime and DeliveryTime
+        // [DestinationPrefix][SourceAccountId]/[SourceRegion]/[SourceBucket]/[YYYY]/[MM]/[DD]/[YYYY]-[MM]-[DD]-[hh]-[mm]-[ss]-[UniqueString]
         obj_name = fmt::format("{}{}/{}/{}/{:%Y/%m/%d}/{:%Y-%m-%d-%H-%M-%S}-{}",
           conf.target_prefix,
-          to_string(target_bucket->get_owner()),
-          source_region,
-          full_bucket_name(target_bucket),
+          to_string(source_bucket->get_owner()),
+          region,
+          full_bucket_name(source_bucket),
           t,
           t,
           unique);
@@ -251,7 +277,7 @@ int new_logging_object(const configuration& conf,
       break;
   }
   const auto& target_bucket_id = target_bucket->get_key();
-  int ret = target_bucket->set_logging_object_name(obj_name, conf.target_prefix, y, dpp, init_obj, objv_tracker);
+  int ret = target_bucket->set_logging_object_name(obj_name, conf.target_prefix, y, dpp, (old_name == std::nullopt), objv_tracker);
   if (ret == -EEXIST || ret == -ECANCELED) {
    if (ret = target_bucket->get_logging_object_name(obj_name, conf.target_prefix, y, dpp, nullptr); ret < 0) {
       ldpp_dout(dpp, 1) << "ERROR: failed to get name of logging object of bucket '" <<
@@ -275,7 +301,8 @@ int commit_logging_object(const configuration& conf,
     const DoutPrefixProvider *dpp,
     rgw::sal::Driver* driver,
     const std::string& tenant_name,
-    optional_yield y) {
+    optional_yield y,
+    std::string* last_committed) {
   std::string target_bucket_name;
   std::string target_tenant_name;
   int ret = rgw_parse_url_bucket(conf.target_bucket, tenant_name, target_tenant_name, target_bucket_name);
@@ -293,20 +320,21 @@ int commit_logging_object(const configuration& conf,
       << ret << dendl;
     return ret;
   }
-  return commit_logging_object(conf, target_bucket, dpp, y);
+  return commit_logging_object(conf, target_bucket, dpp, y, last_committed);
 }
 
 int commit_logging_object(const configuration& conf,
     const std::unique_ptr<rgw::sal::Bucket>& target_bucket,
     const DoutPrefixProvider *dpp,
-    optional_yield y) {
+    optional_yield y,
+    std::string* last_committed) {
   std::string obj_name;
   if (const int ret = target_bucket->get_logging_object_name(obj_name, conf.target_prefix, y, dpp, nullptr); ret < 0) {
     ldpp_dout(dpp, 1) << "ERROR: failed to get name of logging object of bucket '" <<
       target_bucket->get_key() << "'. ret = " << ret << dendl;
     return ret;
   }
-  if (const int ret = target_bucket->commit_logging_object(obj_name, y, dpp); ret <0 ) {
+  if (const int ret = target_bucket->commit_logging_object(obj_name, y, dpp, conf.target_prefix, last_committed); ret < 0) {
     ldpp_dout(dpp, 1) << "ERROR: failed to commit logging object '" << obj_name << "' of bucket '" <<
       target_bucket->get_key() << "'. ret = " << ret << dendl;
     return ret;
@@ -318,9 +346,12 @@ int rollover_logging_object(const configuration& conf,
     const std::unique_ptr<rgw::sal::Bucket>& target_bucket,
     std::string& obj_name,
     const DoutPrefixProvider *dpp,
+    const std::string& region,
+    const std::unique_ptr<rgw::sal::Bucket>& source_bucket,
     optional_yield y,
     bool must_commit,
-    RGWObjVersionTracker* objv_tracker) {
+    RGWObjVersionTracker* objv_tracker,
+    std::string* last_committed) {
   std::string target_bucket_name;
   std::string target_tenant_name;
   std::ignore = rgw_parse_url_bucket(conf.target_bucket, target_bucket->get_tenant(), target_tenant_name, target_bucket_name);
@@ -330,7 +361,7 @@ int rollover_logging_object(const configuration& conf,
     return -EINVAL;
   }
   const auto old_obj = obj_name;
-  const int ret = new_logging_object(conf, target_bucket, obj_name, dpp, y, false, objv_tracker);
+  const int ret = new_logging_object(conf, target_bucket, obj_name, dpp, region, source_bucket, y, old_obj, objv_tracker);
   if (ret == -ECANCELED) {
     ldpp_dout(dpp, 20) << "INFO: rollover already performed for object '" << old_obj <<  "' to logging bucket '" <<
       target_bucket->get_key() << "'. ret = " << ret << dendl;
@@ -340,7 +371,7 @@ int rollover_logging_object(const configuration& conf,
       target_bucket->get_key() << "'. ret = " << ret << dendl;
     return ret;
   }
-  if (const int ret = target_bucket->commit_logging_object(old_obj, y, dpp); ret < 0) {
+  if (const int ret = target_bucket->commit_logging_object(old_obj, y, dpp, conf.target_prefix, last_committed); ret < 0) {
     if (must_commit) {
       return ret;
     }
@@ -439,6 +470,7 @@ int log_record(rgw::sal::Driver* driver,
     return ret;
   }
 
+  const auto region = driver->get_zone()->get_zonegroup().get_api_name();
   std::string obj_name;
   RGWObjVersionTracker objv_tracker;
   ret = target_bucket->get_logging_object_name(obj_name, conf.target_prefix, y, dpp, &objv_tracker);
@@ -447,7 +479,7 @@ int log_record(rgw::sal::Driver* driver,
     if (ceph::coarse_real_time::clock::now() > time_to_commit) {
       ldpp_dout(dpp, 20) << "INFO: logging object '" << obj_name << "' exceeded its time, will be committed to bucket '" <<
         target_bucket_id << "'" << dendl;
-      if (ret = rollover_logging_object(conf, target_bucket, obj_name, dpp, y, false, &objv_tracker); ret < 0) {
+      if (ret = rollover_logging_object(conf, target_bucket, obj_name, dpp, region, s->bucket, y, false, &objv_tracker, nullptr); ret < 0) {
         return ret;
       }
     } else {
@@ -455,7 +487,7 @@ int log_record(rgw::sal::Driver* driver,
     }
   } else if (ret == -ENOENT) {
     // try to create the temporary log object for the first time
-    ret = new_logging_object(conf, target_bucket, obj_name, dpp, y, true, nullptr);
+    ret = new_logging_object(conf, target_bucket, obj_name, dpp, region, s->bucket, y, std::nullopt, nullptr);
     if (ret == 0) {
       ldpp_dout(dpp, 20) << "INFO: first time logging for bucket '" << target_bucket_id << "' and prefix '" <<
         conf.target_prefix << "'" << dendl;
@@ -486,9 +518,13 @@ int log_record(rgw::sal::Driver* driver,
     fqdn.append(".").append(s->info.domain);
   }
 
+  std::string aws_version("-");
+  std::string auth_type("-");
+  rgw::auth::s3::get_aws_version_and_auth_type(s, aws_version, auth_type);
   std::string bucket_owner;
   std::string bucket_name;
-  if (log_source_bucket) {
+  if (log_source_bucket && conf.logging_type == LoggingType::Standard) {
+    // log source bucket for COPY operations only in standard mode
     if (!s->src_object || !s->src_object->get_bucket()) {
       ldpp_dout(dpp, 1) << "ERROR: source object or bucket is missing when logging source bucket" << dendl;
       return -EINVAL;
@@ -500,9 +536,6 @@ int log_record(rgw::sal::Driver* driver,
     bucket_name = full_bucket_name(s->bucket);
   }
 
-  std::string aws_version("-");
-  std::string auth_type("-");
-  rgw::auth::s3::get_aws_version_and_auth_type(s, aws_version, auth_type);
 
   switch (conf.logging_type) {
     case LoggingType::Standard:
@@ -539,8 +572,8 @@ int log_record(rgw::sal::Driver* driver,
       break;
     case LoggingType::Journal:
       record = fmt::format("{} {} [{:%d/%b/%Y:%H:%M:%S %z}] {} {} {} {} {}",
-        dash_if_empty(to_string(s->bucket->get_owner())),
-        dash_if_empty(full_bucket_name(s->bucket)),
+        dash_if_empty(bucket_owner),
+        dash_if_empty(bucket_name),
         t,
         op_name,
         dash_if_empty_or_null(obj, obj->get_name()),
@@ -592,7 +625,7 @@ int log_record(rgw::sal::Driver* driver,
   if (ret == -EFBIG) {
     ldpp_dout(dpp, 5) << "WARNING: logging object '" << obj_name << "' is full, will be committed to bucket '" <<
       target_bucket->get_key() << "'" << dendl;
-    if (ret = rollover_logging_object(conf, target_bucket, obj_name, dpp, y, true, nullptr); ret < 0 ) {
+    if (ret = rollover_logging_object(conf, target_bucket, obj_name, dpp, region, s->bucket, y, true, nullptr, nullptr); ret < 0 ) {
       return ret;
     }
     if (ret = target_bucket->write_logging_object(obj_name,
@@ -823,7 +856,7 @@ int source_bucket_cleanup(const DoutPrefixProvider* dpp,
     return 0;
   }
   const auto& info = bucket->get_info();
-  if (const int ret = commit_logging_object(*conf, dpp, driver, info.bucket.tenant, y); ret < 0) {
+  if (const int ret = commit_logging_object(*conf, dpp, driver, info.bucket.tenant, y, nullptr); ret < 0) {
     ldpp_dout(dpp, 5) << "WARNING: could not commit pending logging object of bucket '" <<
       bucket->get_key() << "' during cleanup. ret = " << ret << dendl;
   } else {

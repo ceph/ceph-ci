@@ -2377,7 +2377,7 @@ pg_scrubbing_status_t PgScrubber::get_schedule() const
 
     } else {
       int32_t dur_seconds =
-	  duration_cast<seconds>(m_fsm->get_time_scrubbing()).count();
+	  ceil<seconds>(m_fsm->get_time_scrubbing()).count();
       return pg_scrubbing_status_t{
 	  utime_t{},
 	  dur_seconds,
@@ -2570,7 +2570,7 @@ std::chrono::milliseconds PgScrubber::get_scrub_sleep_time() const
 {
   return m_osds->get_scrub_services().scrub_sleep_time(
       ceph_clock_now(),
-      !ScrubJob::observes_allowed_hours(m_active_target->urgency()));
+      ScrubJob::observes_extended_sleep(m_active_target->urgency()));
 }
 
 void PgScrubber::queue_for_scrub_resched(Scrub::scrub_prio_t prio)
