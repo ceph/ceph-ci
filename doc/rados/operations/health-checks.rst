@@ -395,7 +395,126 @@ _____________________________
 
 The Ceph Monitors are currently configured to generate tickets for service
 daemons (``ceph-mgr``, ``ceph-osd``, and ``ceph-mds``) using an insecure cipher
-type. 
+type.
+
+
+.. prompt:: bash $
+
+    ceph health detail
+
+outputs
+
+::
+
+    [WRN] AUTH_INSECURE_SERVICE_TICKETS: Monitors are configured to issue insecure service key types
+
+.. warning:: This warning should only be addressed when all service daemons have been upgraded to a version supporting a secure key type.
+
+The warning can be resolved by setting:
+
+.. prompt:: bash $
+
+    ceph mon set auth_service_cipher aes256k
+
+The Ceph Monitors will begin issuing tickets using the more secure cipher type.
+
+
+AUTH_INSECURE_SERVICE_KEY_TYPE
+______________________________
+
+The Ceph Monitors have detected that one or more service daemons are still
+using insecure key types for authentication with the Monitors.
+
+.. prompt:: bash $
+
+    ceph health detail
+
+::
+
+    [ERR] AUTH_INSECURE_SERVICE_KEY_TYPE: 11 auth service entities with insecure key types
+    entity mds.a using insecure key type: aes
+    entity mds.b using insecure key type: aes
+    entity osd.0 using insecure key type: aes
+    entity osd.1 using insecure key type: aes
+    entity osd.2 using insecure key type: aes
+    entity osd.3 using insecure key type: aes
+    entity osd.4 using insecure key type: aes
+    entity osd.5 using insecure key type: aes
+    entity osd.6 using insecure key type: aes
+    entity osd.7 using insecure key type: aes
+    entity mgr.x using insecure key type: aes
+
+.. warning:: Ensure that the daemon is running a version of Ceph that understands the new cipher type.
+
+Fixing this requires rotating the key for each service daemon. You must save
+the new key in daemon's keyring or it will not be able to authenticate.
+
+.. prompt:: bash $
+
+    ceph auth rotate --key-type=aes256k mds.a > MDS_A_KEYRING
+
+Do this for each daemon.
+
+
+AUTH_INSECURE_ROTATING_SERVICE_KEY_TYPE
+_______________________________________
+
+The Ceph Monitors have detected insecure cipher types for the rotating service
+keys which encrypt tickets for clients to authenticate with service daemons.
+
+.. prompt:: bash $
+
+    ceph health detail
+
+::
+
+    [ERR] AUTH_INSECURE_ROTATING_SERVICE_KEY_TYPE: 4 auth service rotating keys using insecure key types
+    rotating service keys for mon using insecure key type: aes
+    rotating service keys for mds using insecure key type: aes
+    rotating service keys for osd using insecure key type: aes
+    rotating service keys for mgr using insecure key type: aes
+
+.. warning:: This warning can only be addressed by first resolving AUTH_INSECURE_SERVICE_TICKETS.
+
+The warning will resolve naturally as the extant rotating service keys eventually expire. This is controlled by
+the ``auth_service_ticket_ttl`` Monitor config:
+
+.. prompt:: bash $
+
+    ceph config get mon auth_service_ticket_ttl
+
+::
+
+    3600.000000
+
+There are three rotating keys by default. The keys have laddered expiration;
+one key will expire every ``auth_service_ticket_ttl`` interval. You can wait for the keys to expire
+naturally or force rotation.
+
+.. warning:: Wiping the service keys invalidates tickets for all existing clients.
+             Only upgraded service daemons understand how to acquire new
+             rotating service keys necessary to decrypt client tickets.
+             expiration. by default.  Also, only upgraded clients understand
+             how to acquire new tickets when service keys are wiped. You
+             probably do not want to do this manually!
+
+Forcing rotating can be done by:
+
+.. prompt:: bash $
+
+    ceph auth wipe-rotating-service-keys
+
+outputs
+
+::
+
+    wiped rotating service keys!
+
+
+The warning should resolve immediately.
+
+
+
 
 
 Manager
