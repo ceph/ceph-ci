@@ -390,6 +390,12 @@ emergency to restore access to other cipher types. The cluster will raise
 
 
 
+AUTH_INSECURE_SERVICE_TICKETS
+_____________________________
+
+The Ceph Monitors are currently configured to generate tickets for service
+daemons (``ceph-mgr``, ``ceph-osd``, and ``ceph-mds``) using an insecure cipher
+type. 
 
 
 Manager
