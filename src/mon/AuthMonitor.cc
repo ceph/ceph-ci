@@ -500,6 +500,8 @@ bool AuthMonitor::check_health()
       }
       /* So that existing clusters continue to allow issuing older key types. */
       cct->_conf.set_val_default("mon_auth_allow_insecure_key", "true");
+    } else {
+      cct->_conf.set_val_default("mon_auth_allow_insecure_key", "false");
     }
   }
 
