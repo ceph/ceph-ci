@@ -3368,10 +3368,21 @@ class CephManager:
             self.log('health:\n{h}'.format(h=out))
         return json.loads(out)
 
-    def wait_until_healthy(self, timeout=None):
+    def wait_until_healthy(self, timeout=None, expected_checks=[]):
         self.log("wait_until_healthy")
         start = time.time()
-        while self.get_mon_health()['status'] != 'HEALTH_OK':
+        while True:
+            health = self.get_mon_health()
+            if health['status'] == 'HEALTH_OK':
+                break
+            okay = True
+            for check in health['checks']:
+                if check in expected_checks:
+                    log.info("{} in expected_checks", check)
+                else:
+                    okay = False
+            if okay:
+                break
             if timeout is not None:
                 assert time.time() - start < timeout, \
                     'timeout expired in wait_until_healthy'
