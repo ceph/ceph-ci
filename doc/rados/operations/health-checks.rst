@@ -270,11 +270,11 @@ creation or rotation of keys with insecure ciphers. This is controlled by the
 Monitor configuration ``mon_auth_allow_insecure_key``. By default, this
 configuration is ``false`` unless the cluster health warning
 ``AUTH_INSECURE_KEYS_ALLOWED`` is raised. In other words, when the cluster
-allows insecure keys to authenticate, then it will also permit the creation of
-new keys with insecure keys.
+allows insecure keys to authenticate, then it will, by default, also permit the
+creation of new keys with insecure keys.
 
-This warning can be resolved by address ``AUTH_INSECURE_KEYS_ALLOWED`` or by
-setting this configuration manually to false.
+This warning can be resolved by addressing ``AUTH_INSECURE_KEYS_ALLOWED`` or by
+manually setting this configuration to false.
 
 .. warning:: Only do this when you are sure that it is no longer necessary to
              create or rotate keys for legacy clients.
@@ -283,6 +283,7 @@ setting this configuration manually to false.
 
     ceph config set mon mon_auth_allow_insecure_key false
 
+.. note:: cephadm and Rook should automate this process for you.
 
 
 
@@ -304,7 +305,7 @@ outputs
 
     [WRN] AUTH_INSECURE_SERVICE_TICKETS: Monitors are configured to issue insecure service key types
 
-.. warning:: This warning should only be addressed when all service daemons have been upgraded to a version supporting a secure key type.
+.. warning:: This warning should only be addressed when all service daemons have been upgraded to a version supporting a secure cipher type.
 
 The warning can be resolved by setting:
 
@@ -314,16 +315,21 @@ The warning can be resolved by setting:
 
 The Ceph Monitors will begin issuing tickets using the more secure cipher type.
 
+.. note:: cephadm and Rook should automate this process for you.
+
+
 
 AUTH_INSECURE_SERVICE_KEY_TYPE
 ______________________________
 
 The Ceph Monitors have detected that one or more service daemons are still
-using insecure key types for authentication with the Monitors.
+using insecure cipher types for authentication with the Monitors.
 
 .. prompt:: bash $
 
     ceph health detail
+
+outputs
 
 ::
 
@@ -351,6 +357,9 @@ the new key in daemon's keyring or it will not be able to authenticate.
 
 Do this for each daemon.
 
+.. note:: cephadm and Rook should automate this process for you.
+
+
 
 AUTH_INSECURE_ROTATING_SERVICE_KEY_TYPE
 _______________________________________
@@ -361,6 +370,8 @@ keys which encrypt tickets for clients to authenticate with service daemons.
 .. prompt:: bash $
 
     ceph health detail
+
+outputs
 
 ::
 
@@ -389,10 +400,10 @@ naturally or force rotation.
 
 .. warning:: Wiping the service keys invalidates tickets for all existing clients.
              Only upgraded service daemons understand how to acquire new
-             rotating service keys necessary to decrypt client tickets.
-             expiration. by default.  Also, only upgraded clients understand
-             how to acquire new tickets when service keys are wiped. You
-             probably do not want to do this manually!
+             rotating service keys necessary to decrypt client tickets.  Also,
+             only upgraded clients understand how to acquire new tickets when
+             service keys are wiped. You probably do not want to do this
+             manually!
 
 Forcing rotating can be done by:
 
@@ -408,6 +419,9 @@ outputs
 
 
 The warning should resolve immediately.
+
+.. note:: cephadm and Rook should automate this process for you.
+
 
 
 AUTH_INSECURE_CLIENT_KEY_TYPE
@@ -550,6 +564,7 @@ As the warning and configuration name implies, this configuration should only
 be used in an emergency to restore access to other cipher types. The cluster
 will raise ``AUTH_EMERGENCY_CIPHERS_SET`` until that configuration has been
 removed.
+
 
 
 Manager
