@@ -514,6 +514,38 @@ outputs
 The warning should resolve immediately.
 
 
+AUTH_INSECURE_CLIENT_KEY_TYPE
+_____________________________
+
+
+The Ceph Monitors have detected that client credentials have keys with insecure cipher types.
+
+.. prompt:: bash $
+
+    ceph health detail
+
+outputs
+
+::
+
+    [WRN] AUTH_INSECURE_CLIENT_KEY_TYPE: 3 auth client entities with insecure key types
+    entity client.admin using insecure key type: aes
+    entity client.fs using insecure key type: aes
+    entity client.fs_a using insecure key type: aes
+
+
+.. warning:: Resolving this warning may not be immediately possible if legacy clients that do not understand secure cipher types exist. If this applies to your situation, muting this warning is recommended.
+
+
+Fixing this requires rotating the key for each affected client. You must save
+the new key on each machine using the client keyring or the client will not be
+able to authenticate.
+
+.. prompt:: bash $
+
+    ceph auth rotate --key-type=aes256k client.X > CLIENT_X_KEYRING
+
+Do this for each client.
 
 
 
