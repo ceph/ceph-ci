@@ -428,7 +428,8 @@ AUTH_INSECURE_CLIENT_KEY_TYPE
 _____________________________
 
 
-The Ceph Monitors have detected that client credentials have keys with insecure cipher types.
+The Ceph Monitors have detected that client credentials have keys with insecure
+cipher types.
 
 .. prompt:: bash $
 
@@ -444,8 +445,7 @@ outputs
     entity client.fs_a using insecure key type: aes
 
 
-.. warning:: Resolving this warning may not be immediately possible if legacy clients that do not understand secure cipher types exist. If this applies to your situation, muting this warning is recommended.
-
+.. warning:: Resolving this warning may not be immediately possible if there exists legacy clients that do not understand secure cipher types. If this applies to your situation, muting this warning is recommended.
 
 Fixing this requires rotating the key for each affected client. You must save
 the new key on each machine using the client keyring or the client will not be
@@ -456,6 +456,9 @@ able to authenticate.
     ceph auth rotate --key-type=aes256k client.X > CLIENT_X_KEYRING
 
 Do this for each client.
+
+
+.. note:: Rook should automate this process for you. cephadm does not generally administer client credentials.
 
 
 AUTH_INSECURE_KEYS_ALLOWED
@@ -545,6 +548,9 @@ outputs
 
 The warning should now be resolved.
 
+.. note:: Rook should automate this process for you. cephadm will not change this as it may adversely affect existing clients.
+
+
 
 AUTH_EMERGENCY_CIPHERS_SET
 __________________________
@@ -564,6 +570,7 @@ As the warning and configuration name implies, this configuration should only
 be used in an emergency to restore access to other cipher types. The cluster
 will raise ``AUTH_EMERGENCY_CIPHERS_SET`` until that configuration has been
 removed.
+
 
 
 
