@@ -40,5 +40,3 @@ if(WITH_JAEGER)
   target_link_libraries(os
     PRIVATE jaeger_base)
 endif()
-
-add_dependencies(os crypto_plugins)
