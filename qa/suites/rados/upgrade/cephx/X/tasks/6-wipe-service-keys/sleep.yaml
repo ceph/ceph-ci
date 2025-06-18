@@ -1,5 +1,5 @@
 # Sleep for ticket refresh.
 tasks:
 - sleep:
-    duration: 500
+    duration: 720
 - ceph.healthy:
