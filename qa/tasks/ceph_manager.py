@@ -3386,8 +3386,10 @@ class CephManager:
             if okay:
                 break
             if timeout is not None:
-                assert time.time() - start < timeout, \
-                    'timeout expired in wait_until_healthy'
+                if timeout < (time.time() - start):
+                    what = ", ".join(health['checks'].keys())
+                    err = f"timeout {timeout}s expired waiting for healthy cluster with these warnings: {what}"
+                    raise RuntimeError(err)
             time.sleep(3)
         self.log("wait_until_healthy done")
 
