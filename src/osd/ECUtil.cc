@@ -665,8 +665,33 @@ int shard_extent_map_t::decode(const ErasureCodeInterfaceRef &ec_impl,
 
   shard_id_set decode_set = shard_id_set::intersection(need_set, sinfo->get_data_shards());
   shard_id_set encode_set = shard_id_set::intersection(need_set, sinfo->get_parity_shards());
+
   shard_extent_set_t read_mask(sinfo->get_k_plus_m());
   sinfo->ro_size_to_read_mask(object_size, read_mask);
+
+  if (!encode_set.empty()) {
+    /* The function has been asked to "decode" parity. To achieve this, we
+     * need all the data shards to be present... So first see if there are
+     * any missing...
+     */
+    shard_id_set decode_for_parity_shards = shard_id_set::difference(sinfo->get_data_shards(), have_set);
+
+    if (!decode_for_parity_shards.empty()) {
+      /* So there are missing data shards which need decoding before we encode,
+       * We need to add these to the decode set and insert buffers for the
+       * decode to happen.
+       */
+      decode_set.insert(decode_for_parity_shards);
+      extent_set decode_for_parity = get_extent_superset();
+
+      for (auto shard : decode_for_parity_shards) {
+        extent_set parity_pad;
+        parity_pad.intersection_of(decode_for_parity, read_mask.at(shard));
+        pad_on_shard(decode_for_parity, shard);
+      }
+    }
+  }
+
   int r = 0;
   if (!decode_set.empty()) {
     pad_on_shards(want, decode_set);
@@ -675,9 +700,9 @@ int shard_extent_map_t::decode(const ErasureCodeInterfaceRef &ec_impl,
      * worked out what needs to be read for this.
      */
     for (auto shard : encode_set) {
-      extent_set decode_for_parity;
-      decode_for_parity.intersection_of(want.at(shard), read_mask.at(shard));
-      pad_on_shard(decode_for_parity, shard);
+      extent_set parity_pad;
+      parity_pad.intersection_of(want.at(shard), read_mask.at(shard));
+      pad_on_shard(parity_pad, shard);
     }
     r = _decode(ec_impl, want_set, decode_set);
   }
