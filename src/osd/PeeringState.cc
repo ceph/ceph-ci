@@ -4532,18 +4532,8 @@ void PeeringState::add_log_entry(const pg_log_entry_t& e, ObjectStore::Transacti
   // log mutation
   enum PGLog::NonPrimary nonprimary{pool.info.is_nonprimary_shard(info.pgid.shard)};
   PGLog::LogEntryHandlerRef handler{pl->get_log_handler(t)};
-  /* Normally an unwritten shard does not get told about a log entry. However,
-   *  when an object is missing, the shard will be sent an empty transaction
-   *  with a valid log entry in order to update the missing list. In this case
-   *  we need most of the processing=, but want to skip actually adding the
-   *  entry to the log.
-   */
-  if (e.is_written_shard(pg_whoami.shard)) {
-    pg_log.add(e, nonprimary, applied, &info, handler.get());
-    psdout(10) << "add_log_entry " << e << dendl;
-  } else {
-    psdout(10) << "add_log_entry skipping " << e << dendl;
-  }
+  pg_log.add(e, nonprimary, applied, &info, handler.get());
+  psdout(10) << "add_log_entry " << e << dendl;
 }
 
 
@@ -4598,13 +4588,7 @@ void PeeringState::append_log(
   }
 
   for (auto p = logv.begin(); p != logv.end(); ++p) {
-    /* When the primary OSD detects that a shard is missing, it sends an
-     * empty transaction, with a valid log entry. We must not apply this log
-     * entry since it was only intended for the potential primary shards.
-     */
-    if (p->is_written_shard(pg_whoami.shard)) {
-      add_log_entry(*p, t, transaction_applied);
-    }
+    add_log_entry(*p, t, transaction_applied);
 
     /* We don't want to leave the rollforward artifacts around
      * here past last_backfill.  It's ok for the same reason as
