@@ -128,12 +128,6 @@ class slice_iterator {
             shard, bufferptr(bl_iter.get_current_ptr(), 0, end - start));
         }
 
-        // FAIL REVIEW - debug code.
-        // Calculating the CRC checks that the CRC cache is either valid
-        // or wrong. This relies on another fail review change inside crc32c
-        emap_iter.get_val().crc32c(-1);
-        // END FAIL REVIEW
-
         // Now we need to move on the iterators.
         bl_iter += end - start;
 
@@ -146,6 +140,12 @@ class slice_iterator {
             if (out_set.contains(shard)) {
               bufferlist bl = emap_iter.get_val();
               bl.invalidate_crc();
+            } else {
+              // FAIL REVIEW - debug code.
+              // Calculating the CRC checks that the CRC cache is either valid
+              // or wrong. This relies on another fail review change inside crc32c
+              emap_iter.get_val().crc32c(-1);
+              // END FAIL REVIEW
             }
             iters.at(shard).second = emap_iter.get_val().begin();
           }
