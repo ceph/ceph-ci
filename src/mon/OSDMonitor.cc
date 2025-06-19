@@ -1524,7 +1524,8 @@ void OSDMonitor::prime_pg_temp(
   {
     std::lock_guard l(prime_pg_temp_lock);
     // do not touch a mapping if a change is pending
-    std::vector<int> pg_temp = next.pgtemp_primaryfirst(*pool, acting);
+    std::vector<int> pg_temp = pool ? next.pgtemp_primaryfirst(*pool, acting) :
+                                      acting;
     pending_inc.new_pg_temp.emplace(
       pgid,
       mempool::osdmap::vector<int>(pg_temp.begin(), pg_temp.end()));
