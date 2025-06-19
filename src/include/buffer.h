@@ -1218,6 +1218,7 @@ struct error_code;
     iov_vec_t prepare_iovs() const;
 
     uint32_t crc32c(uint32_t crc) const;
+    std::ostream &print_crc32c(std::ostream &out, uint32_t crc) const;
     void invalidate_crc();
 
     // These functions return a bufferlist with a pointer to a single

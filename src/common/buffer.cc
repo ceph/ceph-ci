@@ -2062,6 +2062,63 @@ __u32 buffer::list::crc32c(__u32 crc) const
   return crc;
 }
 
+  std::ostream & buffer::list::print_crc32c(std::ostream &out, __u32 crc) const
+  {
+    int cache_misses = 0;
+    int cache_hits = 0;
+    int cache_adjusts = 0;
+    __u32 check_crc = crc;
+
+    for (const auto& node : _buffers) {
+      if (node.length()) {
+        raw* const r = node._raw;
+        pair<size_t, size_t> ofs(node.offset(), node.offset() + node.length());
+        pair<uint32_t, uint32_t> ccrc;
+        check_crc = ceph_crc32c(check_crc, (unsigned char*)node.c_str(), node.length());
+        if (r->get_crc(ofs, &ccrc)) {
+          if (ccrc.first == crc) {
+            // got it already
+            crc = ccrc.second;
+            cache_hits++;
+          } else {
+            /* If we have cached crc32c(buf, v) for initial value v,
+             * we can convert this to a different initial value v' by:
+             * crc32c(buf, v') = crc32c(buf, v) ^ adjustment
+             * where adjustment = crc32c(0*len(buf), v ^ v')
+             *
+             * http://crcutil.googlecode.com/files/crc-doc.1.0.pdf
+             * note, u for our crc32c implementation is 0
+             */
+            crc = ccrc.second ^ ceph_crc32c(ccrc.first ^ crc, NULL, node.length());
+            cache_adjusts++;
+          }
+        } else {
+          cache_misses++;
+          uint32_t base = crc;
+          crc = ceph_crc32c(crc, (unsigned char*)node.c_str(), node.length());
+          r->set_crc(ofs, make_pair(base, crc));
+        }
+      }
+    }
+
+    out << crc;
+    if (crc != check_crc) {
+      out << "MISMATCH (" << check_crc << ")";
+    }
+
+    if (buffer_track_crc) {
+      if (cache_adjusts)
+        buffer_cached_crc_adjusted += cache_adjusts;
+      if (cache_hits)
+        buffer_cached_crc += cache_hits;
+      if (cache_misses)
+        buffer_missed_crc += cache_misses;
+    }
+
+    return out;
+  }
+
+
 void buffer::list::invalidate_crc()
 {
   for (const auto& node : _buffers) {

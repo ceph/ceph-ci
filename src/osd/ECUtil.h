@@ -133,6 +133,13 @@ class slice_iterator {
 
         // If we have reached the end of the extent, we need to move that on too.
         if (bl_iter == emap_iter.get_val().end()) {
+          // FAIL REVIEW - debug code.
+          if (!out_set.contains(shard)) {
+            // Calculating the CRC checks that the CRC cache is either valid
+            // or wrong. This relies on another fail review change inside crc32c
+            emap_iter.get_val().crc32c(-1);
+          }
+          // END FAIL REVIEW
           ++emap_iter;
           if (emap_iter == input[shard].end()) {
             erase = true;

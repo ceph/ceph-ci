@@ -7045,6 +7045,23 @@ void PushOp::dump(Formatter *f) const
 
 ostream &PushOp::print(ostream &out) const
 {
+  // FAIL REVIEW - hack of CRCs!
+  out << "PushOp CRCs(";
+  out << "data=";
+  data.print_crc32c(out, -1);
+  out << ", omap_header=";
+  omap_header.print_crc32c(out, -1);
+  out << ", omap_entries=[" << ":";
+  for (auto &&[s, bl] : omap_entries) {
+    bl.print_crc32c(out, -1);
+    out << ",";
+  }
+  out << "], attrset=[";
+  for (auto &&[s, bl] : attrset) {
+    bl.print_crc32c(out, -1);
+  }
+  out << "] ";
+  // END FAIL REVIEW
   return out
     << "PushOp(" << soid
     << ", version: " << version
