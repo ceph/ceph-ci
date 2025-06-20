@@ -668,12 +668,12 @@ int shard_extent_map_t::decode(const ErasureCodeInterfaceRef &ec_impl,
   shard_id_set decode_set = shard_id_set::intersection(need_set, sinfo->get_data_shards());
   shard_id_set encode_set = shard_id_set::intersection(need_set, sinfo->get_parity_shards());
 
-  shard_extent_set_t read_mask(sinfo->get_k_plus_m());
-  sinfo->ro_size_to_read_mask(object_size, read_mask);
+  if (!encode_set.empty()) {
+    shard_extent_set_t read_mask(sinfo->get_k_plus_m());
+    sinfo->ro_size_to_read_mask(object_size, read_mask);
 
   verify_crc();
 
-  if (!encode_set.empty()) {
     /* The function has been asked to "decode" parity. To achieve this, we
      * need all the data shards to be present... So first see if there are
      * any missing...
@@ -701,15 +701,6 @@ int shard_extent_map_t::decode(const ErasureCodeInterfaceRef &ec_impl,
   int r = 0;
   if (!decode_set.empty()) {
     pad_on_shards(want, decode_set);
-    /* If we are going to be encoding, we need to make sure all the necessary
-     * shards are decoded. The get_min_available functions should have already
-     * worked out what needs to be read for this.
-     */
-    for (auto shard : encode_set) {
-      extent_set parity_pad;
-      parity_pad.intersection_of(want.at(shard), read_mask.at(shard));
-      pad_on_shard(parity_pad, shard);
-    }
     r = _decode(ec_impl, want_set, decode_set);
   }
 
