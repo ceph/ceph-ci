@@ -629,13 +629,27 @@ void ECTransaction::Generate::truncate() {
 
     for (auto &&[shard, eset]: truncate_eset) {
       clone_shards.insert(shard);
+
+      auto &t = transactions.at(shard);
+      uint64_t start = eset.range_start();
+      uint64_t start_align_prev = ECUtil::align_prev(start);
+      uint64_t end = eset.range_end();
+
+      if (clone_start > start_align_prev) {
+        clone_start = start_align_prev;
+      }
+      if (clone_end < end) {
+        clone_end = end;
+      }
+    }
+
+    for (auto &&[shard, eset]: truncate_eset) {
       if (!transactions.contains(shard)) {
         continue;
       }
 
       auto &t = transactions.at(shard);
       uint64_t start = eset.range_start();
-      uint64_t start_align_prev = ECUtil::align_prev(start);
       uint64_t start_align_next = ECUtil::align_next(start);
       uint64_t end = eset.range_end();
       t.touch(
@@ -645,9 +659,9 @@ void ECTransaction::Generate::truncate() {
         coll_t(spg_t(pgid, shard)),
         ghobject_t(oid, ghobject_t::NO_GEN, shard),
         ghobject_t(oid, entry->version.version, shard),
-        start_align_prev,
-        end - start_align_prev,
-        start_align_prev);
+        clone_start,
+        end - clone_start,
+        clone_start);
 
       // First truncate to exactly the right size.
       t.truncate(
@@ -663,13 +677,6 @@ void ECTransaction::Generate::truncate() {
           coll_t(spg_t(pgid, shard)),
           ghobject_t(oid, ghobject_t::NO_GEN, shard),
           start_align_next);
-      }
-
-      if (clone_start > start_align_prev) {
-        clone_start = start_align_prev;
-      }
-      if (clone_end < end) {
-        clone_end = end;
       }
     }
     shards_written(clone_shards);
