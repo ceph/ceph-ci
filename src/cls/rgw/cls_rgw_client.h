@@ -16,143 +16,6 @@
 #include "common/ceph_mutex.h"
 
 
-// Forward declaration
-class BucketIndexAioManager;
-/*
- * Bucket index AIO request argument, this is used to pass a argument
- * to callback.
- */
-struct BucketIndexAioArg : public RefCountedObject {
-  BucketIndexAioArg(int _id, BucketIndexAioManager* _manager) :
-    id(_id), manager(_manager) {}
-  int id;
-  BucketIndexAioManager* manager;
-};
-
-/*
- * This class manages AIO completions. This class is not completely
- * thread-safe, methods like *get_next_request_id* is not thread-safe
- * and is expected to be called from within one thread.
- */
-class BucketIndexAioManager {
-public:
-
-  // allows us to reaccess the shard id and shard's oid during and
-  // after the asynchronous call is made
-  struct RequestObj {
-    int shard_id;
-    std::string oid;
-
-    RequestObj(int _shard_id, const std::string& _oid) :
-      shard_id(_shard_id), oid(_oid)
-    {/* empty */}
-  };
-
-
-private:
-  // NB: the following 4 maps use the request_id as the key; this
-  // is not the same as the shard_id!
-  std::map<int, librados::AioCompletion*> pendings;
-  std::map<int, librados::AioCompletion*> completions;
-  std::map<int, const RequestObj> pending_objs;
-  std::map<int, const RequestObj> completion_objs;
-
-  int next = 0;
-  ceph::mutex lock = ceph::make_mutex("BucketIndexAioManager::lock");
-  ceph::condition_variable cond;
-  /*
-   * Callback implementation for AIO request.
-   */
-  static void bucket_index_op_completion_cb(void* cb, void* arg) {
-    BucketIndexAioArg* cb_arg = (BucketIndexAioArg*) arg;
-    cb_arg->manager->do_completion(cb_arg->id);
-    cb_arg->put();
-  }
-
-  /*
-   * Get next request ID. This method is not thread-safe.
-   *
-   * Return next request ID.
-   */
-  int get_next_request_id() { return next++; }
-
-  /*
-   * Add a new pending AIO completion instance.
-   *
-   * @param id         - the request ID.
-   * @param completion - the AIO completion instance.
-   * @param oid        - the object id associated with the object, if it is NULL, we don't
-   *                     track the object id per callback.
-   */
-  void add_pending(int request_id, librados::AioCompletion* completion, const int shard_id, const std::string& oid) {
-    pendings[request_id] = completion;
-    pending_objs.emplace(request_id, RequestObj(shard_id, oid));
-  }
-
-public:
-  /*
-   * Create a new instance.
-   */
-  BucketIndexAioManager() = default;
-
-  /*
-   * Do completion for the given AIO request.
-   */
-  void do_completion(int request_id);
-
-  /*
-   * Wait for AIO completions.
-   *
-   * valid_ret_code  - valid AIO return code.
-   * num_completions - number of completions.
-   * ret_code        - return code of failed AIO.
-   * objs            - a std::list of objects that has been finished the AIO.
-   *
-   * Return false if there is no pending AIO, true otherwise.
-   */
-  bool wait_for_completions(int valid_ret_code,
-			    int *num_completions = nullptr,
-			    int *ret_code = nullptr,
-			    std::map<int, std::string> *completed_objs = nullptr,
-			    std::map<int, std::string> *retry_objs = nullptr);
-
-  /**
-   * Do aio read operation.
-   */
-  bool aio_operate(librados::IoCtx& io_ctx, const int shard_id, const std::string& oid, librados::ObjectReadOperation *op) {
-    std::lock_guard l{lock};
-    const int request_id = get_next_request_id();
-    BucketIndexAioArg *arg = new BucketIndexAioArg(request_id, this);
-    librados::AioCompletion *c = librados::Rados::aio_create_completion((void*)arg, bucket_index_op_completion_cb);
-    int r = io_ctx.aio_operate(oid, c, (librados::ObjectReadOperation*)op, NULL);
-    if (r >= 0) {
-      add_pending(arg->id, c, shard_id, oid);
-    } else {
-      arg->put();
-      c->release();
-    }
-    return r;
-  }
-
-  /**
-   * Do aio write operation.
-   */
-  bool aio_operate(librados::IoCtx& io_ctx, const int shard_id, const std::string& oid, librados::ObjectWriteOperation *op) {
-    std::lock_guard l{lock};
-    const int request_id = get_next_request_id();
-    BucketIndexAioArg *arg = new BucketIndexAioArg(request_id, this);
-    librados::AioCompletion *c = librados::Rados::aio_create_completion((void*)arg, bucket_index_op_completion_cb);
-    int r = io_ctx.aio_operate(oid, c, (librados::ObjectWriteOperation*)op);
-    if (r >= 0) {
-      add_pending(arg->id, c, shard_id, oid);
-    } else {
-      arg->put();
-      c->release();
-    }
-    return r;
-  }
-};
-
 class RGWGetDirHeader_CB : public boost::intrusive_ref_counter<RGWGetDirHeader_CB> {
 public:
   virtual ~RGWGetDirHeader_CB() {}
@@ -369,13 +232,13 @@ void cls_rgw_encode_suggestion(char op, rgw_bucket_dir_entry& dirent, ceph::buff
 void cls_rgw_suggest_changes(librados::ObjectWriteOperation& o, ceph::buffer::list& updates);
 
 /* usage logging */
-// these overloads which call io_ctx.operate() should not be called in the rgw.
-// rgw_rados_operate() should be called after the overloads w/o calls to io_ctx.operate()
-#ifndef CLS_CLIENT_HIDE_IOCTX
-int cls_rgw_usage_log_read(librados::IoCtx& io_ctx, const std::string& oid, const std::string& user, const std::string& bucket,
-                           uint64_t start_epoch, uint64_t end_epoch, uint32_t max_entries, std::string& read_iter,
-			   std::map<rgw_user_bucket, rgw_usage_log_entry>& usage, bool *is_truncated);
-#endif
+void cls_rgw_usage_log_read(librados::ObjectReadOperation& op,
+                            const std::string& user, const std::string& bucket,
+                            uint64_t start_epoch, uint64_t end_epoch,
+                            uint32_t max_entries, const std::string& read_iter,
+                            bufferlist& bl, int& rval);
+int cls_rgw_usage_log_read_decode(const bufferlist& bl, std::string& read_iter,
+                                  std::map<rgw_user_bucket, rgw_usage_log_entry>& usage, bool *is_truncated);
 
 void cls_rgw_usage_log_trim(librados::ObjectWriteOperation& op, const std::string& user, const std::string& bucket, uint64_t start_epoch, uint64_t end_epoch);
 
@@ -415,13 +278,17 @@ void cls_rgw_reshard_add(librados::ObjectWriteOperation& op,
 			 const cls_rgw_reshard_entry& entry,
 			 const bool create_only);
 void cls_rgw_reshard_remove(librados::ObjectWriteOperation& op, const cls_rgw_reshard_entry& entry);
-// these overloads which call io_ctx.operate() should not be called in the rgw.
-// rgw_rados_operate() should be called after the overloads w/o calls to io_ctx.operate()
-#ifndef CLS_CLIENT_HIDE_IOCTX
-int cls_rgw_reshard_list(librados::IoCtx& io_ctx, const std::string& oid, std::string& marker, uint32_t max,
-                         std::list<cls_rgw_reshard_entry>& entries, bool* is_truncated);
-int cls_rgw_reshard_get(librados::IoCtx& io_ctx, const std::string& oid, cls_rgw_reshard_entry& entry);
-#endif
+void cls_rgw_reshard_list(librados::ObjectReadOperation& op,
+                          std::string marker, uint32_t max,
+                          bufferlist& bl);
+int cls_rgw_reshard_list_decode(const bufferlist& bl,
+                                std::list<cls_rgw_reshard_entry>& entries,
+                                bool* is_truncated);
+void cls_rgw_reshard_get(librados::ObjectReadOperation& op,
+                         std::string tenant, std::string bucket_name,
+                         bufferlist& bl);
+int cls_rgw_reshard_get_decode(const bufferlist& bl,
+                               cls_rgw_reshard_entry& entry);
 
 // If writes to the bucket index should be blocked during resharding, fail with
 // the given error code. RGWRados::guard_reshard() calls this in a loop to retry
