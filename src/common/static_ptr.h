@@ -14,7 +14,6 @@
 
 #pragma once
 
-#include <bit>
 #include <cstddef>
 #include <utility>
 #include <type_traits>
@@ -101,9 +100,7 @@ class static_ptr {
   // difference in semantics between a pointer-to-const and a const
   // pointer.
   //
-  mutable struct alignas(std::bit_ceil(Size)) {
-    unsigned char data[sizeof(Base)];
-  } buf;
+  mutable typename std::aligned_storage<Size>::type buf;
 
 public:
   using element_type = Base;
