@@ -589,10 +589,14 @@ void shard_extent_map_t::pad_on_shard(const extent_set &pad_to,
   if (pad_to.size() == 0) {
     return;
   }
+
   for (auto &[off, length] : pad_to) {
     bufferlist bl;
-    bl.push_back(buffer::create_aligned(length, EC_ALIGN_SIZE));
-    insert_in_shard(shard, off, bl);
+    uint64_t start = align_prev(off);
+    uint64_t end = align_next(off + length);
+
+    bl.push_back(buffer::create_aligned(end - start, EC_ALIGN_SIZE));
+    insert_in_shard(shard, start, bl);
   }
 }
 
@@ -603,11 +607,7 @@ void shard_extent_map_t::pad_on_shards(const extent_set &pad_to,
     return;
   }
   for (auto &shard : shards) {
-    for (auto &[off, length] : pad_to) {
-      bufferlist bl;
-      bl.push_back(buffer::create_aligned(length, EC_ALIGN_SIZE));
-      insert_in_shard(shard, off, bl);
-    }
+    pad_on_shard(pad_to, shard);
   }
 }
 
