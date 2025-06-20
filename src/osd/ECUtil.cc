@@ -506,6 +506,8 @@ int shard_extent_map_t::_encode(const ErasureCodeInterfaceRef &ec_impl) {
     return _encode(ec_impl);
   }
 
+  verify_crc();
+
   return 0;
 }
 
@@ -669,6 +671,8 @@ int shard_extent_map_t::decode(const ErasureCodeInterfaceRef &ec_impl,
   shard_extent_set_t read_mask(sinfo->get_k_plus_m());
   sinfo->ro_size_to_read_mask(object_size, read_mask);
 
+  verify_crc();
+
   if (!encode_set.empty()) {
     /* The function has been asked to "decode" parity. To achieve this, we
      * need all the data shards to be present... So first see if there are
@@ -692,6 +696,8 @@ int shard_extent_map_t::decode(const ErasureCodeInterfaceRef &ec_impl,
     }
   }
 
+  verify_crc();
+
   int r = 0;
   if (!decode_set.empty()) {
     pad_on_shards(want, decode_set);
@@ -706,10 +712,15 @@ int shard_extent_map_t::decode(const ErasureCodeInterfaceRef &ec_impl,
     }
     r = _decode(ec_impl, want_set, decode_set);
   }
+
+  verify_crc();
+
   if (!r && !encode_set.empty()) {
     pad_on_shards(want, encode_set);
     r = _encode(ec_impl);
   }
+
+  verify_crc();
 
   // If we failed to decode, then bail out, or the trimming below might fail.
   if (r) {
@@ -721,6 +732,8 @@ int shard_extent_map_t::decode(const ErasureCodeInterfaceRef &ec_impl,
    * invalid.  So here, we trim off those buffers.
    */
   trim(want);
+
+  verify_crc();
 
   return 0;
 }
