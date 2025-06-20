@@ -700,7 +700,7 @@ int shard_extent_map_t::decode(const ErasureCodeInterfaceRef &ec_impl,
     r = _decode(ec_impl, want_set, decode_set);
   }
   if (!r && !encode_set.empty()) {
-    pad_on_shards(want, encode_set);
+    pad_on_shards(get_extent_superset(), sinfo->get_parity_shards());
     r = _encode(ec_impl);
   }
 
