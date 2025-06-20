@@ -102,8 +102,9 @@ class CBT(Task):
         else:
             install_cmd = ["sudo", "apt-get", "-y", "--force-yes", "install"]
             cbt_depends = ["python3-pip", "librbd-dev", "collectl", "linux-tools-generic"]
-            
+
         self.first_mon.run(args=install_cmd + cbt_depends)
+        testdir = misc.get_testdir(self.ctx)
         # Now install the python dependencies uding pip
         cmd = ["sudo", "pip", "install", "-r", f"{testdir}/cbt/requirements.txt"]
         self.first_mon.run(args=cmd)
@@ -113,7 +114,7 @@ class CBT(Task):
 
         if benchmark_type in ["librbdfio", "fio"]:
             # install fio
-            testdir = misc.get_testdir(self.ctx)
+            # testdir = misc.get_testdir(self.ctx)
             self.first_mon.run(
                 args=[
                     "git",
