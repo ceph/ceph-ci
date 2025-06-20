@@ -6990,7 +6990,6 @@ void PushOp::encode(ceph::buffer::list &bl, uint64_t features) const
   ENCODE_START(1, 1, bl);
   encode(soid, bl);
   encode(version, bl);
-  data.crc32c(-1);
   encode(data, bl);
   encode(data_included, bl);
   encode(omap_header, bl);

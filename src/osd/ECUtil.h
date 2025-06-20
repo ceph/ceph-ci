@@ -194,6 +194,7 @@ public:
       auto bl_iter = emap_iter.get_val().begin();
       auto p = std::make_pair(std::move(emap_iter), std::move(bl_iter));
       iters.emplace(shard, std::move(p));
+
       if (emap_iter.get_off() < start) {
         start = emap_iter.get_off();
       }

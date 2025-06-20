@@ -46,8 +46,6 @@ void ECTransaction::Generate::encode_and_write() {
   // For PDW, we already have necessary parity buffers.
   if (!plan.do_parity_delta_write) {
     to_write.insert_parity_buffers();
-    //FAIL REVIEW
-    to_write.verify_crc();
   }
 
   // If partial writes are not supported, pad out to_write to a full stripe.
@@ -60,8 +58,6 @@ void ECTransaction::Generate::encode_and_write() {
       for (auto [off, len]: eset) {
         to_write.zero_pad(shard, off, len);
       }
-      //FAIL REVIEW
-      to_write.verify_crc();
     }
   }
 
@@ -76,8 +72,6 @@ void ECTransaction::Generate::encode_and_write() {
   } else {
     r = to_write.encode(ec_impl);
   }
-  //FAIL REVIEW
-  to_write.verify_crc();
   ceph_assert(r == 0);
   // Remove any unnecessary writes.
   //to_write = to_write.intersect(plan.will_write);
@@ -97,8 +91,6 @@ void ECTransaction::Generate::encode_and_write() {
     for (auto &&[offset, len]: to_write_eset) {
       to_write.zero_pad(shard, offset, len);
     }
-    //FAIL REVIEW
-    to_write.verify_crc();
 
     if (transactions.contains(shard)) {
       auto &t = transactions.at(shard);
@@ -117,11 +109,7 @@ void ECTransaction::Generate::encode_and_write() {
         t.write(coll_t(spg_t(pgid, shard)),
                 ghobject_t(oid, ghobject_t::NO_GEN, shard),
                 offset, bl.length(), bl, fadvise_flags);
-        // FAIL REVIEW
-        bl.crc32c(-1);
       }
-      //FAIL REVIEW
-      to_write.verify_crc();
     }
   }
 }
@@ -621,8 +609,6 @@ void ECTransaction::Generate::truncate() {
    * will assume zeros.
    */
   to_write.erase_after_ro_offset(op.truncate->first);
-  //FAIL REVIEW
-  to_write.verify_crc();
   all_shards_written();
 
   debug(oid, "truncate_erase", to_write, dpp);

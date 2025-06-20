@@ -367,7 +367,6 @@ void ECBackend::RecoveryBackend::handle_recovery_read_complete(
   // Finally, we don't want to write any padding, so truncate the buffer
   // to remove it.
   op.returned_data->erase_after_ro_offset(aligned_size);
-  op.returned_data->verify_crc();
 
   for (auto &&shard: op.missing_on_shards) {
     if (read_mask.contains(shard) && op.returned_data->contains_shard(shard)) {
@@ -376,15 +375,12 @@ void ECBackend::RecoveryBackend::handle_recovery_read_complete(
     }
   }
 
-  op.returned_data->verify_crc();
-
   dout(20) << __func__ << ": oid=" << op.hoid << dendl;
   dout(20) << __func__ << "EC_DEBUG_BUFFERS: "
            << op.returned_data->debug_string(2048, 0)
            << dendl;
 
   continue_recovery_op(op, m);
-  op.returned_data->verify_crc();
 }
 
 struct SendPushReplies : public Context {
@@ -619,8 +615,6 @@ void ECBackend::RecoveryBackend::continue_recovery_op(
         pop.soid = op.hoid;
         pop.version = op.recovery_info.oi.get_version_for_shard(pg_shard.shard);
         op.returned_data->get_shard_first_buffer(pg_shard.shard, pop.data);
-        //FAIL REVIEW
-        pop.data.crc32c(-1);
         dout(10) << __func__ << ": pop shard=" << pg_shard
                  << ", oid=" << pop.soid
                  << ", before_progress=" << op.recovery_progress
