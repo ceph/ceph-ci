@@ -37,12 +37,14 @@ using ceph::ErasureCodeInterfaceRef;
 void debug(const hobject_t &oid, const std::string &str,
            const ECUtil::shard_extent_map_t &map, DoutPrefixProvider *dpp) {
   ldpp_dout(dpp, 20)
-    << " generate_transactions: " << "oid: " << oid << str << map << dendl;
+    << " generate_transactions: " << "oid: " << oid << " " << str << " " << map << dendl;
   ldpp_dout(dpp, 20)
     << "EC_DEBUG_BUFFERS: " << map.debug_string(2048, 0) << dendl;
 }
 
 void ECTransaction::Generate::encode_and_write() {
+  ldpp_dout(dpp, 20)<< __func__ << dendl;
+
   // For PDW, we already have necessary parity buffers.
   if (!plan.do_parity_delta_write) {
     to_write.insert_parity_buffers();
@@ -612,6 +614,7 @@ void ECTransaction::Generate::truncate() {
   all_shards_written();
 
   debug(oid, "truncate_erase", to_write, dpp);
+  ldpp_dout(dpp, 20) << __func__ << " entry=" << entry << "fresh=" << op.is_fresh_object() << dendl;
 
   if (entry && !op.is_fresh_object()) {
     // Truncate each shard to match the new *actual* size
@@ -625,12 +628,12 @@ void ECTransaction::Generate::truncate() {
     uint64_t clone_start = std::numeric_limits<uint64_t>::max();
     uint64_t clone_end = 0;
 
-    shard_id_set clone_shards; // intentionally left blank!
+    shard_id_set clone_shards;
 
     for (auto &&[shard, eset]: truncate_eset) {
-      clone_shards.insert(shard);
+      ldpp_dout(dpp, 20) << __func__ << " shard=" << shard << "eset=" << eset << dendl;
 
-      auto &t = transactions.at(shard);
+      clone_shards.insert(shard);
       uint64_t start = eset.range_start();
       uint64_t start_align_prev = ECUtil::align_prev(start);
       uint64_t end = eset.range_end();
@@ -643,9 +646,11 @@ void ECTransaction::Generate::truncate() {
       }
     }
 
+    ldpp_dout(dpp, 20) << __func__ << " clone_start=" << clone_start << "clone_end=" << clone_end << dendl;
     for (auto &&[shard, eset]: truncate_eset) {
       if (!transactions.contains(shard)) {
         continue;
+        ldpp_dout(dpp, 20) << __func__ << " continue " << dendl;
       }
 
       auto &t = transactions.at(shard);
@@ -655,6 +660,7 @@ void ECTransaction::Generate::truncate() {
       t.touch(
         coll_t(spg_t(pgid, shard)),
         ghobject_t(oid, entry->version.version, shard));
+      ldpp_dout(dpp, 20) << __func__ << " touch " << dendl;
       t.clone_range(
         coll_t(spg_t(pgid, shard)),
         ghobject_t(oid, ghobject_t::NO_GEN, shard),
@@ -663,29 +669,39 @@ void ECTransaction::Generate::truncate() {
         end - clone_start,
         clone_start);
 
+      ldpp_dout(dpp, 20) << __func__ << " tmp1 " << dendl;
+
       // First truncate to exactly the right size.
       t.truncate(
         coll_t(spg_t(pgid, shard)),
         ghobject_t(oid, ghobject_t::NO_GEN, shard),
         start);
 
+      ldpp_dout(dpp, 20) << __func__ << " tmp2 " << dendl;
+
+
       /* We have truncated to the correct size, but we guarantee aligned
        * shard sizes. So here, we truncate back up to an aligned size if needed.
        */
       if (start != start_align_next) {
+        ldpp_dout(dpp, 20) << __func__ << " extra " << dendl;
         t.truncate(
           coll_t(spg_t(pgid, shard)),
           ghobject_t(oid, ghobject_t::NO_GEN, shard),
           start_align_next);
       }
+      ldpp_dout(dpp, 20) << __func__ << " t=" << t << dendl;
     }
-    shards_written(clone_shards);
-    rollback_extents.emplace_back(make_pair(clone_start, clone_end));
+    rollback_extents.emplace_back(make_pair(clone_start, clone_end - clone_start));
     rollback_shards.emplace_back(clone_shards);
+    ldpp_dout(dpp, 20) << __func__ << " done" << dendl;
   }
+  ldpp_dout(dpp, 20) << __func__ << " done_all" << dendl;
 }
 
 void ECTransaction::Generate::overlay_writes() {
+  ldpp_dout(dpp, 20) << __func__ << " start " << dendl;
+
   for (auto &&extent: op.buffer_updates) {
     using BufferUpdate = PGTransaction::ObjectOperation::BufferUpdate;
     bufferlist bl;
@@ -713,8 +729,11 @@ void ECTransaction::Generate::overlay_writes() {
 
 void ECTransaction::Generate::appends_and_clone_ranges() {
 
+
   extent_set clone_ranges = plan.will_write.get_extent_superset();
   uint64_t clone_max = ECUtil::align_next(plan.orig_size);
+
+  ldpp_dout(dpp, 20) << __func__ << " clone_max=" << clone_max << " delete_first=" << op.delete_first << dendl;
 
   if (op.delete_first) {
     clone_max = 0;
@@ -723,6 +742,8 @@ void ECTransaction::Generate::appends_and_clone_ranges() {
   }
   ECUtil::shard_extent_set_t cloneable_range(sinfo.get_k_plus_m());
   sinfo.ro_size_to_read_mask(clone_max, cloneable_range);
+
+  ldpp_dout(dpp, 20) << __func__ << " orig_size=" << plan.orig_size << " projected_size=" << plan.projected_size << dendl;
 
   if (plan.orig_size < plan.projected_size) {
     ECUtil::shard_extent_set_t projected_cloneable_range(sinfo.get_k_plus_m());
@@ -735,6 +756,8 @@ void ECTransaction::Generate::appends_and_clone_ranges() {
       }
       uint64_t new_shard_size = eset.range_end();
 
+      ldpp_dout(dpp, 20) << __func__ << " new_shard_size=" <<new_shard_size << " old_shard_size=" << old_shard_size << dendl;
+
       if (new_shard_size == old_shard_size) {
         continue;
       }
@@ -743,6 +766,8 @@ void ECTransaction::Generate::appends_and_clone_ranges() {
       if (plan.will_write.contains(shard)) {
         write_end = plan.will_write.at(shard).range_end();
       }
+
+      ldpp_dout(dpp, 20) << __func__ << " write_end=" <<write_end << " new_shard_size=" << new_shard_size << dendl;
 
       if (write_end == new_shard_size) {
         continue;
@@ -769,12 +794,15 @@ void ECTransaction::Generate::appends_and_clone_ranges() {
     }
   }
 
+  ldpp_dout(dpp, 20) << __func__ << " tmp1" << dendl;
+
   shard_id_set touched;
 
   for (auto &[start, len]: clone_ranges) {
     shard_id_set to_clone_shards;
     uint64_t clone_end = 0;
 
+    ldpp_dout(dpp, 20) << __func__ << " plan.will_write=" << plan.will_write << dendl;
     for (auto &&[shard, eset]: plan.will_write) {
       shard_written(shard);
 
@@ -790,13 +818,17 @@ void ECTransaction::Generate::appends_and_clone_ranges() {
       if (shard_end > clone_end) clone_end = shard_end;
 
       // Ignore pure appends on this shard.
+      ldpp_dout(dpp, 20) << __func__ << " shard_end=" << shard_end << " start=" << start << dendl;
       if (shard_end <= start) continue;
 
       // Ignore clones that do not intersect with the write.
+      ldpp_dout(dpp, 20) << __func__ << " eset.intersects(start, len)=" << eset.intersects(start, len) << dendl;
       if (!eset.intersects(start, len)) continue;
 
       // We need a clone...
       if (transactions.contains(shard)) {
+        ldpp_dout(dpp, 20) << __func__ << " touched=" << touched << dendl;
+
         auto &t = transactions.at(shard);
 
         // Only touch once.
@@ -818,6 +850,8 @@ void ECTransaction::Generate::appends_and_clone_ranges() {
         to_clone_shards.insert(shard);
       }
     }
+
+    ldpp_dout(dpp, 20) << __func__ << " to_clone_shards=" << to_clone_shards << dendl;
 
     if (!to_clone_shards.empty()) {
       // It is more efficent to store an empty set to represent the common
