@@ -847,6 +847,10 @@ class TestMonitoring:
                     http_sd_configs:
                     - url: http://[::1]:8765/sd/prometheus/sd-config?service=nvmeof
 
+                  - job_name: 'nfs'
+                    http_sd_configs:
+                    - url: http://[::1]:8765/sd/prometheus/sd-config?service=nfs
+
                   - job_name: 'federate'
                     scrape_interval: 15s
                     honor_labels: true
@@ -1031,6 +1035,19 @@ class TestMonitoring:
                       ca_file: root_cert.pem
                     http_sd_configs:
                     - url: https://[::1]:8765/sd/prometheus/sd-config?service=nvmeof
+                      basic_auth:
+                        username: sd_user
+                        password: sd_password
+                      tls_config:
+                        ca_file: root_cert.pem
+
+                  - job_name: 'nfs'
+                    honor_labels: true
+                    scheme: https
+                    tls_config:
+                      ca_file: root_cert.pem
+                    http_sd_configs:
+                    - url: https://[::1]:8765/sd/prometheus/sd-config?service=nfs
                       basic_auth:
                         username: sd_user
                         password: sd_password
