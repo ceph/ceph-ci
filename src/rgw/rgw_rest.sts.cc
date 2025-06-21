@@ -372,7 +372,7 @@ WebTokenEngine::validate_signature(const DoutPrefixProvider* dpp, const jwt::dec
         if (val.str[val.str.size() - 1] == ']') {
           val.str = val.str.erase(val.str.size() - 1, 1);
         }
-        if (parser.parse(val.str.c_str(), val.str.size())) {
+        if (parser.parse(val)) {
           vector<string> x5c;
           if (JSONDecoder::decode_json("x5c", x5c, &parser)) {
             string cert;
