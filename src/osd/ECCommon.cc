@@ -252,8 +252,15 @@ int ECCommon::ReadPipeline::get_min_avail_to_read_shards(
      * redundant reads is set, then we want to have the same reads on
      * every extent. Otherwise, we need to read every shard only if the
      * necessary shard is missing.
+     * In some (recovery) scenarios, we can "want" a shard, but not "need" to
+     * read it.  This typically happens when we do not have a data shard and the
+     * recovery for this will read enough shards to also generate all the parity.
+     *
+     * Since parity shards are often larger than data shards, we must make sure
+     * to read the extra bit!
      */
-    if (!have.contains(shard) || do_redundant_reads) {
+    if (!have.contains(shard) || do_redundant_reads ||
+        (want.contains(shard) && !need_set.contains(shard))) {
       extra_extents.union_of(extent_set);
     }
   }
