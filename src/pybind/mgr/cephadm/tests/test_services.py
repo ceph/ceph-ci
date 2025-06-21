@@ -356,6 +356,7 @@ port = {default_port}
 enable_auth = False
 state_update_notify = True
 state_update_interval_sec = 5
+break_update_interval_sec = 25
 enable_spdk_discovery_controller = False
 encryption_key = /encryption.key
 rebalance_period_sec = 7
@@ -431,6 +432,7 @@ transport_tcp_options = {{"in_capsule_data_size": 8192, "max_io_qpairs_per_ctrlr
 enable_dsa_acceleration = True
 tgt_cmd_extra_args = {tgt_cmd_extra_args}
 qos_timeslice_in_usecs = 0
+notifications_interval = 60
 
 [monitor]
 timeout = 1.0\n"""
