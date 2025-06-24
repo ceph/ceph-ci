@@ -910,7 +910,14 @@ void RGWZoneStorageClasses::decode_json(JSONObj *obj)
 void RGWZoneGroupTierS3Glacier::dump(Formatter *f) const
 {
   encode_json("glacier_restore_days", glacier_restore_days, f);
-  string s = (glacier_restore_tier_type == Standard ? "Standard" : "Expedited");
+  string s;
+  if (glacier_restore_tier_type == Expedited) {
+    s = "Expedited";
+  } else if (glacier_restore_tier_type == NoTier) {
+    s = "NoTier";
+  } else {
+    s = "Standard";
+  }
   encode_json("glacier_restore_tier_type", s, f);
 }
 
@@ -919,10 +926,12 @@ void RGWZoneGroupTierS3Glacier::decode_json(JSONObj *obj)
   JSONDecoder::decode_json("glacier_restore_days", glacier_restore_days, obj);
   string s;
   JSONDecoder::decode_json("glacier_restore_tier_type", s, obj);
-  if (s != "Expedited") {
-    glacier_restore_tier_type = Standard;
-  } else {
+  if (s == "Expedited") {
     glacier_restore_tier_type = Expedited;
+  } else if (s == "NoTier") {
+    glacier_restore_tier_type = NoTier;
+  } else {
+    glacier_restore_tier_type = Standard;
   }
 }
 

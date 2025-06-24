@@ -1537,10 +1537,12 @@ int RGWZoneGroupTierS3Glacier::update_params(const JSONFormattable& config)
   if (config.exists("glacier_restore_tier_type")) {
     string s;
     s = config["glacier_restore_tier_type"];
-    if (s != "Expedited") {
-      glacier_restore_tier_type = Standard;
-    } else {
+    if (s == "Expedited") {
       glacier_restore_tier_type = Expedited;
+    } else if (s == "NoTier") {
+      glacier_restore_tier_type = NoTier;
+    } else {
+      glacier_restore_tier_type = Standard;
     }
   }
   return 0;
