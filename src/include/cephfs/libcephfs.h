@@ -2057,6 +2057,17 @@ int ceph_is_encrypted(struct ceph_mount_info *cmount,
  */
 int get_inode_flags(struct ceph_mount_info *cmount, int fd, int* file_attr_out);
 
+/**
+ * Get encryption policy of a directory.
+ *
+ * @param cmount the ceph mount handle to use.
+ * @param fd open directory file descriptor
+ * @param policy pointer to to the fscrypt v2 policy
+ * @returns zero on success, other returns a negative error code.
+ */
+int ceph_get_fscrypt_policy_v2(struct ceph_mount_info *cmount,
+                               int fd, struct fscrypt_policy_v2 *policy);
+
 /* Low Level */
 struct Inode *ceph_ll_get_inode(struct ceph_mount_info *cmount,
 				vinodeno_t vino);
