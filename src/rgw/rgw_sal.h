@@ -283,9 +283,6 @@ public:
   virtual bool need_copy_data() = 0;
 };
 
-/** A list of key-value attributes */
-  using Attrs = std::map<std::string, ceph::buffer::list>;
-
 /**
  * @brief Base singleton representing a Store or Filter
  *
