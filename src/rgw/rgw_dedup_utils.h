@@ -24,7 +24,7 @@
 #include "include/encoding.h"
 #include "common/dout.h"
 
-//#define FULL_DEDUP_SUPPORT
+#define FULL_DEDUP_SUPPORT
 namespace rgw::dedup {
   using namespace std::chrono;
   using work_shard_t   = uint16_t;

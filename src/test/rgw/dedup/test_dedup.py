@@ -1322,14 +1322,18 @@ def check_full_dedup_state():
     global full_dedup_state_was_checked
     global full_dedup_state_disabled
     log.debug("check_full_dedup_state:: sending FULL Dedup request")
+<<<<<<< HEAD
     result = admin(['dedup', 'exec', '--yes-i-really-mean-it'])
+=======
+    result = admin(['dedup', 'restart', '--yes-i-really-mean-it', '--tech-preview'])
+>>>>>>> b2d278793c8 (rgw/dedup: tech preview for full object dedup support which means duplicate objects)
     if result[1] == 0:
-        log.debug("full dedup is enabled!")
+        log.info("full dedup is enabled!")
         full_dedup_state_disabled = False
         result = admin(['dedup', 'abort'])
         assert result[1] == 0
     else:
-        log.debug("full dedup is disabled, skip all full dedup tests")
+        log.info("full dedup is disabled, skip all full dedup tests")
         full_dedup_state_disabled = True
 
     full_dedup_state_was_checked = True
