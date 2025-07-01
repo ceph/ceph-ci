@@ -124,6 +124,8 @@ enum action_t {
   s3ReplicateObject,
   s3GetObjectVersionForReplication,
   s3ReplicateTags,
+  s3PutAccountPublicAccessBlock,
+  s3GetAccountPublicAccessBlock,
   s3All,
 
   s3objectlambdaGetObject,
