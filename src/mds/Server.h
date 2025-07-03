@@ -496,7 +496,8 @@ private:
            xattr_name == "ceph.dir.charmap"sv ||
            xattr_name == "ceph.dir.normalization"sv ||
            xattr_name == "ceph.dir.encoding"sv ||
-           xattr_name == "ceph.dir.casesensitive"sv;
+           xattr_name == "ceph.dir.casesensitive"sv ||
+           xattr_name == "ceph.dir.subvolume.snaps.visible"sv;
   }
 
   static bool is_ceph_dir_vxattr(std::string_view xattr_name) {
@@ -516,7 +517,8 @@ private:
 	   xattr_name == "ceph.dir.normalization"sv ||
 	   xattr_name == "ceph.dir.encoding"sv ||
 	   xattr_name == "ceph.dir.casesensitive"sv ||
-	   xattr_name == "ceph.dir.subvolume"sv;
+	   xattr_name == "ceph.dir.subvolume"sv ||
+     xattr_name == "ceph.dir.subvolume.snaps.visible"sv;
   }
 
   static bool is_ceph_file_vxattr(std::string_view xattr_name) {
