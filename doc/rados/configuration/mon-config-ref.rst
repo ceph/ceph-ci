@@ -635,6 +635,13 @@ NVMe-oF Monitor Client
 .. confval:: nvmeof_mon_client_connect_panic
 .. confval:: nvmeof_mon_client_tick_period
 
+NVMe-oF Monitor Client
+=====================
+
+.. confval:: nvmeof_mon_client_disconnect_panic
+.. confval:: nvmeof_mon_client_connect_panic
+.. confval:: nvmeof_mon_client_tick_period
+
 .. _Paxos: https://en.wikipedia.org/wiki/Paxos_(computer_science)
 .. _Monitor Keyrings: ../../../dev/mon-bootstrap#secret-keys
 .. _Ceph configuration file: ../ceph-conf/#monitors
