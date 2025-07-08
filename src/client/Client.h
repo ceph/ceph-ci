@@ -2392,6 +2392,7 @@ private:
   bool is_fuse = false;
   bool client_permissions;
   bool fuse_default_permissions;
+  bool respect_subvolume_snapshot_visibility;
 
   std::locale m_locale;
 };
