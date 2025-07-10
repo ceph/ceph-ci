@@ -22,7 +22,7 @@
 class MClientCaps final : public SafeMessage {
 private:
 
-  static constexpr int HEAD_VERSION = 12;
+  static constexpr int HEAD_VERSION = 13;
   static constexpr int COMPAT_VERSION = 1;
 
  public:
@@ -61,6 +61,7 @@ private:
 
   std::vector<uint8_t> fscrypt_auth;
   std::vector<uint8_t> fscrypt_file;
+  uint64_t subvolume_id = 0;
 
   bool is_fscrypt_enabled() const {
     return !!fscrypt_auth.size();
@@ -296,6 +297,9 @@ public:
       decode(fscrypt_auth, p);
       decode(fscrypt_file, p);
     }
+    if (header.version >= 13) {
+          decode(subvolume_id, p);
+    }
   }
   void encode_payload(uint64_t features) override {
     using ceph::encode;
@@ -366,6 +370,7 @@ public:
     encode(nsubdirs, payload);
     encode(fscrypt_auth, payload);
     encode(fscrypt_file, payload);
+    encode(subvolume_id, payload);
   }
 private:
   template<class T, typename... Args>
