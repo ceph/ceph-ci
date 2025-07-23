@@ -41,6 +41,7 @@ import {
   TagModule,
   LinkModule,
   LayerModule,
+  LayoutModule,
   TilesModule,
   ThemeModule
 } from 'carbon-components-angular';
@@ -89,8 +90,8 @@ import { UpgradableComponent } from './upgradable/upgradable.component';
 import { ProgressComponent } from './progress/progress.component';
 import { TearsheetComponent } from './tearsheet/tearsheet.component';
 import { TearsheetStepComponent } from './tearsheet-step/tearsheet-step.component';
+import { DetailsCardComponent } from './details-card/details-card.component';
 import { SidePanelComponent } from './side-panel/side-panel.component';
-
 // Icons
 import InfoIcon from '@carbon/icons/es/information/16';
 import CopyIcon from '@carbon/icons/es/copy/32';
@@ -175,6 +176,7 @@ import { CallHomeConnectivityStatusComponent } from './call-home-connectivity-st
     TagModule,
     LinkModule,
     LayerModule,
+    LayoutModule,
     TilesModule,
     ThemeModule
   ],
@@ -225,6 +227,7 @@ import { CallHomeConnectivityStatusComponent } from './call-home-connectivity-st
     SidePanelComponent,
     SidebarLayoutComponent,
     ProductiveCardComponent,
+    DetailsCardComponent,
     CallHomeModalComponent,
     CallHomeNotificationComponent,
     StorageInsightsModalComponent,
@@ -280,9 +283,11 @@ import { CallHomeConnectivityStatusComponent } from './call-home-connectivity-st
     CallHomeNotificationComponent,
     StorageInsightsNotificationComponent,
     CallHomeConnectionInfoComponent,
-    CallHomeConnectivityStatusComponent
+    CallHomeConnectivityStatusComponent,
+    DetailsCardComponent
   ]
 })
+
 export class ComponentsModule {
   constructor(private iconService: IconService) {
     this.iconService.registerAll([
