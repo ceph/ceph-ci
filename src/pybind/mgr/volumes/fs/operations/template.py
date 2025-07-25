@@ -76,6 +76,7 @@ class SubvolumeOpType(Enum):
     ENCTAG_GET            = 'enctag-get'
     ENCTAG_SET            = 'enctag-set'
     ENCTAG_CLEAR          = 'enctag-clear'
+    SNAPSHOT_VISIBILITY   = 'snapshot-visibility'
 
 class SubvolumeTemplate(object):
     VERSION = None # type: int
