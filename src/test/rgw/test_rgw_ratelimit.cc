@@ -13,7 +13,7 @@ TEST(RGWRateLimit, op_limit_not_enabled)
   // info.enabled = false, so no limit
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   auto time = ceph::coarse_real_clock::now();
   std::string key = "uuser123";
@@ -25,7 +25,7 @@ TEST(RGWRateLimit, reject_op_over_limit)
   // check that request is being rejected because there are not enough tokens
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_read_ops = 1;
@@ -41,7 +41,7 @@ TEST(RGWRateLimit, accept_op_after_giveback)
   // check that giveback is working fine
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_read_ops = 1;
@@ -58,7 +58,7 @@ TEST(RGWRateLimit, accept_op_after_refill)
   // check that tokens are being filled properly
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_read_ops = 1;
@@ -74,7 +74,7 @@ TEST(RGWRateLimit, reject_bw_over_limit)
   // check that a newer request is rejected if there is no enough tokens (bw)
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_read_bytes = 1;
@@ -91,7 +91,7 @@ TEST(RGWRateLimit, accept_bw)
   // check that when there are enough tokens (bw) the request is still being served
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_read_bytes = 2;
@@ -108,7 +108,7 @@ TEST(RGWRateLimit, check_bw_debt_at_max_120secs)
   // check that the bandwidth debt is not larger than 120 seconds
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_read_bytes = 2;
@@ -125,7 +125,7 @@ TEST(RGWRateLimit, check_that_bw_limit_not_affect_ops)
   // check that high read bytes limit, does not affect ops limit
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_read_ops = 1;
@@ -143,7 +143,7 @@ TEST(RGWRateLimit, read_limit_does_not_affect_writes)
   // read limit does not affect writes
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_read_ops = 1;
@@ -161,7 +161,7 @@ TEST(RGWRateLimit, write_limit_does_not_affect_reads)
   // write limit does not affect reads
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_write_ops = 1;
@@ -180,7 +180,7 @@ TEST(RGWRateLimit, allow_unlimited_access)
   // 0 values in RGWRateLimitInfo should allow unlimited access
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   auto time = ceph::coarse_real_clock::now();
@@ -388,7 +388,7 @@ TEST(RGWRateLimit, reject_list_op_over_limit)
   // check that LIST op is being rejected because there are not enough tokens
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_list_ops = 1;
@@ -405,7 +405,7 @@ TEST(RGWRateLimit, accept_list_op_after_giveback)
   // check that giveback is working for LIST ops
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_list_ops = 1;
@@ -423,7 +423,7 @@ TEST(RGWRateLimit, accept_list_op_after_refill)
   // check that tokens are being filled properly for LIST ops
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_list_ops = 1;
@@ -440,7 +440,7 @@ TEST(RGWRateLimit, list_limit_does_not_affect_reads)
   // list limit does not affect reads
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_list_ops = 1;
@@ -458,7 +458,7 @@ TEST(RGWRateLimit, read_limit_does_not_affect_lists)
   // read limit does not affect lists
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_list_ops = 1;
@@ -476,7 +476,7 @@ TEST(RGWRateLimit, list_limit_does_not_affect_writes)
   // list limit does not affect writes
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_list_ops = 1;
@@ -494,7 +494,7 @@ TEST(RGWRateLimit, write_limit_does_not_affect_lists)
   // write limit does not affect lists
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_list_ops = 1;
@@ -512,7 +512,7 @@ TEST(RGWRateLimit, list_limit_does_not_affect_deletes)
   // list limit does not affect deletes
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_list_ops = 1;
@@ -530,7 +530,7 @@ TEST(RGWRateLimit, delete_limit_does_not_affect_lists)
   // delete limit does not affect lists
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_list_ops = 1;
@@ -549,7 +549,7 @@ TEST(RGWRateLimit, reject_delimiter_op_over_limit)
   // check that DELIMITER op is being rejected because there are not enough tokens
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_list_ops = 1;
@@ -566,7 +566,7 @@ TEST(RGWRateLimit, accept_delimiter_op_after_giveback)
   // check that giveback is working for DELIMITER ops
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_list_ops = 1;
@@ -584,7 +584,7 @@ TEST(RGWRateLimit, accept_delimiter_op_after_refill)
   // check that tokens are being filled properly for DELIMITER ops
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_list_ops = 1;
@@ -602,7 +602,7 @@ TEST(RGWRateLimit, reject_prefix_op_over_limit)
   // check that PREFIX op is being rejected because there are not enough tokens
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_list_ops = 1;
@@ -619,7 +619,7 @@ TEST(RGWRateLimit, accept_prefix_op_after_giveback)
   // check that giveback is working for PREFIX ops
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_list_ops = 1;
@@ -637,7 +637,7 @@ TEST(RGWRateLimit, accept_prefix_op_after_refill)
   // check that tokens are being filled properly for PREFIX ops
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_list_ops = 1;
@@ -789,7 +789,7 @@ TEST(RGWRateLimit, reject_delete_op_over_limit)
   // check that DELETE op is being rejected because there are not enough tokens
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_delete_ops = 1;
@@ -806,7 +806,7 @@ TEST(RGWRateLimit, accept_delete_op_after_giveback)
   // check that giveback is working for DELETE ops
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_delete_ops = 1;
@@ -824,7 +824,7 @@ TEST(RGWRateLimit, accept_delete_op_after_refill)
   // check that tokens are being filled properly for DELETE ops
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_delete_ops = 1;
@@ -841,7 +841,7 @@ TEST(RGWRateLimit, delete_limit_does_not_affect_reads)
   // delete limit does not affect reads
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_delete_ops = 1;
@@ -859,7 +859,7 @@ TEST(RGWRateLimit, read_limit_does_not_affect_deletes)
   // read limit does not affect deletes
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_delete_ops = 1;
@@ -877,7 +877,7 @@ TEST(RGWRateLimit, write_limit_does_not_affect_deletes)
   // write limit does not affect deletes
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_delete_ops = 1;
@@ -895,7 +895,7 @@ TEST(RGWRateLimit, delete_limit_does_not_affect_writes)
   // delete limit does not affect writes
   std::atomic_bool replacing;
   std::condition_variable cv;
-  RateLimiter ratelimit(replacing, cv);
+  RateLimiter ratelimit(g_ceph_context, replacing, cv);
   RGWRateLimitInfo info;
   info.enabled = true;
   info.max_delete_ops = 1;

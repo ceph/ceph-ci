@@ -80,7 +80,7 @@ class RateLimiterEntry {
     del.ops -= fixed_point_rgw_ratelimit;
     return false;
   }
-  bool should_rate_limit_write(int64_t ops_limit, int64_t bw_limit) 
+  bool should_rate_limit_write(int64_t ops_limit, int64_t bw_limit)
   {
     //check if tenants did not reach their bw or ops limits and that the limits are not 0 (which is unlimited)
     if(((write_ops() - 1 < 0) && (ops_limit > 0)) ||
@@ -193,7 +193,7 @@ class RateLimiterEntry {
     }
 };
 
-class RateLimiter {
+class RateLimiter : public DoutPrefix {
 
   static constexpr size_t map_size = 2000000; // will create it with the closest upper prime number
   std::shared_mutex insert_lock;
@@ -256,14 +256,15 @@ class RateLimiter {
     RateLimiter(RateLimiter&&) = delete;
     RateLimiter& operator =(RateLimiter&&) = delete;
     RateLimiter() = delete;
-    RateLimiter(std::atomic_bool& replacing, std::condition_variable& cv)
-      : replacing(replacing), cv(cv)
+    RateLimiter(CephContext* cct, std::atomic_bool& replacing, std::condition_variable& cv)
+      : DoutPrefix(cct, ceph_subsys_rgw, "rate limiter: "), replacing(replacing), cv(cv)
     {
       // prevents rehash, so no iterators invalidation
       ratelimit_entries.max_load_factor(1000);
     };
 
     bool should_rate_limit(const char *method, const std::string& key, ceph::coarse_real_time curr_timestamp, const RGWRateLimitInfo* ratelimit_info, const std::string& resource) {
+      ldpp_dout(this, 21) << "checking should_rate_limit: key=" << std::quoted(key) << " enabled=" << ratelimit_info->enabled << dendl;
       if (key.empty() || key.length() == 1 || !ratelimit_info->enabled)
       {
         return false;
@@ -345,8 +346,8 @@ class ActiveRateLimiter : public DoutPrefix  {
     ActiveRateLimiter(CephContext* cct) :
       DoutPrefix(cct, ceph_subsys_rgw, "rate limiter: ")
     {
-      ratelimit[0] = std::make_shared<RateLimiter>(replacing, cv);
-      ratelimit[1] = std::make_shared<RateLimiter>(replacing, cv);
+      ratelimit[0] = std::make_shared<RateLimiter>(cct, replacing, cv);
+      ratelimit[1] = std::make_shared<RateLimiter>(cct, replacing, cv);
     }
     ~ActiveRateLimiter() {
       ldpp_dout(this, 20) << "stopping ratelimit_gc thread" << dendl;

@@ -112,6 +112,14 @@ bool rate_limit(rgw::sal::Driver* driver, req_state* s) {
   s->ratelimit_bucket_marker = bucketfind;
   const char *method = s->info.method;
 
+  bool is_sts_user = (s->auth.identity && s->auth.identity->get_identity_type() == TYPE_ROLE);
+  if (is_sts_user) {
+    ldpp_dout(s, 21) << "STS user detected: uid=" << std::quoted(s->user->get_id().to_str()) << dendl;
+    auto op_ret = s->user->read_attrs(s, s->yield);
+    if (op_ret < 0) {
+      ldpp_dout(s, 0) << "checking rate_limit: uid=" << std::quoted(s->user->get_id().to_str()) << " failed to read user attrs" << dendl;
+    }
+  }
   auto iter = s->user->get_attrs().find(RGW_ATTR_RATELIMIT);
   if(iter != s->user->get_attrs().end()) {
     try {
@@ -126,6 +134,8 @@ bool rate_limit(rgw::sal::Driver* driver, req_state* s) {
       ldpp_dout(s, 0) << "ERROR: failed to decode rate limit" << dendl;
       return -EIO;
     }
+  } else {
+    ldpp_dout(s, 21) << "checking rate_limit: uid=" << std::quoted(s->user->get_id().to_str()) << " does not have a rate limit attribute" << dendl;
   }
   if (s->user->get_id().id == RGW_USER_ANON_ID && global_anon.enabled) {
     *user_ratelimit = global_anon;

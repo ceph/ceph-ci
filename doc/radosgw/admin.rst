@@ -20,7 +20,7 @@ to `Accounts`_ for ease of management.
 
 There are two types of user: 
 
-- **User:** The term "user" refers to user of the S3 interface.
+- **User:** The term "user" refers to  user of the S3 interface.
 
 - **Subuser:** The term "subuser" refers to a user of the Swift interface. A
   subuser is associated with a user. 
@@ -636,6 +636,14 @@ number of list requests and delete operations per accumulation interval.
 The accumulation interval is configured by the :confval:`rgw_ratelimit_interval` option.
 The default value is 60 seconds.
 (Note: S3 Multi-Object Delete operation are currently not supported by rate limiting)
+
+The configured limits should be divided by the number of active object gateways. For example,
+if "user A" is to be be limited to 10 ops per minute and there are two object gateways in the cluster,
+then the limit on "user A" should be 5 (10 ops per minute / 2 RGWs).
+If the requests are not balanced between RGWs, the rate limit might be underutilized.
+For example: if the ops limit is 5 and there are two RGWs,
+but the Load Balancer sends load to only one of those RGWs,
+the effective limit is 5 ops, because this limit is enforced per RGW.
 
 Read Requests and Write Requests
 --------------------------------

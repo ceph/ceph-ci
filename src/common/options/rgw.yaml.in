@@ -4491,6 +4491,7 @@ options:
     Requests that exceed the configured rate limits within this time window will be rejected.
     The default is a 60 second token bucket.
   default: 60
+  min: 1
   services:
   - rgw
   flags:

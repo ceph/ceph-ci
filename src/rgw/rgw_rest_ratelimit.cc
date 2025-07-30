@@ -1,6 +1,11 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
 // vim: ts=8 sw=2 smarttab ft=cpp
 #include "rgw_rest_ratelimit.h"
+#include "rgw_sal.h"
+#include "rgw_sal_config.h"
+#include "rgw_process_env.h"
+#include "rgw_op.h"
+
 class RGWOp_Ratelimit_Info : public RGWRESTOp {
 int check_caps(const RGWUserCaps& caps) override {
   return caps.check_cap("ratelimit", RGW_CAP_READ);
@@ -247,6 +252,15 @@ void RGWOp_Ratelimit_Set::execute(optional_yield y)
     }
   }
   RESTArgs::get_bool(s, "global", false, &global, nullptr);
+
+  // forward to master zonegroup
+  op_ret = rgw_forward_request_to_master(this, *s->penv.site, s->user->get_id(),
+                                         nullptr, nullptr, s->info, s->err, y);
+  if (op_ret < 0) {
+    ldpp_dout(this, 0) << "ERROR: forward_request_to_master returned ret=" << op_ret << dendl;
+    return;
+  }
+
   set_ratelimit_info(have_max_read_ops, max_read_ops, have_max_write_ops, max_write_ops,
                      have_max_read_bytes, max_read_bytes, have_max_write_bytes, max_write_bytes,
                      have_max_list_ops, max_list_ops, have_max_delete_ops, max_delete_ops,
