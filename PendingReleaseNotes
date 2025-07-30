@@ -32,6 +32,8 @@
 * RGW: Bucket resharding now does most of its processing before it starts to block
   write operations. This should significantly reduce the client-visible impact
   of resharding on large buckets.
+* RGW: 'create_key' admin API's response only includes the latest key created instead
+        of all keys.
 
 * RBD: All Python APIs that produce timestamps now return "aware" `datetime`
   objects instead of "naive" ones (i.e. those including time zone information
