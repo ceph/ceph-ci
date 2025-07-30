@@ -80,7 +80,8 @@ class RateLimiterEntry {
     del.ops -= fixed_point_rgw_ratelimit;
     return false;
   }
-  bool should_rate_limit_write(int64_t ops_limit, int64_t bw_limit)
+
+  bool should_rate_limit_write(int64_t ops_limit, int64_t bw_limit) 
   {
     //check if tenants did not reach their bw or ops limits and that the limits are not 0 (which is unlimited)
     if(((write_ops() - 1 < 0) && (ops_limit > 0)) ||
