@@ -244,6 +244,11 @@ options:
   level: dev
   desc: The backend used by the devices in the hot tier or the only tier (SEGMENTED or RANDOM_BLOCK)
   default: SEGMENTED
+- name: seastore_hot_backend_bw_throttle
+  type: size
+  level: advanced
+  desc: Size in bytes per second written to the hot devices, 0 incidates no limit
+  default: 0
 - name: seastore_cold_device_type
   type: str
   level: dev
@@ -255,6 +260,11 @@ options:
   level: dev
   desc: The backend used by cold devices (SEGMENTED or RANDOM_BLOCK)
   default: SEGMENTED
+- name: seastore_cold_backend_bw_throttle
+  type: size
+  level: advanced
+  desc: Size in bytes per second written to the cold devices, 0 incidates no limit
+  default: 100_M
 - name: seastore_cbjournal_size
   type: size
   level: dev
