@@ -178,7 +178,8 @@ import { CallHomeConnectivityStatusComponent } from './call-home-connectivity-st
     LayerModule,
     LayoutModule,
     TilesModule,
-    ThemeModule
+    ThemeModule,
+    ProductiveCardComponent
   ],
   declarations: [
     SparklineComponent,
