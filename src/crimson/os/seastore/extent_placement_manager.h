@@ -949,6 +949,15 @@ private:
 
     void maybe_wake_blocked_io() final;
 
+    void maybe_wake_promote() final {
+      if (!is_ready()) {
+        return;
+      }
+      if (pinboard && pinboard->should_promote()) {
+        do_wake_promote();
+      }
+    }
+
   private:
     // reserve helpers
     bool try_reserve_cold(std::size_t usage);
@@ -980,6 +989,13 @@ private:
       if (blocking_background) {
 	blocking_background->set_value();
 	blocking_background = std::nullopt;
+      }
+    }
+
+    void do_wake_promote() {
+      if (blocking_promote) {
+        blocking_promote->set_value();
+        blocking_promote = std::nullopt;
       }
     }
 
@@ -1141,6 +1157,7 @@ private:
     };
 
     seastar::future<> do_background_cycle();
+    seastar::future<> run_promote();
 
     void register_metrics(store_index_t store_index);
 
@@ -1176,6 +1193,8 @@ private:
     // giving the woken continuation a chance to retry the reservation
     // before the next background cycle.
     bool pending_user_io_wake = false;
+    std::optional<seastar::future<>> promote_process_join;
+    std::optional<seastar::promise<>> blocking_promote;
     bool is_running_until_halt = false;
     state_t state = state_t::STOP;
     eviction_state_t eviction_state;
