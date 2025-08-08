@@ -1541,7 +1541,8 @@ TransactionManagerRef make_transaction_manager(
       std::move(cold_rbs),
       *backref_manager,
       *lba_manager,
-      cleaner_is_detailed);
+      cleaner_is_detailed,
+      true);
   }
 
   if (backend_type == backend_type_t::SEGMENTED) {
@@ -1569,7 +1570,8 @@ TransactionManagerRef make_transaction_manager(
       std::move(rbs),
       *backref_manager,
       *lba_manager,
-      cleaner_is_detailed);
+      cleaner_is_detailed,
+      false);
     journal = journal::make_circularbounded(
       store_index,
       *journal_trimmer,
