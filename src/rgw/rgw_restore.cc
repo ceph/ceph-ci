@@ -622,8 +622,7 @@ int Restore::restore_obj_from_cloud(rgw::sal::Bucket* pbucket,
   RestoreEntry entry;
   entry.bucket = pbucket->get_key();
   entry.obj_key = pobj->get_key();
-  // for first time mark status as None
-  entry.status = rgw::sal::RGWRestoreStatus::None;
+  entry.status = rgw::sal::RGWRestoreStatus::RestoreAlreadyInProgress;
   entry.days = days;
   entry.zone_id = driver->get_zone()->get_id(); 
  
