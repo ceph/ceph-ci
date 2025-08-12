@@ -17,6 +17,7 @@
 
 #include "include/scope_guard.h"
 #include "include/function2.hpp"
+#include "common/Clock.h" // for ceph_clock_now()
 #include "common/Formatter.h"
 #include "common/containers.h"
 #include "common/split.h"
