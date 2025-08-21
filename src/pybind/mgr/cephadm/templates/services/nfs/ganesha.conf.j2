@@ -26,6 +26,10 @@ NFSv4 {
 {% endif %}
 }
 
+MDCACHE {
+        Dir_Chunk = 0;
+}
+
 RADOS_KV {
         UserId = "{{ user }}";
         nodeid = {{ nodeid }};
