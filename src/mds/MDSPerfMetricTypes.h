@@ -338,13 +338,12 @@ struct Metrics {
   ReadIoSizesMetric read_io_sizes_metric;
   WriteIoSizesMetric write_io_sizes_metric;
   CopyIoSizesMetric copy_io_sizes_metric;
-  SubvolumeMetric subvolume_metrics;
 
   // metric update type
   uint32_t update_type = UpdateType::UPDATE_TYPE_REFRESH;
 
   DENC(Metrics, v, p) {
-    DENC_START(6, 1, p);
+    DENC_START(5, 1, p);
     denc(v.update_type, p);
     denc(v.cap_hit_metric, p);
     denc(v.read_latency_metric, p);
@@ -365,10 +364,6 @@ struct Metrics {
     if (struct_v >= 5) {
       denc(v.copy_io_sizes_metric, p);
     }
-    if (struct_v >= 6) {
-      denc(v.subvolume_metrics, p);
-    }
-
     DENC_FINISH(p);
   }
 
@@ -385,7 +380,6 @@ struct Metrics {
     f->dump_object("read_io_sizes_metric", read_io_sizes_metric);
     f->dump_object("write_io_sizes_metric", write_io_sizes_metric);
     f->dump_object("copy_io_sizes_metric", copy_io_sizes_metric);
-    f->dump_object("subvolume_metrics", subvolume_metrics);
   }
 
   friend std::ostream& operator<<(std::ostream& os, const Metrics& metrics) {
@@ -401,7 +395,6 @@ struct Metrics {
        << ", read_io_sizes_metric=" << metrics.read_io_sizes_metric
        << ", write_io_sizes_metric=" << metrics.write_io_sizes_metric
        << ", copy_io_sizes_metric=" << metrics.copy_io_sizes_metric
-       << ", subvolume_metrics=" << metrics.subvolume_metrics
        << "}]";
     return os;
   }
