@@ -38,8 +38,6 @@ namespace mirror {
 
 namespace {
 
-const std::string SERVICE_DAEMON_MIRROR_ENABLE_FAILED_KEY("mirroring_failed");
-
 class SafeTimerSingleton : public CommonSafeTimer<ceph::mutex> {
 public:
   ceph::mutex timer_lock = ceph::make_mutex("cephfs::mirror::timer_lock");
@@ -443,6 +441,7 @@ void Mirror::mirroring_enabled(const Filesystem &filesystem, uint64_t local_pool
 
   auto p = m_mirror_actions.emplace(filesystem, MirrorAction(local_pool_id));
   auto &mirror_action = p.first->second;
+  m_service_daemon->add_filesystem(filesystem.fscid, filesystem.fs_name);
   mirror_action.action_ctxs.push_back(new C_EnableMirroring(this, filesystem, local_pool_id));
 }
 
