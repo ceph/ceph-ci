@@ -36,6 +36,7 @@ Cache::Cache(
     delta_based_overwrite_enabled(
       crimson::common::get_conf<Option::size_t>(
         "seastore_data_delta_based_overwrite") > 0),
+    force_backref(crimson::common::get_conf<bool>("crimson_test_workload")),
     pinboard(create_extent_pinboard(
       crimson::common::get_conf<Option::size_t>(
        "seastore_cachepin_size_pershard"),
