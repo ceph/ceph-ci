@@ -79,10 +79,19 @@ public:
     Transaction &t,
     laddr_t laddr) final;
 
+  upper_bound_right_ret upper_bound_right(
+    Transaction &t,
+    laddr_t laddr) final;
+
   promote_extent_ret promote_extent(
     Transaction &t,
     LBACursor &cursor,
     std::vector<LogicalChildNodeRef> extents) final;
+
+  demote_extent_ret demote_extent(
+    Transaction &t,
+    LBACursor &cursor,
+    LogicalChildNode &extent) final;
 
   alloc_extent_ret reserve_region(
     Transaction &t,
