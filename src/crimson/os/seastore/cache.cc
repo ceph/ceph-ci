@@ -1278,14 +1278,16 @@ std::vector<CachedExtentRef> Cache::alloc_new_data_extents_by_type(
   case extent_types_t::OBJECT_DATA_BLOCK:
     {
       auto extents = alloc_new_data_extents<
-	ObjectDataBlock>(t, length, {hint, gen, is_tracked});
+	ObjectDataBlock>(t, length, {hint, gen, is_tracked,
+	    epm.get_write_policy(type, length)});
       res.insert(res.begin(), extents.begin(), extents.end());
     }
     return res;
   case extent_types_t::TEST_BLOCK:
     {
       auto extents = alloc_new_data_extents<
-	TestBlock>(t, length, {hint, gen, is_tracked});
+	TestBlock>(t, length, {hint, gen, is_tracked,
+	  epm.get_write_policy(type, length)});
       res.insert(res.begin(), extents.begin(), extents.end());
     }
     return res;
@@ -2207,7 +2209,8 @@ void Cache::init()
              P_ADDR_ROOT,
              PLACEMENT_HINT_NULL,
              NULL_GENERATION,
-             TRANS_ID_NULL);
+             TRANS_ID_NULL,
+	     write_policy_t::WRITE_BACK);
   root->set_modify_time(seastar::lowres_system_clock::now());
   INFO("init root -- {}", *root);
   add_extent(root);
@@ -2631,7 +2634,8 @@ Cache::_get_absent_extent_by_type(
 	    offset,
 	    PLACEMENT_HINT_NULL,
 	    NULL_GENERATION,
-	    TRANS_ID_NULL);
+	    TRANS_ID_NULL,
+	    write_policy_t::WRITE_BACK);
   DEBUGT("{} length=0x{:x} is absent, add extent ... -- {}",
     t, type, length, *ret);
   add_extent(ret);
