@@ -867,10 +867,15 @@ TransactionManager::rewrite_logical_extent(
       t,
       extent->get_type(),
       extent->get_length(),
-      extent->get_user_hint(),
-      // get target rewrite generation
-      extent->get_rewrite_generation(),
-      is_tracked);
+      {
+        extent->get_user_hint(),
+        // get target rewrite generation
+        extent->get_rewrite_generation(),
+        is_tracked,
+        // WRITH_THROUGH is only effective for client io, so
+        // always set the write policy to WRITE_BACK here
+        write_policy_t::WRITE_BACK
+      });
     extent_len_t off = 0;
     auto left = extent->get_length();
     extent_ref_count_t refcount = 0;
@@ -1161,9 +1166,12 @@ TransactionManager::promote_extent(
       t,
       orig_ext->get_type(),
       orig_ext->get_length(),
-      placement_hint_t::HOT,
-      INIT_GENERATION,
-      true);
+      {
+        placement_hint_t::HOT,
+        INIT_GENERATION,
+        true,
+        write_policy_t::WRITE_BACK
+      });
 
     promoted_extents.reserve(promoted_raw_extents.size());
 
