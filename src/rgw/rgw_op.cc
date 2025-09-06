@@ -6203,12 +6203,13 @@ class RGWCOE_make_filter_pipeline : public rgw::sal::ObjectFilter {
   DoutPrefixProvider *dpp;
   boost::optional<RGWGetObj_Decompress> decompress;
   bool partial_content = false;
-  std::map<std::string, std::string> crypt_http_responses;	// XXX who consumes?
+  std::map<std::string, std::string> crypt_http_responses_unused;
   std::unique_ptr<rgw::sal::DataProcessor> oproc;
   const RGWEnv *env;
   struct rgw_err &err;
   std::unique_ptr<rgw::sal::Object> &object;
   uint64_t &obj_size;
+  std::map<std::string, std::string>& crypt_http_responses;
   RGWDecryptContext dctx;
   req_state *s;			// destination only, not for source!
   std::unique_ptr<rgw::sal::DataProcessor> encrypt;
@@ -6217,12 +6218,14 @@ class RGWCOE_make_filter_pipeline : public rgw::sal::ObjectFilter {
 public:
   RGWCOE_make_filter_pipeline(req_state *_s, DoutPrefixProvider *_dpp,
       map<string, bufferlist> &_a, bool _skip_decrypt,
-      std::unique_ptr<rgw::sal::Object> & _object, uint64_t &_obj_size)
+      std::unique_ptr<rgw::sal::Object> & _object, uint64_t &_obj_size,
+      std::map<std::string, std::string>& _crypt_http_responses)
     : cct(_s->cct), attrs(_a), encrypted( attrs.count(RGW_ATTR_CRYPT_MODE)),
       skip_decrypt(_skip_decrypt), dpp(_dpp),
       env(_s->info.env), err(_s->err),
       object(_object),
       obj_size(_obj_size),
+      crypt_http_responses(_crypt_http_responses),
       dctx( dpp, cct,
         err.message,
         false, 
@@ -6239,7 +6242,8 @@ public:
       return 0;
     }
     std::unique_ptr<BlockCrypt> block_crypt;
-    int res = rgw_s3_prepare_decrypt(dctx, y, src_attrs, &block_crypt, crypt_http_responses);
+    int res = rgw_s3_prepare_decrypt(dctx, y, src_attrs, &block_crypt,
+	crypt_http_responses_unused);
     if (res < 0) {
       return res;
     }
@@ -6509,7 +6513,8 @@ void RGWCopyObj::execute(optional_yield y)
   }
 
   try {
-    RGWCOE_make_filter_pipeline cb { s, this, attrs, false, s->src_object, obj_size };
+    RGWCOE_make_filter_pipeline cb { s, this, attrs, false,
+	s->src_object, obj_size, crypt_http_responses };
     op_ret = s->src_object->copy_object(s->owner,
 	   s->user->get_id(),
 	   &s->info,
