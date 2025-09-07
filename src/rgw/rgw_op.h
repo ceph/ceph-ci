@@ -2021,6 +2021,7 @@ protected:
   off_t ofs = 0;
   const char *if_match{nullptr};
   const char *if_nomatch{nullptr};
+  std::map<std::string, std::string> crypt_http_responses;
 
 public:
   RGWCompleteMultipart() {}

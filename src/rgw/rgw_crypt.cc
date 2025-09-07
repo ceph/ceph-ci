@@ -1516,6 +1516,39 @@ int rgw_s3_prepare_decrypt(req_state* s, optional_yield y,
   return res;
 }
 
+// dummy routine does not really prepare for decrypt, juste sets
+// crypt_http_responses (for RGWCompleteMultipart)
+int rgw_s3_prepare_decrypt(req_state* s,
+                       map<string, bufferlist>& attrs,
+                       std::map<std::string, std::string>& crypt_http_responses)
+{
+  // RGWDecryptContext cb(s);
+  int res = 0;
+  std::string stored_mode = get_str_attribute(attrs, RGW_ATTR_CRYPT_MODE);
+  ldpp_dout(s, 15) << "Encryption mode: " << stored_mode << dendl;
+  if (stored_mode == "SSE-C-AES256") {
+    auto keymd5 = to_base64(get_str_attribute(attrs, RGW_ATTR_CRYPT_KEYMD5));
+    crypt_http_responses["x-amz-server-side-encryption-customer-algorithm"] = "AES256";
+    crypt_http_responses["x-amz-server-side-encryption-customer-key-MD5"] = keymd5;
+    return 0;
+  }
+  if (stored_mode == "SSE-KMS") {
+    std::string key_id = get_str_attribute(attrs, RGW_ATTR_CRYPT_KEYID);
+    crypt_http_responses["x-amz-server-side-encryption"] = "aws:kms";
+    crypt_http_responses["x-amz-server-side-encryption-aws-kms-key-id"] = key_id;
+    return 0;
+  }
+  if (stored_mode == "RGW-AUTO") {
+    return 0;
+  }
+  if (stored_mode == "AES256") {
+    crypt_http_responses["x-amz-server-side-encryption"] = "AES256";
+    return 0;
+  }
+  /*no decryption*/
+  return 0;
+}
+
 int rgw_remove_sse_s3_bucket_key(req_state *s, optional_yield y)
 {
   int res;

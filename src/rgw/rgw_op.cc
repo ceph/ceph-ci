@@ -7590,6 +7590,8 @@ void RGWCompleteMultipart::execute(optional_yield y)
 
   auto& target_attrs = meta_obj->get_attrs();
 
+  (void) rgw_s3_prepare_decrypt(s, target_attrs, crypt_http_responses);
+
   if (cksum) {
     /* validate computed checksum against supplied checksum, if present */
     auto [hdr_cksum, supplied_cksum] =

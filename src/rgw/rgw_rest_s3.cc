@@ -4653,6 +4653,8 @@ void RGWCompleteMultipart_ObjStore_S3::send_response()
   if (op_ret)
     set_req_state_err(s, op_ret);
   dump_errno(s);
+  for (auto &it : crypt_http_responses)
+    dump_header(s, it.first, it.second);
   dump_header_if_nonempty(s, "x-amz-version-id", version_id);
   end_header(s, this, to_mime_type(s->format));
   if (op_ret == 0) {
