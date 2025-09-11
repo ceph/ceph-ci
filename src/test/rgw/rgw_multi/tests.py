@@ -2446,7 +2446,7 @@ def test_object_acl():
     secondary.s3_client.put_object_acl(Bucket=bucket.name, Key=objname, ACL='public-read')
     log.debug('set acl on bucket=%s', bucket.name)
     zonegroup_data_checkpoint(zonegroup_conns)
-    zonegroup_bucket_checkpoint(zonegroup_conns, bucket.name)
+    zonegroup_bucket_checkpoint(zonegroup_conns, bucket2.name)
 
     # check object on primary after setacl
     after_acl = primary.s3_client.get_object_acl(Bucket=bucket.name, Key=objname)
