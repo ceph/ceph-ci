@@ -1333,7 +1333,7 @@ int rgw_s3_prepare_decrypt(RGWDecryptContext &cb, optional_yield y,
 
     if (nullptr == req_cust_alg)  {
       ldpp_dout(cb.dpp, 5) << "ERROR: Request for SSE-C encrypted object missing "
-                       << "x-amz-server-side-encryption-customer-algorithm"
+                       << cb.sse_ca
                        << dendl;
       cb.error_message = "Requests specifying Server Side Encryption with Customer "
                        "provided keys must provide a valid encryption algorithm.";
@@ -1523,7 +1523,6 @@ int rgw_s3_prepare_decrypt(req_state* s,
                        std::map<std::string, std::string>& crypt_http_responses)
 {
   // RGWDecryptContext cb(s);
-  int res = 0;
   std::string stored_mode = get_str_attribute(attrs, RGW_ATTR_CRYPT_MODE);
   ldpp_dout(s, 15) << "Encryption mode: " << stored_mode << dendl;
   if (stored_mode == "SSE-C-AES256") {

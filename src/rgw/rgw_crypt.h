@@ -174,7 +174,6 @@ struct RGWDecryptContext {
 	sse_c_key("HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_KEY"),
 	sse_c_md5("HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_KEY_MD5") {
   };
-#if 0
   RGWDecryptContext(req_state *s, bool customer_side) : dpp(s), cct(s->cct),
         error_message(s->err.message),
 	get_or_head(s->op == OP_GET || s->op == OP_HEAD),
@@ -184,7 +183,6 @@ struct RGWDecryptContext {
 	sse_c_key("HTTP_X_AMZ_COPY_SOURCE_SERVER_SIDE_ENCRYPTION_CUSTOMER_KEY"),
 	sse_c_md5("HTTP_X_AMZ_COPY_SOURCE_SERVER_SIDE_ENCRYPTION_CUSTOMER_KEY_MD5") {
   };
-#endif
   RGWDecryptContext(const DoutPrefixProvider* _dpp, CephContext* _cct,
             std::string &_error_message,
             bool _get_or_head, bool _secure_channel,

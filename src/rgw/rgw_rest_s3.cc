@@ -3006,9 +3006,10 @@ int RGWPutObj_ObjStore_S3::get_decrypt_filter(
     bufferlist* manifest_bl)
 {
   std::map<std::string, std::string> crypt_http_responses_unused;
+  RGWDecryptContext dctx { s, true };
 
   std::unique_ptr<BlockCrypt> block_crypt;
-  int res = rgw_s3_prepare_decrypt(s, s->yield, attrs, &block_crypt,
+  int res = rgw_s3_prepare_decrypt(dctx, s->yield, attrs, &block_crypt,
                                    crypt_http_responses_unused);
   if (res < 0) {
     return res;
