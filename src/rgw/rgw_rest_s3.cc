@@ -2954,6 +2954,8 @@ void RGWPutObj_ObjStore_S3::send_response()
 	dump_header(s, "x-amz-checksum-type", "FULL_OBJECT");
 	dump_header(s, cksum->header_name(), cksum->to_armor());
       }
+      for (auto &it : crypt_http_responses)
+        dump_header(s, it.first, it.second);
       end_header(s, this, to_mime_type(s->format));
       dump_start(s);
       struct tm tmp;
