@@ -1522,11 +1522,47 @@ int rgw_s3_prepare_decrypt(req_state* s,
                        map<string, bufferlist>& attrs,
                        std::map<std::string, std::string>& crypt_http_responses)
 {
-  // RGWDecryptContext cb(s);
+  const char *req_cust_alg = s->info.env->get("HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_ALGORITHM");
+  const char *req_cust_key = s->info.env->get("HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_KEY");
+  const char *req_cust_key_md5 = s->info.env->get("HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_KEY_MD5");
   std::string stored_mode = get_str_attribute(attrs, RGW_ATTR_CRYPT_MODE);
   ldpp_dout(s, 15) << "Encryption mode: " << stored_mode << dendl;
   if (stored_mode == "SSE-C-AES256") {
-    auto keymd5 = to_base64(get_str_attribute(attrs, RGW_ATTR_CRYPT_KEYMD5));
+    auto keymd5_bin = get_str_attribute(attrs, RGW_ATTR_CRYPT_KEYMD5);
+    auto keymd5 = to_base64(keymd5_bin);
+    std::string key_bin;
+    MD5 key_hash;
+
+    if (!req_cust_alg || strcmp(req_cust_alg, "AES256")
+	    || !req_cust_key || !req_cust_key_md5
+	    || strcmp(req_cust_key_md5, keymd5.c_str()) ) {
+	s->err.message = "sse-c parameters do not match initial values";
+	return -EINVAL;
+    }
+
+    try {
+      key_bin = from_base64(req_cust_key);
+    } catch (...) {
+      ldpp_dout(s, 5) << "ERROR: invalid sse-c encryption "
+                       << "key which contains character that is not base64 encoded."
+                       << dendl;
+      s->err.message = "Requests specifying Server Side Encryption with Customer "
+                       "provided keys must provide an appropriate secret key.";
+      return -EINVAL;
+    }
+
+    // Allow use of MD5 digest in FIPS mode for non-cryptographic purposes
+    key_hash.SetFlags(EVP_MD_CTX_FLAG_NON_FIPS_ALLOW);
+    unsigned char key_hash_res[CEPH_CRYPTO_MD5_DIGESTSIZE];
+    key_hash.Update(reinterpret_cast<const unsigned char*>(key_bin.c_str()), key_bin.size());
+    key_hash.Final(key_hash_res);
+
+    if (memcmp(key_hash_res, keymd5_bin.c_str(), CEPH_CRYPTO_MD5_DIGESTSIZE) != 0) {
+      ldpp_dout(s, 5) << "ERROR: Invalid key md5 hash" << dendl;
+      s->err.message = "The calculated MD5 hash of the key did not match the hash that was provided.";
+      return -EINVAL;
+    }
+
     crypt_http_responses["x-amz-server-side-encryption-customer-algorithm"] = "AES256";
     crypt_http_responses["x-amz-server-side-encryption-customer-key-MD5"] = keymd5;
     return 0;

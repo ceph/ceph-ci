@@ -7590,7 +7590,11 @@ void RGWCompleteMultipart::execute(optional_yield y)
 
   auto& target_attrs = meta_obj->get_attrs();
 
-  (void) rgw_s3_prepare_decrypt(s, target_attrs, crypt_http_responses);
+  op_ret = rgw_s3_prepare_decrypt(s, target_attrs, crypt_http_responses);
+  if (op_ret < 0) {
+      ldpp_dout(this, 16) << "ERROR: incosistent crypto ret=" << op_ret << dendl;
+      return;
+  }
 
   if (cksum) {
     /* validate computed checksum against supplied checksum, if present */
