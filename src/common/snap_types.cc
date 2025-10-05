@@ -58,7 +58,7 @@ void SnapRealmInfo::generate_test_instances(std::list<SnapRealmInfo*>& o)
 void SnapRealmInfoNew::encode(ceph::buffer::list& bl) const
 {
   using ceph::encode;
-  ENCODE_START(1, 1, bl);
+  ENCODE_START(2, 1, bl);
   encode(info, bl);
   encode(last_modified, bl);
   encode(change_attr, bl);
@@ -69,11 +69,13 @@ void SnapRealmInfoNew::encode(ceph::buffer::list& bl) const
 void SnapRealmInfoNew::decode(ceph::buffer::list::const_iterator& bl)
 {
   using ceph::decode;
-  DECODE_START(1, bl);
+  DECODE_START(2, bl);
   decode(info, bl);
   decode(last_modified, bl);
   decode(change_attr, bl);
-  decode(flags, bl);
+  if (struct_v >= 2) {
+    decode(flags, bl);
+  }
   DECODE_FINISH(bl);
 }
 
