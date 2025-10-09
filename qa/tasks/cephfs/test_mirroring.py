@@ -260,9 +260,12 @@ class TestMirroring(CephFSTestCase):
         self.verify_peer_added(fs_name, fs_id, peer_spec, remote_fs_name)
 
         if check_perf_counter:
-            res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
-            vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR_FS][0]
-            self.assertGreater(vafter["counters"]["mirroring_peers"], vbefore["counters"]["mirroring_peers"])
+            with safe_while(sleep=1, tries=30, action='wait for mirroring_peers to increment') as proceed:
+                while proceed():
+                    res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
+                    vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR_FS][0]
+                    if vafter["counters"]["mirroring_peers"] > vbefore["counters"]["mirroring_peers"]:
+                        return
 
     def peer_remove(self, fs_name, fs_id, peer_spec, verify_dircount=True):
         res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
@@ -314,9 +317,12 @@ class TestMirroring(CephFSTestCase):
         self.assertTrue(new_dir_count > dir_count)
 
         if check_perf_counter:
-            res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
-            vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR_FS][0]
-            self.assertGreater(vafter["counters"]["directory_count"], vbefore["counters"]["directory_count"])
+            with safe_while(sleep=1, tries=30, action='wait for directory_count to increment') as proceed:
+                while proceed():
+                    res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
+                    vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR_FS][0]
+                    if vafter["counters"]["directory_count"] > vbefore["counters"]["directory_count"]:
+                        return
 
     def remove_directory(self, fs_name, fs_id, dir_name):
         res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
@@ -3873,3 +3879,60 @@ class TestMirroring(CephFSTestCase):
         self.mount_a.run_shell(['mkdir', f'{dir_name}/.snap/{snap_name}'])
         self.assert_snapshot_not_synced(dir_name, snap_name)
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
+
+    def test_ceph_health_warning_on_init_failure(self):
+        """Test CEPHFS_MIRROR_FAILURE warning in ceph health on init failure"""
+
+        # disable mgr mirroring plugin as it would try to load dir map on
+        # on mirroring enabled for a filesystem (an throw up errors in
+        # the logs)
+        self.disable_mirroring_module()
+
+        # enable mirroring through mon interface -- this should result in the mirror daemon
+        # failing to enable mirroring due to absence of `cephfs_mirror` index object.
+        self.run_ceph_cmd("fs", "mirror", "enable", self.primary_fs_name)
+
+        try:
+            self.wait_for_health("CEPHFS_MIRROR_FAILURE", 120)
+        finally:
+            self.run_ceph_cmd("fs", "mirror", "disable", self.primary_fs_name)
+
+    def test_ceph_health_warning_on_sync_failure(self):
+        """
+        That making changes to the remote .snap directory shows CEPHFS_MIRROR_SNAP_SYNC_FAILURE
+        warning in ceph health and clears when the failure is resolved.
+        """
+        self.setup_mount_b(mds_perm='rwps')
+        self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
+        peer_spec = "client.mirror_remote@ceph"
+        self.peer_add(self.primary_fs_name, self.primary_fs_id, peer_spec, self.secondary_fs_name)
+        dir_name = 'd0'
+        self.mount_a.run_shell(['mkdir', dir_name])
+        self.add_directory(self.primary_fs_name, self.primary_fs_id, f'/{dir_name}')
+
+        # take a snapshot
+        snap_name = "snap_a"
+        expected_snap_count = 1
+        self.mount_a.run_shell(['mkdir', f'{dir_name}/.snap/{snap_name}'])
+
+        # confirm snapshot synced and status 'idle'
+        with safe_while(sleep=5, tries=30, action='wait for idle state') as proceed:
+            while proceed():
+                try:
+                    self.check_peer_status_idle(self.primary_fs_name, self.primary_fs_id,
+                                                peer_spec, f'/{dir_name}', snap_name, expected_snap_count)
+                    break
+                except:
+                    pass
+
+        # create a directory in the remote fs and check for health warn
+        remote_snap_name = 'snap_b'
+        remote_snap_path = f'{dir_name}/.snap/{remote_snap_name}'
+        self.mount_b.run_shell(['sudo', 'mkdir', remote_snap_path], omit_sudo=False)
+        try:
+            self.wait_for_health("CEPHFS_MIRROR_SNAP_SYNC_FAILURE", 120)
+        finally:
+            # remove the directory in the remote fs and check ceph health clears
+            self.mount_b.run_shell(['sudo', 'rmdir', remote_snap_path], omit_sudo=False)
+            self.wait_for_health_clear(120)
+            self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
