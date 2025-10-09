@@ -156,6 +156,17 @@ public:
 			     std::optional<uint64_t> days,
 			     const DoutPrefixProvider* dpp,
 			     optional_yield y);
+
+  // list restore status of objects in the bucket
+  int list(const DoutPrefixProvider* dpp, RestoreEntry& entry,
+           std::optional<std::string> restore_status_filter, std::string& err_msg,
+           RGWFormatterFlusher& flusher, optional_yield y);
+
+  // restore status of an object in a bucket
+  int status(const DoutPrefixProvider* dpp, RestoreEntry& entry,
+             std::string& err_msg, RGWFormatterFlusher& flusher,
+             optional_yield y);
 };
+
 
 } // namespace rgw::restore

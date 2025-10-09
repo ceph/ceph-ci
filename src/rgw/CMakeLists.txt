@@ -172,6 +172,7 @@ set(librgw_common_srcs
   driver/rados/account.cc
   driver/rados/buckets.cc
   rgw_bucket_logging.cc
+  rgw_rest_restore.cc
   rgw_rest_bucket_logging.cc
   driver/rados/group.cc
   driver/rados/groups.cc
