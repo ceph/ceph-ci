@@ -12,16 +12,21 @@ Add a radosgw-admin command to collect and report deduplication stats
 ***************
 Admin commands:
 ***************
-- ``radosgw-admin dedup stats``:
-   Collects & displays last dedup statistics
+- ``radosgw-admin dedup estimate``
+    Starts a new dedup estimate session (aborting first existing session if exists)
+    It doesn't make any change to the existing system and will only collect statistics and report them.
 - ``radosgw-admin dedup pause``:
    Pauses active dedup session (dedup resources are not released)
 - ``radosgw-admin dedup resume``:
    Resumes a paused dedup session
 - ``radosgw-admin dedup abort``:
-   Aborts active dedup session and release all resources used by it
-- ``radosgw-admin dedup estimate``
-    Starts a new dedup estimate session (aborting first existing session if exists)
+   Aborts an active dedup session and release all resources used by it.
+- ``radosgw-admin dedup stats``:
+   Collects & displays last dedup statistics
+- ``radosgw-admin dedup throttle --max-bucket-index-ops=<count>``:
+   Specify max bucket-index requests per second allowed for a single RGW server during dedup, 0 means unlimited.
+- ``radosgw-admin dedup throttle --stat``:
+   Display dedup throttle setting.
 
 ----
 
@@ -46,19 +51,27 @@ information during the estimate process)
 Estimate Processing:
 ********************
 The Dedup Estimate process collects all the needed information directly from
-the bucket-indices reading one full bucket-index object with 1000's of
+the bucket indices reading one full bucket index object with thousands of
 entries at a time.
 
-The Bucket-Indices objects are sharded between the participating
-members so every bucket-index object is read exactly one time.
-The sharding allow processing to scale almost linearly spliting the
+The bucket indices objects are sharded between the participating
+members so every bucket index object is read exactly one time.
+The sharding allow processing to scale almost linearly splitting the
 load evenly between the participating members.
 
 The Dedup Estimate process does not access the objects themselves
 (data/metadata) which means its processing time won't be affected by
-the underlined media storing the objects (SSD/HDD) since the bucket-indices are
+the underlying media storing the objects (SSD/HDD) since the bucket indices are
 virtually always stored on a fast medium (SSD with heavy memory
-caching)
+caching).
+
+The admin can throttle the estimate process by setting a limit to the number of
+bucket-index reads per-second per an RGW server (each read brings 1000 object entries) using:
+
+$ radosgw-admin dedup throttle --max-bucket-index-ops=<count>
+
+A typical RGW server performs about 100 bucket-index reads per second (i.e. 100,000 object entries).
+Setting the count to 50 will typically slow down access by half and so on...
 
 ----
 
