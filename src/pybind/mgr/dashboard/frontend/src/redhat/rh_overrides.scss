@@ -560,108 +560,108 @@ cd-about {
   dl {
     --bs-gutter-y: 10px !important;
   }
-}
 
-.cds--modal-container  {
-  background: url('/assets/redhat_new_background.svg') no-repeat !important;
-  background-position: left bottom !important;
-  font-size: 1rem;
-  margin-left: -10rem;
-  text-shadow: none !important;
-  width: 70rem !important;
+  .cds--modal-container  {
+    background: url('/assets/redhat_new_background.svg') no-repeat !important;
+    background-position: left bottom !important;
+    font-size: 1rem;
+    margin-left: -10rem;
+    text-shadow: none !important;
+    width: 70rem !important;
 
 
-  .cds--modal-close {
-    background-color: transparent !important;
-  }
+    .cds--modal-close {
+      background-color: transparent !important;
+    }
 
-  .modal-header {
-    background-color: transparent !important;
+    .modal-header {
+      background-color: transparent !important;
 
-    span {
+      span {
+        display: none !important;
+      }
+
+      .btn-close {
+        visibility: hidden;
+      }
+
+      button::after {
+        border: 0;
+        color: vv.$white;
+        content: '\f057';
+        font-family: 'ForkAwesome';
+        font-size: 2rem;
+        position: inherit;
+        right: 0;
+        visibility: initial;
+      }
+    }
+
+    h3 {
+      @extend .pf-c-title, .pf-m-4xl;
+      margin-bottom: 5rem !important;
+      visibility: hidden;
+
+      strong {
+        display: none;
+      }
+    }
+
+    h3::after {
+      content: 'Red Hat Ceph Storage';
+      font-size: 2rem !important;
+      position: absolute;
+      visibility: visible;
+      width: 150%;
+    }
+
+    .header-content {
+      img {
+        background: url('../assets/Logo-RedHat-A-Reverse-RGB.svg') no-repeat;
+        background-size: 150px;
+        display: inline-block;
+        padding-right: 150px;
+        padding-top: 36px;
+        width: 0;
+      }
+    }
+
+    br {
       display: none !important;
     }
 
-    .btn-close {
-      visibility: hidden;
+    .product-versions {
+      margin-bottom: 0.4rem !important;
+
+      strong {
+        font-size: medium !important;
+        margin-right: 16.7rem !important;
+        font-weight: bold !important;
+      }
     }
 
-    button::after {
-      border: 0;
-      color: vv.$white;
-      content: '\f057';
-      font-family: 'ForkAwesome';
-      font-size: 2rem;
-      position: inherit;
-      right: 0;
-      visibility: initial;
-    }
-  }
+    .modal-footer {
+      background-color: transparent !important;
+      font-size: 0.8rem !important;
+      margin-top: 5rem !important;
 
-  h3 {
-    @extend .pf-c-title, .pf-m-4xl;
-    margin-bottom: 5rem !important;
-    visibility: hidden;
+      .copyright {
+        display: flex;
+        margin-left: 2.3rem;
+        margin-top: 0 !important;
+        width: 100%;
+      }
 
-    strong {
-      display: none;
-    }
-  }
-
-  h3::after {
-    content: 'Red Hat Ceph Storage';
-    font-size: 2rem !important;
-    position: absolute;
-    visibility: visible;
-    width: 150%;
-  }
-
-  .header-content {
-    img {
-      background: url('../assets/Logo-RedHat-A-Reverse-RGB.svg') no-repeat;
-      background-size: 150px;
-      display: inline-block;
-      padding-right: 150px;
-      padding-top: 36px;
-      width: 0;
-    }
-  }
-
-  br {
-    display: none !important;
-  }
-
-  .product-versions {
-    margin-bottom: 0.4rem !important;
-
-    strong {
-      font-size: medium !important;
-      margin-right: 16.7rem !important;
-      font-weight: bold !important;
-    }
-  }
-
-  .modal-footer {
-    background-color: transparent !important;
-    font-size: 0.8rem !important;
-    margin-top: 5rem !important;
-
-    .copyright {
-      display: flex;
-      margin-left: 2.3rem;
-      margin-top: 0 !important;
-      width: 100%;
+      .licence {
+        line-height: 1.2rem;
+        margin-left: -52rem !important;
+        width: 62%;
+      }
     }
 
-    .licence {
-      line-height: 1.2rem;
-      margin-left: -52rem !important;
-      width: 62%;
+    dd {
+      padding-left: 0 !important;
     }
-  }
-
-  dd {
-    padding-left: 0 !important;
   }
 }
 
