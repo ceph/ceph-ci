@@ -33,6 +33,7 @@
 #define dout_subsys ceph_subsys_client
 
 
+#if defined(__linux__)
 using ceph::crypto::HMACSHA512;
 /*
  * base64 encode/decode.
@@ -1156,3 +1157,4 @@ void FSCrypt::prepare_data_read(const FSCryptContextRef& ctx,
   }
   *read_len = end - *read_start;
 }
+#endif
