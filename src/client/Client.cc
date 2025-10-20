@@ -11264,8 +11264,18 @@ int Client::read(int fd, char *buf, loff_t size, loff_t offset)
     return -EBADF;
 #endif
   bufferlist bl;
-  /* We can't return bytes written larger than INT_MAX, clamp size to that */
+#if defined(__linux__)
+  /* We can't return bytes written larger than INT_MAX, clamp size to
+   * that or FSCRYPT_MAXIO_SIZE*/
+  Inode *in = f->inode.get();
+  if (in->is_fscrypt_enabled()) {
+    size = std::min(size, (loff_t)FSCRYPT_MAXIO_SIZE);
+  } else {
+    size = std::min(size, (loff_t)INT_MAX);
+  }
+#else
   size = std::min(size, (loff_t)INT_MAX);
+#endif
   int r = _read(f, offset, size, &bl);
   ldout(cct, 3) << "read(" << fd << ", " << (void*)buf << ", " << size << ", " << offset << ") = " << r << dendl;
   if (r >= 0) {
@@ -11958,8 +11968,18 @@ int Client::write(int fd, const char *buf, loff_t size, loff_t offset)
   if (fh->flags & O_PATH)
     return -EBADF;
 #endif
-  /* We can't return bytes written larger than INT_MAX, clamp size to that */
+#if defined(__linux__)
+  /* We can't return bytes written larger than INT_MAX, clamp size to
+   * that or FSCRYPT_MAXIO_SIZE*/
+  Inode *in = fh->inode.get();
+  if (in->is_fscrypt_enabled()) {
+    size = std::min(size, (loff_t)FSCRYPT_MAXIO_SIZE);
+  } else {
+    size = std::min(size, (loff_t)INT_MAX);
+  }
+#else
   size = std::min(size, (loff_t)INT_MAX);
+#endif
   bufferlist bl;
   bl.append(buf, size);
   int r = _write(fh, offset, size, std::move(bl));
@@ -11999,7 +12019,18 @@ int64_t Client::_preadv_pwritev_locked(Fh *fh, const struct iovec *iov,
      */
     bufferlist data;
     if (clamp_to_int) {
+#if defined(__linux__)
+  /* We can't return bytes written larger than INT_MAX, clamp size to
+   * that or FSCRYPT_MAXIO_SIZE*/
+      Inode *in = fh->inode.get();
+      if (in->is_fscrypt_enabled()) {
+        totallen = std::min(totallen, (size_t)FSCRYPT_MAXIO_SIZE);
+      } else {
+        totallen = std::min(totallen, (size_t)INT_MAX);
+      }
+#else
       totallen = std::min(totallen, (size_t)INT_MAX);
+#endif
       size_t total_appended = 0;
       for (int i = 0; i < iovcnt; i++) {
         if (iov[i].iov_len > 0) {
@@ -16881,9 +16912,19 @@ int Client::ll_read(Fh *fh, loff_t off, loff_t len, bufferlist *bl)
     return -ENOTCONN;
   }
 
+#if defined(__linux__)
+  /* We can't return bytes written larger than INT_MAX, clamp size to
+   * that or FSCRYPT_MAXIO_SIZE*/
+  Inode *in = fh->inode.get();
+  if (in->is_fscrypt_enabled()) {
+    len = std::min(len, (loff_t)FSCRYPT_MAXIO_SIZE);
+  } else {
   /* We can't return bytes written larger than INT_MAX, clamp len to that */
+    len = std::min(len, (loff_t)INT_MAX);
+  }
+#else
   len = std::min(len, (loff_t)INT_MAX);
-
+#endif
   std::scoped_lock lock(client_lock);
   if (fh == NULL || !_ll_fh_exists(fh)) {
     ldout(cct, 3) << "(fh)" << fh << " is invalid" << dendl;
@@ -17026,9 +17067,18 @@ int Client::ll_write(Fh *fh, loff_t off, loff_t len, const char *data)
     return -ENOTCONN;
   }
 
-  /* We can't return bytes written larger than INT_MAX, clamp len to that */
+#if defined(__linux__)
+  /* We can't return bytes written larger than INT_MAX, clamp size to
+   * that or FSCRYPT_MAXIO_SIZE*/
+  Inode *in = fh->inode.get();
+  if (in->is_fscrypt_enabled()) {
+    len = std::min(len, (loff_t)FSCRYPT_MAXIO_SIZE);
+  } else {
+    len = std::min(len, (loff_t)INT_MAX);
+  }
+#else
   len = std::min(len, (loff_t)INT_MAX);
-
+#endif
   std::scoped_lock lock(client_lock);
   if (fh == NULL || !_ll_fh_exists(fh)) {
     ldout(cct, 3) << "(fh)" << fh << " is invalid" << dendl;
