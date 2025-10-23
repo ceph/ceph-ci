@@ -484,7 +484,7 @@ class AlertmanagerService(CephadmService):
         spec: Optional[ServiceSpec],
         curr_deps: List[str],
         last_deps: List[str],
-    ) -> utils.Action:
+    ) -> Tuple[utils.Action, Optional[utils.Signal]]:
         """Given the scheduled_action, service spec, daemon_type, and
         current and previous dependency lists return the next action that
         this service would prefer cephadm take.
@@ -785,7 +785,7 @@ class PrometheusService(CephadmService):
         spec: Optional[ServiceSpec],
         curr_deps: List[str],
         last_deps: List[str],
-    ) -> utils.Action:
+    ) -> Tuple[utils.Action, Optional[utils.Signal]]:
         """Given the scheduled_action, service spec, daemon_type, and
         current and previous dependency lists return the next action that
         this service would prefer cephadm take.
@@ -852,7 +852,7 @@ class NodeExporterService(CephadmService):
         spec: Optional[ServiceSpec],
         curr_deps: List[str],
         last_deps: List[str],
-    ) -> utils.Action:
+    ) -> Tuple[utils.Action, Optional[utils.Signal]]:
         """Given the scheduled_action, service spec, daemon_type, and
         current and previous dependency lists return the next action that
         this service would prefer cephadm take.

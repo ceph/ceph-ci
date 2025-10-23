@@ -558,12 +558,12 @@ class IngressService(CephService):
         spec: Optional[ServiceSpec],
         curr_deps: List[str],
         last_deps: List[str],
-    ) -> utils.Action:
+    ) -> Tuple[utils.Action, Optional[utils.Signal]]:
         """Given the scheduled_action, service spec, daemon_type, and
         current and previous dependency lists return the next action that
         this service would prefer cephadm take.
         """
-        action = super().choose_next_action(
+        action, signal = super().choose_next_action(
             scheduled_action, daemon_type, spec, curr_deps, last_deps
         )
         if (
@@ -582,4 +582,4 @@ class IngressService(CephService):
                     spec.service_name(),
                 )
                 action = utils.Action.REDEPLOY
-        return action
+        return action, signal

@@ -196,4 +196,9 @@ def test_custom_cont_choose_next_action(
         # manually invoke _check_daemons to trigger a call to
         # _daemon_action so we can check what action was chosen
         mock_cephadm.serve(cephadm_module)._check_daemons()
-        mock_cephadm._daemon_action.assert_called_with(ANY, action='redeploy')
+        mock_cephadm._daemon_action.assert_called_with(
+            ANY,
+            action='redeploy',
+            skip_restart_for_reconfig=False,
+            send_signal_to_daemon=None,
+        )
