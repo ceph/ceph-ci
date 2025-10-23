@@ -55,7 +55,7 @@ namespace rgw::dedup {
       inline const char* get_buff() { return this->buff; }
       inline unsigned get_buff_size() { return this->total_len; }
     private:
-      static const unsigned BUFF_SIZE = 15;
+      static const unsigned BUFF_SIZE = 16;
       unsigned total_len  = 0;
       unsigned prefix_len = 0;
       char buff[BUFF_SIZE];
