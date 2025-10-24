@@ -567,19 +567,30 @@ class IngressService(CephService):
             scheduled_action, daemon_type, spec, curr_deps, last_deps
         )
         if (
-            action is not utils.Action.REDEPLOY
-            and daemon_type == 'haproxy'
+            daemon_type == 'haproxy'
             and spec
             and hasattr(spec, 'backend_service')
         ):
             backend_spec = self.mgr.spec_store[spec.backend_service].spec
-            if (
-                backend_spec.service_type == 'nfs'
-                and self.has_placement_changed(last_deps, spec)
-            ):
-                logger.debug(
-                    'Redeploy wanted %s: placement has changed',
-                    spec.service_name(),
-                )
-                action = utils.Action.REDEPLOY
+            if backend_spec.service_type == 'nfs':
+                sym_diff = set(curr_deps).symmetric_difference(last_deps)
+                if sym_diff and all(
+                    s.startswith(f'nfs.{backend_spec.service_id}')
+                    for s in sym_diff
+                ):
+                    # only NFS backend daemons changed; reload config via SIGHUP
+                    logger.debug(
+                        'Reconfigure HAProxy daemon with SIGHUP due to '
+                        'change in NFS backend.'
+                    )
+                    signal = utils.Signal.SIGHUP
+                if (
+                    action is not utils.Action.REDEPLOY
+                    and self.has_placement_changed(last_deps, spec)
+                ):
+                    logger.debug(
+                        'Redeploy wanted %s: placement has changed',
+                        spec.service_name(),
+                    )
+                    action = utils.Action.REDEPLOY
         return action, signal
