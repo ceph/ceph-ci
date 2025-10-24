@@ -5077,8 +5077,8 @@ def _add_deploy_parser_args(
     )
     parser_deploy.add_argument(
         '--send-signal-to-daemon',
-        action='store_true',
-        default=False,
+        type=str,
+        default=None,
         help='Send signal to daemon'
     )
 
