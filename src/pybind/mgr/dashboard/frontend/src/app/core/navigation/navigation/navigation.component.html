@@ -96,7 +96,7 @@
         </cds-sidenav-item>
         <!-- Multi-cluster Dashboard -->
         <cds-sidenav-menu title="Multi-Cluster"
-                          *ngIf="permissions.configOpt.read && environment.build === 'ibm'"
+                          *ngIf="permissions.configOpt.read && !['ibm', 'redhat'].includes(environment.build)"
                           i18n-title>
           <svg cdsIcon="edge-cluster"
                icon

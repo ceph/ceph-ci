@@ -25,7 +25,7 @@
           <ng-container [ngSwitch]="currentStep?.stepIndex">
             <div *ngSwitchCase="0"
                  class="ms-5">
-              <ng-container *ngIf="environment.build === 'ibm'; else defaultAlert">
+              <ng-container *ngIf="!['ibm', 'redhat'].includes(environment.build); else defaultAlert">
                 <cd-alert-panel type="info"
                                 spacingClass="mb-3">
                   This wizard enables you to set up multi-site replication within your
