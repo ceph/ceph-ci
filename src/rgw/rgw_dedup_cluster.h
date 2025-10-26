@@ -43,13 +43,13 @@ namespace rgw::dedup {
 
       //---------------------------------------------------------------------------
       void set_shard(uint16_t shard) {
-        int n = snprintf(this->buff + this->prefix_len, BUFF_SIZE, "%03x", shard);
+        int n = snprintf(this->buff + this->prefix_len, BUFF_SIZE - this->prefix_len, "%03x", shard);
         this->total_len = this->prefix_len + n;
       }
 
       //---------------------------------------------------------------------------
       static bool legal_oid_name(const std::string& oid) {
-        return ((oid.length() <= BUFF_SIZE) &&
+        return ((oid.length() < BUFF_SIZE) &&
                 (oid.starts_with(WORKER_SHARD_PREFIX)||oid.starts_with(MD5_SHARD_PREFIX)));
       }
       inline const char* get_buff() { return this->buff; }
