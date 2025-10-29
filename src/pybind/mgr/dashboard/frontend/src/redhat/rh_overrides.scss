@@ -1,4 +1,5 @@
 @use '/src/redhat/variables' as vv;
+@use '@carbon/layout';
 
 /* stylelint-disable */
 $pf-global--font-path: '~@patternfly/patternfly/assets/fonts';
@@ -45,13 +46,21 @@ $pf-global--image-path: '~@patternfly/patternfly/assets/images';
 }
 
 .cds--btn--tertiary {
+  @extend .pf-c-button, .pf-m-tertiary;
   border-color: vv.$primary !important;
   color: vv.$primary !important;
 
   &:active,
+  &:focus,
   &:hover {
     background-color: vv.$primary !important;
     color: vv.$white !important;
+  }
+
+  .cds--btn__icon {
+    margin-bottom: layout.rem(2px) !important;
+    margin-left: layout.rem(16px) !important;
+    position: static !important;
   }
 }
 
@@ -1244,5 +1253,14 @@ cd-dashboard-v3 {
 cd-upgrade {
   .btn-accent:disabled {
     color: vv.$white !important;
+  }
+}
+
+cd-table-actions.btn-group.multisite-actions cds-overflow-menu .cds--btn--icon-only {
+  top: 0px !important;
+  
+  .cds--btn.cds--btn--tertiary {
+    height: layout.rem(40px);
+    min-block-size: 0% !important;
   }
 }
