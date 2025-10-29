@@ -1433,6 +1433,9 @@ int RGWZoneGroupPlacementTierS3::update_params(const JSONFormattable& config)
       host_style = VirtualStyle;
     }
   }
+  if (config.exists("location_constraint")) {
+    location_constraint = config["location_constraint"];
+  }
   if (config.exists("target_storage_class")) {
     target_storage_class = config["target_storage_class"];
   }
@@ -1491,6 +1494,9 @@ int RGWZoneGroupPlacementTierS3::clear_params(const JSONFormattable& config)
   if (config.exists("host_style")) {
     /* default */
     host_style = PathStyle;
+  }
+  if (config.exists("location_constraint")) {
+    location_constraint.clear();
   }
   if (config.exists("target_storage_class")) {
     target_storage_class.clear();
