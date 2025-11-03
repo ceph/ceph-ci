@@ -1363,7 +1363,9 @@ bool verify_bucket_permission(const DoutPrefixProvider* dpp,
 			      const boost::optional<Policy>& bucket_policy,
                               const vector<Policy>& identity_policies,
                               const vector<Policy>& session_policies,
-                              const uint64_t op, bool* granted_by_acl)
+                              const uint64_t op,
+                              bool* granted_by_acl,
+                              bool bucket_owner_comptability)
 {
   if (!verify_requester_payer_permission(s))
     return false;
@@ -1391,6 +1393,31 @@ bool verify_bucket_permission(const DoutPrefixProvider* dpp,
     return true;
   }
 
+  //For backward compatibility with 7.1, return false when
+  //session policy evaluation returns Effect::Pass and when
+  //all entities are in a tenant model(user/role/bucket etc)
+  auto& conf = dpp->get_cct()->_conf;
+  if (!s->identity->get_account() &&
+      conf->rgw_sts_backward_compatibility_7_1 &&
+      effect == Effect::Pass &&
+      !session_policies.empty()) {
+    ldpp_dout(dpp, 10) << __func__ << ": explicit deny from session policy for backward compatibility" << dendl;
+    return false;
+  }
+
+  //check for bucket ownership in case of a tenant for backward compatibility
+  if (!s->identity->get_account() &&
+      conf->rgw_sts_backward_compatibility_7_1 &&
+      bucket_owner_comptability) {
+    if (s->identity->is_owner_of(s->bucket_info.owner)) {
+      ldpp_dout(dpp, 10) << __func__ << ": backward compatibility check, it is a bucket owner, returning true" << dendl;
+      return true;
+    } else {
+      ldpp_dout(dpp, 10) << __func__ << ": backward compatibility check, it is NOT a bucket owner, returning false" << dendl;
+      return false;
+    }
+  }
+
   const auto perm = op_to_perm(op);
   return verify_bucket_permission_no_policy(dpp, s, user_acl, bucket_acl, perm, granted_by_acl);
 }
@@ -1403,7 +1430,8 @@ bool verify_bucket_permission(const DoutPrefixProvider* dpp,
 			      const boost::optional<Policy>& bucket_policy,
                               const vector<Policy>& user_policies,
                               const vector<Policy>& session_policies,
-                              const uint64_t op)
+                              const uint64_t op,
+                              bool bucket_owner_comptability)
 {
   perm_state_from_req_state ps(s);
   auto expected = s->info.env->get("HTTP_X_AMZ_EXPECTED_BUCKET_OWNER");
@@ -1438,7 +1466,7 @@ bool verify_bucket_permission(const DoutPrefixProvider* dpp,
   return verify_bucket_permission(dpp, &ps, arn, account_root,
                                   user_acl, bucket_acl,
                                   bucket_policy, user_policies,
-                                  session_policies, op, &s->granted_by_acl);
+                                  session_policies, op, &s->granted_by_acl, bucket_owner_comptability);
 }
 
 bool verify_bucket_permission_no_policy(const DoutPrefixProvider* dpp,
@@ -1498,20 +1526,20 @@ bool verify_bucket_permission_no_policy(const DoutPrefixProvider* dpp, req_state
 }
 
 bool verify_bucket_permission(const DoutPrefixProvider* dpp, req_state* s,
-                              const rgw::ARN& arn, uint64_t op)
+                              const rgw::ARN& arn, uint64_t op, bool bucket_owner_comptability)
 {
   return verify_bucket_permission(dpp, s, arn, s->user_acl, s->bucket_acl,
                                   s->iam_policy, s->iam_identity_policies,
-                                  s->session_policies, op);
+                                  s->session_policies, op, bucket_owner_comptability);
 }
 
-bool verify_bucket_permission(const DoutPrefixProvider* dpp, req_state* s, uint64_t op)
+bool verify_bucket_permission(const DoutPrefixProvider* dpp, req_state* s, uint64_t op, bool bucket_owner_comptability)
 {
   if (rgw::sal::Bucket::empty(s->bucket)) {
     // request is missing a bucket name
     return false;
   }
-  return verify_bucket_permission(dpp, s, ARN(s->bucket->get_key()), op);
+  return verify_bucket_permission(dpp, s, ARN(s->bucket->get_key()), op, bucket_owner_comptability);
 }
 
 
@@ -1556,6 +1584,18 @@ bool verify_object_permission(const DoutPrefixProvider* dpp, struct perm_state_b
   }
   if (effect == Effect::Allow) {
     return true;
+  }
+
+  //For backward compatibility with 7.1, return false when
+  //session policy evaluation returns Effect::Pass and when
+  //all entities are in a tenant model(user/role/bucket etc)
+  auto& conf = dpp->get_cct()->_conf;
+  if (!ps->identity->get_account() &&
+      conf->rgw_sts_backward_compatibility_7_1 &&
+      effect == Effect::Pass &&
+      !session_policies.empty()) {
+    ldpp_dout(dpp, 10) << __func__ << ": explicit deny from session policy for backward compatibility" << dendl;
+    return false;
   }
 
   const auto perm = op_to_perm(op);

@@ -4560,4 +4560,14 @@ options:
   - rgw
   see_also:
   - rgw_user_quota_sync_interval
+- name: rgw_sts_backward_compatibility_7_1
+  type: bool
+  level: advanced
+  long_desc: To maintain backward compatibility with 7.1, turn it to true ONLY when
+    a bucket owner assumes a role, and performs s3 operations, in a tenant based model.
+  default: false
+  services:
+  - rgw
+  flags:
+  - startup
   with_legacy: true

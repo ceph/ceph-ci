@@ -54,7 +54,7 @@ public:
     if (has_s3_resource_tag)
       rgw_iam_add_buckettags(this, s);
 
-    if (!verify_bucket_permission(this, s, rgw::IAM::s3GetBucketLogging)) {
+    if (!verify_bucket_permission(this, s, rgw::IAM::s3GetBucketLogging, true)) {
       return -EACCES;
     }
 
