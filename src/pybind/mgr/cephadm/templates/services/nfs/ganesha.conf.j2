@@ -24,6 +24,9 @@ NFS_CORE_PARAM {
 {% if enable_rdma and rdma_port %}
         NFS_RDMA_Port = {{ rdma_port }};
 {% endif %}
+{% if cqos_port %}
+        Cqos_Port = {{ cqos_port }};
+{% endif %}
 }
 
 NFSv4 {
@@ -41,6 +44,10 @@ RADOS_KV {
         nodeid = {{ nodeid }};
         pool = "{{ pool }}";
         namespace = "{{ namespace }}";
+}
+
+CEPH_NODES_LIST {
+        Ceph_Nodes = {{ ceph_nodes|join(", ") }};
 }
 
 RADOS_URLS {

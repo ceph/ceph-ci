@@ -1376,6 +1376,7 @@ class NFSServiceSpec(ServiceSpec):
                  idmap_conf: Optional[Dict[str, Dict[str, str]]] = None,
                  custom_configs: Optional[List[CustomConfig]] = None,
                  cluster_qos_config: Optional[Dict[str, Union[str, bool, int]]] = None,
+                 cluster_qos_port: Optional[int] = None,
                  ssl: bool = False,
                  ssl_cert: Optional[str] = None,
                  ssl_key: Optional[str] = None,
@@ -1414,6 +1415,7 @@ class NFSServiceSpec(ServiceSpec):
         self.enable_rdma = enable_rdma
         self.rdma_port = rdma_port
         self.cluster_qos_config = cluster_qos_config
+        self.cluster_qos_port = cluster_qos_port
 
         # colocation_ports is a list of port dicts for ADDITIONAL colocated daemons
         # The first daemon always uses port and monitoring_port from the spec
@@ -1433,7 +1435,7 @@ class NFSServiceSpec(ServiceSpec):
         return self.COLOCATION_PORT_FIELDS
 
     def get_port_start(self) -> List[int]:
-        ports = [self.port or 2049, self.monitoring_port or 9587]
+        ports = [self.port or 2049, self.monitoring_port or 9587, self.cluster_qos_port or 31311]
         if self.enable_rdma:
             ports.append(self.rdma_port or 20049)
         return ports
@@ -1521,18 +1523,24 @@ class NFSServiceSpec(ServiceSpec):
             qos_type = self.cluster_qos_config.get('qos_type')
             valid_qos_types = ['PerShare', 'PerClient', 'PerShare_PerClient']
             if not qos_type:
-                raise SpecValidationError('Invalid NFS spec: to set cluster-level QoS, "qos_type" must be provided.')
+                raise SpecValidationError(
+                    'Invalid NFS spec: to set cluster-level QoS, "qos_type" must be provided.'
+                )
             if qos_type not in valid_qos_types:
                 raise SpecValidationError(
-                    f'Invalid NFS spec: "{qos_type}" is not a valid qos_type. Valid types are: {"|".join(valid_qos_types)}.'
+                    f'Invalid NFS spec: "{qos_type}" is not a valid qos_type. '
+                    f'Valid types are: {"|".join(valid_qos_types)}.'
                 )
 
             # Verify bandwidth and IOPS types
             for key, value in self.cluster_qos_config.items():
                 if key.endswith('bw') and not isinstance(value, str):
-                    raise SpecValidationError(f"Invalid NFS spec: bandwidth '{key}' should be a string")
+                    raise SpecValidationError(
+                        f"Invalid NFS spec: bandwidth '{key}' should be a string"
+                    )
                 if key.endswith('iops') and not isinstance(value, int):
-                    raise SpecValidationError(f"Invalid NFS spec: IOPS '{key}' should be an integer")
+                    raise SpecValidationError(
+                        f"Invalid NFS spec: IOPS '{key}' should be an integer")
 
         # TLS certificate validation
         if self.ssl and not self.certificate_source:

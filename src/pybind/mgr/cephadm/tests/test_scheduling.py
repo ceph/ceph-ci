@@ -675,8 +675,8 @@ class NodeAssignmentTest(NamedTuple):
             [],
             {},
             {0: {0: None}, 1: {0: None}, 2: {0: None}},
-            ['nfs:host3(rank=0.0 *:2049,9587)', 'nfs:host2(rank=1.0 *:2049,9587)', 'nfs:host1(rank=2.0 *:2049,9587)'],
-            ['nfs:host3(rank=0.0 *:2049,9587)', 'nfs:host2(rank=1.0 *:2049,9587)', 'nfs:host1(rank=2.0 *:2049,9587)'],
+            ['nfs:host3(rank=0.0 *:2049,9587,31311)', 'nfs:host2(rank=1.0 *:2049,9587,31311)', 'nfs:host1(rank=2.0 *:2049,9587,31311)'],
+            ['nfs:host3(rank=0.0 *:2049,9587,31311)', 'nfs:host2(rank=1.0 *:2049,9587,31311)', 'nfs:host1(rank=2.0 *:2049,9587,31311)'],
             []
         ),
         # 21: ranked, exist
@@ -689,8 +689,8 @@ class NodeAssignmentTest(NamedTuple):
             ],
             {0: {1: '0.1'}},
             {0: {1: '0.1'}, 1: {0: None}, 2: {0: None}},
-            ['nfs:host1(rank=0.1 *:2049,9587)', 'nfs:host3(rank=1.0 *:2049,9587)', 'nfs:host2(rank=2.0 *:2049,9587)'],
-            ['nfs:host3(rank=1.0 *:2049,9587)', 'nfs:host2(rank=2.0 *:2049,9587)'],
+            ['nfs:host1(rank=0.1 *:2049,9587,31311)', 'nfs:host3(rank=1.0 *:2049,9587,31311)', 'nfs:host2(rank=2.0 *:2049,9587,31311)'],
+            ['nfs:host3(rank=1.0 *:2049,9587,31311)', 'nfs:host2(rank=2.0 *:2049,9587,31311)'],
             []
         ),
         # ranked, exist, different ranks
@@ -704,8 +704,8 @@ class NodeAssignmentTest(NamedTuple):
             ],
             {0: {1: '0.1'}, 1: {1: '1.1'}},
             {0: {1: '0.1'}, 1: {1: '1.1'}, 2: {0: None}},
-            ['nfs:host1(rank=0.1 *:2049,9587)', 'nfs:host2(rank=1.1 *:2049,9587)', 'nfs:host3(rank=2.0 *:2049,9587)'],
-            ['nfs:host3(rank=2.0 *:2049,9587)'],
+            ['nfs:host1(rank=0.1 *:2049,9587,31311)', 'nfs:host2(rank=1.1 *:2049,9587,31311)', 'nfs:host3(rank=2.0 *:2049,9587,31311)'],
+            ['nfs:host3(rank=2.0 *:2049,9587,31311)'],
             []
         ),
         # ranked, exist, different ranks (2)
@@ -719,8 +719,8 @@ class NodeAssignmentTest(NamedTuple):
             ],
             {0: {1: '0.1'}, 1: {1: '1.1'}},
             {0: {1: '0.1'}, 1: {1: '1.1'}, 2: {0: None}},
-            ['nfs:host1(rank=0.1 *:2049,9587)', 'nfs:host3(rank=1.1 *:2049,9587)', 'nfs:host2(rank=2.0 *:2049,9587)'],
-            ['nfs:host2(rank=2.0 *:2049,9587)'],
+            ['nfs:host1(rank=0.1 *:2049,9587,31311)', 'nfs:host3(rank=1.1 *:2049,9587,31311)', 'nfs:host2(rank=2.0 *:2049,9587,31311)'],
+            ['nfs:host2(rank=2.0 *:2049,9587,31311)'],
             []
         ),
         # ranked, exist, extra ranks
@@ -735,8 +735,8 @@ class NodeAssignmentTest(NamedTuple):
             ],
             {0: {5: '0.5'}, 1: {5: '1.5'}},
             {0: {5: '0.5'}, 1: {5: '1.5'}, 2: {0: None}},
-            ['nfs:host1(rank=0.5 *:2049,9587)', 'nfs:host2(rank=1.5 *:2049,9587)', 'nfs:host3(rank=2.0 *:2049,9587)'],
-            ['nfs:host3(rank=2.0 *:2049,9587)'],
+            ['nfs:host1(rank=0.5 *:2049,9587,31311)', 'nfs:host2(rank=1.5 *:2049,9587,31311)', 'nfs:host3(rank=2.0 *:2049,9587,31311)'],
+            ['nfs:host3(rank=2.0 *:2049,9587,31311)'],
             ['nfs.4.5']
         ),
         # 25: ranked, exist, extra ranks (scale down: kill off high rank)
@@ -751,7 +751,7 @@ class NodeAssignmentTest(NamedTuple):
             ],
             {0: {5: '0.5'}, 1: {5: '1.5'}, 2: {5: '2.5'}},
             {0: {5: '0.5'}, 1: {5: '1.5'}, 2: {5: '2.5'}},
-            ['nfs:host1(rank=0.5 *:2049,9587)', 'nfs:host2(rank=1.5 *:2049,9587)'],
+            ['nfs:host1(rank=0.5 *:2049,9587,31311)', 'nfs:host2(rank=1.5 *:2049,9587,31311)'],
             [],
             ['nfs.2.5']
         ),
@@ -767,8 +767,8 @@ class NodeAssignmentTest(NamedTuple):
             ],
             {0: {5: '0.5'}, 1: {5: '1.5'}, 2: {5: '2.5'}},
             {0: {5: '0.5'}, 1: {5: '1.5', 6: None}, 2: {5: '2.5'}},
-            ['nfs:host1(rank=0.5 *:2049,9587)', 'nfs:host3(rank=1.6 *:2049,9587)'],
-            ['nfs:host3(rank=1.6 *:2049,9587)'],
+            ['nfs:host1(rank=0.5 *:2049,9587,31311)', 'nfs:host3(rank=1.6 *:2049,9587,31311)'],
+            ['nfs:host3(rank=1.6 *:2049,9587,31311)'],
             ['nfs.2.5', 'nfs.1.5']
         ),
         # ranked, exist, duplicate rank
@@ -783,8 +783,8 @@ class NodeAssignmentTest(NamedTuple):
             ],
             {0: {0: '0.0'}, 1: {2: '1.2'}},
             {0: {0: '0.0'}, 1: {2: '1.2'}, 2: {0: None}},
-            ['nfs:host1(rank=0.0 *:2049,9587)', 'nfs:host3(rank=1.2 *:2049,9587)', 'nfs:host2(rank=2.0 *:2049,9587)'],
-            ['nfs:host2(rank=2.0 *:2049,9587)'],
+            ['nfs:host1(rank=0.0 *:2049,9587,31311)', 'nfs:host3(rank=1.2 *:2049,9587,31311)', 'nfs:host2(rank=2.0 *:2049,9587,31311)'],
+            ['nfs:host2(rank=2.0 *:2049,9587,31311)'],
             ['nfs.1.1']
         ),
         # 28: ranked, all gens stale (failure during update cycle)
@@ -798,8 +798,8 @@ class NodeAssignmentTest(NamedTuple):
             ],
             {0: {2: '0.2'}, 1: {2: '1.2', 3: '1.3'}},
             {0: {2: '0.2'}, 1: {2: '1.2', 3: '1.3', 4: None}},
-            ['nfs:host1(rank=0.2 *:2049,9587)', 'nfs:host3(rank=1.4 *:2049,9587)'],
-            ['nfs:host3(rank=1.4 *:2049,9587)'],
+            ['nfs:host1(rank=0.2 *:2049,9587,31311)', 'nfs:host3(rank=1.4 *:2049,9587,31311)'],
+            ['nfs:host3(rank=1.4 *:2049,9587,31311)'],
             ['nfs.1.2']
         ),
         # ranked, not enough hosts (with colocation, 4th daemon can be placed)
@@ -813,8 +813,8 @@ class NodeAssignmentTest(NamedTuple):
             ],
             {0: {2: '0.2'}, 1: {2: '1.2'}},
             {0: {2: '0.2'}, 1: {2: '1.2'}, 2: {0: None}, 3: {0: None}},
-            ['nfs:host1(rank=0.2 *:2049,9587)', 'nfs:host2(rank=1.2 *:2049,9587)', 'nfs:host3(rank=2.0 *:2049,9587)', 'nfs:host3(rank=3.0 *:2050,9588)'],
-            ['nfs:host3(rank=2.0 *:2049,9587)', 'nfs:host3(rank=3.0 *:2050,9588)'],
+            ['nfs:host1(rank=0.2 *:2049,9587,31311)', 'nfs:host2(rank=1.2 *:2049,9587,31311)', 'nfs:host3(rank=2.0 *:2049,9587,31311)', 'nfs:host3(rank=3.0 *:2050,9588,31311)'],
+            ['nfs:host3(rank=2.0 *:2049,9587,31311)', 'nfs:host3(rank=3.0 *:2050,9588,31311)'],
             []
         ),
         # ranked, scale down
@@ -829,8 +829,8 @@ class NodeAssignmentTest(NamedTuple):
             ],
             {0: {2: '0.2'}, 1: {2: '1.2'}, 2: {2: '2.2'}},
             {0: {2: '0.2', 3: None}, 1: {2: '1.2'}, 2: {2: '2.2'}},
-            ['nfs:host2(rank=0.3 *:2049,9587)'],
-            ['nfs:host2(rank=0.3 *:2049,9587)'],
+            ['nfs:host2(rank=0.3 *:2049,9587,31311)'],
+            ['nfs:host2(rank=0.3 *:2049,9587,31311)'],
             ['nfs.0.2', 'nfs.1.2', 'nfs.2.2']
         ),
         # NFS colocation - count > hosts, ports should increment
