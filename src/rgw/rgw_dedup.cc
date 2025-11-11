@@ -1691,15 +1691,20 @@ namespace rgw::dedup {
       obj_count += result.dir.m.size();
       for (auto& entry : result.dir.m) {
         const rgw_bucket_dir_entry& dirent = entry.second;
+        // make sure to advance marker in all cases!
+        marker = dirent.key;
+
         if (unlikely((!dirent.exists && !dirent.is_delete_marker()) || !dirent.pending_map.empty())) {
           // TBD: should we bailout ???
           ldpp_dout(dpp, 1) << __func__ << "::ERR: calling check_disk_state bucket="
                             << bucket->get_name() << " entry=" << dirent.key << dendl;
-          // make sure we're advancing marker
-          marker = dirent.key;
           continue;
         }
-        marker = dirent.key;
+        else if (unlikely(dirent.is_delete_marker())) {
+          ldpp_dout(dpp, 20) << __func__ << "::skip delete_marker::" << bucket->get_name()
+                             << "/" << marker.name << "::instance=" << marker.instance << dendl;
+          continue;
+        }
         ret = ingress_bucket_idx_single_object(disk_arr, bucket, dirent, p_worker_stats);
       }
       // TBD: advance marker only once here!
