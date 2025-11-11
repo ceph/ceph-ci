@@ -1226,8 +1226,8 @@ namespace rgw::dedup {
       return ret;
     }
 
-    // 10 seconds timeout
-    const uint64_t timeout_ms = 10*1000;
+    // unlimited timeout
+    const uint64_t timeout_ms = 0;
     bufferlist reply_bl;
     ret = rgw_rados_notify(dpp, ctl_ioctx, DEDUP_WATCH_OBJ, urgent_msg_bl,
                            timeout_ms, &reply_bl, null_yield);
