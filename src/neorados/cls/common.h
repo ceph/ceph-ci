@@ -35,7 +35,7 @@
 #include "include/encoding.h"
 
 #if !defined(__clang__) && defined(__GNUC__) && (__GNUC__ < 13)
-#define BROKEN_CO_COMPOSED
+#define BROKEN_CO_COMPOSED 1
 #endif
 
 /// \file neorados/cls/common.h
