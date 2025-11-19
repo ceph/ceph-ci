@@ -54,6 +54,7 @@ UsagePerfCounters::~UsagePerfCounters() {
 
 void UsagePerfCounters::create_global_counters() {
   PerfCountersBuilder b(cct, "rgw_usage", l_rgw_usage_first, l_rgw_usage_last);
+  b.set_prio_default(PerfCountersBuilder::PRIO_USEFUL);
   
   // Placeholder counters for indices that aren't globally used
   b.add_u64(l_rgw_user_used_bytes, "user_used_bytes", 
@@ -99,6 +100,7 @@ PerfCounters* UsagePerfCounters::create_user_counters(const std::string& user_id
   };
 
   PerfCountersBuilder b(cct, name, l_rgw_user_first, l_rgw_user_last);
+  b.set_prio_default(PerfCountersBuilder::PRIO_USEFUL);
 
   b.add_u64(l_rgw_user_bytes, "used_bytes",
            "Bytes used by user", nullptr, 0, unit_t(UNIT_BYTES));
@@ -131,7 +133,7 @@ PerfCounters* UsagePerfCounters::create_bucket_counters(const std::string& bucke
   };
 
   PerfCountersBuilder b(cct, name, l_rgw_bucket_first, l_rgw_bucket_last);
-
+  b.set_prio_default(PerfCountersBuilder::PRIO_USEFUL);
   b.add_u64(l_rgw_bucket_bytes, "used_bytes",
            "Bytes used in bucket", nullptr, 0, unit_t(UNIT_BYTES));
   b.add_u64(l_rgw_bucket_objects, "num_objects",
