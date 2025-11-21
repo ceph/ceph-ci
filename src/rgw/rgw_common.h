@@ -1806,16 +1806,16 @@ bool verify_user_permission(const DoutPrefixProvider* dpp,
 bool verify_user_permission_no_policy(const DoutPrefixProvider* dpp,
                                       req_state * const s,
                                       int perm);
-bool verify_bucket_permission(const DoutPrefixProvider* dpp,
-                              const perm_state_base * const s,
-                              const rgw::ARN& arn,
-                              bool account_root,
-                              const RGWAccessControlPolicy& user_acl,
-                              const RGWAccessControlPolicy& bucket_acl,
-			      const boost::optional<rgw::IAM::Policy>& bucket_policy,
-                              const std::vector<rgw::IAM::Policy>& identity_policies,
-                              const std::vector<rgw::IAM::Policy>& session_policies,
-                              const uint64_t op, bool *granted_by_acl = nullptr);
+bool verify_bucket_permission(
+    const DoutPrefixProvider *dpp, const perm_state_base *const s,
+    const rgw::ARN &arn, bool account_root,
+    const RGWAccessControlPolicy &user_acl,
+    const RGWAccessControlPolicy &bucket_acl,
+    const boost::optional<rgw::IAM::Policy> &bucket_policy,
+    const std::vector<rgw::IAM::Policy> &identity_policies,
+    const std::vector<rgw::IAM::Policy> &session_policies, const uint64_t op,
+    bool *granted_by_acl = nullptr, bool bucket_owner_comptability = false);
+
 bool verify_bucket_permission(
   const DoutPrefixProvider* dpp,
   req_state * const s,
