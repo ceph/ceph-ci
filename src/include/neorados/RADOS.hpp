@@ -1373,6 +1373,14 @@ public:
       }, consigned);
   }
 
+  // Prevent passing a `CephContext*`.
+
+  template<boost::asio::completion_token_for<BuildSig> CompletionToken>
+  static auto make_with_cct(CephContext* cct,
+			    boost::asio::io_context& ioctx,
+			    CompletionToken&& token) = delete;
+
+
   static RADOS make_with_librados(librados::Rados& rados);
 
   RADOS(const RADOS&);
