@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 smarttab ft=cpp
 
 #include <optional>
+#include <boost/algorithm/string.hpp>
 
 #include "common/errno.h"
 
@@ -959,9 +960,67 @@ void RGWZoneGroupPlacementTierS3::decode_json(JSONObj *obj)
   JSONDecoder::decode_json("location_constraint", location_constraint, obj);
   JSONDecoder::decode_json("target_storage_class", target_storage_class, obj);
   JSONDecoder::decode_json("target_path", target_path, obj);
+  JSONDecoder::decode_json("target_by_bucket", target_by_bucket, obj);
+  JSONDecoder::decode_json("target_by_bucket_prefix", target_by_bucket_prefix, obj);
   JSONDecoder::decode_json("acl_mappings", acl_mappings, obj);
   JSONDecoder::decode_json("multipart_sync_threshold", multipart_sync_threshold, obj);
   JSONDecoder::decode_json("multipart_min_part_size", multipart_min_part_size, obj);
+}
+
+std::string RGWZoneGroupPlacementTierS3::make_target_bucket_name(
+    const std::string& zonegroup_name,
+    const std::string& storage_class,
+    const std::string& bucket_name,
+    const std::string& tenant,
+    const std::string& owner) const
+{
+  auto substitute = [](std::string& target, const std::string& placeholder,
+                       const std::string& value) {
+    size_t pos = 0;
+    while ((pos = target.find(placeholder, pos)) != std::string::npos) {
+      target.replace(pos, placeholder.size(), value);
+      pos += value.size();
+    }
+  };
+
+  const bool has_custom_target = !target_path.empty();
+  const bool has_custom_bucket_prefix = !target_by_bucket_prefix.empty();
+
+  std::string templ;
+
+  if (target_by_bucket) {
+    if (has_custom_bucket_prefix) {
+      templ = target_by_bucket_prefix;
+    } else {
+      templ = "rgwx-${zonegroup}-${storage_class}-${bucket}";
+    }
+  } else {
+    if (has_custom_target) {
+      templ = target_path;
+    } else {
+      templ = "rgwx-${zonegroup}-${storage_class}-cloud-bucket";
+    }
+  }
+
+  if (target_by_bucket) {
+    const bool has_bucket_token = templ.find("${bucket}") != std::string::npos;
+    substitute(templ, "${bucket}", bucket_name);
+    if (!has_bucket_token) {
+      if (!templ.empty() && templ.back() != '-' && templ.back() != '/') {
+        templ.push_back('-');
+      }
+      templ.append(bucket_name);
+    }
+    substitute(templ, "${tenant}", tenant);
+    substitute(templ, "${owner}", owner);
+  }
+
+  substitute(templ, "${zonegroup}", zonegroup_name);
+  substitute(templ, "${storage_class}", storage_class);
+
+  boost::algorithm::to_lower(templ);
+
+  return templ;
 }
 
 void RGWZoneStorageClass::dump(Formatter *f) const
@@ -1015,6 +1074,8 @@ void RGWZoneGroupPlacementTierS3::dump(Formatter *f) const
   encode_json("location_constraint", location_constraint, f);
   encode_json("target_storage_class", target_storage_class, f);
   encode_json("target_path", target_path, f);
+  encode_json("target_by_bucket", target_by_bucket, f);
+  encode_json("target_by_bucket_prefix", target_by_bucket_prefix, f);
   encode_json("acl_mappings", acl_mappings, f);
   encode_json("multipart_sync_threshold", multipart_sync_threshold, f);
   encode_json("multipart_min_part_size", multipart_min_part_size, f);

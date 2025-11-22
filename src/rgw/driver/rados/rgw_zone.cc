@@ -1421,6 +1421,19 @@ int RGWZoneGroupPlacementTierS3::update_params(const JSONFormattable& config)
   if (config.exists("target_path")) {
     target_path = config["target_path"];
   }
+  if (config.exists("target_by_bucket")) {
+    string s = config["target_by_bucket"];
+    target_by_bucket = (s == "true");
+  }
+  if (config.exists("target_by_bucket_prefix")) {
+    target_by_bucket_prefix = config["target_by_bucket_prefix"];
+  }
+  if (target_by_bucket) {
+    if (!target_by_bucket_prefix.empty() &&
+        target_by_bucket_prefix.find('/') != std::string::npos) {
+      ldout(g_ceph_context, 1) << "cloud tier target_by_bucket_prefix contains '/', which may be invalid for bucket names" << dendl;
+    }
+  }
   if (config.exists("region")) {
     region = config["region"];
   }
@@ -1487,6 +1500,12 @@ int RGWZoneGroupPlacementTierS3::clear_params(const JSONFormattable& config)
   }
   if (config.exists("target_path")) {
     target_path.clear();
+  }
+  if (config.exists("target_by_bucket")) {
+    target_by_bucket = false;
+  }
+  if (config.exists("target_by_bucket_prefix")) {
+    target_by_bucket_prefix.clear();
   }
   if (config.exists("region")) {
     region.clear();
