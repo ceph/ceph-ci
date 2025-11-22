@@ -39,6 +39,7 @@ struct RGWLCCloudTierCtx {
 
   bool is_multipart_upload{false};
   bool target_bucket_created{true};
+  bool target_by_bucket{false};
 
   optional_yield y;
 
@@ -46,10 +47,12 @@ struct RGWLCCloudTierCtx {
       rgw_bucket_dir_entry& _o, rgw::sal::Driver *_driver,
       RGWBucketInfo &_binfo, rgw::sal::Object *_obj,
       RGWRESTConn& _conn, std::string& _bucket,
-      std::string& _storage_class, optional_yield _y) :
+      std::string& _storage_class, bool _target_by_bucket,
+      optional_yield _y) :
     cct(_cct), dpp(_dpp), o(_o), driver(_driver), bucket_info(_binfo),
     obj(_obj), conn(_conn), target_bucket_name(_bucket),
-    target_storage_class(_storage_class), y(_y) {}
+    target_storage_class(_storage_class),
+    target_by_bucket(_target_by_bucket), y(_y) {}
 };
 
 /* Transition object to cloud endpoint */
