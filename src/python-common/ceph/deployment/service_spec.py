@@ -1672,6 +1672,7 @@ class RGWSpec(ServiceSpec):
             rgw_zone: myzone
             ssl: true
             rgw_frontend_port: 1234
+            rgw_frontend_http_port: 4321
             rgw_frontend_type: beast
             rgw_frontend_ssl_certificate: ...
             # Optional: enable D3N (L1 datacache) for RGW
@@ -1703,6 +1704,7 @@ class RGWSpec(ServiceSpec):
                  rgw_zonegroup: Optional[str] = None,
                  rgw_zone: Optional[str] = None,
                  rgw_frontend_port: Optional[int] = None,
+                 rgw_frontend_http_port: Optional[int] = None,
                  rgw_frontend_ssl_certificate: Optional[Union[str, List[str]]] = None,
                  rgw_frontend_type: Optional[str] = None,
                  rgw_frontend_extra_args: Optional[List[str]] = None,
@@ -1768,6 +1770,8 @@ class RGWSpec(ServiceSpec):
         self.rgw_zone: Optional[str] = rgw_zone
         #: Port of the RGW daemons
         self.rgw_frontend_port: Optional[int] = rgw_frontend_port
+        #: Secondary RGW frontend port, intended for HTTP (unencrypted) traffic only.
+        self.rgw_frontend_http_port: Optional[int] = rgw_frontend_http_port
         #: List of SSL certificates
         self.rgw_frontend_ssl_certificate: Optional[Union[str, List[str]]] \
             = rgw_frontend_ssl_certificate
@@ -1809,16 +1813,39 @@ class RGWSpec(ServiceSpec):
         ports = self.get_port()
         return ports
 
+    def get_http_port(self) -> Optional[int]:
+        """Secondary (plain HTTP) port. Only honoured when SSL is enabled."""
+        if self.ssl and self.rgw_frontend_http_port:
+            return self.rgw_frontend_http_port
+        return None
+
     def get_port(self) -> List[int]:
+        # Layout: [primary, secondary (only if set), extra ssl_port (only if set)].
+        # When a secondary port is configured the primary port is always
+        # present (defaulting to 443), so the secondary port is at index 1.
         ports = []
+        secondary = self.get_http_port()
+
         if self.rgw_frontend_port:
             ports.append(self.rgw_frontend_port)
+        elif secondary is not None:
+            ports.append(443)
 
+        if secondary is not None:
+            ports.append(secondary)
+
+        # Best effort: accept "ssl_port=444" as well as "ssl_port=<ip>:444".
+        # Values that do not end in a port number are ignored here, never
+        # raised on: get_port() runs on scheduling and listing paths.
         ssl_port = next(
             (
-                int(arg.split('=')[1])
-                for arg in (self.rgw_frontend_extra_args or [])
-                if arg.startswith("ssl_port=")
+                int(m.group(1))
+                for m in (
+                    re.search(r'(\d+)$', arg.split('=', 1)[1].strip())
+                    for arg in (self.rgw_frontend_extra_args or [])
+                    if arg.startswith("ssl_port=")
+                )
+                if m
             ),
             None,
         )
@@ -1859,10 +1886,123 @@ class RGWSpec(ServiceSpec):
         self.certificate_source = CertificateSource.INLINE.value
         self.rgw_frontend_ssl_certificate = None
 
+    # rgw_frontend_extra_args options that bind a fixed port
+    _FIXED_PORT_KEYS = ('port', 'ssl_port', 'endpoint', 'ssl_endpoint')
+
+    @staticmethod
+    def _ports_in_extra_arg(arg: str) -> List[int]:
+        """Port numbers named by a port/endpoint style frontend option.
+
+        Understands "port=8080", "port=<ip>:8080", "endpoint=[::1]:8080" and
+        the civetweb form "port=8080+8443s". Best effort: anything that
+        does not look like a port is ignored and nothing is ever raised.
+        """
+        key, _, value = arg.partition('=')
+        if key not in RGWSpec._FIXED_PORT_KEYS:
+            return []
+        found = []
+        for token in value.split('+'):
+            m = re.search(r'(?:^|:)(\d+)s?$', token.strip())
+            if m:
+                found.append(int(m.group(1)))
+        return found
+
+    @staticmethod
+    def _is_civetweb_ssl_port(arg: str) -> bool:
+        """True if a "port=" option marks a port as SSL, e.g. "port=8443s",
+        "port=8080+8443s" or "port=10.0.0.1:8443s" (civetweb syntax)."""
+        key, _, value = arg.partition('=')
+        return key == 'port' and any(
+            re.search(r'(?:^|:)\d+s$', token.strip()) for token in value.split('+')
+        )
+
+    def _validate_http_port(self) -> None:
+        secondary = self.rgw_frontend_http_port
+        if not secondary:
+            return
+        if not self.ssl:
+            raise SpecValidationError(
+                'Invalid rgw_frontend_http_port: Only can be enabled with SSL'
+            )
+        if not 1 <= secondary <= 65535:
+            raise SpecValidationError(
+                'Invalid rgw_frontend_http_port: must be in the range 1-65535'
+            )
+        primary = self.rgw_frontend_port or 443
+        if primary == secondary:
+            if self.rgw_frontend_port:
+                same_as = 'rgw_frontend_port'
+            else:
+                same_as = ('rgw_frontend_port, which defaults to 443 when ssl is '
+                           'enabled and it is not set')
+            raise SpecValidationError(
+                f'Invalid rgw_frontend_http_port: {secondary} is the same port as '
+                f'{same_as}. The two ports must be different.'
+            )
+        # with count_per_host=N the i-th daemon on a host uses
+        # (primary + i, secondary + i): the two ranges must not overlap
+        count = (self.placement.count_per_host if self.placement else None) or 1
+        if abs(secondary - primary) < count:
+            raise SpecValidationError(
+                f'Invalid rgw_frontend_http_port: ports {primary} and {secondary} '
+                f'overlap when count_per_host is {count}'
+            )
+        if max(primary, secondary) + count - 1 > 65535:
+            raise SpecValidationError(
+                'Invalid rgw_frontend_http_port: port range exceeds 65535 '
+                f'with count_per_host {count}'
+            )
+
+        # A fixed port in rgw_frontend_extra_args must not repeat a port that
+        # is already bound, or the radosgw would try to listen on it twice.
+        used = {primary: 'rgw_frontend_port', secondary: 'rgw_frontend_http_port'}
+        for arg in (self.rgw_frontend_extra_args or []):
+            for extra_port in self._ports_in_extra_arg(arg):
+                if extra_port in used:
+                    raise SpecValidationError(
+                        f'Invalid rgw_frontend_extra_args: "{arg}" uses port {extra_port}, '
+                        f'which is already used by {used[extra_port]}'
+                    )
+                used[extra_port] = f'"{arg}"'
+
+        if count > 1:
+            # Every daemon gets the same rgw_frontend_extra_args, so a fixed
+            # port in there would be bound by all the daemons on the host.
+            # Only the key is inspected, the value is never parsed.
+            offending = sorted({
+                arg.split('=', 1)[0]
+                for arg in (self.rgw_frontend_extra_args or [])
+                if arg.split('=', 1)[0] in self._FIXED_PORT_KEYS
+            })
+            if offending:
+                raise SpecValidationError(
+                    f'Invalid rgw_frontend_extra_args: {", ".join(offending)} cannot be '
+                    'used together with rgw_frontend_http_port when count_per_host '
+                    f'is {count}: every daemon on a host would bind the same fixed port'
+                )
+
+    # rgw_frontend_extra_args options that only make sense with ssl enabled
+    _SSL_ONLY_KEYS = ('ssl_port', 'ssl_endpoint')
+
+    def _validate_ssl_extra_args(self) -> None:
+        if self.ssl:
+            return
+        offending = [arg for arg in (self.rgw_frontend_extra_args or [])
+                     if arg.partition('=')[0] in self._SSL_ONLY_KEYS
+                     or self._is_civetweb_ssl_port(arg)]
+        if offending:
+            raise SpecValidationError(
+                f'Invalid rgw_frontend_extra_args: {", ".join(offending)} can only be '
+                'used when ssl is enabled (set "ssl: true")'
+            )
+
     def validate(self) -> None:
 
         if self.ssl and not self.ssl_cert and self.rgw_frontend_ssl_certificate:
             self._migrate_legacy_rgw_frontend_ssl_certificate()
+
+        self._validate_http_port()
+        self._validate_ssl_extra_args()
 
         # This validation is done after adjusting the SSL field so when
         # RGW Spec is updated with the right fields before validation
