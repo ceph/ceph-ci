@@ -1411,11 +1411,16 @@ class Notifier : public async::service_list_base_hook {
     if (neoref) {
       neoref = nullptr;
     }
-    if (linger_op) {
-      linger_op->put();
-    }
     std::unique_lock l(m);
     handlers.clear();
+    l.unlock();
+    if (linger_op) {
+      // We are being taken down and will execute no more
+      // handlers. Call `linger_cancel` to clean up properly in
+      // Objecter. (It doesn't call out to the OSD or anything.)
+      linger_op->objecter->linger_cancel(linger_op);
+    }
+    // We may be freed after this point. Touch nothing.
   }
 
 public:
