@@ -1544,13 +1544,15 @@ void RADOS::watch_(Object o, IOContext _ioc,
   auto e = asio::prefer(get_executor(),
 			asio::execution::outstanding_work.tracked);
   impl->objecter->linger_watch(
-    linger_op, op, ioc->snapc, ceph::real_clock::now(), bl,
-    asio::bind_executor(
-      std::move(e),
-      [c = std::move(c), cookie, linger_op](bs::error_code e, cb::list) mutable {
+      linger_op, op, ioc->snapc, ceph::real_clock::now(), bl,
+      asio::bind_executor(std::move(e), [
+        c = std::move(c), cookie,
+        objecter = impl->objecter](bs::error_code e, cb::list) mutable {
 	if (e) {
-	  linger_op->objecter->linger_cancel(linger_op);
-	  cookie = 0;
+          if (auto linger_op = objecter->linger_by_cookie(cookie)) {
+            objecter->linger_cancel(linger_op.get());
+          }
+          cookie = 0;
 	}
 	asio::dispatch(asio::append(std::move(c), e, cookie));
       }), nullptr);
@@ -1581,11 +1583,13 @@ void RADOS::watch_(Object o, IOContext _ioc, WatchComp c,
     linger_op, op, ioc->snapc, ceph::real_clock::now(), bl,
     asio::bind_executor(
       std::move(e),
-      [c = std::move(c), cookie, linger_op](bs::error_code e, cb::list) mutable {
+      [c = std::move(c), cookie, objecter = impl->objecter](bs::error_code e, cb::list) mutable {
 	if (e) {
-	  linger_op->user_data.reset();
-	  linger_op->objecter->linger_cancel(linger_op);
-	  cookie = 0;
+          if (auto linger_op = objecter->linger_by_cookie(cookie)) {
+            linger_op->user_data.reset();
+            objecter->linger_cancel(linger_op.get());
+          }
+          cookie = 0;
 	}
 	asio::dispatch(asio::append(std::move(c), e, cookie));
       }), nullptr);
