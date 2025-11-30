@@ -364,3 +364,14 @@ Cloud Restore feature currently enables the restoration of objects transitioned 
 .. confval:: rgw_restore_processor_period
 
 These values can be tuned based upon your specific workload to further increase the aggressiveness of restore processing. 
+
+Cloud Delete Settings
+=====================
+
+When ``allow_delete_through`` and ``retain_head_object`` are both enabled,
+RGW enqueues asynchronous deletes of remote cloud objects. These settings
+control the background worker that processes that queue.
+
+.. confval:: rgw_cloud_delete_interval
+.. confval:: rgw_cloud_delete_max_objs
+.. confval:: rgw_enable_cloud_delete_threads

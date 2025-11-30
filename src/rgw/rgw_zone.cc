@@ -308,6 +308,7 @@ void RGWZoneParams::decode_json(JSONObj *obj)
   JSONDecoder::decode_json("tier_config", tier_config, obj);
   JSONDecoder::decode_json("realm_id", realm_id, obj);
   JSONDecoder::decode_json("restore_pool", restore_pool, obj);
+  JSONDecoder::decode_json("cloud_delete_pool", cloud_delete_pool, obj);
 }
 
 void RGWZoneParams::dump(Formatter *f) const
@@ -338,6 +339,7 @@ void RGWZoneParams::dump(Formatter *f) const
   encode_json("tier_config", tier_config, f);
   encode_json("realm_id", realm_id, f);
   encode_json("restore_pool", restore_pool, f);
+  encode_json("cloud_delete_pool", cloud_delete_pool, f);
 }
 
 int RGWZoneParams::init(const DoutPrefixProvider *dpp, 
@@ -497,6 +499,7 @@ void add_zone_pools(const RGWZoneParams& info,
   pools.insert(info.topics_pool);
   pools.insert(info.account_pool);
   pools.insert(info.group_pool);
+  pools.insert(info.cloud_delete_pool);
 
   for (const auto& [pname, placement] : info.placement_pools) {
     pools.insert(placement.index_pool);
@@ -964,6 +967,7 @@ void RGWZoneGroupPlacementTierS3::decode_json(JSONObj *obj)
   JSONDecoder::decode_json("target_path", target_path, obj);
   JSONDecoder::decode_json("target_by_bucket", target_by_bucket, obj);
   JSONDecoder::decode_json("target_by_bucket_prefix", target_by_bucket_prefix, obj);
+  JSONDecoder::decode_json("allow_delete_through", allow_delete_through, obj);
   JSONDecoder::decode_json("acl_mappings", acl_mappings, obj);
   JSONDecoder::decode_json("multipart_sync_threshold", multipart_sync_threshold, obj);
   JSONDecoder::decode_json("multipart_min_part_size", multipart_min_part_size, obj);
@@ -1078,6 +1082,7 @@ void RGWZoneGroupPlacementTierS3::dump(Formatter *f) const
   encode_json("target_path", target_path, f);
   encode_json("target_by_bucket", target_by_bucket, f);
   encode_json("target_by_bucket_prefix", target_by_bucket_prefix, f);
+  encode_json("allow_delete_through", allow_delete_through, f);
   encode_json("acl_mappings", acl_mappings, f);
   encode_json("multipart_sync_threshold", multipart_sync_threshold, f);
   encode_json("multipart_min_part_size", multipart_min_part_size, f);
@@ -1351,6 +1356,7 @@ int init_zone_pool_names(const DoutPrefixProvider *dpp, optional_yield y,
   info.gc_pool = fix_zone_pool_dup(pools, info.name, ".rgw.log:gc", info.gc_pool);
   info.lc_pool = fix_zone_pool_dup(pools, info.name, ".rgw.log:lc", info.lc_pool);
   info.restore_pool = fix_zone_pool_dup(pools, info.name, ".rgw.log:restore", info.restore_pool);
+  info.cloud_delete_pool = fix_zone_pool_dup(pools, info.name, ".rgw.log:cloud-delete", info.cloud_delete_pool);
   info.log_pool = fix_zone_pool_dup(pools, info.name, ".rgw.log", info.log_pool);
   info.intent_log_pool = fix_zone_pool_dup(pools, info.name, ".rgw.log:intent", info.intent_log_pool);
   info.usage_log_pool = fix_zone_pool_dup(pools, info.name, ".rgw.log:usage", info.usage_log_pool);

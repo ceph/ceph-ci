@@ -60,6 +60,11 @@ namespace rgw {
   namespace IAM { struct Policy; }
 }
 
+namespace rgw::cloud_delete {
+  class CloudDelete;
+  struct CloudDeleteEntry;
+}
+
 namespace rgw::restore {
   class Restore;
   struct RestoreEntry;
@@ -150,6 +155,7 @@ namespace rgw { namespace sal {
 struct MPSerializer;
 class GCChain;
 class RGWRole;
+class CloudDelete;
 
 enum AttrsMod {
   ATTRSMOD_NONE    = 0,
@@ -480,6 +486,8 @@ class Driver {
     virtual std::unique_ptr<Lifecycle> get_lifecycle(void) = 0;
     /** Get a @a Restore object. Used to manage/run restore objects */
     virtual std::unique_ptr<Restore> get_restore(void) = 0;
+    /** Get a @a CloudDelete object. Used to manage async cloud object deletion */
+    virtual std::unique_ptr<CloudDelete> get_cloud_delete(void) = 0;
     /** Reset the temporarily restored objects which are expired */
     virtual bool process_expired_objects(const DoutPrefixProvider *dpp, optional_yield y) = 0;
 
@@ -572,7 +580,9 @@ class Driver {
     /** Get access to the lifecycle management thread */
     virtual RGWLC* get_rgwlc(void) = 0;
     /** Get access to the tier restore management thread */
-    virtual rgw::restore::Restore* get_rgwrestore(void) = 0;   
+    virtual rgw::restore::Restore* get_rgwrestore(void) = 0;
+    /** Get access to cloud delete processing thread (optional) */
+    virtual rgw::cloud_delete::CloudDelete* get_rgwcloud_delete(void) { return nullptr; }
     /** Get access to the coroutine registry.  Used to create new coroutine managers */
     virtual RGWCoroutinesManagerRegistry* get_cr_registry() = 0;
 
@@ -1175,6 +1185,7 @@ class Object {
         rgw_zone_set* zones_trace{nullptr};
 	bool abortmp{false};
 	uint64_t parts_accounted_size{0};
+        obj_version* check_objv{nullptr};
         RGWObjVersionTracker* objv_tracker = nullptr;
       } params;
 
@@ -1727,7 +1738,44 @@ public:
 						const std::string& oid,
 						const std::string& cookie) = 0;
 };
-  
+
+class CloudDeleteSerializer : public Serializer {
+public:
+  CloudDeleteSerializer() {}
+  virtual ~CloudDeleteSerializer() = default;
+};
+
+/**
+ * @brief Abstraction for cloud delete processing
+ *
+ * The CloudDelete class manages asynchronous deletion of cloud-tiered objects
+ * from remote storage when local objects are deleted.
+ */
+class CloudDelete {
+public:
+  CloudDelete() = default;
+  virtual ~CloudDelete() = default;
+  virtual int initialize(const DoutPrefixProvider* dpp, optional_yield y,
+                        int n_objs, std::vector<std::string>& obj_names) = 0;
+  /** Enqueue a cloud delete entry */
+  virtual int enqueue(const DoutPrefixProvider* dpp, optional_yield y,
+                     const rgw::cloud_delete::CloudDeleteEntry& entry) = 0;
+  /** List entries from a shard */
+  virtual int list_entries(const DoutPrefixProvider* dpp, optional_yield y,
+                          int index, const std::string& marker,
+                          std::string* out_marker, uint32_t max_entries,
+                          std::vector<rgw::cloud_delete::CloudDeleteEntry>& entries,
+                          bool* truncated) = 0;
+  /** Trim entries up to marker */
+  virtual int trim_entries(const DoutPrefixProvider* dpp, optional_yield y,
+                          int index, const std::string& marker) = 0;
+  /** Get a serializer for per-shard locking */
+  virtual std::unique_ptr<CloudDeleteSerializer> get_serializer(
+                          const std::string& lock_name,
+                          const std::string& oid,
+                          const std::string& cookie) = 0;
+};
+
 /**
  * @brief Abstraction for a Notification event
  *
@@ -1808,6 +1856,8 @@ public:
   virtual bool allow_read_through() = 0;
   /** Get read_through restore_days */
   virtual uint64_t get_read_through_restore_days() = 0;
+  /** Should we delete cloud objects when local objects are deleted */
+  virtual bool allow_delete_through() = 0;
   /** Get the placement rule associated with this tier */
 };
 
@@ -1949,6 +1999,7 @@ public:
 				      bool use_gc_thread,
 				      bool use_lc_thread,
 				      bool use_restore_thread,
+				      bool use_cloud_delete_thread,
 				      bool quota_threads,
 				      bool run_sync_thread,
 				      bool run_reshard_thread,
@@ -1963,6 +2014,7 @@ public:
 						   use_gc_thread,
 						   use_lc_thread,
 						   use_restore_thread,
+						   use_cloud_delete_thread,
 						   quota_threads,
 						   run_sync_thread,
 						   run_reshard_thread,
@@ -1991,6 +2043,7 @@ public:
 						bool use_gc_thread,
 						bool use_lc_thread,
 						bool use_restore_thread,
+						bool use_cloud_delete_thread,
 						bool quota_threads,
 						bool run_sync_thread,
 						bool run_reshard_thread,

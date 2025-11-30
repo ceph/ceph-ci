@@ -40,6 +40,7 @@ namespace sal {
   class MultipartUpload;
   class Lifecycle;
   class Restore;
+  class CloudDelete;
   class Notification;
   class Writer;
   class PlacementTier;

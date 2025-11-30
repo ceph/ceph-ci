@@ -27,6 +27,7 @@
 #include "rgw_asio_thread.h"
 #include "rgw_cksum.h"
 #include "rgw_sal.h"
+#include "rgw_cloud_delete.h"
 #include "rgw_zone.h"
 #include "rgw_cache.h"
 #include "rgw_acl.h"
@@ -1152,7 +1153,11 @@ void RGWRados::finalize()
   if (use_restore_thread) {
     restore->stop_processor();
   }
+  if (cloud_delete) {
+    cloud_delete->stop_processor();
+  }
   restore = NULL;
+  cloud_delete = NULL;
 }
 
 /** 
@@ -1256,7 +1261,15 @@ int RGWRados::init_complete(const DoutPrefixProvider *dpp, optional_yield y)
   if (ret < 0)
     return ret;
 
+  ret = open_cloud_delete_pool_ctx(dpp);
+  if (ret < 0)
+    return ret;
+
   ret = open_restore_pool_ctx(dpp);
+  if (ret < 0)
+    return ret;
+
+  ret = open_cloud_delete_pool_neo_ctx(dpp);
   if (ret < 0)
     return ret;
 
@@ -1402,6 +1415,16 @@ int RGWRados::init_complete(const DoutPrefixProvider *dpp, optional_yield y)
   if (use_restore_thread)
     restore->start_processor();
 
+  cloud_delete = rgw::cloud_delete::make_cloud_delete();
+  ret = cloud_delete->initialize(cct, this->driver);
+  if (ret < 0) {
+    ldpp_dout(dpp, 0) << "ERROR: failed to initialize cloud delete queue" << dendl;
+    return ret;
+  }
+  if (use_cloud_delete_thread) {
+    cloud_delete->start_processor();
+  }
+
   quota_handler = RGWQuotaHandler::generate_handler(dpp, this->driver, quota_threads);
 
   bucket_index_max_shards = (cct->_conf->rgw_override_bucket_index_max_shards ? cct->_conf->rgw_override_bucket_index_max_shards :
@@ -1528,6 +1551,11 @@ int RGWRados::open_restore_pool_ctx(const DoutPrefixProvider *dpp)
   return rgw_init_ioctx(dpp, get_rados_handle(), svc.zone->get_zone_params().restore_pool, restore_pool_ctx, true, true);
 }
 
+int RGWRados::open_cloud_delete_pool_ctx(const DoutPrefixProvider *dpp)
+{
+  return rgw_init_ioctx(dpp, get_rados_handle(), svc.zone->get_zone_params().cloud_delete_pool, cloud_delete_pool_ctx, true, true);
+}
+
 int RGWRados::open_restore_pool_neo_ctx(const DoutPrefixProvider *dpp)
 {
   maybe_warn_about_blocking(dpp);
@@ -1540,6 +1568,23 @@ int RGWRados::open_restore_pool_neo_ctx(const DoutPrefixProvider *dpp)
     ldpp_dout(dpp, -1) << __PRETTY_FUNCTION__ << ": Failed to initialized ioctx: "
 	   	       << e.what()
 	      	       << ", for restore pool" << dendl;
+    return ceph::from_error_code(e.code());
+  }
+  return 0;
+}
+
+int RGWRados::open_cloud_delete_pool_neo_ctx(const DoutPrefixProvider *dpp)
+{
+  maybe_warn_about_blocking(dpp);
+  try {
+    cloud_delete_pool_neo_ctx = rgw::init_iocontext(dpp, driver->get_neorados(),
+		                       svc.zone->get_zone_params().cloud_delete_pool,
+				       rgw::create, ceph::async::use_blocked);
+
+  } catch (const boost::system::system_error& e) {
+    ldpp_dout(dpp, -1) << __PRETTY_FUNCTION__ << ": Failed to initialize ioctx: "
+                       << e.what()
+                       << ", for cloud delete pool" << dendl;
     return ceph::from_error_code(e.code());
   }
   return 0;

@@ -218,6 +218,7 @@ protected:
     virtual uint64_t get_read_through_restore_days() { return tier.read_through_restore_days; }
     virtual bool retain_head_object() { return tier.retain_head_object; }
     virtual bool retain_current_version() { return tier.retain_current_version; }
+    virtual bool allow_delete_through() { return tier.is_tier_type_s3() ? tier.t.s3.allow_delete_through : false; }
     RGWZoneGroupPlacementTier& get_rt() { return tier; }
   };
 
@@ -900,6 +901,7 @@ public:
       virtual int cluster_stat(RGWClusterStat& stats) override;
       virtual std::unique_ptr<Lifecycle> get_lifecycle(void) override;
       virtual std::unique_ptr<Restore> get_restore(void) override;
+      virtual std::unique_ptr<CloudDelete> get_cloud_delete(void) override { return nullptr; }
       virtual bool process_expired_objects(const DoutPrefixProvider *dpp, optional_yield y) override;
 
   virtual std::unique_ptr<Notification> get_notification(

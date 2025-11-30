@@ -1450,6 +1450,9 @@ int RGWZoneGroupPlacementTierS3::update_params(const JSONFormattable& config)
       ldout(g_ceph_context, 1) << "cloud tier target_by_bucket_prefix contains '/', which may be invalid for bucket names" << dendl;
     }
   }
+  if (config.exists("allow_delete_through")) {
+    allow_delete_through = (config["allow_delete_through"].operator string() == "true");
+  }
   if (config.exists("region")) {
     region = config["region"];
   }
@@ -1522,6 +1525,9 @@ int RGWZoneGroupPlacementTierS3::clear_params(const JSONFormattable& config)
   }
   if (config.exists("target_by_bucket_prefix")) {
     target_by_bucket_prefix.clear();
+  }
+  if (config.exists("allow_delete_through")) {
+    allow_delete_through = false;
   }
   if (config.exists("region")) {
     region.clear();
