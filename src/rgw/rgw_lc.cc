@@ -942,7 +942,7 @@ int RGWLC::handle_multipart_expiration(rgw::sal::Bucket* target,
 				       const multimap<string, lc_op>& prefix_map,
 				       LCWorker* worker, time_t stop_at, bool once)
 {
-  int ret;
+  int ret{0};
   rgw::sal::Bucket::ListParams params_base;
   rgw::sal::Bucket::ListResults results;
   auto delay_ms = cct->_conf.get_val<int64_t>("rgw_lc_thread_delay");
@@ -1002,7 +1002,7 @@ int RGWLC::handle_multipart_expiration(rgw::sal::Bucket* target,
         }
       } /* abort failed */
     }   /* expired */
-		return ret;
+    return ret;
   };
 
   worker->workpool->setf(pf);
@@ -1021,7 +1021,8 @@ int RGWLC::handle_multipart_expiration(rgw::sal::Bucket* target,
       ldpp_dout(this, 5) << __func__ << " interval budget EXPIRED worker="
 		     << worker->ix << " bucket=" << target->get_name()
 		     << dendl;
-      return 0;
+      ret = 0;
+      goto done;
     }
 
     rgw::sal::Bucket::ListParams params = params_base;
@@ -1031,10 +1032,12 @@ int RGWLC::handle_multipart_expiration(rgw::sal::Bucket* target,
       results.objs.clear();
       ret = target->list(this, params, 1000, results, null_yield);
       if (ret < 0) {
-          if (ret == (-ENOENT))
-            return 0;
-          ldpp_dout(this, 0) << "ERROR: driver->list_objects():" <<dendl;
-          return ret;
+	if (ret == (-ENOENT)) {
+          ret = 0;
+	  goto done;
+	}
+	ldpp_dout(this, 0) << "ERROR: driver->list_objects():" << dendl;
+	goto done;
       }
 
       for (auto obj_iter = results.objs.begin(); obj_iter != results.objs.end(); ++obj_iter, ++offset) {
@@ -1045,7 +1048,7 @@ int RGWLC::handle_multipart_expiration(rgw::sal::Bucket* target,
         }
 
 	if (going_down()) {
-	  return 0;
+	  goto done;
 	}
       } /* for objs */
 
@@ -1054,7 +1057,7 @@ int RGWLC::handle_multipart_expiration(rgw::sal::Bucket* target,
 	  ldpp_dout(this, 5) << __func__ << " interval budget EXPIRED worker="
 			     << worker->ix << " bucket=" << target->get_name()
 			     << dendl;
-	  return 0;
+	  goto done;
 	}
       }
 
@@ -1062,8 +1065,9 @@ int RGWLC::handle_multipart_expiration(rgw::sal::Bucket* target,
     } while(results.is_truncated);
   } /* for grouped_mp_ops */
 
+ done:
   worker->workpool->drain();
-  return 0;
+  return ret;
 } /* RGWLC::handle_multipart_expiration */
 
 static int read_obj_tags(const DoutPrefixProvider *dpp, rgw::sal::Object* obj, bufferlist& tags_bl)
@@ -1982,6 +1986,7 @@ int RGWLC::bucket_lc_process(string& shard_id, LCWorker* worker,
 
     ret = ol.init(this);
     if (ret < 0) {
+      worker->workpool->drain();
       if (ret == (-ENOENT))
         return 0;
       ldpp_dout(this, 0) << "ERROR: driver->list_objects():" << dendl;
@@ -2014,7 +2019,8 @@ int RGWLC::bucket_lc_process(string& shard_id, LCWorker* worker,
 	  ldpp_dout(this, 5) << __func__ << " interval budget EXPIRED worker="
 			     << worker->ix << " bucket=" << bucket_name
 			     << dendl;
-	  return 0;
+	  worker->workpool->drain();
+          return 0;
 	}
       }
     }
