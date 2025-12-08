@@ -431,6 +431,8 @@ struct AggregatedSubvolumeMetric {
     uint64_t write_iops = 0;
     uint64_t read_tpBs = 0;
     uint64_t write_tBps = 0;
+    uint64_t quota_bytes = 0;
+    uint64_t used_bytes = 0;
 
     uint64_t min_read_latency = std::numeric_limits<uint64_t>::max();
     uint64_t max_read_latency = 0;
@@ -443,15 +445,14 @@ struct AggregatedSubvolumeMetric {
     uint64_t time_window_last_end_sec = 0;
     uint64_t time_window_last_dur_sec = 0;
 
-    uint64_t quota_bytes = 0;
-    uint64_t used_bytes = 0;
-
     void dump(ceph::Formatter* f) const {
       f->dump_string("subvolume_path", subvolume_path);
       f->dump_unsigned("read_iops", read_iops);
       f->dump_unsigned("write_iops", write_iops);
       f->dump_unsigned("read_tpBs", read_tpBs);
       f->dump_unsigned("write_tBps", write_tBps);
+      f->dump_unsigned("quota_bytes", quota_bytes);
+      f->dump_unsigned("used_bytes", used_bytes);
 
       f->dump_unsigned("min_read_latency_ns", min_read_latency);
       f->dump_unsigned("max_read_latency_ns", max_read_latency);
@@ -463,9 +464,6 @@ struct AggregatedSubvolumeMetric {
 
       f->dump_unsigned("time_window_sec_end", time_window_last_end_sec);
       f->dump_unsigned("time_window_sec_dur", time_window_last_dur_sec);
-
-      f->dump_unsigned("quota_bytes", quota_bytes);
-      f->dump_unsigned("used_bytes", used_bytes);
     }
 };
 
