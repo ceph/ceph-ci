@@ -144,7 +144,9 @@ enum class MDSPerformanceCounterType : uint8_t {
   SUBV_READ_THROUGHPUT_METRIC = 18,
   SUBV_WRITE_THROUGHPUT_METRIC = 19,
   SUBV_AVG_READ_LATENCY_METRIC = 20,
-  SUBV_AVG_WRITE_LATENCY_METRIC = 21
+  SUBV_AVG_WRITE_LATENCY_METRIC = 21,
+  SUBV_QUOTA_BYTES_METRIC = 22,
+  SUBV_USED_BYTES_METRIC = 23
 };
 
 struct MDSPerformanceCounterDescriptor {
@@ -174,6 +176,8 @@ struct MDSPerformanceCounterDescriptor {
     case MDSPerformanceCounterType::SUBV_WRITE_THROUGHPUT_METRIC:
     case MDSPerformanceCounterType::SUBV_AVG_READ_LATENCY_METRIC:
     case MDSPerformanceCounterType::SUBV_AVG_WRITE_LATENCY_METRIC:
+    case MDSPerformanceCounterType::SUBV_QUOTA_BYTES_METRIC:
+    case MDSPerformanceCounterType::SUBV_USED_BYTES_METRIC:
       return true;
     default:
       return false;
@@ -439,6 +443,9 @@ struct AggregatedSubvolumeMetric {
     uint64_t time_window_last_end_sec = 0;
     uint64_t time_window_last_dur_sec = 0;
 
+    uint64_t quota_bytes = 0;
+    uint64_t used_bytes = 0;
+
     void dump(ceph::Formatter* f) const {
       f->dump_string("subvolume_path", subvolume_path);
       f->dump_unsigned("read_iops", read_iops);
@@ -456,6 +463,9 @@ struct AggregatedSubvolumeMetric {
 
       f->dump_unsigned("time_window_sec_end", time_window_last_end_sec);
       f->dump_unsigned("time_window_sec_dur", time_window_last_dur_sec);
+
+      f->dump_unsigned("quota_bytes", quota_bytes);
+      f->dump_unsigned("used_bytes", used_bytes);
     }
 };
 

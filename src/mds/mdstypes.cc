@@ -1203,6 +1203,8 @@ void SubvolumeMetric::dump(Formatter *f) const {
   f->dump_unsigned("avg_read_latency", avg_read_latency);
   f->dump_unsigned("avg_write_latency", avg_write_latency);
   f->dump_unsigned("time_window_sec", time_stamp);
+  f->dump_unsigned("quota_bytes", quota_bytes);
+  f->dump_unsigned("used_bytes", used_bytes);
 }
 
 std::ostream& operator<<(std::ostream& os, const SubvolumeMetric &m) {
@@ -1213,6 +1215,8 @@ std::ostream& operator<<(std::ostream& os, const SubvolumeMetric &m) {
      << ", write_size=" << m.write_size
      << ", avg_read_lat=" << m.avg_read_latency
      << ", avg_write_lat=" << m.avg_write_latency
-     << ", time_window_sec=" << m.time_stamp << "}";
+     << ", time_window_sec=" << m.time_stamp
+     << ", quota_bytes=" << m.quota_bytes
+     << ", used_bytes=" << m.used_bytes << "}";
   return os;
 }
