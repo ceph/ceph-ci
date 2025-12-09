@@ -1393,7 +1393,7 @@ public:
 };
 
 class LCOpAction_Transition : public LCOpAction {
-  const transition_action& transition;
+  transition_action transition;
   bool need_to_process{false};
 
 protected:
