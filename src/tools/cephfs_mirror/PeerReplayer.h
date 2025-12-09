@@ -193,7 +193,7 @@ private:
                                    const struct ceph_statx &stx, bool sync_check,
                                    const std::function<int (uint64_t, struct cblock *)> &callback);
 
-    virtual void finish_sync() = 0;
+    virtual void finish_crawl() = 0;
 
     void push_dataq_entry(PeerReplayer::SyncEntry e);
     bool pop_dataq_entry(PeerReplayer::SyncEntry &out);
@@ -227,7 +227,7 @@ private:
                   const std::function<int (const std::string&)> &dirsync_func,
                   const std::function<int (const std::string&)> &purge_func);
 
-    void finish_sync();
+    void finish_crawl();
   };
 
   class SnapDiffSync : public SyncMechanism {
@@ -247,7 +247,7 @@ private:
                            const struct ceph_statx &stx, bool sync_check,
                            const std::function<int (uint64_t, struct cblock *)> &callback);
 
-    void finish_sync();
+    void finish_crawl();
 
   private:
     int init_directory(const std::string &epath,

@@ -1641,7 +1641,7 @@ int PeerReplayer::SnapDiffSync::get_changed_blocks(const std::string &epath,
   return r;
 }
 
-void PeerReplayer::SnapDiffSync::finish_sync() {
+void PeerReplayer::SnapDiffSync::finish_crawl() {
   dout(20) << dendl;
 
   while (!m_sync_stack.empty()) {
@@ -1655,6 +1655,9 @@ void PeerReplayer::SnapDiffSync::finish_sync() {
 
     m_sync_stack.pop();
   }
+
+  // Crawl and entry operations are done syncing here. So mark crawl finished here
+  mark_crawl_finished();
 }
 
 PeerReplayer::RemoteSync::RemoteSync(MountRef local, MountRef remote, FHandles *fh,
@@ -1787,7 +1790,7 @@ int PeerReplayer::RemoteSync::get_entry(std::string *epath, struct ceph_statx *s
   return 0;
 }
 
-void PeerReplayer::RemoteSync::finish_sync() {
+void PeerReplayer::RemoteSync::finish_crawl() {
   dout(20) << dendl;
 
   while (!m_sync_stack.empty()) {
@@ -1801,6 +1804,9 @@ void PeerReplayer::RemoteSync::finish_sync() {
 
     m_sync_stack.pop();
   }
+
+  // Crawl and entry operations are done syncing here. So mark stack finished here
+  mark_crawl_finished();
 }
 
 int PeerReplayer::do_synchronize(const std::string &dir_root, const Snapshot &current,
@@ -1903,7 +1909,7 @@ int PeerReplayer::do_synchronize(const std::string &dir_root, const Snapshot &cu
     }
   }
 
-  syncm->finish_sync();
+  syncm->finish_crawl();
 
   dout(20) << " cur:" << fh.c_fd
            << " prev:" << fh.p_fd
