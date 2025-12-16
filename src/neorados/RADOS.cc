@@ -1544,15 +1544,13 @@ void RADOS::watch_(Object o, IOContext _ioc,
   auto e = asio::prefer(get_executor(),
 			asio::execution::outstanding_work.tracked);
   impl->objecter->linger_watch(
-      linger_op, op, ioc->snapc, ceph::real_clock::now(), bl,
-      asio::bind_executor(std::move(e), [
-        c = std::move(c), cookie,
-        objecter = impl->objecter](bs::error_code e, cb::list) mutable {
+    linger_op, op, ioc->snapc, ceph::real_clock::now(), bl,
+    asio::bind_executor(
+      std::move(e),
+      [c = std::move(c), cookie, linger_op](bs::error_code e, cb::list) mutable {
 	if (e) {
-          if (auto linger_op = objecter->linger_by_cookie(cookie)) {
-            objecter->linger_cancel(linger_op.get());
-          }
-          cookie = 0;
+	  linger_op->objecter->linger_cancel(linger_op);
+	  cookie = 0;
 	}
 	asio::dispatch(asio::append(std::move(c), e, cookie));
       }), nullptr);
@@ -1583,21 +1581,19 @@ void RADOS::watch_(Object o, IOContext _ioc, WatchComp c,
     linger_op, op, ioc->snapc, ceph::real_clock::now(), bl,
     asio::bind_executor(
       std::move(e),
-      [c = std::move(c), cookie, objecter = impl->objecter](bs::error_code e, cb::list) mutable {
+      [c = std::move(c), cookie, linger_op](bs::error_code e, cb::list) mutable {
 	if (e) {
-          if (auto linger_op = objecter->linger_by_cookie(cookie)) {
-            linger_op->user_data.reset();
-            objecter->linger_cancel(linger_op.get());
-          }
-          cookie = 0;
+	  linger_op->user_data.reset();
+	  linger_op->objecter->linger_cancel(linger_op);
+	  cookie = 0;
 	}
 	asio::dispatch(asio::append(std::move(c), e, cookie));
       }), nullptr);
 }
 
 void RADOS::next_notification_(uint64_t cookie, NextNotificationComp c) {
-  boost::intrusive_ptr linger_op = impl->objecter->linger_by_cookie(cookie);
-  if (!linger_op) {
+  Objecter::LingerOp* linger_op = reinterpret_cast<Objecter::LingerOp*>(cookie);
+  if (!impl->objecter->is_valid_watch(linger_op)) {
     dispatch(asio::append(std::move(c),
 			  bs::error_code(ENOTCONN, bs::generic_category()),
 			  Notification{}));
@@ -1637,9 +1633,9 @@ void RADOS::notify_ack_(Object o, IOContext _ioc,
 
 tl::expected<ceph::timespan, bs::error_code> RADOS::check_watch(uint64_t cookie)
 {
-  boost::intrusive_ptr linger_op = impl->objecter->linger_by_cookie(cookie);
-  if (linger_op) {
-    return impl->objecter->linger_check(linger_op.get());
+  auto linger_op = reinterpret_cast<Objecter::LingerOp*>(cookie);
+  if (impl->objecter->is_valid_watch(linger_op)) {
+    return impl->objecter->linger_check(linger_op);
   } else {
     return tl::unexpected(bs::error_code(ENOTCONN, bs::generic_category()));
   }
@@ -1650,12 +1646,7 @@ void RADOS::unwatch_(uint64_t cookie, IOContext _ioc,
 {
   auto ioc = reinterpret_cast<const IOContextImpl*>(&_ioc.impl);
 
-  boost::intrusive_ptr linger_op = impl->objecter->linger_by_cookie(cookie);
-  if (!linger_op) {
-    dispatch(asio::append(std::move(c),
-			  bs::error_code(ENOTCONN, bs::generic_category())));
-    return;
-  }
+  Objecter::LingerOp *linger_op = reinterpret_cast<Objecter::LingerOp*>(cookie);
 
   ObjectOperation op;
   op.watch(cookie, CEPH_OSD_WATCH_OP_UNWATCH);
@@ -1668,7 +1659,7 @@ void RADOS::unwatch_(uint64_t cookie, IOContext _ioc,
 			   [objecter = impl->objecter,
 			    linger_op, c = std::move(c)]
 			   (bs::error_code ec) mutable {
-			     objecter->linger_cancel(linger_op.get());
+			     objecter->linger_cancel(linger_op);
 			     asio::dispatch(asio::append(std::move(c), ec));
 			   }));
 }
