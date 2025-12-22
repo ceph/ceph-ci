@@ -3,9 +3,11 @@ import { Injectable } from '@angular/core';
 import { BehaviorSubject, Subscription } from 'rxjs';
 import { filter, first, map } from 'rxjs/operators';
 
-import { CephReleaseNamePipe } from '../pipes/ceph-release-name.pipe';
 import { SummaryService } from './summary.service';
 import { environment } from '~/environments/environment';
+import { getVersionAndRelease } from '../helpers/utils';
+
+const MIN_VER_NEW_IBM_FORMAT = 9.9;
 
 @Injectable({
   providedIn: 'root'
@@ -16,20 +18,22 @@ export class DocService {
 
   constructor(
     private summaryservice: SummaryService,
-    private cephReleaseNamePipe: CephReleaseNamePipe
   ) {
     this.summaryservice.subscribeOnce((summary) => {
-      const releaseName = this.cephReleaseNamePipe.transform(summary.version);
-      this.releaseDataSource.next(releaseName);
+      const releaseVersion = getVersionAndRelease(summary?.version)?.release;
+      this.releaseDataSource.next(releaseVersion);
     });
   }
 
-  urlGenerator(section: string, release = 'squid'): string {
-    const docVersion = release === 'squid' ? '8' : release;
-    let sections = {};
+  urlGenerator(section: string, releaseVersion: string = null): string {
+    // Sanitization for z release
+    const docVersion = releaseVersion?.split('z')?.[0];
+    let sections: {[key: string]: string} = {};
 
     if (environment.build === 'ibm') {
-      const domain = `https://www.ibm.com/docs/storage-ceph/${docVersion}?topic=`;
+      // 9.0 introduced newer build (9.9.0.0) and doc format (9.9.0)
+      const ibmDocVersion = parseFloat(docVersion) >= MIN_VER_NEW_IBM_FORMAT ? docVersion?.replace(/\.0$/, ""): docVersion;
+      const domain = `https://www.ibm.com/docs/storage-ceph/${ibmDocVersion}?topic=`;
       const domainIBM = `https://www.ibm.com/support/customer/csol/terms/`;
 
       sections = {
@@ -81,13 +85,13 @@ export class DocService {
 
   subscribeOnce(
     section: string,
-    next: (release: string) => void,
+    next: (url: string) => void,
     error?: (error: any) => void
   ): Subscription {
     return this.releaseData$
       .pipe(
         filter((value) => !!value),
-        map((release) => this.urlGenerator(section, release)),
+        map((release: string) => this.urlGenerator(section, release)),
         first()
       )
       .subscribe(next, error);
