@@ -34,6 +34,7 @@ from ceph.deployment.hostspec import HostSpec, SpecValidationError, assert_valid
 from ceph.deployment.utils import unwrap_ipv6, valid_addr, verify_non_negative_int
 from ceph.deployment.utils import verify_positive_int, verify_non_negative_number
 from ceph.deployment.utils import verify_boolean, verify_enum, verify_int
+from ceph.cephadm.d3n_types import D3NCacheSpec, D3NCacheError
 from ceph.utils import is_hex
 from ceph.smb import constants as smbconst
 
@@ -1208,6 +1209,16 @@ class RGWSpec(ServiceSpec):
             rgw_frontend_port: 1234
             rgw_frontend_type: beast
             rgw_frontend_ssl_certificate: ...
+            # Optional: enable D3N (L1 datacache) for RGW
+            d3n_cache:
+                filesystem: xfs          # default: xfs
+                size: 10G                # required; int bytes or string with K/M/G/T/P
+                devices:                 # required; per-host list of devices
+                    host1:
+                      - /dev/nvme0n1
+                    host2:
+                      - /dev/nvme1n1
+                      - /dev/nvme2n1
 
     See also: :ref:`orchestrator-cli-service-spec`
     """
@@ -1253,6 +1264,7 @@ class RGWSpec(ServiceSpec):
                  disable_multisite_sync_traffic: Optional[bool] = None,
                  wildcard_enabled: Optional[bool] = False,
                  rgw_exit_timeout_secs: int = 120,
+                 d3n_cache: Optional[Dict[str, Any]] = None,
                  ):
         assert service_type == 'rgw', service_type
 
@@ -1315,6 +1327,8 @@ class RGWSpec(ServiceSpec):
         #: How long the RGW will wait to try and complete client requests when told to shut down
         self.rgw_exit_timeout_secs = rgw_exit_timeout_secs
 
+        self.d3n_cache = d3n_cache or {}
+
     def get_port_start(self) -> List[int]:
         ports = self.get_port()
         return ports
@@ -1375,6 +1389,12 @@ class RGWSpec(ServiceSpec):
                         'invalid option in data_pool_attribues "erasure_code_profile"'
                         'ec profile will be generated automatically based on provided attributes'
                     )
+
+        if self.d3n_cache:
+            try:
+                D3NCacheSpec.from_json(self.d3n_cache)
+            except D3NCacheError as e:
+                raise SpecValidationError(str(e))
 
 
 yaml.add_representer(RGWSpec, ServiceSpec.yaml_representer)
