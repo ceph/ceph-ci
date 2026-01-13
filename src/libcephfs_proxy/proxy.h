@@ -99,6 +99,7 @@ struct _list {
 struct _proxy_settings {
 	const char *socket_path;
 	const char *work_dir;
+	bool disable_copy;
 };
 
 #endif
