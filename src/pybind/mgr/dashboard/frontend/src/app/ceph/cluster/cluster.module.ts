@@ -24,7 +24,8 @@ import {
   RadioModule,
   TilesModule,
   LayerModule,
-  ProgressBarModule
+  ProgressBarModule,
+  TabsModule
 } from 'carbon-components-angular';
 
 import {
@@ -77,6 +78,7 @@ import { SilenceListComponent } from './prometheus/silence-list/silence-list.com
 import { SilenceMatcherModalComponent } from './prometheus/silence-matcher-modal/silence-matcher-modal.component';
 import { PlacementPipe } from './services/placement.pipe';
 import { ServiceDaemonListComponent } from './services/service-daemon-list/service-daemon-list.component';
+import { ServiceCertificateDetailsComponent } from './services/service-cert-details/service-certificate-details.component';
 import { ServiceDetailsComponent } from './services/service-details/service-details.component';
 import { ServiceFormComponent } from './services/service-form/service-form.component';
 import { ServicesComponent } from './services/services.component';
@@ -125,6 +127,7 @@ import { LicenceAgreementComponent } from './license-agreement/license-agreement
     ToggletipModule,
     IconModule,
     TagModule,
+    TabsModule,
     TextLabelListComponent,
     SelectModule,
     LayoutModule,
@@ -166,6 +169,7 @@ import { LicenceAgreementComponent } from './license-agreement/license-agreement
     ActiveAlertListComponent,
     ServiceDetailsComponent,
     ServiceDaemonListComponent,
+    ServiceCertificateDetailsComponent,
     TelemetryComponent,
     PrometheusTabsComponent,
     ServiceFormComponent,
