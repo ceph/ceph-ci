@@ -4133,7 +4133,7 @@ class SMBSpec(ServiceSpec):
         keybridge_kmip_ssl_cert: Optional[str] = None,
         keybridge_kmip_ssl_key: Optional[str] = None,
         keybridge_kmip_ca_cert: Optional[str] = None,
-        # --- genearal tweaks ---
+        # --- general tweaks ---
         extra_container_args: Optional[GeneralArgList] = None,
         extra_entrypoint_args: Optional[GeneralArgList] = None,
         custom_configs: Optional[List[CustomConfig]] = None,
