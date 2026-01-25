@@ -614,6 +614,7 @@ struct RGWZoneGroupPlacementTier {
   std::string tier_type;
   std::string storage_class;
   bool retain_head_object = false;
+  bool retain_current_version = false;
 
   struct _tier {
     RGWZoneGroupPlacementTierS3 s3;
@@ -629,7 +630,7 @@ struct RGWZoneGroupPlacementTier {
   int clear_params(const JSONFormattable& config);
 
   void encode(bufferlist& bl) const {
-    ENCODE_START(4, 1, bl);
+    ENCODE_START(5, 1, bl);
     encode(tier_type, bl);
     encode(storage_class, bl);
     encode(retain_head_object, bl);
@@ -642,11 +643,12 @@ struct RGWZoneGroupPlacementTier {
     if (is_tier_type_s3_glacier()) {
       encode(s3_glacier, bl);
     }
+    encode(retain_current_version, bl);
     ENCODE_FINISH(bl);
   }
 
   void decode(bufferlist::const_iterator& bl) {
-    DECODE_START(4, bl);
+    DECODE_START(5, bl);
     decode(tier_type, bl);
     decode(storage_class, bl);
     decode(retain_head_object, bl);
@@ -672,6 +674,9 @@ struct RGWZoneGroupPlacementTier {
       if (is_tier_type_s3_glacier()) {
         decode(s3_glacier, bl);
       }
+    }
+    if (struct_v >= 5) {
+      decode(retain_current_version, bl);
     }
     DECODE_FINISH(bl);
   }

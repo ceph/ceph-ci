@@ -1353,6 +1353,18 @@ int RGWZoneGroupPlacementTier::update_params(const JSONFormattable& config)
       retain_head_object = true;
     } else {
       retain_head_object = false;
+      retain_current_version = false;
+    }
+  }
+  if (config.exists("retain_current_version")) {
+    string s = config["retain_current_version"];
+    if (s == "true") {
+      if (!retain_head_object) {
+        return -EINVAL;
+      }
+      retain_current_version = true;
+    } else {
+      retain_current_version = false;
     }
   }
   if (config.exists("allow_read_through")) {
@@ -1388,6 +1400,10 @@ int RGWZoneGroupPlacementTier::clear_params(const JSONFormattable& config)
 {
   if (config.exists("retain_head_object")) {
     retain_head_object = false;
+    retain_current_version = false;
+  }
+  if (config.exists("retain_current_version")) {
+    retain_current_version = false;
   }
   if (config.exists("allow_read_through")) {
     allow_read_through = false;

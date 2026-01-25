@@ -40,6 +40,7 @@ struct RGWLCCloudTierCtx {
   bool is_multipart_upload{false};
   bool target_bucket_created{true};
   bool target_by_bucket{false};
+  bool retain_current_version{false};
 
   RGWLCCloudTierCtx(CephContext* _cct, const DoutPrefixProvider *_dpp,
       rgw_bucket_dir_entry& _o, rgw::sal::Driver *_driver,
