@@ -1,0 +1,71 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional, TYPE_CHECKING, Tuple
+from ceph_secrets_types import SecretScope
+
+
+if TYPE_CHECKING:
+    # Import only for type-checkers to avoid runtime import cycles
+    from .secret_store import SecretRecord, BadSecretRecord
+
+
+class SecretStorageBackend(ABC):
+    """
+    Abstract base class for ceph secrets storage backends.
+
+    Backends store secret instances addressed by:
+      (namespace, scope, target, name)
+
+    Epoch:
+      Each namespace has an independent monotonic epoch counter that is bumped
+      on every mutation (set/rm).  Consumers can use get_epoch(namespace) as a
+      cheap change-detector to avoid re-fetching secrets when nothing changed
+      in their namespace.
+
+    Implementations:
+      - SecretStoreMon  (Mon KV store)
+      - Vault backend (future)
+    """
+
+    @abstractmethod
+    def get(self, namespace: str, scope: SecretScope, target: str, name: str) -> Optional["SecretRecord"]:
+        ...
+
+    @abstractmethod
+    def set(
+        self,
+        namespace: str,
+        scope: SecretScope,
+        target: str,
+        name: str,
+        data: Dict[str, Any],
+        secret_type: str = "Opaque",
+        user_made: bool = True,
+        editable: bool = True,
+    ) -> "SecretRecord":
+        ...
+
+    @abstractmethod
+    def rm(self, namespace: str, scope: SecretScope, target: str, name: str) -> bool:
+        ...
+
+    @abstractmethod
+    def ls(
+        self,
+        namespace: Optional[str] = None,
+        scope: Optional[SecretScope] = None,
+        target: Optional[str] = None,
+    ) -> Tuple[List["SecretRecord"], List["BadSecretRecord"]]:
+        ...
+
+    @abstractmethod
+    def get_epoch(self, namespace: str) -> int:
+        """Return the current epoch for *namespace*."""
+        ...
+
+    @abstractmethod
+    def bump_epoch(self, namespace: str) -> int:
+        """Increment and persist the epoch for *namespace*; return the new value."""
+        ...
