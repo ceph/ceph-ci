@@ -6,6 +6,7 @@
 #include "osd_perf_counters.h"
 #include "common/ceph_releases.h"
 #include "common/debug.h"
+#include "common/JSONFormatter.h"
 #include "common/ostream_temp.h"
 #include "crush/crush.h" // for CRUSH_ITEM_NONE
 #include "crush/CrushWrapper.h"
@@ -3394,6 +3395,7 @@ void PeeringState::proc_master_log(
 	       &olog);
   }
 
+  const pg_log_entry_t* head_log_entry = nullptr;
   bool invalidate_stats = false;
 
   // For partial writes we may be able to keep some of the divergent entries
@@ -3403,7 +3405,10 @@ void PeeringState::proc_master_log(
     while (p != pg_log.get_log().log.begin()) {
       --p;
       if (p->version <= olog.head) {
-	break;
+        if (p->version == olog.head) {
+          head_log_entry = &(*p);
+        }
+        break;
       }
     }
     if (p == pg_log.get_log().log.end()) {
@@ -3501,22 +3506,74 @@ void PeeringState::proc_master_log(
       }
       rollbacker.get()->partial_write(&info, previous_version, *p);
       olog.head = p->version;
+      head_log_entry = &(*p);
 
       // Process the next entry
       ++p;
     }
   }
+
+  // Find the version we want to roll forwards to
+  // Iterate over all shards and see if any have a last_update equal to where we want to roll to
+  // Copy the stats for this shard into oinfo
+  // Set invalidate_stats to false again if we do copy these stats
+  // We will only copy stats if they are copied from a primary, or if they are
+  // copied from a non-primary where the last write was a non-partial write
+  // as the stats of non-primaries are stale after partial writes on objects with clones
+  if (invalidate_stats && pool.info.allows_ecoptimizations()) {
+    for (const auto& [shard, my_info] : peer_info) {
+      if (invalidate_stats && my_info.stats.version == olog.head &&
+          (!pool.info.is_nonprimary_shard(shard.shard) ||
+           (head_log_entry &&
+            head_log_entry->is_written_shard(shard.shard)))) {
+        oinfo.stats = my_info.stats;
+        invalidate_stats = false;
+        psdout(10) << "keeping stats for " << shard
+                   << " (wanted last update: " << olog.head
+                   << ", stats version: " << my_info.stats.version
+                   << ", shard last update: " << my_info.last_update << ")."
+                   << " Stats: ";
+
+        JSONFormatter f;
+        oinfo.stats.dump(&f);
+        f.flush(*_dout);
+
+        *_dout << dendl;
+      } else {
+        psdout(20) << "not using stats for " << shard
+                   << " (wanted last update: " << olog.head
+                   << ", stats version: " << my_info.stats.version
+                   << ", shard last update: " << my_info.last_update << ")."
+                   << " Stats: ";
+
+        JSONFormatter f;
+        my_info.stats.dump(&f);
+        f.flush(*_dout);
+
+        *_dout << dendl;
+      }
+    }
+  }
+
   // merge log into our own log to build master log.  no need to
   // make any adjustments to their missing map; we are taking their
   // log to be authoritative (i.e., their entries are by definitely
   // non-divergent).
   merge_log(t, oinfo, std::move(olog), from);
   if (info.last_backfill.is_max() &&
-      pool.info.is_nonprimary_shard(from.shard)) {
+      (pool.info.allows_ecoptimizations() &&
+       pool.info.is_nonprimary_shard(from.shard) &&
+      (!head_log_entry ||
+       !head_log_entry->is_written_shard(from.shard)))){
     invalidate_stats = true;
   }
+
   info.stats.stats_invalid |= invalidate_stats;
   increment_stats_invalidations_counter(invalidate_stats);
+  if (invalidate_stats)
+  {
+    psdout(10) << "invalidating stats for " << pg_whoami << dendl;
+  }
   peer_info[from] = oinfo;
   psdout(10) << " peer osd." << from << " now " << oinfo
 	     << " " << omissing << dendl;
