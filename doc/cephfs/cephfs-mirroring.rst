@@ -547,6 +547,7 @@ Configuration Options
 ---------------------
 
 .. confval:: cephfs_mirror_max_concurrent_directory_syncs
+.. confval:: cephfs_mirror_max_datasync_threads
 .. confval:: cephfs_mirror_action_update_interval
 .. confval:: cephfs_mirror_restart_mirror_on_blocklist_interval
 .. confval:: cephfs_mirror_max_snapshot_sync_per_cycle
@@ -556,6 +557,7 @@ Configuration Options
 .. confval:: cephfs_mirror_restart_mirror_on_failure_interval
 .. confval:: cephfs_mirror_mount_timeout
 .. confval:: cephfs_mirror_perf_stats_prio
+.. confval:: cephfs_mirror_blockdiff_min_file_size
 
 Re-adding Peers
 ---------------
