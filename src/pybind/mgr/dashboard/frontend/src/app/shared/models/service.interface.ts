@@ -88,6 +88,7 @@ export interface CephServiceAdditionalSpec {
   ssl_certificate_key: string;
   ssl_protocols: string[];
   ssl_ciphers: string[];
+  certificate_source: string;
   port: number;
   initial_admin_password: string;
   rgw_realm: string;
