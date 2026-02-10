@@ -3569,7 +3569,8 @@ void PeeringState::proc_master_log(
   }
 
   info.stats.stats_invalid |= invalidate_stats;
-  increment_stats_invalidations_counter(invalidate_stats);
+  increment_stats_invalidations_counter(rs_process_log_stats_invalidated,
+                                        invalidate_stats);
   if (invalidate_stats)
   {
     psdout(10) << "invalidating stats for " << pg_whoami << dendl;
@@ -3828,8 +3829,10 @@ void PeeringState::split_into(
   child->info.last_epoch_started = info.last_epoch_started;
   child->info.last_interval_started = info.last_interval_started;
 
-  increment_stats_invalidations_counter(info.stats.stats_invalid);
-  increment_stats_invalidations_counter(child->info.stats.stats_invalid);
+  increment_stats_invalidations_counter(rs_pg_split_parent_stats_invalidated,
+                                        info.stats.stats_invalid);
+  increment_stats_invalidations_counter(rs_pg_split_child_stats_invalidated,
+                                        child->info.stats.stats_invalid);
 
   // There can't be recovery/backfill going on now
   int primary, up_primary;
@@ -4501,9 +4504,10 @@ std::optional<pg_stat_t> PeeringState::prepare_stats_for_publish(
   }
 }
 
-void PeeringState::increment_stats_invalidations_counter(bool invalidation_state) {
+void PeeringState::increment_stats_invalidations_counter(int stats_invalidation_counter,
+                                                         bool invalidation_state) {
   if (invalidation_state) {
-    pl->get_peering_perf().inc(rs_stats_invalidated);
+    pl->get_peering_perf().inc(stats_invalidation_counter);
   }
 }
 
@@ -4606,7 +4610,8 @@ void PeeringState::update_stats(
   }
 
   if (previous_stats_invalidation != info.stats.stats_invalid) {
-    increment_stats_invalidations_counter(info.stats.stats_invalid);
+    increment_stats_invalidations_counter(rs_update_stats_invalidated,
+                                          info.stats.stats_invalid);
   }
 
   if (t) {
@@ -4655,7 +4660,8 @@ bool PeeringState::append_log_entries_update_missing(
     info.last_complete = info.last_update;
   }
   info.stats.stats_invalid = info.stats.stats_invalid || invalidate_stats;
-  increment_stats_invalidations_counter(invalidate_stats);
+  increment_stats_invalidations_counter(rs_append_log_stats_invalidated,
+                                        invalidate_stats);
   psdout(20) << "trim_to bool = " << bool(trim_to)
 	     << " trim_to = " << (trim_to ? *trim_to : eversion_t()) << dendl;
   if (trim_to) {
@@ -4709,7 +4715,8 @@ void PeeringState::merge_new_log_entries(
       dpp);
     pinfo.last_update = info.last_update;
     pinfo.stats.stats_invalid = pinfo.stats.stats_invalid || invalidate_stats;
-    increment_stats_invalidations_counter(invalidate_stats);
+    increment_stats_invalidations_counter(rs_merge_log_stats_invalidated,
+                                          invalidate_stats);
     rebuild_missing = rebuild_missing || invalidate_stats;
   }
 
