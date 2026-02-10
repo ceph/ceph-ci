@@ -131,6 +131,7 @@ import { StorageInsightsModalComponent } from './storage-insights-modal/storage-
 import { StorageInsightsNotificationComponent } from './storage-insights-notification/storage-insights-notification.component';
 import { CallHomeConnectionInfoComponent } from './call-home-connection-info/call-home-connection-info.component';
 import { CallHomeConnectivityStatusComponent } from './call-home-connectivity-status/call-home-connectivity-status.component';
+import { NumberWithUnitComponent } from './number-with-unit/number-with-unit.component';
 
 @NgModule({
   imports: [
@@ -234,7 +235,8 @@ import { CallHomeConnectivityStatusComponent } from './call-home-connectivity-st
     StorageInsightsModalComponent,
     StorageInsightsNotificationComponent,
     CallHomeConnectionInfoComponent,
-    CallHomeConnectivityStatusComponent
+    CallHomeConnectivityStatusComponent,
+    NumberWithUnitComponent
   ],
   providers: [provideCharts(withDefaultRegisterables())],
   exports: [
@@ -285,7 +287,8 @@ import { CallHomeConnectivityStatusComponent } from './call-home-connectivity-st
     StorageInsightsNotificationComponent,
     CallHomeConnectionInfoComponent,
     CallHomeConnectivityStatusComponent,
-    DetailsCardComponent
+    DetailsCardComponent,
+    NumberWithUnitComponent
   ]
 })
 
