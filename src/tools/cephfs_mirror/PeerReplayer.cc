@@ -1700,7 +1700,7 @@ int PeerReplayer::SnapDiffSync::get_changed_blocks(const std::string &epath,
   dout(20) << ": dir_root=" << m_dir_root << ", epath=" << epath
            << ", sync_check=" << sync_check << dendl;
 
-  if (!sync_check) {
+  if (!sync_check || stx.stx_size <= m_peer_replayer.blockdiff_min_file_size) {
     return SyncMechanism::get_changed_blocks(epath, stx, sync_check, callback);
   }
 
@@ -2146,6 +2146,7 @@ int PeerReplayer::do_sync_snaps(const std::string &dir_root) {
   double start = 0;
   double end = 0;
   double duration = 0;
+  uint64_t blockdiff_min_file_size_conf = 0;
   for (; it != local_snap_map.end(); ++it) {
     if (m_perf_counters) {
       start = std::chrono::duration_cast<std::chrono::seconds>(clock::now().time_since_epoch()).count();
@@ -2154,6 +2155,17 @@ int PeerReplayer::do_sync_snaps(const std::string &dir_root) {
       m_perf_counters->tset(l_cephfs_mirror_peer_replayer_last_synced_start, t);
     }
     set_current_syncing_snap(dir_root, it->first, it->second);
+    // Check for blockdiff_min_file_size config change at the beginning of snapshot sync
+    blockdiff_min_file_size_conf = g_ceph_context->_conf.get_val<Option::size_t>(
+                                     "cephfs_mirror_blockdiff_min_file_size");
+    {
+      std::scoped_lock locker(m_lock);
+      if (blockdiff_min_file_size != blockdiff_min_file_size_conf) {
+        dout(10) << ":  blockdiff_min_file_size changed" << " old=" << blockdiff_min_file_size
+                 << " new=" << blockdiff_min_file_size_conf << dendl;
+        blockdiff_min_file_size = blockdiff_min_file_size_conf;
+      }
+    }
     boost::optional<Snapshot> prev = boost::none;
     if (last_snap_id != 0) {
       prev = std::make_pair(last_snap_name, last_snap_id);

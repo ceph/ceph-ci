@@ -514,6 +514,8 @@ private:
   ceph::condition_variable smq_cv;
   std::deque<std::shared_ptr<SyncMechanism>> syncm_q;
 
+  uint64_t blockdiff_min_file_size = 0;
+
   ServiceDaemonStats m_service_daemon_stats;
 
   PerfCounters *m_perf_counters;
