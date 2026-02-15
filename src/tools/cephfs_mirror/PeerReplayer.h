@@ -76,7 +76,7 @@ private:
   };
 
   bool is_stopping() {
-    return m_stopping;
+    return m_stopping.load(std::memory_order_acquire);
   }
 
   struct Replayer;
@@ -470,7 +470,7 @@ private:
   ceph::condition_variable m_cond;
   RadosRef m_remote_cluster;
   MountRef m_remote_mount;
-  bool m_stopping = false;
+  std::atomic<bool> m_stopping{false};
   SnapshotReplayers m_replayers;
 
   SnapshotDataReplayers m_data_replayers;

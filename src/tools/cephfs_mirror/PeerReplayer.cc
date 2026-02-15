@@ -315,11 +315,14 @@ int PeerReplayer::init() {
 void PeerReplayer::shutdown() {
   dout(20) << dendl;
 
+  bool expected = false;
+  if (!m_stopping.compare_exchange_strong(expected, true)) {
+    dout(1) << ": shutdown is already in progress - return"<< dendl;
+    return;
+  }
   {
-    std::scoped_lock locker(m_lock);
-    ceph_assert(!m_stopping);
-    m_stopping = true;
-    m_cond.notify_all();
+    std::scoped_lock lock(m_lock);
+    m_cond.notify_all(); //wake up shutdown wait
   }
 
   for (auto &replayer : m_replayers) {
