@@ -806,11 +806,6 @@ int PeerReplayer::copy_to_remote(const std::string &dir_root,  const std::string
            << cpp_strerror(r) << dendl;
       goto freeptr;
     }
-    r = ceph_fsync(m_remote_mount, r_fd, 0);
-    if (r < 0) {
-      derr << ": failed to sync data for file path=" << epath << ": "
-           << cpp_strerror(r) << dendl;
-    }
   }
 
 freeptr:
@@ -2008,7 +2003,14 @@ int PeerReplayer::do_synchronize(const std::string &dir_root, const Snapshot &cu
   bool datasync_err = syncm->wait_for_sync();
 
   if (r == 0 && !datasync_err) {
-    // All good, take the snapshot
+    // All good, fsync remote fs and take the snapshot
+    dout(20) << ": syncing remote filesystem, dir_root=" << dir_root << dendl;
+    r = ceph_sync_fs(m_remote_mount);
+    if (r < 0) {
+      derr << ": failed to sync remote filesystem, dir_root=" << dir_root
+           << ": " << cpp_strerror(r) << dendl;
+      return r;
+    }
     auto cur_snap_id_str{stringify(current.second)};
     snap_metadata snap_meta[] = {{PRIMARY_SNAP_ID_KEY.c_str(), cur_snap_id_str.c_str()}};
     r = ceph_mksnap(m_remote_mount, dir_root.c_str(), current.first.c_str(), 0755,
@@ -2016,6 +2018,7 @@ int PeerReplayer::do_synchronize(const std::string &dir_root, const Snapshot &cu
     if (r < 0) {
       derr << ": failed to snap remote directory dir_root=" << dir_root
            << ": " << cpp_strerror(r) << dendl;
+      return r;
     }
   } else if (datasync_err) {
     r = syncm->get_datasync_errno();
