@@ -211,12 +211,6 @@ private:
     bool get_crawl_finished_unlocked() {
       return m_crawl_finished;
     }
-    void set_datasync_error_and_dec_in_flight(int err) {
-      std::unique_lock lock(sdq_lock);
-      m_datasync_error = true;
-      m_datasync_errno = err;
-      --m_in_flight;
-    }
     void set_datasync_error(int err) {
       std::unique_lock lock(sdq_lock);
       m_datasync_error = true;
@@ -236,8 +230,11 @@ private:
     bool get_crawl_error_unlocked() {
       return m_crawl_error;
     }
-    void dec_in_flight() {
+    void inc_in_flight() {
       std::unique_lock lock(sdq_lock);
+      ++m_in_flight;
+    }
+    void dec_in_flight_unlocked() {
       --m_in_flight;
     }
     int get_in_flight_unlocked() {
@@ -490,7 +487,7 @@ private:
   void run_datasync(SnapshotDataSyncThread *data_replayer);
   void remove_syncm(const std::shared_ptr<SyncMechanism>& syncm_obj);
   bool is_syncm_active(const std::shared_ptr<SyncMechanism>& syncm_obj);
-  std::shared_ptr<SyncMechanism> pick_next_syncm() const;
+  std::shared_ptr<SyncMechanism> pick_next_syncm_and_mark();
 
   boost::optional<std::string> pick_directory();
   int register_directory(const std::string &dir_root, SnapshotReplayerThread *replayer);
