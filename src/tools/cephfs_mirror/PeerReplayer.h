@@ -186,10 +186,10 @@ private:
 
   class SyncMechanism {
   public:
-    SyncMechanism(std::string_view dir_root,
-                  MountRef local, MountRef remote, FHandles *fh,
-                  const Peer &peer, /* keep dout happy */
-                  const Snapshot &current, boost::optional<Snapshot> prev);
+    explicit SyncMechanism(PeerReplayer& peer_replayer, std::string_view dir_root,
+                           MountRef local, MountRef remote, FHandles *fh,
+                           const Peer &peer, /* keep dout happy */
+                           const Snapshot &current, boost::optional<Snapshot> prev);
     virtual ~SyncMechanism() = 0;
 
     virtual int init_sync() = 0;
@@ -263,6 +263,9 @@ private:
 
     int remote_mkdir(const std::string &epath, const struct ceph_statx &stx);
   protected:
+    PeerReplayer& m_peer_replayer;
+    // It's not used in RemoteSync but required to be accessed in datasync threads
+    std::string m_dir_root;
     MountRef m_local;
     MountRef m_remote;
     FHandles *m_fh;
@@ -280,13 +283,11 @@ private:
     bool m_sync_done = false;
     bool m_datasync_error = false;
     int m_datasync_errno = 0;
-    // It's not used in RemoteSync but required to be accessed in datasync threads
-    std::string m_dir_root;
   };
 
   class RemoteSync : public SyncMechanism {
   public:
-    RemoteSync(std::string_view dir_root,
+    RemoteSync(PeerReplayer& peer_replayer, std::string_view dir_root,
                MountRef local, MountRef remote, FHandles *fh,
                const Peer &peer, /* keep dout happy */
                const Snapshot &current, boost::optional<Snapshot> prev);
@@ -303,8 +304,8 @@ private:
 
   class SnapDiffSync : public SyncMechanism {
   public:
-    SnapDiffSync(std::string_view dir_root, MountRef local, MountRef remote,
-                 FHandles *fh, const Peer &peer, const Snapshot &current,
+    SnapDiffSync(PeerReplayer& peer_replayer, std::string_view dir_root, MountRef local,
+                 MountRef remote, FHandles *fh, const Peer &peer, const Snapshot &current,
                  boost::optional<Snapshot> prev);
     ~SnapDiffSync();
 
