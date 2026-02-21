@@ -242,11 +242,17 @@ private:
     void mark_backoff_unlocked() {
       m_backoff = true;
     }
+    bool get_backoff_unlocked() {
+      return m_backoff;
+    }
     bool get_datasync_error_unlocked() {
       return m_datasync_error;
     }
     int get_datasync_errno() {
       std::unique_lock lock(sdq_lock);
+      return m_datasync_errno;
+    }
+    int get_datasync_errno_unlocked() {
       return m_datasync_errno;
     }
     bool get_crawl_error() {
@@ -521,6 +527,8 @@ private:
     return m_active_datasync_threads.load(std::memory_order_relaxed);
   }
   void mark_and_notify_syncms_to_backoff(int err);
+  void mark_all_syncms_to_backoff_unlocked(int err);
+  void notify_all_syncms_to_backoff();
 
   boost::optional<std::string> pick_directory();
   int register_directory(const std::string &dir_root, SnapshotReplayerThread *replayer);
@@ -568,6 +576,9 @@ private:
 
   // add syncm to syncm_q
   void enqueue_syncm(const std::shared_ptr<SyncMechanism>& item);
+  ceph::mutex& get_smq_lock() {
+    return smq_lock;
+  }
 };
 
 } // namespace mirror
