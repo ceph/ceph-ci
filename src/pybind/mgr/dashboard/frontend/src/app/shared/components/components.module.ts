@@ -124,6 +124,10 @@ import Warning16 from '@carbon/icons/es/warning/16';
 import Deploy16 from '@carbon/icons/es/deploy/16';
 import { SidebarLayoutComponent } from './sidebar-layout/sidebar-layout.component';
 import { ProductiveCardComponent } from './productive-card/productive-card.component';
+import { CallHomeModalComponent } from './call-home-modal/call-home-modal.component';
+import { CallHomeNotificationComponent } from './call-home-notification/call-home-notification.component';
+import { StorageInsightsModalComponent } from './storage-insights-modal/storage-insights-modal.component';
+import { StorageInsightsNotificationComponent } from './storage-insights-notification/storage-insights-notification.component';
 import { CallHomeConnectionInfoComponent } from './call-home-connection-info/call-home-connection-info.component';
 import { CallHomeConnectivityStatusComponent } from './call-home-connectivity-status/call-home-connectivity-status.component';
 
@@ -221,12 +225,10 @@ import { CallHomeConnectivityStatusComponent } from './call-home-connectivity-st
     SidePanelComponent,
     SidebarLayoutComponent,
     ProductiveCardComponent,
-    CardGroupComponent,
     CallHomeModalComponent,
     CallHomeNotificationComponent,
     StorageInsightsModalComponent,
     StorageInsightsNotificationComponent,
-    ProgressComponent,
     CallHomeConnectionInfoComponent,
     CallHomeConnectivityStatusComponent
   ],
@@ -274,7 +276,7 @@ import { CallHomeConnectivityStatusComponent } from './call-home-connectivity-st
     SidePanelComponent,
     SidebarLayoutComponent,
     ProductiveCardComponent,
-    CardGroupComponent,
+    CallHomeModalComponent,
     CallHomeNotificationComponent,
     StorageInsightsNotificationComponent,
     CallHomeConnectionInfoComponent,

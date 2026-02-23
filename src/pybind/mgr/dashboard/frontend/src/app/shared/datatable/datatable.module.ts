@@ -119,6 +119,7 @@ import { TableDetailDirective } from './directives/table-detail.directive';
     FormlyArrayTypeComponent,
     FormlyInputTypeComponent,
     FormlyObjectTypeComponent,
+    FormlyTextareaTypeComponent,
     FormlyInputWrapperComponent,
     FormlyFileTypeComponent,
     FormlyFileValueAccessorDirective,
