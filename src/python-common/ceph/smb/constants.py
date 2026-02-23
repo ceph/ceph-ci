@@ -14,6 +14,7 @@ CLUSTERED = 'clustered'
 DOMAIN = 'domain'
 KEYBRIDGE = 'keybridge'
 REMOTE_CONTROL = 'remote-control'
+REMOTE_CONTROL_LOCAL = 'remote-control-local'
 SMBMETRICS = 'smbmetrics'
 
 
@@ -26,6 +27,7 @@ FEATURES = {
     DOMAIN,
     KEYBRIDGE,
     REMOTE_CONTROL,
+    REMOTE_CONTROL_LOCAL,
 }
 
 # Services are components that listen on a "public" network port, to expose
