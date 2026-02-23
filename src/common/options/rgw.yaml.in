@@ -1315,8 +1315,8 @@ options:
 - name: rgw_nfs_run_quota_threads
   type: bool
   level: advanced
-  desc: run quota threads in librgw (default off)
-  default: false
+  desc: run quota threads in librgw (default on)
+  default: true
   services:
   - rgw
   with_legacy: true
