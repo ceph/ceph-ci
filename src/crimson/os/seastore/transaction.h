@@ -783,7 +783,7 @@ private:
 
     // step 2: attach extent to transaction to become visible
     assert(!read_set.count(ref->get_paddr(), extent_cmp_t{}));
-    [[maybe_unused]] auto [iter, inserted] = read_set.insert(*it);
+    [[maybe_unused]] auto [_, inserted] = read_set.insert(*it);
     assert(inserted);
   }
 
@@ -802,7 +802,7 @@ private:
     }
 
     // step 2: attach extent to transaction to become visible
-    [[maybe_unused]] auto [iter, inserted] = read_set.insert(read_items.back());
+    [[maybe_unused]] auto [_, inserted] = read_set.insert(read_items.back());
     assert(inserted);
 
     // added
