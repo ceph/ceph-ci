@@ -1,6 +1,10 @@
 overrides:
   ceph:
     cephfs:
+      ec_metadata_profile:
+        - m=2
+        - k=2
+        - crush-failure-domain=osd
       fs:
         - name: a
         - name: b

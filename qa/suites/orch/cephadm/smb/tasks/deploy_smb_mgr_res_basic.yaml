@@ -56,6 +56,10 @@ tasks:
             cluster_id: modusr1
             share_id: share1
             cephfs:
+              ec_metadata_profile:
+                - m=2
+                - k=2
+                - crush-failure-domain=osd
               volume: cephfs
               subvolumegroup: smb
               subvolume: sv1
@@ -64,6 +68,10 @@ tasks:
             cluster_id: modusr1
             share_id: share2
             cephfs:
+              ec_metadata_profile:
+                - m=2
+                - k=2
+                - crush-failure-domain=osd
               volume: cephfs
               subvolumegroup: smb
               subvolume: sv2

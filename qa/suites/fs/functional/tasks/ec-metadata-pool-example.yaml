@@ -1,0 +1,42 @@
+# Example configuration for testing CephFS with erasure coded metadata pool
+# WARNING: This is an EXPERIMENTAL feature for testing purposes only!
+# EC metadata pools have significant performance penalties and are NOT recommended for production.
+
+overrides:
+  ceph:
+    cephfs:
+      # Enable erasure coding for metadata pool (NEW FEATURE)
+      ec_metadata_profile:
+        - k=2
+        - m=1
+        - plugin=jerasure
+        - crush-failure-domain=osd
+      # Enable erasure coding for data pool (existing feature)
+      ec_profile:
+        - k=4
+        - m=2
+        - plugin=isa
+        - crush-failure-domain=host
+    
+    # Configuration settings
+    conf:
+      global:
+        mon allow pool delete: true
+      osd:
+        osd pool default size: 3
+        osd pool default min size: 2
+    
+    # Ignore expected warnings
+    log-ignorelist:
+      - \(POOL_APP_NOT_ENABLED\)
+      - application not enabled
+      - \(MDS_CACHE_OVERSIZED\)
+      - evicting unresponsive client
+
+tasks:
+  - cephfs_test_runner:
+      fail_on_skip: false
+      modules:
+        - tasks.cephfs.test_admin
+
+# Made with Bob

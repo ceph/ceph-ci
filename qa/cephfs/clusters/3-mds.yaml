@@ -5,6 +5,10 @@ roles:
 overrides:
   ceph:
     cephfs:
+      ec_metadata_profile:
+        - m=2
+        - k=2
+        - crush-failure-domain=osd
       max_mds: 3
 openstack:
 - volumes: # attached to each instance

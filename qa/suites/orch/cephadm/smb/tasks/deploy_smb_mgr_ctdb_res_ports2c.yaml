@@ -75,6 +75,10 @@ tasks:
             cluster_id: ac1
             share_id: share1
             cephfs:
+              ec_metadata_profile:
+                - m=2
+                - k=2
+                - crush-failure-domain=osd
               volume: cephfs
               subvolumegroup: smb
               subvolume: sv1
@@ -83,6 +87,10 @@ tasks:
             cluster_id: ac1
             share_id: share2
             cephfs:
+              ec_metadata_profile:
+                - m=2
+                - k=2
+                - crush-failure-domain=osd
               volume: cephfs
               subvolumegroup: smb
               subvolume: sv2
@@ -110,6 +118,10 @@ tasks:
             cluster_id: ac2
             share_id: s1ac2
             cephfs:
+              ec_metadata_profile:
+                - m=2
+                - k=2
+                - crush-failure-domain=osd
               volume: cephfs
               subvolumegroup: smb
               subvolume: sv3

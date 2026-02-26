@@ -59,6 +59,10 @@ tasks:
             cluster_id: modtest1
             share_id: share1
             cephfs:
+              ec_metadata_profile:
+                - m=2
+                - k=2
+                - crush-failure-domain=osd
               provider: samba-vfs/new
               volume: cephfs
               subvolumegroup: smb
@@ -68,6 +72,10 @@ tasks:
             cluster_id: modtest1
             share_id: share2
             cephfs:
+              ec_metadata_profile:
+                - m=2
+                - k=2
+                - crush-failure-domain=osd
               provider: samba-vfs/new
               volume: cephfs
               subvolumegroup: smb

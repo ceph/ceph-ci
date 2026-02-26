@@ -562,6 +562,7 @@ class FilesystemBase(MDSClusterBase):
         self.data_pools = None
         self.fs_config = fs_config
         self.ec_profile = fs_config.get('ec_profile')
+        self.ec_metadata_profile = fs_config.get('ec_metadata_profile')
 
         client_list = list(misc.all_roles_of_type(self._ctx.cluster, 'client'))
         self.client_id = client_list[0]
@@ -731,9 +732,28 @@ class FilesystemBase(MDSClusterBase):
         log.debug("Creating filesystem '{0}'".format(self.name))
 
         try:
-            self.run_ceph_cmd('osd', 'pool', 'create',self.metadata_pool_name,
-                              '--pg_num_min', str(self.pg_num_min))
+            # Create metadata pool (EC or replicated based on config)
+            if self.ec_metadata_profile and 'disabled' not in self.ec_metadata_profile:
+                # Create EC profile for metadata pool
+                ec_metadata_profile_name = self.metadata_pool_name + "_ec_profile"
+                log.debug("EC metadata profile is %s", self.ec_metadata_profile)
+                cmd = ['osd', 'erasure-code-profile', 'set', ec_metadata_profile_name]
+                cmd.extend(self.ec_metadata_profile)
+                self.run_ceph_cmd(*cmd)
+                # Created erasure coded metadata pool
+                self.run_ceph_cmd('osd', 'pool', 'create', self.metadata_pool_name,
+                                  'erasure', ec_metadata_profile_name,
+                                  '--pg_num_min', str(self.pg_num_min))
+                self.run_ceph_cmd('osd', 'pool', 'set', self.metadata_pool_name,
+                                  'allow_ec_overwrites', 'true')
+                self.run_ceph_cmd('osd', 'pool', 'set', self.metadata_pool_name,
+                                  'allow_ec_optimizations', 'true')
+            else:
+                # Create replicated metadata pool
+                self.run_ceph_cmd('osd', 'pool', 'create', self.metadata_pool_name,
+                                  '--pg_num_min', str(self.pg_num_min))
 
+            # Create default replicated data pool
             self.run_ceph_cmd('osd', 'pool', 'create', data_pool_name,
                               str(self.pg_num),
                               '--pg_num_min', str(self.pg_num_min),
@@ -741,9 +761,14 @@ class FilesystemBase(MDSClusterBase):
                               str(self.target_size_ratio))
         except CommandFailedError as e:
             if e.exitstatus == 22: # nautilus couldn't specify --pg_num_min option
-                self.run_ceph_cmd('osd', 'pool', 'create',
-                                  self.metadata_pool_name,
-                                  str(self.pg_num_min))
+                # Fallback for older Ceph versions
+                if self.ec_metadata_profile and 'disabled' not in self.ec_metadata_profile:
+                    # EC metadata pools are unsupported in older Ceph versions
+                    raise
+                else:
+                    self.run_ceph_cmd('osd', 'pool', 'create',
+                                      self.metadata_pool_name,
+                                      str(self.pg_num_min))
 
                 self.run_ceph_cmd('osd', 'pool', 'create',
                                   data_pool_name, str(self.pg_num),
