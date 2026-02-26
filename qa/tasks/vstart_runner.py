@@ -984,7 +984,15 @@ class LocalFilesystem(LocalMDSCluster, tasks.cephfs.filesystem.FilesystemBase):
         self.data_pool_name = None
         self.data_pools = None
         self.fs_config = fs_config
-        self.ec_profile = fs_config.get('ec_profile')
+
+        pool_types = fs_config.get('pool_types', {})
+        data_tokens = pool_types.get('data_pool', [])
+        self.data_pool_is_erasure = 'type=erasure' in data_tokens
+        # Legacy key — still accepted for backward compatibility
+        if not self.data_pool_is_erasure:
+            legacy_ec = fs_config.get('ec_profile')
+            if legacy_ec and 'disabled' not in legacy_ec:
+                self.data_pool_is_erasure = True
 
         self.mon_manager = LocalCephManager(ctx=self._ctx, cluster_name=cluster_name)
 

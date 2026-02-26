@@ -156,7 +156,7 @@ class TestAdminCommands(CephFSTestCase):
             'osd', 'pool', 'application', 'get', pool, app, key)
         self.assertEqual(str(output.strip()), value)
 
-    def setup_ec_pools(self, n, metadata=True, overwrites=True):
+    def setup_ec_pools(self, n, metadata=True, overwrites=True, optimized=False):
         if metadata:
             self.run_ceph_cmd('osd', 'pool', 'create', n+"-meta", "8")
         cmd = ['osd', 'erasure-code-profile', 'set', n+"-profile", "m=2", "k=2", "crush-failure-domain=osd"]
@@ -164,6 +164,8 @@ class TestAdminCommands(CephFSTestCase):
         self.run_ceph_cmd('osd', 'pool', 'create', n+"-data", "8", "erasure", n+"-profile")
         if overwrites:
             self.run_ceph_cmd('osd', 'pool', 'set', n+"-data", 'allow_ec_overwrites', 'true')
+        if optimized:
+            self.run_ceph_cmd('osd', 'pool', 'set', n+"-data", 'allow_ec_optimizations', 'true')
 
     def gen_health_warn_mds_cache_oversized(self, mds_id=None, fs=None, path='.'):
         health_warn = 'MDS_CACHE_OVERSIZED'
@@ -522,13 +524,13 @@ class TestFsNew(TestAdminCommands):
 
     def test_new_default_ec(self):
         """
-        That a new file system warns/fails with an EC default data pool.
+        That a new file system warns/fails with an EC default data pool without OMAP support.
         """
 
         self.mount_a.umount_wait(require_clean=True)
         self.mds_cluster.delete_all_filesystems()
         n = "test_new_default_ec"
-        self.setup_ec_pools(n)
+        self.setup_ec_pools(n, optimized=False)
         try:
             self.run_ceph_cmd('fs', 'new', n, n+"-meta", n+"-data")
         except CommandFailedError as e:
@@ -541,13 +543,13 @@ class TestFsNew(TestAdminCommands):
 
     def test_new_default_ec_force(self):
         """
-        That a new file system succeeds with an EC default data pool with --force.
+        That a new file system succeeds with an EC default data pool without OMAP support when using --force.
         """
 
         self.mount_a.umount_wait(require_clean=True)
         self.mds_cluster.delete_all_filesystems()
         n = "test_new_default_ec_force"
-        self.setup_ec_pools(n)
+        self.setup_ec_pools(n, optimized=False)
         self.run_ceph_cmd('fs', 'new', n, n+"-meta", n+"-data", "--force")
 
     def test_new_default_ec_no_overwrite(self):
@@ -578,6 +580,38 @@ class TestFsNew(TestAdminCommands):
                 raise
         else:
             raise RuntimeError("expected failure")
+
+    def test_new_default_ec_with_omap(self):
+        """
+        That a new file system succeeds with an EC default data pool that has OMAP support enabled.
+        """
+        self.mount_a.umount_wait(require_clean=True)
+        self.mds_cluster.delete_all_filesystems()
+        n = "test_new_default_ec_with_omap"
+        self.setup_ec_pools(n, optimized=True)
+        # Should succeed without --force
+        self.run_ceph_cmd('fs', 'new', n, n+"-meta", n+"-data")
+
+    def test_new_ec_metadata_with_omap(self):
+        """
+        That a new file system succeeds with an EC metadata pool that has OMAP support enabled.
+        """
+        self.mount_a.umount_wait(require_clean=True)
+        self.mds_cluster.delete_all_filesystems()
+        n = "test_new_ec_metadata_with_omap"
+        
+        # Create EC metadata pool with OMAP support
+        cmd = ['osd', 'erasure-code-profile', 'set', n+"-profile", "m=2", "k=2", "crush-failure-domain=osd"]
+        self.run_ceph_cmd(cmd)
+        self.run_ceph_cmd('osd', 'pool', 'create', n+"-meta", "8", "erasure", n+"-profile")
+        self.run_ceph_cmd('osd', 'pool', 'set', n+"-meta", 'allow_ec_overwrites', 'true')
+        self.run_ceph_cmd('osd', 'pool', 'set', n+"-meta", 'allow_ec_optimizations', 'true')
+        
+        # Create regular data pool
+        self.run_ceph_cmd('osd', 'pool', 'create', n+"-data", "8")
+        
+        # Should succeed
+        self.run_ceph_cmd('fs', 'new', n, n+"-meta", n+"-data")
 
     def test_fs_new_pool_application_metadata(self):
         """
