@@ -14,6 +14,7 @@ from ..security import Scope
 from ..services.nvmeof_cli import NvmeofCLICommand, convert_to_bytes, \
     escape_address_if_ipv6, format_host_updates, \
     resolve_nvmeof_server_address
+from ..services.nvmeof_client import get_gateway_locations
 from ..services.orchestrator import OrchClient
 from ..tools import str_to_bool
 from . import APIDoc, APIRouter, BaseController, CreatePermission, \
@@ -65,14 +66,55 @@ else:
         @ReadPermission
         @Endpoint('GET')
         def group(self):
+            # pylint: disable=too-many-nested-blocks
             try:
                 orch = OrchClient.instance()
-                return orch.services.list(service_type='nvmeof')
+                services_result = orch.services.list(service_type='nvmeof')
+
+                if isinstance(services_result, tuple) and len(services_result) == 2:
+                    services, count = services_result
+                else:
+                    services = services_result
+                    count = len(services) if services else 0
+
+                if services:
+                    result = []
+                    for service in services:
+                        service_dict = service.to_json() if hasattr(service, 'to_json') else service
+
+                        if isinstance(service_dict, dict):
+                            # Extract pool and group from spec
+                            spec = service_dict.get('spec', {})
+                            if isinstance(spec, dict):
+                                pool = spec.get('pool')
+                                group = spec.get('group')
+
+                                if pool and group:
+                                    # Get hosts list from placement to match location order
+                                    placement = service_dict.get('placement', {})
+                                    hosts = placement.get('hosts', [])
+
+                                    # Get locations in the same order as hosts
+                                    locations = get_gateway_locations(pool, group, hosts)
+
+                                    if 'placement' not in service_dict:
+                                        service_dict['placement'] = {}
+
+                                    service_dict['placement']['locations'] = locations
+
+                        result.append(service_dict)
+
+                    return (result, count)
+
+                return services_result
             except OrchestratorError as e:
                 # just return none instead of raising an exception
                 # since we need this to work regardless of the status
                 # of orchestrator in UI
                 logger.error('Failed to fetch the gateway groups: %s', e)
+                return None
+            except Exception as e:  # pylint: disable=broad-except
+                logger.error("Unexpected error in group(): %s", e, exc_info=True)
                 return None
 
         @ReadPermission
@@ -1040,6 +1082,7 @@ else:
                                 "Key ID(s) to use for encryption pass phrases, "
                                 "separated by commas",
                                 True, None),
+                "location": Param(str, "Gateway location for namespace", True, None),
                 "gw_group": Param(str, "NVMeoF gateway group", True, None),
                 "server_address": Param(str, "NVMeoF gateway address", True, None),
                 "traddr": Param(str, "NVMeoF gateway address (deprecated)", True, None),
@@ -1063,6 +1106,7 @@ else:
             no_auto_visible: Optional[bool] = False,
             disable_auto_resize: Optional[bool] = False,
             read_only: Optional[bool] = False,
+            location: Optional[str] = None,
             gw_group: Optional[str] = None,
             server_address: Optional[str] = None,
             traddr: Optional[str] = None,
@@ -1110,7 +1154,8 @@ else:
                     disable_auto_resize=disable_auto_resize,
                     read_only=read_only,
                     encryption_entries=enc_entries,
-                    encryption_algorithm=enc_alg
+                    encryption_algorithm=enc_alg,
+                    location=location
                 )
             )
 
@@ -1135,6 +1180,7 @@ else:
                 "load_balancing_group": Param(int, "Load balancing group"),
                 "disable_auto_resize": Param(str, "Disable auto resize", True, None),
                 "read_only": Param(str, "Read only namespace", True, None),
+                "location": Param(str, "Gateway location for namespace", True, None),
                 "force": Param(
                     bool,
                     "Force create namespace even it image is used by other namespace"
@@ -1177,6 +1223,7 @@ else:
             no_auto_visible: Optional[bool] = False,
             disable_auto_resize: Optional[bool] = False,
             read_only: Optional[bool] = False,
+            location: Optional[str] = None,
             gw_group: Optional[str] = None,
             server_address: Optional[str] = None,
             traddr: Optional[str] = None,
@@ -1239,7 +1286,8 @@ else:
                     disable_auto_resize=disable_auto_resize,
                     read_only=read_only,
                     encryption_entries=enc_entries,
-                    encryption_algorithm=enc_alg
+                    encryption_algorithm=enc_alg,
+                    location=location
                 )
             )
 
@@ -1755,6 +1803,7 @@ else:
                 "r_mbytes_per_second": Param(int, "Read MB/s"),
                 "w_mbytes_per_second": Param(int, "Write MB/s"),
                 "trash_image": Param(bool, "Trash RBD image after removing namespace"),
+                "location": Param(str, "Namespace location"),
                 "gw_group": Param(str, "NVMeoF gateway group", True, None),
                 "server_address": Param(str, "NVMeoF gateway address", True, None),
                 "traddr": Param(str, "NVMeoF gateway address (deprecated)", True, None),
@@ -1773,6 +1822,7 @@ else:
             r_mbytes_per_second: Optional[int] = None,
             w_mbytes_per_second: Optional[int] = None,
             trash_image: Optional[bool] = None,
+            location: Optional[str] = None,
             gw_group: Optional[str] = None,
             server_address: Optional[str] = None,
             traddr: Optional[str] = None,
@@ -1828,6 +1878,20 @@ else:
                         subsystem_nqn=nqn,
                         nsid=int(nsid),
                         trash_image=str_to_bool(trash_image)
+                    )
+                )
+                if resp.status != 0:
+                    contains_failure = True
+
+            if location is not None:
+                resp = NVMeoFClient(
+                    gw_group=gw_group,
+                    server_address=server_address
+                ).stub.namespace_change_location(
+                    NVMeoFClient.pb2.namespace_change_location_req(
+                        subsystem_nqn=nqn,
+                        nsid=int(nsid),
+                        location=location
                     )
                 )
                 if resp.status != 0:
