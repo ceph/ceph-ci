@@ -15,4 +15,4 @@ tasks:
     basedir: qa/standalone
     clients:
       all:
-        - osd
+        - osd/repeer-on-acting-back.sh # changed temporarily to test just this file
