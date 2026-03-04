@@ -65,9 +65,11 @@ class ClusterUpgrade(RESTController):
     @CreatePermission
     def start(self, image: Optional[str] = None, version: Optional[str] = None,
               daemon_types: Optional[List[str]] = None, host_placement: Optional[str] = None,
-              services: Optional[List[str]] = None, limit: Optional[int] = None) -> str:
+              services: Optional[List[str]] = None, limit: Optional[int] = None,
+              license_accepted: Optional[bool] = False) -> str:
         orch = OrchClient.instance()
-        start = orch.upgrades.start(image, version, daemon_types, host_placement, services, limit)
+        start = orch.upgrades.start(image, version, daemon_types, host_placement, services, limit,
+                                    license_accepted)
         return start
 
     @Endpoint('PUT')
@@ -99,3 +101,24 @@ class ClusterUpgrade(RESTController):
     def stop(self) -> str:
         orch = OrchClient.instance()
         return orch.upgrades.stop()
+
+@APIRouter('/cluster/license', Scope.CONFIG_OPT)
+@APIDoc("License Management API", "License")
+class LicenseManager(RESTController):
+    @raise_if_no_orchestrator([OrchFeature.LICENSE])
+    @handle_orchestrator_error('license')
+    @EndpointDoc("Get the cluster license information",
+                 parameters={'image_name': (str, 'Image Name')})
+    @ReadPermission
+    def get(self, image_name: str) -> Dict:
+        orch = OrchClient.instance()
+        return orch.license.get_license(image_name)
+
+    @raise_if_no_orchestrator([OrchFeature.LICENSE])
+    @handle_orchestrator_error('license')
+    @EndpointDoc("Accept the cluster license",
+                 parameters={'image_name': (str, 'Image Name')})
+    @UpdatePermission
+    def set(self, image_name: str) -> Dict:
+        orch = OrchClient.instance()
+        return orch.license.accept_license(image_name)

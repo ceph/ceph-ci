@@ -181,9 +181,9 @@ class UpgradeManager(ResourceManager):
     @wait_api_result
     def start(self, image: str, version: str, daemon_types: Optional[List[str]] = None,
               host_placement: Optional[str] = None, services: Optional[List[str]] = None,
-              limit: Optional[int] = None) -> str:
+              limit: Optional[int] = None, license_accepted: Optional[bool] = False) -> str:
         return self.api.upgrade_start(image, version, daemon_types, host_placement, services,
-                                      limit)
+                                      limit, automatically_accept_license=license_accepted)
 
     @wait_api_result
     def pause(self) -> str:
@@ -239,6 +239,18 @@ class MonitoringManager(ResourceManager):
         """Get security config information"""
         return self.api.get_security_config()
 
+class LicenseManager(ResourceManager):
+
+    @wait_api_result
+    def get_license(self, image_name: str) -> Dict[str, str]:
+        """Get license information"""
+        return self.api.display_license(image_name)
+
+    @wait_api_result
+    def accept_license(self, image_name: str) -> str:
+        """Accept a license"""
+        return self.api.accept_license(image_name)
+
 
 class OrchClient(object):
 
@@ -263,6 +275,7 @@ class OrchClient(object):
         self.hardware = HardwareManager(self.api)
         self.cert_store = CertStoreManager(self.api)
         self.monitoring = MonitoringManager(self.api)
+        self.license = LicenseManager(self.api)
 
     def available(self, features: Optional[List[str]] = None) -> bool:
         available = self.status()['available']
@@ -321,3 +334,4 @@ class OrchFeature(object):
     UPGRADE_PAUSE = 'upgrade_pause'
     UPGRADE_RESUME = 'upgrade_resume'
     UPGRADE_STOP = 'upgrade_stop'
+    LICENSE = 'display_license'

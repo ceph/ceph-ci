@@ -24,4 +24,14 @@ export class ClusterService {
       { headers: { Accept: 'application/vnd.ceph.api.v0.1+json' } }
     );
   }
+
+  getLicense(image_name: string): Observable<string> {
+    return this.http.get<string>(
+      `${this.baseURL}/license/${encodeURIComponent(image_name)}`
+    );
+  }
+
+  acceptLicense(image_name: string): Observable<void> {
+    return this.http.put<void>(`${this.baseURL}/license`, { image_name: image_name });
+  }
 }
