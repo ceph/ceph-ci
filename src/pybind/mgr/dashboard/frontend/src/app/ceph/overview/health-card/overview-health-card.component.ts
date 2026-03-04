@@ -33,6 +33,8 @@ import { RefreshIntervalService } from '~/app/shared/services/refresh-interval.s
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
 import { HardwareNameMapping } from '~/app/shared/enum/hardware.enum';
 import { GaugeChartComponent } from '@carbon/charts-angular';
+import { CallHomeService } from '~/app/shared/api/call-home.service';
+import { StorageInsightsService } from '~/app/shared/api/storage-insights.service';
 
 type OverviewHealthData = {
   summary: Summary;
@@ -84,6 +86,8 @@ export class OverviewHealthCardComponent {
   private readonly mgrModuleService = inject(MgrModuleService);
   private readonly refreshIntervalService = inject(RefreshIntervalService);
   private readonly authStorageService = inject(AuthStorageService);
+  private readonly callHomeService = inject(CallHomeService);
+  private readonly storageInsightsService = inject(StorageInsightsService);
 
   @Input({ required: true }) vm!: HealthCardVM;
   @Output() viewIncidents = new EventEmitter<void>();
@@ -156,6 +160,18 @@ export class OverviewHealthCardComponent {
     }),
     shareReplay({ bufferSize: 1, refCount: true })
   );
+
+  readonly callHomeEnabled$: Observable<boolean> = this.callHomeService.getCallHomeStatus().pipe(
+    catchError(() => of(false)),
+    shareReplay({ bufferSize: 1, refCount: true })
+  );
+
+  readonly storageInsightsEnabled$: Observable<boolean> = this.storageInsightsService
+    .getStorageInsightsStatus()
+    .pipe(
+      catchError(() => of(false)),
+      shareReplay({ bufferSize: 1, refCount: true })
+    );
 
   readonly sections$: Observable<HwRowVM[][] | null> = this.hardwareRows$.pipe(
     map((rows) => {

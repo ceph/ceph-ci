@@ -1,6 +1,5 @@
 import { Component, OnInit } from '@angular/core';
 import { CdFormGroup } from '../../forms/cd-form-group';
-import { NgbActiveModal } from '@ng-bootstrap/ng-bootstrap';
 import { NotificationService } from '../../services/notification.service';
 import { NotificationType } from '../../enum/notification-type.enum';
 import { FormControl, Validators } from '@angular/forms';
@@ -23,7 +22,7 @@ export class StorageInsightsModalComponent extends CdForm implements OnInit {
   action = $localize`Opt in`;
 
   tenantsList: any;
-  selectedTenant: any[] = [];
+  selectedTenant: any;
 
   tenantUrl: string;
   tenantId: string;
@@ -33,7 +32,6 @@ export class StorageInsightsModalComponent extends CdForm implements OnInit {
   callHomeEnabled = false;
 
   constructor(
-    public activeModal: NgbActiveModal,
     public actionLabels: ActionLabelsI18n,
     private notificationService: NotificationService,
     private callHomeService: CallHomeService,
@@ -85,16 +83,16 @@ export class StorageInsightsModalComponent extends CdForm implements OnInit {
       this.modalForm.get('email').setValue(data.IBM_storage_insights.owner_email);
       this.modalForm.get('ownerTenantId').setValue(data.IBM_storage_insights.owner_tenant_id);
       const tenantId = data.IBM_storage_insights.owner_tenant_id;
-      this.modalForm.get('tenants').setValue(tenantId);
       this.fetchTenants(this.modalForm.value, tenantId);
+      this.loadingReady();
     });
-    this.loadingReady();
   }
 
   onSelectChange(): void {
+    if (!this.selectedTenant) return;
     this.tenantCompanyName = this.selectedTenant['company-name'];
-    this.tenantUrl = this.selectedTenant['external_url'];
-    let urlSplit = this.tenantUrl.split('/');
+    this.tenantUrl = this.selectedTenant['external_url'] ?? '';
+    const urlSplit = this.tenantUrl.split('/');
     this.tenantId = urlSplit[urlSplit.length - 1];
   }
 
@@ -103,11 +101,11 @@ export class StorageInsightsModalComponent extends CdForm implements OnInit {
       (data: any) => {
         this.tenantsList = data['si-instances'];
         if (tenantId) {
-          this.selectedTenant = this.tenantsList.filter((tenant: any) =>
-            tenant['external_url'].includes(tenantId)
+          this.selectedTenant = this.tenantsList?.find((tenant: any) =>
+            tenant['external_url']?.includes(tenantId)
           );
         } else {
-          this.selectedTenant = this.tenantsList[0];
+          this.selectedTenant = this.tenantsList?.[0];
         }
         this.onSelectChange();
       },
@@ -116,7 +114,7 @@ export class StorageInsightsModalComponent extends CdForm implements OnInit {
         this.notificationService.show(
           NotificationType.error,
           $localize`Failed to fetch tenants`,
-          error.error.detail
+          error.error?.detail
         );
       }
     );
@@ -124,7 +122,7 @@ export class StorageInsightsModalComponent extends CdForm implements OnInit {
 
   optIn(formFields: any) {
     const notificationMessage = this.isConfigured
-      ? $localize`Updated IBM Storage Insights Configuration`
+      ? $localize`Updated IBM Storage Insights configuration`
       : $localize`Activated IBM Storage Insights`;
     formFields['tenantId'] = this.tenantId;
     this.callHomeService.set(formFields).subscribe({
@@ -132,8 +130,7 @@ export class StorageInsightsModalComponent extends CdForm implements OnInit {
       complete: () => {
         this.storageInsightsNotificationService.setVisibility(false);
         this.notificationService.show(NotificationType.success, notificationMessage);
-        this.storageInsightsNotificationService.setVisibility(false);
-        this.activeModal.close();
+        this.closeModal();
       }
     });
   }

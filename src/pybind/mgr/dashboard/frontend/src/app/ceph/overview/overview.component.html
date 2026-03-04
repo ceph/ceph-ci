@@ -1,5 +1,12 @@
 @let storageCard = (storageCardVm$ | async);
 @let health = (healthCardVm$ | async);
+@let callHomeEnabledWarning = (callHomeEnabledWarning$ | async);
+@let callHomeEnabled = (callHomeStatus$ | async);
+
+@if (environment.build === 'ibm' && permissions['configOpt'].read) {
+  <cd-call-home-notification [callHomeEnabled]="callHomeEnabled" [callHomeEnabledWarning]="callHomeEnabledWarning"></cd-call-home-notification>
+  <cd-storage-insights-notification></cd-storage-insights-notification>
+}
 <div cdsGrid
      [fullWidth]="true"
      [narrow]="true"

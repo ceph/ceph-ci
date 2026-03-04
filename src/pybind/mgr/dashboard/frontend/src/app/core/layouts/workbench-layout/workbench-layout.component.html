@@ -10,8 +10,6 @@
         <cd-pwd-expiration-notification></cd-pwd-expiration-notification>
         <cd-telemetry-notification *ngIf="environment.build !== 'ibm' && permissions['configOpt'].read"></cd-telemetry-notification>
         <cd-motd></cd-motd>
-        <cd-call-home-notification *ngIf="environment.build === 'ibm' && permissions['configOpt'].read"></cd-call-home-notification>
-        <cd-storage-insights-notification *ngIf="environment.build === 'ibm' && permissions['configOpt'].read"></cd-storage-insights-notification>
       </div>
       <cd-context></cd-context>
       <div class="breadcrumbs--padding">

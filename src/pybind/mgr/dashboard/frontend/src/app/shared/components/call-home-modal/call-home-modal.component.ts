@@ -14,6 +14,8 @@ import { ConnectivityStatus } from '../../models/call-home.model';
 import { switchMap } from 'rxjs/operators';
 import { Icons } from '../../enum/icons.enum';
 import { CallHomeNotificationService } from '../../services/call-home-notification.service';
+import { ModalCdsService } from '../../services/modal-cds.service';
+import { ConfirmationModalComponent } from '../confirmation-modal/confirmation-modal.component';
 
 @Component({
   selector: 'cd-call-home-modal',
@@ -43,7 +45,8 @@ export class CallHomeModalComponent extends CdForm implements OnInit {
     private notificationService: NotificationService,
     private callHomeSerive: CallHomeService,
     private textToDownloadService: TextToDownloadService,
-    private callHomeNotificationService: CallHomeNotificationService
+    private callHomeNotificationService: CallHomeNotificationService,
+    private cdsModalService: ModalCdsService
   ) {
     super();
   }
@@ -53,7 +56,7 @@ export class CallHomeModalComponent extends CdForm implements OnInit {
     this.callHomeSerive.getCallHomeStatus().subscribe((data: boolean) => {
       this.isConfigured = data;
       if (data) {
-        this.title = $localize`Download Reports`;
+        this.title = $localize`Download reports`;
       }
       this.loadingReady();
     });
@@ -70,10 +73,10 @@ export class CallHomeModalComponent extends CdForm implements OnInit {
       lastName: new FormControl(null, [Validators.required]),
       email: new FormControl(null, [Validators.required, Validators.email]),
       phone: new FormControl(null, [Validators.required]),
-      address: new FormControl(null),
-      companyName: new FormControl(null),
+      address: new FormControl(null, [Validators.required]),
+      companyName: new FormControl(null, [Validators.required]),
       countryCode: new FormControl(null, [Validators.required]),
-      licenseAgrmt: new FormControl(null, [Validators.required])
+      licenseAgrmt: new FormControl(false, [Validators.requiredTrue])
     });
   }
 
@@ -86,7 +89,15 @@ export class CallHomeModalComponent extends CdForm implements OnInit {
   }
 
   stop() {
-    this.callHome(false);
+    this.cdsModalService.show(ConfirmationModalComponent, {
+      titleText: $localize`Deactivate IBM Call Home`,
+      description: $localize`Are you sure you want to deactivate IBM Call Home? This will stop sending diagnostic data to IBM.`,
+      buttonText: $localize`Deactivate`,
+      onSubmit: () => {
+        this.cdsModalService.dismissAll();
+        this.callHome(false);
+      }
+    });
   }
 
   submit() {
@@ -130,7 +141,7 @@ export class CallHomeModalComponent extends CdForm implements OnInit {
       enable ? $localize`Activated IBM Call Home Agent`
        : $localize`Deactivated IBM Call Home Agent`,
       false,
-      $localize`Enabling Call Home Module...`,
+      enable ? $localize`Enabling Call Home module...` : $localize`Disabling Call Home module...`,
       this.activeModal
     );
 

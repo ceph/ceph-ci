@@ -4,7 +4,7 @@ import { StorageInsightsModalComponent } from '~/app/shared/components/storage-i
 
 import { Permission } from '~/app/shared/models/permissions';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
-import { ModalService } from '~/app/shared/services/modal.service';
+import { ModalCdsService } from '~/app/shared/services/modal-cds.service';
 import { environment } from '~/environments/environment';
 
 @Component({
@@ -17,17 +17,17 @@ export class AdministrationComponent {
   configOptPermission: Permission;
   environment = environment;
 
-  constructor(private authStorageService: AuthStorageService, private modalService: ModalService) {
+  constructor(private authStorageService: AuthStorageService, private cdsModalService: ModalCdsService) {
     const permissions = this.authStorageService.getPermissions();
     this.userPermission = permissions.user;
     this.configOptPermission = permissions.configOpt;
   }
 
   openCallHomeModal() {
-    this.modalService.show(CallHomeModalComponent, null, { size: 'lg' });
+    this.cdsModalService.show(CallHomeModalComponent);
   }
 
   openSIModal() {
-    this.modalService.show(StorageInsightsModalComponent, null, { size: 'lg' });
+    this.cdsModalService.show(StorageInsightsModalComponent);
   }
 }

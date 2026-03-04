@@ -56,4 +56,8 @@ export class CallHomeService {
   testConnectivity() {
     return this.http.post(`${this.baseURL}/connectivity`, {});
   }
+
+  confirmAutoEnabled(): Observable<void> {
+    return this.http.post<void>(`${this.baseURL}/confirm_auto_enabled`, {});
+  }
 }

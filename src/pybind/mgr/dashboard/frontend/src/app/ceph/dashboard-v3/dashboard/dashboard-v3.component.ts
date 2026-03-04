@@ -2,7 +2,7 @@ import { Component, OnDestroy, OnInit } from '@angular/core';
 
 import _ from 'lodash';
 import { BehaviorSubject, EMPTY, Observable, Subject, Subscription, of } from 'rxjs';
-import { catchError, exhaustMap, switchMap, takeUntil } from 'rxjs/operators';
+import { catchError, exhaustMap, map, shareReplay, switchMap, takeUntil } from 'rxjs/operators';
 
 import { HealthService } from '~/app/shared/api/health.service';
 import { PrometheusService, PromqlGuageMetric } from '~/app/shared/api/prometheus.service';
@@ -45,6 +45,7 @@ import { ConnectivityStatus } from '~/app/shared/models/call-home.model';
 import { NotificationService } from '~/app/shared/services/notification.service';
 import { NotificationType } from '~/app/shared/enum/notification-type.enum';
 import { getVersionAndRelease } from '~/app/shared/helpers/utils';
+import { environment } from '~/environments/environment';
 
 @Component({
   selector: 'cd-dashboard-v3',
@@ -59,11 +60,13 @@ export class DashboardV3Component extends PrometheusListHelper implements OnInit
   interval = new Subscription();
   capacityService: any;
   capacity: any;
-  healthData$: Observable<Object>;
+  healthData$: Observable<any>;
   callHomeStatus$: Observable<ConnectivityStatus>;
+  callHomeEnabledWarning$: Observable<boolean>;
   callHomeStatusSubject = new BehaviorSubject<ConnectivityStatus>(null);
 
   callHomeRefreshLoading = false;
+  environment = environment;
 
   icons = Icons;
 
@@ -166,6 +169,13 @@ export class DashboardV3Component extends PrometheusListHelper implements OnInit
             return of(null)
           })
         ))
+      );
+      this.healthData$ = this.refreshIntervalObs(() =>
+        this.healthService.getHealthSnapshot()
+      ).pipe(shareReplay({ bufferSize: 1, refCount: true }));
+      this.callHomeEnabledWarning$ = this.healthData$.pipe(
+        map((data: HealthSnapshotMap) => 'CALL_HOME_ENABLED_AUTOMATICALLY' in (data.health?.checks ?? {})),
+        shareReplay({ bufferSize: 1, refCount: true })
       );
     }
 
@@ -276,7 +286,12 @@ export class DashboardV3Component extends PrometheusListHelper implements OnInit
   }
 
   loadInventories() {
-    this.refreshIntervalObs(() => this.healthService.getHealthSnapshot()).subscribe({
+    if (!this.healthData$) {
+      this.healthData$ = this.refreshIntervalObs(() =>
+        this.healthService.getHealthSnapshot()
+      ).pipe(shareReplay({ bufferSize: 1, refCount: true }));
+    }
+    this.healthData$.subscribe({
       next: (data: HealthSnapshotMap) => {
         this.detailsCardData.fsid = data?.fsid;
         this.healthCardData = data?.health;

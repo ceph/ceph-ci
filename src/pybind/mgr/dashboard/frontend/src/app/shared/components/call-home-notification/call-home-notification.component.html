@@ -1,13 +1,29 @@
-<ng-container *ngIf="environment.build === 'ibm' && displayNotification">
+@if (environment.build === 'ibm' && callHomeEnabled !== null) {
+  @if (callHomeEnabled && callHomeEnabledWarning) {
+  <cd-alert-panel class="no-margin-bottom"
+                  title="IBM Call Home is enabled"
+                  i18n-title
+                  size="slim"
+                  type="info"
+                  [dismissible]="false"
+                  (action)="confirmAutoEnabled()"
+                  actionName="Acknowledge">
+    <div i18n>This cluster is configured to automatically send diagnostic and usage data to help improve product
+      stability and support.
+      By acknowledging this message, you confirm that you’ve been informed, which will help resolve the call home
+      warning. You can disable Call Home at any time in Settings.</div>
+  </cd-alert-panel>
+  } @else if (!callHomeEnabled) {
   <cd-alert-panel class="no-margin-bottom"
                   [showTitle]="false"
                   size="slim"
                   [type]="notificationSeverity"
                   [dismissible]="true"
-                  (dismissed)="onDismissed()">
-  <div i18n>The IBM Call Home helps to improve support experience of Ceph Clusters. Please
-  <button (click)="openModal()"
-          class="btn activate-button alert-link activate-text">Activate</button>
-  the IBM Call Home.</div>
+                  (dismissed)="onDismissedActivate()"
+                  (action)="openModal()"
+                  actionName="Activate">
+    <div i18n>The IBM Call Home helps to improve support experience of Ceph Clusters. Please
+      activate the IBM Call Home.</div>
   </cd-alert-panel>
-</ng-container>
+  }
+}

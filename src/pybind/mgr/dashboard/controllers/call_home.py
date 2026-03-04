@@ -3,9 +3,10 @@
 import json
 
 from typing import Tuple
-from . import APIDoc, APIRouter, RESTController, Endpoint, ReadPermission, CreatePermission
+from . import APIDoc, APIRouter, RESTController, Endpoint, ReadPermission, CreatePermission, EndpointDoc
 from .. import mgr
 from ..exceptions import DashboardException
+from ..services.orchestrator import OrchClient
 
 @APIRouter('/call_home')
 @APIDoc("Call Home Management API", "CallHome")
@@ -80,4 +81,14 @@ class CallHome(RESTController):
             if error_code != 0:
                 raise DashboardException(f'Error testing the connectivity: {err}')
         except RuntimeError as e:
+            raise DashboardException(e, component='call_home')
+
+    @Endpoint('POST')
+    @CreatePermission
+    @EndpointDoc("Confirm that the user has acknowledged the use of IBM Call Home")
+    def accept_call_home(self):
+        try:
+            orch = OrchClient.instance()
+            orch.license.accept_call_home()
+        except Exception as e:
             raise DashboardException(e, component='call_home')

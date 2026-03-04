@@ -1,3 +1,10 @@
+@let callHomeEnabled = (callHomeStatus$ | async);
+@let callHomeEnabledWarning = (callHomeEnabledWarning$ | async);
+
+@if (environment.build === 'ibm' && permissions['configOpt'].read) {
+  <cd-call-home-notification [callHomeEnabled]="callHomeEnabled" [callHomeEnabledWarning]="callHomeEnabledWarning"></cd-call-home-notification>
+  <cd-storage-insights-notification></cd-storage-insights-notification>
+}
 <div class="container-fluid p-4">
   <div class="row d-flex flex-row ps-3">
 

@@ -24,15 +24,55 @@
         source="fsid">
       </cd-copy-2-clipboard-button>
     </div>
-    <cds-icon-button
-      type="button"
-      kind="ghost"
-      size="sm"
-      description="Check logs"
-      i18n-description
-      [routerLink]="['/logs']">
-      <cd-icon type="dataViewAlt"></cd-icon>
-    </cds-icon-button>
+    <ng-template #telemetryDescription>
+      <div class="cds--type-heading-compact-01 cds-mb-2"
+           i18n>Support & diagnostics</div>
+      <table>
+        <tr>
+          <td class="cds-pr-8" i18n>Call Home</td>
+          <td>
+            @if (callHomeEnabled$ | async) {
+            <cd-icon type="success"></cd-icon>&nbsp;
+            <span i18n>on</span>
+            } @else {
+            <cd-icon type="infoCircle"></cd-icon>&nbsp;
+            <span i18n>off</span>
+            }
+          </td>
+        </tr>
+        <tr>
+          <td class="cds-pr-8" i18n>Storage Insight</td>
+          <td>
+            @if (storageInsightsEnabled$ | async) {
+            <cd-icon type="success"></cd-icon>&nbsp;
+            <span i18n>on</span>
+            } @else {
+            <cd-icon type="infoCircle"></cd-icon>&nbsp;
+            <span i18n>off</span>
+            }
+          </td>
+        </tr>
+      </table>
+    </ng-template>
+    <div cdsStack="horizontal"
+         [gap]="2">
+      <cds-icon-button
+        type="button"
+        kind="ghost"
+        size="sm"
+        [description]="telemetryDescription">
+        <cd-icon type="cloudMonitoring"></cd-icon>
+      </cds-icon-button>
+      <cds-icon-button
+        type="button"
+        kind="ghost"
+        size="sm"
+        description="Check logs"
+        i18n-description
+        [routerLink]="['/logs']">
+        <cd-icon type="dataViewAlt"></cd-icon>
+      </cds-icon-button>
+    </div>
   </ng-template>
   } @else {
   <cds-skeleton-text

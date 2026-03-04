@@ -251,6 +251,11 @@ class LicenseManager(ResourceManager):
         """Accept a license"""
         return self.api.accept_license(image_name)
 
+    @wait_api_result
+    def accept_call_home(self) -> str:
+        """Accept call home has been automatically enabled and clear warning"""
+        return self.api.accept_call_home()
+
 
 class OrchClient(object):
 

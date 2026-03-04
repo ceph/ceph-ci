@@ -7,8 +7,8 @@ import {
   ViewEncapsulation
 } from '@angular/core';
 import { GridModule, LayoutModule, TilesModule } from 'carbon-components-angular';
-import { combineLatest, EMPTY, Observable } from 'rxjs';
-import { catchError, exhaustMap, map, shareReplay, startWith } from 'rxjs/operators';
+import { combineLatest, EMPTY, Observable, of } from 'rxjs';
+import { catchError, exhaustMap, map, shareReplay, startWith, switchMap } from 'rxjs/operators';
 
 import { HealthService } from '~/app/shared/api/health.service';
 import { RefreshIntervalService } from '~/app/shared/services/refresh-interval.service';
@@ -40,6 +40,11 @@ import { PerformanceCardComponent } from '~/app/shared/components/performance-ca
 import { DataTableModule } from '~/app/shared/datatable/datatable.module';
 import { PipesModule } from '~/app/shared/pipes/pipes.module';
 import { OverviewStorageService } from '~/app/shared/api/storage-overview.service';
+import { environment } from '~/environments/environment';
+import { Permissions } from '~/app/shared/models/permissions';
+import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
+import { CallHomeService } from '~/app/shared/api/call-home.service';
+
 
 const SECONDS_PER_HOUR = 3600;
 const SECONDS_PER_DAY = 86400;
@@ -153,6 +158,11 @@ function buildHealthCardVM(d: HealthSnapshotMap): HealthCardVM {
   encapsulation: ViewEncapsulation.None
 })
 export class OverviewComponent {
+  environment = environment;
+
+  private authStorageService = inject(AuthStorageService);
+  permissions: Permissions = this.authStorageService.getPermissions();
+
   isHealthPanelOpen = false;
   isPGStatePanelOpen = false;
   activeHealthTab: HealthCardTabSection | null = null;
@@ -165,6 +175,7 @@ export class OverviewComponent {
   private readonly refreshIntervalService = inject(RefreshIntervalService);
   private readonly overviewStorageService = inject(OverviewStorageService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly callHomeService = inject(CallHomeService);
 
   /* HEALTH CARD DATA */
   private readonly healthData$: Observable<HealthSnapshotMap> = this.refreshIntervalObs(() =>
@@ -183,6 +194,19 @@ export class OverviewComponent {
       total: data.pgmap?.bytes_total,
       used: data.pgmap?.bytes_used
     })),
+    shareReplay({ bufferSize: 1, refCount: true })
+  );
+
+  readonly callHomeEnabledWarning$: Observable<boolean> = this.healthData$.pipe(
+    map((data: HealthSnapshotMap) => 'CALL_HOME_ENABLED_AUTOMATICALLY' in (data.health?.checks ?? {})),
+    shareReplay({ bufferSize: 1, refCount: true })
+  );
+
+  readonly callHomeStatus$: Observable<any> = this.refreshIntervalObs(() =>
+    this.callHomeService.getCallHomeStatus().pipe(
+      switchMap((status: boolean) => status ? this.callHomeService.status() : of(null))
+    )
+  ).pipe(
     shareReplay({ bufferSize: 1, refCount: true })
   );
 

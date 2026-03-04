@@ -1,24 +1,27 @@
-<cd-modal [modalRef]="activeModal">
-  <ng-container class="modal-title">
-    <div i18n>{{ title }}</div>
-  </ng-container>
+<cds-modal size="md"
+           [open]="open"
+           (overlaySelected)="closeModal()">
+  <cds-modal-header (closeSelect)="closeModal()">
+    <h3 cdsModalHeaderHeading
+        i18n>{{ title }}</h3>
+    <cd-help-text></cd-help-text>
+  </cds-modal-header>
 
-  <ng-container class="modal-content"
-                *cdFormLoading="loading">
-
+  <section cdsModalContent
+           *cdFormLoading="loading">
     <form name="callHomeForm"
           #formDir="ngForm"
           [formGroup]="callHomeForm"
           novalidate>
-    <div class="modal-body">
-    <ng-container *ngIf="!isConfigured; else downloadReport"><p i18n>
+    @if (!isConfigured) {
+      <p i18n>
         IBM Call Home enables users to share basic configuration data of their cluster with IBM. This
         allows IBM Storage Ceph to be configured to meet its maximum potential.
         IBM Support and development teams can also use this Call Home
         information in order to quickly analyze and solve IBM Storage Ceph
         user problems.
       </p>
-      <p class="mt-4">
+      <p class="cds-mt-3">
         Enabling call home has the following benefits:
       </p>
       <ul>
@@ -28,256 +31,258 @@
         <li class="p-1">Provide customer insights reports for support and development</li>
       </ul>
       <!-- Customer Number -->
-      <div class="form-group row mt-4">
-        <label class="cd-col-form-label required"
+      <div class="form-item cds-mt-5">
+        <cds-text-label
                for="customerNumber"
                i18n>IBM customer number
-          <cd-helper>An IBM Customer Number (ICN) is the unique number that IBM issues
-              its customers during the post contract signing entitlement process. It is a 7 character long string</cd-helper>
-        </label>
-        <div class="cd-col-form-input">
-          <input class="form-control"
+          <cd-help-text>An IBM Customer Number (ICN) is the unique number that IBM issues
+              its customers during the post contract signing entitlement process. It is a 7 character long string</cd-help-text>
+          <input cdsText
                  type="text"
                  id="customerNumber"
                  name="customerNumber"
                  formControlName="customerNumber"
                  maxlength="7"
                  autofocus>
+        </cds-text-label>
+        @if (callHomeForm.showError('customerNumber', formDir, 'required')) {
           <span class="invalid-feedback"
-                *ngIf="callHomeForm.showError('customerNumber', formDir, 'required')"
                 i18n>This field is required.</span>
-        </div>
+        }
       </div>
 
-      <div class="form-group row">
-        <label class="cd-col-form-label required"
+      <div class="form-item">
+        <cds-text-label
                for="firstName"
-               i18n>First name</label>
-        <div class="cd-col-form-input">
-          <input class="form-control"
+               i18n>First name
+          <input cdsText
                  type="text"
                  id="firstName"
                  name="firstName"
                  formControlName="firstName">
+        </cds-text-label>
+        @if (callHomeForm.showError('firstName', formDir, 'required')) {
           <span class="invalid-feedback"
-                *ngIf="callHomeForm.showError('firstName', formDir, 'required')"
                 i18n>This field is required.</span>
-        </div>
+        }
       </div>
 
       <!-- Last name -->
-      <div class="form-group row">
-        <label class="cd-col-form-label required"
+      <div class="form-item">
+        <cds-text-label
                for="lastName"
-               i18n>Last name</label>
-        <div class="cd-col-form-input">
-          <input class="form-control"
+               i18n>Last name
+          <input cdsText
                  type="text"
                  id="lastName"
                  name="lastName"
                  formControlName="lastName">
+        </cds-text-label>
+        @if (callHomeForm.showError('lastName', formDir, 'required')) {
           <span class="invalid-feedback"
-                *ngIf="callHomeForm.showError('lastName', formDir, 'required')"
                 i18n>This field is required.</span>
-        </div>
+        }
       </div>
 
         <!-- Email -->
-        <div class="form-group row">
-          <label class="cd-col-form-label required"
+        <div class="form-item">
+          <cds-text-label
                  for="email"
-                 i18n>Email</label>
-          <div class="cd-col-form-input">
-            <input class="form-control"
+                 i18n>Email
+            <input cdsText
                    type="text"
                    id="email"
                    name="email"
                    formControlName="email">
-            <span class="invalid-feedback"
-                  *ngIf="callHomeForm.showError('email', formDir, 'required')"
-                  i18n>This field is required.</span>
-            <span class="invalid-feedback"
-                  *ngIf="callHomeForm.showError('email', formDir, 'email')"
-                  i18n>The value is not a valid email address.</span>
-          </div>
+        </cds-text-label>
+            @if (callHomeForm.showError('email', formDir, 'required')) {
+              <span class="invalid-feedback"
+                    i18n>This field is required.</span>
+            }
+            @if (callHomeForm.showError('email', formDir, 'email')) {
+              <span class="invalid-feedback"
+                    i18n>The value is not a valid email address.</span>
+            }
         </div>
 
         <!-- Phone -->
-        <div class="form-group row">
-          <label class="cd-col-form-label required"
+        <div class="form-item">
+          <cds-text-label
                  for="phone"
-                 i18n>Phone number</label>
-          <div class="cd-col-form-input">
-            <input class="form-control"
+                 i18n>Phone number
+            <input cdsText
                    type="text"
                    id="phone"
                    name="phone"
                    formControlName="phone">
+        </cds-text-label>
+          @if (callHomeForm.showError('phone', formDir, 'required')) {
             <span class="invalid-feedback"
-                  *ngIf="callHomeForm.showError('phone', formDir, 'required')"
                   i18n>This field is required.</span>
-          </div>
+          }
         </div>
 
         <!-- Country code -->
-        <div class="form-group row">
-          <label class="cd-col-form-label required"
+        <div class="form-item">
+          <cds-text-label
                  for="countryCode"
-                 i18n>Country code</label>
-          <div class="cd-col-form-input">
-            <input class="form-control"
+                 i18n>Country code
+            <input cdsText
                    type="text"
                    id="countryCode"
                    name="countryCode"
                    formControlName="countryCode">
+        </cds-text-label>
+          @if (callHomeForm.showError('countryCode', formDir, 'required')) {
             <span class="invalid-feedback"
-                  *ngIf="callHomeForm.showError('countryCode', formDir, 'required')"
                   i18n>This field is required.</span>
-          </div>
+          }
         </div>
 
       <!-- Address -->
-      <div class="form-group row">
-        <label class="cd-col-form-label"
+      <div class="form-item">
+        <cds-text-label
                for="address"
-               i18n>Address</label>
-        <div class="cd-col-form-input">
-          <textarea class="form-control"
+               i18n>Address
+          <input cdsText
                     type="text"
                     id="address"
                     name="address"
-                    formControlName="address"></textarea>
-        </div>
+                    formControlName="address">
+        </cds-text-label>
+        @if (callHomeForm.showError('address', formDir, 'required')) {
+          <span class="invalid-feedback"
+                i18n>This field is required.</span>
+        }
       </div>
 
       <!-- Customer company name-->
-      <div class="form-group row">
-        <label class="cd-col-form-label"
+      <div class="form-item">
+        <cds-text-label
                for="companyName"
-               i18n>Company name</label>
-        <div class="cd-col-form-input">
-          <input class="form-control"
+               i18n>Company name
+          <input cdsText
                  type="text"
                  id="companyName"
                  name="companyName"
                  formControlName="companyName">
-        </div>
+        </cds-text-label>
+        @if (callHomeForm.showError('companyName', formDir, 'required')) {
+          <span class="invalid-feedback"
+                i18n>This field is required.</span>
+        }
       </div>
-      </ng-container>
 
-      <!-- License agreement -->
-      <div class="form-group row"
-          *ngIf="!isConfigured">
-        <div class="cd-col-form-offset">
-          <div class="custom-control custom-checkbox">
-            <label class="custom-control-label"
-                  i18n>By enabling Call Home, you agree to allow IBM and its subsidiaries to store and use your contact information
-                  and certain call-home system information anywhere they do business worldwide as described in the Program license
-                  agreement and documentation. For more information, please refer to the Program license agreement and documentation.</label>
-            <div>
-              <input type="checkbox"
-                    id="licenseAgrmt"
-                    name="licenseAgrmt"
-                    formControlName="licenseAgrmt">
-              <label class="custom-control-label mt-1 required"
-                    for="licenseAgrmt"
-                    i18n>I agree.</label>
-
-              <span class="invalid-feedback"
-                    *ngIf="callHomeForm.showError('licenseAgrmt', formDir, 'required')"
-                    i18n>You must agree before submitting.</span>
+        <!-- License agreement -->
+        <div class="form-item">
+          <div class="cd-col-form-offset">
+            <div class="custom-control custom-checkbox">
+              <label class="cds--label"
+                     i18n>By enabling Call Home, you agree to allow IBM and its subsidiaries to store and use your contact information
+                    and certain call-home system information anywhere they do business worldwide as described in the Program license
+                    agreement and documentation. For more information, please refer to the Program license agreement and documentation.</label>
+              <div>
+                <cds-checkbox
+                      id="licenseAgrmt"
+                      name="licenseAgrmt"
+                      formControlName="licenseAgrmt"
+                      i18n>I agree.</cds-checkbox>
+                @if (callHomeForm.showError('licenseAgrmt', formDir, 'required')) {
+                  <span class="invalid-feedback"
+                        i18n>You must agree to the license agreement to proceed.</span>
+                }
+              </div>
             </div>
           </div>
         </div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <cd-form-button-panel submitText="Configure Call Home"
+    } @else {
+        <p i18n>IBM Call Home is enabled in your cluster. You can click Deactivate to disable it.</p>
+        <div class="cds-mt-3">
+          <button cdsButton="tertiary"
+                  (click)="stop()"
+                  i18n>Deactivate</button>
+        </div>
+        @if (callHomeStatus$ | async; as status) {
+        <div class="form-item cds-mt-3">
+          <cds-text-label i18n>Connectivity
+            <span class="d-block fs-6 fw-light text-muted"
+                  [title]="status.last_checked * 1000 | date:'yyyy-MM-ddTHH:mm:ss.SSSZ':'UTC' | cdDate"
+                *ngIf="status.last_checked">Last refreshed: {{ status.last_checked * 1000 | date:'yyyy-MM-ddTHH:mm:ss.SSSZ':'UTC' | relativeDate }}</span>
+          </cds-text-label>
+
+          <div class="cd-col-form-input mt-1">
+            <cd-call-home-connectivity-status [status]="status"></cd-call-home-connectivity-status>
+          </div>
+          <div class="cds-mt-3">
+            <button cdsButton="tertiary"
+                    id="testConnectivity"
+                    (click)="testConnectivity()">
+              Test connectivity
+              <i [ngClass]="callHomeRefreshLoading ? [icons.spinner, icons.spin] : [icons.refresh]"></i>
+            </button>
+          </div>
+        </div>
+        }
+        <div class="form-item cds-mt-3">
+          <cds-text-label i18n>Inventory</cds-text-label>
+          <div class="cd-col-form-input">
+            <button cdsButton="tertiary"
+                    id="inventoryBtn"
+                    aria-label="Download Inventory Report"
+                    (click)="download('inventory')">
+              Download
+              <svg cdsIcon="download" size="16" class="cds--btn__icon"></svg>
+            </button>
+          </div>
+        </div>
+      
+        <div class="form-item cds-mt-3">
+          <cds-text-label i18n>Status</cds-text-label>
+          <div class="cd-col-form-input">
+            <button cdsButton="tertiary"
+                    id="statusBtn"
+                    aria-label="Download Status Report"
+                    (click)="download('status')">
+              Download
+              <svg cdsIcon="download" size="16" class="cds--btn__icon"></svg>
+            </button>
+          </div>
+        </div>
+      
+        <div class="form-item cds-mt-3">
+          <cds-text-label i18n>Last Contact</cds-text-label>
+          <div class="cd-col-form-input">
+            <button cdsButton="tertiary"
+                    id="lastContactBtn"
+                    aria-label="Download Last Contact Report"
+                    (click)="download('last_contact')">
+              Download
+              <svg cdsIcon="download" size="16" class="cds--btn__icon"></svg>
+            </button>
+          </div>
+        </div>
+      
+        <div class="form-item cds-mt-3">
+          <cds-text-label i18n>Performance</cds-text-label>
+          <div class="cd-col-form-input">
+            <button cdsButton="tertiary"
+                    id="PerformanceBtn"
+                    aria-label="Download Performance Report"
+                    (click)="download('performance')">
+              Download
+              <svg cdsIcon="download" size="16" class="cds--btn__icon"></svg>
+            </button>
+          </div>
+        </div>
+      }
+    </form>
+
+    </section>
+
+      <cd-form-button-panel submitText="Configure IBM Call Home"
                             i18n-submitText
                             [showSubmit]="!isConfigured"
                             [form]="callHomeForm"
+                            [modalForm]="true"
                             (submitActionEvent)="submit()"></cd-form-button-panel>
-    </div>
-    </form>
-  </ng-container>
-</cd-modal>
-
-<ng-template #downloadReport>
-  <p i18n>IBM Call Home is enabled in your cluster. You can click Deactivate to disable it.
-    <button class="btn btn-light"
-            (click)="stop()">Deactivate</button>
-  </p>
-
-  <div class="form-group row mt-4"
-       *ngIf="callHomeStatus$ | async as status">
-    <label class="cd-col-form-label"
-           i18n>Connectivity
-      <span class="d-block fs-6 fw-light text-muted"
-            [title]="status.last_checked * 1000 | date:'yyyy-MM-ddTHH:mm:ss.SSSZ':'UTC' | cdDate"
-          *ngIf="status.last_checked">Last refreshed: {{ status.last_checked * 1000 | date:'yyyy-MM-ddTHH:mm:ss.SSSZ':'UTC' | relativeDate }}</span>
-    </label>
-
-    <div class="cd-col-form-input mt-1">
-      <cd-call-home-connectivity-status [status]="status"></cd-call-home-connectivity-status>
-
-      <button class="btn btn-light ms-2"
-              id="testConnectivity"
-              (click)="testConnectivity()">
-        <i [ngClass]="callHomeRefreshLoading ? [icons.spinner, icons.spin] : [icons.refresh]"></i>
-        Test Connectivity
-      </button>
-    </div>
-  </div>
-
-  <div class="form-group row mt-4">
-    <label class="cd-col-form-label"
-           i18n>Inventory</label>
-    <div class="cd-col-form-input">
-      <button class="btn btn-light"
-              id="inventoryBtn"
-              aria-label="Download Inventory Report"
-              (click)="download('inventory')">
-        <i class="fa fa-download"></i>
-      </button>
-    </div>
-  </div>
-
-  <div class="form-group row">
-    <label class="cd-col-form-label"
-           i18n>Status</label>
-    <div class="cd-col-form-input">
-      <button class="btn btn-light"
-              id="statusBtn"
-              aria-label="Download Status Report"
-              (click)="download('status')">
-        <i class="fa fa-download"></i>
-      </button>
-    </div>
-  </div>
-
-  <div class="form-group row">
-    <label class="cd-col-form-label"
-           i18n>Last Contact</label>
-    <div class="cd-col-form-input">
-      <button class="btn btn-light"
-              id="lastContactBtn"
-              aria-label="Download Last Contact Report"
-              (click)="download('last_contact')">
-        <i class="fa fa-download"></i>
-      </button>
-    </div>
-  </div>
-
-  <div class="form-group row">
-    <label class="cd-col-form-label"
-           i18n>Performance</label>
-    <div class="cd-col-form-input">
-      <button class="btn btn-light"
-              id="PerformanceBtn"
-              aria-label="Download Performance Report"
-              (click)="download('performance')">
-        <i class="fa fa-download"></i>
-      </button>
-    </div>
-  </div>
-</ng-template>
+</cds-modal>

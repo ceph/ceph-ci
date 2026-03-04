@@ -125,7 +125,8 @@ export enum Icons {
   warningAlt = 'warning--alt',
   arrowUpRight = 'arrow--up-right',
   inProgress = 'in-progress',
-  arrowDown = 'arrow--down'
+  arrowDown = 'arrow--down',
+  cloudMonitoring = 'cloud--monitoring'
 }
 
 export enum IconSize {
@@ -165,7 +166,12 @@ export const ICON_TYPE = {
   arrowUpRight: ' arrow--up-right',
   inProgress: 'in-progress',
   arrowDown: 'arrow--down',
-  warning: 'warning'
+  warning: 'warning',
+  ibmCloudBareMetalServer:'ibm-cloud--bare-metal-server',
+  ibmCloudDedicatedHost:'ibm-cloud--dedicated-host',
+  clusterIcon:'web-services--cluster',
+  download: 'download',
+  cloudMonitoring: 'cloud--monitoring'
 } as const;
 
 export const EMPTY_STATE_IMAGE = {

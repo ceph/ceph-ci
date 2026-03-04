@@ -1,6 +1,6 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, Input, OnInit } from '@angular/core';
 import { NgbModalRef } from '@ng-bootstrap/ng-bootstrap';
-import { ModalService } from '../../services/modal.service';
+import { ModalCdsService } from '../../services/modal-cds.service';
 import { MgrModuleService } from '../../api/mgr-module.service';
 import { Observable } from 'rxjs';
 import { environment } from '~/environments/environment';
@@ -8,6 +8,7 @@ import { NotificationService } from '../../services/notification.service';
 import { NotificationType } from '../../enum/notification-type.enum';
 import { CallHomeNotificationService } from '../../services/call-home-notification.service';
 import { CallHomeModalComponent } from '../call-home-modal/call-home-modal.component';
+import { CallHomeService } from '../../api/call-home.service';
 
 @Component({
   selector: 'cd-call-home-notification',
@@ -15,6 +16,8 @@ import { CallHomeModalComponent } from '../call-home-modal/call-home-modal.compo
   styleUrls: ['./call-home-notification.component.scss']
 })
 export class CallHomeNotificationComponent implements OnInit {
+  @Input() callHomeEnabled: boolean | null = null;
+  @Input() callHomeEnabledWarning: boolean = false;
   mgrModuleConfig$: Observable<object>;
 
   displayNotification = false;
@@ -26,10 +29,11 @@ export class CallHomeNotificationComponent implements OnInit {
   remindAfterDays = 90;
 
   constructor(
-    private modalService: ModalService,
+    private cdsModalService: ModalCdsService,
     private mgrModuleService: MgrModuleService,
     private notificationService: NotificationService,
-    private callHomeNotificationService: CallHomeNotificationService
+    private callHomeNotificationService: CallHomeNotificationService,
+    private callHomeService: CallHomeService
   ) {}
 
   ngOnInit(): void {
@@ -39,18 +43,17 @@ export class CallHomeNotificationComponent implements OnInit {
   }
 
   openModal(): void {
-    this.modalRef = this.modalService.show(
+    this.modalRef = this.cdsModalService.show(
       CallHomeModalComponent,
       {
         submitAction: () => {
           this.modalRef.close();
         }
-      },
-      { size: 'lg' }
+      }
     );
   }
 
-  onDismissed(): void {
+  onDismissedActivate(): void {
     this.callHomeNotificationService.hide();
     const dateNow = new Date();
     const remindOn = new Date(
@@ -65,5 +68,24 @@ export class CallHomeNotificationComponent implements OnInit {
           $localize`You have muted the Call Home activation for ${this.remindAfterDays} days.`
         );
       });
+  }
+
+  confirmAutoEnabled(): void {
+    this.callHomeService.confirmAutoEnabled().subscribe({
+      next: () => {
+        this.callHomeNotificationService.hide();
+        this.notificationService.show(
+          NotificationType.success,
+          $localize`Call Home acknowledged`
+        );
+      },
+      error: (err) => {
+        this.notificationService.show(
+          NotificationType.error,
+          $localize`Error confirming Call Home`,
+          err?.error?.detail || err?.message
+        );
+      }
+    });
   }
 }
