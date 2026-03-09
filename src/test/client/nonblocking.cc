@@ -1208,6 +1208,7 @@ TEST_F(TestClient, LlreadvLlwritevQuotaFull) {
   ASSERT_EQ(rc, 0);
   rc = client->ll_getxattr(diri, xattrk, (void *)getxattrv, len, myperm);
   ASSERT_EQ(rc, 7);
+  getxattrv[rc] = '\0';  // Null-terminate the retrieved xattr value
   ASSERT_STREQ(setxattrv, getxattrv);
 
   // create a file inside the dir
