@@ -1383,7 +1383,7 @@ std::unique_ptr<Writer> FilterMultipartUpload::get_writer(
   return std::make_unique<FilterWriter>(std::move(writer), obj);
 }
 
-int FilterMPSerializer::try_lock(const DoutPrefixProvider *dpp, utime_t dur,
+int FilterMPSerializer::try_lock(const DoutPrefixProvider *dpp, ceph::timespan dur,
 				 optional_yield y)
 {
   return next->try_lock(dpp, dur, y);
@@ -1393,7 +1393,7 @@ int FilterMPSerializer::unlock(const DoutPrefixProvider* dpp, optional_yield y)
   return next->unlock(dpp, y);
 }
 
-int FilterLCSerializer::try_lock(const DoutPrefixProvider *dpp, utime_t dur,
+int FilterLCSerializer::try_lock(const DoutPrefixProvider *dpp, ceph::timespan dur,
 				 optional_yield y)
 {
   return next->try_lock(dpp, dur, y);
@@ -1460,7 +1460,7 @@ std::unique_ptr<LCSerializer> FilterLifecycle::get_serializer(
   return std::make_unique<FilterLCSerializer>(std::move(ns));
 }
 
-int FilterRestoreSerializer::try_lock(const DoutPrefixProvider *dpp, utime_t dur,
+int FilterRestoreSerializer::try_lock(const DoutPrefixProvider *dpp, ceph::timespan dur,
 				 optional_yield y)
 {
   return next->try_lock(dpp, dur, y);
