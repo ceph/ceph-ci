@@ -566,6 +566,62 @@ else:
 
         @empty_response
         @NvmeofCLICommand(
+            "nvmeof subsystem add_network", model.RequestStatus,
+            success_message_template=("Adding network mask {network_mask} for subsystem "
+                                      "{nqn}: Successful")
+        )
+        @EndpointDoc(
+            "Add subsystem network mask",
+            parameters={
+                "nqn": Param(str, "NVMeoF subsystem NQN"),
+                "network_mask": Param(str, "Network mask to add"),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
+                "traddr": Param(str, "NVMeoF gateway address", True, None),
+            },
+        )
+        @convert_to_model(model.RequestStatus)
+        @handle_nvmeof_error
+        def add_network(self, nqn: str, network_mask: str, gw_group: Optional[str] = None,
+                        traddr: Optional[str] = None):
+            return NVMeoFClient(
+                gw_group=gw_group,
+                traddr=traddr
+            ).stub.add_subsystem_network(
+                NVMeoFClient.pb2.add_subsystem_network_req(
+                    subsystem_nqn=nqn, network_mask=network_mask
+                )
+            )
+
+        @empty_response
+        @NvmeofCLICommand(
+            "nvmeof subsystem del_network", model.RequestStatus,
+            success_message_template=("Deleting network mask {network_mask} for subsystem "
+                                      "{nqn}: Successful")
+        )
+        @EndpointDoc(
+            "Delete subsystem network mask",
+            parameters={
+                "nqn": Param(str, "NVMeoF subsystem NQN"),
+                "network_mask": Param(str, "Network mask to remove"),
+                "gw_group": Param(str, "NVMeoF gateway group", True, None),
+                "traddr": Param(str, "NVMeoF gateway address", True, None),
+            },
+        )
+        @convert_to_model(model.RequestStatus)
+        @handle_nvmeof_error
+        def del_network(self, nqn: str, network_mask: str, gw_group: Optional[str] = None,
+                        traddr: Optional[str] = None):
+            return NVMeoFClient(
+                gw_group=gw_group,
+                traddr=traddr
+            ).stub.del_subsystem_network(
+                NVMeoFClient.pb2.del_subsystem_network_req(
+                    subsystem_nqn=nqn, network_mask=network_mask
+                )
+            )
+
+        @empty_response
+        @NvmeofCLICommand(
             "nvmeof subsystem add_kmip_server_endpoint", model.RequestStatus,
             success_message_template=("Adding an endpoint, with address {address}:{port}, "
                                       "to KMIP server {server_name} on subsystem {nqn}: "
