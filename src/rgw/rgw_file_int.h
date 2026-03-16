@@ -1638,7 +1638,8 @@ public:
       void parse_cp() {
 	if (is_cp()) {
 	  /* leading-/ skip case */
-	  if (cp_iter->first == "/") {
+          if (cp_iter->first == "/") {
+	    cp_sref = std::string_view{cp_iter->first};
 	    _skip_cp = true;
 	    return;
 	  } else
