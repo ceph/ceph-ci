@@ -25,7 +25,7 @@ the simplest causes of Monitor malfunction.
 
 #. Make sure that the Monitors are running.
     Make sure that the Monitor (*mon*) daemon processes (``ceph-mon``) are
-    running. It might be the case that the mons have not be restarted after an
+    running. It might be the case that the Monitors have not been restarted after an
     upgrade. Checking for this simple oversight can save hours of painstaking
     troubleshooting.
 
@@ -412,7 +412,7 @@ B. Inject a monmap into the Monitor.
 Clock Skews
 -----------
 
-The Paxos consensus algorithm requires close time synchroniziation, which means
+The Paxos consensus algorithm requires close time synchronization, which means
 that clock skew among the Monitors in the quorum can have a serious effect on
 Monitor operation. The resulting behavior can be puzzling. To avoid this issue,
 run a clock synchronization tool on your Monitor nodes: for example, use
@@ -486,7 +486,7 @@ Client Can't Connect or Mount
 
 If a client can't connect to the cluster or mount, check your iptables. Some
 operating-system install utilities add a ``REJECT`` rule to iptables.
-Iptables rules will reject all clients other than SSH that try to
+Such iptables rules will reject all clients other than SSH that try to
 connect to the host. If your Monitor host's iptables have a ``REJECT`` rule in
 place, clients that connect from a separate node will fail, and this will raise
 a timeout error. Look for iptables rules that reject clients that are
@@ -572,21 +572,21 @@ to recover the Monitors:
   # deployed
   ceph-authtool /path/to/admin.keyring --add-key 'AQDN8kBe9PLWARAAZwxXMr+n85SBYbSlLcZnMA==' -n mgr.x \
     --cap mon 'allow profile mgr' --cap osd 'allow *' --cap mds 'allow *'
-  # If your monitors' ids are not sorted by ip address, please specify them in order.
+  # If your Monitors' ids are not sorted by ip address, please specify them in order.
   # For example. if mon 'a' is 10.0.0.3, mon 'b' is 10.0.0.2, and mon 'c' is  10.0.0.4,
   # please passing "--mon-ids b a c".
-  # In addition, if your monitors' ids are not single characters like 'a', 'b', 'c', please
+  # In addition, if your Monitors' ids are not single characters like 'a', 'b', 'c', please
   # specify them in the command line by passing them as arguments of the "--mon-ids"
   # option. if you are not sure, please check your ceph.conf to see if there is any
   # sections named like '[mon.foo]'. don't pass the "--mon-ids" option, if you are
-  # using DNS SRV for looking up monitors.
+  # using DNS SRV for looking up Monitors.
   ceph-monstore-tool $ms rebuild -- --keyring /path/to/admin.keyring --mon-ids alpha beta gamma
 
   # make a backup of the corrupted store.db just in case!  repeat for
-  # all monitors.
+  # all Monitors.
   mv /var/lib/ceph/mon/mon.foo/store.db /var/lib/ceph/mon/mon.foo/store.db.corrupted
 
-  # move rebuild store.db into place.  repeat for all monitors.
+  # move rebuild store.db into place.  repeat for all Monitors.
   mv $ms/store.db /var/lib/ceph/mon/mon.foo/store.db
   chown -R ceph:ceph /var/lib/ceph/mon/mon.foo/store.db
 
