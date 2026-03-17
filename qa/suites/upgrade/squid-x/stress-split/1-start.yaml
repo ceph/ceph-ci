@@ -31,6 +31,7 @@ overrides:
       - OBJECT_UNFOUND
       - pg .* is stuck peering
       - OSD_HOST_DOWN
+      - PG_DAMAGED
 tasks:
 - install:
     branch: squid
