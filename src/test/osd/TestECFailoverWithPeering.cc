@@ -672,7 +672,7 @@ TEST_P(TestECFailoverWithPeering, DISABLED_MultiObjectParallelRecoveryCrash) {
  */
 TEST_P(
   TestECFailoverWithPeering,
-  DISABLED_RollbackAfterMixedBlockedWritesWithOSDFailure
+  RollbackAfterMixedBlockedWritesWithOSDFailure
 ) {
   if (m < 2) {
     GTEST_SKIP() << "RollbackAfterMixedBlockedWritesWithOSDFailure requires m >= 2";
@@ -744,7 +744,7 @@ TEST_P(
  */
 TEST_P(
   TestECFailoverWithPeering,
-  DISABLED_RollbackAfterMixedBlockedWritesWithOSDFailure2
+  RollbackAfterMixedBlockedWritesWithOSDFailure2
 ) {
   if (m < 2) {
     GTEST_SKIP() << "RollbackAfterMixedBlockedWritesWithOSDFailure requires m >= 2";
