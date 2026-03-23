@@ -556,6 +556,11 @@ timeout = 1.0\n"""
             ):
                 cephadm_module._apply_service_spec(mismatch_nvmeof_spec_group_service_id_with_dot)
 
+    def test_nvmeof_service_spec_defaults_pool_to_metadata_pool(self):
+        spec = NvmeofServiceSpec(service_id='pool4.bla.group', group='group')
+
+        assert spec.pool == ".nvmeof"
+
 
 class TestMonitoring:
     def _get_config(self, url: str) -> str:
