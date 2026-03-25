@@ -5,6 +5,7 @@ import string
 from typing import List, Dict, Any, Tuple, cast, Optional, TYPE_CHECKING
 
 from ceph.deployment.service_spec import ServiceSpec, IngressSpec, MonitorCertSource
+from ceph.deployment.utils import is_ipv6
 from mgr_util import build_url
 from cephadm import utils
 from orchestrator import OrchestratorError, DaemonDescription
@@ -275,6 +276,7 @@ class IngressService(CephService):
                 'v4v6_flag': v4v6_flag,
                 'monitor_ssl_file': monitor_ssl_file,
                 'peer_hosts': peer_hosts,
+                'is_ipv6': is_ipv6(ip)
             }
         )
         config_files = {
