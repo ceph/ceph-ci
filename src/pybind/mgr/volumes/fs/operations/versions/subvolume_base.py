@@ -572,6 +572,14 @@ class SubvolumeBase(object):
         except cephfs.NoData:
             casesensitive = True
 
+        try:
+            fs_enctag = CephFSVolumeEncryptionTag(self.fs, subvolpath)
+            enctag = fs_enctag.get_tag()
+        except cephfs.NoData:
+            enctag = ''
+        except EncryptionTagException:
+            enctag = ''
+
         subvol_info = {
                 'path': subvolpath,
                 'type': etype.value,
