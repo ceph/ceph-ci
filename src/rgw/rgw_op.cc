@@ -1294,7 +1294,7 @@ int RGWGetObj::verify_permission(optional_yield y)
 
   if (is_replication_request) {
     // check for s3:GetObject(Version)Acl permission
-    action = s->object->get_instance().empty() ? rgw::IAM::s3GetObjectAcl : rgw::IAM::s3GetObjectVersionAcl;
+    action = s->object_key.instance.empty() ? rgw::IAM::s3GetObjectAcl : rgw::IAM::s3GetObjectVersionAcl;
     if (!verify_object_permission(this, s, action)) {
       s->err.message = fmt::format("missing {} permission", rgw::IAM::action_bit_string(action));
       ldpp_dout(this, 4) << "ERROR: fetching object for replication object=" << s->object << " reason=" << s->err.message << dendl;
@@ -1311,7 +1311,7 @@ int RGWGetObj::verify_permission(optional_yield y)
     }
 
     // fallback to s3:GetObject(Version) permission
-    action = s->object->get_instance().empty() ? rgw::IAM::s3GetObject : rgw::IAM::s3GetObjectVersion;
+    action = s->object_key.instance.empty() ? rgw::IAM::s3GetObject : rgw::IAM::s3GetObjectVersion;
 
     // sse-kms is not supported by s3:GetObject(Version) permission
     bufferlist bl;
@@ -1322,9 +1322,9 @@ int RGWGetObj::verify_permission(optional_yield y)
       return -EACCES;
     }
   } else if (get_torrent) {
-    action = s->object->get_instance().empty() ? rgw::IAM::s3GetObjectTorrent : rgw::IAM::s3GetObjectVersionTorrent;
+    action = s->object_key.instance.empty() ? rgw::IAM::s3GetObjectTorrent : rgw::IAM::s3GetObjectVersionTorrent;
   } else {
-    action = s->object->get_instance().empty() ? rgw::IAM::s3GetObject : rgw::IAM::s3GetObjectVersion;
+    action = s->object_key.instance.empty() ? rgw::IAM::s3GetObject : rgw::IAM::s3GetObjectVersion;
   }
 
   if (!verify_object_permission(this, s, action)) {
@@ -1364,7 +1364,7 @@ int RGWOp::verify_op_mask()
 
 int RGWGetObjTags::verify_permission(optional_yield y)
 {
-  auto iam_action = s->object->get_instance().empty()?
+  auto iam_action = s->object_key.instance.empty() ?
     rgw::IAM::s3GetObjectTagging:
     rgw::IAM::s3GetObjectVersionTagging;
 
@@ -1403,7 +1403,7 @@ void RGWGetObjTags::execute(optional_yield y)
 
 int RGWPutObjTags::verify_permission(optional_yield y)
 {
-  auto iam_action = s->object->get_instance().empty() ?
+  auto iam_action = s->object_key.instance.empty() ?
     rgw::IAM::s3PutObjectTagging:
     rgw::IAM::s3PutObjectVersionTagging;
 
@@ -1464,7 +1464,7 @@ void RGWDeleteObjTags::pre_exec()
 int RGWDeleteObjTags::verify_permission(optional_yield y)
 {
   if (!rgw::sal::Object::empty(s->object.get())) {
-    auto iam_action = s->object->get_instance().empty() ?
+    auto iam_action = s->object_key.instance.empty() ?
       rgw::IAM::s3DeleteObjectTagging:
       rgw::IAM::s3DeleteObjectVersionTagging;
 
@@ -4371,7 +4371,7 @@ int RGWPutObj::verify_permission(optional_yield y)
     if (has_s3_existing_tag || has_s3_resource_tag)
       rgw_iam_add_objtags(this, s, cs_object.get(), has_s3_existing_tag, has_s3_resource_tag);
 
-    const auto action = cs_object->get_instance().empty() ?
+    const auto action = copy_source_version_id.empty() ?
         rgw::IAM::s3GetObject :
         rgw::IAM::s3GetObjectVersion;
 
@@ -5694,7 +5694,7 @@ int RGWDeleteObj::verify_permission(optional_yield y)
     rgw_iam_add_objtags(this, s, has_s3_existing_tag, has_s3_resource_tag);
 
   const auto arn = ARN{s->object->get_obj()};
-  const auto action = s->object->get_instance().empty() ?
+  const auto action = s->object_key.instance.empty() ?
       rgw::IAM::s3DeleteObject :
       rgw::IAM::s3DeleteObjectVersion;
 
@@ -5708,7 +5708,7 @@ int RGWDeleteObj::verify_permission(optional_yield y)
   }
 
   if (s->bucket->get_info().mfa_enabled() &&
-      !s->object->get_instance().empty() &&
+      !s->object_key.instance.empty() &&
       !s->mfa_verified) {
     ldpp_dout(this, 5) << "NOTICE: object delete request with a versioned object, mfa auth not provided" << dendl;
     return -ERR_MFA_REQUIRED;
@@ -5795,7 +5795,7 @@ void RGWDeleteObj::execute(optional_yield y)
     // make reservation for notification if needed
     const auto versioned_object = s->bucket->versioning_enabled();
     const auto event_type = versioned_object &&
-      s->object->get_instance().empty() ?
+      s->object_key.instance.empty() ?
       rgw::notify::ObjectRemovedDeleteMarkerCreated :
       rgw::notify::ObjectRemovedDelete;
     std::unique_ptr<rgw::sal::Notification> res
@@ -6180,7 +6180,7 @@ int RGWCopyObj::verify_permission(optional_yield y)
     if (has_s3_existing_tag || has_s3_resource_tag)
       rgw_iam_add_objtags(this, s, s->src_object.get(), has_s3_existing_tag, has_s3_resource_tag);
 
-    const auto action = s->src_object->get_instance().empty() ?
+    const auto action = s->src_object_key.instance.empty() ?
         rgw::IAM::s3GetObject :
         rgw::IAM::s3GetObjectVersion;
 
@@ -6464,7 +6464,7 @@ int RGWGetACLs::verify_permission(optional_yield y)
   bool perm;
   auto [has_s3_existing_tag, has_s3_resource_tag] = rgw_check_policy_condition(this, s);
   if (!rgw::sal::Object::empty(s->object.get())) {
-    auto iam_action = s->object->get_instance().empty() ?
+    auto iam_action = s->object_key.instance.empty() ?
       rgw::IAM::s3GetObjectAcl :
       rgw::IAM::s3GetObjectVersionAcl;
     if (has_s3_existing_tag || has_s3_resource_tag)
@@ -6508,7 +6508,7 @@ int RGWPutACLs::verify_permission(optional_yield y)
 
   rgw_add_grant_to_iam_environment(s->env, s);
   if (!rgw::sal::Object::empty(s->object.get())) {
-    auto iam_action = s->object->get_instance().empty() ? rgw::IAM::s3PutObjectAcl : rgw::IAM::s3PutObjectVersionAcl;
+    auto iam_action = s->object_key.instance.empty() ? rgw::IAM::s3PutObjectAcl : rgw::IAM::s3PutObjectVersionAcl;
     op_ret = rgw_iam_add_objtags(this, s, true, true);
     perm = verify_object_permission(this, s, iam_action);
   } else {
@@ -6553,11 +6553,11 @@ int RGWGetObjAttrs::verify_permission(optional_yield y)
 
   if (! rgw::sal::Object::empty(s->object.get())) {
 
-    auto iam_action1 = s->object->get_instance().empty() ?
+    auto iam_action1 = s->object_key.instance.empty() ?
       rgw::IAM::s3GetObject :
       rgw::IAM::s3GetObjectVersion;
 
-    auto iam_action2 = s->object->get_instance().empty() ?
+    auto iam_action2 = s->object_key.instance.empty() ?
       rgw::IAM::s3GetObjectAttributes :
       rgw::IAM::s3GetObjectVersionAttributes;
 
@@ -7983,7 +7983,7 @@ void RGWDeleteMultiObj::handle_individual_object(const RGWMultiDelObject& object
 
   // make reservation for notification if needed
   const auto versioned_object = s->bucket->versioning_enabled();
-  const auto event_type = versioned_object && obj->get_instance().empty() ?
+  const auto event_type = versioned_object && o.instance.empty() ?
                           rgw::notify::ObjectRemovedDeleteMarkerCreated :
                           rgw::notify::ObjectRemovedDelete;
   std::unique_ptr<rgw::sal::Notification> res
@@ -8858,7 +8858,7 @@ int RGWGetAttrs::verify_permission(optional_yield y)
     if (has_s3_existing_tag || has_s3_resource_tag)
       rgw_iam_add_objtags(this, s, has_s3_existing_tag, has_s3_resource_tag);
 
-  auto iam_action = s->object->get_instance().empty() ?
+  auto iam_action = s->object_key.instance.empty() ?
     rgw::IAM::s3GetObject :
     rgw::IAM::s3GetObjectVersion;
 
