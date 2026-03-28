@@ -7034,7 +7034,7 @@ public:
     average_util = average_utilization();
   }
 
-  void dump(F *f){
+  void dump(F *f) {
     if (tree) {
       CrushTreeDumper::Dumper<F>::dump(f);
     } else {
