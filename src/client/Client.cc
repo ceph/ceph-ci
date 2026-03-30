@@ -7356,7 +7356,7 @@ void Client::abort_conn()
 #if defined(__linux__)
 int Client::fscrypt_dummy_encryption() {
     // get add key
-    char key[FSCRYPT_KEY_IDENTIFIER_SIZE];
+    char key[FSCRYPT_MAX_KEY_SIZE];
     memset(key, 0, sizeof(key));
 
     char keyid[FSCRYPT_KEY_IDENTIFIER_SIZE];
