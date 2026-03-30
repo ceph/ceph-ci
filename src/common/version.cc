@@ -63,6 +63,9 @@ static std::string read_vendor_release_file()
     return "";
   }
   if (!content.empty()) {
+    while (!content.empty() && (content.back() == '\n' || content.back() == '\r')) {
+      content.pop_back();
+    }
     return std::string(" release ") + content;
   }
 
