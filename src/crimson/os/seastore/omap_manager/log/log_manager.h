@@ -230,7 +230,7 @@ public:
    */
   omap_set_key_ret _log_set_key(omap_root_t &log_root,
     Transaction &t, LogNodeRef e, const std::string &key,
-    const ceph::bufferlist &value, bool can_ow = false);
+    const ceph::bufferlist &value);
 
   /**
    * remove_kv
