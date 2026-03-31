@@ -1390,11 +1390,11 @@ bool PeerReplayer::SyncMechanism::has_pending_work() const {
   const bool job_done =
     m_sync_dataq.empty() && m_crawl_finished;
 
-  /* On crawl error, return true even if the queue is empty to
+  /* On crawl error or crawl finished (job_don), return true even if the queue is empty to
    *   - Dequeue the syncm object
    *   - Notify the crawler as it waits after the error for pending jobs to finish.
    */
-  if (m_crawl_error) {
+  if (m_crawl_error || job_done) {
     // If m_in_flight > 0, those threads will take care of dequeue/notify, you just consume next job
     if (m_in_flight > 0)
       return false;
@@ -1402,8 +1402,9 @@ bool PeerReplayer::SyncMechanism::has_pending_work() const {
       return true;
   }
 
-  // No more work if datasync failed or everything is done
-  if (m_datasync_error || job_done)
+  // No more work if datasync failed. Since datasync error is set by datasync thread, dequeue
+  // and notify will be taken care by it.
+  if (m_datasync_error)
     return false;
 
   // Distribute threads fairly if enabled
