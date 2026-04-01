@@ -573,6 +573,7 @@ class RGWInitDataSyncStatusCoroutine : public RGWCoroutine {
     RGWDataSyncStatusManager::sync_status_oid(sc->source_zone) };
 
   map<int, RGWDataChangesLogInfo> shards_info;
+  int ret = 0;
 
 
 public:
@@ -599,7 +600,6 @@ public:
   }
 
   int operate(const DoutPrefixProvider *dpp) override {
-    int ret;
     reenter(this) {
       if (!lease_cr->is_locked()) {
 	drain_all();
@@ -4892,6 +4892,7 @@ class RGWBucketShardIncrementalSyncCR : public RGWCoroutine {
 
   RGWSyncTraceNodeRef tn;
   RGWBucketIncSyncShardMarkerTrack marker_tracker;
+  int ret = 0;
 
 public:
   RGWBucketShardIncrementalSyncCR(RGWDataSyncCtx *_sc,
@@ -4936,7 +4937,6 @@ public:
 
 int RGWBucketShardIncrementalSyncCR::operate(const DoutPrefixProvider *dpp)
 {
-  int ret;
   reenter(this) {
     do {
       if (lease_cr && !lease_cr->is_locked()) {
