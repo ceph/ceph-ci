@@ -284,6 +284,111 @@
       </div>
       }
 
+      @if (serviceForm.controls.service_type.value === 'object-browser') {
+      <div class="form-item">
+        <cds-password-label 
+                        helperText="The default is the access key of the RGW's dashboard user"
+                        i18n-helperText>Access key
+          <input cdsPassword
+                 type="password"
+                 id="accessKey"
+                 formControlName="accessKey" />
+        </cds-password-label>
+      </div>
+
+      <div class="form-item">
+          <cds-password-label helperText="The default is the secret key of the RGW's dashboard user"
+                              i18n-helperText>Secret key
+            <input cdsPassword
+                   type="password"
+                   id="secretKey"
+                   formControlName="secretKey" />
+          </cds-password-label>
+      </div>
+
+      <div class="form-item">
+        <cds-text-label helperText="The url of the rgw client where the browser should browse contents from"
+                        i18n-helperText>Endpoint URL
+          <input cdsText
+                 type="text"
+                 id="endpointUrl"
+                 formControlName="endpointUrl" />
+        </cds-text-label>
+      </div>
+
+      <div class="form-item">
+        <cds-text-label helperText="The zonegroup of the RGW client"
+                        i18n-helperText>Zonegroup
+          <input cdsText
+                 type="text"
+                 id="region"
+                 formControlName="region" />
+        </cds-text-label>
+      </div>
+
+      <!-- port -->
+      <div class="form-item">
+        <cds-number label="Port"
+                    formControlName="browserPort"
+                    id="browserPort"
+                    min="1"
+                    max="65535"
+                    helperText="Default is 8095 for non SSL and 9443 for SSL"
+                    i18n-helperText
+                    [invalid]="serviceForm.controls.browserPort.invalid && serviceForm.controls.browserPort.dirty"
+                    [invalidText]="invalidPortError">
+        </cds-number>
+        <ng-template #invalidPortError>
+          @if (serviceForm.showError('browserPort', frm, 'min')) {
+          <span class="invalid-feedback"
+                i18n>The value must be at least 1.</span>
+          }
+          @if (serviceForm.showError('browserPort', frm, 'max')) {
+          <span class="invalid-feedback"
+                i18n>The value cannot exceed 65535.</span>
+          }
+        </ng-template>
+      </div>
+
+      <div class="form-item">
+        <cds-checkbox id="obSsl"
+                      formControlName="obSsl">
+          Enable SSL
+        </cds-checkbox>
+      </div>
+
+      <!-- ssl_cert - Only show when SSL is enabled AND certificate type is external -->
+      @if (serviceForm.controls.obSsl.value) {
+      <div class="form-item">
+        <ng-container *ngTemplateOutlet="fileUploaderTextarea; context: { controlName: 'obSslCert', title: 'Certificate', helperText: 'Uploaded files will populate the certificate details automatically. Or paste the PEM content directly in the text area.', description: 'Upload a .crt file, or paste the certificate PEM content directly.', invalidTemplate: invalidSslCertError, isRequired: false }"></ng-container>
+        <ng-template #invalidSslCertError>
+          @if (serviceForm.showError('obSslCert', frm, 'required')) {
+          <span class="invalid-feedback"
+                i18n>This field is required.</span>
+          }
+          @if (serviceForm.showError('obSslCert', frm, 'pattern')) {
+          <span class="invalid-feedback"
+                i18n>Invalid SSL certificate.</span>
+          }
+        </ng-template>
+      </div>
+
+      <div class="form-item">
+        <ng-container *ngTemplateOutlet="fileUploaderTextarea; context: { controlName: 'obSslKey', title: 'Key', helperText: 'Uploaded files will populate the certificate details automatically. Or paste the PEM content directly in the text area.', description: 'Upload a .key file, or paste the key PEM content directly.', invalidTemplate: invalidSslKeyError, isRequired: false }"></ng-container>
+        <ng-template #invalidSslKeyError>
+          @if (serviceForm.showError('obSslKey', frm, 'required')) {
+          <span class="invalid-feedback"
+                i18n>This field is required.</span>
+          }
+          @if (serviceForm.showError('obSslKey', frm, 'pattern')) {
+          <span class="invalid-feedback"
+                i18n>Invalid SSL key.</span>
+          }
+        </ng-template>
+      </div>
+      }
+    }
+
       <!-- unmanaged -->
       <div class="form-item">
         <fieldset>
