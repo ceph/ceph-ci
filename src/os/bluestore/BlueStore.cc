@@ -7162,7 +7162,7 @@ int BlueStore::_open_bdev(bool create)
         derr << "Failed preloading extblkdev plugins, error code: " << plugin_preload_r << dendl;
       }
       string bdev_plugin_id;
-      r = bdev->get_ebd_id(bdev_plugin_id);
+      r = bdev->detect_ebd(bdev_plugin_id);
       bool is_osd = cct->get_module_type() & CEPH_ENTITY_TYPE_OSD;
       if (r != 0) {
         derr << __func__ << " plugin " << meta_plugin_id << " not loaded" << dendl;
@@ -8648,7 +8648,7 @@ int BlueStore::mkfs()
   if (cct->_conf->bluestore_use_ebd) {
     // check if EBD plugin is enabled
     string plugin_id;
-    r = bdev->get_ebd_id(plugin_id);
+    r = bdev->detect_ebd(plugin_id);
     if (r == 0) {
       // retrieved name, save plugin into bdev metadata
       r = write_meta("extblkdev", plugin_id);

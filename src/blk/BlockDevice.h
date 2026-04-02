@@ -248,7 +248,7 @@ public:
   virtual int get_ebd_state(ExtBlkDevState &state) const {
     return -ENOENT;
   }
-  virtual int get_ebd_id(std::string& id) const {
+  virtual int detect_ebd(std::string& id) {
     return -ENOENT;
   }
 
