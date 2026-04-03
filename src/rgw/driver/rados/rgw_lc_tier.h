@@ -44,6 +44,10 @@ struct RGWLCCloudTierCtx {
 
   optional_yield y;
 
+  // set by resolve_cloud_target_name() before restore so that
+  // make_target_obj_name() returns the verified key
+  std::string resolved_target_name;
+
   RGWLCCloudTierCtx(CephContext* _cct, const DoutPrefixProvider *_dpp,
       rgw_bucket_dir_entry& _o, rgw::sal::Driver *_driver,
       RGWBucketInfo &_binfo, rgw::sal::Object *_obj,
@@ -85,3 +89,6 @@ std::string make_target_obj_name(const std::string& bucket_name,
                                  const rgw_obj_key& obj_key,
                                  bool target_by_bucket,
                                  bool is_current);
+
+int resolve_cloud_target_name(RGWLCCloudTierCtx& tier_ctx,
+                              std::map<std::string, std::string>& out_headers);

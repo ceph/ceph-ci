@@ -119,6 +119,9 @@ static inline string obj_to_aws_path(const rgw_obj& obj)
 
 static inline string make_target_obj_name(const RGWLCCloudTierCtx& tier_ctx)
 {
+  if (!tier_ctx.resolved_target_name.empty()) {
+    return tier_ctx.resolved_target_name;
+  }
   string target_obj_name;
   if (tier_ctx.target_by_bucket) {
     // Per-bucket targeting: object key only, no source bucket prefix
@@ -134,6 +137,93 @@ static inline string make_target_obj_name(const RGWLCCloudTierCtx& tier_ctx)
     target_obj_name += get_key_instance(tier_ctx.obj->get_key());
   }
   return target_obj_name;
+}
+
+/*
+ * HEAD a cloud object via the connection layer, preserving its
+ * endpoint failover and retry behavior.
+ */
+static int head_cloud_object(const DoutPrefixProvider* dpp,
+                             RGWRESTConn& conn,
+                             const std::string& target_bucket_name,
+                             const std::string& target_obj_name,
+                             std::map<std::string, std::string>& out_headers,
+                             optional_yield y)
+{
+  rgw_bucket dest_bucket;
+  dest_bucket.name = target_bucket_name;
+  rgw_obj dest_obj(dest_bucket, rgw_obj_key(target_obj_name));
+
+  RGWRESTConn::get_obj_params req_params;
+  req_params.get_op = false; // HEAD
+  RGWRESTStreamRWRequest *in_req;
+
+  static constexpr int NUM_RETRIES = 20;
+  for (int tries = 0; tries < NUM_RETRIES; tries++) {
+    int ret = conn.get_obj(dpp, dest_obj, req_params, true, &in_req);
+    if (ret < 0) return ret;
+
+    ret = conn.complete_request(dpp, in_req, nullptr, nullptr,
+                                nullptr, nullptr, &out_headers, y);
+    if (ret == -EIO && tries < NUM_RETRIES - 1) {
+      ldpp_dout(dpp, 20) << __func__
+          << "(): HEAD failed with EIO, retrying (" << tries << ")"
+          << dendl;
+      continue;
+    }
+    return ret;
+  }
+  return -EIO;
+}
+
+/*
+ * Resolve the correct cloud target name for a null version.
+ *
+ * When an object is transitioned from an unversioned bucket, it is
+ * stored in the cloud without a version suffix. If versioning is
+ * later enabled and new versions are uploaded, the original becomes
+ * a non-current null version. The restore path would reconstruct
+ * the key with a "-null" suffix that doesn't exist in the cloud.
+ *
+ * HEAD the suffixed name first; if not found, fall back to the
+ * unsuffixed head name. Caller should only call this for null
+ * versions (have_null_instance() == true).
+ */
+int resolve_cloud_target_name(RGWLCCloudTierCtx& tier_ctx,
+                              std::map<std::string, std::string>& out_headers)
+{
+  const auto& obj_key = tier_ctx.obj->get_key();
+  const auto& bucket_name = tier_ctx.bucket_info.bucket.name;
+
+  // try the suffixed name first ("<obj>-null")
+  std::string null_name = make_target_obj_name(
+      bucket_name, obj_key, tier_ctx.target_by_bucket, false);
+
+  int ret = head_cloud_object(tier_ctx.dpp, tier_ctx.conn,
+                              tier_ctx.target_bucket_name,
+                              null_name, out_headers, tier_ctx.y);
+  if (ret == 0) {
+    tier_ctx.resolved_target_name = std::move(null_name);
+    return 0;
+  }
+  if (ret != -ENOENT) {
+    return ret;
+  }
+
+  // fall back to the unsuffixed head name ("<obj>")
+  rgw_obj_key head_key(obj_key.name);
+  std::string head_name = make_target_obj_name(
+      bucket_name, head_key, tier_ctx.target_by_bucket, true);
+
+  out_headers.clear();
+  ret = head_cloud_object(tier_ctx.dpp, tier_ctx.conn,
+                          tier_ctx.target_bucket_name,
+                          head_name, out_headers, tier_ctx.y);
+  if (ret == 0) {
+    tier_ctx.resolved_target_name = std::move(head_name);
+    return 0;
+  }
+  return ret;
 }
 
 static int read_upload_status(const DoutPrefixProvider *dpp, rgw::sal::Driver *driver,

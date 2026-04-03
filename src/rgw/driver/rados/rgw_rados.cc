@@ -5601,6 +5601,37 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
   string etag;
   real_time set_mtime;
   std::map<std::string, std::string> headers;
+
+  // For null versions, resolve the correct cloud target name. An
+  // object transitioned from an unversioned bucket gets a cloud key
+  // without a version suffix. If versioning is later enabled, the
+  // restore path would reconstruct the key with "-null" which does
+  // not exist in the cloud. Also verify the etag to detect cases
+  // where a newer version overwrote the cloud key.
+  if (tier_ctx.obj->get_key().have_null_instance()) {
+    std::map<std::string, std::string> resolve_headers;
+    ret = resolve_cloud_target_name(tier_ctx, resolve_headers);
+    if (ret < 0) {
+      ldpp_dout(dpp, 0) << "ERROR: failed to resolve cloud target for "
+          << dest_obj << ": " << ret << dendl;
+      return ret;
+    }
+
+    auto cloud_etag_it = resolve_headers.find("X_AMZ_META_RGWX_SOURCE_ETAG");
+    auto local_etag_it = attrs.find(RGW_ATTR_ETAG);
+    if (cloud_etag_it != resolve_headers.end() &&
+        local_etag_it != attrs.end()) {
+      std::string local_etag = local_etag_it->second.to_str();
+      if (cloud_etag_it->second != local_etag) {
+        ldpp_dout(dpp, 0) << "ERROR: cloud object etag mismatch for "
+            << dest_obj << ": cloud=" << cloud_etag_it->second
+            << " local=" << local_etag
+            << " - cloud object may have been overwritten" << dendl;
+        return -EIO;
+      }
+    }
+  }
+
   ldpp_dout(dpp, 20) << "Fetching from cloud, object:" << dest_obj << dendl;
   if (tier_config.tier_placement.tier_type == "cloud-s3-glacier") {
     ldpp_dout(dpp, 20) << "Restoring  object:" << dest_obj << " from the cloud" << dendl;
