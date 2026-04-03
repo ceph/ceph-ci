@@ -853,6 +853,20 @@ cd-table {
 
   .cds--toolbar-content {
     width: 50% !important;
+
+    .cds--search.cds--toolbar-search-container-persistent .cds--search-input {
+      @extend .pf-c-form-control;
+      border: 0 !important;
+      border-bottom: 1px solid vv.$btn-border-bottom !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      padding-left: 3rem !important;
+
+      &:focus {
+        outline: 2px solid vv.$primary !important;
+        outline-offset: -2px !important;
+      }
+    }
   }
 }
 
