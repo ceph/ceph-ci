@@ -6,7 +6,7 @@ from cephadm.module import CephadmOrchestrator
 from cephadm.tests.fixtures import with_host, with_service, async_side_effect
 
 
-_SAMBA_METRICS_IMAGE = 'quay.io/samba.org/samba-metrics:devbuilds-centos-amd64'
+_SAMBA_METRICS_IMAGE = 'quay.io/samba.org/samba-metrics:devbuilds-centos-any'
 
 
 class TestSMB:
