@@ -1826,6 +1826,9 @@ class CephFSMountBase(object):
             cmd.append(path)
         cmd.extend(["-type", "f", "-exec", "md5sum", "{}", "+"])
         checksum_text = self.run_shell(cmd).stdout.getvalue().strip()
+        # Handle empty directory
+        if not checksum_text:
+          return hashlib.md5(b'').hexdigest()
         checksum_sorted = sorted(checksum_text.split('\n'), key=lambda v: v.split()[1])
         return hashlib.md5(('\n'.join(checksum_sorted)).encode('utf-8')).hexdigest()
 
