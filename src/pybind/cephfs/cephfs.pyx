@@ -3432,6 +3432,9 @@ class RmtreeDir:
         and tell caller whether to continue or break loop based through the
         return value.
         '''
+        if self.name == b'/':
+            return
+
         try:
             self.fs.unlinkat(self.parent_dir_fd, self.name, AT_REMOVEDIR)
 
