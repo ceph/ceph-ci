@@ -182,9 +182,11 @@ class UpgradeManager(ResourceManager):
     @wait_api_result
     def start(self, image: str, version: str, daemon_types: Optional[List[str]] = None,
               host_placement: Optional[str] = None, services: Optional[List[str]] = None,
-              limit: Optional[int] = None) -> str:
-        return self.api.upgrade_start(image, version, daemon_types, host_placement, services,
-                                      limit)
+              limit: Optional[int] = None, bucket_type: Optional[str] = None,
+              bucket_name: Optional[str] = None) -> str:
+        return self.api.upgrade_start(
+            image, version, daemon_types, host_placement, services, limit,
+            bucket_type, bucket_name)
 
     @wait_api_result
     def pause(self) -> str:
