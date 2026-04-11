@@ -1435,6 +1435,9 @@ seastar::future<struct stat> SeaStore::Shard::stat(
     [this, oid](auto &t, auto &onode) {
     return _stat(t, onode, oid);
   }).handle_error(
+    crimson::ct_error::enoent::handle([] {
+      return seastar::make_ready_future<struct stat>();
+    }),
     crimson::ct_error::assert_all{
       "Invalid error in SeaStoreS::stat"
     }

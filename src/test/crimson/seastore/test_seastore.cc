@@ -965,6 +965,16 @@ TEST_P(seastore_test_t, touch_stat_list_remove)
   });
 }
 
+TEST_P(seastore_test_t, stat_nonexistent)
+{
+  run_async([this] {
+    auto st = sharded_seastore->stat(
+      coll,
+      make_oid(99)).get();
+    EXPECT_EQ(st.st_size, 0);
+  });
+}
+
 using bound_t = seastore_test_t::bound_t;
 constexpr unsigned MAX_LIMIT = std::numeric_limits<unsigned>::max();
 static const seastore_test_t::list_test_cases_t temp_list_cases{
