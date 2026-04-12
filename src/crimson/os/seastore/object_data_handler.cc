@@ -232,7 +232,7 @@ ObjectDataHandler::delta_based_overwrite(
   DEBUGT("0x{:x}~0x{:x} {} zero={}",
     ctx.t, unaligned_offset, unaligned_len, overwrite_mapping, !data.has_value());
   // delta based overwrite
-  return ctx.tm.read_pin<ObjectDataBlock>(
+  auto maybe_indirect_extent = co_await ctx.tm.read_pin<ObjectDataBlock>(
     ctx.t,
     overwrite_mapping
   ).handle_error_interruptible(
@@ -240,20 +240,17 @@ ObjectDataHandler::delta_based_overwrite(
     crimson::ct_error::assert_all{
       "ObjectDataHandler::do_remapping hit invalid error"
     }
-  ).si_then([ctx](auto maybe_indirect_extent) {
-    assert(!maybe_indirect_extent.is_indirect());
-    return ctx.tm.get_mutable_extent(ctx.t, maybe_indirect_extent.extent);
-  }).si_then([overwrite_mapping, unaligned_offset,
-	      unaligned_len, data=std::move(data)](auto extent) {
-    bufferlist bl;
-    if (data) {
-      bl.append(*data);
-    } else {
-      bl.append_zero(unaligned_len);
-    }
-    auto odblock = extent->template cast<ObjectDataBlock>();
-    odblock->overwrite(unaligned_offset, std::move(bl));
-  });
+  );
+  assert(!maybe_indirect_extent.is_indirect());
+  auto extent = ctx.tm.get_mutable_extent(ctx.t, maybe_indirect_extent.extent);
+  bufferlist bl;
+  if (data) {
+    bl.append(*data);
+  } else {
+    bl.append_zero(unaligned_len);
+  }
+  auto odblock = extent->template cast<ObjectDataBlock>();
+  odblock->overwrite(unaligned_offset, std::move(bl));
 }
 
 ObjectDataHandler::write_ret do_zero(
