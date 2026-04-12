@@ -1,5 +1,5 @@
 import { Pipe, PipeTransform } from '@angular/core';
-import { VERSION_PREFIX } from '~/app/shared/constants/app.constants';
+import { getVersionAndRelease } from '../helpers/utils';
 
 @Pipe({
   name: 'cephVersion',
@@ -7,13 +7,11 @@ import { VERSION_PREFIX } from '~/app/shared/constants/app.constants';
 })
 export class CephVersionPipe implements PipeTransform {
   transform(value: string = ''): string {
-    // Expect "ceph version 13.1.0-419-g251e2515b5
-    //         (251e2515b563856349498c6caf34e7a282f62937) nautilus (dev)"
+    // Expect ""ceph version 20.2.1-102.0.TEST.wip_rocky10_branch_of_the_day_9.1_20260408_1600.el10cp
+    //          (2cabc0155d4201501d3d2a098f9c80781fd8f293) tentacle (stable - RelWithDebInfo) release 9.1.0"
     if (value) {
-      const version = value.replace(`${VERSION_PREFIX} `, '').split(' ');
-      return version[0] + ' ' + version.slice(2, version.length).join(' ');
+      return getVersionAndRelease(value)?.release;
     }
-
     return value;
   }
 }
