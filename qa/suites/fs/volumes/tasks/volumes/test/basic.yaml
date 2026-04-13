@@ -9,3 +9,7 @@ tasks:
         - tasks.cephfs.test_volumes.TestCorruptedSubvolumes
         - tasks.cephfs.test_subvolume.TestSubvolume
         - tasks.cephfs.test_subvolume.TestSubvolumeReplicated
+        - tasks.cephfs.test_subvolume.TestSubvolumeV2
+        - tasks.cephfs.test_subvolume.TestSubvolumeV1
+        - tasks.cephfs.test_subvolume.TestSubvolumeV0
+        - tasks.cephfs.volumes.upgrades
