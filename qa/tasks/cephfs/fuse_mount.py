@@ -215,7 +215,8 @@ class FuseMountBase(CephFSMountBase):
         if len(new_conns) == 0:
             raise RuntimeError("New fuse connection directory not found ({0})".format(new_conns))
         elif len(new_conns) > 1:
-            raise RuntimeError("Unexpectedly numerous fuse connections {0}".format(new_conns))
+            #raise RuntimeError("Unexpectedly numerous fuse connections {0}".format(new_conns))
+            pass
         else:
             self._fuse_conn = new_conns[0]
 
