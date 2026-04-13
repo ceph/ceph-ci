@@ -368,7 +368,7 @@ class NvmeofService(CephService):
         ]
         return blocking_daemon_hosts
 
-    def _pick_running_daemon_host_for_service(self, service_name: str) -> Optional[str]:
+    def _get_daemon_hostname(self, service_name: str, daemon_name: str) -> Optional[str]:
         """
         Resolve a deterministic host for a service when HOST-scoped objects are needed.
         Picks the first RUNNING daemon host from the orchestrator cache.
@@ -381,17 +381,12 @@ class NvmeofService(CephService):
 
         for dd in dds:
             # dd.hostname is the short host name used for HOST-scoped certmgr objects
-            if dd.status == DaemonDescriptionStatus.running and dd.hostname:
-                return dd.hostname
-
-        # fallback: any host if nothing is RUNNING
-        for dd in dds:
-            if dd.hostname:
+            if dd.name == daemon_name:
                 return dd.hostname
 
         return None
 
-    def get_nvmeof_tls_bundle(self, service_name: str) -> Optional[NvmeofTLSBundle]:
+    def get_nvmeof_tls_bundle(self, service_name: str, daemon_name: str) -> Optional[NvmeofTLSBundle]:
         """
         Deterministic NVMeoF TLS bundle retrieval based on the NVMeoF spec's certificate_source.
 
@@ -443,7 +438,7 @@ class NvmeofService(CephService):
 
         # -------- CEPHADM_SIGNED --------
         elif cert_source == CertificateSource.CEPHADM_SIGNED.value:
-            hostname = self._pick_running_daemon_host_for_service(service_name)
+            hostname = self._get_daemon_hostname(service_name, daemon_name)
             if not hostname:
                 logger.error(f"certificate_source=cephadm-signed for '{service_name}' but no hostname could be resolved")
                 return None
