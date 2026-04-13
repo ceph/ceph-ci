@@ -1,0 +1,6 @@
+tasks:
+  - cephfs_test_runner:
+      fail_on_skip: false
+      modules:
+        - tasks.cephfs.volumes.upgrades.test_v2_to_v3
+        - tasks.cephfs.volumes.upgrades.test_v1_to_v3
