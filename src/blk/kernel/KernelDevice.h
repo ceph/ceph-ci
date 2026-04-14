@@ -98,6 +98,8 @@ private:
   bool _queue_discard(interval_set<uint64_t> &to_release);
   bool try_discard(interval_set<uint64_t> &to_release, bool async = true) override;
 
+  void collect_alerts(osd_alert_list_t& alerts, const std::string& device_name) override;
+
   int _aio_start();
   void _aio_stop();
 

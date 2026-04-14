@@ -894,6 +894,11 @@ bool KernelDevice::try_discard(interval_set<uint64_t> &to_release, bool async)
   return false;
 }
 
+void KernelDevice::collect_alerts(osd_alert_list_t& alerts, const std::string& device_name)
+{
+  BlockDevice::collect_alerts(alerts, device_name);
+}
+
 void KernelDevice::_aio_log_start(
   IOContext *ioc,
   uint64_t offset,
