@@ -95,6 +95,7 @@
           <option
             [value]="plugin"
             [selected]="plugin === PLUGIN.ISA"
+            [hidden]="plugin !=='isa' && plugin !== 'jerasure'"
           >
             @if(plugin === PLUGIN.JERASURE) {
               {{ plugin | upperFirst }}
