@@ -897,6 +897,9 @@ bool KernelDevice::try_discard(interval_set<uint64_t> &to_release, bool async)
 void KernelDevice::collect_alerts(osd_alert_list_t& alerts, const std::string& device_name)
 {
   BlockDevice::collect_alerts(alerts, device_name);
+  if (ebd_impl) {
+    ebd_impl->collect_alerts(alerts);
+  }
 }
 
 void KernelDevice::_aio_log_start(
