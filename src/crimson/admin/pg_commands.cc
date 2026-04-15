@@ -9,6 +9,7 @@
 #include <utility>
 
 #include <fmt/format.h>
+#include <json_spirit/json_spirit.h>
 #include <seastar/core/future.hh>
 
 #include "crimson/admin/admin_socket.h"

@@ -10,6 +10,7 @@
 #include <boost/range/algorithm/copy.hpp>
 #include <fmt/format.h>
 #include <fmt/ostream.h>
+#include "include/err.h" // for MAX_ERRNO
 #include "include/utime_fmt.h"
 #include <seastar/core/print.hh>
 

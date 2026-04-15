@@ -13,6 +13,8 @@
 #include "crimson/os/seastore/seastore.h"
 #include "crimson/os/seastore/onode.h"
 
+#include "common/strtol.h" // for ritoa()
+
 using namespace crimson;
 using namespace crimson::os;
 using namespace crimson::os::seastore;

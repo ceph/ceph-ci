@@ -14,10 +14,12 @@
 #include <seastar/core/thread.hh>
 #include <seastar/util/std-compat.hh>
 
+#include "common/errno.h" // for cpp_strerror()
 #include "common/options.h"
 #include "common/version.h"
 #include "messages/MCommand.h"
 #include "messages/MCommandReply.h"
+#include "crimson/common/config_proxy.h" // for local_conf()
 #include "crimson/common/log.h"
 #include "crimson/net/Socket.h"
 #include "crimson/net/Connection.h"

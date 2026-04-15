@@ -4,6 +4,7 @@
 #include "messages/MPing.h"
 #include "common/ceph_argparse.h"
 #include "crimson/auth/DummyAuth.h"
+#include "crimson/common/config_proxy.h" // for local_conf()
 #include "crimson/common/throttle.h"
 #include "crimson/net/Connection.h"
 #include "crimson/net/Dispatcher.h"
