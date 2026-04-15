@@ -3,13 +3,14 @@ function(build_isal)
   set(isal_BINARY_DIR ${CMAKE_BINARY_DIR}/src/isa-l)
   set(isal_INSTALL_DIR ${isal_BINARY_DIR}/install)
   set(isal_INCLUDE_DIR "${isal_INSTALL_DIR}/include")
-  set(isal_LIBRARY "${isal_INSTALL_DIR}/lib/libisal.a")
+  set(isal_LIBRARY_DIR "${isal_INSTALL_DIR}/lib")
+  set(isal_LIBRARY "${isal_LIBRARY_DIR}/libisal.a")
 
   # this include directory won't exist until the install step, but the
   # imported targets need it early for INTERFACE_INCLUDE_DIRECTORIES
   file(MAKE_DIRECTORY "${isal_INCLUDE_DIR}")
 
-  set(configure_cmd env CC=${CMAKE_C_COMPILER} ./configure --prefix=${isal_INSTALL_DIR})
+  set(configure_cmd env CC=${CMAKE_C_COMPILER} ./configure --prefix=${isal_INSTALL_DIR} --libdir=${isal_LIBRARY_DIR})
   # build a static library with -fPIC that we can link into crypto/compressor plugins
   list(APPEND configure_cmd --with-pic --enable-static --disable-shared)
 
