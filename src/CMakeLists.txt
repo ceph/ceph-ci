@@ -789,6 +789,7 @@ if(NOT CEPH_BUILD_VIRTUALENV)
 endif()
 
 option(WITH_CEPHADM "Flag to determine if cephadm should be built" ON)
+option(WITH_PYPKG "Build using PEP517 & PEP518 packaging when possible" OFF)
 
 if(NOT WIN32)
 add_subdirectory(pybind)
