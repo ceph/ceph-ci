@@ -11,6 +11,7 @@ overrides:
 tasks:
 - ceph_objectstore_tool:
     crimson_objectstore_tool: true
+    gc_before_restart: true
     objects: 5
     pgnum: 8
 
