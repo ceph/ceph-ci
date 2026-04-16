@@ -882,6 +882,7 @@ private:
     }
 
     seastar::future<> run_until_halt();
+
     seastar::future<> run_cleaner_until_done();
 
     bool is_no_background() const {

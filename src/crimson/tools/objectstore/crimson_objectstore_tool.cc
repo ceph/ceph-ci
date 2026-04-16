@@ -92,6 +92,9 @@ enum class operation_type_t {
 
   // Device-inspection operations (--op)
   DUMP_SUPERBLOCK,
+
+  // Maintenance operations (--op)
+  GC,
 };
 
 std::string to_string(operation_type_t op) {
@@ -115,6 +118,7 @@ std::string to_string(operation_type_t op) {
     case operation_type_t::SET_SIZE: return "set-size";
     case operation_type_t::CLEAR_DATA_DIGEST: return "clear-data-digest";
     case operation_type_t::DUMP_SUPERBLOCK: return "dump-superblock";
+    case operation_type_t::GC: return "gc";
     default: return "unknown";
   }
 }
@@ -124,6 +128,7 @@ tl::expected<operation_type_t, std::string> parse_pg_operation(const std::string
   if (op_str == "list") return operation_type_t::LIST_OBJECTS;
   if (op_str == "info") return operation_type_t::INFO;
   if (op_str == "dump-superblock") return operation_type_t::DUMP_SUPERBLOCK;
+  if (op_str == "gc") return operation_type_t::GC;
   return tl::unexpected("Unsupported PG operation: " + op_str);
 }
 
@@ -723,7 +728,8 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
 
   // Resolve object and pgid before executing operations
   if (config.operation->op != operation_type_t::LIST_PGS &&
-      config.operation->op != operation_type_t::DUMP_SUPERBLOCK) {
+      config.operation->op != operation_type_t::DUMP_SUPERBLOCK &&
+      config.operation->op != operation_type_t::GC) {
     bool resolved = co_await resolve_operation_parameters(st, config);
     if (!resolved) {
       co_return EXIT_FAILURE;
@@ -993,6 +999,11 @@ seastar::future<int> run_tool(StoreTool& st, objectstore_config_t& config) {
         fmt::println(std::cerr, "clear data digest failed");
         co_return EXIT_FAILURE;
       }
+      break;
+    }
+
+    case operation_type_t::GC: {
+      co_await st.do_gc();
       break;
     }
 
