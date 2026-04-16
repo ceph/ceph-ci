@@ -594,6 +594,10 @@ public:
     return background_process.run_until_halt();
   }
 
+  seastar::future<> run_cleaner_until_done() {
+    return background_process.run_cleaner_until_done();
+  }
+
   bool get_checksum_needed(paddr_t addr) {
     // checksum offloading only for blocks physically stored in the device
 #ifdef UNIT_TESTS_BUILT
@@ -878,7 +882,8 @@ private:
     }
 
     seastar::future<> run_until_halt();
-    
+    seastar::future<> run_cleaner_until_done();
+
     bool is_no_background() const {
       return !trimmer || !main_cleaner;
     }

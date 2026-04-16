@@ -427,6 +427,31 @@ base_ertr::future<> SeaStore::Shard::umount()
   onode_manager.reset();
 }
 
+seastar::future<> SeaStore::Shard::do_gc()
+{
+  LOG_PREFIX(SeaStore::Shard::do_gc);
+  if (!store_active || !transaction_manager) {
+    co_return;
+  }
+  auto *epm = transaction_manager->get_epm();
+  INFO("stopping background and running cleaner...");
+  co_await epm->stop_background();
+  co_await epm->run_cleaner_until_done();
+  INFO("done");
+}
+
+seastar::future<> SeaStore::do_gc()
+{
+  LOG_PREFIX(SeaStore::do_gc);
+  INFO("...");
+  co_await shard_stores.invoke_on_all([](auto &local_store) {
+    return seastar::do_for_each(local_store.mshard_stores, [](auto& mshard_store) {
+      return mshard_store->do_gc();
+    });
+  });
+  INFO("done");
+}
+
 seastar::future<> SeaStore::write_fsid(uuid_d new_osd_fsid)
 {
   ceph_assert(seastar::this_shard_id() == primary_core);

@@ -190,6 +190,7 @@ public:
   // only exposed to SeaStore
   public:
     base_ertr::future<> umount();
+    seastar::future<> do_gc();
     // init managers and mount transaction_manager
     seastar::future<> mount_managers();
 
@@ -592,6 +593,8 @@ public:
   seastar::future<std::vector<coll_core_t>> list_collections() override;
 
   seastar::future<std::string> get_default_device_class() final;
+
+  seastar::future<> do_gc() override;
 
   BackendStore get_backend_store(store_index_t store_index) override {
     assert(!shard_stores.local().mshard_stores.empty());
