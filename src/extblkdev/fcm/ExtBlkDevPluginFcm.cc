@@ -126,6 +126,9 @@ class ExtBlkDevFcm : public ceph::ExtBlkDevInterface
   struct timespec last_access = {0};
   PerfCounters *perfc = nullptr;
 
+  bool error_accessing_log = false;
+  bool error_multivolume = false;
+
   uint64_t get_partition_physical_size() const {return psize;}
   uint64_t get_partition_logical_size() const {return lsize;}
   uint64_t get_partition_physical_avail() const {return pavail;}
@@ -199,7 +202,7 @@ class ExtBlkDevFcm : public ceph::ExtBlkDevInterface
   }
 
 
-  int get_fcm_utilization()
+  int get_fcm_utilization_core()
   {
     struct timespec tnow;
     clock_gettime(CLOCK_MONOTONIC_COARSE, &tnow);
@@ -253,6 +256,23 @@ class ExtBlkDevFcm : public ceph::ExtBlkDevInterface
     last_access = tnow;
 
     return 0;
+  }
+
+  int get_fcm_utilization() {
+    int result = get_fcm_utilization_core();
+    if (result < 0) {
+      // raise alert status
+      error_accessing_log = true;
+    }
+    if (result == 0) {
+      // clear alert
+      error_accessing_log = false;
+    }
+    if (result > 0) {
+      // We only retrieve log every 15s.
+      // We did not retrieve it in this run, so no change on error_accessing_log.
+    }
+    return result;
   }
 
   static int fcm_get_int_property(const std::string& devpath, const std::string& attr)
@@ -325,10 +345,17 @@ public:
         }
       }
     }
+
     if(fcm_devices.empty()){
       return -1000;
+    } else {
+      if (raw_devices.size() > 1) {
+        error_multivolume = true;
+        derr << __func__ << "Device " << logdevname_a << " consist of "
+             << raw_devices.size() << " devices: " << raw_devices << dendl;
+        derr << "Multi-device volumes are unsupported for FCM plugin" << dendl;
+      }
     }
-
     // get size of logical volume/partition
     int rc=get_lsize();
     if(rc<0)
@@ -341,12 +368,8 @@ public:
 	return rc;
     }
 
-    // do initial query for utilization to ensure query mechanism works
-    rc=get_fcm_utilization();
-    if(rc<0){
-      derr << __func__ << " Device detected, but FCM utilization log cannot be accessed (check capabilites!)" << dendl;
-      return rc;
-    }
+    // do initial query for utilization to maybe raise health warning
+    get_fcm_utilization();
     return 0;
   }
   enum perf_counters: uint32_t
@@ -470,6 +493,31 @@ public:
     id_str = "fcm";
     return 0;
   };
+
+  void collect_alerts(osd_alert_list_t& alerts) override
+  {
+    if (error_accessing_log) {
+      std::string& v = alerts["EXTBLKDEV"];
+      if (!v.empty()) {
+        v += "; ";
+      }
+      v.append("failed accessing FCM utilization log");
+    }
+    if (!cct->_conf->bdev_enable_discard) {
+      std::string& v = alerts["EXTBLKDEV"];
+      if (!v.empty()) {
+        v += "; ";
+      }
+      v.append("bdev_enable_discard not enabled - free space will leak");
+    }
+    if (error_multivolume) {
+      std::string& v = alerts["EXTBLKDEV"];
+      if (!v.empty()) {
+        v += "; ";
+      }
+      v.append("multivolume fcm will not work properly");
+    }
+  }
 };
 
 class ExtBlkDevPluginFcm : public ceph::ExtBlkDevPlugin {
@@ -490,10 +538,6 @@ public:
     if (r != 0) {
       delete fcm;
       return r;
-    } else {
-      if (!cct->_conf->bdev_enable_discard) {
-        derr << "FCM device in use, but bdev_enable_discard not enabled. Free space will leak." << dendl;
-      }
     }
     ext_blk_dev.reset(fcm);
     return 0;
