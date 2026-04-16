@@ -4741,10 +4741,11 @@ bool BlueFS::debug_get_is_dev_dirty(FileWriter *h, uint8_t dev)
 }
 
 void BlueFS::collect_alerts(osd_alert_list_t& alerts) {
-  if (bdev[BDEV_DB]) {
+  if (bdev[BDEV_DB] &&
+    (!is_shared_alloc(BDEV_DB) /*BlueStore is collecting alerts for its bdev*/) ) {
     bdev[BDEV_DB]->collect_alerts(alerts, "DB");
   }
-  if (bdev[BDEV_WAL]) {
+  if (bdev[BDEV_WAL] /*WAL is never shared*/) {
     bdev[BDEV_WAL]->collect_alerts(alerts, "WAL");
   }
 }
