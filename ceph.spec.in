@@ -144,6 +144,7 @@
 %global _find_debuginfo_dwz_opts %{nil}
 %endif
 %bcond_with sccache
+%bcond_with pypkg
 
 %{!?_udevrulesdir: %global _udevrulesdir /lib/udev/rules.d}
 %{!?tmpfiles_create: %global tmpfiles_create systemd-tmpfiles --create}
@@ -1540,6 +1541,9 @@ cmake .. \
 %if %{with sccache}
     -DWITH_SCCACHE=ON \
 %endif
+%if 0%{with pypkg}
+    -DWITH_PYPKG:BOOL=ON \
+%endif
 %if 0%{with cephadm_bundling}
 %if 0%{with cephadm_pip_deps}
     -DCEPHADM_BUNDLED_DEPENDENCIES=pip
@@ -2587,7 +2591,7 @@ fi
 
 %files -n python%{python3_pkgversion}-ceph-common
 %{python3_sitelib}/ceph
-%{python3_sitelib}/ceph-*.egg-info
+%{python3_sitelib}/ceph-*.%{?with_pypkg:dist}%{!?with_pypkg:egg}-info
 
 %if 0%{with cephfs_shell}
 %files -n cephfs-shell
