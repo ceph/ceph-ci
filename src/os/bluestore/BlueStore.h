@@ -2393,6 +2393,8 @@ private:
   std::string freelist_type;
   FreelistManager *fm = nullptr;
 
+  std::string ebd_health_alert; ///< used to report ExtBlkDev plugin problem up the health chain
+
   Allocator *alloc = nullptr;   ///< allocator consumed by BlueStore
   bluefs_shared_alloc_context_t shared_alloc; ///< consumed by BlueFS (may be == alloc)
 

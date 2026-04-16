@@ -7152,6 +7152,7 @@ int BlueStore::_open_bdev(bool create)
 
   if (!create && cct->_conf->bluestore_use_ebd) {
     // for regular bdev opens check if it was deployed with plugin
+    ebd_health_alert.clear();
     string meta_plugin_id;
     r = read_meta("extblkdev", &meta_plugin_id);
     if (r == 0) {
@@ -7163,19 +7164,15 @@ int BlueStore::_open_bdev(bool create)
       }
       string bdev_plugin_id;
       r = bdev->detect_ebd(bdev_plugin_id);
-      bool is_osd = cct->get_module_type() & CEPH_ENTITY_TYPE_OSD;
       if (r != 0) {
+        ebd_health_alert = "plugin '" + meta_plugin_id + "' not loaded";
         derr << __func__ << " plugin " << meta_plugin_id << " not loaded" << dendl;
-        if (is_osd) {
-          goto fail_close;
-        }
       } else {
         if (meta_plugin_id != bdev_plugin_id) {
+          ebd_health_alert = " plugin '" + meta_plugin_id + "' used on mkfs, "
+            "but now uses plugin '" + bdev_plugin_id + "'";
           derr << __func__ << " plugin '" << meta_plugin_id << "' used on mkfs, "
             << "but now uses plugin '" << bdev_plugin_id << "'" << dendl;
-          if (is_osd) {
-            goto fail_close;
-          }
         }
       }
     }
@@ -19442,6 +19439,13 @@ void BlueStore::_log_alerts(osd_alert_list_t& alerts)
     cct->_conf.get_val<double>("bluestore_warn_on_free_fragmentation") * 1e6) {
     alerts.emplace("BLUESTORE_FREE_FRAGMENTATION",
       fmt::format("{0:.6f}", logger->get(l_bluestore_fragmentation) * 1e-6));
+  }
+  if (!ebd_health_alert.empty()) {
+    std::string& v = alerts["EXTBLKDEV"];
+    if (!v.empty()) {
+      v += "; ";
+    }
+    v.append(ebd_health_alert);
   }
 }
 
