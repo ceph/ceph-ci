@@ -301,7 +301,8 @@ public:
   ~ExtBlkDevFcm(){
     unregister_perf_counters();
   }
-  int init(const std::string& logdevname_a){
+  int init(const std::string& logdevname_a) override
+  {
     logdevname=logdevname_a;
 
     // determine device name for underlying hardware
@@ -426,8 +427,8 @@ public:
     return result;
   }
 
-  virtual const std::string& get_devname() const {return logdevname;}
-  int get_state(ExtBlkDevState& state)
+  const std::string& get_devname() const override {return logdevname;}
+  int get_state(ExtBlkDevState& state) override
   {
     int rc=get_fcm_utilization();
     if(rc<0)
@@ -452,7 +453,7 @@ public:
 
     return 0;
   }
-  int collect_metadata(const std::string& prefix, std::map<std::string,std::string> *pm)
+  int collect_metadata(const std::string& prefix, std::map<std::string,std::string> *pm) override
   {
     int rc=get_fcm_utilization();
     if(rc<0)
