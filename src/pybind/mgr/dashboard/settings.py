@@ -127,7 +127,7 @@ class Options(object):
 
     CALL_HOME_REMIND_LATER_ON = Setting('', [str])
     STORAGE_INSIGHTS_REMIND_LATER_ON = Setting('', [str])
-    OBJECT_BROWSER_IMAGE = Setting('docker.io/nizamial09/hello:world', [str])
+    OBJECT_BROWSER_IMAGE = Setting('icr.io/cp/ibm-ceph/object-browser:1.0.0', [str])
 
     @staticmethod
     def has_default_value(name):

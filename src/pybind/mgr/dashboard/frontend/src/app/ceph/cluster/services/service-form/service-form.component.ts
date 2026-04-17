@@ -931,12 +931,6 @@ export class ServiceFormComponent extends CdForm implements OnInit {
           }
         }
       else if (value === 'object-browser') {
-        this.mgrModuleService.getConfig('dashboard').subscribe((response: any) => {
-          const accessKey = response['RGW_API_ACCESS_KEY'];
-          const secretKey = response['RGW_API_SECRET_KEY'];
-          this.serviceForm.get('accessKey').setValue(accessKey);
-          this.serviceForm.get('secretKey').setValue(secretKey);
-        });
         this.settingsService.getValues('OBJECT_BROWSER_IMAGE').subscribe((resp: any) => {
           this.objectBrowserImage = resp.OBJECT_BROWSER_IMAGE;
         })
