@@ -706,19 +706,17 @@ def test_objectstore(ctx, config, cli_remote, REP_POOL, REP_NAME, ec=False):
         if CRIMSON and config.get('gc_before_restart', False):
             # Run GC on each OSD's seastore to reclaim segments consumed
             # by repeated tool mount/unmount cycles before restarting.
-            log.info("Running GC on each OSD store...")
+            gc_timeout = config.get('gc_timeout', 120)
+            log.info("Running GC on each OSD store (timeout={})...".format(
+                gc_timeout))
             for remote in osds.remotes.keys():
                 for role in osds.remotes[remote]:
                     if not role.startswith("osd."):
                         continue
                     osdid = int(role.split('.')[1])
-                    cmd = (prefix + "--op gc").format(id=osdid)
-                    try:
-                        remote.sh(cmd, wait=True)
-                    except CommandFailedError as e:
-                        log.warning(
-                            "GC failed on osd.{id} with {ret}".format(
-                                id=osdid, ret=e.exitstatus))
+                    cmd = ("timeout {timeout} " + prefix + "--op gc").format(
+                        timeout=gc_timeout, id=osdid)
+                    remote.sh(cmd, wait=True)
 
         log.info("Restarting OSDs....")
         # They are still look to be up because of setting nodown
