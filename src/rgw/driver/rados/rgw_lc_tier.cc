@@ -1479,7 +1479,7 @@ static int cloud_tier_bucket_exists(RGWLCCloudTierCtx& tier_ctx)
 
   int ret = tier_ctx.conn.send_resource(tier_ctx.dpp, "HEAD", resource,
                                         nullptr, nullptr, out_bl, nullptr,
-                                        nullptr, null_yield);
+                                        nullptr, tier_ctx.y);
   if (ret == -ERR_NO_SUCH_BUCKET || ret == -ENOENT) {
     return -ENOENT;
   }
