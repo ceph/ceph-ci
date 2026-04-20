@@ -35,6 +35,7 @@ import { HardwareNameMapping } from '~/app/shared/enum/hardware.enum';
 import { GaugeChartComponent } from '@carbon/charts-angular';
 import { CallHomeService } from '~/app/shared/api/call-home.service';
 import { StorageInsightsService } from '~/app/shared/api/storage-insights.service';
+import { environment } from '~/environments/environment';
 
 type OverviewHealthData = {
   summary: Summary;
@@ -80,6 +81,7 @@ type HwRowVM = {
   changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class OverviewHealthCardComponent {
+  environment = environment;
   private readonly summaryService = inject(SummaryService);
   private readonly upgradeService = inject(UpgradeService);
   private readonly hardwareService = inject(HardwareService);

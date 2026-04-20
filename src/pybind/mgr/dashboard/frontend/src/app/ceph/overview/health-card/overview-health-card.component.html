@@ -41,7 +41,7 @@
           </td>
         </tr>
         <tr>
-          <td class="cds-pr-8" i18n>Storage Insight</td>
+          <td class="cds-pr-8" i18n>Storage Insights</td>
           <td>
             @if (storageInsightsEnabled$ | async) {
             <cd-icon type="success"></cd-icon>&nbsp;
@@ -56,6 +56,7 @@
     </ng-template>
     <div cdsStack="horizontal"
          [gap]="2">
+      @if (environment.build === 'ibm') {
       <cds-icon-button
         type="button"
         kind="ghost"
@@ -63,6 +64,7 @@
         [description]="telemetryDescription">
         <cd-icon type="cloudMonitoring"></cd-icon>
       </cds-icon-button>
+      }
       <cds-icon-button
         type="button"
         kind="ghost"
