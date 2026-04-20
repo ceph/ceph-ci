@@ -1,4 +1,13 @@
-from typing import TYPE_CHECKING, Any, List, Optional, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    List,
+    Literal,
+    Optional,
+    Union,
+    cast,
+    overload,
+)
 
 import logging
 from dataclasses import replace
@@ -473,13 +482,52 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
         )
         return self._apply_res([share], create_only=True).one()
 
+    @overload
+    def share_rm(
+        self, cluster_id: str, share_id: str, wildcard: Literal[False] = False
+    ) -> results.Result:
+        ...
+
+    @overload
+    def share_rm(
+        self, cluster_id: str, share_id: str, wildcard: Literal[True]
+    ) -> results.ResultGroup:
+        ...
+
     @SMBCLICommand('share rm', perm='rw')
-    def share_rm(self, cluster_id: str, share_id: str) -> results.Result:
+    def share_rm(
+        self, cluster_id: str, share_id: str, wildcard: bool = False
+    ) -> Union[results.Result, results.ResultGroup]:
         """Remove an smb share"""
+        if wildcard:
+            return self._share_wildcard_rm(cluster_id, share_id)
+        # basic mode
         share = resources.RemovedShare(
             cluster_id=cluster_id, share_id=share_id
         )
         return self._apply_res([share]).one()
+
+    def _share_wildcard_rm(
+        self, cluster_id: str, share_id: str
+    ) -> results.ResultGroup:
+        shares = self._handler.matching_resources(
+            [f'ceph.smb.share.{cluster_id}.{share_id}'],
+            wildcard=True,
+        )
+        if not shares:
+            # nothing matching the wildcard
+            raise cli.NoMatchingValue(
+                f'no shares matching "{share_id}" in {cluster_id}'
+            )
+        rm_shares: list[resources.SMBResource]
+        rm_shares = [
+            resources.RemovedShare(
+                cluster_id=s.cluster_id, share_id=s.share_id
+            )
+            for s in shares
+            if isinstance(s, resources.Share)
+        ]
+        return self._apply_res(rm_shares)
 
     @SMBCLICommand('share update cephfs qos', perm='rw')
     def share_update_qos(
