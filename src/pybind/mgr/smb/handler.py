@@ -15,6 +15,7 @@ from typing import (
 
 import contextlib
 import dataclasses
+import fnmatch
 import logging
 import time
 
@@ -188,6 +189,7 @@ class _Matcher:
     def __init__(self) -> None:
         self._contents: Set[Any] = set()
         self._inputs: Set[str] = set()
+        self._wildcards: Set[tuple[Any, ...]] = set()
 
     def __str__(self) -> str:
         if not self._contents:
@@ -210,9 +212,22 @@ class _Matcher:
                 len(value) == 3
                 and (value[0], value[1], None) in self._contents
             )
+            or self._wildmatch(value)
         )
 
-    def parse(self, txt: str) -> None:
+    def _wildmatch(self, value: tuple[Any]) -> bool:
+        if not self._wildcards:
+            return False
+        if not value:
+            return False
+        head, tail = value[:-1], value[-1]
+        return any(
+            fnmatch.fnmatch(tail, wild[-1])
+            for wild in self._wildcards
+            if head == wild[:-1]
+        )
+
+    def parse(self, txt: str, *, wildcard: bool = False) -> None:
         rtypes: Dict[str, Any] = {
             cast(Any, r).resource_type: r for r in self._match_resources
         }
@@ -225,19 +240,25 @@ class _Matcher:
         try:
             prefix, id_a = txt.rsplit('.', 1)
             resource_cls = rtypes[prefix]
-            self._contents.add(resource_cls)
-            self._contents.add((resource_cls, id_a))
-            self._contents.add((resource_cls, id_a, None))
             self._inputs.add(txt)
+            self._contents.add(resource_cls)
+            if wildcard:
+                self._wildcards.add((resource_cls, id_a))
+            else:
+                self._contents.add((resource_cls, id_a))
+                self._contents.add((resource_cls, id_a, None))
             return
         except (ValueError, KeyError):
             pass
         try:
             prefix, id_a, id_b = txt.rsplit('.', 2)
             resource_cls = rtypes[prefix]
-            self._contents.add(resource_cls)
-            self._contents.add((resource_cls, id_a, id_b))
             self._inputs.add(txt)
+            self._contents.add(resource_cls)
+            if wildcard:
+                self._wildcards.add((resource_cls, id_a, id_b))
+            else:
+                self._contents.add((resource_cls, id_a, id_b))
             return
         except (ValueError, KeyError):
             pass
@@ -382,10 +403,12 @@ class ClusterConfigHandler:
         with _store_transaction(self.internal_store):
             return self._search_resources(_Matcher())
 
-    def matching_resources(self, names: List[str]) -> List[SMBResource]:
+    def matching_resources(
+        self, names: List[str], *, wildcard: bool = False
+    ) -> List[SMBResource]:
         matcher = _Matcher()
         for name in names:
-            matcher.parse(name)
+            matcher.parse(name, wildcard=wildcard)
         with _store_transaction(self.internal_store):
             return self._search_resources(matcher)
 
