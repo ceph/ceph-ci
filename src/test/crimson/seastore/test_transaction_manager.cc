@@ -1647,6 +1647,10 @@ struct transaction_manager_test_t :
 	    }
 
 	    auto t = create_transaction();
+	    if (!test_mappings.contains(offset, t.mapping_delta)) {
+	      early_exit++;
+	      return;
+	    }
             auto last_pin = try_get_pin(t, offset);
 	    if (!last_pin || last_pin->get_length() != length) {
 	      early_exit++;
