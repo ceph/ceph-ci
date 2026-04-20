@@ -286,9 +286,22 @@ bool new_producer(connection_t* conn) {
   // however, testing with librdkafka v1.6.1 did not expire the message in that case. hence, a value of zero is changed to 1ms
   constexpr std::uint64_t min_message_timeout = 1;
   const auto message_timeout = std::max(min_message_timeout, conn->cct->_conf->rgw_kafka_message_timeout);
+  const auto batch_size = conn->cct->_conf->rgw_kafka_max_batch_size;
+  ldout(conn->cct, 1) << "Kafka connect: broker=" << conn->broker
+      << " use_ssl=" << conn->use_ssl
+      << " user=" << conn->user
+      << " message_timeout=" << message_timeout
+      << " batch_size=" << batch_size << dendl;
+
   if (rd_kafka_conf_set(conf.get(), "message.timeout.ms", 
         std::to_string(message_timeout).c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) goto conf_error;
 
+  if (batch_size > 0) {
+    if (rd_kafka_conf_set(conf.get(), "batch.size",
+        std::to_string(batch_size).c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) goto conf_error;
+    if (rd_kafka_conf_set(conf.get(), "message.max.bytes",
+        std::to_string(batch_size).c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) goto conf_error;
+  }
   // get list of brokers based on the bootstrap broker
   if (rd_kafka_conf_set(conf.get(), "bootstrap.servers", conn->broker.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) goto conf_error;
 

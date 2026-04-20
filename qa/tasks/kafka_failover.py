@@ -233,6 +233,8 @@ def task(ctx,config):
     if isinstance(config, list):
         config = dict.fromkeys(config)
 
+    ctx.kafka_dir = get_kafka_dir(ctx, config)
+
     log.debug('Kafka config is %s', config)
 
     with contextutil.nested(

@@ -4524,6 +4524,17 @@ options:
   services:
   - rgw
   with_legacy: true
+- name: rgw_kafka_max_batch_size
+  type: uint
+  level: advanced
+  desc: This is the maximum size in bytes of a batch of messages sent to kafka
+  long_desc: This is the maximum size in bytes of a batch of messages sent to kafka. Messages will be sent
+    in batches to improve performance, and this option sets the maximum size of those batches.
+    If set to zero, the value is not set and the default batch size will be used.
+  default: 0
+  services:
+  - rgw
+  with_legacy: true
 - name: rgw_d4n_l1_datacache_address
   type: str
   level: advanced

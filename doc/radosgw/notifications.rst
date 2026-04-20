@@ -143,6 +143,20 @@ Notification Performance Statistics
     ``pubsub_push_ok`` and ``pubsub_push_fail`` are incremented per push action
     on each notification.
 
+Configuration Options
+---------------------
+The following are global configuration options for the different endpoints:
+
+Kafka
+~~~~~
+After recovering from a broker failure, a persistent topic will try
+to resend all notifications in batches. If the topic is configured on
+the broker with a segment size smaller than our default (1MB), sending
+the messages would fail. If we know that we have such segment size
+configuration, we should send smaller batches using:
+
+.. confval:: rgw_kafka_max_batch_size
+
 Bucket Notification REST API
 ----------------------------
 
