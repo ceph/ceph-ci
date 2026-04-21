@@ -31,7 +31,8 @@ const DEFAULT_PLACEHOLDER = $localize`Enter group name`;
 @Component({
   selector: 'cd-nvmeof-subsystems',
   templateUrl: './nvmeof-subsystems.component.html',
-  styleUrls: ['./nvmeof-subsystems.component.scss']
+  styleUrls: ['./nvmeof-subsystems.component.scss'],
+  standalone: false
 })
 export class NvmeofSubsystemsComponent extends ListWithDetails implements OnInit, OnDestroy {
   @ViewChild('authenticationTpl', { static: true })
@@ -174,7 +175,8 @@ export class NvmeofSubsystemsComponent extends ListWithDetails implements OnInit
       itemNames: [subsystem.nqn],
       actionDescription: 'delete',
       bodyContext: {
-        deletionMessage: $localize`Deleting <strong>${subsystem.nqn}</strong> will remove all associated configurations and resources. Dependent services may stop working. This action cannot be undone.`
+        deletionMessage: $localize`Deleting <strong>${subsystem.nqn}</strong> will remove all associated configurations and resources. Dependent services may stop working. This action cannot be undone.`,
+        forceDeleteAcknowledgementMessage: $localize`I understand this may remove resources still attached to this subsystem.`
       },
       submitActionObservable: () =>
         this.taskWrapper.wrapTaskAroundCall({
