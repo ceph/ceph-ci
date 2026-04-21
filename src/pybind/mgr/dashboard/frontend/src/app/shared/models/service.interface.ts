@@ -16,6 +16,23 @@ export enum CephCertificateStatus {
   invalid = 'invalid'
 }
 
+export enum DaemonAction {
+  START = 'start',
+  STOP = 'stop',
+  RESTART = 'restart',
+  REDEPLOY = 'redeploy'
+}
+
+export const CERTIFICATE_STATUS_ICON_MAP: Record<string, string> = {
+  valid: 'success',
+  expiring: 'warning',
+  expiring_soon: 'warning',
+  expired: 'danger',
+  not_configured: 'warning',
+  invalid: 'danger',
+  default: 'warning'
+};
+
 export interface CephServiceCertificate {
   cert_name: string;
   scope: string;
