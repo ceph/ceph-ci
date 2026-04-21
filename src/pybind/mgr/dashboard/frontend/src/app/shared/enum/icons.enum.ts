@@ -171,7 +171,8 @@ export const ICON_TYPE = {
   ibmCloudDedicatedHost:'ibm-cloud--dedicated-host',
   clusterIcon:'web-services--cluster',
   download: 'download',
-  cloudMonitoring: 'cloud--monitoring'
+  cloudMonitoring: 'cloud--monitoring',
+  arrowRight: 'arrow--right'
 } as const;
 
 export const EMPTY_STATE_IMAGE = {

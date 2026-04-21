@@ -15,7 +15,6 @@ import { RgwRealm, RgwZonegroup, RgwZone, RgwEntities } from '~/app/ceph/rgw/mod
 
 import { CephServiceService } from '~/app/shared/api/ceph-service.service';
 import { HostService } from '~/app/shared/api/host.service';
-import { MgrModuleService } from '~/app/shared/api/mgr-module.service';
 import { PoolService } from '~/app/shared/api/pool.service';
 import { RbdService } from '~/app/shared/api/rbd.service';
 import { RgwMultisiteService } from '~/app/shared/api/rgw-multisite.service';
@@ -137,7 +136,6 @@ export class ServiceFormComponent extends CdForm implements OnInit {
     private route: ActivatedRoute,
     public modalService: ModalCdsService,
     private location: Location,
-    private mgrModuleService: MgrModuleService,
     private settingsService: SettingsService
   ) {
     super();

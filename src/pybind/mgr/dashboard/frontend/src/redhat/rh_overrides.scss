@@ -78,6 +78,10 @@ $pf-global--image-path: '~@patternfly/patternfly/assets/images';
   }
 }
 
+.cds--btn--tertiary {
+  min-block-size: 0% !important;
+}
+
 .cds--btn--primary,
 .primary-dropdown-btn {
   @extend .pf-c-button, .pf-m-primary;
