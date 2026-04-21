@@ -107,7 +107,8 @@
           </cd-help-text>
         </cds-checkbox>
       </div>
-      <div class="form-item">
+      <div *ngIf="multisiteZoneForm.get('master_zone')?.value === false"
+           class="form-item">
         <cds-checkbox
           id="archive_zone"
           formControlName="archive_zone"
@@ -122,7 +123,8 @@
           </cd-help-text>
         </cds-checkbox>
       </div>
-      <div class="form-item">
+      <div *ngIf="multisiteZoneForm.get('master_zone')?.value === false"
+           class="form-item">
         <cds-checkbox
           id="sync_from_all"
           formControlName="sync_from_all"
@@ -143,7 +145,7 @@
           </div>
         </cds-checkbox>
       </div>
-      <div *ngIf="multisiteZoneForm.get('sync_from_all')?.value === false"
+      <div *ngIf="multisiteZoneForm.get('sync_from_all')?.value === false || multisiteZoneForm.get('master_zone')?.value === false"
            class="form-item">
         <cds-combo-box type="multi"
                        selectionFeedback="top-after-reopen"
