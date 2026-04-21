@@ -6,7 +6,7 @@
        [narrow]="true"
        [fullWidth]="true">
     <div cdsCol
-         [columnNumbers]="{lg: 10}"
+         [columnNumbers]="{sm: 4, md: 8, lg: 16}"
          class="cd-nvmeof-subsystem-step-two">
       <div cdsRow
            class="form-item cds-mb-0">
@@ -114,7 +114,7 @@
     description="Remove host"
     i18n-description
     (click)="removeHost(host)">
-  <cd-icon type="close"></cd-icon>
+  <cd-icon type="destroy"></cd-icon>
 </cds-icon-button>
 </ng-template>
 

@@ -17,6 +17,12 @@
   max-block-size: calc(100vh - 88px);
   max-inline-size: none;
   position: fixed;
+
+  // Keep header from shrinking; body row must be allowed to shrink below content height
+  // so inner .tearsheet-content can scroll (default min-height: auto prevents this).
+  > .tearsheet-header {
+    flex-shrink: 0;
+  }
 }
 
 // Global Carbon override sets .cds--modal-scroll-content to max-height: 70vh.
@@ -41,9 +47,9 @@
 // FULL TEARSHEET
 .tearsheet--full {
   height: 100%;
+  width: 100%;
   margin: 0;
   padding: 0;
-  width: 100%;
 }
 
 .tearsheet-cols--full {
@@ -53,11 +59,8 @@
 
 // HEADER
 .tearsheet-header {
+  fill: var(--cds-icon-primary);
   background-color: var(--cds-background);
-  border-block-end: 1px solid var(--cds-border-subtle-01);
-  fill: var(--cds-icon-primary);
-  fill: var(--cds-icon-primary);
-  padding: var(--cds-spacing-06) var(--cds-spacing-07);
   padding: var(--cds-spacing-06) var(--cds-spacing-07);
 
   &-title {
@@ -65,44 +68,74 @@
   }
 
   &-description {
+    margin-top: var(--cds-spacing-04);
     color: var(--cds-text-secondary);
-    margin-top: var(--cds-spacing-04);
-    margin-top: var(--cds-spacing-04);
   }
 
   &--full {
-    padding: 0 0 var(--cds-spacing-05) var(--cds-spacing-07);
     position: sticky;
+    padding: 0 0 var(--cds-spacing-05) var(--cds-spacing-07);
   }
 }
 
 // BODY
 .tearsheet-body {
   height: 100%;
-  height: 100%;
   margin: 0;
-  margin: 0;
-  padding: 0;
   padding: 0;
   padding-block: 0;
   padding-inline: 0;
 }
 
+// Wide tearsheet: body is a flex child of .cds--modal-container--lg; must shrink so
+// .tearsheet-content scrolls and the footer stays in view on tall steps (e.g. Review).
+.cds--modal-container.cds--modal-container--lg > .tearsheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-block-size: 0;
+  height: auto;
+}
+
 .tearsheet-left-influencer {
   background-color: var(--cds-background);
-  border-inline-end: 1px solid var(--cds-border-subtle-01);
   margin: 0;
   overflow-block: auto;
   overflow-y: auto;
   padding: var(--cds-spacing-06) var(--cds-spacing-07);
+  min-height: 0;
+  min-block-size: 0;
 }
 
 .tearsheet-right-influencer {
   background-color: var(--cds-background);
   padding: var(--cds-spacing-05) var(--cds-spacing-05);
+  border-inline-start: 1px solid var(--cds-border-subtle-01);
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+
+// Two-column body (main content + right influencer): bound the inner grid so
+// nested form rows and dividers stay in the left column (host access step).
+.tearsheet-main > .cds--css-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-block-size: 0;
+  inline-size: 100%;
+}
+
+.tearsheet-main > .cds--css-grid > .tearsheet-content {
+  min-width: 0;
+  min-inline-size: 0;
+  min-height: 0;
+  min-block-size: 0;
+  max-block-size: none;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .tearsheet-main {
+  min-height: 0;
+  min-block-size: 0;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -136,7 +169,7 @@
 //FOOTER
 .tearsheet-footer {
   background-color: var(--cds-layer-01);
-  border-top: 1px solid var(--cds-border-subtle);
+  flex-shrink: 0;
 
   &-submit {
     display: flex;
@@ -144,8 +177,8 @@
   }
 
   &--full {
-    bottom: 0;
     position: sticky;
+    bottom: 0;
   }
 }
 
