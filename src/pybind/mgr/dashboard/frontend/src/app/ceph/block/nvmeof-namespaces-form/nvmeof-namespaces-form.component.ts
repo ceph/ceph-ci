@@ -44,8 +44,8 @@ export class NvmeofNamespacesFormComponent implements OnInit {
 
   nsForm: CdFormGroup;
   subsystemNQN: string;
-  subsystems: NvmeofSubsystem[] = [];
-  rbdPools: Array<Pool> = null;
+  subsystems: NvmeofSubsystem[] | null = null;
+  rbdPools: Array<Pool> | null = null;
   rbdImages: any[] = [];
   initiatorCandidates: { content: string; selected: boolean }[] = [];
 
@@ -318,7 +318,7 @@ export class NvmeofNamespacesFormComponent implements OnInit {
   }
 
   buildCreateRequest(
-    rbdImageSize: number,
+    rbdImageSize: number | null,
     nsCount: number,
     noAutoVisible: boolean
   ): Observable<HttpResponse<Object>>[] {
@@ -380,7 +380,7 @@ export class NvmeofNamespacesFormComponent implements OnInit {
     const selectedHosts: string[] = this.nsForm.getValue('initiators') || [];
     const noAutoVisible = hostAccess === 'specific';
     let action: Observable<any>;
-    let rbdImageSize: number = null;
+    let rbdImageSize: number | null = null;
 
     if (image_size) {
       const normalizedSize = this.normalizeImageSizeInput(image_size);
