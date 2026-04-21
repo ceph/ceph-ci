@@ -330,6 +330,7 @@ export class NvmeofNamespacesFormComponent implements OnInit {
     const loopCount = isGatewayProvisioned ? nsCount : 1;
 
     for (let i = 1; i <= loopCount; i++) {
+      const blockSize = this.nsForm.getValue('namespace_size');
       const request: NamespaceCreateRequest = {
         gw_group: this.group,
         rbd_pool: pool,
@@ -344,9 +345,6 @@ export class NvmeofNamespacesFormComponent implements OnInit {
         } else {
           request.rbd_image_name = `nvme_${pool}_${this.group}_${this.randomString()}`;
         }
-        if (rbdImageSize) {
-          request['rbd_image_size'] = rbdImageSize;
-        }
       } else {
         const rbdImageName = this.nsForm.getValue('rbd_image_name');
         if (rbdImageName) {
@@ -354,6 +352,12 @@ export class NvmeofNamespacesFormComponent implements OnInit {
         }
       }
 
+      if (blockSize) {
+        request['block_size'] = blockSize;
+      }
+      if (rbdImageSize) {
+        request['rbd_image_size'] = rbdImageSize;
+      }
       const subsystemNQN = this.nsForm.getValue('subsystem') || this.subsystemNQN;
       requests.push(this.nvmeofService.createNamespace(subsystemNQN, request));
     }

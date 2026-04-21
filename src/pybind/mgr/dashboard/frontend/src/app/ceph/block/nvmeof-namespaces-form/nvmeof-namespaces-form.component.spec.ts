@@ -21,7 +21,6 @@ import { NumberModule, RadioModule, ComboBoxModule, SelectModule } from 'carbon-
 import { ActivatedRoute, Router } from '@angular/router';
 
 import { ActivatedRouteStub } from '~/testing/activated-route-stub';
-
 const MOCK_POOLS = [
   Mocks.getPool('pool-1', 1, ['cephfs']),
   Mocks.getPool('rbd', 2),
@@ -147,6 +146,18 @@ describe('NvmeofNamespacesFormComponent', () => {
 
       const request = (nvmeofService.createNamespace as jasmine.Spy).calls.mostRecent().args[1];
       expect(request.block_size).toBeUndefined();
+    });
+
+    it('should send block_size from namespace_size UI field', () => {
+      formHelper.setValue('pool', 'rbd');
+      formHelper.setValue('image_size', new FormatterService().toBytes('1GiB'));
+      formHelper.setValue('subsystem', MOCK_SUBSYSTEM);
+      formHelper.setValue('namespace_size', 1024);
+
+      component.onSubmit();
+
+      const request = (nvmeofService.createNamespace as jasmine.Spy).calls.mostRecent().args[1];
+      expect(request.block_size).toBe(1024);
     });
   });
 });
