@@ -221,7 +221,7 @@ Remove Cluster
 
 .. prompt:: bash #
 
-   ceph smb cluster rm <cluster_id> [--password-filter=<password_filter>]
+   ceph smb cluster rm <cluster_id> [--recursive] [--wildcard] [--password-filter=<password_filter>]
 
 Remove a logical SMB cluster from the Ceph cluster.
 
@@ -229,6 +229,14 @@ Options:
 
 cluster_id
     A ``cluster_id`` value identifying a cluster resource.
+recursive
+    If the ``--recursive`` flag is included in the command the cluster
+    and the shares contained by that cluster will be automatically
+    removed.
+wildcard
+    If the ``--wildcard`` flag is included in the command the ``cluster_id``
+    value will be treated as a glob_ style wildcard. All clusters with an ID
+    matching the glob pattern will be removed.
 password_filter
     Optional. One of ``none``, ``base64``, or ``hidden``. If the filter is
     ``none`` the password fields in the output are emitted as plain text. If
@@ -419,9 +427,23 @@ Remove Share
 
 .. prompt:: bash #
 
-   ceph smb share rm <cluster_id> <share_id>
+   ceph smb share rm <cluster_id> <share_id> [--wildcard]
 
 Remove an SMB Share from the cluster.
+
+Options:
+
+cluster_id
+    A ``cluster_id`` value identifying a cluster resource that contains
+    the share resource.
+share_id
+    A ``share_id`` value identifying the specific share within a cluster.
+wildcard
+    If the ``--wildcard`` flag is included in the command the ``share_id``
+    value will be treated as a glob_ style wildcard. All shares with an ID
+    matching the glob pattern will be removed.
+
+.. _glob: https://docs.python.org/3/library/fnmatch.html
 
 
 List Shares
