@@ -223,6 +223,12 @@ class NFSService(CephService):
             host_ip = self.mgr.inventory.get_addr(host.hostname)
             ceph_nodes.append(host_ip)
 
+        cluster_qos_port = None
+        if daemon_spec.ports and len(daemon_spec.ports) > 2:
+            cluster_qos_port = daemon_spec.ports[2]
+        elif spec.cluster_qos_port:
+            cluster_qos_port = spec.cluster_qos_port
+
         # generate the ganesha config
         rdma_port = None
         if spec.enable_rdma and daemon_spec.ports and len(daemon_spec.ports) > 2:
@@ -242,7 +248,7 @@ class NFSService(CephService):
                 "port": port,
                 "monitoring_addr": monitoring_ip,
                 "monitoring_port": monitoring_port,
-                "cqos_port": spec.cluster_qos_port,
+                "cqos_port": cluster_qos_port,
                 "bind_addr": bind_addr,
                 "haproxy_hosts": [],
                 "nfs_idmap_conf": nfs_idmap_conf,
