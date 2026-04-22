@@ -2044,7 +2044,7 @@ def _pull_image(ctx, image, insecure=False):
 @infer_image
 def command_inspect_image(ctx):
     # type: (CephadmContext) -> int
-    out, err, ret = call_throws(ctx, [
+    out, err, ret = call(ctx, [
         ctx.container_engine.path, 'inspect',
         '--format', '{{.ID}},{{.RepoDigests}}',
         ctx.image])
