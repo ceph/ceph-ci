@@ -22,7 +22,13 @@ from ceph.deployment.hostspec import SpecValidationError
 from ceph.deployment.utils import unwrap_ipv6
 from ceph.utils import datetime_now
 from ceph.cephadm.images import NonCephImageServiceTypes
-from mgr_util import to_pretty_timedelta, format_bytes, parse_combined_pem_file, NvmeofMetadataPoolHelper
+from mgr_util import (
+    is_valid_container_image_ref,
+    to_pretty_timedelta,
+    format_bytes,
+    parse_combined_pem_file,
+    NvmeofMetadataPoolHelper,
+)
 from mgr_module import MgrModule, HandleCommandResult, Option
 from object_format import Format
 
@@ -1791,11 +1797,16 @@ Usage:
     @OrchestratorCLICommand.Write('orch daemon redeploy')
     def _daemon_action_redeploy(self,
                                 name: str,
-                                image: Optional[str] = None) -> HandleCommandResult:
+                                image: Optional[str] = None,
+                                force: bool = False) -> HandleCommandResult:
         """Redeploy a daemon (with a specific image)"""
         if '.' not in name:
             raise OrchestratorError('%s is not a valid daemon name' % name)
-        completion = self.daemon_action("redeploy", name, image=image)
+        if image is not None and not is_valid_container_image_ref(image):
+            raise OrchestratorError(
+                f'Invalid container image {image!r} (not a valid container image reference)'
+            )
+        completion = self.daemon_action("redeploy", name, image=image, force=force)
         raise_if_exception(completion)
         return HandleCommandResult(stdout=completion.result_str())
 

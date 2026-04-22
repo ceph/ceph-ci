@@ -17,6 +17,7 @@ import errno
 import socket
 import time
 import logging
+import re
 import sys
 from ipaddress import ip_address
 from threading import Lock, Condition
@@ -61,6 +62,67 @@ BOLD_SEQ = "\033[1m"
 UNDERLINE_SEQ = "\033[4m"
 
 logger = logging.getLogger(__name__)
+
+# NAME and TAG are taken verbatim from the OCI distribution spec:
+#   https://github.com/opencontainers/distribution-spec/blob/main/spec.md
+# DIGEST is based on the OCI image-spec descriptor grammar:
+#   https://github.com/opencontainers/image-spec/blob/main/descriptor.md
+# REGISTRY is a practical heuristic, not defined by either spec.
+#
+# Catches malformed input.
+# Not a full OCI image reference parser.
+
+# distribution-spec, verbatim:
+NAME = r"[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*(\/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*"
+
+# distribution-spec, verbatim:
+TAG = r"[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}"
+
+# image-spec descriptor grammar translated literally:
+GENERIC_DIGEST_RE = re.compile(
+    r"^[a-z0-9]+(?:[+._-][a-z0-9]+)*:[a-zA-Z0-9=_-]+$",
+    re.ASCII,
+)
+
+# Practical heuristic for hostname[:port].
+REGISTRY = r"(?:[a-zA-Z0-9.-]+(?::[0-9]+)?)"
+
+STRICT_KNOWN_DIGESTS = {
+    "sha256": re.compile(r"^[a-f0-9]{64}$", re.ASCII),
+    "sha512": re.compile(r"^[a-f0-9]{128}$", re.ASCII),
+    "blake3": re.compile(r"^[a-f0-9]{64}$", re.ASCII),
+}
+
+IMAGE_RE = re.compile(
+    rf"""
+        ^
+        (?:{REGISTRY}/)?
+        {NAME}
+        (?::{TAG})?
+        (?:@(?P<digest>[a-z0-9]+(?:[+._-][a-z0-9]+)*:[a-zA-Z0-9=_-]+))?
+        $
+    """,
+    re.VERBOSE | re.ASCII,
+)
+
+
+def is_valid_digest(digest: str) -> bool:
+    if not GENERIC_DIGEST_RE.fullmatch(digest):
+        return False
+    algorithm, encoded = digest.split(":", 1)
+    checker = STRICT_KNOWN_DIGESTS.get(algorithm)
+    if checker is None:
+        return True
+    return checker.fullmatch(encoded) is not None
+
+
+def is_valid_container_image_ref(ref: str) -> bool:
+    """Basic sanity check for OCI/Docker-style container image references."""
+    m = IMAGE_RE.fullmatch(ref)
+    if m is None:
+        return False
+    digest = m.group("digest")
+    return digest is None or is_valid_digest(digest)
 
 
 class PortAlreadyInUse(Exception):

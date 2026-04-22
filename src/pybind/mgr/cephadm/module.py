@@ -62,7 +62,7 @@ from mgr_module import (
     NotifyType,
     MonCommandFailed,
 )
-from mgr_util import build_url, NvmeofMetadataPoolHelper
+from mgr_util import build_url, is_valid_container_image_ref, NvmeofMetadataPoolHelper
 import orchestrator
 from orchestrator.module import to_format, Format
 
@@ -2722,6 +2722,9 @@ Then run the following:
                 raise OrchestratorError(
                     f'Cannot redeploy {daemon_type}.{daemon_id} with a new image: Supported '
                     f'types are: {", ".join(CEPH_IMAGE_TYPES)}')
+            if not is_valid_container_image_ref(image):
+                raise OrchestratorError(
+                    f'Invalid container image {image!r} (not a valid container image reference)')
 
             self.check_mon_command({
                 'prefix': 'config set',
