@@ -681,7 +681,7 @@ public:
         needs_step_2 = !ret.is_paddr_known;
       }
     } else {
-      assert(!extent->is_pending_io());
+      assert(!extent->is_pending_io() || extent->is_exist_clean());
       assert(extent->is_pending_in_trans(t.get_trans_id()));
       ++access_stats.trans_pending;
       ++stats.access.trans_pending;
