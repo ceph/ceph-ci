@@ -3,7 +3,8 @@ import json
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING, Optional, Dict, List, Tuple, Any, cast, Set
+from dataclasses import dataclass, field, asdict
+from typing import TYPE_CHECKING, Optional, Dict, List, Tuple, Any, Mapping, cast, Set
 from cephadm.services.service_registry import service_registry
 
 import orchestrator
@@ -59,11 +60,71 @@ def normalize_image_digest(digest: str, default_registry: str) -> str:
     return digest
 
 
+def _get_boolean_values_from_mon_json(value: Any) -> Optional[bool]:
+    """Handle only JSON booleans for ``ok_to_upgrade`` / ``all_osds_upgraded``."""
+    if isinstance(value, bool):
+        return value
+    if value is not None:
+        logger.warning('osd ok-to-upgrade: expected boolean, got %s: %r', type(value), value)
+    return None
+
+
+def _get_osd_ids_from_mon_json(value: Any) -> List[int]:
+    """
+    OSD id list fields from ``osd ok-to-upgrade`` inner JSON.
+
+    Per-element types are not checked: the monitor's ``upgrade_osd_report::dump``
+    path emits bare integer arrays for these keys, and the mgr treats that as the
+    contract for this command.
+    """
+    if isinstance(value, list):
+        return list(value)
+    return []
+
+
+@dataclass(frozen=True)
+class OkToUpgradeMonReport:
+    """
+    Normalized view of the inner mon JSON for osd ok-to-upgrade after
+    parse_ok_to_upgrade_mon_json unwraps the top-level ok_to_upgrade object.
+
+    Field names match the keys in the inner report object from the mon JSON.
+    (ok_to_upgrade, all_osds_upgraded, osds_in_crush_bucket,
+     osds_ok_to_upgrade, osds_upgraded, bad_no_version).
+    """
+
+    ok_to_upgrade: Optional[bool]
+    all_osds_upgraded: Optional[bool]
+    osds_ok_to_upgrade: List[int] = field(default_factory=list)
+    osds_in_crush_bucket: List[int] = field(default_factory=list)
+    osds_upgraded: List[int] = field(default_factory=list)
+    bad_no_version: List[int] = field(default_factory=list)
+
+    @classmethod
+    def from_parsed_body(cls, body: Any) -> 'OkToUpgradeMonReport':
+        if not isinstance(body, Mapping):
+            raise ValueError(
+                f'osd ok-to-upgrade: expected JSON object after unwrap, got {type(body)!r}')
+        b = dict(body)
+        return cls(
+            ok_to_upgrade=_get_boolean_values_from_mon_json(b.get('ok_to_upgrade')),
+            all_osds_upgraded=_get_boolean_values_from_mon_json(b.get('all_osds_upgraded')),
+            osds_ok_to_upgrade=_get_osd_ids_from_mon_json(b.get('osds_ok_to_upgrade')),
+            osds_in_crush_bucket=_get_osd_ids_from_mon_json(b.get('osds_in_crush_bucket')),
+            osds_upgraded=_get_osd_ids_from_mon_json(b.get('osds_upgraded')),
+            bad_no_version=_get_osd_ids_from_mon_json(b.get('bad_no_version')),
+        )
+
+    def mon_resp_as_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
 def parse_ok_to_upgrade_mon_json(out: str) -> dict:
     """
-    Parse mon JSON from ``osd ok-to-upgrade``. The monitor nests the
-    report under a top-level ``ok_to_upgrade`` object.
-    If the report is not nested, return the entire JSON object.
+    Parse mon JSON from ``osd ok-to-upgrade``.
+    osd ok-to-upgrade implementation in DaemonServer.cc dumps the response
+    as a top-level boolean object with the inner report object as the key-values
+
     """
     parsed = json.loads(out)
     nested_ok_report = parsed.get('ok_to_upgrade')
@@ -77,7 +138,7 @@ def request_osd_ok_to_upgrade_report(
     crush_bucket: str,
     ceph_version_short: str,
     max_osds: int,
-) -> dict:
+) -> OkToUpgradeMonReport:
     """
     Send ``osd ok-to-upgrade`` to the monitor.
 
@@ -93,7 +154,8 @@ def request_osd_ok_to_upgrade_report(
         'max': max_osds,
     }
     _return_code, mon_out, _stderr = mgr.check_mon_command(cmd)
-    report = parse_ok_to_upgrade_mon_json(mon_out)
+    body = parse_ok_to_upgrade_mon_json(mon_out)
+    report = OkToUpgradeMonReport.from_parsed_body(body)
     logger.debug(
         'Upgrade: osd ok-to-upgrade mon response: requested max=%s crush_bucket=%r '
         'ceph_version=%r ok_to_upgrade=%s all_osds_upgraded=%s osds_ok_to_upgrade=%s '
@@ -101,12 +163,12 @@ def request_osd_ok_to_upgrade_report(
         max_osds,
         crush_bucket,
         ceph_version_short,
-        report.get('ok_to_upgrade'),
-        report.get('all_osds_upgraded'),
-        report.get('osds_ok_to_upgrade'),
-        report.get('osds_in_crush_bucket'),
-        report.get('osds_upgraded'),
-        report.get('bad_no_version'),
+        report.ok_to_upgrade,
+        report.all_osds_upgraded,
+        report.osds_ok_to_upgrade,
+        report.osds_in_crush_bucket,
+        report.osds_upgraded,
+        report.bad_no_version,
     )
     return report
 
@@ -192,6 +254,7 @@ class CephadmUpgrade:
         'UPGRADE_EXCEPTION',
         'UPGRADE_OFFLINE_HOST',
         'UPGRADE_INVALID_CRUSH_BUCKET',
+        'UPGRADE_OSD_NO_VERSION',
     ]
 
     def __init__(self, mgr: "CephadmOrchestrator"):
@@ -724,12 +787,12 @@ class CephadmUpgrade:
 
         return True
 
-    def _cache_osds_in_crush_bucket_from_ok_to_upgrade_report(self, report: dict) -> None:
-        raw = report.get('osds_in_crush_bucket')
-        if isinstance(raw, list):
-            self._ok_to_upgrade_osds_in_crush_bucket = {
-                f'osd.{osd_id}' for osd_id in raw
-            }
+    def _cache_osds_in_crush_bucket_from_ok_to_upgrade_report(
+            self, report: OkToUpgradeMonReport) -> None:
+        ids = report.osds_in_crush_bucket
+        self._ok_to_upgrade_osds_in_crush_bucket = {
+            f'osd.{osd_id}' for osd_id in ids
+        }
 
     def is_osd_upgrade_valid_for_failure_domain(self, d: DaemonDescription) -> bool:
         # If not using ok-to-upgrade for OSDs, any OSD is valid.
@@ -781,6 +844,25 @@ class CephadmUpgrade:
                     ceph_version_short,
                     max_osds=max_parallel,
                 )
+            except json.JSONDecodeError as err:
+                logger.error('Upgrade: osd ok-to-upgrade JSON parse failed: %s', err)
+                self._fail_upgrade('UPGRADE_EXCEPTION', {
+                    'severity': 'error',
+                    'summary': 'Upgrade: osd ok-to-upgrade returned invalid JSON',
+                    'count': 1,
+                    'detail': [str(err)],
+                })
+                return False
+            except ValueError as err:
+                logger.error(
+                    'Upgrade: osd ok-to-upgrade unexpected response shape: %s', err)
+                self._fail_upgrade('UPGRADE_EXCEPTION', {
+                    'severity': 'error',
+                    'summary': 'Upgrade: osd ok-to-upgrade returned unexpected JSON shape',
+                    'count': 1,
+                    'detail': [str(err)],
+                })
+                return False
             except MonCommandFailed as err:
                 if self.is_mon_error_for_invalid_bucket(err):
                     st = self.upgrade_state
@@ -804,18 +886,30 @@ class CephadmUpgrade:
 
             self._cache_osds_in_crush_bucket_from_ok_to_upgrade_report(report)
 
+            if report.bad_no_version:
+                osd_names = ', '.join(f'osd.{i}' for i in report.bad_no_version)
+                self._fail_upgrade('UPGRADE_OSD_NO_VERSION', {
+                    'severity': 'error',
+                    'summary': (
+                        'Upgrade: osd ok-to-upgrade reported OSDs without a detectable '
+                        'Ceph version'
+                    ),
+                    'count': len(report.bad_no_version),
+                    'detail': [
+                        f'The monitor cannot compare these OSDs to the target version '
+                        f'({ceph_version_short!r}): {osd_names}. '
+                        'Resolve daemon or version reporting on those OSDs before '
+                        'continuing the upgrade.',
+                    ],
+                })
+                return False
+
             # Detailed mon fields logged in ``request_osd_ok_to_upgrade_report``.
-            # Same JSON shape as ``osd ok-to-stop`` → ``osds``: array of OSD ids.
-            raw_osds = report.get('osds_ok_to_upgrade')
-            if isinstance(raw_osds, list):
-                approved_names = [f'osd.{osd_id}' for osd_id in raw_osds]
-            else:
-                approved_names = []
-            bad_no_version = report.get('bad_no_version') or []
+            approved_names = [f'osd.{osd_id}' for osd_id in report.osds_ok_to_upgrade]
             if (
                 not approved_names
-                and report.get('all_osds_upgraded') is True
-                and not bad_no_version
+                and report.all_osds_upgraded is True
+                and not report.bad_no_version
             ):
                 self._ok_to_upgrade_all_osds_upgraded = True
                 logger.info(
@@ -834,7 +928,7 @@ class CephadmUpgrade:
                     'not yet on the target version). Report: %s',
                     bucket_name,
                     ceph_version_short,
-                    report,
+                    report.mon_resp_as_dict(),
                 )
                 time.sleep(15)
                 remaining_tries -= 1
