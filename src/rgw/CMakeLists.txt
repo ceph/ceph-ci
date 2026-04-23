@@ -168,6 +168,7 @@ set(librgw_common_srcs
   rgw_tracer.cc
   rgw_lua_background.cc
   rgw_dedup.cc
+  rgw_dedup_filter.cc
   rgw_dedup_table.cc
   rgw_dedup_store.cc
   rgw_dedup_utils.cc
