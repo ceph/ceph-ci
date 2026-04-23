@@ -100,42 +100,45 @@ For example, to upgrade to v16.2.6, run the following command:
        ceph orch upgrade start --image quay.io/ceph/ceph:v16.2.6
 
 
-CRUSH bucket scoped OSD upgrades (``osd ok-to-upgrade``)
+CRUSH bucket-scoped OSD upgrades (``osd ok-to-upgrade``)
 ========================================================
 
-For **OSD-only** upgrades you can limit which failure domain cephadm works
-through and ask the monitor which OSDs under a given CRUSH bucket may safely
-move to the target **Ceph short version** (the same string as
-``ceph_version_short`` in OSD metadata, e.g. ``20.3.0-3803-g63ca1ffb5a2`` or
-``20.1.0-144.el9cp``).
+When performing OSD upgrades as part of a staggered Ceph upgrade,
+one may constrain the set of OSDs on which cephadm will operate.
+This ability is available in the Ceph Umbrella and later releases.
+As cephadm progresses through the specified CRUSH bucket, it asks
+the Monitors which OSDs may safely move to the target release.
+This process uses the ceph osd ok-to-upgrade command.
 
 Requirements:
 
 * For OSD-only upgrades, pass both ``--crush_bucket_type`` and ``--crush_bucket_name``.
   Supported types today are ``host``, ``rack``, and ``chassis``.
 * The monitor's ``osd ok-to-upgrade`` expects the target **short** Ceph version
-  (same shape as ``ceph_version_short`` in ``ceph osd metadata``). Cephadm does
-  **not** fall back to ``osd ok-to-stop`` for bucket-scoped OSD runs. If the mon
-  returns no OSDs (e.g. unknown bucket name), cephadm logs details and retries.
-* If bucket parameters are not provided, cephadm will fall back to ``osd ok-to-stop`` 
+  (same shape as ``ceph_version_short`` in ``ceph osd metadata``).
+* If the Monitors indicate to cephadm that no OSDs in the selected CRUSH bucket
+  are okay to upgrade, cephadm will log details then retry the operation.
+  If the bucket parameters for a ceph osd ok-to-upgrade upgrade are not provided,
+  cephadm will fall back to the default ceph osd ok-to-stop gate for OSD upgrades.
+* If bucket parameters are not provided, cephadm will fall back to ``osd ok-to-stop``
   for OSD upgrades.
-* Bucket scope applies only to OSDs. Other daemon types (mon, mgr, mds) are 
-  upgraded cluster-wide without bucket constraints.
+* Bucket-scope upgrades apply only to OSDs. CRUSH buckets do not influence upgrades
+  of other daemon types, for example Monitors, Managers, and MDSes.
 
 Example:
 
 .. prompt:: bash #
 
-  ceph orch upgrade start --image quay.ceph.io/ceph-ci/ceph:recent-git-branch-name
+  ceph orch upgrade start --image quay.io/ceph/ceph:v21.2.1
     --daemon-types osd \\
     --crush_bucket_type rack --crush_bucket_name rack-a
 
-For each failure domain batch, cephadm calls ``ceph osd ok-to-upgrade`` with the 
-specified failure domain name, the target short version, and ``max`` set to
+When performing OSD upgrades withiin this failure domain, cephadm calls
+ceph osd ok-to-upgrade with the specified bucket name and type, and max set to
 :confval:`mgr/cephadm/max_parallel_osd_upgrades`
 
-Note that it is not recommended to change the CRUSH bucket type or name after
-the upgrade has started as it may cause the upgrade to fail.
+Note: do not change the cluster's topology during an OSD upgrade phase.
+This includes the name or type of any CRUSH bucket.
 
 
 Monitoring the Upgrade
