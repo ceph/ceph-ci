@@ -58,7 +58,9 @@ export class DocService {
         'dashboard-side-panel': `${domain}/rados/operations/health-checks/`
       };
     } else {
-      const domain = `https://docs.redhat.com/en/documentation/red_hat_ceph_storage/${docVersion}/html/`;
+      // redhat release take doc version as 9 when release is 9.0 or 9.1
+      const redHatVersion = docVersion?.split('.')?.[0];
+      const domain = `https://docs.redhat.com/en/documentation/red_hat_ceph_storage/${redHatVersion}/html/`;
       const domainRedHat = `https://www.redhat.com/en/about/`;
 
       sections = {
