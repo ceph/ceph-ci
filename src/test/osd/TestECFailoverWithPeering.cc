@@ -453,7 +453,7 @@ TEST_P(TestECFailoverWithPeering, ECSequentialOSDFailoverTest) {
  *
  * Recreate https://tracker.ceph.com/issues/76213
  */
-TEST_P(TestECFailoverWithPeering, DISABLED_RollbackVersionMismatch) {
+TEST_P(TestECFailoverWithPeering, RollbackVersionMismatch) {
   if (k < 3) {
     GTEST_SKIP() << "SnapshotTrimRollbackVersionMismatch requires at least 3 data shards";
   }
