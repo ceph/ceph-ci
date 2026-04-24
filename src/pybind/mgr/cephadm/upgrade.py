@@ -4,7 +4,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field, asdict
-from typing import TYPE_CHECKING, Optional, Dict, List, Tuple, Any, Mapping, cast, Set
+from typing import TYPE_CHECKING, Optional, Dict, List, Tuple, Any, cast, Set
 from cephadm.services.service_registry import service_registry
 
 import orchestrator
@@ -60,7 +60,7 @@ def normalize_image_digest(digest: str, default_registry: str) -> str:
     return digest
 
 
-def _get_boolean_values_from_mon_json(value: Any) -> Optional[bool]:
+def _get_bool_value_from_mon_json(value: Any) -> Optional[bool]:
     """Handle only JSON booleans for ``ok_to_upgrade`` / ``all_osds_upgraded``."""
     if isinstance(value, bool):
         return value
@@ -79,6 +79,12 @@ def _get_osd_ids_from_mon_json(value: Any) -> List[int]:
     """
     if isinstance(value, list):
         return list(value)
+    if value is not None:
+        logger.warning(
+            'osd ok-to-upgrade: expected list of osd ids, got %s: %r',
+            type(value),
+            value,
+        )
     return []
 
 
@@ -89,8 +95,12 @@ class OkToUpgradeMonReport:
     parse_ok_to_upgrade_mon_json unwraps the top-level ok_to_upgrade object.
 
     Field names match the keys in the inner report object from the mon JSON.
-    (ok_to_upgrade, all_osds_upgraded, osds_in_crush_bucket,
-     osds_ok_to_upgrade, osds_upgraded, bad_no_version).
+    ok_to_upgrade: : JSON bool; True if mon found a safe batch of OSDs to upgrade.
+    all_osds_upgraded: : JSON bool; True if every bucket OSD already on target ceph_version.
+    osds_ok_to_upgrade: List[int] : OSD ids safe to upgrade this step
+    osds_in_crush_bucket: List[int] : OSD ids under the named CRUSH bucket
+    osds_upgraded: List[int] : OSD ids already matching target ceph_version_short in metadata.
+    bad_no_version: List[int] : OSD ids with missing ceph_version_short in mgr metadata.
     """
 
     ok_to_upgrade: Optional[bool]
@@ -102,13 +112,13 @@ class OkToUpgradeMonReport:
 
     @classmethod
     def from_parsed_body(cls, body: Any) -> 'OkToUpgradeMonReport':
-        if not isinstance(body, Mapping):
+        if not isinstance(body, dict):
             raise ValueError(
                 f'osd ok-to-upgrade: expected JSON object after unwrap, got {type(body)!r}')
         b = dict(body)
         return cls(
-            ok_to_upgrade=_get_boolean_values_from_mon_json(b.get('ok_to_upgrade')),
-            all_osds_upgraded=_get_boolean_values_from_mon_json(b.get('all_osds_upgraded')),
+            ok_to_upgrade=_get_bool_value_from_mon_json(b.get('ok_to_upgrade')),
+            all_osds_upgraded=_get_bool_value_from_mon_json(b.get('all_osds_upgraded')),
             osds_ok_to_upgrade=_get_osd_ids_from_mon_json(b.get('osds_ok_to_upgrade')),
             osds_in_crush_bucket=_get_osd_ids_from_mon_json(b.get('osds_in_crush_bucket')),
             osds_upgraded=_get_osd_ids_from_mon_json(b.get('osds_upgraded')),
@@ -266,8 +276,10 @@ class CephadmUpgrade:
         else:
             self.upgrade_state = None
         self.upgrade_info_str: str = ''
-        # Set during _to_upgrade when last osd ok-to-upgrade call reported all bucket OSDs
-        # on target version (no batch ids); used for logging and to skip repeat mon RPCs.
+        # Set during _to_upgrade when last osd ok-to-upgrade reported all bucket OSDs
+        # on target version (all_osds_upgraded=True). For OSDs still in need_upgrade for an
+        # image/digest mismatch, this helps the code fall back to ok-to-stop for
+        # per-daemon PG safety.
         self._ok_to_upgrade_all_osds_upgraded: bool = False
         # osd.<id> names under the upgrade CRUSH bucket from the last osd ok-to-upgrade
         # report (``osds_in_crush_bucket``). Used so ok-to-stop ``known`` (cluster-wide)
