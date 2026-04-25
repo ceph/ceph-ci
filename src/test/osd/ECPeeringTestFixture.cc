@@ -88,10 +88,13 @@ void ECPeeringTestFixture::SetUp() {
   // Register handlers for peering messages (MOSDPeeringOp)
   // All peering messages (Query, Notify, Info, Log) use the same handler pattern
   // since they all inherit from MOSDPeeringOp and use get_event()
-  auto peering_handler = [this](int from_osd, int to_osd, MOSDPeeringOp* op) -> bool {
-    // Message is already correctly typed as MOSDPeeringOp*
+  auto peering_handler = [this](int from_osd, int to_osd,
+                                boost::intrusive_ptr<MOSDPeeringOp> op) -> bool {
+    // Message is already correctly typed as MOSDPeeringOp.  The
+    // intrusive_ptr keeps the message alive across this handler;
+    // releasing happens automatically when `op` goes out of scope.
     ceph_assert(op);
-    
+
     // Get the peering event from the message
     PGPeeringEventRef evt_ref(op->get_event());
     

@@ -242,7 +242,10 @@ public:
 
   // Routes messages through MockMessenger for asynchronous message processing.
   void send_message(int to_osd, Message *m) override {
-    MessageRef mref(m);
+    // Callers that pass `new T(...)` hand off a +1 refcount; consume it here
+    // with add_ref=false so the original +1 is owned by `mref`/the storage
+    // vectors and is correctly released when those go out of scope.
+    MessageRef mref(m, /*add_ref=*/false);
     sent_messages.push_back(mref);
     sent_messages_with_dest.push_back({to_osd, mref});
     

@@ -185,14 +185,19 @@ void PGBackendTestFixture::setup_ec_pool()
   // Helper lambda to create a typed handler that wraps messages and routes to backends
   auto make_backend_handler = [this]<typename MsgType>(int msg_type) {
     messenger->register_typed_handler<MsgType>(msg_type,
-      [this](int from_osd, int to_osd, MsgType* m) -> bool {
+      [this](int from_osd, int to_osd, boost::intrusive_ptr<MsgType> m) -> bool {
         auto it = backends.find(to_osd);
         ceph_assert(it != backends.end());
-        OpRequestRef op = this->op_tracker->create_request<OpRequest, Message*>(m);
+        // OpRequest stores Message* and put()s in its destructor.  Use
+        // m.detach() to transfer the +1 refcount to the raw pointer
+        // OpRequest takes ownership of, so the lifetime balances without
+        // any explicit refcount manipulation.
+        OpRequestRef op =
+            this->op_tracker->create_request<OpRequest, Message*>(m.detach());
         return it->second->_handle_message(op);
       });
   };
-  
+
   // Register typed handlers for all EC message types
   make_backend_handler.template operator()<MOSDECSubOpWrite>(MSG_OSD_EC_WRITE);
   make_backend_handler.template operator()<MOSDECSubOpWriteReply>(MSG_OSD_EC_WRITE_REPLY);
@@ -312,14 +317,17 @@ void PGBackendTestFixture::setup_replicated_pool()
   // Helper lambda to create a typed handler that wraps messages and routes to backends
   auto make_backend_handler = [this]<typename MsgType>(int msg_type) {
     messenger->register_typed_handler<MsgType>(msg_type,
-      [this](int from_osd, int to_osd, MsgType* m) -> bool {
+      [this](int from_osd, int to_osd, boost::intrusive_ptr<MsgType> m) -> bool {
         auto it = backends.find(to_osd);
         ceph_assert(it != backends.end());
-        OpRequestRef op = this->op_tracker->create_request<OpRequest, Message*>(m);
+        // See setup_ec_pool() above: detach to transfer the +1 refcount to
+        // the raw pointer OpRequest will take ownership of.
+        OpRequestRef op =
+            this->op_tracker->create_request<OpRequest, Message*>(m.detach());
         return it->second->_handle_message(op);
       });
   };
-  
+
   // Register typed handlers for replicated backend message types
   make_backend_handler.template operator()<MOSDRepOp>(MSG_OSD_REPOP);
   make_backend_handler.template operator()<MOSDRepOpReply>(MSG_OSD_REPOPREPLY);
