@@ -242,7 +242,15 @@ ceph::perf_counters::PerfCountersCache *lc_counters_cache = nullptr;
 const std::string rgw_lc_counters_key = "rgw_lc_per_bucket";
 
 void add_lc_counters(PerfCountersBuilder *pcb) {
-  pcb->set_prio_default(PerfCountersBuilder::PRIO_USEFUL);
+  /*
+   * Per-bucket LC counters are high-cardinality (one set per bucket
+   * processed by LC). PRIO_DEBUGONLY keeps them out of the
+   * daemon-to-mgr MgrReport flow under the default
+   * mgr_stats_threshold (PRIO_USEFUL=5). They remain visible via the
+   * admin socket and are scraped by the per-host ceph-exporter, which
+   * is the appropriate transport for this volume of labeled metrics.
+   */
+  pcb->set_prio_default(PerfCountersBuilder::PRIO_DEBUGONLY);
 
   pcb->add_u64(l_rgw_lc_per_bucket_start_time, "start_time",
                "LC processing start timestamp (Unix epoch seconds)");

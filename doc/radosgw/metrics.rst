@@ -289,6 +289,8 @@ To track lifecycle metrics per bucket, set :confval:`rgw_lc_counters_cache` to `
 
 Lifecycle metrics are stored as labeled performance counters in memory. All counters are lost when the Ceph Object Gateway restarts or crashes.
 
+These counters are registered at ``PRIO_DEBUGONLY`` so they are not forwarded to ``ceph-mgr`` under the default ``mgr_stats_threshold``. They are only available via the radosgw admin socket and the per-host ``ceph-exporter`` daemon, which is the supported way to scrape them into Prometheus.
+
 Lifecycle Counter Cache Size & Eviction
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
