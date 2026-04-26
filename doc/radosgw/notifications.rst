@@ -204,6 +204,10 @@ generated. A successful response includes the topic's `ARN`_
 (the "Amazon Resource Name", a unique identifier used to reference the topic).
 To update a topic, use the same command that you used to create it (but when
 updating, use the name of an existing topic and different endpoint values).
+Topic names must contain only alphanumeric characters, hyphens, and underscores,
+and must be between 1 and 256 characters long. To relax these requirements, use:
+
+.. confval:: rgw_relaxed_topic_names
 
 .. tip:: Any notification already associated with the topic must be re-created
    in order for the topic to update.

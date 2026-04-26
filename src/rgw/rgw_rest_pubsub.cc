@@ -254,7 +254,10 @@ class RGWPSCreateTopicOp : public RGWOp {
 
   int get_params() {
     topic_name = s->info.args.get("Name");
-    if (!validate_topic_name(topic_name, s->err.message)) {
+    if (topic_name.empty() ||
+        (!s->get_cct()->_conf.get_val<bool>("rgw_relaxed_topic_names") &&
+        !validate_topic_name(topic_name, s->err.message))
+       ) {
       return -EINVAL;
     }
 

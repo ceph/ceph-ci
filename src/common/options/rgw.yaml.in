@@ -4386,6 +4386,17 @@ options:
   flags:
   - startup
   with_legacy: true
+- name: rgw_relaxed_topic_names
+  type: bool
+  level: advanced
+  desc: RGW enable relaxed topic names
+  long_desc: RGW enable relaxed topic names to allow changing existing topics
+    that were created before validation rules were implemented. This also allows re-creating
+    topics that were deleted, but match names that are already used externally (e.g. in Kafka)
+  default: false
+  services:
+  - rgw
+  with_legacy: true
 - name: rgw_lua_max_memory_per_state
   type: uint
   level: advanced
