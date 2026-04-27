@@ -493,8 +493,8 @@ void ECCommon::ReadPipeline::do_read_op(ReadOp &rop) {
       }
     }
     ceph_assert(!need_attrs);
-    ceph_assert(reads_sent);
   }
+  ceph_assert(reads_sent);
 
   std::optional<ECSubRead> local_read_op;
   std::vector<std::pair<int, Message*>> m;
