@@ -558,8 +558,8 @@ def test_nfs_spec_rdma_default():
     spec = NFSServiceSpec(service_id='mynfs', placement=PlacementSpec(count=1))
     assert spec.enable_rdma is False
     assert spec.rdma_port is None
-    assert spec.get_port_start() == [2049, 9587]
-    assert spec.get_colocation_port_fields() == ['data_port', 'monitoring_port']
+    assert spec.get_port_start() == [2049, 9587, 31311]
+    assert spec.get_colocation_port_fields() == ['data_port', 'monitoring_port', 'cluster_qos_port']
 
 
 def test_nfs_spec_rdma_enabled():
@@ -571,8 +571,8 @@ def test_nfs_spec_rdma_enabled():
     )
     assert spec.enable_rdma is True
     assert spec.rdma_port is None
-    assert spec.get_port_start() == [2049, 9587, 20049]
-    assert spec.get_colocation_port_fields() == ['data_port', 'monitoring_port', 'rdma_port']
+    assert spec.get_port_start() == [2049, 9587, 31311, 20049]
+    assert spec.get_colocation_port_fields() == ['data_port', 'monitoring_port', 'cluster_qos_port', 'rdma_port']
 
 
 def test_nfs_spec_rdma_custom_port():
@@ -587,7 +587,7 @@ def test_nfs_spec_rdma_custom_port():
     )
     assert spec.enable_rdma is True
     assert spec.rdma_port == 20050
-    assert spec.get_port_start() == [3049, 9588, 20050]
+    assert spec.get_port_start() == [3049, 9588, 31311, 20050]
 
 
 def test_nfs_spec_from_json_rdma():

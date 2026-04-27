@@ -231,8 +231,8 @@ class NFSService(CephService):
 
         # generate the ganesha config
         rdma_port = None
-        if spec.enable_rdma and daemon_spec.ports and len(daemon_spec.ports) > 2:
-            rdma_port = daemon_spec.ports[2]
+        if spec.enable_rdma and daemon_spec.ports and len(daemon_spec.ports) > 3:
+            rdma_port = daemon_spec.ports[3]
         elif spec.enable_rdma:
             rdma_port = spec.rdma_port
 

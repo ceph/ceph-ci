@@ -598,8 +598,8 @@ def test_nfs_colocation_ports_validation():
         port=2049,
         monitoring_port=9587,
         colocation_ports=[
-            {'data_port': 3049, 'monitoring_port': 9588},
-            {'data_port': 4049, 'monitoring_port': 9589}
+            {'data_port': 3049, 'monitoring_port': 9588, 'cluster_qos_port': 31312},
+            {'data_port': 4049, 'monitoring_port': 9589, 'cluster_qos_port': 31313}
         ]
     )
     spec.validate()  # Should not raise
@@ -611,7 +611,7 @@ def test_nfs_colocation_ports_validation():
             placement=PlacementSpec(count=4),
             port=2049,
             monitoring_port=9587,
-            colocation_ports=[{'data_port': 3049, 'monitoring_port': 9588}]
+            colocation_ports=[{'data_port': 3049, 'monitoring_port': 9588, 'cluster_qos_port': 31312}]
         )
         spec.validate()
     assert "colocation_ports requires 3 entries for count=4 (got 1)" in str(e.value)
@@ -625,7 +625,7 @@ def test_nfs_colocation_ports_validation():
             monitoring_port=9587,
             colocation_ports=[
                 {'data_port': 3049},  # Missing monitoring_port
-                {'data_port': 4049, 'monitoring_port': 9589}
+                {'data_port': 4049, 'monitoring_port': 9589, 'cluster_qos_port': 31312}
             ]
         )
         spec.validate()
@@ -643,8 +643,8 @@ def test_nfs_colocation_ports_validation_with_rdma():
         enable_rdma=True,
         rdma_port=20049,
         colocation_ports=[
-            {'data_port': 3049, 'monitoring_port': 9588, 'rdma_port': 20050},
-            {'data_port': 4049, 'monitoring_port': 9589, 'rdma_port': 20051},
+            {'data_port': 3049, 'monitoring_port': 9588, 'cluster_qos_port': 31312, 'rdma_port': 20050},
+            {'data_port': 4049, 'monitoring_port': 9589, 'cluster_qos_port': 31313, 'rdma_port': 20051},
         ]
     )
     spec.validate()
@@ -658,8 +658,8 @@ def test_nfs_colocation_ports_validation_with_rdma():
             monitoring_port=9587,
             enable_rdma=True,
             colocation_ports=[
-                {'data_port': 3049, 'monitoring_port': 9588},  # missing rdma_port
-                {'data_port': 4049, 'monitoring_port': 9589, 'rdma_port': 20051},
+                {'data_port': 3049, 'monitoring_port': 9588, 'cluster_qos_port': 31312},  # missing rdma_port
+                {'data_port': 4049, 'monitoring_port': 9589, 'cluster_qos_port': 31313, 'rdma_port': 20051},
             ]
         )
         spec.validate()

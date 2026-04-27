@@ -1350,8 +1350,13 @@ yaml.add_representer(ServiceSpec, ServiceSpec.yaml_representer)
 
 
 class NFSServiceSpec(ServiceSpec):
-    COLOCATION_PORT_FIELDS = ['data_port', 'monitoring_port']
-    COLOCATION_PORT_FIELDS_WITH_RDMA = ['data_port', 'monitoring_port', 'rdma_port']
+    COLOCATION_PORT_FIELDS = ['data_port', 'monitoring_port', 'cluster_qos_port']
+    COLOCATION_PORT_FIELDS_WITH_RDMA = [
+        'data_port',
+        'monitoring_port',
+        'cluster_qos_port',
+        'rdma_port'
+    ]
 
     def __init__(self,
                  service_type: str = 'nfs',
