@@ -234,14 +234,6 @@ except (git.NoSuchPathError, git.InvalidGitRepositoryError) as e:
 
 CONTRIBUTORS = {}
 NEW_CONTRIBUTORS = {}
-with open(git_dir + "/.githubmap", mode='r', encoding='utf-8') as f:
-    comment = re.compile(r"\s*#")
-    patt = re.compile(r"([\w-]+)\s+(.*)")
-    for line in f:
-        if comment.match(line):
-            continue
-        m = patt.match(line)
-        CONTRIBUTORS[m.group(1)] = m.group(2)
 
 BZ_MATCH = re.compile("(.*https?://bugzilla.redhat.com/.*)")
 TRACKER_MATCH = re.compile("(.*https?://tracker.ceph.com/.*)")
@@ -359,6 +351,21 @@ def build_branch(args):
         get(session, endpoint, paging=False)
 
     G = git.Repo(args.git)
+
+    try:
+        log.info("Fetching .githubmap from %s main branch", BASE_REMOTE_URL)
+        G.git.fetch(BASE_REMOTE_URL, "main")
+        githubmap_content = G.git.show("FETCH_HEAD:.githubmap")
+        comment = re.compile(r"\s*#")
+        patt = re.compile(r"([\w-]+)\s+(.*)")
+        for line in githubmap_content.splitlines():
+            if comment.match(line):
+                continue
+            m = patt.match(line)
+            if m:
+                CONTRIBUTORS[m.group(1)] = m.group(2)
+    except git.exc.GitCommandError as e:
+        raise SystemExit(f"Could not fetch .githubmap from {BASE_REMOTE_URL}:main:\n{e}")
 
     if args.create_qa or args.update_qa:
         log.info("connecting to %s", REDMINE_ENDPOINT)
