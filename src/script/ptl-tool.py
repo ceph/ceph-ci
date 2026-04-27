@@ -227,13 +227,10 @@ log.addHandler(logging.StreamHandler())
 log.setLevel(logging.INFO)
 
 # find containing git dir
-git_dir = GITDIR
-max_levels = 6
-while not os.path.exists(git_dir + '/.git'):
-    git_dir += '/..'
-    max_levels -= 1
-    if max_levels < 0:
-        break
+try:
+    git_dir = git.Repo(GITDIR, search_parent_directories=True).working_tree_dir
+except (git.NoSuchPathError, git.InvalidGitRepositoryError) as e:
+    raise SystemExit(f"error: not a git repository: {GITDIR}") from e
 
 CONTRIBUTORS = {}
 NEW_CONTRIBUTORS = {}
