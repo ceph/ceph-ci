@@ -187,10 +187,13 @@ def file_mode_to_str(mode: int) -> str:
     return r
 
 
-def md5_hash(input_value: str) -> str:
-    input_str = str(input_value).encode('utf-8')
-    hash_object = hashlib.md5(input_str)
-    return hash_object.hexdigest()
+def config_hash(input_value: str) -> str:
+    """
+    Short stable digest for config/dependency change detection.
+    Uses SHA-256 so this works on FIPS-enabled systems (MD5 may be blocked).
+    """
+    input_str = input_value.encode('utf-8')
+    return hashlib.sha256(input_str).hexdigest()[:8]
 
 
 def get_node_proxy_status_value(data: Any, key: str, lower: bool = False) -> str:

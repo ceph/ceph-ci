@@ -1343,7 +1343,7 @@ class RgwService(CephService):
         if ssl_cert:
             if isinstance(ssl_cert, list):
                 ssl_cert = '\n'.join(ssl_cert)
-            deps.append(f'ssl-cert:{str(utils.md5_hash(ssl_cert))}')
+            deps.append(f'ssl-cert:{utils.config_hash(ssl_cert)}')
 
         return sorted(deps)
 

@@ -121,7 +121,7 @@ class IngressService(CephService):
             ssl_cert_key = getattr(ingress_spec, attr, None)
             if ssl_cert_key:
                 assert isinstance(ssl_cert_key, str)
-                deps.append(f'ssl-cert-key:{str(utils.md5_hash(ssl_cert_key))}')
+                deps.append(f'ssl-cert-key:{utils.config_hash(ssl_cert_key)}')
         backend_spec = mgr.spec_store[ingress_spec.backend_service].spec
         if backend_spec.service_type == 'nfs':
             hosts = get_placement_hosts(spec, mgr.cache.get_schedulable_hosts(), mgr.cache.get_draining_hosts())

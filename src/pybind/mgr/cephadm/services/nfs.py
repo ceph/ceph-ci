@@ -132,9 +132,9 @@ class NFSService(CephService):
         nfs_spec = cast(NFSServiceSpec, spec)
         # add dependency of tls fields
         if (spec.ssl and spec.ssl_cert and spec.ssl_key and spec.ssl_ca_cert):
-            deps.append(f'ssl_cert: {str(utils.md5_hash(spec.ssl_cert))}')
-            deps.append(f'ssl_key: {str(utils.md5_hash(spec.ssl_key))}')
-            deps.append(f'ssl_ca_cert: {str(utils.md5_hash(spec.ssl_ca_cert))}')
+            deps.append(f'ssl_cert: {utils.config_hash(spec.ssl_cert)}')
+            deps.append(f'ssl_key: {utils.config_hash(spec.ssl_key)}')
+            deps.append(f'ssl_ca_cert: {utils.config_hash(spec.ssl_ca_cert)}')
         deps.append(f'tls_ktls: {nfs_spec.tls_ktls}')
         deps.append(f'tls_debug: {nfs_spec.tls_debug}')
         deps.append(f'tls_min_version: {nfs_spec.tls_min_version}')
