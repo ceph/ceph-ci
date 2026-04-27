@@ -114,9 +114,10 @@ struct rbm_pending_ool_t {
  * - TRACE: DEBUG details
  * - seastore_cache logs
  */
-class Transaction {
+class Transaction : public boost::intrusive_ref_counter<
+  Transaction, boost::thread_unsafe_counter> {
 public:
-  using Ref = std::unique_ptr<Transaction>;
+  using Ref = boost::intrusive_ptr<Transaction>;
   using on_destruct_func_t = std::function<void(Transaction&)>;
   enum class get_extent_ret {
     PRESENT,
@@ -926,13 +927,13 @@ using TransactionRef = Transaction::Ref;
 /// Should only be used with dummy staged-fltree node extent manager
 inline TransactionRef make_test_transaction() {
   static transaction_id_t next_id = 0;
-  return std::make_unique<Transaction>(
+  return boost::intrusive_ptr(new Transaction(
     get_dummy_ordering_handle(),
     false,
     Transaction::src_t::MUTATE,
     [](Transaction&) {},
     ++next_id,
-    CACHE_HINT_TOUCH
+    CACHE_HINT_TOUCH)
   );
 }
 

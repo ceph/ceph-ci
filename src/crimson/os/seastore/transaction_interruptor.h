@@ -24,7 +24,7 @@ struct TransactionConflictCondition {
   };
 
 public:
-  TransactionConflictCondition(Transaction &t) : t(t) {}
+  TransactionConflictCondition(Transaction &t) : t(t), tref(&t) {}
 
   template <typename Fut>
   std::optional<Fut> may_interrupt() {
@@ -49,6 +49,7 @@ private:
   bool is_conflicted() const;
 
   Transaction &t;
+  TransactionRef tref;
 };
 
 using trans_intr = crimson::interruptible::interruptor<
