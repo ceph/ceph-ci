@@ -594,7 +594,7 @@ TEST_P(TestECFailoverWithPeering, MultiObjectRecoveryReadCrash) {
  *
  * Expected behavior WITH fix: Test completes successfully.
  */
-TEST_P(TestECFailoverWithPeering, DISABLED_MultiObjectParallelRecoveryCrash) {
+TEST_P(TestECFailoverWithPeering, MultiObjectParallelRecoveryCrash) {
   // This test requires k >= 3 and m >= 2
   if (k < 3 || m < 2) {
     GTEST_SKIP() << "Test requires k >= 3 and m >= 2";
