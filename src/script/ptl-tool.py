@@ -505,7 +505,7 @@ def build_branch(args):
             G.head.reference = G.create_head(branch, force=True)
             log.info("Checked out branch {branch}".format(branch=branch))
 
-        if created_branch:
+        if created_branch and not args.no_tag:
             # tag it for future reference.
             tag_name = "testing/%s" % branch
             tag = git.refs.tag.Tag.create(G, tag_name)
@@ -514,7 +514,8 @@ def build_branch(args):
     do_qa = args.create_qa or args.update_qa
     if args.push_ci or (not args.no_push_ci and do_qa):
         G.git.push(CI_REMOTE_URL, branch) # for shaman
-        G.git.push(CI_REMOTE_URL, tag.name) # for archival
+        if created_branch and not args.no_tag:
+            G.git.push(CI_REMOTE_URL, tag.name) # for archival
 
     if args.create_qa or args.update_qa:
         if not created_branch:
@@ -541,7 +542,10 @@ def build_branch(args):
         if args.qa_tags:
             custom_fields.append({'id': REDMINE_CUSTOM_FIELD_ID_QA_TAGS, 'value': args.qa_tags})
 
-        origin_url = f'{BASE_PROJECT}/{CI_REPO}/commits/{tag.name}'
+        if not args.no_tag:
+            origin_url = f'{BASE_PROJECT}/{CI_REPO}/commits/{tag.name}'
+        else:
+            origin_url = f'{BASE_PROJECT}/{CI_REPO}/commits/{branch}'
         custom_fields.append({'id': REDMINE_CUSTOM_FIELD_ID_GIT_BRANCH, 'value': origin_url})
 
         issue_kwargs = {
@@ -637,6 +641,7 @@ def main():
     group.add_argument('--branch-release', dest='branch_release', action='store', help='release name to embed in branch (for shaman)')
     group.add_argument('--merge-branch-name', dest='merge_branch_name', action='store', default=False, help='name of the branch for merge messages')
     group.add_argument('--no-credits', dest='credits', action='store_false', help='skip indication search (Reviewed-by, etc.)')
+    group.add_argument('--no-tag', dest='no_tag', action='store_true', help='do not create a tag of the branch')
     group.add_argument('--stop-at-built', dest='stop_at_built', action='store_true', help='stop execution when branch is built')
 
     group = parser.add_argument_group('Build Control Options')
