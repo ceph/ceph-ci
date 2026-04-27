@@ -21,6 +21,8 @@
 #include "messages/MOSDECSubOpReadReply.h"
 #include "messages/MOSDRepOp.h"
 #include "messages/MOSDRepOpReply.h"
+#include "messages/MOSDPGPush.h"
+#include "messages/MOSDPGPushReply.h"
 
 void PGBackendTestFixture::setup_ec_pool()
 {
@@ -196,6 +198,8 @@ void PGBackendTestFixture::setup_ec_pool()
   make_backend_handler.template operator()<MOSDECSubOpWriteReply>(MSG_OSD_EC_WRITE_REPLY);
   make_backend_handler.template operator()<MOSDECSubOpRead>(MSG_OSD_EC_READ);
   make_backend_handler.template operator()<MOSDECSubOpReadReply>(MSG_OSD_EC_READ_REPLY);
+  make_backend_handler.template operator()<MOSDPGPush>(MSG_OSD_PG_PUSH);
+  make_backend_handler.template operator()<MOSDPGPushReply>(MSG_OSD_PG_PUSH_REPLY);
 
   for (int i = 0; i < num_osds; i++) {
     listeners[i]->set_messenger(messenger.get());
@@ -747,8 +751,12 @@ void PGBackendTestFixture::update_osdmap(
   }
 
   // Step 3: Clear all attr_caches before on_change()
-  // The cached OI attributes may be stale after a peering event
+  // The cached OI attributes may be stale after a peering event.
+  // Also drop any stale outstanding write tracking: once we enter a new
+  // interval, blocked/in-flight writes from the previous interval should no
+  // longer prevent OBC reloading for rollback/recovery verification.
   clear_all_attr_caches();
+  outstanding_writes.clear();
 
   // Step 4: Schedule on_change() calls as event loop actions
   // This allows them to be delayed and processed after the new epoch
@@ -782,4 +790,108 @@ void PGBackendTestFixture::clear_all_attr_caches()
       obc->attr_cache.clear();
     }
   }
+}
+
+
+int PGBackendTestFixture::write_attribute(
+  const std::string& obj_name,
+  const std::string& attr_name,
+  const std::string& attr_value,
+  bool force_all_shards)
+{
+  hobject_t hoid = make_test_object(obj_name);
+  PGTransactionUPtr pg_t = std::make_unique<PGTransaction>();
+  
+  ObjectContextRef obc = get_or_create_obc(hoid, true, 0);
+  pg_t->obc_map[hoid] = obc;
+  
+  outstanding_writes[hoid]++;
+  
+  eversion_t prior_version = obc->obs.oi.version;
+  eversion_t at_version = get_next_version();
+  
+  object_info_t new_oi = obc->obs.oi;
+  new_oi.version = at_version;
+  new_oi.prior_version = prior_version;
+  
+  {
+    bufferlist oi_bl;
+    new_oi.encode(oi_bl, osdmap->get_features(CEPH_ENTITY_TYPE_OSD, nullptr));
+    pg_t->setattr(hoid, OI_ATTR, oi_bl);
+  }
+  
+  {
+    bufferlist attr_bl;
+    attr_bl.append(attr_value);
+    pg_t->setattr(hoid, attr_name, attr_bl);
+  }
+  
+  obc->obs.oi = new_oi;
+  
+  std::vector<pg_log_entry_t> log_entries;
+  pg_log_entry_t entry;
+  entry.op = pg_log_entry_t::MODIFY;
+  entry.soid = hoid;
+  entry.version = at_version;
+  entry.prior_version = prior_version;
+  log_entries.push_back(entry);
+  
+  object_stat_sum_t delta_stats;
+  
+  auto write_complete = [this, hoid, obc, prior_version](int r) {
+    if (outstanding_writes[hoid] > 0) {
+      outstanding_writes[hoid]--;
+      if (outstanding_writes[hoid] == 0) {
+        outstanding_writes.erase(hoid);
+      }
+    }
+    
+    if (r != 0 && r != -EINPROGRESS) {
+      obc->obs.oi.version = prior_version;
+      obc->attr_cache.clear();
+      outstanding_writes.erase(hoid);
+    }
+  };
+  
+  // Control first_write_in_interval to simulate different write patterns
+  if (force_all_shards && pool_type == EC) {
+    PGBackend* primary_backend = get_primary_backend();
+    if (primary_backend) {
+      primary_backend->on_change();
+    }
+  }
+  
+  int result = do_transaction_and_complete(
+    hoid, std::move(pg_t), delta_stats, at_version, std::move(log_entries), write_complete);
+  
+  return result;
+}
+
+object_info_t PGBackendTestFixture::read_shard_object_info(
+  const std::string& obj_name,
+  int shard)
+{
+  hobject_t hoid = make_test_object(obj_name);
+  ghobject_t ghoid(hoid, ghobject_t::NO_GEN, shard_id_t(shard));
+  
+  auto ch_it = chs.find(shard);
+  if (ch_it == chs.end()) {
+    std::cerr << "ERROR: No collection handle for shard " << shard << std::endl;
+    return object_info_t(hoid);
+  }
+  
+  ceph::buffer::ptr value_ptr;
+  int r = store->getattr(ch_it->second, ghoid, OI_ATTR, value_ptr);
+  if (r < 0) {
+    std::cerr << "ERROR: Failed to read OI_ATTR from shard " << shard 
+              << ": " << cpp_strerror(r) << std::endl;
+    return object_info_t(hoid);
+  }
+  
+  bufferlist bl;
+  bl.append(value_ptr);
+  auto p = bl.cbegin();
+  object_info_t oi;
+  oi.decode(p);
+  return oi;
 }

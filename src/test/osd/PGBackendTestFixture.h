@@ -28,6 +28,7 @@
 #include "test/osd/MockMessenger.h"
 #include "common/TrackedOp.h"
 #include "os/memstore/MemStore.h"
+#include "test/osd/MockStore.h"
 #include "osd/ECSwitch.h"
 #include "osd/ECExtentCache.h"
 #include "osd/ReplicatedBackend.h"
@@ -58,7 +59,7 @@ protected:
   // Default includes both OVERWRITES and OPTIMIZATIONS flags.
   uint64_t pool_flags = pg_pool_t::FLAG_EC_OVERWRITES | pg_pool_t::FLAG_EC_OPTIMIZATIONS;
   
-  std::unique_ptr<MemStore> store;
+  std::unique_ptr<MockStore> store;
   std::string data_dir;
   ObjectStore::CollectionHandle ch;
   coll_t coll;
@@ -148,8 +149,8 @@ public:
     }
     ASSERT_EQ(0, r);
     
-    // Create MemStore - contexts are stolen by MockPGBackendListener, so we don't need manual_finisher
-    store.reset(new MemStore(g_ceph_context, data_dir));
+    // Create MockMemStore - contexts are stolen by MockPGBackendListener, so we don't need manual_finisher
+    store.reset(new MockStore(g_ceph_context, data_dir));
     ASSERT_TRUE(store);
     ASSERT_EQ(0, store->mkfs());
     ASSERT_EQ(0, store->mount());
@@ -282,45 +283,53 @@ public:
   /// Unlike make_object_context(), this method reuses OBCs for the same
   /// object across operations, which is essential for attr_cache continuity
   /// in EC pools.
+  /// @param primary_shard The shard ID to read attributes from (for EC pools)
   ObjectContextRef get_or_create_obc(
     const hobject_t& hoid,
     bool exists = false,
-    uint64_t size = 0)
+    uint64_t size = 0,
+    int primary_shard = 0)
   {
     auto it = object_contexts.find(hoid);
+    ObjectContextRef obc;
+
     if (it != object_contexts.end()) {
-      return it->second;
+      obc = it->second;
+    } else {
+      obc = make_object_context(hoid, exists, size);
+      object_contexts[hoid] = obc;
     }
-    ObjectContextRef obc = make_object_context(hoid, exists, size);
-    
+
     // If the object exists and this is an EC pool, populate attr_cache with
-    // ALL attributes from disk. This matches production behavior where the OBC
-    // is loaded with all xattrs from the object store.
-    if (exists && pool_type == EC && store && !chs.empty()) {
+    // ALL attributes from disk if not already populated. This matches production
+    // behavior where the OBC is loaded with all xattrs from the object store.
+    // In EC, attributes are stored per-shard, so we must read from the specified shard.
+    if (exists && pool_type == EC && store && !chs.empty() && obc->attr_cache.empty()) {
       auto writes_it = outstanding_writes.find(hoid);
       bool has_outstanding_writes = (writes_it != outstanding_writes.end() && writes_it->second > 0);
-      
-      // Only read from disk if there are no outstanding writes
-      if (!has_outstanding_writes) {
-        ObjectStore::CollectionHandle ch_primary = chs[0];
-        if (ch_primary) {
-          ghobject_t ghoid(hoid, ghobject_t::NO_GEN, shard_id_t::NO_SHARD);
-          std::map<std::string, ceph::buffer::ptr, std::less<>> attrs;
-          int r = store->getattrs(ch_primary, ghoid, attrs);
-          
-          if (r >= 0) {
-            // Successfully read all attributes from disk - populate the cache
-            for (auto& [key, value_ptr] : attrs) {
-              bufferlist bl;
-              bl.append(value_ptr);
-              obc->attr_cache[key] = std::move(bl);
-            }
+
+      // Cannot read from disk if there are outstanding writes - test bug
+      ceph_assert(!has_outstanding_writes);
+
+      // For EC pools, attributes are stored with the shard ID in the ghobject_t
+      ceph_assert(primary_shard >= 0 && primary_shard < (int)chs.size());
+      ObjectStore::CollectionHandle ch = chs[primary_shard];
+      if (ch) {
+        ghobject_t ghoid(hoid, ghobject_t::NO_GEN, shard_id_t(primary_shard));
+        std::map<std::string, ceph::buffer::ptr, std::less<>> attrs;
+        int r = store->getattrs(ch, ghoid, attrs);
+
+        if (r >= 0) {
+          // Successfully read all attributes from disk - populate the cache
+          for (auto& [key, value_ptr] : attrs) {
+            bufferlist bl;
+            bl.append(value_ptr);
+            obc->attr_cache[key] = std::move(bl);
           }
         }
       }
     }
-    
-    object_contexts[hoid] = obc;
+
     return obc;
   }
   
@@ -457,6 +466,45 @@ public:
    * after a peering event or OSDMap change.
    */
   void clear_all_attr_caches();
+
+  /**
+   * Write attributes to an object with control over first_write_in_interval.
+   *
+   * This simulates different types of writes in EC pools:
+   * - force_all_shards=true: Simulates first_write_in_interval=true, causing
+   *   all_shards_written() which updates ALL shards (data + parity)
+   * - force_all_shards=false: Simulates first_write_in_interval=false, causing
+   *   only PRIMARY shards (shard 0 + parity shards) to be updated
+   *
+   * This is useful for testing EC rollback scenarios where version mismatches
+   * can occur between primary and non-primary shards.
+   *
+   * @param obj_name Name of the object
+   * @param attr_name Name of the attribute to write
+   * @param attr_value Value of the attribute
+   * @param force_all_shards If true, forces all shards to be written
+   * @return Result code (0 on success, -EINPROGRESS if blocked, negative on error)
+   */
+  int write_attribute(
+    const std::string& obj_name,
+    const std::string& attr_name,
+    const std::string& attr_value,
+    bool force_all_shards);
+
+  /**
+   * Read object_info_t directly from the ObjectStore for a specific shard.
+   *
+   * This bypasses the OBC cache and reads the actual on-disk state,
+   * which is useful for verifying version consistency across shards
+   * after rollback or peering events.
+   *
+   * @param obj_name Name of the object
+   * @param shard Shard ID to read from
+   * @return The object_info_t decoded from the shard's OI_ATTR
+   */
+  object_info_t read_shard_object_info(
+    const std::string& obj_name,
+    int shard);
 
 };
 
