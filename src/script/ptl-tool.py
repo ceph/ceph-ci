@@ -657,8 +657,17 @@ def main():
     group.add_argument('--no-push-ci', dest='no_push_ci', action='store_true', help='don\'t push branch to ceph-ci repo (when making QA tickets)')
     group.add_argument('--push-ci', dest='push_ci', action='store_true', help='push branch and tag to CI repository (even when not making QA tickets)')
 
+    def parse_pr(value):
+        m = re.search(r'/pull/(\d+)', value)
+        if m:
+            return int(m.group(1))
+        try:
+            return int(value)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"Invalid PR format: {value}")
+
     group = parser.add_argument_group('PRs to Merge')
-    group.add_argument('prs', metavar="PRs...", type=int, nargs='*', help='Pull Requests to Merge')
+    group.add_argument('prs', metavar="PRs...", type=parse_pr, nargs='*', help='Pull Requests to Merge (numbers or URLs)')
 
     args = parser.parse_args(argv)
 
