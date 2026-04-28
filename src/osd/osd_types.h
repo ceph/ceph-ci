@@ -1327,6 +1327,9 @@ struct pg_pool_t {
     FLAG_CRIMSON = 1<<18,
     FLAG_EC_OPTIMIZATIONS = 1<<19, // enable optimizations, once enabled, cannot be disabled
     FLAG_CLIENT_SPLIT_READS = 1<<20, // Optimized EC is permitted to do direct reads.
+    // Allow decreasing pg_num/pgp_num (PG merge) for crimson pools.
+    // Note: requires that the pool is currently all bluestore.
+    FLAG_CRIMSON_ALLOW_PG_MERGE = 1<<21,
   };
 
   static const char *get_flag_name(uint64_t f) {
@@ -1352,6 +1355,7 @@ struct pg_pool_t {
     case FLAG_CRIMSON: return "crimson";
     case FLAG_EC_OPTIMIZATIONS: return "ec_optimizations";
     case FLAG_CLIENT_SPLIT_READS: return "split_reads";
+    case FLAG_CRIMSON_ALLOW_PG_MERGE: return "crimson_allow_pg_merge";
     default: return "???";
     }
   }
@@ -1408,6 +1412,8 @@ struct pg_pool_t {
       return FLAG_BULK;
     if (name == "crimson")
       return FLAG_CRIMSON;
+    if (name == "crimson_allow_pg_merge")
+      return FLAG_CRIMSON_ALLOW_PG_MERGE;
     if (name == "ec_optimizations")
       return FLAG_EC_OPTIMIZATIONS;
     if (name == "split_reads")
