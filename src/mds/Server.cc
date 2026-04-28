@@ -2600,7 +2600,7 @@ void Server::set_reply_extra_bl(const cref_t<MClientRequest> &req, inodeno_t ino
       // Try to delegate some prealloc_inos to the client, if it's down to half the max
       unsigned frac = 100 / delegate_inos_pct;
       if (session->delegated_inos.size() < (unsigned)g_conf()->mds_client_prealloc_inos / frac / 2)
-	session->delegate_inos(g_conf()->mds_client_prealloc_inos / frac, ocresp.delegated_inos);
+        session->delegate_inos(g_conf()->mds_client_prealloc_inos / frac, ocresp.delegated_inos);
     }
 
     encode(ocresp, extra_bl);
@@ -3595,6 +3595,11 @@ CDentry* Server::prepare_stray_dentry(const MDRequestRef& mdr, CInode *in)
 CInode* Server::prepare_new_inode(const MDRequestRef& mdr, CDir *dir, inodeno_t useino, unsigned mode,
 				  const file_layout_t *layout)
 {
+  if (g_conf().get_val<int64_t>("mds_kill_ino_prealloc_at") == INO_PREALLOC_PREPARE_NEW_INODE) {
+    g_conf().set_val("mds_kill_ino_prealloc_at", "0");
+    ceph_abort_msg("killpoint INO_PREALLOC_PREPARE_NEW_INODE");
+  }
+
   CInode *in = new CInode(mdcache);
   auto _inode = in->_get_inode();
   
@@ -3741,6 +3746,11 @@ void Server::apply_allocated_inos(const MDRequestRef& mdr, Session *session)
 	   << " / " << mdr->prealloc_inos
 	   << " / " << mdr->used_prealloc_ino << dendl;
 
+  if (g_conf().get_val<int64_t>("mds_kill_ino_prealloc_at") == INO_PREALLOC_APPLY_ALLOCATED_BEFORE) {
+    g_conf().set_val("mds_kill_ino_prealloc_at", "0");
+    ceph_abort_msg("killpoint INO_PREALLOC_APPLY_ALLOCATED_BEFORE");
+  }
+
   if (mdr->alloc_ino) {
     mds->inotable->apply_alloc_id(mdr->alloc_ino);
   }
@@ -3756,6 +3766,11 @@ void Server::apply_allocated_inos(const MDRequestRef& mdr, Session *session)
     ceph_assert(session);
     session->info.prealloc_inos.erase(mdr->used_prealloc_ino);
     mds->sessionmap.mark_dirty(session);
+  }
+
+  if (g_conf().get_val<int64_t>("mds_kill_ino_prealloc_at") == INO_PREALLOC_APPLY_ALLOCATED_AFTER) {
+    g_conf().set_val("mds_kill_ino_prealloc_at", "0");
+    ceph_abort_msg("killpoint INO_PREALLOC_APPLY_ALLOCATED_AFTER");
   }
 }
 
