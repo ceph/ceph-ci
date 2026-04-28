@@ -4,6 +4,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 
 import { NgbNav } from '@ng-bootstrap/ng-bootstrap';
 import _ from 'lodash';
+import { startWith } from 'rxjs/operators';
 import { Observable, ReplaySubject, Subscription } from 'rxjs';
 
 import { DashboardNotFoundError } from '~/app/core/error/error';
@@ -458,16 +459,14 @@ export class PoolFormComponent extends CdForm implements OnInit {
       this.pgCalc();
     });
 
-    this.form.get('erasureProfile').valueChanges.subscribe((profile) => {
-      // The ec profile can only be changed if type 'erasure' is set.
-      if (!profile) {
-        return;
-      }
-      this.data.erasureInfo = false;
-      this.erasureProfileChange();
-      this.ecpIsUsedBy(profile);
-      this.pgCalc();
-    });
+    this.form
+      .get('erasureProfile')
+      .valueChanges.pipe(startWith(this.form.getValue('erasureProfile')))
+      .subscribe((profile) => {
+        // The ec profile can only be changed if type 'erasure' is set.
+        this.erasureProfileChange(profile);
+        this.pgCalc();
+      });
     this.form.get('mode').valueChanges.subscribe(() => {
       ['minBlobSize', 'maxBlobSize', 'ratio'].forEach((name) => {
         this.form.get(name).updateValueAndValidity({ emitEvent: false });
@@ -1092,16 +1091,27 @@ export class PoolFormComponent extends CdForm implements OnInit {
     this.form.get('name').updateValueAndValidity({ emitEvent: false, onlySelf: true });
   }
 
-  erasureProfileChange() {
+  erasureProfileChange(selectedName?: string) {
     if (!this.ecProfiles || this.ecProfiles.length === 0) {
       return;
     }
-    const selectedName = this.form.get('erasureProfile').value;
-    this.selectedEcp = this.ecProfiles.find((ecp: ErasureCodeProfile) => ecp.name === selectedName);
-    if (this.selectedEcp) {
+    const formSelectedName = this.form.get('erasureProfile')?.value;
+    const resolvedName = selectedName ?? formSelectedName ?? this.ecProfiles[0]?.name;
+    const selectedEcp = this.ecProfiles.find(
+      (ecp: ErasureCodeProfile) => ecp.name === resolvedName
+    );
+    this.ecpIsUsedBy(resolvedName);
+    if (resolvedName) {
+      this.data.erasureInfo = false;
+    }
+    if (selectedEcp) {
+      this.selectedEcp = selectedEcp;
       this.msrCrush =
-        this.selectedEcp['crush-num-failure-domains'] > 0 ||
-        this.selectedEcp['crush-osds-per-failure-domain'] > 0;
+        (selectedEcp['crush-num-failure-domains'] ?? 0) > 0 ||
+        (selectedEcp['crush-osds-per-failure-domain'] ?? 0) > 0;
+    } else {
+      this.selectedEcp = undefined as any;
+      this.msrCrush = false;
     }
   }
 }
