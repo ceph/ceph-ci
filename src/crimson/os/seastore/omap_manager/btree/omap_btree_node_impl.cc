@@ -164,7 +164,7 @@ OMapInnerNode::insert(
   const ceph::bufferlist &value)
 {
   LOG_PREFIX(OMapInnerNode::insert);
-  DEBUGT("{}->{}, this: {}",  oc.t, key, value, *this);
+  DEBUGT("{} -> 0x{:x} value, this: {}", oc.t, key, value.length(), *this);
   auto child_pt = get_containing_child(key);
   if (exceeds_max_kv_limit(key, value)) {
     return crimson::ct_error::value_too_large::make();
@@ -752,7 +752,7 @@ OMapLeafNode::insert(
   const ceph::bufferlist &value)
 {
   LOG_PREFIX(OMapLeafNode::insert);
-  DEBUGT("{} -> {}, this: {}", oc.t, key, value, *this);
+  DEBUGT("{} -> 0x{:x} value, this: {}", oc.t, key, value.length(), *this);
   if (exceeds_max_kv_limit(key, value)) {
     return crimson::ct_error::value_too_large::make();
   }
