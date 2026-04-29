@@ -33,7 +33,12 @@ from typing import (
 
 import yaml
 
-from ceph.deployment.hostspec import HostSpec, SpecValidationError, normalize_hostname, assert_valid_host
+from ceph.deployment.hostspec import (
+    HostSpec,
+    SpecValidationError,
+    normalize_hostname,
+    assert_valid_host,
+)
 from ceph.deployment.utils import unwrap_ipv6, valid_addr, verify_non_negative_int
 from ceph.deployment.utils import verify_positive_int, verify_non_negative_number
 from ceph.deployment.utils import verify_boolean, verify_enum, verify_int
@@ -366,10 +371,15 @@ class PlacementSpec(object):
         # To backpopulate the .hosts attribute when using labels or count
         # in the orchestrator backend.
         if all(isinstance(h, HostPlacementSpec) for h in hosts):
-            # All items are HostPlacementSpec → normalize directly
+            # All items are HostPlacementSpec, normalize directly.
+            host_specs = cast(List[HostPlacementSpec], hosts)
             self.hosts = [
-                HostPlacementSpec(normalize_hostname(h.hostname), h.network, h.name)  # type: ignore[union-attr]
-                for h in hosts
+                HostPlacementSpec(
+                    normalize_hostname(h.hostname),
+                    h.network,
+                    h.name,
+                )
+                for h in host_specs
             ]
         else:
             # Otherwise, parse from strings
