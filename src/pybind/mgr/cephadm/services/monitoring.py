@@ -657,6 +657,109 @@ class PrometheusService(CephadmService):
         r['files']['/etc/prometheus/alerting/custom_alerts.yml'] = \
             self.mgr.get_store('services/prometheus/alerting/custom_alerts.yml', '')
 
+    def generate_config(
+            self,
+            daemon_spec: CephadmDaemonDeploySpec,
+    ) -> Tuple[Dict[str, Any], List[str]]:
+
+        assert self.TYPE == daemon_spec.daemon_type
+
+        spec = cast(PrometheusSpec, self.mgr.spec_store[daemon_spec.service_name].spec)
+        retention_time = get_field_from_spec(spec, 'retention_time', '15d')
+        retention_size = get_field_from_spec(spec, 'retention_size', '0')
+        targets = get_field_from_spec(spec, 'targets', [])
+        remote_write_url = get_field_from_spec(spec, 'remote_write_url', '')
+        remote_write_allowed_metrics = get_field_from_spec(spec, 'remote_write_allowed_metrics', '')
+
+        # build service discovery end-point
+        security_enabled, mgmt_gw_enabled, oauth2_enabled = self.mgr._get_security_config()
+        alertmanager_user, alertmanager_password = self.mgr._get_alertmanager_credentials()
+        federate_path = self.get_target_cluster_federate_path(targets)
+        cluster_credentials: Dict[str, Any] = {}
+        cluster_credentials_files: Dict[str, Any] = {'files': {}}
+        if targets:
+            if 'dashboard' in self.mgr.get('mgr_map')['modules']:
+                cluster_credentials_files, cluster_credentials = self.mgr.remote(
+                    'dashboard', 'get_cluster_credentials_files', targets
+                )
+            else:
+                logger.error("dashboard module not found")
+
+        # generate the prometheus configuration
+        context = {
+            'alertmanager_url_prefix': '/alertmanager' if mgmt_gw_enabled else '/',
+            'security_enabled': security_enabled,
+            'alertmanager_web_user': alertmanager_user,
+            'alertmanager_web_password': alertmanager_password,
+            'service_discovery_username': self.mgr.http_server.service_discovery.username,
+            'service_discovery_password': self.mgr.http_server.service_discovery.password,
+            'service_discovery_cfg': self.get_service_discovery_cfg(security_enabled, mgmt_gw_enabled),
+            'external_prometheus_targets': targets,
+            'remote_write_url': remote_write_url,
+            'remote_write_allowed_metrics': remote_write_allowed_metrics,
+            'cluster_fsid': self.mgr._cluster_fsid,
+            'clusters_credentials': cluster_credentials,
+            'federate_path': federate_path
+        }
+
+        ip_to_bind_to = ''
+        if spec.only_bind_port_on_networks and spec.networks:
+            assert daemon_spec.host is not None
+            ip_to_bind_to = self.mgr.get_first_matching_network_ip(daemon_spec.host, spec) or ''
+            if ip_to_bind_to:
+                daemon_spec.port_ips = {str(self.mgr.service_discovery_port): ip_to_bind_to}
+
+        files = {
+            'prometheus.yml': self.mgr.template.render('services/prometheus/prometheus.yml.j2', context)
+        }
+
+        # check if the prometheus.yml already exists in the config-key store,
+        # if not we need to set the initial config-key with the default template content.
+        # If it already exists, we need not override user config changes.
+        config_key = 'services/prometheus/prometheus.yml'
+        existing_config = self.mgr.get_store(config_key)
+
+        if existing_config is None:
+            loader = self.mgr.template.engine.env.loader
+            assert loader is not None
+
+            raw_template, _, _ = loader.get_source(
+                self.mgr.template.engine.env,
+                'services/prometheus/prometheus.yml.j2'
+            )
+            self.mgr.set_store(config_key, raw_template)
+
+        r: Dict[str, Any] = {
+            'files': files,
+            'retention_time': retention_time,
+            'retention_size': retention_size,
+            'ip_to_bind_to': ip_to_bind_to,
+            'use_url_prefix': mgmt_gw_enabled
+        }
+        if security_enabled:
+            # Following key/cert are needed for:
+            # 1- run the prometheus server (web.yml config)
+            # 2- use mTLS to scrape node-exporter (prometheus acts as client)
+            # 3- use mTLS to send alerts to alertmanager (prometheus acts as client)
+            prometheus_user, prometheus_password = self.mgr._get_prometheus_credentials()
+            web_context = {
+                'enable_mtls': mgmt_gw_enabled,
+                'enable_basic_auth': not oauth2_enabled,
+                'prometheus_web_user': prometheus_user,
+                'prometheus_web_password': password_hash(prometheus_password),
+            }
+            tls_pair = self.get_prometheus_certificates(daemon_spec)
+            files.update({
+                'root_cert.pem': self.mgr.cert_mgr.get_root_ca(),
+                'web.yml': self.mgr.template.render('services/prometheus/web.yml.j2', web_context),
+                'prometheus.crt': tls_pair.cert,
+                'prometheus.key': tls_pair.key,
+                **cluster_credentials_files['files']
+            })
+            r.update({'web_config': '/etc/prometheus/web.yml'})
+
+        self.configure_alerts(r)
+
         return r, self.get_dependencies(self.mgr)
 
     @classmethod
@@ -695,6 +798,12 @@ class PrometheusService(CephadmService):
         deps += [s for s in ['node-exporter', 'alertmanager'] if mgr.cache.get_daemons_by_service(s)]
         if len(mgr.cache.get_daemons_by_type('ingress')) > 0:
             deps.append('ingress')
+
+        if spec:
+            prometheus_spec = cast(PrometheusSpec, spec)
+
+            deps.append(f'remote_write_url:{prometheus_spec.remote_write_url}')
+            deps.append(f'remote_write_metrics:{prometheus_spec.remote_write_allowed_metrics}')
 
         return sorted(deps)
 

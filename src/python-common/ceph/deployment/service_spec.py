@@ -887,6 +887,8 @@ class ServiceSpec(object):
                  preview_only: bool = False,
                  networks: Optional[List[str]] = None,
                  targets: Optional[List[str]] = None,
+                 remote_write_url: Optional[str] = None,
+                 remote_write_allowed_metrics: Optional[str] = None,
                  extra_container_args: Optional[GeneralArgList] = None,
                  extra_entrypoint_args: Optional[GeneralArgList] = None,
                  custom_configs: Optional[List[CustomConfig]] = None,
@@ -924,6 +926,8 @@ class ServiceSpec(object):
         #: :ref:`cephadm-rgw-networks` and :ref:`cephadm-mgr-networks`.
         self.networks: List[str] = networks or []
         self.targets: List[str] = targets or []
+        self.remote_write_url = remote_write_url
+        self.remote_write_allowed_metrics = remote_write_allowed_metrics
 
         self.config: Optional[Dict[str, str]] = None
         if config:
@@ -2505,6 +2509,8 @@ class MonitoringSpec(ServiceSpec):
                  preview_only: bool = False,
                  port: Optional[int] = None,
                  targets: Optional[List[str]] = None,
+                 remote_write_url: Optional[str] = None,
+                 remote_write_allowed_metrics: Optional[str] = None,
                  extra_container_args: Optional[GeneralArgList] = None,
                  extra_entrypoint_args: Optional[GeneralArgList] = None,
                  custom_configs: Optional[List[CustomConfig]] = None,
@@ -2518,7 +2524,9 @@ class MonitoringSpec(ServiceSpec):
             preview_only=preview_only, config=config,
             networks=networks, extra_container_args=extra_container_args,
             extra_entrypoint_args=extra_entrypoint_args,
-            custom_configs=custom_configs, targets=targets)
+            custom_configs=custom_configs, targets=targets,
+            remote_write_url=remote_write_url,
+            remote_write_allowed_metrics=remote_write_allowed_metrics)
 
         self.service_type = service_type
         self.port = port
@@ -2683,6 +2691,8 @@ class PrometheusSpec(MonitoringSpec):
                  retention_time: Optional[str] = None,
                  retention_size: Optional[str] = None,
                  targets: Optional[List[str]] = None,
+                 remote_write_url: Optional[str] = None,
+                 remote_write_allowed_metrics: Optional[str] = None,
                  extra_container_args: Optional[GeneralArgList] = None,
                  extra_entrypoint_args: Optional[GeneralArgList] = None,
                  custom_configs: Optional[List[CustomConfig]] = None,
@@ -2693,7 +2703,8 @@ class PrometheusSpec(MonitoringSpec):
             placement=placement, unmanaged=unmanaged,
             preview_only=preview_only, config=config, networks=networks, port=port, targets=targets,
             extra_container_args=extra_container_args, extra_entrypoint_args=extra_entrypoint_args,
-            custom_configs=custom_configs)
+            custom_configs=custom_configs, remote_write_url=remote_write_url,
+            remote_write_allowed_metrics=remote_write_allowed_metrics)
 
         self.retention_time = retention_time.strip() if retention_time else None
         self.retention_size = retention_size.strip() if retention_size else None
