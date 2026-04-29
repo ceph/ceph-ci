@@ -108,17 +108,17 @@ one may constrain the set of OSDs on which cephadm will operate.
 This ability is available in the Ceph Umbrella and later releases.
 As cephadm progresses through the specified CRUSH bucket, it asks
 the Monitors which OSDs may safely move to the target release.
-This process uses the ceph osd ok-to-upgrade command.
+This process uses the ceph ``osd ok-to-upgrade`` command.
 
 Requirements:
 
 * For OSD-only upgrades, pass both ``--crush_bucket_type`` and ``--crush_bucket_name``.
   Supported types today are ``host``, ``rack``, and ``chassis``.
-* The monitor's ``osd ok-to-upgrade`` expects the target **short** Ceph version
+* The Monitor's ``osd ok-to-upgrade`` expects the target **short** Ceph version
   (same shape as ``ceph_version_short`` in ``ceph osd metadata``).
 * If the Monitors indicate to cephadm that no OSDs in the selected CRUSH bucket
-  are okay to upgrade, cephadm will log details then retry the operation.
-  If the bucket parameters for a ceph osd ok-to-upgrade upgrade are not provided,
+  are okay to upgrade, cephadm will log details and then retry the operation.
+  If the bucket parameters for a ceph ``osd ok-to-upgrade`` upgrade are not provided,
   cephadm will fall back to the default ceph osd ok-to-stop gate for OSD upgrades.
 * If bucket parameters are not provided, cephadm will fall back to ``osd ok-to-stop``
   for OSD upgrades.
@@ -129,16 +129,16 @@ Example:
 
 .. prompt:: bash #
 
-  ceph orch upgrade start --image quay.io/ceph/ceph:v21.2.1
-    --daemon-types osd \\
+  ceph orch upgrade start --image quay.io/ceph/ceph:v21.2.1 \
+    --daemon-types osd \
     --crush_bucket_type rack --crush_bucket_name rack-a
 
-When performing OSD upgrades withiin this failure domain, cephadm calls
-ceph osd ok-to-upgrade with the specified bucket name and type, and max set to
+When performing OSD upgrades within this failure domain, cephadm calls
+ceph ``osd ok-to-upgrade`` with the specified bucket name and type, and max set to
 :confval:`mgr/cephadm/max_parallel_osd_upgrades`
 
-Note: do not change the cluster's topology during an OSD upgrade phase.
-This includes the name or type of any CRUSH bucket.
+.. warning:: Do not change the cluster's topology during an OSD upgrade phase.
+   This includes the name or type of any CRUSH bucket.
 
 
 Monitoring the Upgrade
