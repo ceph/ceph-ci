@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
-from typing import Any, Dict, Optional, List, Tuple
+from typing import Any, Dict, List, Optional
 import errno
 
 from .cli import CephSecretsCLICommand
@@ -133,20 +133,17 @@ class Module(MgrModule):
         target: Optional[str] = None,
         show_values: bool = False,
         show_internals: bool = False
-    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         sc = SecretScope.from_str(scope) if scope else None
-        good, bad = self.secret_mgr.ls(namespace=namespace, scope=sc, target=target)
-        out_good: Dict[str, Any] = {}
-        for r in good:
+        records = self.secret_mgr.ls(namespace=namespace, scope=sc, target=target)
+        out: Dict[str, Any] = {}
+        for r in records:
             if r.target:
                 key = f'{r.namespace}/{r.scope.value}/{r.target}/{r.name}'
             else:
                 key = f'{r.namespace}/{r.scope.value}/{r.name}'
-            out_good[key] = r.to_json(include_data=bool(show_values), include_internal=show_internals)
-        out_bad: Dict[str, Any] = {}
-        for b in bad:
-            out_bad[b.raw_key] = {'raw_key': b.raw_key, 'namespace': b.namespace, 'error': b.error}
-        return out_good, out_bad
+            out[key] = r.to_json(include_data=bool(show_values), include_internal=show_internals)
+        return out
 
     def secret_get(
         self,
@@ -231,13 +228,13 @@ class Module(MgrModule):
                        reveal: bool = False,
                        show_internals: bool = False) -> HandleCommandResult:
         try:
-            good, bad = self.secret_ls(namespace=namespace,
-                                       scope=scope,
-                                       target=sec_target,
-                                       show_values=reveal,
-                                       show_internals=show_internals)
-            out = {'secrets': good, 'errors': bad}
-            return HandleCommandResult(0, json.dumps(out, indent=2, sort_keys=True), '')
+            secrets = self.secret_ls(
+                namespace=namespace,
+                scope=scope,
+                target=sec_target,
+                show_values=reveal,
+                show_internals=show_internals)
+            return HandleCommandResult(0, json.dumps(secrets, indent=2, sort_keys=True), '')
         except CephSecretException as e:
             return HandleCommandResult(-errno.EINVAL, '', f'secret error: {e}')
 

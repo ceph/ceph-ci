@@ -250,22 +250,12 @@ class SecretStoreMon(SecretStorageBackend):
         namespace: Optional[str] = None,
         scope: Optional[SecretScope] = None,
         target: Optional[str] = None,
-    ) -> Tuple[List[SecretRecord], List[BadSecretRecord]]:
+    ) -> List[SecretRecord]:
         """
         List secrets matching the given filters.
 
-        Returns:
-          (good_records, bad_records)
-
-        - good_records: parsed SecretRecord entries.
-        - bad_records: entries that exist in the KV store but are malformed (bad key structure,
-          unknown scope, wrong segment count for scope, or corrupted JSON payload).
-
-        Notes:
-          - If namespace/scope/target filters are provided, bad records are still reported
-            only if they pass the same filters based on key-derived components.
-          - Empty-path-component keys (e.g. double slashes) are reported as bad records.
-          - Epoch keys live under secret_store/meta/ and are never scanned here.
+        Corrupt/malformed module-owned entries are data errors, not part of the
+        normal listing contract, so they are raised as CephSecretDataError.
         """
         if scope is not None and not isinstance(scope, SecretScope):
             scope = SecretScope.from_str(str(scope))
@@ -279,8 +269,7 @@ class SecretStoreMon(SecretStorageBackend):
                 if target and scope not in (SecretScope.GLOBAL, SecretScope.CUSTOM):
                     prefix += f'{target}/'
         items = self.mgr.get_store_prefix(prefix) or {}
-        good_records: List[SecretRecord] = []
-        bad_records: List[BadSecretRecord] = []
+        records: List[SecretRecord] = []
 
         for k, v in items.items():
             # k is full key: secret_store/v1/ns/scope/target/name
@@ -289,34 +278,29 @@ class SecretStoreMon(SecretStorageBackend):
 
             # reject keys with empty segments (double slash, trailing slash, etc.)
             if '' in parts:
-                bad_records.append(BadSecretRecord(k, 'empty path component in key', parts[0] if parts else ''))
-                continue
+                raise CephSecretDataError(f'{k}: empty path component in key')
 
             if len(parts) < 3:
-                bad_records.append(BadSecretRecord(k, 'unexpected key structure', parts[0] if parts else ''))
-                continue
+                raise CephSecretDataError(f'{k}: unexpected key structure')
 
             ns, sc = parts[0], parts[1]
 
             try:
                 sc_enum = SecretScope.from_str(sc)
             except Exception as e:
-                bad_records.append(BadSecretRecord(k, f'invalid scope {sc!r}: {e}', ns))
-                continue
+                raise CephSecretDataError(f'{k}: invalid scope {sc!r}: {e}') from e
 
             if sc_enum == SecretScope.CUSTOM:
                 tgt = ''
                 name = '/'.join(parts[2:])
             elif sc_enum == SecretScope.GLOBAL:
                 if len(parts) != 3:
-                    bad_records.append(BadSecretRecord(k, 'unexpected global key structure', ns))
-                    continue
+                    raise CephSecretDataError(f'{k}: unexpected global key structure')
                 tgt = ''
                 name = parts[2]
             else:
                 if len(parts) != 4:
-                    bad_records.append(BadSecretRecord(k, 'unexpected targeted-scope key structure', ns))
-                    continue
+                    raise CephSecretDataError(f'{k}: unexpected targeted-scope key structure')
                 tgt = parts[2]
                 name = parts[3]
 
@@ -331,13 +315,20 @@ class SecretStoreMon(SecretStorageBackend):
             # parse payload
             try:
                 payload = json.loads(v)
-                if not isinstance(payload, dict):
-                    bad_records.append(BadSecretRecord(k, f'payload is not a JSON object (got {type(payload).__name__})', ns))
-                    continue
-                good_records.append(SecretRecord.from_json(ns, sc_enum, tgt, name, payload))
             except Exception as e:
-                bad_records.append(BadSecretRecord(k, str(e), ns))
+                raise CephSecretDataError(f'{k}: invalid JSON payload: {e}') from e
 
-        good_records.sort(key=lambda r: (r.namespace, r.scope.value, r.target, r.name))
-        bad_records.sort(key=lambda r: (r.namespace, r.raw_key))
-        return good_records, bad_records
+            if not isinstance(payload, dict):
+                raise CephSecretDataError(
+                    f'{k}: payload is not a JSON object (got {type(payload).__name__})'
+                )
+
+            try:
+                records.append(SecretRecord.from_json(ns, sc_enum, tgt, name, payload))
+            except CephSecretDataError as e:
+                raise CephSecretDataError(f'{k}: {e}') from e
+            except Exception as e:
+                raise CephSecretDataError(f'{k}: corrupted secret record: {e}') from e
+
+        records.sort(key=lambda r: (r.namespace, r.scope.value, r.target, r.name))
+        return records

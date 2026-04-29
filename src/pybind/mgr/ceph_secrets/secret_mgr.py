@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 import logging
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
-from .secret_store import SecretRecord, BadSecretRecord
+from .secret_store import SecretRecord
 from ceph_secrets_types import (CephSecretException,
                                 SecretURI,
                                 SecretRef,
@@ -91,7 +91,7 @@ class SecretMgr:
         namespace: Optional[str] = None,
         scope: Optional[SecretScope | str] = None,
         target: Optional[str] = None,
-    ) -> Tuple[List[SecretRecord], List[BadSecretRecord]]:
+    ) -> List[SecretRecord]:
         sc = _coerce_scope(scope) if scope else None
         return self.store.ls(namespace=namespace, scope=sc, target=target)
 

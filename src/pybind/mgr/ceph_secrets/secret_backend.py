@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, TYPE_CHECKING, Tuple
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from ceph_secrets_types import SecretScope
 
 
 if TYPE_CHECKING:
     # Import only for type-checkers to avoid runtime import cycles
-    from .secret_store import SecretRecord, BadSecretRecord
+    from .secret_store import SecretRecord
 
 
 class SecretStorageBackend(ABC):
@@ -59,7 +59,7 @@ class SecretStorageBackend(ABC):
         namespace: Optional[str] = None,
         scope: Optional[SecretScope] = None,
         target: Optional[str] = None,
-    ) -> Tuple[List["SecretRecord"], List["BadSecretRecord"]]:
+    ) -> List["SecretRecord"]:
         ...
 
     @abstractmethod
