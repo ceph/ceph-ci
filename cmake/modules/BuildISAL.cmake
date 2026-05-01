@@ -22,15 +22,15 @@ function(build_isal)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang" AND HAVE_ARMV8_SIMD)
     list(APPEND arm_cflags "-no-integrated-as")
   endif()
-  # isa-l 2.32.0 requires SVE assembly support
+  # isa-l 2.32.0 includes SVE and SVE2-optimized assembly for better performance on
+  # compatible ARM CPUs
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|AARCH64")
     list(APPEND arm_cflags "-Wa,-march=armv8-a+sve")
   endif()
   if(arm_cflags)
     string(REPLACE ";" " " arm_cflags_str "${arm_cflags}")
-    list(APPEND configure_cmd "CFLAGS=${arm_cflags_string}")
+    list(APPEND configure_cmd "CFLAGS=$ENV{CFLAGS} -fPIC ${arm_cflags_str}")
   endif()
-  
 
   include(ExternalProject)
   ExternalProject_Add(isal_ext
