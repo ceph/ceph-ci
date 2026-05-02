@@ -623,6 +623,13 @@ void PG::on_active_actmap()
       logger().debug("{}: {} already trimming.", *this, __func__);
       return;
     }
+    // Temporary: defer snap trimming while scrubbing, until the full scrub
+    // scheduling code (including is_scrub_queued_or_active()) is merged.
+    // (mark https://tracker.ceph.com/issues/76428 as solved once fixed).
+    if (peering_state.state_test(PG_STATE_SCRUBBING)) {
+      logger().info("{}: {} scrubbing, deferring snap trim", *this, __func__);
+      return;
+    }
     // loops until snap_trimq is empty or SNAPTRIM_ERROR.
     Ref<PG> pg_ref = this;
     std::ignore = interruptor::with_interruption([this] {
@@ -654,6 +661,16 @@ void PG::on_active_actmap()
   } else {
     logger().debug("pg not clean, skipping snap trim");
     ceph_assert(!peering_state.state_test(PG_STATE_SNAPTRIM));
+  }
+}
+
+void PG::kick_snap_trim()
+{
+  if (peering_state.is_active() && peering_state.is_clean()
+      && !snap_trimq.empty()
+      && !peering_state.state_test(PG_STATE_SNAPTRIM)) {
+    logger().info("{}: scrub complete, retriggering snap trim", *this);
+    on_active_actmap();
   }
 }
 

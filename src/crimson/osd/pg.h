@@ -907,6 +907,10 @@ private:
   interruptible_future<seastar::stop_iteration> trim_snap(
     snapid_t to_trim,
     bool needs_pause);
+  /// Re-trigger snap trimming after scrub completion. Snap trimming is
+  /// deferred while the PG is scrubbing; call this from notify_scrub_end()
+  /// to resume.
+  void kick_snap_trim();
 
 private:
   PG_OSDMapGate osdmap_gate;
