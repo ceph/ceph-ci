@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <functional>
+
 #include "rgw_lc.h"
 #include "rgw_rest_conn.h"
 #include "rgw_rados.h"
@@ -92,3 +94,6 @@ std::string make_target_obj_name(const std::string& bucket_name,
 
 int resolve_cloud_target_name(RGWLCCloudTierCtx& tier_ctx,
                               std::map<std::string, std::string>& out_headers);
+
+int retry_on_busy(optional_yield y, const DoutPrefixProvider *dpp, CephContext *cct,
+                  const char *op_name, std::function<int()> op);
