@@ -4981,7 +4981,6 @@ void RGWDeleteMultiObj_ObjStore_S3::send_partial_response(const rgw_obj_key& key
 
 void RGWDeleteMultiObj_ObjStore_S3::end_response()
 {
-  s->formatter->close_section();
   rgw_flush_formatter_and_reset(s, s->formatter);
 }
 
