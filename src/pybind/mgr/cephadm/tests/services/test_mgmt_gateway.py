@@ -148,7 +148,7 @@ class TestMgmtGateway:
                                          }"""),
                     "nginx_external_server.conf": dedent("""
                                              server {
-                                                 listen                    5555 ssl;
+                                                 listen                    0.0.0.0:5555 ssl;
                                                  listen                    [::]:5555 ssl;
                                                  ssl_certificate            /etc/nginx/ssl/nginx.crt;
                                                  ssl_certificate_key /etc/nginx/ssl/nginx.key;
@@ -401,7 +401,7 @@ class TestMgmtGateway:
                                          }"""),
                     "nginx_external_server.conf": dedent("""
                                              server {
-                                                 listen                    5555 ssl;
+                                                 listen                    0.0.0.0:5555 ssl;
                                                  listen                    [::]:5555 ssl;
                                                  ssl_certificate            /etc/nginx/ssl/nginx.crt;
                                                  ssl_certificate_key /etc/nginx/ssl/nginx.key;
