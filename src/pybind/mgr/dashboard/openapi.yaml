@@ -14004,7 +14004,6 @@ paths:
                   description: NVMeoF transport address
                   type: string
                 trsvcid:
-                  default: 4420
                   description: NVMeoF transport service port
                   type: integer
                 verify_host_name:
@@ -14049,7 +14048,7 @@ paths:
       summary: Create a new NVMeoF listener
       tags:
       - NVMe-oF Subsystem Listener
-  /api/nvmeof/subsystem/{nqn}/listener/{host_name}/{traddr}:
+  /api/nvmeof/subsystem/{nqn}/listener/{host_name}/{traddr}/{trsvcid}:
     delete:
       parameters:
       - description: NVMeoF subsystem NQN
@@ -14070,10 +14069,10 @@ paths:
         required: true
         schema:
           type: string
-      - default: 4420
-        description: NVMeoF transport service port
-        in: query
+      - description: NVMeoF transport service port
+        in: path
         name: trsvcid
+        required: true
         schema:
           type: integer
       - default: 0
