@@ -3938,6 +3938,8 @@ def command_shell(ctx):
                 mounts[mount] = dst
             else:
                 mounts[mount] = '/mnt/{}'.format(filename)
+    if '/var/lib/ceph' not in mounts:
+        mounts['/var/lib/ceph'] = '/srv/ceph:ro,z'
     if ctx.command:
         command = ctx.command
     else:
