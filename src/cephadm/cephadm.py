@@ -1383,6 +1383,17 @@ def deploy_daemon_units(
         limit_core_infinity=ctx.limit_core_infinity,
     )
     call_throws(ctx, ['systemctl', 'daemon-reload'])
+    restart_deployed_daemon(ctx, ident, enable, start)
+
+
+def restart_deployed_daemon(
+    ctx: CephadmContext,
+    ident: DaemonIdentity,
+    enable: bool = True,
+    start: bool = True
+) -> None:
+    # this handles the systemctl commands we need to sttart/restart a daemon
+    # after we have written out its unit files in a non-reconfig scenario
 
     unit_name = get_unit_name(ident.fsid, ident.daemon_type, ident.daemon_id)
     call(ctx, ['systemctl', 'stop', unit_name],
