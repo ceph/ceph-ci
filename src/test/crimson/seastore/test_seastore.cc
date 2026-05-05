@@ -901,6 +901,43 @@ TEST_P(seastore_test_t, collection_split)
   });
 }
 
+TEST_P(seastore_test_t, collection_merge)
+{
+  run_async([this] {
+    coll_t src_coll{spg_t{pg_t{17, 0}}};
+    coll_t dest_coll{spg_t{pg_t{1, 0}}};
+
+    sharded_seastore->create_new_collection(dest_coll).get();
+    {
+      CTransaction t;
+      t.create_collection(dest_coll, 5);
+      do_transaction(std::move(t));
+    }
+    sharded_seastore->create_new_collection(src_coll).get();
+    {
+      CTransaction t;
+      t.create_collection(src_coll, 5);
+      do_transaction(std::move(t));
+    }
+
+    {
+      CTransaction t;
+      t.merge_collection(src_coll, dest_coll, 4);
+      do_transaction(std::move(t));
+    }
+
+    auto raw = seastore->list_collections().get();
+    std::vector<coll_t> colls;
+    colls.reserve(raw.size());
+    std::ranges::transform(raw, std::back_inserter(colls),
+                           [](const auto& p) { return p.first; });
+    EXPECT_EQ(colls.size(), 2u);
+    EXPECT_TRUE(contains(colls, coll_name));
+    EXPECT_TRUE(contains(colls, dest_coll));
+    EXPECT_FALSE(contains(colls, src_coll));
+  });
+}
+
 TEST_P(seastore_test_t, meta) {
   run_async([this] {
     set_meta("key1", "value1");

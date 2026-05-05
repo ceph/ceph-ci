@@ -1779,6 +1779,15 @@ SeaStore::Shard::_do_transaction_step(
 	*ctx.transaction, cid, dest_cid, bits);
       return _split_collection(ctx, cid, bits);
     }
+    case Transaction::OP_MERGE_COLLECTION:
+    {
+      uint32_t bits = op->split_bits;
+      coll_t cid = i.get_cid(op->cid);
+      coll_t dest_cid = i.get_cid(op->dest_cid);
+      DEBUGT("op OP_MERGE_COLLECTION, cid={}, dest_cid={}, bits={}",
+	*ctx.transaction, cid, dest_cid, bits);
+      return _merge_collection(ctx, cid, dest_cid, bits);
+    }
   }
 
   using onode_iertr = OnodeManager::get_onode_iertr::extend<
@@ -2473,6 +2482,25 @@ SeaStore::Shard::_split_collection(
       "Invalid error in SeaStoreS::_create_collection"
     }
   );
+}
+
+SeaStore::Shard::tm_ret
+SeaStore::Shard::_merge_collection(
+  internal_context_t &ctx,
+  coll_t cid,
+  coll_t dest_cid,
+  int bits)
+{
+  auto cmroot = co_await transaction_manager->read_collection_root(
+    *ctx.transaction);
+  co_await collection_manager->update(cmroot, *ctx.transaction, dest_cid, bits)
+    .handle_error_interruptible(
+      tm_iertr::pass_further{},
+      crimson::ct_error::assert_all{"unexpected error from update in _merge_collection"});
+  co_await collection_manager->remove(cmroot, *ctx.transaction, cid)
+    .handle_error_interruptible(
+      tm_iertr::pass_further{},
+      crimson::ct_error::assert_all{"unexpected error from remove in _merge_collection"});
 }
 
 SeaStore::Shard::tm_ret

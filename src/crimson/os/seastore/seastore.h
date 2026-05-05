@@ -402,6 +402,11 @@ public:
     tm_ret _split_collection(
       internal_context_t &ctx,
       const coll_t& cid, int bits);
+    tm_ret _merge_collection(
+      internal_context_t &ctx,
+      coll_t cid,
+      coll_t dest_cid,
+      int bits);
     tm_ret _remove_collection(
       internal_context_t &ctx,
       const coll_t& cid);
