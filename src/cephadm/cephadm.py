@@ -1229,14 +1229,48 @@ def deploy_daemon(
         if data:
             update_meta_file(os.path.join(data_dir, 'unit.meta'), data)
 
-    update_unit_created_and_configured_files(ctx, ident, uid, gid)
+    handle_post_writing_unit_files_deployment_actions(
+        ctx,
+        ident=ident,
+        deployment_type=deployment_type,
+        enable=enable_daemon,
+        # deploy_daemon_units has this "start" option, but it was only
+        # ever set to False during adoption, not new deployments / redeploys
+        start=True,
+        uid=uid,
+        gid=gid,
+        endpoints=endpoints
+    )
 
-    handle_deployment_firewall_updates(ctx, ident, endpoints)
 
-    # If this was a reconfig and the daemon is not a Ceph daemon, restart it
-    # so it can pick up potential changes to its configuration files
+def handle_post_writing_unit_files_deployment_actions(
+    ctx: CephadmContext,
+    ident: DaemonIdentity,
+    deployment_type: DeploymentType,
+    enable: bool,
+    start: bool,
+    uid: int,
+    gid: int,
+    endpoints: Optional[List[EndPoint]]
+) -> None:
+
+    # There's obviously overlap in these two cases, but I have
+    # kept them in their own blocks because I like being
+    # able to see exactly what actions and in what order we
+    # complete them in the two cases quickly
     if deployment_type == DeploymentType.RECONFIG:
+        # Reconfigured daemons that had conf files rewritten but
+        # not their unit files
+        update_unit_created_and_configured_files(ctx, ident, uid, gid)
+        handle_deployment_firewall_updates(ctx, ident, endpoints)
         restart_reconfigured_daemon(ctx, ident)
+    else:
+        # redeploy and fresh deployment cases. Basically if we rewrote your
+        # unit files you should be here
+        call_throws(ctx, ['systemctl', 'daemon-reload'])
+        restart_deployed_daemon(ctx, ident, enable, start)
+        update_unit_created_and_configured_files(ctx, ident, uid, gid)
+        handle_deployment_firewall_updates(ctx, ident, endpoints)
 
 
 def clean_cgroup(ctx: CephadmContext, fsid: str, unit_name: str) -> None:
@@ -1362,8 +1396,6 @@ def deploy_daemon_units(
         sidecar_ids=sc_ids,
         limit_core_infinity=ctx.limit_core_infinity,
     )
-    call_throws(ctx, ['systemctl', 'daemon-reload'])
-    restart_deployed_daemon(ctx, ident, enable, start)
 
 
 def restart_deployed_daemon(
@@ -4261,6 +4293,8 @@ def command_adopt_ceph(ctx, daemon_type, daemon_id, fsid):
     logger.info('Creating new units...')
     make_var_run(ctx, fsid, uid, gid)
     ident = DaemonIdentity(fsid, daemon_type, daemon_id)
+    enable = True  # unconditionally enable the new unit
+    start = (state == 'running' or ctx.force_start)
     c = get_container(ctx, ident)
     deploy_daemon_units(
         ctx,
@@ -4268,9 +4302,16 @@ def command_adopt_ceph(ctx, daemon_type, daemon_id, fsid):
         uid,
         gid,
         c,
-        enable=True,  # unconditionally enable the new unit
-        start=(state == 'running' or ctx.force_start),
+        enable=enable,
+        start=start,
         osd_fsid=osd_fsid,
+    )
+    call_throws(ctx, ['systemctl', 'daemon-reload'])
+    restart_deployed_daemon(
+        ctx,
+        ident,
+        enable=enable,
+        start=start
     )
     update_firewalld(ctx, daemon_form_create(ctx, ident))
 
