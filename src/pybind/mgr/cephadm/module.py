@@ -3875,6 +3875,30 @@ Then run the following:
                 )
         return cert_warning
 
+    def _is_adding_nvmeof_group_to_existing_service(self, nvmeof_spec: NvmeofServiceSpec) -> bool:
+        """
+        Check whether this spec is assigning a group to an existing NVMe-oF
+        service that does not have a group yet.
+
+        This allows an existing service to keep its current service_id while adding
+        a group for the first time. New services and services that already have a
+        group must still follow the normal service_id/group validation.
+        """
+        existing_spec = self.spec_store.active_specs.get(nvmeof_spec.service_name())
+        if existing_spec is None:
+            return False
+
+        if existing_spec.service_type != 'nvmeof':
+            return False
+
+        existing_nvmeof_spec = cast(NvmeofServiceSpec, existing_spec)
+
+        return (
+            existing_nvmeof_spec.service_id == nvmeof_spec.service_id
+            and not existing_nvmeof_spec.group
+            and bool(nvmeof_spec.group)
+        )
+
     def _apply_service_spec(self, spec: ServiceSpec) -> str:
         if spec.placement.is_empty():
             # fill in default placement
@@ -3932,11 +3956,13 @@ Then run the following:
             except OrchestratorError as e:
                 self.log.debug(f"{e}")
                 raise
-            nvmeof_spec = cast(NvmeofServiceSpec, spec)
             assert nvmeof_spec.service_id is not None  # for mypy
             if nvmeof_spec.group and not nvmeof_spec.service_id.endswith(nvmeof_spec.group):
-                raise OrchestratorError("The 'nvmeof' service id/name must end with '.<nvmeof-group-name>'. Found "
-                                        f"group name '{nvmeof_spec.group}' and service id '{nvmeof_spec.service_id}'")
+                if not self._is_adding_nvmeof_group_to_existing_service(nvmeof_spec):
+                    raise OrchestratorError(
+                        "The 'nvmeof' service id/name must end with '.<nvmeof-group-name>'. Found "
+                        f"group name '{nvmeof_spec.group}' and service id '{nvmeof_spec.service_id}'"
+                    )
             for sspec in [s.spec for s in self.spec_store.get_by_service_type('nvmeof')]:
                 nspec = cast(NvmeofServiceSpec, sspec)
                 if nvmeof_spec.group == nspec.group and nvmeof_spec.service_id != nspec.service_id:
