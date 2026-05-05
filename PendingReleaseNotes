@@ -21,7 +21,7 @@
     it must be explicitly loaded in the configuration file or code (see https://github.com/openssl/openssl/blob/master/README-PROVIDERS.md).
 * RGW: Fixed bucket notification events so the 'x_amz_request_id' in NotificationEvent now matches the 'x_amz_request_id' returned by the corresponding S3 operation.
 
-* DASHBOARD: Introduces a new landing page - "Overview". This revamps UX and adds more information in the landing page - overall cluster health, health checks, resilency panel (showing active/clean Pgs status), total and used raw capacity, alerts, capacity breakdown by object, file and block and performance charts - throughput, latency and IOPS. This renames teh landing page from "Dashboard" to "Overview"
+* DASHBOARD: Introduces a new landing page - "Overview". This revamps UX and adds more information in the landing page - overall cluster health, health checks, resilency panel (showing PG status, active/clean percent), total and used raw capacity, alerts, capacity breakdown by object, file and block and performance charts - throughput, latency and IOPS. This renames the landing page from "Dashboard" to "Overview"
 * DASHBOARD: Removed the older landing page which was deprecated in Quincy.
   Admins can no longer enable the older, deprecated landing page layout by
   adjusting FEATURE_TOGGLE_DASHBOARD.
