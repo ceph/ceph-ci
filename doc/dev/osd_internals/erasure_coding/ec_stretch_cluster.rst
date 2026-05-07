@@ -247,8 +247,7 @@ These parameters are intended for advanced users and offer finer control over th
 
 **--min_size**
   - *Definition*: The minimum number of shards required to serve I/O within a zone.
-  - *Format*: Now always specified as a target range: ``1-<num replicas>`` for replica pools, 
-              or ``<num data shards>-<num data shards>+<num coding shards>`` for EC pools.
+  - *Note*: The value should be within allowed specified ranges. For replica pools this range is ``1-<num replicas>``, for EC pools this is ``<num data shards>-<num data shards>+<num coding shards>``.
 
 **--crush_rule**
   - *Definition*: Use this CRUSH rule, instead of an auto-generated rule. 
