@@ -64,15 +64,11 @@ public:
   tcache(_tcache),
   technique(_technique)
   {
-    flags = FLAG_EC_PLUGIN_PARTIAL_READ_OPTIMIZATION |
+    flags = FLAG_EC_PLUGIN_OPTIMIZED_SUPPORTED |
+            FLAG_EC_PLUGIN_PARTIAL_READ_OPTIMIZATION |
             FLAG_EC_PLUGIN_PARTIAL_WRITE_OPTIMIZATION |
             FLAG_EC_PLUGIN_ZERO_INPUT_ZERO_OUTPUT_OPTIMIZATION |
             FLAG_EC_PLUGIN_PARITY_DELTA_OPTIMIZATION;
-
-    if (technique == "reed_sol_van"sv ||
-        technique == "default"sv) {
-      flags |= FLAG_EC_PLUGIN_OPTIMIZED_SUPPORTED;
-    }
   }
 
   

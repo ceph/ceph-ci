@@ -2708,7 +2708,7 @@ options:
   level: advanced
   desc: Control whether to create new erasure coded pools with EC optimizations turned on by default.
   fmt_desc: Set the ``allow_ec_optimizations`` flag on new erasure coded pools.
-  default: false
+  default: true
   services:
   - mon
   with_legacy: true
