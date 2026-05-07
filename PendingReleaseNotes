@@ -294,6 +294,7 @@
 * Dashboard: RGW Topics and Bucket Notification Management
 * Dashboard: RGW granular bucket replication
 * Dashboard: SMB monitoring and management
+* Dashboard: `ceph dashboard sso enable oauth2` checks for oauth2-proxy service for SSO enablement.  If the `oauth2-proxy` service goes down, cephadm will automatically disable Dashboard OAuth2 SSO.
 * Monitoring: New monitoring Dashboards for Application, NVMe, CephFS, and SMB Overview
 * RGW: Introduce the `rgw_usage_log_key_transition` configuration option to handle
   the co-existence of old and new usage log keys. This option is enabled by default
