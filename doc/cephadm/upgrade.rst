@@ -112,16 +112,15 @@ This process uses the ceph ``osd ok-to-upgrade`` command.
 
 Requirements:
 
-* For OSD-only upgrades, pass both ``--crush_bucket_type`` and ``--crush_bucket_name``.
-  Supported types today are ``host``, ``rack``, and ``chassis``.
+* For OSD-only upgrades, pass both ``--crush_bucket_type`` and ``--crush_bucket_name``
+  and ``--daemon-types osd`` only. Supported types today are ``host``, ``rack``,
+  and ``chassis``.
 * The Monitor's ``osd ok-to-upgrade`` expects the target **short** Ceph version
   (same shape as ``ceph_version_short`` in ``ceph osd metadata``).
 * If the Monitors indicate to cephadm that no OSDs in the selected CRUSH bucket
   are okay to upgrade, cephadm will log details and then retry the operation.
-  If the bucket parameters for a ceph ``osd ok-to-upgrade`` upgrade are not provided,
+*  If the bucket parameters for a ceph ``osd ok-to-upgrade`` upgrade are not provided,
   cephadm will fall back to the default ceph osd ok-to-stop gate for OSD upgrades.
-* If bucket parameters are not provided, cephadm will fall back to ``osd ok-to-stop``
-  for OSD upgrades.
 * Bucket-scope upgrades apply only to OSDs. CRUSH buckets do not influence upgrades
   of other daemon types, for example Monitors, Managers, and MDSes.
 

@@ -300,7 +300,7 @@ class CephadmUpgrade:
     def _upgrade_status_osd_bucket_scope_active(self) -> bool:
         """True when upgrade state selects OSD bucket scope"""
         st = self.upgrade_state
-        return bool(st and st.crush_bucket_name)
+        return bool(st and st.crush_bucket_name and st.crush_bucket_type)
 
     def upgrade_status(self) -> orchestrator.UpgradeStatusSpec:
         r = orchestrator.UpgradeStatusSpec()
@@ -325,8 +325,6 @@ class CephadmUpgrade:
                     which_str += f' on host(s) {",".join(self.upgrade_state.hosts)}'
             elif self.upgrade_state.hosts is not None:
                 which_str = f'Upgrading all daemons on host(s) {",".join(self.upgrade_state.hosts)}'
-            elif osd_bucket_scope:
-                which_str = 'Upgrading all daemon types on all hosts (OSDs only in bucket scope)'
             else:
                 which_str = 'Upgrading all daemon types on all hosts'
             if self.upgrade_state.total_count is not None and self.upgrade_state.remaining_count is not None:
@@ -489,17 +487,6 @@ class CephadmUpgrade:
             raise OrchestratorError(
                 f'Supported bucket types for OSD upgrade are: {allowed} (specified: {crush_bucket_type!r})')
 
-        osd_in_upgrade_scope = (
-            daemon_types is None
-            or any(
-                (dt or '').strip().lower() == 'osd'
-                for dt in daemon_types
-            )
-        )
-        if not osd_in_upgrade_scope:
-            raise OrchestratorError(
-                'Bucket parameters for OSD upgrade require --daemon-types to include "osd"')
-
         single_bucket_name = (
             ',' not in bucket_name
             and len(bucket_name.split()) == 1
@@ -508,6 +495,15 @@ class CephadmUpgrade:
         if not single_bucket_name:
             raise OrchestratorError(
                 'Invalid --crush_bucket_name: use a single name token without commas')
+
+        osd_only = (
+            daemon_types is not None
+            and len(daemon_types) == 1
+            and (daemon_types[0] or '').strip().lower() == 'osd'
+        )
+        if not osd_only:
+            raise OrchestratorError(
+                'Bucket parameters for OSD upgrade require --daemon-types to be "osd"')
 
     @staticmethod
     def is_mon_error_for_invalid_bucket(err: MonCommandFailed) -> bool:

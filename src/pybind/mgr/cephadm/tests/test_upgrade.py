@@ -60,6 +60,23 @@ def test_upgrade_start_hosts_mutually_exclusive_with_bucket(cephadm_module: Ceph
 
 
 @mock.patch("cephadm.serve.CephadmServe._run_cephadm", _run_cephadm('{}'))
+def test_upgrade_start_services_mutually_exclusive_with_bucket(cephadm_module: CephadmOrchestrator):
+    with with_host(cephadm_module, 'test'):
+        with with_host(cephadm_module, 'test2'):
+            with with_service(cephadm_module, ServiceSpec('mgr', placement=PlacementSpec(count=2)), status_running=True):
+                with pytest.raises(OrchestratorError) as err:
+                    cephadm_module.upgrade_start(
+                        'image_id', None,
+                        services=['mgr'],
+                        bucket_type='rack',
+                        bucket_name='rack-a',
+                    )
+                assert str(err.value) == (
+                    '--services cannot be combined with --crush_bucket_type or '
+                    '--crush_bucket_name')
+
+
+@mock.patch("cephadm.serve.CephadmServe._run_cephadm", _run_cephadm('{}'))
 def test_upgrade_start_offline_hosts(cephadm_module: CephadmOrchestrator):
     with with_host(cephadm_module, 'test'):
         with with_host(cephadm_module, 'test2'):
@@ -283,8 +300,7 @@ def test_upgrade_status_which_full_cluster_with_crush_bucket(cephadm_module: Cep
     )
     with mock.patch.object(cephadm_module.upgrade, '_get_upgrade_info', return_value=('0/0', [])):
         status = wait(cephadm_module, cephadm_module.upgrade_status())
-    assert status.which == (
-        'Upgrading all daemon types on all hosts (OSDs only in bucket scope)')
+    assert status.which == 'Upgrading all daemon types on all hosts'
 
 
 def test_parse_ok_to_upgrade_mon_json_nested_and_flat():
@@ -522,13 +538,16 @@ def test_validate_failure_domain_upgrade_options_multi_token_name(cephadm_module
 
 
 def test_validate_failure_domain_upgrade_options_daemon_types(cephadm_module: CephadmOrchestrator):
-    cephadm_module.upgrade._validate_failure_domain_upgrade_options(
-        'rack', 'rack-a', None)
-    cephadm_module.upgrade._validate_failure_domain_upgrade_options(
-        'rack', 'rack-a', ['osd', 'mds'])
-    cephadm_module.upgrade._validate_failure_domain_upgrade_options(
-        'rack', 'rack-a', ['mgr', 'mon', 'osd'])
-    osd_msg = 'Bucket parameters for OSD upgrade require --daemon-types to include "osd"'
+    osd_msg = 'Bucket parameters for OSD upgrade require --daemon-types to be "osd"'
+    with pytest.raises(OrchestratorError):
+        cephadm_module.upgrade._validate_failure_domain_upgrade_options(
+            'rack', 'rack-a', None)
+    with pytest.raises(OrchestratorError):
+        cephadm_module.upgrade._validate_failure_domain_upgrade_options(
+            'rack', 'rack-a', ['osd', 'mds'])
+    with pytest.raises(OrchestratorError):
+        cephadm_module.upgrade._validate_failure_domain_upgrade_options(
+            'rack', 'rack-a', ['mgr', 'mon', 'osd'])
     with pytest.raises(OrchestratorError) as err:
         cephadm_module.upgrade._validate_failure_domain_upgrade_options(
             'rack', 'rack-a', ['mgr', 'mon'])
