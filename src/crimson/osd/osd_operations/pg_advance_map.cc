@@ -71,6 +71,12 @@ seastar::future<> PGAdvanceMap::start()
   return enter_stage<>(
     peering_pp(*pg).process
   ).then([this, FNAME] {
+    // pg may have been deleted while this op was queued; see PG::do_delete_work.
+    if (pg->is_deleted()) {
+      DEBUG("{}: pg is deleted, skipping advance", *this);
+      return seastar::now();
+    }
+
     /*
      * PGAdvanceMap is scheduled at pg creation and when
      * broadcasting new osdmaps to pgs. We are not able to serialize

@@ -507,6 +507,17 @@ PG::do_delete_work(ceph::os::Transaction &t, ghobject_t _next)
     t.remove(coll_ref->get_cid(), pgid.make_snapmapper_oid());
     t.remove(coll_ref->get_cid(), pgmeta_oid);
     t.remove_collection(coll_ref->get_cid());
+    /*
+     * Mark the PG as fully deleted *before* dispatching the final
+     * RMCOLL transaction.  A PGAdvanceMap may already have been queued
+     * (with a Ref<PG>) by an earlier broadcast_map_to_pgs while this
+     * PG was still in pg_map, and is now sitting behind these
+     * DeleteSome events on the peering pipeline.  Setting the deleted
+     * flag now lets that queued PGAdvanceMap detect the situation and
+     * skip itself instead of issuing ops on a collection that is
+     * about to disappear.
+     */
+    peering_state.set_delete_complete();
     (void) crimson::os::with_store_do_transaction(
       shard_services.get_store(store_index),
       coll_ref,
