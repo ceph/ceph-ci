@@ -4454,6 +4454,10 @@ def command_check_host(ctx: CephadmContext) -> None:
 ##################################
 
 
+def command_check_online(ctx: CephadmContext) -> int:
+    return 0
+
+
 def command_prepare_host(ctx: CephadmContext) -> None:
     logger.info('Verifying podman|docker is present...')
     pkg = None
@@ -5602,6 +5606,10 @@ def _get_parser():
         '--expect-hostname',
         help='Check that hostname matches an expected value')
 
+    parser_check_online = subparsers.add_parser(
+        'check-online', help='return true to indicate host is running')
+    parser_check_online.set_defaults(func=command_check_online)
+
     parser_prepare_host = subparsers.add_parser(
         'prepare-host', help='prepare a host for cephadm use')
     parser_prepare_host.set_defaults(func=command_prepare_host)
@@ -5837,6 +5845,7 @@ def main() -> None:
         if ctx.func not in \
                 [
                     command_check_host,
+                    command_check_online,
                     command_prepare_host,
                     command_add_repo,
                     command_rm_repo,
