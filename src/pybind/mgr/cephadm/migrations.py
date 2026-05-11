@@ -17,7 +17,7 @@ from orchestrator import OrchestratorError, DaemonDescription
 if TYPE_CHECKING:
     from .module import CephadmOrchestrator
 
-LAST_MIGRATION = 11
+LAST_MIGRATION = 12
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +130,11 @@ class Migrations:
             logger.info('Running migration 10 -> 11')
             if self.migrate_10_11():
                 self.set(11)
+
+        if self.mgr.migration_current == 11:
+            logger.info('Running migration 11 -> 12')
+            if self.migrate_11_12():
+                self.set(12)
 
     def migrate_0_1(self) -> bool:
         """
@@ -588,6 +593,31 @@ class Migrations:
             return True
         except Exception as e:
             logger.error('Failed to update NFS clusters QoS type from int to str: %s', e)
+            return False
+
+    def migrate_11_12(self) -> bool:
+        """
+        Migration 11 -> 12
+        Update NFS client auth capabilities to include MDS 'allow all' permissions
+        required for KMIP-based encryption (BYOK) support.
+        """
+        from nfs.cluster import update_nfs_client_caps
+
+        logger.info('Running migration 11 -> 12: Updating NFS client permissions for KMIP support')
+
+        service_specs = self.mgr.spec_store.get_specs_by_type('nfs')
+        if not service_specs:
+            logger.info('No NFS services found, migration not needed')
+            return True
+
+        try:
+            for service_name, spec in service_specs.items():
+                assert spec.service_id
+                update_nfs_client_caps(self.mgr, spec.service_id)
+            logger.info(f'Migration 11->12: Updated {len(service_specs)} NFS services')
+            return True
+        except Exception as e:
+            logger.error(f'Migration 11->12 failed: {e}')
             return False
 
 
