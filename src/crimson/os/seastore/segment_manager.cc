@@ -44,12 +44,9 @@ SegmentManager::get_segment_manager(
   INFO("Found {} zones.", nr_zones);
   if (nr_zones != 0) {
     co_return std::make_unique<segment_manager::zbd::ZBDSegmentManager>(device + "/block");
-  } else {
-    co_return std::make_unique<segment_manager::block::BlockSegmentManager>(device + "/block", dtype);
   }
-#else
-  co_return std::make_unique<segment_manager::block::BlockSegmentManager>(device + "/block", dtype);
 #endif
+  co_return std::make_unique<segment_manager::block::BlockSegmentManager>(device + "/block", dtype);
 }
 
 } // namespace crimson::os::seastore
