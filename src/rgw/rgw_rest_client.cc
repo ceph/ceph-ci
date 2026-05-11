@@ -1027,10 +1027,12 @@ int RGWHTTPStreamRWRequest::handle_header(const string& name, const string& val,
       return -EINVAL;
     }
 
-    cb->set_extra_data_len(len);
+    if (cb) {
+      cb->set_extra_data_len(len);
+    }
   }
 
-  if (name == "X_AMZ_SERVER_SIDE_ENCRYPTION" && val == "AES256") {
+  if (cb && name == "X_AMZ_SERVER_SIDE_ENCRYPTION" && val == "AES256") {
     cb->make_sse_s3_key(pause);
   }
 
