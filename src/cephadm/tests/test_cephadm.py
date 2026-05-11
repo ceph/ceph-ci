@@ -2690,6 +2690,70 @@ class TestInspectImage:
         assert out['redhat_storage_release'].startswith('Red Hat Ceph Storage')
 
 
+class TestLicenseLanguage:
+    def test_license_basename_suffix(self):
+        assert _cephadm._license_basename_from_language('en') == 'LA_en'
+        assert _cephadm._license_basename_from_language('zh_TW') == 'LA_zh_TW'
+        assert _cephadm._license_basename_from_language('  de  ') == 'LA_de'
+
+    def test_license_basename_rejects_la_prefix(self):
+        with pytest.raises(_cephadm.Error, match='part after LA_'):
+            _cephadm._license_basename_from_language('LA_en')
+
+    def test_license_basename_rejects_empty(self):
+        with pytest.raises(_cephadm.Error, match='must not be empty'):
+            _cephadm._license_basename_from_language('')
+        with pytest.raises(_cephadm.Error, match='must not be empty'):
+            _cephadm._license_basename_from_language('   ')
+
+    def test_license_basename_rejects_invalid_chars(self):
+        with pytest.raises(_cephadm.Error, match='Invalid license language'):
+            _cephadm._license_basename_from_language('en;rm')
+
+    @mock.patch('cephadm.CephContainer')
+    def test_pull_license_from_image_uses_container(self, mock_cc):
+        mock_cc.return_value.run.return_value = 'IBM license text\n'
+        with with_cephadm_ctx(['--image', 'registry/ceph:v1', 'version']) as ctx:
+            out = _cephadm._pull_license_from_image(ctx, 'registry/ceph:v1', 'fr')
+        assert out == 'IBM license text\n'
+        mock_cc.assert_called_once()
+        _args, kwargs = mock_cc.call_args
+        assert kwargs['envs'] == ['LICENSE_BASENAME=LA_fr']
+        assert kwargs['entrypoint'] == '/bin/sh'
+        assert _args[1] == 'registry/ceph:v1'
+
+    @mock.patch('cephadm.CephContainer')
+    def test_pull_license_from_image_wraps_runtime_error(self, mock_cc):
+        mock_cc.return_value.run.side_effect = RuntimeError('container failed')
+        with with_cephadm_ctx(['--image', 'registry/ceph:v1', 'version']) as ctx:
+            with pytest.raises(_cephadm.Error, match='Failed to read IBM license file LA_en'):
+                _cephadm._pull_license_from_image(ctx, 'registry/ceph:v1', 'en')
+
+    @mock.patch('cephadm.CephContainer')
+    @mock.patch('cephadm._pull_image')
+    def test_command_display_license_plain(self, _pull_image, mock_cc, capsys):
+        mock_cc.return_value.run.return_value = 'plain license\n'
+        cmd = ['--image', 'registry/ceph:v1', 'display-license', '--license-language', 'de']
+        with with_cephadm_ctx(cmd) as ctx:
+            rc = _cephadm.command_display_license(ctx)
+        assert rc == 0
+        assert capsys.readouterr().out == 'plain license\n'
+        _pull_image.assert_called_once_with(ctx, 'registry/ceph:v1', False)
+        _args, kwargs = mock_cc.call_args
+        assert kwargs['envs'] == ['LICENSE_BASENAME=LA_de']
+
+    @mock.patch('cephadm.CephContainer')
+    @mock.patch('cephadm._pull_image')
+    def test_command_display_license_json(self, _pull_image, mock_cc, capsys):
+        mock_cc.return_value.run.return_value = 'line1\nline2\n'
+        cmd = ['--image', 'registry/ceph:v1', 'display-license', '--json']
+        with with_cephadm_ctx(cmd) as ctx:
+            rc = _cephadm.command_display_license(ctx)
+        assert rc == 0
+        blob = json.loads(capsys.readouterr().out)
+        assert blob == {'license': 'line1\nline2\n'}
+
+
 class TestApplySpec:
 
     def test_extract_host_info_from_applied_spec(self, cephadm_fs):

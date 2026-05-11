@@ -2322,7 +2322,9 @@ class CephadmServe:
         self.log.debug(f'image {image_name} -> {r}')
         return r
 
-    async def _get_container_ibm_license(self, image_name: str) -> str:
+    async def _get_container_ibm_license(
+        self, image_name: str, license_language: str = 'en'
+    ) -> str:
         # select host to run this on
         host = None
         # default to active mgr host
@@ -2344,7 +2346,7 @@ class CephadmServe:
         if self.mgr.cache.host_needs_registry_login(host) and self.mgr.registry_url:
             await self._registry_login(host, json.loads(str(self.mgr.get_store('registry_credentials'))))
 
-        display_license_args = ['--json']
+        display_license_args = ['--json', '--license-language', license_language]
         if self.mgr.registry_insecure:
             display_license_args.append('--insecure')
 

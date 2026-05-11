@@ -2651,11 +2651,11 @@ Usage:
         return HandleCommandResult(stdout=completion.result_str())
 
     @_cli_read_command('orch display-license')
-    def _display_ibm_license(self, image: str) -> HandleCommandResult:
+    def _display_ibm_license(self, image: str, license_language: str = 'en') -> HandleCommandResult:
         """
         Fetch and display the IBM license for a given container image
         """
-        completion = self.display_license(image)
+        completion = self.display_license(image, license_language)
         raise_if_exception(completion)
         return HandleCommandResult(stdout=completion.result_str())
 
