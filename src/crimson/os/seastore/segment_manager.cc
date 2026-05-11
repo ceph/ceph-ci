@@ -39,7 +39,8 @@ SegmentManager::get_segment_manager(
 	seastar::open_flags::rw);
   ceph_assert(file);
   uint32_t nr_zones = 0;
-  [[maybe_unused]] auto ret = co_await file.ioctl(BLKGETNRZONES, &nr_zones);
+  auto ret = co_await file.ioctl(BLKGETNRZONES, &nr_zones);
+  ceph_assert(ret == 0);
   INFO("Found {} zones.", nr_zones);
   if (nr_zones != 0) {
     co_return std::make_unique<segment_manager::zbd::ZBDSegmentManager>(device + "/block");
