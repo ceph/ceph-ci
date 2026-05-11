@@ -97,6 +97,81 @@ def update_qos_type_for_cluster(mgr: 'MgrModule', cluster_id: str) -> bool:
         raise
 
 
+def update_nfs_client_caps(mgr: 'MgrModule', cluster_id: str) -> bool:
+    """
+    Update NFS export user auth capabilities to include MDS 'allow all' permissions.
+    This function is used during Ceph upgrade (cephadm migration 11 -> 12) to
+    update MDS capabilities from 'allow rw' to 'allow all' for KMIP-based
+    encryption (BYOK) support.
+    """
+    import json
+
+    try:
+        # Get all auth entities
+        ret, out, err = mgr.mon_command({
+            'prefix': 'auth ls',
+            'format': 'json',
+        })
+
+        if ret != 0:
+            log.error('Could not list auth entities: %s', err)
+            return False
+
+        auth_list = json.loads(out)
+        updated_count = 0
+
+        # Find all NFS export users for this cluster
+        for auth_entry in auth_list.get('auth_dump', []):
+            entity = auth_entry.get('entity', '')
+
+            if not entity.startswith(f'client.nfs.{cluster_id}.'):
+                continue
+
+            caps = auth_entry.get('caps', {})
+            mds_cap = caps.get('mds', '')
+
+            if 'allow all' in mds_cap:
+                log.debug('%s already has correct MDS permissions', entity)
+                continue
+
+            if not mds_cap:
+                log.debug('%s has no MDS cap, skipping', entity)
+                continue
+
+            # Update if has 'allow rw'
+            if 'allow rw' in mds_cap:
+                path_match = re.search(r'path=([^\s,]+)', mds_cap)
+                path = path_match.group(1) if path_match else '/volumes'
+
+                # Update capabilities
+                ret, out, err = mgr.mon_command({
+                    'prefix': 'auth caps',
+                    'entity': entity,
+                    'caps': [
+                        'mon', caps.get('mon', 'allow r'),
+                        'osd', caps.get('osd', ''),
+                        'mds', f'allow all path={path}'
+                    ],
+                })
+
+                if ret == 0:
+                    log.info('Updated export user %s: mds=allow all path=%s', entity, path)
+                    updated_count += 1
+                else:
+                    log.error('Failed to update caps for %s: %s', entity, err)
+
+        if updated_count > 0:
+            log.info('Updated %d NFS export users for cluster %s', updated_count, cluster_id)
+        else:
+            log.debug('No NFS export users needed updates for cluster %s', cluster_id)
+
+        return True
+
+    except Exception as e:
+        log.exception('Error updating NFS client caps for %s: %s', cluster_id, e)
+        return False
+
+
 def resolve_ip(hostname: str) -> str:
     try:
         r = socket.getaddrinfo(hostname, None, flags=socket.AI_CANONNAME,
