@@ -493,7 +493,6 @@ Architecture: any
 Depends: ceph-base (= ${binary:Version}),
          ${misc:Depends},
          ${shlibs:Depends},
-         libprotobuf23,
 Recommends: ceph-volume (= ${binary:Version}),
             nvme-cli,
             smartmontools,
