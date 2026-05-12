@@ -45,7 +45,6 @@ import { Permissions } from '~/app/shared/models/permissions';
 import { AuthStorageService } from '~/app/shared/services/auth-storage.service';
 import { CallHomeService } from '~/app/shared/api/call-home.service';
 
-
 const SECONDS_PER_HOUR = 3600;
 const SECONDS_PER_DAY = 86400;
 const TREND_DAYS = 7;
@@ -198,17 +197,19 @@ export class OverviewComponent {
   );
 
   readonly callHomeEnabledWarning$: Observable<boolean> = this.healthData$.pipe(
-    map((data: HealthSnapshotMap) => 'CALL_HOME_ENABLED_AUTOMATICALLY' in (data.health?.checks ?? {})),
+    map(
+      (data: HealthSnapshotMap) => 'CALL_HOME_ENABLED_AUTOMATICALLY' in (data.health?.checks ?? {})
+    ),
     shareReplay({ bufferSize: 1, refCount: true })
   );
 
   readonly callHomeStatus$: Observable<any> = this.refreshIntervalObs(() =>
-    this.callHomeService.getCallHomeStatus().pipe(
-      switchMap((status: boolean) => status ? this.callHomeService.status() : of(null))
-    )
-  ).pipe(
-    shareReplay({ bufferSize: 1, refCount: true })
-  );
+    this.permissions?.configOpt?.read && this.environment.build === 'ibm'
+      ? this.callHomeService
+          .getCallHomeStatus()
+          .pipe(switchMap((status: boolean) => (status ? this.callHomeService.status() : of(null))))
+      : of(null)
+  ).pipe(shareReplay({ bufferSize: 1, refCount: true }));
 
   readonly averageConsumption$ = this.refreshIntervalObs(() =>
     this.overviewStorageService.getAverageConsumption()

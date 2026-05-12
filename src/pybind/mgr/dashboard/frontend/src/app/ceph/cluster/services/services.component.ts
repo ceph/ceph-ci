@@ -40,10 +40,7 @@ const BASE_URL = 'services';
   selector: 'cd-services',
   templateUrl: './services.component.html',
   styleUrls: ['./services.component.scss'],
-  providers: [
-    CdDatePipe,
-    { provide: URLBuilderService, useValue: new URLBuilderService(BASE_URL) }
-  ]
+  providers: [CdDatePipe, { provide: URLBuilderService, useValue: new URLBuilderService(BASE_URL) }]
 })
 export class ServicesComponent extends ListWithDetails implements OnChanges, OnInit {
   @ViewChild(TableComponent, { static: true })

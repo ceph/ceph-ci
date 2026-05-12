@@ -256,7 +256,7 @@ export function getHealthChecksAndIncidents(checksObj: Record<string, HealthChec
     checks.push({
       name,
       description: check?.summary?.message ?? '',
-      icon: HealthIconMap[check?.severity] ?? ''
+      icon: HealthIconMap[check?.severity as keyof typeof HealthIconMap] ?? ''
     });
   }
 

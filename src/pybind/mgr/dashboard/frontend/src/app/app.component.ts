@@ -35,7 +35,6 @@ export class AppComponent {
       projectName = 'Red Hat Ceph Storage';
       favicon.setAttribute('href', 'assets/RedHat_favicon_0319.svg');
     } else if (environment.build === 'ibm') {
-
       projectName = 'IBM Storage Ceph';
       favicon.setAttribute('href', 'assets/StorageCeph_favicon.svg');
     }

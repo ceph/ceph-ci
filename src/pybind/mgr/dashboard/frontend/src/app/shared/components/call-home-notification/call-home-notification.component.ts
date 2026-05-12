@@ -43,14 +43,11 @@ export class CallHomeNotificationComponent implements OnInit {
   }
 
   openModal(): void {
-    this.modalRef = this.cdsModalService.show(
-      CallHomeModalComponent,
-      {
-        submitAction: () => {
-          this.modalRef.close();
-        }
+    this.modalRef = this.cdsModalService.show(CallHomeModalComponent, {
+      submitAction: () => {
+        this.modalRef.close();
       }
-    );
+    });
   }
 
   onDismissedActivate(): void {
@@ -74,10 +71,7 @@ export class CallHomeNotificationComponent implements OnInit {
     this.callHomeService.confirmAutoEnabled().subscribe({
       next: () => {
         this.callHomeNotificationService.hide();
-        this.notificationService.show(
-          NotificationType.success,
-          $localize`Call Home acknowledged`
-        );
+        this.notificationService.show(NotificationType.success, $localize`Call Home acknowledged`);
       },
       error: (err) => {
         this.notificationService.show(

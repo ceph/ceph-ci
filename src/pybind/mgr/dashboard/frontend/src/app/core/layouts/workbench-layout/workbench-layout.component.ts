@@ -59,11 +59,11 @@ export class WorkbenchLayoutComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
+    this.subs.add(this.summaryService.startPolling());
+    this.subs.add(this.taskManagerService.init(this.summaryService));
     if (this.permissions.configOpt.read) {
       this.subs.add(this.multiClusterService.startPolling());
       this.subs.add(this.multiClusterService.startClusterTokenStatusPolling());
-      this.subs.add(this.summaryService.startPolling());
-      this.subs.add(this.taskManagerService.init(this.summaryService));
 
       if (this.environment.build === 'ibm') {
         this.subs.add(
@@ -85,7 +85,6 @@ export class WorkbenchLayoutComponent implements OnInit, OnDestroy {
         );
       }
     }
-
 
     this.subs.add(
       this.authStorageService.isPwdDisplayed$.subscribe((isDisplayed) => {

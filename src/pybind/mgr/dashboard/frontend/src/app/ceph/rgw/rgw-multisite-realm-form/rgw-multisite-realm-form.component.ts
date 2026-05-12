@@ -93,7 +93,7 @@ export class RgwMultisiteRealmFormComponent extends BaseModal implements OnInit 
       this.defaultRealmDisabled = true;
     }
     this.docService.subscribeOnce('rgw-multisite', (url: string) => {
-        this.docUrl = url;
+      this.docUrl = url;
     });
     if (this.action === this.actionLabels?.EDIT) {
       this.multisiteRealmForm.get('default_realm').disable();

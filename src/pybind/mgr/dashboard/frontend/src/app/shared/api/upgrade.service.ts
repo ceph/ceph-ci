@@ -69,7 +69,11 @@ export class UpgradeService extends ApiClient {
   }
 
   start(version?: string, image?: string, licenseAccepted: boolean = false) {
-    return this.http.post(`${this.baseURL}/start`, { image: image, version: version, license_accepted: licenseAccepted });
+    return this.http.post(`${this.baseURL}/start`, {
+      image: image,
+      version: version,
+      license_accepted: licenseAccepted
+    });
   }
 
   pause() {

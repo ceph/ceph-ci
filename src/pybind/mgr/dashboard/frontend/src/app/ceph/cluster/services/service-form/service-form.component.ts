@@ -678,13 +678,12 @@ export class ServiceFormComponent extends CdForm implements OnInit {
       });
 
     this.cephServiceService.getKnownTypes().subscribe((resp: Array<string>) => {
-
       // Remove service types:
       // osd       - This is deployed a different way.
       // container - This should only be used in the CLI.
       // nvmeof    - This is only supported for IBM builds.
       this.hiddenServices.push('osd', 'container', 'promtail');
-      if (environment.build !== 'ibm') this.hiddenServices.push('nvmeof')
+      if (environment.build !== 'ibm') this.hiddenServices.push('nvmeof');
       else resp.push('object-browser'); // show object browser only for IBM builds
 
       this.serviceTypes = _.difference(resp, this.hiddenServices).sort();
@@ -933,12 +932,11 @@ export class ServiceFormComponent extends CdForm implements OnInit {
               this.showMgmtGatewayMessage = true;
             });
           }
+        } else if (value === 'object-browser') {
+          this.settingsService.getValues('OBJECT_BROWSER_IMAGE').subscribe((resp: any) => {
+            this.objectBrowserImage = resp.OBJECT_BROWSER_IMAGE;
+          });
         }
-      else if (value === 'object-browser') {
-        this.settingsService.getValues('OBJECT_BROWSER_IMAGE').subscribe((resp: any) => {
-          this.objectBrowserImage = resp.OBJECT_BROWSER_IMAGE;
-        })
-      }
       });
     }
   }
@@ -1561,7 +1559,7 @@ export class ServiceFormComponent extends CdForm implements OnInit {
       dirs = ['CERT_DIR'];
       mounts = {
         CERT_DIR: '/etc/nginx/certs'
-      }
+      };
     }
 
     serviceSpec['service_name'] = serviceName;
@@ -1579,8 +1577,8 @@ export class ServiceFormComponent extends CdForm implements OnInit {
       ],
       volume_mounts: mounts,
       dirs: dirs,
-      files: files,
-    }
+      files: files
+    };
 
     return serviceSpec;
   }

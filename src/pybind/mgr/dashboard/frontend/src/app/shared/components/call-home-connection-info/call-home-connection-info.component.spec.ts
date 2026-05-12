@@ -9,12 +9,11 @@ describe('CallHomeConnectionInfoComponent', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       declarations: [CallHomeConnectionInfoComponent]
-    })
-    .compileComponents();
+    }).compileComponents();
 
     fixture = TestBed.createComponent(CallHomeConnectionInfoComponent);
     component = fixture.componentInstance;
-    component.message = 'sample message'
+    component.message = 'sample message';
     fixture.detectChanges();
   });
 

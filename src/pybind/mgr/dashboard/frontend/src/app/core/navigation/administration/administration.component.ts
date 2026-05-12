@@ -17,7 +17,10 @@ export class AdministrationComponent {
   configOptPermission: Permission;
   environment = environment;
 
-  constructor(private authStorageService: AuthStorageService, private cdsModalService: ModalCdsService) {
+  constructor(
+    private authStorageService: AuthStorageService,
+    private cdsModalService: ModalCdsService
+  ) {
     const permissions = this.authStorageService.getPermissions();
     this.userPermission = permissions.user;
     this.configOptPermission = permissions.configOpt;
