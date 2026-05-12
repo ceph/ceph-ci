@@ -120,6 +120,7 @@ set(librgw_common_srcs
   rgw_rest_client.cc
   rgw_rest_config.cc
   rgw_rest_conn.cc
+  rgw_rest_dedup.cc
   rgw_rest_metadata.cc
   rgw_rest_ratelimit.cc
   rgw_rest_role.cc
@@ -422,6 +423,7 @@ set(rgw_a_srcs
   rgw_realm_watcher.cc
   rgw_rest_config.cc
   rgw_rest_info.cc
+  rgw_rest_dedup.cc
   rgw_rest_metadata.cc
   rgw_rest_ratelimit.cc
   rgw_rest_sts.cc
