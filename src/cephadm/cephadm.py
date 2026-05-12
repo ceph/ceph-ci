@@ -1280,6 +1280,36 @@ def return_deployment_post_unit_files_writing_ctx_attrs(
     return (ident, deployment_type, enable, start, uid, gid, endpoints)
 
 
+def verify_deployment_post_unit_file_writing_ctx_set(
+    ctx: CephadmContext
+) -> bool:
+    # ctx objects for deployment should always have the name attr set
+    if not hasattr(ctx, 'name'):
+        logger.error('Was asked to verify deployment ctx without name attr')
+        return False
+
+    # TODO: generalize this with the other function that handle these settings
+    # instead of just having a list here
+    all_found = True
+    for attr in [
+        '_deployment_ident',
+        '_deployment_type',
+        '_deployment_enable',
+        '_deployment_start',
+        '_deployment_uid',
+        '_deployment_gid',
+        '_deployment_endpoints'
+    ]:
+        if not hasattr(ctx, attr):
+            logger.info(
+                f'Saw deployment ctx without {attr} attribute for daemon '
+                f'{ctx.name}. Cannot continue deploying daemon'
+            )
+            all_found = False
+
+    return all_found
+
+
 def handle_post_writing_unit_files_deployment_actions(
     ctx: CephadmContext,
 ) -> None:
@@ -3581,7 +3611,7 @@ def command_deploy_from(base_ctx: CephadmContext) -> None:
             _common_deploy(ctx)
         except Exception as e:
             # TODO: better rc based on exception?
-            logger.exception(str(e))
+            logger.exception(f'Got exception preparing {ctx.name} for deployment\n{str(e)}')
             rc = -1
         return (ctx.name, rc)
 
@@ -3591,7 +3621,7 @@ def command_deploy_from(base_ctx: CephadmContext) -> None:
             handle_post_writing_unit_files_deployment_actions(ctx)
         except Exception as e:
             # TODO: better rc based on exception?
-            logger.exception(str(e))
+            logger.exception(f'Got exception finishing deployment of {ctx.name}\n{str(e)}')
             rc = -1
         return (ctx.name, rc)
 
@@ -3624,10 +3654,12 @@ def command_deploy_from(base_ctx: CephadmContext) -> None:
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         deploy_futures = {}
-        # only do the next deployment step for daemons that had no errors in the first part
+        # only do the next deployment step for daemons that have all required attrs set
         for deploy_ctx in daemon_ctxs:
-            if ctx._deployment_ident.daemon_name in results and not results[ctx._deployment_ident.daemon_name]:
+            if verify_deployment_post_unit_file_writing_ctx_set(deploy_ctx):
                 deploy_futures[executor.submit(_start_daemons, deploy_ctx)] = deploy_ctx
+            else:
+                results[deploy_ctx.name] = -1
         for future in as_completed(deploy_futures):
             daemon_name, rc = future.result()
             results[daemon_name] = rc
