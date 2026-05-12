@@ -587,12 +587,12 @@ const routes: Routes = [
 ];
 
 if (environment.build !== 'ibm') {
-  routes.forEach(route => {
+  routes.forEach((route) => {
     if (route.children) {
-      route.children.forEach(childRoute => {
+      route.children.forEach((childRoute) => {
         if (childRoute.path === 'cephfs') {
-            const smbIndex = childRoute.children.findIndex(child => child.path === 'smb');
-            childRoute.children.splice(smbIndex, 1);
+          const smbIndex = childRoute.children.findIndex((child) => child.path === 'smb');
+          childRoute.children.splice(smbIndex, 1);
         }
       });
     }

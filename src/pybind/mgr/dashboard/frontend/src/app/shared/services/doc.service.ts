@@ -16,9 +16,7 @@ export class DocService {
   private releaseDataSource = new BehaviorSubject<string>(null);
   releaseData$ = this.releaseDataSource.asObservable();
 
-  constructor(
-    private summaryservice: SummaryService,
-  ) {
+  constructor(private summaryservice: SummaryService) {
     this.summaryservice.subscribeOnce((summary) => {
       const releaseVersion = getVersionAndRelease(summary?.version)?.release;
       this.releaseDataSource.next(releaseVersion);
@@ -28,11 +26,14 @@ export class DocService {
   urlGenerator(section: string, releaseVersion: string = null): string {
     // Sanitization for z release
     const docVersion = releaseVersion?.split('z')?.[0];
-    let sections: {[key: string]: string} = {};
+    let sections: { [key: string]: string } = {};
 
     if (environment.build === 'ibm') {
       // 9.0 introduced newer build (9.9.0.0) and doc format (9.9.0)
-      const ibmDocVersion = parseFloat(docVersion) >= MIN_VER_NEW_IBM_FORMAT ? docVersion?.replace(/\.0$/, ""): docVersion;
+      const ibmDocVersion =
+        parseFloat(docVersion) >= MIN_VER_NEW_IBM_FORMAT
+          ? docVersion?.replace(/\.0$/, '')
+          : docVersion;
       const domain = `https://www.ibm.com/docs/storage-ceph/${ibmDocVersion}?topic=`;
       const domainIBM = `https://www.ibm.com/support/customer/csol/terms/`;
 

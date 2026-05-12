@@ -169,9 +169,9 @@ export const ICON_TYPE = {
   arrowUpRight: 'arrow--up-right',
   inProgress: 'in-progress',
   arrowDown: 'arrow--down',
-  ibmCloudBareMetalServer:'ibm-cloud--bare-metal-server',
-  ibmCloudDedicatedHost:'ibm-cloud--dedicated-host',
-  clusterIcon:'web-services--cluster',
+  ibmCloudBareMetalServer: 'ibm-cloud--bare-metal-server',
+  ibmCloudDedicatedHost: 'ibm-cloud--dedicated-host',
+  clusterIcon: 'web-services--cluster',
   download: 'download',
   cloudMonitoring: 'cloud--monitoring',
   arrowRight: 'arrow--right'

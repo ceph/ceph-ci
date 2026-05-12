@@ -163,18 +163,23 @@ export class DashboardV3Component extends PrometheusListHelper implements OnInit
       );
       this.managedByConfig$ = this.settingsService.getValues('MANAGED_BY_CLUSTERS');
       this.callHomeStatus$ = this.callHomeStatusSubject.pipe(
-        switchMap(() => this.callHomeService.getCallHomeStatus().pipe(
-          switchMap((status: boolean) => {
-            if (status) return this.callHomeService.status()
-            return of(null)
-          })
-        ))
+        switchMap(() =>
+          this.callHomeService.getCallHomeStatus().pipe(
+            switchMap((status: boolean) => {
+              if (status) return this.callHomeService.status();
+              return of(null);
+            })
+          )
+        )
       );
-      this.healthData$ = this.refreshIntervalObs(() =>
-        this.healthService.getHealthSnapshot()
-      ).pipe(shareReplay({ bufferSize: 1, refCount: true }));
+      this.healthData$ = this.refreshIntervalObs(() => this.healthService.getHealthSnapshot()).pipe(
+        shareReplay({ bufferSize: 1, refCount: true })
+      );
       this.callHomeEnabledWarning$ = this.healthData$.pipe(
-        map((data: HealthSnapshotMap) => 'CALL_HOME_ENABLED_AUTOMATICALLY' in (data.health?.checks ?? {})),
+        map(
+          (data: HealthSnapshotMap) =>
+            'CALL_HOME_ENABLED_AUTOMATICALLY' in (data.health?.checks ?? {})
+        ),
         shareReplay({ bufferSize: 1, refCount: true })
       );
     }
@@ -212,7 +217,7 @@ export class DashboardV3Component extends PrometheusListHelper implements OnInit
     });
     this.subs.add(
       this.summaryService.subscribe((summary) => {
-        const {release} = getVersionAndRelease(summary.version);
+        const { release } = getVersionAndRelease(summary.version);
         this.detailsCardData.cephVersion = release;
       })
     );
@@ -287,9 +292,9 @@ export class DashboardV3Component extends PrometheusListHelper implements OnInit
 
   loadInventories() {
     if (!this.healthData$) {
-      this.healthData$ = this.refreshIntervalObs(() =>
-        this.healthService.getHealthSnapshot()
-      ).pipe(shareReplay({ bufferSize: 1, refCount: true }));
+      this.healthData$ = this.refreshIntervalObs(() => this.healthService.getHealthSnapshot()).pipe(
+        shareReplay({ bufferSize: 1, refCount: true })
+      );
     }
     this.healthData$.subscribe({
       next: (data: HealthSnapshotMap) => {

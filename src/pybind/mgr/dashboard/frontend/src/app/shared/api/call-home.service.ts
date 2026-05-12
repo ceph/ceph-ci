@@ -1,17 +1,26 @@
 import { Injectable } from '@angular/core';
-import { Observable } from 'rxjs';
+import { Observable, of } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { MgrModuleService } from './mgr-module.service';
 import { HttpClient } from '@angular/common/http';
 import { ConnectivityStatus } from '../models/call-home.model';
+import { AuthStorageService } from '../services/auth-storage.service';
+import { Permission } from '../models/permissions';
 
 @Injectable({
   providedIn: 'root'
 })
 export class CallHomeService {
   baseURL = 'api/call_home';
+  permissions: Permission;
 
-  constructor(private http: HttpClient, private mgrModuleService: MgrModuleService) {}
+  constructor(
+    private http: HttpClient,
+    private mgrModuleService: MgrModuleService,
+    private authStorageService: AuthStorageService
+  ) {
+    this.permissions = this.authStorageService.getPermissions()?.configOpt;
+  }
 
   list(params: any) {
     return this.http.get<any>(`${this.baseURL}/${params.ibmId}/
@@ -27,18 +36,26 @@ export class CallHomeService {
   }
 
   getCallHomeConfig(): Observable<string> {
-    return this.mgrModuleService
-      .getConfig('dashboard')
-      .pipe(map((config: any) => config.CALL_HOME_REMIND_LATER_ON));
+    if (this.permissions?.read) {
+      return this.mgrModuleService
+        .getConfig('dashboard')
+        .pipe(map((config: any) => config.CALL_HOME_REMIND_LATER_ON));
+    }
+    return of(null);
   }
 
   getCallHomeStatus(): Observable<boolean> {
-    return this.mgrModuleService.list().pipe(
-      map((moduleData: any) => {
-        const callHomeModule = moduleData.find((module: any) => module.name === 'call_home_agent');
-        return callHomeModule ? callHomeModule.enabled : false;
-      })
-    );
+    if (this.permissions?.read) {
+      return this.mgrModuleService.list().pipe(
+        map((moduleData: any) => {
+          const callHomeModule = moduleData.find(
+            (module: any) => module.name === 'call_home_agent'
+          );
+          return callHomeModule ? callHomeModule.enabled : false;
+        })
+      );
+    }
+    return of(false);
   }
 
   downloadReport(type: string) {

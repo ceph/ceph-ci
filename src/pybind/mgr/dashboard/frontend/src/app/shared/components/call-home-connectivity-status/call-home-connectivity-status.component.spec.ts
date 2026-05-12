@@ -12,8 +12,7 @@ describe('CallHomeConnectivityStatusComponent', () => {
     await TestBed.configureTestingModule({
       declarations: [CallHomeConnectivityStatusComponent],
       imports: [SharedModule]
-    })
-    .compileComponents();
+    }).compileComponents();
 
     fixture = TestBed.createComponent(CallHomeConnectivityStatusComponent);
     component = fixture.componentInstance;
@@ -28,7 +27,7 @@ describe('CallHomeConnectivityStatusComponent', () => {
 
   const getElementById = (id: string) => {
     return fixture.debugElement.query(By.css(`#${id}`));
-  }
+  };
 
   it('should create', () => {
     expect(component).toBeTruthy();

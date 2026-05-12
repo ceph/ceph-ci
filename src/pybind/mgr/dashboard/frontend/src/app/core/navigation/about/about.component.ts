@@ -39,7 +39,7 @@ export class AboutComponent extends BaseModal implements OnInit, OnDestroy {
     this.hostAddr = window.location.hostname;
     this.modalVariables = this.setVariables();
     this.subs = this.summaryService.subscribe((summary) => {
-      const {release, version} = getVersionAndRelease(summary.version);
+      const { release, version } = getVersionAndRelease(summary.version);
       this.release = release;
       this.version = version.split(' ')[0];
       this.hostAddr = summary.mgr_host.replace(/(^\w+:|^)\/\//, '').replace(/\/$/, '');

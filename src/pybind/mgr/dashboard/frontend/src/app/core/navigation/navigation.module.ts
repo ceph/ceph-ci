@@ -59,7 +59,6 @@ import VmdkDiskIcon from '@carbon/icons/es/vmdk-disk/20';
 
 import CloseIcon from '@carbon/icons/es/close/16';
 
-
 @NgModule({
   imports: [
     CommonModule,

@@ -102,7 +102,9 @@ export class NvmeofSubsystemsStepTwoComponent implements OnInit, TearsheetStep {
 
   removeHost(removedHost: string) {
     const currentAddedHosts = this.formGroup.get('addedHosts')?.value ?? [];
-    const newHostList = currentAddedHosts.filter((currentHost: string) => currentHost !== removedHost);
+    const newHostList = currentAddedHosts.filter(
+      (currentHost: string) => currentHost !== removedHost
+    );
     this.addedHostsLength = newHostList.length;
     this.formGroup.patchValue({
       addedHosts: newHostList

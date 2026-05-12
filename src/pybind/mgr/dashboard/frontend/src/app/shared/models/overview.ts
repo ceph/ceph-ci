@@ -151,13 +151,13 @@ const PG_STATES = [
   'backfill_wait',
   'remapped',
   'unknown',
-  //PROGRESS
+  // PROGRESS
   'deep',
   'scrubbing'
 ] as const;
 
-//PROGRESS
-const SCRUBBING_STATES = ['deep','scrubbing'];
+// PROGRESS
+const SCRUBBING_STATES = ['deep', 'scrubbing'];
 
 const LABELS: Record<string, string> = {
   scrubbing: 'Scrub',
@@ -256,7 +256,7 @@ export function getHealthChecksAndIncidents(checksObj: Record<string, HealthChec
     checks.push({
       name,
       description: check?.summary?.message ?? '',
-      icon: HealthIconMap[check?.severity as  keyof typeof HealthIconMap] ?? ''
+      icon: HealthIconMap[check?.severity as keyof typeof HealthIconMap] ?? ''
     });
   }
 

@@ -22,7 +22,10 @@ export class StorageInsightsNotificationService implements OnDestroy {
     private authStorageService: AuthStorageService
   ) {
     this.remindLaterOn$ = this.remindLaterOnSource.asObservable();
-    if (this.environment.build === 'ibm' && this.authStorageService.getPermissions().configOpt.read) {
+    if (
+      this.environment.build === 'ibm' &&
+      this.authStorageService.getPermissions().configOpt.read
+    ) {
       this.subscription = of(true)
         .pipe(
           mergeMap(() =>

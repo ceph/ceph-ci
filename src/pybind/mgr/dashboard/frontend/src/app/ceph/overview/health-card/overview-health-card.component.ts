@@ -170,12 +170,12 @@ export class OverviewHealthCardComponent {
     shareReplay({ bufferSize: 1, refCount: true })
   );
 
-  readonly storageInsightsEnabled$: Observable<boolean> = this.storageInsightsService
-    .getStorageInsightsStatus()
-    .pipe(
-      catchError(() => of(false)),
-      shareReplay({ bufferSize: 1, refCount: true })
-    );
+  readonly storageInsightsEnabled$: Observable<
+    boolean
+  > = this.storageInsightsService.getStorageInsightsStatus().pipe(
+    catchError(() => of(false)),
+    shareReplay({ bufferSize: 1, refCount: true })
+  );
 
   readonly sections$: Observable<HwRowVM[][] | null> = this.hardwareRows$.pipe(
     map((rows) => {

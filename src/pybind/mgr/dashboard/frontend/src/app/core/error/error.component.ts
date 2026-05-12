@@ -96,7 +96,7 @@ export class ErrorComponent implements OnDestroy, OnInit {
       this.component = history.state.component;
       this.docService.subscribeOnce(this.section, (url: string) => {
         this.docUrl = url;
-    });
+      });
     } catch (error) {
       this.router.navigate(['/error']);
     }

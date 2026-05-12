@@ -68,7 +68,9 @@ export class StorageInsightsModalComponent extends CdForm implements OnInit {
       lastName: new FormControl({ value: null, disabled: this.callHomeEnabled }, [
         Validators.required
       ]),
-      email: new FormControl({ value: null, disabled: this.callHomeEnabled }, [Validators.required]),
+      email: new FormControl({ value: null, disabled: this.callHomeEnabled }, [
+        Validators.required
+      ]),
       ownerTenantId: new FormControl({ value: null, disabled: true })
     });
   }

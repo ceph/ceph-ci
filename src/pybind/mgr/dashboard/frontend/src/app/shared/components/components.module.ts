@@ -179,7 +179,7 @@ import CloudMonitoring16 from '@carbon/icons/es/cloud--monitoring/16';
     LayerModule,
     LayoutModule,
     TilesModule,
-    ThemeModule,
+    ThemeModule
   ],
   declarations: [
     SparklineComponent,
