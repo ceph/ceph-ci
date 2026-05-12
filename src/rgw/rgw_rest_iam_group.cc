@@ -163,7 +163,7 @@ void RGWCreateGroup_IAM::execute(optional_yield y)
   {
     // check the current group count against account limit
     RGWAccountInfo account;
-    rgw::sal::Attrs attrs;
+    rgw::sal::Attrs attrs; // unused
     RGWObjVersionTracker objv; // unused
     op_ret = driver->load_account_by_id(this, y, info.account_id,
                                         account, attrs, objv);

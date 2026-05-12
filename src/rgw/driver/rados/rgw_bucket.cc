@@ -1905,7 +1905,7 @@ int RGWBucketAdminOp::info(rgw::sal::Driver* driver,
     // look up the account's tenant
     const rgw_account_id& account_id = op_state.get_account_id();
     RGWAccountInfo info;
-    rgw::sal::Attrs attrs;
+    rgw::sal::Attrs attrs; // ignored
     RGWObjVersionTracker objv; // ignored
     int ret = driver->load_account_by_id(dpp, y, account_id, info, attrs, objv);
     if (ret < 0) {

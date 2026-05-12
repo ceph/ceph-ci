@@ -387,16 +387,35 @@ get_public_access_conf_from_attr(const map<string, bufferlist>& attrs)
   return configuration;
 }
 
-static PublicAccessBlockConfiguration
-get_public_access_conf(const map<string, bufferlist>& bucket_attrs,
-                       const std::optional<RGWAccountInfo>& account)
+static int read_public_access_conf(const DoutPrefixProvider *dpp,
+                                   optional_yield y, rgw::sal::Driver* driver,
+                                   const rgw_owner& bucket_owner,
+                                   const std::map<std::string, bufferlist>& bucket_attrs,
+                                   PublicAccessBlockConfiguration& config)
 {
   auto bucket_config = get_public_access_conf_from_attr(bucket_attrs);
-  if (!account) {
-    return bucket_config;
+
+  const auto* account_id = std::get_if<rgw_account_id>(&bucket_owner);
+  if (!account_id) {
+    config = std::move(bucket_config);
+    return 0;
   }
-  auto account_config = get_public_access_conf_from_attr(account->attrs);
-  return config_union(bucket_config, account_config);
+
+  // if the bucket owner is an account, check for account-level config
+  RGWAccountInfo account_info;
+  std::map<std::string, bufferlist> account_attrs;
+  RGWObjVersionTracker objv; // ignored
+  int r = driver->load_account_by_id(dpp, y, *account_id, account_info,
+                                     account_attrs, objv);
+  if (r < 0) {
+    ldpp_dout(dpp, 1) << "ERROR: " << __func__ <<  " failed to load bucket "
+        "owner's account=" << *account_id << " with " << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  auto account_config = get_public_access_conf_from_attr(account_attrs);
+  config = config_union(bucket_config, account_config);
+  return 0;
 }
 
 static int read_bucket_policy(const DoutPrefixProvider *dpp, 
@@ -629,8 +648,13 @@ int rgw_build_bucket_policies(const DoutPrefixProvider *dpp, rgw::sal::Driver* d
       return -EINVAL;
     }
 
-    s->public_access_block = get_public_access_conf(s->bucket_attrs,
-                                                    s->auth.identity->get_account());
+    ret = read_public_access_conf(dpp, y, driver,
+                                  s->bucket->get_owner(),
+                                  s->bucket->get_attrs(),
+                                  s->public_access_block);
+    if (ret < 0) {
+      return ret;
+    }
     s->bucket_object_ownership = rgw::s3::get_object_ownership(s->bucket_attrs);
   }
 
@@ -1653,7 +1677,7 @@ int get_owner_quota_info(const DoutPrefixProvider* dpp,
       },
       [&](const rgw_account_id &account_id) {
         RGWAccountInfo info;
-        rgw::sal::Attrs attrs;
+        rgw::sal::Attrs attrs; // ignored
         RGWObjVersionTracker objv; // ignored
         int r = driver->load_account_by_id(dpp, y, account_id, info, attrs, objv);
         if (r >= 0) {
@@ -3446,7 +3470,7 @@ static int get_account_max_buckets(const DoutPrefixProvider* dpp,
                                    int32_t& max_buckets)
 {
   RGWAccountInfo info;
-  rgw::sal::Attrs attrs;  
+  rgw::sal::Attrs attrs;
   RGWObjVersionTracker objv;
 
   int ret = driver->load_account_by_id(dpp, y, id, info, attrs, objv);
@@ -3523,8 +3547,12 @@ int RGWCreateBucket::verify_permission(optional_yield y)
   }
 
   // CreateBucket doesn't call rgw_build_bucket_policies() to initialize this
-  s->public_access_block = get_public_access_conf(s->bucket_attrs,
-                                                  s->auth.identity->get_account());
+  int r = read_public_access_conf(this, y, driver, s->owner.id, s->bucket_attrs,
+                                  s->public_access_block);
+  if (r < 0) {
+    return -EACCES;
+  }
+
   // reject public canned acls
   if (s->public_access_block.BlockPublicAcls &&
       (s->canned_acl == "public-read" ||
