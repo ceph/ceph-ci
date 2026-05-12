@@ -38,7 +38,7 @@ class DefaultImages(Enum):
     SAMBA = _create_image('cp.icr.io/cp/ibm-ceph/samba-server-rhel10:v9.1', 'samba')
     SAMBA_METRICS = _create_image('cp.icr.io/cp/ibm-ceph/samba-metrics-rhel10:v9.1', 'samba_metrics')
     NGINX = _create_image('registry.redhat.io/rhel9/nginx-124:latest', 'nginx')
-    OAUTH2_PROXY = _create_image('registry.redhat.io/rhceph/oauth2-proxy-rhel10:v7.6.0', 'oauth2_proxy')
+    OAUTH2_PROXY = _create_image('registry.redhat.io/rhceph/oauth2-proxy-rhel10:v7.14.0', 'oauth2_proxy')
 
     @property
     def image_ref(self) -> str:
