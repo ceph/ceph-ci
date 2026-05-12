@@ -135,7 +135,7 @@ int check_role_limit(const DoutPrefixProvider* dpp, optional_yield y,
                      std::string& err)
 {
   RGWAccountInfo account;
-  rgw::sal::Attrs attrs;
+  rgw::sal::Attrs attrs; // unused
   RGWObjVersionTracker objv; // unused
   int r = driver->load_account_by_id(dpp, y, account_id, account, attrs, objv);
   if (r < 0) {

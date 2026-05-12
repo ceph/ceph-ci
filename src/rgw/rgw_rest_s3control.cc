@@ -24,10 +24,10 @@
 template <std::invocable<> F>
 int retry_raced_account_write(const DoutPrefixProvider* dpp, optional_yield y,
                               rgw::sal::Driver* driver, RGWAccountInfo& info,
-                              RGWObjVersionTracker& objv, const F& f)
+                              rgw::sal::Attrs& attrs, RGWObjVersionTracker& objv,
+                              const F& f)
 {
   int r = f();
-  rgw::sal::Attrs attrs;
   for (int i = 0; i < 10 && r == -ECANCELED; ++i) {
     objv.clear();
     r = driver->load_account_by_id(dpp, y, info.id, info, attrs, objv);
@@ -103,8 +103,8 @@ void RGWGetPublicAccessBlock_S3Control::execute(optional_yield y)
     return;
   }
 
-  auto i = account.attrs.find(RGW_ATTR_PUBLIC_ACCESS);
-  if (i == account.attrs.end()) {
+  auto i = attrs.find(RGW_ATTR_PUBLIC_ACCESS);
+  if (i == attrs.end()) {
     op_ret = -ERR_NO_SUCH_PUBLIC_ACCESS_BLOCK_CONFIGURATION;
     return;
   }
@@ -207,12 +207,11 @@ void RGWPutPublicAccessBlock_S3Control::execute(optional_yield y)
   bufferlist conf_bl;
   encode(public_access_block, conf_bl);
 
-  op_ret = retry_raced_account_write(this, y, driver, account, objv,
-      [this, y, &conf_bl, &account, &objv] {
+  op_ret = retry_raced_account_write(this, y, driver, account, attrs, objv,
+      [this, y, &conf_bl, &account, &attrs, &objv] {
         const RGWAccountInfo old_info = account;
-        account.attrs[RGW_ATTR_PUBLIC_ACCESS] = conf_bl;
+        attrs[RGW_ATTR_PUBLIC_ACCESS] = conf_bl;
 
-	rgw::sal::Attrs attrs;
         constexpr bool exclusive = false;
         return driver->store_account(this, y, exclusive, account,
                                      &old_info, attrs, objv);
@@ -273,15 +272,15 @@ void RGWDeletePublicAccessBlock_S3Control::execute(optional_yield y)
     return;
   }
 
-  op_ret = retry_raced_account_write(this, y, driver, account, objv,
-      [this, y, &account, &objv] {
+  op_ret = retry_raced_account_write(this, y, driver, account, attrs, objv,
+      [this, y, &account, &attrs, &objv] {
         const RGWAccountInfo old_info = account;
 
-        auto i = account.attrs.find(RGW_ATTR_PUBLIC_ACCESS);
-        if (i == account.attrs.end()) {
+        auto i = attrs.find(RGW_ATTR_PUBLIC_ACCESS);
+        if (i == attrs.end()) {
           return 0;
         }
-        account.attrs.erase(i);
+        attrs.erase(i);
 
 	rgw::sal::Attrs attrs;
         constexpr bool exclusive = false;

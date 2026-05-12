@@ -175,6 +175,7 @@ int read(const DoutPrefixProvider* dpp,
          const RGWZoneParams& zone,
          std::string_view account_id,
          RGWAccountInfo& info,
+         std::map<std::string, ceph::buffer::list>& attrs,
          ceph::real_time& mtime,
          RGWObjVersionTracker& objv)
 {
@@ -182,7 +183,7 @@ int read(const DoutPrefixProvider* dpp,
 
   bufferlist bl;
   int r = rgw_get_system_obj(&sysobj, obj.pool, obj.oid, bl,
-                             &objv, &mtime, y, dpp, &info.attrs);
+                             &objv, &mtime, y, dpp, &attrs);
   if (r < 0) {
     ldpp_dout(dpp, 20) << "account lookup with id=" << account_id
         << " failed: " << cpp_strerror(r) << dendl;
@@ -212,6 +213,7 @@ int read_by_name(const DoutPrefixProvider* dpp,
                  std::string_view tenant,
                  std::string_view name,
                  RGWAccountInfo& info,
+                 std::map<std::string, ceph::buffer::list>& attrs,
                  RGWObjVersionTracker& objv)
 {
   auto redirect = RedirectObj{.obj = get_name_obj(zone, tenant, name)};
@@ -220,7 +222,7 @@ int read_by_name(const DoutPrefixProvider* dpp,
     return r;
   }
   ceph::real_time mtime; // ignored
-  return read(dpp, y, sysobj, zone, redirect.data.id, info, mtime, objv);
+  return read(dpp, y, sysobj, zone, redirect.data.id, info, attrs, mtime, objv);
 }
 
 int read_by_email(const DoutPrefixProvider* dpp,
@@ -229,6 +231,7 @@ int read_by_email(const DoutPrefixProvider* dpp,
                   const RGWZoneParams& zone,
                   std::string_view email,
                   RGWAccountInfo& info,
+                  std::map<std::string, ceph::buffer::list>& attrs,
                   RGWObjVersionTracker& objv)
 {
   auto redirect = RedirectObj{.obj = get_email_obj(zone, email)};
@@ -241,7 +244,7 @@ int read_by_email(const DoutPrefixProvider* dpp,
     return -ENOENT;
   }
   ceph::real_time mtime; // ignored
-  return read(dpp, y, sysobj, zone, redirect.data.id, info, mtime, objv);
+  return read(dpp, y, sysobj, zone, redirect.data.id, info, attrs, mtime, objv);
 }
 
 
@@ -251,6 +254,7 @@ int write(const DoutPrefixProvider* dpp,
           const RGWZoneParams& zone,
           const RGWAccountInfo& info,
           const RGWAccountInfo* old_info,
+          const std::map<std::string, ceph::buffer::list>& attrs,
           ceph::real_time mtime,
           bool exclusive,
           RGWObjVersionTracker& objv)
@@ -337,7 +341,7 @@ int write(const DoutPrefixProvider* dpp,
 
     const rgw_raw_obj obj = get_account_obj(zone, info.id);
     int r = rgw_put_system_obj(dpp, &sysobj, obj.pool, obj.oid, bl,
-                               exclusive, &objv, mtime, y, &info.attrs);
+                               exclusive, &objv, mtime, y, &attrs);
     if (r < 0) {
       ldpp_dout(dpp, 1) << "ERROR: failed to write account obj " << obj
           << " with: " << cpp_strerror(r) << dendl;
@@ -491,16 +495,17 @@ int resource_count(const DoutPrefixProvider* dpp,
 
 struct CompleteInfo {
   RGWAccountInfo info;
+  std::map<std::string, bufferlist> attrs;
   bool has_attrs = false;
 
   void dump(Formatter* f) const {
     info.dump(f);
-    encode_json("attrs", info.attrs, f);
+    encode_json("attrs", attrs, f);
   }
 
   void decode_json(JSONObj* obj) {
     decode_json_obj(info, obj);
-    has_attrs = JSONDecoder::decode_json("attrs", info.attrs, obj);
+    has_attrs = JSONDecoder::decode_json("attrs", attrs, obj);
   }
 };
 
@@ -566,7 +571,8 @@ class MetadataHandler : public RGWMetadataHandler {
     RGWObjVersionTracker objv;
     ceph::real_time mtime;
 
-    int r = read(dpp, y, sysobj, zone, account_id, aci.info, mtime, objv);
+    int r = read(dpp, y, sysobj, zone, account_id,
+                 aci.info, aci.attrs, mtime, objv);
     if (r < 0) {
       return r;
     }
@@ -591,8 +597,10 @@ class MetadataHandler : public RGWMetadataHandler {
 
     // read existing metadata
     RGWAccountInfo old_info;
+    std::map<std::string, ceph::buffer::list> old_attrs;
     ceph::real_time old_mtime;
-    int r = read(dpp, y, sysobj, zone, account_id, old_info, old_mtime, objv);
+    int r = read(dpp, y, sysobj, zone, account_id,
+                 old_info, old_attrs, old_mtime, objv);
     if (r < 0 && r != -ENOENT) {
       return r;
     }
@@ -601,7 +609,8 @@ class MetadataHandler : public RGWMetadataHandler {
     // write/overwrite metadata
     constexpr bool exclusive = false;
     return write(dpp, y, sysobj, zone, new_info, pold_info,
-                 obj->get_mtime(), exclusive, objv);
+                 account_obj->get().attrs, obj->get_mtime(),
+                 exclusive, objv);
   }
 
   int remove(std::string& entry, RGWObjVersionTracker& objv,
@@ -611,8 +620,10 @@ class MetadataHandler : public RGWMetadataHandler {
 
     // read existing metadata
     RGWAccountInfo info;
+    std::map<std::string, ceph::buffer::list> attrs;
     ceph::real_time mtime;
-    int r = read(dpp, y, sysobj, zone, account_id, info, mtime, objv);
+    int r = read(dpp, y, sysobj, zone, account_id,
+                 info, attrs, mtime, objv);
     if (r < 0) {
       return r;
     }

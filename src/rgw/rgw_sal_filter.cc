@@ -158,8 +158,8 @@ int FilterDriver::get_user_by_swift(const DoutPrefixProvider* dpp, const std::st
 int FilterDriver::load_account_by_id(const DoutPrefixProvider *dpp,
                                      optional_yield y,
                                      std::string_view id,
-                                     RGWAccountInfo &info,
-				     Attrs& attrs,
+                                     RGWAccountInfo& info,
+                                     Attrs& attrs,
                                      RGWObjVersionTracker& objv)
 {
   return next->load_account_by_id(dpp, y, id, info, attrs, objv);
@@ -169,8 +169,8 @@ int FilterDriver::load_account_by_name(const DoutPrefixProvider *dpp,
                                        optional_yield y,
                                        std::string_view tenant,
                                        std::string_view name,
-                                       RGWAccountInfo &info,
-				       Attrs& attrs,
+                                       RGWAccountInfo& info,
+                                       Attrs& attrs,
                                        RGWObjVersionTracker& objv)
 {
   return next->load_account_by_name(dpp, y, tenant, name, info, attrs, objv);
@@ -179,18 +179,18 @@ int FilterDriver::load_account_by_name(const DoutPrefixProvider *dpp,
 int FilterDriver::load_account_by_email(const DoutPrefixProvider *dpp,
                                         optional_yield y,
                                         std::string_view email,
-                                        RGWAccountInfo &info,
-                                        Attrs &attrs,
+                                        RGWAccountInfo& info,
+                                        Attrs& attrs,
                                         RGWObjVersionTracker& objv)
 {
   return next->load_account_by_email(dpp, y, email, info, attrs, objv);
 }
 
-int FilterDriver::store_account(const DoutPrefixProvider *dpp, optional_yield y,
-                                bool exclusive,
-                                const RGWAccountInfo &info,
-                                const RGWAccountInfo *old_info,
-                                const Attrs &attrs,
+int FilterDriver::store_account(const DoutPrefixProvider* dpp,
+                                optional_yield y, bool exclusive,
+                                const RGWAccountInfo& info,
+                                const RGWAccountInfo* old_info,
+                                const Attrs& attrs,
                                 RGWObjVersionTracker& objv)
 {
   return next->store_account(dpp, y, exclusive, info, old_info, attrs, objv);

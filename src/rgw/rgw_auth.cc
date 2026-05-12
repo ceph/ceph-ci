@@ -142,9 +142,10 @@ int load_account_and_policies(const DoutPrefixProvider* dpp,
 {
   if (!info.account_id.empty()) {
     account.emplace();
-    rgw::sal::Attrs attrs;
+    rgw::sal::Attrs attrs; // ignored
     RGWObjVersionTracker objv; // ignored
-    int r = driver->load_account_by_id(dpp, y, info.account_id, *account, attrs, objv);
+    int r = driver->load_account_by_id(dpp, y, info.account_id,
+                                       *account, attrs, objv);
     if (r < 0) {
       ldpp_dout(dpp, 1) << "ERROR: failed to load account "
           << info.account_id << " for user " << info.user_id
