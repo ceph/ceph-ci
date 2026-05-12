@@ -432,6 +432,9 @@ public:
         }
       }
       delay();
+      if (obj_iter == list_results.objs.end()) {
+        return false;
+      }
     }
 
     if (obj_iter->key.name == pre_obj.key.name) {
@@ -442,7 +445,7 @@ public:
 
     /* returning address of entry in objs */
     *obj = &(*obj_iter);
-    return obj_iter != list_results.objs.end();
+    return true;
   }
 
   rgw_bucket_dir_entry get_prev_obj() {
