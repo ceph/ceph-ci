@@ -40,3 +40,22 @@ DAEMON_FAILED_ERROR = 17
 
 # Host labels
 ADMIN_LABEL = '_admin'
+
+# IBM display-license / bootstrap: Call Home notice (display-license --json call_home_notice).
+IBM_DISPLAY_LICENSE_CALL_HOME_NOTICE = """\
+Call Home is enabled by default in this release.
+
+Call Home provides the following benefits:
+
+* Helps to pro-actively detect issues (Call Home data can help IBM support to find certain issues and suggest actions to resolve these).
+
+* Generates reports based on customer insights for support and development
+
+* Detects critical system warnings or failures and pro-actively opens support tickets.
+
+Here's more information about Call Home: https://www.ibm.com/support/pages/node/7273284
+
+IBM recommends that clients leave the Call Home feature enabled to improve the client and support experience.
+
+To Disable Call Home, please follow the documentation - https://www.ibm.com/support/pages/node/7273284
+"""
