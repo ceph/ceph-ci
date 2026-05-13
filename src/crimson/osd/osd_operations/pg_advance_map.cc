@@ -157,7 +157,6 @@ seastar::future<> PGAdvanceMap::check_for_splits(
       co_await split_pg(children, next_map);
     }
   }
-  co_return;
 }
 
 
@@ -207,7 +206,6 @@ seastar::future<> PGAdvanceMap::split_pg(
   }
 
   split_stats(split_pgs, children_pgids);
-  co_return;
 }
 
 seastar::future<> PGAdvanceMap::handle_split_pg_creation(
