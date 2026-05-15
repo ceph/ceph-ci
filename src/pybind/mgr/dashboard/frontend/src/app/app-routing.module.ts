@@ -77,7 +77,6 @@ import { SmbUsergroupsResourceBreadcrumbResolver } from './ceph/smb/smb-usersgro
 import { MultiClusterFormComponent } from './ceph/cluster/multi-cluster/multi-cluster-form/multi-cluster-form.component';
 import { CephfsMirroringListComponent } from './ceph/cephfs/cephfs-mirroring-list/cephfs-mirroring-list.component';
 import { NotificationsPageComponent } from './core/navigation/notification-panel/notifications-page/notifications-page.component';
-import { CephfsMirroringWizardComponent } from './ceph/cephfs/cephfs-mirroring-wizard/cephfs-mirroring-wizard.component';
 import { CephfsMirroringErrorComponent } from './ceph/cephfs/cephfs-mirroring-error/cephfs-mirroring-error.component';
 import { OverviewComponent } from './ceph/overview/overview.component';
 
@@ -517,11 +516,6 @@ const routes: Routes = [
               breadcrumbs: 'File/Mirroring',
               pageHeader: CEPHFS_MIRRORING_PAGE_HEADER
             }
-          },
-          {
-            path: `mirroring/${URLVerbs.CREATE}`,
-            component: CephfsMirroringWizardComponent,
-            data: { breadcrumbs: ActionLabels.CREATE }
           },
           {
             path: 'nfs',
