@@ -71,6 +71,7 @@ export class CallHomeNotificationComponent implements OnInit {
     this.callHomeService.confirmAutoEnabled().subscribe({
       next: () => {
         this.callHomeNotificationService.hide();
+        this.callHomeEnabledWarning = false;
         this.notificationService.show(NotificationType.success, $localize`Call Home acknowledged`);
       },
       error: (err) => {
