@@ -75,6 +75,6 @@ export class CallHomeService {
   }
 
   confirmAutoEnabled(): Observable<void> {
-    return this.http.post<void>(`${this.baseURL}/confirm_auto_enabled`, {});
+    return this.http.post<void>(`${this.baseURL}/accept_call_home`, {});
   }
 }

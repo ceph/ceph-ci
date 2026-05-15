@@ -33,9 +33,7 @@ from mgr_util import ServerConfigException, build_url, \
     create_self_signed_cert, get_default_addr, verify_tls_files
 
 from . import mgr
-from .cli import DBCLICommand
-from .controllers import nvmeof  # noqa # pylint: disable=unused-import
-from .controllers import Router, json_error_page
+from .controllers import Router, json_error_page, nvmeof  # noqa # pylint: disable=unused-import
 from .grafana import push_local_dashboards
 from .services import nvmeof_cli, nvmeof_top_cli  # noqa # pylint: disable=unused-import
 from .services.auth import AuthManager, AuthManagerTool, JwtManager
