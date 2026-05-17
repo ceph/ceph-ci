@@ -1,0 +1,89 @@
+ARG FROM_IMAGE="docker.io/library/ubuntu:24.04"
+FROM $FROM_IMAGE
+
+# "tentacle" (latest point release) or e.g. "20.2.1" (frozen).
+ARG CEPH_REF="tentacle"
+ARG USE_LOCAL_DEBS="0"
+# Build-context path to make-debs.sh output (reprepro repo). Must exist
+# (an empty dir is fine); bind-mounted only when USE_LOCAL_DEBS=1.
+ARG LOCAL_DEBS_PATH="debs/ubuntu"
+ARG LOCAL_DEBS_CODENAME="noble"
+
+LABEL org.opencontainers.image.authors="Ceph Release Team <ceph-maintainers@ceph.io>" \
+      org.opencontainers.image.documentation="https://docs.ceph.com/"
+LABEL ceph=True
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8
+
+# Pin ceph UID/GID to 167 to match the upstream CentOS/RHEL RPM convention.
+# Creating the user before package install ensures the debs reuse this ID.
+RUN groupadd -g 167 -r ceph && useradd -u 167 -g 167 -r -d /var/lib/ceph -s /sbin/nologin ceph
+
+# Enable universe (for nfs-ganesha-*, sg3-utils, etc.). Add upstream Ceph repo
+# only when not using local debs -- they're mutually exclusive.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg software-properties-common; \
+    add-apt-repository -y universe; \
+    if [ "$USE_LOCAL_DEBS" != "1" ]; then \
+        install -d -m 0755 /etc/apt/keyrings; \
+        curl -fsSL https://download.ceph.com/keys/release.gpg \
+            | gpg --dearmor -o /etc/apt/keyrings/ceph.gpg; \
+        echo "deb [signed-by=/etc/apt/keyrings/ceph.gpg] https://download.ceph.com/debian-${CEPH_REF} noble main" \
+            > /etc/apt/sources.list.d/ceph.list; \
+    fi; \
+    apt-get update
+
+# Ceph daemons and tools. Local debs are bind-mounted from the build context
+# only during this RUN (no layer bloat); the apt source must be torn down in
+# the same RUN since the mount disappears afterwards.
+RUN --mount=type=bind,source=${LOCAL_DEBS_PATH},target=/var/local-debs,readonly \
+    set -eux; \
+    if [ "$USE_LOCAL_DEBS" = "1" ]; then \
+        test -d /var/local-debs/dists/${LOCAL_DEBS_CODENAME}; \
+        echo "deb [trusted=yes] file:///var/local-debs ${LOCAL_DEBS_CODENAME} main" \
+            > /etc/apt/sources.list.d/ceph-local.list; \
+        apt-get update; \
+    fi; \
+    apt-get install -y --no-install-recommends \
+        ceph-common ceph-mon ceph-mgr ceph-mgr-cephadm ceph-mgr-dashboard \
+        ceph-mgr-diskprediction-local ceph-mgr-k8sevents ceph-mgr-rook \
+        ceph-mds ceph-osd ceph-volume ceph-exporter ceph-immutable-object-cache \
+        ceph-grafana-dashboards \
+        radosgw rbd-mirror rbd-nbd cephfs-mirror cephfs-top \
+        libradosstriper1 libcephfs-daemon \
+        python3-onelogin-saml2; \
+    rm -f /etc/apt/sources.list.d/ceph-local.list
+
+# NFS-Ganesha (Ubuntu universe; nfs-ganesha-rados-urls is not packaged for noble)
+RUN apt-get install -y --no-install-recommends \
+        nfs-ganesha nfs-ganesha-ceph nfs-ganesha-rgw nfs-ganesha-rados-grace \
+        dbus rpcbind sssd-tools
+
+# Runtime / debugging utilities
+RUN apt-get install -y --no-install-recommends \
+        gdisk hostname procps sg3-utils e2fsprogs lvm2 nvme-cli smartmontools \
+        attr ceph-fuse kmod udev
+
+# scikit (for mgr-diskprediction-local)
+RUN apt-get install -y --no-install-recommends python3-sklearn
+
+# lvm cannot reach udev from inside the container
+RUN sed -i -e 's/udev_rules = 1/udev_rules = 0/' \
+           -e 's/udev_sync = 1/udev_sync = 0/' \
+           -e 's/obtain_device_list_from_udev = 1/obtain_device_list_from_udev = 0/' \
+        /etc/lvm/lvm.conf && \
+    grep -q "udev_sync = 0" /etc/lvm/lvm.conf && \
+    grep -q "udev_rules = 0" /etc/lvm/lvm.conf && \
+    grep -q "obtain_device_list_from_udev = 0" /etc/lvm/lvm.conf
+
+RUN mkdir -p /var/run/ganesha
+
+RUN apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+           /etc/apt/sources.list.d/ceph.list /etc/apt/keyrings/ceph.gpg
+
+ENV CEPH_REF="${CEPH_REF}" \
+    CEPH_VERSION="${CEPH_REF}"
