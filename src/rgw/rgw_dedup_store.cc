@@ -98,24 +98,24 @@ namespace rgw::dedup {
 
     const char *p = buff + sizeof(this->s);
     this->obj_name = std::string(p, this->s.obj_name_len);
-    p += p_rec->s.obj_name_len;
+    p += this->s.obj_name_len;
 
     this->bucket_name = std::string(p, this->s.bucket_name_len);
-    p += p_rec->s.bucket_name_len;
+    p += this->s.bucket_name_len;
 
     this->bucket_id = std::string(p, this->s.bucket_id_len);
-    p += p_rec->s.bucket_id_len;
+    p += this->s.bucket_id_len;
 
     this->tenant_name = std::string(p, this->s.tenant_name_len);
-    p += p_rec->s.tenant_name_len;
+    p += this->s.tenant_name_len;
 
     this->instance = std::string(p, this->s.instance_len);
-    p += p_rec->s.instance_len;
+    p += this->s.instance_len;
 
     this->stor_class = std::string(p, this->s.stor_class_len);
-    p += p_rec->s.stor_class_len;
+    p += this->s.stor_class_len;
 
-    if (p_rec->s.flags.is_fastlane()) {
+    if (this->s.flags.is_fastlane()) {
       // TBD:: remove asserts
       ceph_assert(this->s.ref_tag_len == 0);
       ceph_assert(this->s.manifest_len == 0);
@@ -127,7 +127,7 @@ namespace rgw::dedup {
         this->s.hash[i] = CEPHTOH_64(p_rec->s.hash[i]);
       }
       this->ref_tag = std::string(p, this->s.ref_tag_len);
-      p += p_rec->s.ref_tag_len;
+      p += this->s.ref_tag_len;
 
       this->manifest_bl.append(p, this->s.manifest_len);
     }

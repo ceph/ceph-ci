@@ -1436,7 +1436,7 @@ def exec_dedup_internal(expected_dedup_stats, dry_run, max_dedup_time):
     log.debug("wait for dedup to complete")
 
     dedup_time = 0
-    dedup_timeout = 5
+    dedup_timeout = 3
     dedup_stats = Dedup_Stats()
     dedup_ratio=Dedup_Ratio()
     wait_for_completion = True
@@ -1449,7 +1449,7 @@ def exec_dedup_internal(expected_dedup_stats, dry_run, max_dedup_time):
             wait_for_completion = False
             log.info("dedup completed in %d seconds", dedup_time)
             return (dedup_time, ret[1], ret[2], ret[3])
-       else:
+        else:
             ### set throttling to a rand val between 50-200 IOPS (i.e. 50K-200K objs)
             limit=random.randint(50, 200)
             set_bucket_index_throttling(limit)
@@ -1659,12 +1659,12 @@ def check_full_dedup_state():
     log.debug("check_full_dedup_state:: sending FULL Dedup request")
     result = admin(['dedup', 'exec', '--yes-i-really-mean-it'])
     if result[1] == 0:
-        log.info("full dedup is enabled!")
+        log.debug("full dedup is enabled!")
         full_dedup_state_disabled = False
         result = admin(['dedup', 'abort'])
         assert result[1] == 0
     else:
-        log.info("full dedup is disabled, skip all full dedup tests")
+        log.debug("full dedup is disabled, skip all full dedup tests")
         full_dedup_state_disabled = True
 
     full_dedup_state_was_checked = True
@@ -3699,6 +3699,17 @@ def test_dedup_filter_bucket_list_parsing():
         result = admin(['dedup', 'estimate', '--allow-bucket-list',
                         '/nonexistent/bucket_list.txt'])
         assert result[1] != 0, "Expected failure for non-existent filter file"
+
+        # 3. Empty file
+        empty_file = OUT_DIR + "empty_buckets.txt"
+        with open(empty_file, "w") as f:
+            pass
+
+        result = admin(['dedup', 'estimate', '--allow-bucket-list', empty_file])
+        assert result[1] != 0, "Expected failure for empty filter file"
+
+        result = admin(['dedup', 'estimate', '--deny-bucket-list', empty_file])
+        assert result[1] != 0, "Expected failure for empty filter file"
     finally:
         cleanup_local()
 
@@ -3712,8 +3723,8 @@ def test_dedup_filter_storage_class_list_parsing():
     prepare_test()
     try:
         # 1. Mutual exclusivity: --allow-storage-class-list and --deny-storage-class-list together.
-        allow_file = OUT_DIR + "allow_storage_classs.txt"
-        deny_file  = OUT_DIR + "deny_storage_classs.txt"
+        allow_file = OUT_DIR + "allow_storage_class.txt"
+        deny_file  = OUT_DIR + "deny_storage_class.txt"
         write_filter_list_file(allow_file, ['STORAGECLASS1'])
         write_filter_list_file(deny_file,  ['STORAGECLASS2'])
         result = admin(['dedup', 'estimate',
@@ -3727,6 +3738,17 @@ def test_dedup_filter_storage_class_list_parsing():
         result = admin(['dedup', 'estimate', '--allow-storage-class-list',
                         '/nonexistent/storage_class_list.txt'])
         assert result[1] != 0, "Expected failure for non-existent filter file"
+
+        # 3. Empty file
+        empty_file = OUT_DIR + "empty_storage_class.txt"
+        with open(empty_file, "w") as f:
+            pass
+
+        result = admin(['dedup', 'estimate', '--allow-storage-class-list', empty_file])
+        assert result[1] != 0, "Expected failure for empty filter file"
+
+        result = admin(['dedup', 'estimate', '--deny-storage-class-list', empty_file])
+        assert result[1] != 0, "Expected failure for empty filter file"
     finally:
         cleanup_local()
 
@@ -3786,7 +3808,7 @@ def dedup_filter_allow_deny_storage_class_common(dry_run, filter_mode_allow):
     """
     prepare_test()
     config=default_config
-    filter_file = OUT_DIR + "deny_storage_classs.txt"
+    filter_file = OUT_DIR + "deny_storage_class.txt"
     bucket_name = gen_bucket_name()
     conn=get_single_connection()
     files=[]

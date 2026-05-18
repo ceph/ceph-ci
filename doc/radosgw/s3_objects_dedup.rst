@@ -54,7 +54,8 @@ The ``dedup estimate`` and ``dedup exec`` commands also accept filter options:
    Mutually exclusive with ``--allow-storage-class-list``.
 
 **File format:** One name per line. Lines starting with or containing ``#``
-are treated as comments. Whitespace is ignored.
+are treated as comments. Whitespace is ignored. The file must contain at least
+one valid name; an empty or all-comment file is rejected.
 
 
 Skipped Objects
@@ -122,7 +123,7 @@ Next, we iterate through these dedup candidate objects, reading their complete
 information from the object metadata (a per-object RADOS operation). During
 this step, we filter out **compressed** and **user-encrypted** objects.
 
-Following this, we calculate a cryptograhically strong hash of the candidate
+Following this, we calculate a cryptographically strong hash of the candidate
 object data. This involves a full-object read which is a resource-intensive
 operation. The hash ensures that the dedup candidates are indeed perfect
 matches. If they are, we proceed with the deduplication:
