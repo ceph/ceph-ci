@@ -1731,6 +1731,9 @@ public:
       read_extent_futs, [](auto &fut) { return std::move(fut); });
   }
 
+  bool is_on_cold_tier(paddr_t paddr) const {
+    return epm.is_cold_device(paddr.get_device_id());
+  }
 private:
   void touch_extent_fully(
       CachedExtent &ext,
