@@ -3928,6 +3928,8 @@ void Objecter::handle_osd_op_reply(MOSDOpReply *m)
     *op->reply_epoch = m->get_map_epoch();
   if (op->data_offset)
     *op->data_offset = m->get_header().data_off;
+  if (op->osd_queue_latency)
+    *op->osd_queue_latency = m->get_osd_queue_latency();
 
   // got data?
   if (op->outbl) {

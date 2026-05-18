@@ -2040,6 +2040,7 @@ public:
 
     version_t *objver;
     epoch_t *reply_epoch = nullptr;
+    utime_t *osd_queue_latency = nullptr;
 
     ceph::coarse_mono_time stamp;
 

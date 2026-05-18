@@ -1642,8 +1642,9 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op)
 
   // reply
   MOSDOpReply *reply = new MOSDOpReply(m, 0, get_osdmap_epoch(),
-				       CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK,
-				       false);
+  		       CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK,
+  		       false,
+  		       op->get_dequeued_time() - op->get_req()->get_recv_stamp());
   reply->claim_op_out_data(ops);
   reply->set_result(result);
   reply->set_reply_versions(info.last_update, info.last_user_version);
@@ -2982,7 +2983,8 @@ void PrimaryLogPG::do_cache_redirect(OpRequestRef op)
   auto m = op->get_req<MOSDOp>();
   int flags = m->get_flags() & (CEPH_OSD_FLAG_ACK|CEPH_OSD_FLAG_ONDISK);
   MOSDOpReply *reply = new MOSDOpReply(m, -ENOENT, get_osdmap_epoch(),
-                                       flags, false);
+                                       flags, false,
+                                       op->get_dequeued_time() - op->get_req()->get_recv_stamp());
   request_redirect_t redir(m->get_object_locator(), pool.info.tier_of);
   reply->set_redirect(redir);
   dout(10) << "sending redirect to pool " << pool.info.tier_of << " for op "
@@ -3192,7 +3194,8 @@ void PrimaryLogPG::finish_proxy_read(hobject_t oid, ceph_tid_t tid, int r)
 
   auto m = op->get_req<MOSDOp>();
   OpContext *ctx = new OpContext(op, m->get_reqid(), &prdop->ops, this);
-  ctx->reply = new MOSDOpReply(m, 0, get_osdmap_epoch(), 0, false);
+  ctx->reply = new MOSDOpReply(m, 0, get_osdmap_epoch(), 0, false,
+  	       op->get_dequeued_time() - op->get_req()->get_recv_stamp());
   ctx->user_at_version = prdop->user_version;
   ctx->data_off = prdop->data_offset;
   ctx->ignore_log_op_stats = true;
@@ -3365,7 +3368,8 @@ void PrimaryLogPG::do_proxy_chunked_op(OpRequestRef op, const hobject_t& missing
       if (!chunk_index && !chunk_length) {
 	if (cursor == osd_op->op.extent.offset) {
 	  OpContext *ctx = new OpContext(op, m->get_reqid(), &m->ops, this);
-	  ctx->reply = new MOSDOpReply(m, 0, get_osdmap_epoch(), 0, false);
+	  ctx->reply = new MOSDOpReply(m, 0, get_osdmap_epoch(), 0, false,
+	  	       op->get_dequeued_time() - op->get_req()->get_recv_stamp());
 	  ctx->data_off = osd_op->op.extent.offset;
 	  ctx->ignore_log_op_stats = true;
 	  complete_read_ctx(0, ctx);
@@ -4017,7 +4021,8 @@ void PrimaryLogPG::finish_proxy_write(hobject_t oid, ceph_tid_t tid, int r)
     // send commit.
     ceph_assert(pwop->ctx->reply == nullptr);
     MOSDOpReply *reply = new MOSDOpReply(m, r, get_osdmap_epoch(), 0,
-					 true /* we claim it below */);
+    	 true /* we claim it below */,
+    	 pwop->op->get_dequeued_time() - pwop->op->get_req()->get_recv_stamp());
     reply->set_reply_versions(eversion_t(), pwop->user_version);
     reply->add_flags(CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
     reply->claim_op_out_data(pwop->ops);
@@ -4327,7 +4332,8 @@ void PrimaryLogPG::execute_ctx(OpContext *ctx)
 
   // prepare the reply
   ctx->reply = new MOSDOpReply(m, result, get_osdmap_epoch(), 0,
-			       ignore_out_data);
+  	       ignore_out_data,
+  	       op->get_dequeued_time() - op->get_req()->get_recv_stamp());
   dout(20) << __func__ << " alloc reply " << ctx->reply
 	   << " result " << result << dendl;
 
@@ -9538,7 +9544,8 @@ void PrimaryLogPG::fill_in_copy_get_noent(OpRequestRef& op, hobject_t oid,
   dout(20) << __func__ << " got reqids " << reply_obj.reqids << dendl;
   encode(reply_obj, osd_op.outdata, features);
   osd_op.rval = -ENOENT;
-  MOSDOpReply *reply = new MOSDOpReply(m, 0, get_osdmap_epoch(), 0, false);
+  MOSDOpReply *reply = new MOSDOpReply(m, 0, get_osdmap_epoch(), 0, false,
+  		       op->get_dequeued_time() - op->get_req()->get_recv_stamp());
   reply->set_result(-ENOENT);
   reply->add_flags(CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK);
   osd->send_message_osd_client(reply, m->get_connection());

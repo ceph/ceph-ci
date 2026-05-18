@@ -185,7 +185,7 @@ static void ceph_msgr_receiver_on_request(struct ceph_msgr_data *data,
 {
   MOSDOpReply *rep;
 
-  rep = new MOSDOpReply(req, 0, 0, 0, false);
+  rep = new MOSDOpReply(req, 0, 0, 0, false, utime_t());
   rep->set_connection(req->get_connection());
 
   pthread_spin_lock(&data->spin);

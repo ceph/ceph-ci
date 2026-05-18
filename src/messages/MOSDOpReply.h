@@ -35,7 +35,7 @@
 
 class MOSDOpReply final : public Message {
 private:
-  static constexpr int HEAD_VERSION = 8;
+  static constexpr int HEAD_VERSION = 9;
   static constexpr int COMPAT_VERSION = 2;
 
   object_t oid;
@@ -51,6 +51,7 @@ private:
   int32_t retry_attempt = -1;
   bool do_redirect;
   request_redirect_t redirect;
+  utime_t osd_queue_latency;
 
 public:
   const object_t& get_oid() const { return oid; }
@@ -63,6 +64,7 @@ public:
   int get_result() const { return result; }
   const eversion_t& get_replay_version() const { return replay_version; }
   const version_t& get_user_version() const { return user_version; }
+  const utime_t& get_osd_queue_latency() const { return osd_queue_latency; }
   
   void set_result(int r) { result = r; }
 
@@ -145,10 +147,10 @@ public:
     do_redirect = false;
   }
   MOSDOpReply(const MOSDOp *req, int r, epoch_t e, int acktype,
-	      bool ignore_out_data)
+       bool ignore_out_data, utime_t osd_queue_latency_value)
     : Message{CEPH_MSG_OSD_OPREPLY, HEAD_VERSION, COMPAT_VERSION},
       oid(req->hobj.oid), pgid(req->pgid.pgid), ops(req->ops),
-      bdata_encode(false) {
+      bdata_encode(false), osd_queue_latency(osd_queue_latency_value) {
 
     set_tid(req->get_tid());
     result = r;
@@ -216,6 +218,7 @@ public:
 
       encode(replay_version, payload);
       encode(user_version, payload);
+
       if ((features & CEPH_FEATURE_NEW_OSDOPREPLY_ENCODING) == 0) {
         header.version = 6;
         encode(redirect, payload);
@@ -225,8 +228,17 @@ public:
         if (do_redirect) {
           encode(redirect, payload);
         }
+        if ((features & CEPH_FEATUREMASK_SERVER_UMBRELLA) != 0) {
+          encode(osd_queue_latency, payload);
+          // Keep header.version = HEAD_VERSION (9) when umbrella is present
+        } else {
+          // Downgrade to version 8 when umbrella is absent
+          header.version = 8;
+        }
       }
+
       encode_trace(payload, features);
+
     }
   }
   void decode_payload() override {
@@ -258,7 +270,8 @@ public:
       decode(user_version, p);
       decode(do_redirect, p);
       if (do_redirect)
-	decode(redirect, p);
+ decode(redirect, p);
+      decode(osd_queue_latency, p);
       decode_trace(p);
     } else if (header.version < 2) {
       ceph_osd_reply_head head;
@@ -320,6 +333,11 @@ public:
 	  decode(redirect, p);
         }
       }
+
+      if (header.version >= 9) {
+        decode(osd_queue_latency, p);
+      }
+
       if (header.version >= 8) {
         decode_trace(p);
       }

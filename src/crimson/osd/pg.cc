@@ -1300,14 +1300,14 @@ PG::interruptible_future<MURef<MOSDOpReply>> PG::do_pg_ops(Ref<MOSDOp> m)
   }).then_interruptible([m, this, ox = std::move(ox)] {
     auto reply = crimson::make_message<MOSDOpReply>(m.get(), 0, get_osdmap_epoch(),
                                            CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK,
-                                           false);
+                                           false, utime_t());
     reply->claim_op_out_data(m->ops);
     reply->set_reply_versions(peering_state.get_info().last_update,
       peering_state.get_info().last_user_version);
     return seastar::make_ready_future<MURef<MOSDOpReply>>(std::move(reply));
   }).handle_exception_type_interruptible([=, this](const crimson::osd::error& e) {
     auto reply = crimson::make_message<MOSDOpReply>(
-      m.get(), -e.code().value(), get_osdmap_epoch(), 0, false);
+      m.get(), -e.code().value(), get_osdmap_epoch(), 0, false, utime_t());
     reply->set_enoent_reply_versions(peering_state.get_info().last_update,
 				     peering_state.get_info().last_user_version);
     return seastar::make_ready_future<MURef<MOSDOpReply>>(std::move(reply));

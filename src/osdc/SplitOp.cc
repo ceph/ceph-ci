@@ -24,6 +24,10 @@ inline boost::system::error_code osdcode(int r) {
 }
 }
 
+namespace {
+  std::atomic<int> replica_split_op_throttle_counter;
+}
+
 constexpr static uint64_t kReplicaMinShardReads = 2;
 
 #undef dout_prefix
@@ -524,6 +528,30 @@ void SplitOp::complete() {
   ldout(cct, DBG_LVL) << __func__ << " object_id=" << orig_op->target.base_oid << " entry this=" << this << dendl;
   boost::system::error_code handler_error;
 
+  // Check queue latency and increment counter if it was slow
+  // Only update counter for replicated split reads
+  const pg_pool_t *pi = objecter.osdmap->get_pg_pool(orig_op->target.base_oloc.pool);
+  bool is_erasure = pi && pi->is_erasure();
+
+  bool detected_high_latency = false;
+  for (auto & [index, sub_read] : sub_reads) {
+    if (sub_read.osd_queue_latency)
+    {
+      if (sub_read.osd_queue_latency.usec() > 3000) {
+        detected_high_latency = true;
+        ldout(cct, DBG_LVL) << __func__ << " slow queue latency detected: "
+                          << sub_read.osd_queue_latency.usec() << " usec, counter now: "
+                          << replica_split_op_throttle_counter.load() << dendl;
+      }
+    }
+  }
+
+  // Only update counter for replicated split reads
+  if (!is_erasure && detected_high_latency) {
+    int expected = 0;
+    replica_split_op_throttle_counter.compare_exchange_strong(expected, 10);
+  }
+
   int rc = assemble_rc();
   if (rc >= 0) {
 
@@ -693,6 +721,16 @@ std::pair<bool, bool> is_single_chunk(const pg_pool_t *pi, uint64_t offset, uint
   return {true, offset % stripe_width < chunk_size};
 }
 
+bool allow_replica_split_read() {
+  int current = replica_split_op_throttle_counter.load();
+  while (current > 0) {
+    if (replica_split_op_throttle_counter.compare_exchange_weak(current, current - 1)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * Validate operation flags for split operation eligibility.
  *
@@ -823,6 +861,13 @@ std::pair<bool, bool> validate(Objecter::Op *op, Objecter &objecter,
   // Initialize state for operation validation
   bool has_primary_ops = nullptr != op->objver;
   bool single_direct_op = is_erasure;
+  bool has_read_ops = false;
+  for (const auto& o : op->ops) {
+    if (o.op.op == CEPH_OSD_OP_READ || o.op.op == CEPH_OSD_OP_SPARSE_READ) {
+      has_read_ops = true;
+      break;
+    }
+  }
 
   uint64_t replica_min_shard_read_size = objecter.get_min_split_replica_read_size();
   
@@ -830,7 +875,15 @@ std::pair<bool, bool> validate(Objecter::Op *op, Objecter &objecter,
     ldout(cct, DBG_LVL) << __func__ << " REJECT: splitting disabled (min_split_replica_read_size=0)" << dendl;
     return {false, false};
   }
-  
+
+  // Only consult the counter for replicated split reads
+  if (!is_erasure && !allow_replica_split_read()) {
+    if (has_read_ops) {
+      ldout(cct, DBG_LVL) << __func__ << " REJECT: splitting denied" << dendl;
+    }
+    return {false, false};
+  }
+
   uint64_t replica_min_read_size = replica_min_shard_read_size * kReplicaMinShardReads;
 
   // Validate operations and read sizes
@@ -1066,6 +1119,8 @@ bool SplitOp::create(Objecter::Op *op, Objecter &objecter,
     auto sub_op = objecter.prepare_read_op(
       target.base_oid, target.base_oloc, split_read->sub_reads.at(index).rd, op->snapid,
       nullptr, split_read->flags, -1, fin, objver);
+
+    sub_op->osd_queue_latency = &sub_read.osd_queue_latency;
 
     auto &st = sub_op->target;
     st = target; // Target can start off in same state as parent.

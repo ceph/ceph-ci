@@ -11,8 +11,11 @@
 
 #pragma once
 
+#include <atomic>
 #include <ostream>
 #include <ranges>
+
+#include "Objecter.h"
 
 /**
  * @class SplitOp
@@ -252,6 +255,7 @@ class SplitOp {
     mini_flat_map<int, Details> details;
     int rc = -EIO;
     std::optional<InternalVersion> internal_version;
+    utime_t osd_queue_latency;
 
     SubRead(int count) : details(count) {}
   };
