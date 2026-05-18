@@ -721,7 +721,7 @@ std::pair<bool, bool> is_single_chunk(const pg_pool_t *pi, uint64_t offset, uint
   return {true, offset % stripe_width < chunk_size};
 }
 
-bool allow_replica_split_read() {
+bool throttle_replica_split_read() {
   int current = replica_split_op_throttle_counter.load();
   while (current > 0) {
     if (replica_split_op_throttle_counter.compare_exchange_weak(current, current - 1)) {
@@ -876,20 +876,20 @@ std::pair<bool, bool> validate(Objecter::Op *op, Objecter &objecter,
     return {false, false};
   }
 
-  // Only consult the counter for replicated split reads
-  if (!is_erasure && !allow_replica_split_read()) {
-    if (has_read_ops) {
-      ldout(cct, DBG_LVL) << __func__ << " REJECT: splitting denied" << dendl;
-    }
-    return {false, false};
-  }
-
   uint64_t replica_min_read_size = replica_min_shard_read_size * kReplicaMinShardReads;
 
   // Validate operations and read sizes
   bool suitable_read_found = validate_operations(op, pi, is_erasure,
                                                  replica_min_read_size, cct,
                                                  has_primary_ops, single_direct_op);
+
+// Only consult the counter for replicated split reads
+  if (!is_erasure && !throttle_replica_split_read()) {
+    if (has_read_ops) {
+      ldout(cct, DBG_LVL) << __func__ << " REJECT: splitting denied" << dendl;
+    }
+    return {false, false};
+  }
 
   return {suitable_read_found, single_direct_op};
 }
