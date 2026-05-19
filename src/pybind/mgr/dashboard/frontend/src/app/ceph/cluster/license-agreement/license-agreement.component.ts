@@ -56,8 +56,8 @@ export class LicenceAgreementComponent extends BaseModal implements OnInit, Afte
 
   fetchLicenceInfo() {
     this.clusterService.getLicense(this.customImageName).subscribe({
-      next: (response: string) => {
-        this.licenceForm.get('licenceText')?.setValue(response);
+      next: (response: { call_home_notice: string; license: string }) => {
+        this.licenceForm.get('licenceText')?.setValue(response.license);
         this.loading = false;
 
         this.cdr.detectChanges();

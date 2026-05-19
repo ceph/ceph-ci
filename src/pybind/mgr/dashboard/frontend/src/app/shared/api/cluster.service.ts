@@ -25,8 +25,10 @@ export class ClusterService {
     );
   }
 
-  getLicense(image_name: string): Observable<string> {
-    return this.http.get<string>(`${this.baseURL}/license/${encodeURIComponent(image_name)}`);
+  getLicense(image_name: string): Observable<{ call_home_notice: string; license: string }> {
+    return this.http.get<{ call_home_notice: string; license: string }>(
+      `${this.baseURL}/license/${encodeURIComponent(image_name)}`
+    );
   }
 
   acceptLicense(image_name: string): Observable<void> {
