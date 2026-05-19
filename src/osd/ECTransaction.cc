@@ -327,6 +327,11 @@ void ECTransaction::Generate::shards_written(const shard_id_set &shards) {
   }
 }
 
+// NOTE: This function is no longer called as of the fix for truncate-to-zero
+// preserving omap data. Truncating an object to zero bytes should be treated
+// as a modification operation (not delete+recreate) to preserve omap headers
+// and keys. The delete+recreate approach was causing omap data loss in EC pools.
+// See: OmapTest.OmapPreservedAfterTruncateToZero test case.
 void ECTransaction::Generate::zero_truncate_to_delete() {
   ceph_assert(obc);
 
@@ -734,10 +739,6 @@ ECTransaction::Generate::Generate(PGTransaction &t,
 
   if (entry && op.updated_snaps) {
     entry->mod_desc.update_snaps(op.updated_snaps->first);
-  }
-
-  if (op.is_none() && op.truncate && op.truncate->first == 0) {
-    zero_truncate_to_delete();
   }
 
   if (op.delete_first) {
