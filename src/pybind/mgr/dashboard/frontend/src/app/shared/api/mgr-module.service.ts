@@ -13,6 +13,7 @@ import { SummaryService } from '../services/summary.service';
 
 const GLOBAL = 'global';
 import { NgbActiveModal } from '@ng-bootstrap/ng-bootstrap';
+import { ModalCdsService } from '../services/modal-cds.service';
 
 @Injectable({
   providedIn: 'root'
@@ -94,7 +95,7 @@ export class MgrModuleService {
     notificationText?: string,
     navigateByUrl?: boolean,
     reconnectingMessage: string = $localize`Reconnecting, please wait ...`,
-    activeModal?: NgbActiveModal
+    activeModal?: NgbActiveModal | ModalCdsService
   ): void {
     const moduleToggle$ = enabled ? this.disable(module) : this.enable(module);
 
@@ -130,7 +131,11 @@ export class MgrModuleService {
                 table.refreshBtn();
               }
 
-              if (activeModal) activeModal.close();
+              if (activeModal && 'close' in activeModal) {
+                activeModal.close();
+              } else if (activeModal && 'dismissAll' in activeModal) {
+                activeModal.dismissAll();
+              }
 
               if (notificationText) {
                 this.notificationService.show(

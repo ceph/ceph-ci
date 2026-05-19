@@ -1,9 +1,7 @@
 import { Component, EventEmitter, OnInit, Output } from '@angular/core';
-import { NgbActiveModal } from '@ng-bootstrap/ng-bootstrap';
 import { MgrModuleService } from '../../api/mgr-module.service';
 import { NotificationService } from '../../services/notification.service';
 import { NotificationType } from '../../enum/notification-type.enum';
-import { BlockUI, NgBlockUI } from 'ng-block-ui';
 import { BehaviorSubject, Observable } from 'rxjs';
 import { CdFormGroup } from '../../forms/cd-form-group';
 import { FormControl, Validators } from '@angular/forms';
@@ -23,9 +21,6 @@ import { ConfirmationModalComponent } from '../confirmation-modal/confirmation-m
   styleUrls: ['./call-home-modal.component.scss']
 })
 export class CallHomeModalComponent extends CdForm implements OnInit {
-  @BlockUI()
-  blockUI: NgBlockUI;
-
   @Output() callHomeEnabled = new EventEmitter<boolean>(); // Change the type as needed
 
   callHomeForm: CdFormGroup;
@@ -40,7 +35,6 @@ export class CallHomeModalComponent extends CdForm implements OnInit {
   icons = Icons;
 
   constructor(
-    public activeModal: NgbActiveModal,
     private mgrModuleService: MgrModuleService,
     private notificationService: NotificationService,
     private callHomeSerive: CallHomeService,
@@ -73,8 +67,8 @@ export class CallHomeModalComponent extends CdForm implements OnInit {
       lastName: new FormControl(null, [Validators.required]),
       email: new FormControl(null, [Validators.required, Validators.email]),
       phone: new FormControl(null, [Validators.required]),
-      address: new FormControl(null, [Validators.required]),
-      companyName: new FormControl(null, [Validators.required]),
+      address: new FormControl(null),
+      companyName: new FormControl(null),
       countryCode: new FormControl(null, [Validators.required]),
       licenseAgrmt: new FormControl(false, [Validators.requiredTrue])
     });
@@ -143,7 +137,7 @@ export class CallHomeModalComponent extends CdForm implements OnInit {
         : $localize`Deactivated IBM Call Home Agent`,
       false,
       enable ? $localize`Enabling Call Home module...` : $localize`Disabling Call Home module...`,
-      this.activeModal
+      this.cdsModalService
     );
 
     if (!enable) this.callHomeNotificationService.setVisibility(true);
