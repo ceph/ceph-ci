@@ -7884,6 +7884,7 @@ int OSDMonitor::parse_erasure_code_profile(const vector<string> &erasure_code_pr
 
 int OSDMonitor::prepare_pool_size(const unsigned pool_type,
 				  const string &erasure_code_profile,
+          int num_zones,
                                   uint8_t repl_size,
 				  int64_t num_zones,
 				  unsigned *size, unsigned *min_size,

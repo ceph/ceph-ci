@@ -542,6 +542,7 @@ private:
 				 std::ostream *ss);
   int prepare_pool_size(const unsigned pool_type,
 			const std::string &erasure_code_profile,
+      int num_zones,
                         uint8_t repl_size,
 			int64_t num_zones,
 			unsigned *size, unsigned *min_size,
