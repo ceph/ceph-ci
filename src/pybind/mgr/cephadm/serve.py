@@ -213,9 +213,8 @@ class CephadmServe:
             self.mgr.remove_health_warning('CEPHADM_PAUSED')
 
     def handle_call_home_warning(self) -> None:
-        if not self.mgr.call_home_needs_acceptance:
-            return
-        self.mgr.raise_call_home_warning()
+        if self.mgr.call_home_needs_acceptance:
+            self.mgr.raise_call_home_warning()
 
     def _autotune_host_memory(self, host: str) -> None:
         total_mem = self.mgr.cache.get_facts(host).get('memory_total_kb', 0)
