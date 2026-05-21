@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import logging
 import re
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Union
 
 from .secret_store import SecretRecord
 from ceph_secrets_types import (CephSecretException,
@@ -67,7 +67,7 @@ class SecretMgr:
     def set(
         self,
         namespace: str,
-        scope: Tuple[SecretScope,str],
+        scope: Union[SecretScope, str],
         target: str,
         name: str,
         data: Dict[str, Any],
@@ -131,56 +131,36 @@ class SecretMgr:
         _scan(obj)
         return refs
 
+    def _resolve_secret_uri(self, uri: str) -> Any:
+        """Resolve a single secret URI to its value."""
+        try:
+            parsed_secret = parse_secret_uri(uri)
+        except CephSecretException as e:
+            raise CephSecretException(f"Invalid secret URI {uri!r}: {e}") from e
+        if not isinstance(parsed_secret, SecretRef):
+            raise CephSecretException(f"Invalid secret URI {uri!r}")
+        return self.get_value(parsed_secret)
+
+    def _resolve(self, v: Any) -> Any:
+        """Recursively resolve secret URIs within a nested structure."""
+        if isinstance(v, dict):
+            return {k: self._resolve(vv) for k, vv in v.items()}
+        if isinstance(v, list):
+            return [self._resolve(vv) for vv in v]
+        if isinstance(v, tuple):
+            return tuple(self._resolve(vv) for vv in v)
+        if isinstance(v, str):
+            s = v.strip()
+            if s.startswith(_SECRET_URI_PREFIX):
+                return self._resolve_secret_uri(s)
+        return v
+
     def resolve_object(self, obj: Any) -> Any:
+        """Resolve secret references within nested dict/list/tuple structures.
+        Strings that are exactly a secret URI are replaced by their referenced
+        value.
+
+        Note: Embedded secret URIs within larger strings are not supported,
+        the entire string value must be a secret URI.
         """
-        Resolve secret references within nested dict/list structures.
-
-        - If a string is exactly a secret URI, replace it with the referenced value.
-        - If a string contains embedded secret URIs, replace each URI by its
-          string value. Multi-key secrets resolve to dicts and therefore cannot
-          be embedded into larger strings.
-        """
-
-        def get_secret_value(uri: str) -> Any:
-            try:
-                parsed_secret = parse_secret_uri(uri)
-            except CephSecretException as e:
-                raise CephSecretException(f"Invalid secret URI {uri!r}: {e}") from e
-            if not isinstance(parsed_secret, SecretRef):
-                raise CephSecretException(f"Invalid secret URI {uri!r}")
-            return self.get_value(parsed_secret)
-
-        def _resolve_str(s: str) -> Any:
-            s_strip = s.strip()
-
-            # exact URI -> return value (can be scalar or dict depending on rule)
-            if s_strip.startswith(_SECRET_URI_PREFIX) and _SECRET_URI_RE.fullmatch(s_strip):
-                return get_secret_value(s_strip)
-
-            # embedded URIs -> must be string substitutions
-            if _SECRET_URI_PREFIX in s:
-                def repl(m: re.Match) -> str:
-                    uri = m.group(0)
-                    val = get_secret_value(uri)
-                    if not isinstance(val, str):
-                        raise CephSecretException(
-                            f"Secret {uri} resolved to non-string; cannot embed into string. "
-                            f"Use a single-key string secret or reference the URI as the whole value."
-                        )
-                    return val
-                return _SECRET_URI_RE.sub(repl, s)
-
-            return s
-
-        def _resolve(v: Any) -> Any:
-            if isinstance(v, dict):
-                return {k: _resolve(vv) for k, vv in v.items()}
-            if isinstance(v, list):
-                return [_resolve(vv) for vv in v]
-            if isinstance(v, tuple):
-                return tuple(_resolve(vv) for vv in v)
-            if isinstance(v, str):
-                return _resolve_str(v)
-            return v
-
-        return _resolve(obj)
+        return self._resolve(obj)
