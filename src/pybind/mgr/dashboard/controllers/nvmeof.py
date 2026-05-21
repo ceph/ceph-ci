@@ -576,16 +576,22 @@ else:
                 "nqn": Param(str, "NVMeoF subsystem NQN"),
                 "network_mask": Param(str, "Network mask to add"),
                 "gw_group": Param(str, "NVMeoF gateway group", True, None),
-                "traddr": Param(str, "NVMeoF gateway address", True, None),
+                "server_address": Param(str, "NVMeoF gateway address", True, None),
+                "traddr": Param(str, "NVMeoF gateway address (deprecated)", True, None),
             },
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
         def add_network(self, nqn: str, network_mask: str, gw_group: Optional[str] = None,
+                        server_address: Optional[str] = None,
                         traddr: Optional[str] = None):
+            server_address = resolve_nvmeof_server_address(
+                server_address=server_address,
+                traddr=traddr
+            )
             return NVMeoFClient(
                 gw_group=gw_group,
-                traddr=traddr
+                server_address=server_address
             ).stub.add_subsystem_network(
                 NVMeoFClient.pb2.add_subsystem_network_req(
                     subsystem_nqn=nqn, network_mask=network_mask
@@ -604,16 +610,22 @@ else:
                 "nqn": Param(str, "NVMeoF subsystem NQN"),
                 "network_mask": Param(str, "Network mask to remove"),
                 "gw_group": Param(str, "NVMeoF gateway group", True, None),
-                "traddr": Param(str, "NVMeoF gateway address", True, None),
+                "server_address": Param(str, "NVMeoF gateway address", True, None),
+                "traddr": Param(str, "NVMeoF gateway address (deprecated)", True, None),
             },
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
         def del_network(self, nqn: str, network_mask: str, gw_group: Optional[str] = None,
+                        server_address: Optional[str] = None,
                         traddr: Optional[str] = None):
+            server_address = resolve_nvmeof_server_address(
+                server_address=server_address,
+                traddr=traddr
+            )
             return NVMeoFClient(
                 gw_group=gw_group,
-                traddr=traddr
+                server_address=server_address
             ).stub.del_subsystem_network(
                 NVMeoFClient.pb2.del_subsystem_network_req(
                     subsystem_nqn=nqn, network_mask=network_mask
