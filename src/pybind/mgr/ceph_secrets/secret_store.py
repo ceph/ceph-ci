@@ -53,7 +53,6 @@ class SecretRecord:
     target: str
     name: str
     version: int
-    secret_type: str
     data: Dict[str, Any]
     user_made: bool = True
     editable: bool = True
@@ -197,7 +196,6 @@ class SecretStoreMon(SecretStorageBackend):
             target: str,
             name: str,
             data: Dict[str, Any],
-            secret_type: str = 'Opaque',
             user_made: bool = True,
             editable: bool = True) -> SecretRecord:
 
@@ -223,7 +221,6 @@ class SecretStoreMon(SecretStorageBackend):
             target=target,
             name=name,
             version=version,
-            secret_type=secret_type,
             data=data,
             user_made=user_made,
             editable=editable,

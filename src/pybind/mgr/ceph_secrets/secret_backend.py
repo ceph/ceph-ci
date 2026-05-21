@@ -43,7 +43,6 @@ class SecretStorageBackend(ABC):
         target: str,
         name: str,
         data: Dict[str, Any],
-        secret_type: str = "Opaque",
         user_made: bool = True,
         editable: bool = True,
     ) -> "SecretRecord":

@@ -202,7 +202,6 @@ class Module(MgrModule):
                    target: str,
                    name: str,
                    data: Dict[str, Any],
-                   secret_type: str = 'Opaque',
                    user_made: bool = True,
                    editable: bool = True) -> Dict[str, Any]:
         """Internal entrypoint (data is a dict)."""
@@ -212,7 +211,6 @@ class Module(MgrModule):
             target=target,
             name=name,
             data=data,
-            secret_type=secret_type,
             user_made=user_made,
             editable=editable)
         return rec.to_json(include_data=False, include_internal=False)

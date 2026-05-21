@@ -83,7 +83,6 @@ class CephSecretsClient:
         target: str,
         name: str,
         data: Dict[str, Any],
-        secret_type: str = "Opaque",
         user_made: bool = True,
         editable: bool = True,
     ) -> Dict[str, Any]:
@@ -94,7 +93,6 @@ class CephSecretsClient:
             target=target,
             name=name,
             data=data,
-            secret_type=secret_type,
             user_made=user_made,
             editable=editable,
         )

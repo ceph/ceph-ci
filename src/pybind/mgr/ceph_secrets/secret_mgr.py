@@ -71,7 +71,6 @@ class SecretMgr:
         target: str,
         name: str,
         data: Dict[str, Any],
-        secret_type: str = "Opaque",
         user_made: bool = True,
         editable: bool = True,
     ) -> SecretRecord:
@@ -81,7 +80,7 @@ class SecretMgr:
             raise CephSecretException(f"target must be empty for {sc.value} scope")
         if sc not in (SecretScope.GLOBAL, SecretScope.CUSTOM) and not tgt:
             raise CephSecretException("target is required")
-        return self.store.set(namespace, sc, tgt, name, data, secret_type, user_made, editable)
+        return self.store.set(namespace, sc, tgt, name, data, user_made, editable)
 
     def rm(self, namespace: str, scope: SecretScope | str, target: str, name: str) -> bool:
         return self.store.rm(namespace, _coerce_scope(scope), target or '', name)
