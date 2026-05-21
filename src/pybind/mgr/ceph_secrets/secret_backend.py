@@ -18,6 +18,8 @@ class SecretStorageBackend(ABC):
     Backends store secret instances addressed by:
       (namespace, scope, target, name)
 
+    For custom scope, target is empty and name stores the free-form path suffix.
+
     Epoch:
       Each namespace has an independent monotonic epoch counter that is bumped
       on every mutation (set/rm).  Consumers can use get_epoch(namespace) as a

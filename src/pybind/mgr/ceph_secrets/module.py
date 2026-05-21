@@ -10,7 +10,7 @@ from mgr_module import (
     Option
 )
 from .secret_mgr import SecretMgr
-from ceph_secrets_types import CephSecretException, SecretScope, parse_secret_path
+from ceph_secrets_types import CephSecretException, CephSecretDataError, SecretScope, parse_secret_path
 from .backends import BACKENDS
 
 
@@ -147,6 +147,10 @@ class Module(MgrModule):
         ref = self.secret_mgr.make_ref(namespace, scope, target, name)
         try:
             rec = self.secret_mgr.get(ref)
+        except CephSecretDataError:
+            # Corruption is not the same as absence; let callers/CLI report a
+            # data error instead of returning the same sentinel as "not found".
+            raise
         except CephSecretException:
             return {}
         return rec.to_json(include_data=reveal, include_internal=False)
@@ -162,6 +166,8 @@ class Module(MgrModule):
         ref = self.secret_mgr.make_ref(namespace, sc, target, name)
         try:
             rec = self.secret_mgr.get(ref)
+        except CephSecretDataError:
+            raise
         except CephSecretException:
             return None
         return rec.version if rec is not None else None
@@ -177,8 +183,11 @@ class Module(MgrModule):
                    editable: bool = True) -> Dict[str, Any]:
         """Internal entrypoint (data is a dict)."""
         rec = self.secret_mgr.set(
-            name, data, namespace=namespace, scope=scope,
+            namespace=namespace,
+            scope=scope,
             target=target,
+            name=name,
+            data=data,
             secret_type=secret_type,
             user_made=user_made,
             editable=editable)

@@ -138,22 +138,43 @@ class SecretStoreMon(SecretStorageBackend):
     # ------------------------------------------------------------------ helpers
 
     def _kv_key(self, namespace: str, scope: SecretScope, target: str, name: str) -> str:
-        # Avoid '/' in components for v1 simplicity
-        for label, val in (('namespace', namespace), ('name', name)):
-            if '/' in val:
-                raise CephSecretDataError(f"{label} must not contain '/': {val!r}")
-        if scope != SecretScope.GLOBAL:
-            if '/' in target:
-                raise CephSecretDataError(f"target must not contain '/': {target!r}")
-            return f'{SECRET_STORE_PREFIX}{namespace}/{scope.value}/{target}/{name}'
-        elif target:
-            raise CephSecretDataError("target must be empty for global scope")
+        try:
+            scope = scope if isinstance(scope, SecretScope) else SecretScope.from_str(str(scope))
+        except Exception as e:
+            raise CephSecretDataError(f"invalid scope {scope!r}: {e}") from e
 
-        return f'{SECRET_STORE_PREFIX}{namespace}/{scope.value}/{name}'
+        if not namespace:
+            raise CephSecretDataError("namespace must not be empty")
+        if '/' in namespace:
+            raise CephSecretDataError(f"namespace must not contain '/': {namespace!r}")
+        if not name:
+            raise CephSecretDataError("name must not be empty")
+
+        if scope == SecretScope.CUSTOM:
+            if target:
+                raise CephSecretDataError("target must be empty for custom scope")
+            if name.startswith('/') or name.endswith('/') or '//' in name:
+                raise CephSecretDataError(f"custom path must not contain empty segments: {name!r}")
+            return f'{SECRET_STORE_PREFIX}{namespace}/{scope.value}/{name}'
+
+        if '/' in name:
+            raise CephSecretDataError(f"name must not contain '/': {name!r}")
+
+        if scope == SecretScope.GLOBAL:
+            if target:
+                raise CephSecretDataError("target must be empty for global scope")
+            return f'{SECRET_STORE_PREFIX}{namespace}/{scope.value}/{name}'
+
+        if not target:
+            raise CephSecretDataError(f"target must not be empty for {scope.value} scope")
+        if '/' in target:
+            raise CephSecretDataError(f"target must not contain '/': {target!r}")
+        return f'{SECRET_STORE_PREFIX}{namespace}/{scope.value}/{target}/{name}'
 
     # ------------------------------------------------------------------ CRUD
 
     def get(self, namespace: str, scope: SecretScope, target: str, name: str) -> Optional[SecretRecord]:
+        scope = scope if isinstance(scope, SecretScope) else SecretScope.from_str(str(scope))
         k = self._kv_key(namespace, scope, target, name)
         raw = self.mgr.get_store(k)
         if raw is None:
@@ -180,6 +201,7 @@ class SecretStoreMon(SecretStorageBackend):
             user_made: bool = True,
             editable: bool = True) -> SecretRecord:
 
+        scope = scope if isinstance(scope, SecretScope) else SecretScope.from_str(str(scope))
         existing = None
         try:
             existing = self.get(namespace, scope, target, name)
@@ -215,6 +237,7 @@ class SecretStoreMon(SecretStorageBackend):
         return rec
 
     def rm(self, namespace: str, scope: SecretScope, target: str, name: str) -> bool:
+        scope = scope if isinstance(scope, SecretScope) else SecretScope.from_str(str(scope))
         k = self._kv_key(namespace, scope, target, name)
         existed = self.mgr.get_store(k) is not None
         self.mgr.set_store(k, None)
@@ -244,13 +267,16 @@ class SecretStoreMon(SecretStorageBackend):
           - Empty-path-component keys (e.g. double slashes) are reported as bad records.
           - Epoch keys live under secret_store/meta/ and are never scanned here.
         """
+        if scope is not None and not isinstance(scope, SecretScope):
+            scope = SecretScope.from_str(str(scope))
+
         # list by prefix for efficiency
         prefix = SECRET_STORE_PREFIX
         if namespace:
             prefix += f'{namespace}/'
             if scope:
                 prefix += f'{scope.value}/'
-                if target and scope != SecretScope.GLOBAL:
+                if target and scope not in (SecretScope.GLOBAL, SecretScope.CUSTOM):
                     prefix += f'{target}/'
         items = self.mgr.get_store_prefix(prefix) or {}
         good_records: List[SecretRecord] = []
@@ -266,14 +292,11 @@ class SecretStoreMon(SecretStorageBackend):
                 bad_records.append(BadSecretRecord(k, 'empty path component in key', parts[0] if parts else ''))
                 continue
 
-            if len(parts) == 3:
-                ns, sc, name = parts[0], parts[1], parts[2]
-                tgt = ''
-            elif len(parts) == 4:
-                ns, sc, tgt, name = parts[0], parts[1], parts[2], parts[3]
-            else:
-                bad_records.append(BadSecretRecord(k, 'unexpected key structure', parts[0]))
+            if len(parts) < 3:
+                bad_records.append(BadSecretRecord(k, 'unexpected key structure', parts[0] if parts else ''))
                 continue
+
+            ns, sc = parts[0], parts[1]
 
             try:
                 sc_enum = SecretScope.from_str(sc)
@@ -281,13 +304,21 @@ class SecretStoreMon(SecretStorageBackend):
                 bad_records.append(BadSecretRecord(k, f'invalid scope {sc!r}: {e}', ns))
                 continue
 
-            # cross-validate segment count against scope
-            if sc_enum == SecretScope.GLOBAL and tgt:
-                bad_records.append(BadSecretRecord(k, '4-part key but scope is global', ns))
-                continue
-            if sc_enum != SecretScope.GLOBAL and not tgt:
-                bad_records.append(BadSecretRecord(k, '3-part key but scope is not global', ns))
-                continue
+            if sc_enum == SecretScope.CUSTOM:
+                tgt = ''
+                name = '/'.join(parts[2:])
+            elif sc_enum == SecretScope.GLOBAL:
+                if len(parts) != 3:
+                    bad_records.append(BadSecretRecord(k, 'unexpected global key structure', ns))
+                    continue
+                tgt = ''
+                name = parts[2]
+            else:
+                if len(parts) != 4:
+                    bad_records.append(BadSecretRecord(k, 'unexpected targeted-scope key structure', ns))
+                    continue
+                tgt = parts[2]
+                name = parts[3]
 
             # apply caller filters
             if namespace and ns != namespace:

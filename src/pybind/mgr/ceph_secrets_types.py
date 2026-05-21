@@ -17,13 +17,16 @@ SECRET_URI_SCHEME = f'{SECRET_SCHEME}://'
 class CephSecretException(Exception):
     pass
 
+
 class CephSecretDataError(CephSecretException):
     pass
+
 
 class SecretScope(str, Enum):
     GLOBAL = 'global'
     SERVICE = 'service'
     HOST = 'host'
+    CUSTOM = 'custom'
 
     @classmethod
     def from_str(cls, s: str) -> 'SecretScope':
@@ -36,69 +39,65 @@ class SecretScope(str, Enum):
             ) from e
 
 
-_SCOPE_VALUES = frozenset(s.value for s in SecretScope)
+_TARGETED_SCOPES = frozenset((SecretScope.SERVICE, SecretScope.HOST))
 
 
 class SecretURI(Protocol, Hashable):
     def to_uri(self) -> str: ...
 
 
-def _extract_key_param(parsed_url: ParseResult) -> Optional[str]:
-    """
-    Extract the optional data key from the query string (?key=<value>).
-
-    Policy:
-      - Fragment form ('#...') is intentionally not supported; it is rejected upstream.
-      - Reject multiple 'key=' values.
-      - Reject an explicitly empty key (e.g. '?key=').
-
-    Note: keep_blank_values=True is required so that '?key=' is preserved by parse_qs
-    and can be detected and rejected. Without it, parse_qs silently drops the empty
-    value and the function would return None, treating '?key=' as if no key was given.
-    """
-    q = parse_qs(parsed_url.query or '', keep_blank_values=True)
-    vals = q.get('key')
-
-    if vals is None:
-        return None
-
-    if len(vals) != 1:
-        raise CephSecretException(
-            f'Invalid secret uri: multiple key parameters are not allowed: {vals!r}'
-        )
-
-    key = (vals[0] or '').strip()
-    if not key:
-        raise CephSecretException('Invalid secret uri: key parameter must not be empty')
-    return key
+def _q_path_component(v: str) -> str:
+    return quote(v, safe='')
 
 
-def _validate_components_no_slash(
+def _q_path(v: str) -> str:
+    # CUSTOM stores a slash-delimited path in name. Preserve path separators, but
+    # encode URI-reserved characters such as '?', '#', and '%'.
+    return quote(v, safe='/')
+
+
+def _has_empty_path_component(v: str) -> bool:
+    return v.startswith('/') or v.endswith('/') or '//' in v
+
+
+def _validate_components(
     *,
     uri: str,
     namespace: str,
     scope: SecretScope,
     target: str,
     name: str,
-    key: Optional[str],
 ) -> None:
     if not namespace:
         raise CephSecretException(f'Invalid secret uri {uri!r}: namespace must not be empty')
+    if '/' in namespace:
+        raise CephSecretException(f'Invalid secret uri {uri!r}: namespace must not contain \'/\'')
     if not name:
         raise CephSecretException(f'Invalid secret uri {uri!r}: name must not be empty')
-    if scope != SecretScope.GLOBAL and not target:
-        raise CephSecretException(f'Invalid secret uri {uri!r}: target must not be empty')
-    if key is not None and not key.strip():
-        raise CephSecretException(f'Invalid secret uri {uri!r}: key must not be empty if specified')
 
-    for label, val in (
-        ('namespace', namespace),
-        ('target', target),
-        ('name', name),
-        ('key', key or ''),
-    ):
-        if val and '/' in val:
-            raise CephSecretException(f'Invalid secret uri {uri!r}: {label!r} must not contain \'/\'')
+    if scope == SecretScope.GLOBAL:
+        if target:
+            raise CephSecretException(f'Invalid secret uri {uri!r}: target must be empty for global scope')
+        if '/' in name:
+            raise CephSecretException(f'Invalid secret uri {uri!r}: global secret name must not contain \'/\'')
+        return
+
+    if scope == SecretScope.CUSTOM:
+        if target:
+            raise CephSecretException(f'Invalid secret uri {uri!r}: target must be empty for custom scope')
+        if _has_empty_path_component(name):
+            raise CephSecretException(f'Invalid secret uri {uri!r}: custom path must not contain empty segments')
+        return
+
+    if scope in _TARGETED_SCOPES:
+        if not target:
+            raise CephSecretException(f'Invalid secret uri {uri!r}: target must not be empty')
+        for label, val in (('target', target), ('name', name)):
+            if '/' in val:
+                raise CephSecretException(f'Invalid secret uri {uri!r}: {label} must not contain \'/\'')
+        return
+
+    raise CephSecretException(f'Invalid secret uri {uri!r}: unsupported scope {scope!r}')
 
 
 @dataclass(frozen=True)
@@ -107,17 +106,17 @@ class SecretRef:
     scope: SecretScope
     target: str
     name: str
-    key: Optional[str] = None
 
     def __post_init__(self) -> None:
         try:
-            _validate_components_no_slash(
+            scope = self.scope if isinstance(self.scope, SecretScope) else SecretScope.from_str(str(self.scope))
+            object.__setattr__(self, 'scope', scope)
+            _validate_components(
                 uri='<SecretRef>',
                 namespace=self.namespace,
-                scope=self.scope,
+                scope=scope,
                 target=self.target,
                 name=self.name,
-                key=self.key,
             )
         except CephSecretException as e:
             raise ValueError(str(e)) from e
@@ -126,15 +125,14 @@ class SecretRef:
         return (self.namespace, self.scope.value, self.target, self.name)
 
     def to_uri(self) -> str:
-        # Components are already validated to not contain '/'
-        if self.scope == SecretScope.GLOBAL:
-            base = f'{SECRET_URI_SCHEME}{self.namespace}/{self.scope.value}/{self.name}'
-        else:
-            base = f'{SECRET_URI_SCHEME}{self.namespace}/{self.scope.value}/{self.target}/{self.name}'
-
-        if self.key is not None:
-            return f'{base}?{urlencode({"key": self.key})}'
-        return base
+        ns = _q_path_component(self.namespace)
+        scope = self.scope.value
+        if self.scope in (SecretScope.GLOBAL, SecretScope.CUSTOM):
+            return f'{SECRET_SCHEME}:/{ns}/{scope}/{_q_path(self.name)}'
+        return (
+            f'{SECRET_SCHEME}:/{ns}/{scope}/'
+            f'{_q_path_component(self.target)}/{_q_path_component(self.name)}'
+        )
 
 
 @dataclass(frozen=True)

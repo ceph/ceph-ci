@@ -19,6 +19,12 @@ _SECRET_URI_RE = re.compile(rf"{re.escape(SECRET_URI_SCHEME)}[^\s\"']*")
 logger = logging.getLogger(__name__)
 
 
+def _coerce_scope(scope: SecretScope | str) -> SecretScope:
+    if isinstance(scope, SecretScope):
+        return scope
+    return SecretScope.from_str(str(scope))
+
+
 class SecretMgr:
     """
     Phase 1: Mon-store backend only.
@@ -36,12 +42,11 @@ class SecretMgr:
     def make_ref(
         self,
         namespace: str,
-        scope: SecretScope,
+        scope: SecretScope | str,
         target: str = '',
         name: str = '',
-        key: Optional[str] = None,
     ) -> SecretRef:
-        return SecretRef(namespace=namespace, scope=scope, target=target, name=name, key=key)
+        return SecretRef(namespace=namespace, scope=_coerce_scope(scope), target=target or '', name=name)
 
     def get(self, ref: SecretRef) -> SecretRecord:
         rec = self.store.get(ref.namespace, ref.scope, ref.target, ref.name)
@@ -67,45 +72,44 @@ class SecretMgr:
 
     def set(
         self,
+        namespace: str,
+        scope: Tuple[SecretScope,str],
+        target: str,
         name: str,
         data: Dict[str, Any],
-        namespace: str,
-        scope: Optional[SecretScope] = None,
-        target: Optional[str] = None,
         secret_type: str = "Opaque",
         user_made: bool = True,
         editable: bool = True,
     ) -> SecretRecord:
-        sc = scope or SecretScope.GLOBAL
+        sc = _coerce_scope(scope)
         tgt = target or ""
-        if sc != SecretScope.GLOBAL and not tgt:
+        if sc in (SecretScope.GLOBAL, SecretScope.CUSTOM) and tgt:
+            raise CephSecretException(f"target must be empty for {sc.value} scope")
+        if sc not in (SecretScope.GLOBAL, SecretScope.CUSTOM) and not tgt:
             raise CephSecretException("target is required")
-        if sc == SecretScope.GLOBAL and tgt:
-            raise CephSecretException("target must be empty for global scope")
         return self.store.set(namespace, sc, tgt, name, data, secret_type, user_made, editable)
 
-    def rm(self, namespace: str, scope: SecretScope, target: str, name: str) -> bool:
-        return self.store.rm(namespace, scope, target, name)
+    def rm(self, namespace: str, scope: SecretScope | str, target: str, name: str) -> bool:
+        return self.store.rm(namespace, _coerce_scope(scope), target or '', name)
 
     def ls(
         self,
         namespace: Optional[str] = None,
-        scope: Optional[SecretScope] = None,
+        scope: Optional[SecretScope | str] = None,
         target: Optional[str] = None,
     ) -> Tuple[List[SecretRecord], List[BadSecretRecord]]:
-        return self.store.ls(namespace=namespace, scope=scope, target=target)
+        sc = _coerce_scope(scope) if scope else None
+        return self.store.ls(namespace=namespace, scope=sc, target=target)
 
     def scan_unresolved_refs(self, obj: Any, namespace: str) -> Set[SecretURI]:
         """
-        Return secret refs found in `obj` that cannot be fetched (i.e. self.get(ref) fails).
-
-        Note: this only checks the secret record exists. It does NOT validate ref.key.
+        Return secret refs found in `obj` that cannot be fetched.
         """
         unresolved: Set[SecretURI] = set()
         for ref in self.scan_refs(obj, namespace):
             if isinstance(ref, SecretRef):
                 try:
-                    self.get(ref)
+                    self.get_value(ref)
                 except CephSecretException:
                     unresolved.add(ref)
             else:
