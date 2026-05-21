@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-import json
-from typing import Any, Dict, List, Optional
+import functools
+from typing import Any, Dict, List, Optional, Callable, TypeVar, Union
 import errno
+import json
 
 from .cli import CephSecretsCLICommand
+from object_format import ObjectFormatAdapter, ErrorResponse, Responder
 from mgr_module import (
     MgrModule,
-    HandleCommandResult,
     Option
 )
 from .secret_mgr import SecretMgr
@@ -14,12 +15,14 @@ from ceph_secrets_types import CephSecretException, CephSecretDataError, SecretS
 from .backends import BACKENDS
 
 
+_T = TypeVar('_T')
+
+
 def _parse_data_arg(data: str) -> Dict[str, Any]:
     s = (data or "").strip()
     if not s:
         raise CephSecretException("--data must not be empty")
 
-    # 1) JSON object support
     try:
         payload = json.loads(s)
     except Exception:
@@ -27,6 +30,18 @@ def _parse_data_arg(data: str) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         raise CephSecretException("Secret --data must be a JSON object")
     return payload
+
+
+def _handle_secret_errors(fn: Callable[..., _T]) -> Callable[..., _T]:
+    """Decorator for CLI handlers: converts CephSecretException into
+    ErrorResponse so that Responder / ErrorResponseHandler can catch it."""
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> _T:
+        try:
+            return fn(*args, **kwargs)
+        except CephSecretException as e:
+            raise ErrorResponse(str(e)) from e
+    return wrapper
 
 
 class Module(MgrModule):
@@ -167,7 +182,7 @@ class Module(MgrModule):
     def secret_get_version(
         self,
         namespace: str,
-        scope: str,
+        scope: Union[SecretScope, str],
         target: str,
         name: str,
     ) -> Optional[int]:
@@ -179,7 +194,7 @@ class Module(MgrModule):
             raise
         except CephSecretException:
             return None
-        return rec.version if rec is not None else None
+        return rec.version
 
     def secret_set(self,
                    namespace: str,
@@ -221,78 +236,65 @@ class Module(MgrModule):
     # ---------------------- Module CLI commands ----------------------
 
     @CephSecretsCLICommand.Read('secret ls')
-    def _cli_secret_ls(self,
-                       namespace: Optional[str] = None,
-                       scope: Optional[str] = None,
-                       sec_target: Optional[str] = None,
-                       reveal: bool = False,
-                       show_internals: bool = False) -> HandleCommandResult:
-        try:
-            secrets = self.secret_ls(
-                namespace=namespace,
-                scope=scope,
-                target=sec_target,
-                show_values=reveal,
-                show_internals=show_internals)
-            return HandleCommandResult(0, json.dumps(secrets, indent=2, sort_keys=True), '')
-        except CephSecretException as e:
-            return HandleCommandResult(-errno.EINVAL, '', f'secret error: {e}')
+    @Responder(functools.partial(ObjectFormatAdapter, compatible=True))
+    @_handle_secret_errors
+    def _cli_secret_ls(
+        self,
+        namespace: Optional[str] = None,
+        scope: Optional[str] = None,
+        sec_target: Optional[str] = None,
+        reveal: bool = False,
+        show_internals: bool = False,
+    ) -> Dict[str, Any]:
+        return self.secret_ls(
+            namespace=namespace,
+            scope=scope,
+            target=sec_target,
+            show_values=reveal,
+            show_internals=show_internals,
+        )
 
     @CephSecretsCLICommand.Read('secret get')
-    def _cli_secret_get_by_path(self, path: str, reveal: bool = False) -> HandleCommandResult:
-        try:
-            ns, sc, target, name = parse_secret_path(path)
-            res = self.secret_get(namespace=ns, scope=sc, target=target, name=name, reveal=reveal)
-            if not res:
-                return HandleCommandResult(-errno.ENOENT, '', 'secret error: not found')
-            return HandleCommandResult(0, json.dumps(res, indent=2, sort_keys=True), '')
-        except CephSecretException as e:
-            return HandleCommandResult(-errno.EINVAL, '', f'secret error: {e}')
+    @Responder(functools.partial(ObjectFormatAdapter, compatible=True))
+    @_handle_secret_errors
+    def _cli_secret_get_by_path(
+        self,
+        path: str,
+        reveal: bool = False
+    ) -> Dict[str, Any]:
+        ns, sc, target, name = parse_secret_path(path)
+        res = self.secret_get(namespace=ns, scope=sc, target=target, name=name, reveal=reveal)
+        if not res:
+            raise ErrorResponse('secret error: not found', return_value=-errno.ENOENT)
+        return res
 
     @CephSecretsCLICommand.Write('secret set')
+    @Responder(functools.partial(ObjectFormatAdapter, compatible=True))
+    @_handle_secret_errors
     def _cli_secret_set_by_path(
         self,
         path: str,
-        secret_type: str = 'Opaque',
-        inbuf: Optional[str] = None,
-    ) -> HandleCommandResult:
-        try:
-            if inbuf is None:
-                return HandleCommandResult(
-                    -errno.EINVAL,
-                    '',
-                    'secret error: use -i to provide secret data',
-                )
-
-            parsed_data = _parse_data_arg(inbuf)
-            ns, sc, target, name = parse_secret_path(path)
-            msg = self.secret_set(
-                namespace=ns,
-                scope=sc,
-                target=target,
-                name=name,
-                data=parsed_data,
-                secret_type=secret_type,
-            )
-            return HandleCommandResult(
-                0,
-                json.dumps(msg, indent=2, sort_keys=True),
-                '',
-            )
-        except CephSecretException as e:
-            return HandleCommandResult(
-                -errno.EINVAL,
-                '',
-                f'secret error: {e}',
-            )
+        inbuf: Optional[str] = None
+    ) -> Dict[str, Any]:
+        if inbuf is None:
+            raise ErrorResponse('secret error: use -i to provide secret data')
+        parsed_data = _parse_data_arg(inbuf)
+        ns, sc, target, name = parse_secret_path(path)
+        return self.secret_set(
+            namespace=ns,
+            scope=sc,
+            target=target,
+            name=name,
+            data=parsed_data,
+        )
 
     @CephSecretsCLICommand.Write('secret rm')
-    def _cli_secret_rm_by_path(self, path: str) -> HandleCommandResult:
-        try:
-            ns, sc, target, name = parse_secret_path(path)
-            existed = self.secret_rm(namespace=ns, scope=sc, target=target, name=name)
-            if not existed:
-                return HandleCommandResult(-errno.ENOENT, '', 'secret error: not found')
-            return HandleCommandResult(0, 'secret removed correctly', '')
-        except CephSecretException as e:
-            return HandleCommandResult(-errno.EINVAL, '', f'secret error: {e}')
+    @Responder(functools.partial(ObjectFormatAdapter, compatible=True))
+    @_handle_secret_errors
+    def _cli_secret_rm_by_path(
+        self,
+        path: str
+    ) -> Dict[str, Any]:
+        ns, sc, target, name = parse_secret_path(path)
+        existed = self.secret_rm(namespace=ns, scope=sc, target=target, name=name)
+        return {'status': 'removed' if existed else 'not_found'}
