@@ -41,11 +41,11 @@ public:
     assert(laddr == laddr.get_object_prefix());
     auto iter = index.find(laddr);
     if (iter != index.end()) {
-      TRACE("find bucket: {}", iter->first);
+      INFO("find bucket: {}", iter->first);
       iter->second->demoting = false;
       lru.splice(lru.end(), lru, iter->second);
     } else {
-      TRACE("create bucket: {}", laddr);
+      INFO("create bucket: {}", laddr);
       index[laddr] = lru.emplace(lru.end(), laddr);
       if (should_demote()) {
 	assert(listener);
@@ -124,7 +124,7 @@ public:
 
     co_await ecb->submit_transaction_direct(t);
 
-    DEBUGT("finish demoting {} buckets with {} bytes evicted and {} bytes demoted",
+    INFOT("finish demoting {} buckets with {} bytes evicted and {} bytes demoted",
 	   t, completed_buckets.size(), evicted_size, demoted_size);
     stat.demoted_bucket_count += completed_buckets.size();
     stat.demoted_size += demoted_size;
@@ -169,7 +169,7 @@ private:
     auto iter = index.find(laddr);
     if (iter != index.end()) {
       if (iter->second->demoting) {
-	DEBUG("remove bucket: {}", laddr);
+	INFO("remove bucket: {}", laddr);
 	lru.erase(iter->second);
 	index.erase(iter);
       } else {
