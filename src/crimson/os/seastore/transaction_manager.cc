@@ -988,7 +988,7 @@ TransactionManager::rewrite_logical_extent(
     }
     nextent->rewrite(t, *extent, 0);
 
-    DEBUGT("rewriting meta -- {} to {}", t, *extent, *nextent);
+    INFOT("rewriting meta -- {} to {}", t, *extent, *nextent);
 
 #ifndef NDEBUG
     if (get_checksum_needed(extent->get_paddr())) {
@@ -1056,7 +1056,7 @@ TransactionManager::rewrite_logical_extent(
       bool first_extent = (off == 0);
       ceph_assert(left >= nextent->get_length());
       nextent->rewrite(t, *extent, off);
-      DEBUGT("rewriting data -- {} to {}", t, *extent, *nextent);
+      INFOT("rewriting data -- {} to {}", t, *extent, *nextent);
 
       /* This update_mapping is, strictly speaking, unnecessary for delayed_alloc
        * extents since we're going to do it again once we either do the ool write
@@ -1316,7 +1316,7 @@ TransactionManager::promote_extent(
 {
   LOG_PREFIX(TransactionManager::promote_extent);
   assert(epm->is_cold_device(extent->get_paddr().get_device_id()));
-  DEBUGT("promote extent: {}", t, *extent);
+  INFOT("promote extent: {}", t, *extent);
   ceph_assert(extent->is_logical());
 
   std::vector<LogicalChildNodeRef> promoted_extents;
@@ -1578,7 +1578,7 @@ TransactionManager::demote_region(
 {
   LOG_PREFIX(TransactionManager::demote_region);
   auto prefix = start.get_object_prefix();
-  DEBUGT("start demote {}", t, prefix);
+  INFOT("start demote {}", t, prefix);
   auto cursor = co_await lba_manager->upper_bound_right(
     t, start
   ).handle_error_interruptible(
@@ -1597,7 +1597,7 @@ TransactionManager::demote_region(
       continue;
     }
     if (it.has_shadow_val()) {
-      DEBUGT("demote shadow {}", t, it);
+      INFOT("demote shadow {}", t, it);
       auto extent = co_await relocate_shadow_extent(t, it);
       ret.demoted_size += extent->get_length();
       auto cursor = co_await lba_manager->demote_extent(
@@ -1606,14 +1606,14 @@ TransactionManager::demote_region(
       it = co_await nit.next();
     } else if (!it.is_indirect() && !it.is_zero_reserved() &&
       !epm->is_cold_device(it.get_val().get_device_id())) {
-      DEBUGT("demote hot {}", t, it);
+      INFOT("demote hot {}", t, it);
       auto extent = co_await read_cursor_by_type(
         t, it.direct_cursor, it.get_extent_type());
       ret.evicted_size += extent->get_length();
       extents.push_back(extent);
       it = co_await it.next();
     } else {
-      DEBUGT("skip {}", t, it);
+      INFOT("skip {}", t, it);
       it = co_await it.next();
     }
   }

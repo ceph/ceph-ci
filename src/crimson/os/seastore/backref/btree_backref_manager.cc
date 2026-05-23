@@ -473,22 +473,22 @@ BtreeBackrefManager::scan_device(
     auto bentry = cache.get_cached_backref_entry(key);
     if (bentry) {
       assert(bentry->paddr == key);
-      DEBUGT("found in cache: {} {}", t, bentry->paddr, bentry->laddr);
+      INFOT("found in cache: {} {}", t, bentry->paddr, bentry->laddr);
     }
     if (bentry && bentry->laddr == L_ADDR_NULL) {
-      DEBUGT("{} is removed", t, bentry->paddr);
+      INFOT("{} is removed", t, bentry->paddr);
       iter = co_await iter.next(c);
       continue;
     }
     if (key.get_device_id() == paddr.get_device_id()) {
       auto val = iter.get_val();
       if (bentry && bentry->laddr != val.laddr) {
-        DEBUGT("{} changed from {} to {}",
+        INFOT("{} changed from {} to {}",
           t, bentry->paddr, val.laddr, bentry->laddr);
         iter = co_await iter.next(c);
         continue;
       }
-      DEBUGT("scanned {}, {}", t, key, val.laddr);
+      INFOT("scanned {}, {}", t, key, val.laddr);
       auto ret = co_await f(key, val.len, val.type, val.laddr);
       if (ret == seastar::stop_iteration::yes) {
 	break;

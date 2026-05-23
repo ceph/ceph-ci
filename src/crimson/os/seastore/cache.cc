@@ -1848,6 +1848,10 @@ record_t Cache::prepare_record(
       continue;
     }
 
+    DEBUGT("backref_entry alloc existing {}~0x{:x}",
+           t,
+           i->get_paddr(),
+           i->get_length());
     // Note: commit extents and backref allocations in the same place
     // Note: remapping is split into 2 steps, retire and alloc, they must be
     //       committed atomically together

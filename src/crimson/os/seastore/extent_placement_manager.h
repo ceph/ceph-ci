@@ -745,6 +745,7 @@ private:
       rewrite_gen_t gen,
       write_policy_t policy,
       bool is_tracked) {
+    LOG_PREFIX(ExtentPlacementManager::adjust_generation);
     assert(is_real_type(type));
     if (is_root_type(type)) {
       gen = INLINE_GENERATION;
@@ -792,6 +793,7 @@ private:
         hint != placement_hint_t::REWRITE &&
         hint != placement_hint_t::COLD) {
       gen = hot_tier_generations - 1;
+      SUBINFO(seastore_epm, "setting gen to {}", gen);
     }
 
     if (gen > dynamic_max_rewrite_generation) {
@@ -1098,6 +1100,8 @@ private:
     }
 
     seastar::future<> wait_background() {
+      LOG_PREFIX(BackgroundProcess::wait_background);
+      SUBINFO(seastore_epm, "");
       if (!blocking_io) {
         blocking_io = seastar::promise<>();
       }
@@ -1206,7 +1210,7 @@ private:
     }
 
     struct eviction_state_t {
-      enum class eviction_mode_t {
+      enum class eviction_mode_t : uint8_t {
         STOP,     // generation greater than or equal to MIN_COLD_GENERATION
                   // will be set to MIN_COLD_GENERATION - 1, which means
                   // no extents will be evicted.
@@ -1252,6 +1256,8 @@ private:
 
       rewrite_gen_t adjust_generation_with_eviction(rewrite_gen_t gen) {
         rewrite_gen_t ret = gen;
+        LOG_PREFIX(eviction_state_t::adjust_generation_with_eviction);
+        SUBINFO(seastore_epm, "gen={} mode={}", gen, (uint8_t)eviction_mode);
         switch(eviction_mode) {
         case eviction_mode_t::STOP:
           if (gen == hot_tier_generations) {
