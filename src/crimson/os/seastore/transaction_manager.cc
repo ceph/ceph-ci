@@ -791,7 +791,7 @@ TransactionManager::do_submit_transaction(
   tref.get_phase_durations().prepare_enter +=
     std::chrono::steady_clock::now() - prepare_enter_start;
 
-  while (tref.need_wait_visibility) {
+  while (!tref.blocked_by.empty()) {
     co_await trans_intr::make_interruptible(seastar::yield());
   }
   if (trim_alloc_to && *trim_alloc_to != JOURNAL_SEQ_NULL) {
@@ -1058,7 +1058,6 @@ TransactionManager::rewrite_extent_ret TransactionManager::rewrite_extent(
            rewrite_gen_printer_t{target_generation},
            sea_time_point_printer_t{modify_time},
            *extent);
-    ceph_assert(!extent->is_pending_io());
   }
 
   assert(extent->is_valid() && !extent->is_initial_pending());
