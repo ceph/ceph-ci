@@ -323,6 +323,8 @@ public:
   }
 
   void add_extent(CachedExtent &extent) {
+    LOG_PREFIX(ExtentPromoter::add_extent);
+    INFO("{} current_contents: 0x{:x}", extent, current_contents);
     assert(!extent.is_linked_to_list());
     assert(extent.is_stable_clean());
     extent.set_pin_state(extent_pin_state_t::PendingPromote);
@@ -330,6 +332,7 @@ public:
     current_contents += extent.get_length();
     intrusive_ptr_add_ref(&extent);
     while (current_contents > promotion_size) {
+      INFO("removing front {}", list.front());
       remove_extent(list.front(), extent_pin_state_t::Fresh);
     }
     if (should_run_promote()) {
@@ -339,6 +342,8 @@ public:
   }
 
   void remove_extent(CachedExtent &extent, extent_pin_state_t new_state) {
+    LOG_PREFIX(ExtentPromoter::remove_extent);
+    INFO("{} {} curent_contents: 0x{:x}", extent, new_state, current_contents);
     assert(extent.is_linked_to_list());
     assert(extent.get_pin_state() == extent_pin_state_t::PendingPromote);
     assert(current_contents >= extent.get_length());
@@ -359,7 +364,7 @@ public:
     LOG_PREFIX(ExtentPromoter::run_promote);
     std::size_t promote_size = 0;
     std::list<CachedExtentRef> extents;
-    DEBUGT("start promote", t);
+    INFOT("start promote", t);
     if (current_contents < promotion_size && test_workload) {
       auto id = epm.get_cold_device_id();
       paddr_t start = P_ADDR_NULL;

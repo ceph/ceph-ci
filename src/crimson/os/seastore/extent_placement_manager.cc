@@ -219,7 +219,7 @@ void ExtentPlacementManager::init(
   if (cold_cleaner) {
     dynamic_max_rewrite_generation = hot_tier_generations + cold_tier_generations - 1;
   }
-  DEBUG("dynamic_max_rewrite_generation: {}, "
+  INFO("dynamic_max_rewrite_generation: {}, "
         "hot_tier_generations{} , cold_tier_generations {}",
         dynamic_max_rewrite_generation, hot_tier_generations,
         cold_tier_generations);
@@ -642,12 +642,12 @@ ExtentPlacementManager::close()
 void ExtentPlacementManager::BackgroundProcess::log_state(const char *caller) const
 {
   LOG_PREFIX(BackgroundProcess::log_state);
-  DEBUG("caller {}, {}, {}",
+  INFO("caller {}, {}, {}",
         caller,
         JournalTrimmerImpl::stat_printer_t{*trimmer, true},
         AsyncCleaner::stat_printer_t{*main_cleaner, true});
   if (has_cold_tier()) {
-    DEBUG("caller {}, cold_cleaner: {}",
+    INFO("caller {}, cold_cleaner: {}",
           caller,
           AsyncCleaner::stat_printer_t{*cold_cleaner, true});
   }
@@ -1033,6 +1033,7 @@ seastar::future<>
 ExtentPlacementManager::BackgroundProcess::do_background_cycle()
 {
   LOG_PREFIX(BackgroundProcess::do_background_cycle);
+  INFO("");
   assert(is_ready());
   bool should_trim = trimmer->should_trim();
   bool proceed_trim = false;
@@ -1070,10 +1071,10 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
   }
 
   if (proceed_trim) {
-    DEBUG("started trimming...");
+    INFO("started trimming...");
     return trimmer->trim(force_trim
     ).finally([this, trim_usage, should_abort_cleaner_usage, FNAME] {
-      DEBUG("finished trimming");
+      INFO("finished trimming");
       if (should_abort_cleaner_usage) {
         abort_cleaner_usage(trim_usage, {true, true});
       }
@@ -1110,6 +1111,9 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
     if (demote_should_run()) {
       proceed_demote = true;
     }
+    INFO("proceed_demote: {}, could_demote: {}, fast_mode: {}, should_demote {}",
+      proceed_demote, logical_bucket->could_demote(),
+      eviction_state.is_fast_mode(), logical_bucket->should_demote());
 
     bool abort_cold_cleaner_usage = true;
     if (unlikely(should_force_clean())) {
