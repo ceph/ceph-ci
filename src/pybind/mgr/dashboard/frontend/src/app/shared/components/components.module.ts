@@ -93,7 +93,6 @@ import { TearsheetStepComponent } from './tearsheet-step/tearsheet-step.componen
 import { DetailsCardComponent } from './details-card/details-card.component';
 import { SidePanelComponent } from './side-panel/side-panel.component';
 // Icons
-import InfoIcon from '@carbon/icons/es/information/16';
 import CopyIcon from '@carbon/icons/es/copy/32';
 import { IconComponent } from './icon/icon.component';
 import downloadIcon from '@carbon/icons/es/download/16';
@@ -229,7 +228,6 @@ import CloudMonitoring16 from '@carbon/icons/es/cloud--monitoring/16';
     TearsheetStepComponent,
     SidePanelComponent,
     SidebarLayoutComponent,
-    ProductiveCardComponent,
     DetailsCardComponent,
     CallHomeModalComponent,
     CallHomeNotificationComponent,
