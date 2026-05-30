@@ -223,6 +223,7 @@
     restore status                   shows restoration status of object in a bucket
     restore list                     list restore status of each object in the bucket
                                      can be filtered with help of --restore-status which shows objects with specified status
+    restore reset                    reset restore metadata for an object; requires --yes-i-really-mean-it
   options:
      --tenant=<tenant>                 tenant name
      --user_ns=<namespace>             namespace of user (oidc in case of users authenticated with oidc provider)

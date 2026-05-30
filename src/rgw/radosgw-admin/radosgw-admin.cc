@@ -364,6 +364,7 @@ void usage()
   cout << "  restore status                   shows restoration status of object in a bucket\n";
   cout << "  restore list                     list restore status of each object in the bucket\n";
   cout << "                                   can be filtered with help of --restore-status which shows objects with specified status\n";
+  cout << "  restore reset                    reset restore metadata for an object; requires --yes-i-really-mean-it\n";
   cout << "options:\n";
   cout << "   --tenant=<tenant>                 tenant name\n";
   cout << "   --user_ns=<namespace>             namespace of user (oidc in case of users authenticated with oidc provider)\n";
@@ -930,6 +931,7 @@ enum class OPT {
   CLOUD_DELETE_LIST,
   RESTORE_STATUS,
   RESTORE_LIST,
+  RESTORE_RESET,
 };
 
 }
@@ -1197,6 +1199,7 @@ static SimpleCmd::Commands all_cmds = {
   { "cloud-delete list", OPT::CLOUD_DELETE_LIST },
   { "restore status", OPT::RESTORE_STATUS },
   { "restore list", OPT::RESTORE_LIST },
+  { "restore reset", OPT::RESTORE_RESET },
 };
 
 static SimpleCmd::Aliases cmd_aliases = {
@@ -12350,16 +12353,35 @@ next:
     formatter->flush(cout);
   }
   if (opt_cmd == OPT::RESTORE_STATUS ||
-      opt_cmd == OPT::RESTORE_LIST) {
+      opt_cmd == OPT::RESTORE_LIST ||
+      opt_cmd == OPT::RESTORE_RESET) {
     rgw::restore::RestoreEntry entry;
     entry.bucket = rgw_bucket {tenant, bucket_name};
     if (opt_cmd == OPT::RESTORE_STATUS) {
-      entry.obj_key = rgw_obj_key {object};
+      entry.obj_key = rgw_obj_key {object, object_version};
       ret = driver->get_rgwrestore()->status(dpp(), entry, err_msg,
                                              stream_flusher, null_yield);
     } else if (opt_cmd == OPT::RESTORE_LIST) {
       ret =  driver->get_rgwrestore()->list(dpp(), entry, restore_status_filter,
                                             err_msg, stream_flusher, null_yield);
+    } else if (opt_cmd == OPT::RESTORE_RESET) {
+      if (!yes_i_really_mean_it) {
+        cerr << "ERROR: restore reset requires --yes-i-really-mean-it" << std::endl;
+        return EINVAL;
+      }
+      entry.obj_key = rgw_obj_key {object, object_version};
+      ret = driver->get_rgwrestore()->reset(dpp(), entry, err_msg,
+                                            stream_flusher, null_yield);
+      if (ret < 0) {
+        cerr << "ERROR: failed to reset restore metadata";
+        if (!err_msg.empty()) {
+          cerr << ": " << err_msg;
+        } else {
+          cerr << ": " << cpp_strerror(-ret);
+        }
+        cerr << std::endl;
+        return -ret;
+      }
     }
   }
   return 0;

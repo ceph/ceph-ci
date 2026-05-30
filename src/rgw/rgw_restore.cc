@@ -835,4 +835,112 @@ int Restore::status(const DoutPrefixProvider* dpp, RestoreEntry& entry,
   return ret;
 }
 
+int Restore::reset(const DoutPrefixProvider* dpp, RestoreEntry& entry,
+                   std::string& err_msg, RGWFormatterFlusher& flusher,
+                   optional_yield y)
+{
+  if (entry.bucket.name.empty()) {
+    err_msg = "bucket not specified";
+    return -EINVAL;
+  }
+  if (entry.obj_key.name.empty()) {
+    err_msg = "object not specified";
+    return -EINVAL;
+  }
+
+  std::unique_ptr<rgw::sal::Bucket> bucket;
+  int ret = driver->load_bucket(dpp, entry.bucket, &bucket, y);
+  if (ret < 0) {
+    err_msg = "could not init bucket";
+    ldpp_dout(dpp, 0) << "ERROR: could not init bucket: "
+                      << cpp_strerror(-ret) << dendl;
+    return ret;
+  }
+
+  std::unique_ptr<rgw::sal::Object> obj = bucket->get_object(entry.obj_key);
+  ret = obj->get_obj_attrs(y, dpp);
+  if (ret < 0) {
+    err_msg = "failed to stat object";
+    ldpp_dout(dpp, 0) << "ERROR: failed to stat object, returned error: "
+                      << cpp_strerror(-ret) << dendl;
+    return ret;
+  }
+
+  auto& attrs = obj->get_attrs();
+  auto attr_iter = attrs.find(RGW_ATTR_RESTORE_STATUS);
+  if (attr_iter == attrs.end()) {
+    flusher.start(0);
+    auto f = flusher.get_formatter();
+    f->open_object_section("restore_reset");
+    f->dump_string("name", entry.obj_key.name);
+    if (!entry.obj_key.instance.empty()) {
+      f->dump_string("version", entry.obj_key.instance);
+    }
+    f->dump_string("RestoreStatus", rgw::sal::rgw_restore_status_dump(
+        rgw::sal::RGWRestoreStatus::None));
+    f->dump_bool("RestoreAttrsDeleted", false);
+    f->close_section();
+    flusher.flush();
+    return 0;
+  }
+
+  rgw::sal::RGWRestoreStatus restore_status;
+  try {
+    using ceph::decode;
+    decode(restore_status, attr_iter->second);
+  } catch (const buffer::error& e) {
+    err_msg = "failed to decode restore status";
+    ldpp_dout(dpp, 0) << "ERROR: failed to decode restore status: "
+                      << e.what() << dendl;
+    return -EINVAL;
+  }
+
+  if (restore_status == rgw::sal::RGWRestoreStatus::CloudRestored) {
+    err_msg = "restore reset refuses to reset completed restore metadata";
+    return -EINVAL;
+  }
+
+  static constexpr std::array<const char*, 5> restore_attrs = {
+    RGW_ATTR_RESTORE_STATUS,
+    RGW_ATTR_RESTORE_TYPE,
+    RGW_ATTR_RESTORE_TIME,
+    RGW_ATTR_RESTORE_EXPIRY_DATE,
+    RGW_ATTR_RESTORE_VERSIONED_EPOCH,
+  };
+
+  rgw::sal::Attrs delattrs;
+  bufferlist bl;
+  for (const auto* attr : restore_attrs) {
+    if (attrs.find(attr) != attrs.end()) {
+      delattrs[attr] = bl;
+    }
+  }
+
+  if (!delattrs.empty()) {
+    obj->set_atomic(true);
+    ret = obj->set_obj_attrs(dpp, nullptr, &delattrs, y, rgw::sal::FLAG_LOG_OP);
+    obj->set_atomic(false);
+    if (ret < 0) {
+      err_msg = "failed to delete restore attrs";
+      ldpp_dout(dpp, 0) << "ERROR: failed to delete restore attrs, ret="
+                        << ret << dendl;
+      return ret;
+    }
+  }
+
+  flusher.start(0);
+  auto f = flusher.get_formatter();
+  f->open_object_section("restore_reset");
+  f->dump_string("name", entry.obj_key.name);
+  if (!entry.obj_key.instance.empty()) {
+    f->dump_string("version", entry.obj_key.instance);
+  }
+  f->dump_string("RestoreStatus", rgw::sal::rgw_restore_status_dump(restore_status));
+  f->dump_bool("RestoreAttrsDeleted", !delattrs.empty());
+  f->close_section();
+  flusher.flush();
+
+  return 0;
+}
+
 } // namespace rgw::restore

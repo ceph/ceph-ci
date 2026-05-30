@@ -499,6 +499,10 @@ as follows:
 :command:`restore status`
   Show restoration status of an object in the bucket
 
+:command:`restore reset`
+  Reset restore metadata on an object so a restore can be attempted again.
+  Requires ``--yes-i-really-mean-it``.
+
 Options
 =======
 

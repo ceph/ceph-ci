@@ -166,6 +166,11 @@ public:
   int status(const DoutPrefixProvider* dpp, RestoreEntry& entry,
              std::string& err_msg, RGWFormatterFlusher& flusher,
              optional_yield y);
+
+  // reset restore metadata on an object so restore can be retried
+  int reset(const DoutPrefixProvider* dpp, RestoreEntry& entry,
+            std::string& err_msg, RGWFormatterFlusher& flusher,
+            optional_yield y);
 };
 
 
