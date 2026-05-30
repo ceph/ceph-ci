@@ -779,6 +779,10 @@ TransactionManager::do_submit_transaction(
   auto num_extents = allocated_extents.size();
   SUBTRACET(seastore_t, "process {} allocated extents", tref, num_extents);
   ool_start = std::chrono::steady_clock::now();
+  if (epm->get_main_backend_type() == backend_type_t::RANDOM_BLOCK) {
+    tref.backref_lba_ool_written = true;
+  }
+
   co_await epm->write_preallocated_ool_extents(tref, allocated_extents);
   tref.get_phase_durations().ool_write +=
     std::chrono::steady_clock::now() - ool_start;
