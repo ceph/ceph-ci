@@ -4793,6 +4793,12 @@ Then run the following:
         return self.upgrade.update_service(service_type, service_image, image)
 
     @handle_orch_error
+    def display_license(self, image_name: str) -> str:
+        image_info = self.wait_async(CephadmServe(self)._get_container_image_info(image_name))
+        license = self.wait_async(CephadmServe(self)._get_container_ibm_license(image_name))
+        return license
+
+    @handle_orch_error
     def replace_device(self,
                        hostname: str,
                        device: str,

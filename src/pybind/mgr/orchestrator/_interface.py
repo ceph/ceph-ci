@@ -977,6 +977,10 @@ class Orchestrator(object):
         """Remove multiple settings from a tuned profile"""
         raise NotImplementedError
 
+    def display_license(self, image_name: str) -> OrchResult[str]:
+        """Display license for specific IBM ceph container image"""
+        raise NotImplementedError()
+
     def upgrade_check(self, image: Optional[str], version: Optional[str]) -> OrchResult[str]:
         raise NotImplementedError()
 

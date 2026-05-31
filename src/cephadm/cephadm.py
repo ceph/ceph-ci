@@ -3501,8 +3501,7 @@ def command_run(ctx):
 ##################################
 
 
-def command_display_license(ctx: CephadmContext) -> str:
-    # type: (CephadmContext) -> int
+def command_display_license(ctx: CephadmContext) -> int:
     if not ctx.image:
         raise Error('No image provided. Command should be formatted cephadm --image <image-name> display-license')
     try:
@@ -3517,6 +3516,8 @@ def command_display_license(ctx: CephadmContext) -> str:
         print(json.dumps({'license': license_text}, indent=4))
     else:
         print(license_text)
+
+    return 0
 
 
 def _pull_license_from_image(ctx: CephadmContext, image_name: str) -> str:

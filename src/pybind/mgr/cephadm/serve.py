@@ -2211,6 +2211,47 @@ class CephadmServe:
         self.log.debug(f'image {image_name} -> {r}')
         return r
 
+    async def _get_container_ibm_license(self, image_name: str) -> str:
+        # select host to run this on
+        host = None
+        # default to active mgr host
+        active_mgr = self.mgr.mgr_service.get_active_daemon(
+            self.mgr.cache.get_daemons_by_type('mgr')
+        )
+        if active_mgr.hostname is not None:
+            host = active_mgr.hostname
+        else:
+            # pick a random host...
+            for host_name in self.mgr.inventory.keys():
+                host = host_name
+                break
+            if not host:
+                raise OrchestratorError('no hosts defined')
+
+        # we need to pull the image to get the license. Login to container
+        # registry if we need to
+        if self.mgr.cache.host_needs_registry_login(host) and self.mgr.registry_url:
+            await self._registry_login(host, json.loads(str(self.mgr.get_store('registry_credentials'))))
+
+        display_license_args = ['--json']
+        if self.mgr.registry_insecure:
+            display_license_args.append('--insecure')
+
+        j = await self._run_cephadm_json(
+            host,
+            '',
+            'display-license',
+            display_license_args,
+            image=image_name,
+            no_fsid=True,
+            error_ok=True
+        )
+
+        if 'license' not in j or not j.get('license', ''):
+            raise OrcestratorError(f'Failed to fetch ibm license for {image_name}')
+
+        return j.get('license')
+
     # function responsible for logging single host into custom registry
     async def _registry_login(self, host: str, registry_json: Dict[str, list[Dict[str, str]]]) -> Optional[str]:
         self.log.debug(
