@@ -11,7 +11,7 @@ from mgr_util import verify_tls_files
 import tempfile
 
 from cephadm.services.ingress import IngressSpec
-from cephadm.services.cephadmservice import CephExporterService
+from cephadm.services.cephadmservice import CephExporterService, RGWSpec
 from cephadm.services.nvmeof import NvmeofService
 from cephadm.services.service_registry import service_registry
 
@@ -202,14 +202,19 @@ class Root:
     def haproxy_sd_config(self) -> List[Dict[str, Collection[str]]]:
         """Return <http_sd_config> compatible prometheus config for haproxy service."""
         srv_entries = []
+        # haproxy daemons as part of an ingress service
         for dd in self.mgr.cache.get_daemons_by_type('ingress'):
             if dd.service_name() in self.mgr.spec_store:
-                spec = cast(IngressSpec, self.mgr.spec_store[dd.service_name()].spec)
+                spec = self.mgr.spec_store[dd.service_name()].spec
+                if spec.service_type == 'rgw':
+                    port = cast(RGWSpec, spec).concentrator_monitor_port
+                else:
+                    port = cast(IngressSpec, spec).monitor_port
                 assert dd.hostname is not None
                 if dd.daemon_type == 'haproxy':
                     addr = self.mgr.inventory.get_addr(dd.hostname)
                     srv_entries.append({
-                        'targets': [f"{build_url(host=addr, port=spec.monitor_port).lstrip('/')}"],
+                        'targets': [f"{build_url(host=addr, port=port).lstrip('/')}"],
                         'labels': {'ingress': dd.service_name(), 'instance': dd.hostname}
                     })
         return srv_entries

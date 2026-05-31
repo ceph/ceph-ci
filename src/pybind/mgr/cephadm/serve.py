@@ -1130,7 +1130,7 @@ class CephadmServe:
             else:
                 dd.is_active = False
 
-            deps = self.mgr._calc_daemon_deps(spec, dd.daemon_type, dd.daemon_id)
+            deps = self.mgr._calc_daemon_deps(spec, dd.daemon_type, dd.daemon_id, dd.hostname)
             last_deps, last_config = self.mgr.cache.get_daemon_last_config_deps(
                 dd.hostname, dd.name())
             if last_deps is None:
@@ -1179,7 +1179,7 @@ class CephadmServe:
                     action = 'redeploy'
                 try:
                     daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(dd)
-                    self.mgr._daemon_action(daemon_spec, action=action)
+                    self.mgr._daemon_action(daemon_spec, action=action, spec=spec)
                     if self.mgr.cache.rm_scheduled_daemon_action(dd.hostname, dd.name()):
                         self.mgr.cache.save_host(dd.hostname)
                 except OrchestratorError as e:

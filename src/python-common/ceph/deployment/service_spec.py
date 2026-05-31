@@ -955,8 +955,8 @@ class ServiceSpec(object):
                 tname = str(type(v))
                 if 'ArgumentSpec' not in tname:
                     raise TypeError(
-                        f"{name} is not all ArgumentSpec values:"
-                        f" {v!r}(is {type(v)} in {value!r}")
+                        f"{name} is not all ArgumentSpec values: "
+                        f"{v!r}(is {type(v)} in {value!r}")
 
         super().__setattr__(name, value)
 
@@ -1242,6 +1242,12 @@ class RGWSpec(ServiceSpec):
         'rgw_frontends',
     ]
 
+    DEFAULT_HAPROXY_CONCENTRATOR_VALUES: Dict[str, Union[int, str]] = {
+        'concentrator_frontend_port': 8080,
+        'concentrator_monitor_port': 1967,
+        'concentrator_monitor_user': 'admin'
+    }
+
     def __init__(self,
                  service_type: str = 'rgw',
                  service_id: Optional[str] = None,
@@ -1277,6 +1283,11 @@ class RGWSpec(ServiceSpec):
                  wildcard_enabled: Optional[bool] = False,
                  rgw_exit_timeout_secs: int = 120,
                  d3n_cache: Optional[Dict[str, Any]] = None,
+                 concentrator: Optional[str] = None,
+                 concentrator_frontend_port: Optional[int] = None,
+                 concentrator_monitor_port: Optional[int] = None,
+                 concentrator_monitor_user: Optional[str] = None,
+                 concentrator_monitor_password: Optional[str] = None,
                  ):
         assert service_type == 'rgw', service_type
 
@@ -1338,6 +1349,18 @@ class RGWSpec(ServiceSpec):
         self.data_pool_attributes = data_pool_attributes
         #: How long the RGW will wait to try and complete client requests when told to shut down
         self.rgw_exit_timeout_secs = rgw_exit_timeout_secs
+        # type of "concentrator", a daemon to be deployed on the host with
+        # the RGW daemons to handle local load balancing. Currently only supports haproxy
+        self.concentrator: Optional[str] = concentrator
+        # port concentrator should bind to to handle IO traffic
+        self.concentrator_frontend_port = concentrator_frontend_port
+        # monitoring port for the concentrator
+        self.concentrator_monitor_port = concentrator_monitor_port
+        # username to use for monitoring concentrator
+        self.concentrator_monitor_user = concentrator_monitor_user
+        # password to use for monitoring concnetrator
+        self.concentrator_monitor_password = concentrator_monitor_password
+        self._set_concentrator_defaults()
 
         self.d3n_cache = d3n_cache or {}
 
@@ -1365,6 +1388,12 @@ class RGWSpec(ServiceSpec):
             ports.append(443 if self.ssl else 80)
 
         return ports
+
+    def _set_concentrator_defaults(self) -> None:
+        if self.concentrator and self.concentrator == 'haproxy':
+            for attr, value in self.DEFAULT_HAPROXY_CONCENTRATOR_VALUES.items():
+                if not getattr(self, attr, None):
+                    setattr(self, attr, value)
 
     def validate(self) -> None:
         super(RGWSpec, self).validate()
@@ -1407,6 +1436,35 @@ class RGWSpec(ServiceSpec):
                 D3NCacheSpec.from_json(self.d3n_cache)
             except D3NCacheError as e:
                 raise SpecValidationError(str(e))
+
+        valid_concentrators = ['haproxy']
+        if self.concentrator is not None and self.concentrator not in valid_concentrators:
+            raise SpecValidationError(f'Invalid concentrator {self.concentrator}. Valid '
+                                      f'concentrators are {valid_concentrators}')
+
+        if not self.concentrator:
+            set_concentrator_attrs: List[str] = []
+            for concentrator_attr in [
+                'concentrator_frontend_port',
+                'concentrator_monitor_port',
+                'concentrator_monitor_user',
+                'concentrator_monitor_password'
+            ]:
+                if getattr(self, concentrator_attr, None):
+                    set_concentrator_attrs.append(concentrator_attr)
+            if set_concentrator_attrs:
+                raise SpecValidationError(f'Parameter(s) {set_concentrator_attrs} cannot be set '
+                                          'without setting "concentrator" parameter')
+        elif self.concentrator == 'haproxy':
+            # NOTE: these parameters aren't required to be set by the
+            # user, but we should have applied defaults if they weren't provided.
+            unset_concentrator_attrs: List[str] = []
+            for attr in self.DEFAULT_HAPROXY_CONCENTRATOR_VALUES.keys():
+                if not getattr(self, attr, None):
+                    unset_concentrator_attrs.append(attr)
+            if unset_concentrator_attrs:
+                raise SpecValidationError(f'Parameter(s) {unset_concentrator_attrs} found empty '
+                                          'with"concentrator" parameter set to "haproxy"')
 
 
 yaml.add_representer(RGWSpec, ServiceSpec.yaml_representer)
@@ -2306,7 +2364,7 @@ class OAuth2ProxySpec(ServiceSpec):
 
     def _validate_https_address(self, https_address: Optional[str]) -> None:
         from urllib.parse import urlparse
-        result = urlparse(f'http://{https_address}')
+        result = urlparse(f'http://{https_address}')  # noqa: E231
         # Check if netloc contains a valid IP or hostname and a port
         if not result.netloc or ':' not in result.netloc:
             raise SpecValidationError("Invalid https_address: Valid format [IP|hostname]:port.")

@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 from cephadm.service_discovery import Root
 from cephadm.services.service_registry import service_registry
+from typing import Optional
 
 
 class FakeDaemonDescription:
@@ -59,8 +60,9 @@ class FakeInventory:
 
 
 class FakeServiceSpec:
-    def __init__(self, port):
+    def __init__(self, port, service_type: Optional[str] = ''):
         self.monitor_port = port
+        self.service_type = service_type
 
     def metrics_exporter_port(self):
         # TODO: for smb only

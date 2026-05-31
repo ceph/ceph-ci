@@ -3003,7 +3003,8 @@ Then run the following:
     def _daemon_action(self,
                        daemon_spec: CephadmDaemonDeploySpec,
                        action: str,
-                       image: Optional[str] = None) -> str:
+                       image: Optional[str] = None,
+                       spec: Optional[ServiceSpec] = None) -> str:
         self._daemon_action_set_image(action, image, daemon_spec.daemon_type,
                                       daemon_spec.daemon_id)
 
@@ -3016,9 +3017,12 @@ Then run the following:
             return self._rotate_daemon_key(daemon_spec)
 
         if action == 'redeploy' or action == 'reconfig':
+            if spec:
+                svc_type = spec.service_type
+            else:
+                svc_type = daemon_type_to_service(daemon_spec.daemon_type)
             if daemon_spec.daemon_type != 'osd':
-                daemon_spec = service_registry.get_service(daemon_type_to_service(
-                    daemon_spec.daemon_type)).prepare_create(daemon_spec)
+                daemon_spec = service_registry.get_service(svc_type).prepare_create(daemon_spec)
             else:
                 # for OSDs, we still need to update config, just not carry out the full
                 # prepare_create function
@@ -3601,10 +3605,14 @@ Then run the following:
     def _calc_daemon_deps(self,
                           spec: Optional[ServiceSpec],
                           daemon_type: str,
-                          daemon_id: str) -> List[str]:
-        svc_type = daemon_type_to_service(daemon_type)
+                          daemon_id: str,
+                          hostname: str) -> List[str]:
+        if spec is not None:
+            svc_type = spec.service_type
+        else:
+            svc_type = daemon_type_to_service(daemon_type)
         svc_cls = service_registry.get_service(svc_type)
-        deps = svc_cls.get_dependencies(self, spec, daemon_type) if svc_cls else []
+        deps = svc_cls.get_dependencies(self, spec, daemon_type, hostname) if svc_cls else []
         return sorted(deps)
 
     @forall_hosts

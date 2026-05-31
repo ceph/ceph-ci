@@ -2,7 +2,9 @@ import errno
 import re
 import json
 import logging
+import random
 import socket
+import string
 import time
 from abc import ABCMeta, abstractmethod
 import ipaddress
@@ -20,6 +22,7 @@ from ceph.deployment.service_spec import (
     MONSpec,
     RGWSpec,
     ServiceSpec,
+    IngressSpec,
 )
 from ceph.deployment.utils import is_ipv6, unwrap_ipv6, wrap_ipv6
 from mgr_util import build_url, merge_dicts
@@ -284,7 +287,8 @@ class CephadmService(metaclass=ABCMeta):
     @classmethod
     def get_dependencies(cls, mgr: "CephadmOrchestrator",
                          spec: Optional[ServiceSpec] = None,
-                         daemon_type: Optional[str] = None) -> List[str]:
+                         daemon_type: Optional[str] = None,
+                         hostname: Optional[str] = None) -> List[str]:
         return []
 
     def __init__(self, mgr: "CephadmOrchestrator"):
@@ -1017,8 +1021,35 @@ class RgwService(CephService):
     @classmethod
     def get_dependencies(cls, mgr: "CephadmOrchestrator",
                          spec: Optional[ServiceSpec] = None,
-                         daemon_type: Optional[str] = None) -> List[str]:
+                         daemon_type: Optional[str] = None,
+                         hostname: Optional[str] = None) -> List[str]:
 
+        if daemon_type == 'haproxy':
+            # haproxy concentrator daemon. Deps are rgw daemons deployed on the same host
+            # that we put in as the backend servers in the haproxy config
+            assert spec is not None
+            assert hostname is not None
+            daemons = mgr.cache.get_daemons_by_service(spec.service_name())
+            deps = []
+            for d in daemons:
+                if (
+                    d.daemon_type == 'rgw'
+                    and d.ports
+                    and d.hostname == hostname
+                ):
+                    deps.extend([
+                        str(d.name()),
+                        d.ip or str(utils.resolve_ip(mgr.inventory.get_addr(str(d.hostname)))),
+                        str(d.ports[0])
+                    ])
+            return sorted(deps)
+        elif daemon_type and daemon_type != 'rgw':
+            # we should only be getting rgw or concentrator daemons here
+            raise OrchestratorError(
+                f'RGWService was asked for deps for unexpected daemon type: {daemon_type}'
+            )
+
+        # if we're here, it's a normal rgw daemon
         deps = []
         rgw_spec = cast(RGWSpec, spec)
         ssl_cert = getattr(rgw_spec, 'rgw_frontend_ssl_certificate', None)
@@ -1028,6 +1059,15 @@ class RgwService(CephService):
             deps.append(f'ssl-cert:{str(utils.md5_hash(ssl_cert))}')
 
         return sorted(deps)
+
+    def per_host_daemon_type(self, spec: Optional[ServiceSpec] = None) -> Optional[str]:
+        if spec:
+            rgw_spec = cast(RGWSpec, spec)
+            if getattr(rgw_spec, 'concentrator', None) == 'haproxy':
+                # if we are doing a concentrator setup, we need to deploy one
+                # haproxy daemon on each host that will receive RGW daemons
+                return 'haproxy'
+        return None
 
     def set_realm_zg_zone(self, spec: RGWSpec) -> None:
         assert self.TYPE == spec.service_type
@@ -1143,6 +1183,9 @@ class RgwService(CephService):
         )
 
     def prepare_create(self, daemon_spec: CephadmDaemonDeploySpec) -> CephadmDaemonDeploySpec:
+        if self.is_concentrator_daemon_spec(daemon_spec):
+            return self.concentrator_prepare_create(daemon_spec)
+
         assert self.TYPE == daemon_spec.daemon_type
         rgw_id, _ = daemon_spec.daemon_id, daemon_spec.host
         spec = cast(RGWSpec, self.mgr.spec_store[daemon_spec.service_name].spec)
@@ -1327,6 +1370,108 @@ class RgwService(CephService):
                 'value': str(size),
             })
 
+        return daemon_spec
+
+    def is_concentrator_daemon_spec(self, daemon_spec: CephadmDaemonDeploySpec) -> bool:
+        # rgw daemons themselves are not concentrators
+        if daemon_spec.daemon_type == self.TYPE:
+            return False
+
+        rgw_spec = cast(RGWSpec, self.mgr.spec_store[daemon_spec.service_name].spec)
+        concentrator_type = getattr(rgw_spec, 'concentrator', None)
+        if daemon_spec.daemon_type != concentrator_type:
+            raise OrchestratorError(
+                f'RgwService prepare_create was asked to prepare daemon type of {daemon_spec.daemon_type} '
+                f'which is not type "rgw" or the {rgw_spec.service_name()}\'s concentrator type (found type "{concentrator_type}")'
+            )
+        # if we got here, the daemon_spec type matches the service spec's concentrator type
+        return True
+
+    def concentrator_prepare_create(self, daemon_spec: CephadmDaemonDeploySpec) -> CephadmDaemonDeploySpec:
+        rgw_spec = cast(RGWSpec, self.mgr.spec_store[daemon_spec.service_name].spec)
+        if daemon_spec.daemon_type == 'haproxy':
+            return self.haproxy_concentrator_prepare_create(
+                daemon_spec,
+                rgw_spec
+            )
+        raise OrchestratorError(
+            f'Got unknown RGW concentrator type {daemon_spec.daemon_type} attempting to apply '
+            f'the {rgw_spec.service_name()} service'
+        )
+
+    def haproxy_concentrator_prepare_create(
+            self,
+            daemon_spec: CephadmDaemonDeploySpec,
+            rgw_spec: RGWSpec
+    ) -> CephadmDaemonDeploySpec:
+        ispec = IngressSpec(
+            service_id='',
+            backend_service=rgw_spec.service_name(),
+            # not actually a "virtual" ip but this allows us to re-use
+            # the existing ingress spec class when rendering the template
+            virtual_ip=self.mgr.inventory.get_addr(daemon_spec.host),
+            frontend_port=rgw_spec.concentrator_frontend_port,
+            monitor_port=rgw_spec.concentrator_monitor_port,
+        )
+
+        # either find or create monitoring password
+        pw_key = f'{daemon_spec.name()}/monitor_password'
+        spec_password = getattr(rgw_spec, 'concentrator_monitor_password', None)
+        password = self.mgr.get_store(pw_key)
+        if not password and not spec_password:
+            # no password in mon store or spec, generate one
+            password = ''.join(random.choice(string.ascii_lowercase) for _ in range(8))
+            self.mgr.set_store(pw_key, password)
+        elif spec_password:
+            # password is in spec. If spec and mon store mismatch, update mon store.
+            # This covers the case of both the password not being in the mon store
+            # and it being there but being different from what we found in the spec
+            if password != spec_password:
+                self.mgr.set_store(pw_key, spec_password)
+            password = spec_password
+        else:
+            # Last case is password in mon store but not spec, at which point it is most
+            # likely a previously generated random password and we should just leave it.
+            # I know that means we don't actually need this else block but having it here
+            # helps make it clear all cases are being covered
+            pass
+
+        # we want "servers" to be only the RGW daemons for this service deployed
+        # on the same host as we are going to deploy this haproxy daemon
+        daemons = self.mgr.cache.get_daemons_by_service(rgw_spec.service_name())
+        servers = [
+            {
+                'name': d.name(),
+                'ip': d.ip or utils.resolve_ip(self.mgr.inventory.get_addr(str(d.hostname))),
+                'port': d.ports[0],
+            } for d in daemons if d.daemon_type == 'rgw' and d.ports and d.hostname == daemon_spec.host
+        ]
+        v4v6_flag = "v4v6" if ispec.virtual_ip == "[::]" else ""
+        haproxy_conf = self.mgr.template.render(
+            'services/ingress/haproxy.cfg.j2',
+            {
+                'spec': ispec,
+                'backend_spec': rgw_spec,
+                'mode': 'tcp',
+                'servers': servers,
+                'user': rgw_spec.concentrator_monitor_user,
+                'password': password,
+                'ip': ispec.virtual_ip,
+                'frontend_port': ispec.frontend_port,
+                'monitor_port': daemon_spec.ports[1] if daemon_spec.ports else ispec.monitor_port,
+                'local_host_ip': self.mgr.inventory.get_addr(daemon_spec.host),
+                'default_server_opts': [],
+                'health_check_interval': '2s',
+                'v4v6_flag': v4v6_flag,
+            }
+        )
+        config_files = {
+            'files': {
+                "haproxy.cfg": haproxy_conf,
+            }
+        }
+        daemon_spec.final_config = config_files
+        daemon_spec.deps = self.get_dependencies(self.mgr, rgw_spec, 'haproxy', daemon_spec.host)
         return daemon_spec
 
     def get_keyring(self, rgw_id: str) -> str:
@@ -1529,7 +1674,8 @@ class CephExporterService(CephService):
     @classmethod
     def get_dependencies(cls, mgr: "CephadmOrchestrator",
                          spec: Optional[ServiceSpec] = None,
-                         daemon_type: Optional[str] = None) -> List[str]:
+                         daemon_type: Optional[str] = None,
+                         hostname: Optional[str] = None) -> List[str]:
 
         deps = [f'secure_monitoring_stack:{mgr.secure_monitoring_stack}']
         deps += mgr.cache.get_daemons_by_types(['mgmt-gateway'])
@@ -1614,7 +1760,8 @@ class CephadmAgent(CephService):
     @classmethod
     def get_dependencies(cls, mgr: "CephadmOrchestrator",
                          spec: Optional[ServiceSpec] = None,
-                         daemon_type: Optional[str] = None) -> List[str]:
+                         daemon_type: Optional[str] = None,
+                         hostname: Optional[str] = None) -> List[str]:
         agent = mgr.http_server.agent
         return sorted(
             [

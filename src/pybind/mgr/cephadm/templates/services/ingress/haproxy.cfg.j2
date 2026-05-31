@@ -52,7 +52,9 @@ defaults
 frontend stats
     mode http
     bind {{ ip }}:{{ monitor_port }}
+{% if ip != local_host_ip %}
     bind {{ local_host_ip }}:{{ monitor_port }}
+{% endif %}
     stats enable
     stats uri /stats
     stats refresh 10s

@@ -42,7 +42,8 @@ class IscsiService(CephService):
     @classmethod
     def get_dependencies(cls, mgr: "CephadmOrchestrator",
                          spec: Optional[ServiceSpec] = None,
-                         daemon_type: Optional[str] = None) -> List[str]:
+                         daemon_type: Optional[str] = None,
+                         hostname: Optional[str] = None) -> List[str]:
         if spec:
             iscsi_spec = cast(IscsiServiceSpec, spec)
             return [get_trusted_ips(mgr, iscsi_spec)]
