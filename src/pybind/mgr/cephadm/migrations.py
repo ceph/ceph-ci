@@ -1,11 +1,13 @@
 import json
 import re
 import logging
-from typing import TYPE_CHECKING, Iterator, Optional, Dict, Any, List
+from typing import TYPE_CHECKING, Iterator, Optional, Dict, Any, List, cast
 
-from ceph.deployment.service_spec import PlacementSpec, ServiceSpec, HostPlacementSpec, RGWSpec
+from ceph.deployment.service_spec import PlacementSpec, ServiceSpec, HostPlacementSpec, RGWSpec, NFSServiceSpec
 from cephadm.schedule import HostAssignment
 from cephadm.utils import SpecialHostLabels
+from cephadm.services.nfs import NFSService
+from cephadm.services.service_registry import service_registry
 import rados
 
 from mgr_module import NFS_POOL_NAME
