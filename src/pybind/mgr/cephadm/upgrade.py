@@ -647,7 +647,7 @@ class CephadmUpgrade:
 
     def upgrade_start(self, image: str, version: str, daemon_types: Optional[List[str]] = None,
                       hosts: Optional[List[str]] = None, services: Optional[List[str]] = None,
-                      limit: Optional[int] = None, no_osd_flags: bool = False) -> str:
+                      limit: Optional[int] = None, no_osd_flags: bool = False, automatically_accept_license: bool = False) -> str:
         fail_fs_value = cast(bool, self.mgr.get_module_option_ex(
             'orchestrator', 'fail_fs', False))
         if self.mgr.mode != 'root':
@@ -665,15 +665,25 @@ class CephadmUpgrade:
 
         image_info = self.mgr.wait_async(CephadmServe(self.mgr)._get_container_image_info(target_name))
         license = self.mgr.wait_async(CephadmServe(self.mgr)._get_container_ibm_license(target_name))
-        entry_key = get_license_acceptance_key_value_entry_name(image_info.ceph_version, license)
+        entry_key = get_license_acceptance_key_value_entry_name(image_info.ceph_version or 'unknown_version', license)
         license_acceptance_entry = self.mgr.get_store(entry_key, None)
         if not license_acceptance_entry:
-            raise OrchestratorError(
-                f'IBM license for image {target_name} not yet accepted. '
-                f'View license with "ceph orch display-license --image {target_name}" '
-                f'and accept license with "ceph orch accept-license --image {target_name}" '
-                'before upgrading to this image'
-            )
+            if not automatically_accept_license:
+                raise OrchestratorError(
+                    f'IBM license for image {target_name} not yet accepted. '
+                    f'View license with "ceph orch display-license --image {target_name}" '
+                    f'and accept license with "ceph orch accept-license --image {target_name}" '
+                    'before upgrading to this image. Alternatively if you\'ve viewed the license '
+                    'and wish to accept it, the --automatically-accept-license flag maybe be passed '
+                    'to the "ceph orch upgrade start" command'
+                )
+            else:
+                self.mgr.log.info(
+                    f'Automatically accepting license for image with id {image_info.image_id} '
+                    f'and ceph version {image_info.ceph_version} as --automatically-accept-license '
+                    'flag was passed to upgrade start command'
+                )
+                self.mgr.accept_license(target_name)
 
         if daemon_types is not None or services is not None or hosts is not None:
             self._validate_upgrade_filters(target_name, daemon_types, hosts, services)
