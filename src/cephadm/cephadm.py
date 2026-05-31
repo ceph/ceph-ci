@@ -1229,7 +1229,7 @@ def deploy_daemon(
         if data:
             update_meta_file(os.path.join(data_dir, 'unit.meta'), data)
 
-    handle_post_writing_unit_files_deployment_actions(
+    set_deployment_post_unit_file_writing_ctx_attrs(
         ctx,
         ident=ident,
         deployment_type=deployment_type,
@@ -1241,9 +1241,10 @@ def deploy_daemon(
         gid=gid,
         endpoints=endpoints
     )
+    handle_post_writing_unit_files_deployment_actions(ctx)
 
 
-def handle_post_writing_unit_files_deployment_actions(
+def set_deployment_post_unit_file_writing_ctx_attrs(
     ctx: CephadmContext,
     ident: DaemonIdentity,
     deployment_type: DeploymentType,
@@ -1253,7 +1254,41 @@ def handle_post_writing_unit_files_deployment_actions(
     gid: int,
     endpoints: Optional[List[EndPoint]]
 ) -> None:
+    ctx._deployment_ident = ident
+    ctx._deployment_type = deployment_type
+    ctx._deployment_enable = enable
+    ctx._deployment_start = True
+    ctx._deployment_uid = uid
+    ctx._deployment_gid = gid
+    ctx._deployment_endpoints = endpoints
 
+
+def return_deployment_post_unit_files_writing_ctx_attrs(
+    ctx: CephadmContext
+) -> Tuple[DaemonIdentity, DeploymentType, bool, bool, int, int, Optional[List[EndPoint]]]:
+    ident: DaemonIdentity = ctx._deployment_ident
+    deployment_type: DeploymentType = ctx._deployment_type
+    enable: bool = ctx._deployment_enable
+    start: bool = ctx._deployment_start
+    uid: int = ctx._deployment_uid
+    gid: int = ctx._deployment_gid
+    endpoints: Optional[List[EndPoint]] = ctx._deployment_endpoints
+
+    return (ident, deployment_type, enable, start, uid, gid, endpoints)
+
+
+def handle_post_writing_unit_files_deployment_actions(
+    ctx: CephadmContext,
+) -> None:
+    (
+        ident,
+        deployment_type,
+        enable,
+        start,
+        uid,
+        gid,
+        endpoints
+    ) = return_deployment_post_unit_files_writing_ctx_attrs(ctx)
     # There's obviously overlap in these two cases, but I have
     # kept them in their own blocks because I like being
     # able to see exactly what actions and in what order we
