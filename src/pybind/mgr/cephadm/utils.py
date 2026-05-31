@@ -48,6 +48,7 @@ class ContainerInspectInfo(NamedTuple):
     image_id: str
     ceph_version: Optional[str]
     repo_digests: Optional[List[str]]
+    image_vendor: Optional[str]
 
 
 class SpecialHostLabels(str, Enum):

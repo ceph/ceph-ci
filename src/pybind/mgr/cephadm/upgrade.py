@@ -664,26 +664,27 @@ class CephadmUpgrade:
             raise OrchestratorError('must specify either image or version')
 
         image_info = self.mgr.wait_async(CephadmServe(self.mgr)._get_container_image_info(target_name))
-        license = self.mgr.wait_async(CephadmServe(self.mgr)._get_container_ibm_license(target_name))
-        entry_key = get_license_acceptance_key_value_entry_name(image_info.ceph_version or 'unknown_version', license)
-        license_acceptance_entry = self.mgr.get_store(entry_key, None)
-        if not license_acceptance_entry:
-            if not automatically_accept_license:
-                raise OrchestratorError(
-                    f'IBM license for image {target_name} not yet accepted. '
-                    f'View license with "ceph orch display-license --image {target_name}" '
-                    f'and accept license with "ceph orch accept-license --image {target_name}" '
-                    'before upgrading to this image. Alternatively if you\'ve viewed the license '
-                    'and wish to accept it, the --automatically-accept-license flag maybe be passed '
-                    'to the "ceph orch upgrade start" command'
-                )
-            else:
-                self.mgr.log.info(
-                    f'Automatically accepting license for image with id {image_info.image_id} '
-                    f'and ceph version {image_info.ceph_version} as --automatically-accept-license '
-                    'flag was passed to upgrade start command'
-                )
-                self.mgr.accept_license(target_name)
+        if image_info.image_vendor is not None and image_info.image_vendor.lower() == 'ibm':
+            license = self.mgr.wait_async(CephadmServe(self.mgr)._get_container_ibm_license(target_name))
+            entry_key = get_license_acceptance_key_value_entry_name(image_info.ceph_version or 'unknown_version', license)
+            license_acceptance_entry = self.mgr.get_store(entry_key, None)
+            if not license_acceptance_entry:
+                if not automatically_accept_license:
+                    raise OrchestratorError(
+                        f'IBM license for image {target_name} not yet accepted. '
+                        f'View license with "ceph orch display-license --image {target_name}" '
+                        f'and accept license with "ceph orch accept-license --image {target_name}" '
+                        'before upgrading to this image. Alternatively if you\'ve viewed the license '
+                        'and wish to accept it, the --automatically-accept-license flag maybe be passed '
+                        'to the "ceph orch upgrade start" command'
+                    )
+                else:
+                    self.mgr.log.info(
+                        f'Automatically accepting license for image with id {image_info.image_id} '
+                        f'and ceph version {image_info.ceph_version} as --automatically-accept-license '
+                        'flag was passed to upgrade start command'
+                    )
+                    self.mgr.accept_license(target_name)
 
         if daemon_types is not None or services is not None or hosts is not None:
             self._validate_upgrade_filters(target_name, daemon_types, hosts, services)
@@ -772,7 +773,7 @@ class CephadmUpgrade:
                 'Cannot set values for --daemon-types, --services or --hosts when upgrade already in progress.')
         try:
             with self.mgr.async_timeout_handler('cephadm inspect-image'):
-                target_id, target_version, target_digests = self.mgr.wait_async(
+                target_id, target_version, target_digests, image_vendor = self.mgr.wait_async(
                     CephadmServe(self.mgr)._get_container_image_info(target_name))
         except OrchestratorError as e:
             raise OrchestratorError(f'Failed to pull {target_name}: {str(e)}')
@@ -1565,7 +1566,7 @@ class CephadmUpgrade:
             self.upgrade_info_str = 'Doing first pull of %s image' % (target_image)
             try:
                 with self.mgr.async_timeout_handler(f'cephadm inspect-image (image {target_image})'):
-                    target_id, target_version, target_digests = self.mgr.wait_async(
+                    target_id, target_version, target_digests, image_vendor = self.mgr.wait_async(
                         CephadmServe(self.mgr)._get_container_image_info(target_image))
             except OrchestratorError as e:
                 self._fail_upgrade('UPGRADE_FAILED_PULL', {
@@ -1764,32 +1765,33 @@ class CephadmUpgrade:
         self.mgr.set_container_image('global', target_image)
 
         image_info = self.mgr.wait_async(CephadmServe(self.mgr)._get_container_image_info(self.target_image))
-        license = self.mgr.wait_async(CephadmServe(self.mgr)._get_container_ibm_license(self.target_image))
-        entry_key = get_license_acceptance_key_value_entry_name(image_info.ceph_version or 'unknown_release', license)
-        license_acceptance_entry = self.mgr.get_store(entry_key, None)
-        if not license_acceptance_entry:
-            self.mgr.set_health_warning(
-                'IBM_LICENSE_NOT_ACCEPTED',
-                'Cannot find IBM license acceptance entry',
-                1,
-                [f'To accept license use `ceph orch display-license --image {self.target_image}` and `ceph orch accept-license --image {self.target_image}` '
-                 'Alternatively, the call_home_agent module can be disabled and this health warning muted']
-            )
-        else:
-            mgr_map = self.mgr.get('mgr_map')
-            if 'call_home_agent' not in mgr_map.get('services', {}):
-                self.mgr.check_mon_command({
-                    'prefix': 'mgr module enable',
-                    'module': 'call_home_agent'
-                })
+        if image_info.image_vendor is not None and image_info.image_vendor.lower() == 'ibm':
+            license = self.mgr.wait_async(CephadmServe(self.mgr)._get_container_ibm_license(self.target_image))
+            entry_key = get_license_acceptance_key_value_entry_name(image_info.ceph_version or 'unknown_release', license)
+            license_acceptance_entry = self.mgr.get_store(entry_key, None)
+            if not license_acceptance_entry:
                 self.mgr.set_health_warning(
-                    'CALL_HOME_ENABLED_AUTOMATICALLY',
+                    'IBM_LICENSE_NOT_ACCEPTED',
                     'Cannot find IBM license acceptance entry',
                     1,
-                    ['The call home agent mgr module has been enabled automatically as IBM license was accepted and upgrade was initiated '
-                     'To clear this warning either run `ceph orch accept call-home-enabled` if call home is desired or '
-                     'ceph orch deny call-home-enabled to turn off the module']
+                    [f'To accept license use `ceph orch display-license --image {self.target_image}` and `ceph orch accept-license --image {self.target_image}` '
+                     'Alternatively, the call_home_agent module can be disabled and this health warning muted']
                 )
+            else:
+                mgr_map = self.mgr.get('mgr_map')
+                if 'call_home_agent' not in mgr_map.get('services', {}):
+                    self.mgr.check_mon_command({
+                        'prefix': 'mgr module enable',
+                        'module': 'call_home_agent'
+                    })
+                    self.mgr.set_health_warning(
+                        'CALL_HOME_ENABLED_AUTOMATICALLY',
+                        'Cannot find IBM license acceptance entry',
+                        1,
+                        ['The call home agent mgr module has been enabled automatically as IBM license was accepted and upgrade was initiated '
+                         'To clear this warning either run `ceph orch accept call-home-enabled` if call home is desired or '
+                         'ceph orch deny call-home-enabled to turn off the module']
+                    )
 
         for daemon_type in CEPH_UPGRADE_ORDER:
             ret, image, err = self.mgr.check_mon_command({

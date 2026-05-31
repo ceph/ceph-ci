@@ -2276,7 +2276,8 @@ class CephadmServe:
         r = ContainerInspectInfo(
             j['image_id'],
             j.get('ceph_version'),
-            j.get('repo_digests')
+            j.get('repo_digests'),
+            j.get('image_vendor', '')
         )
         self.log.debug(f'image {image_name} -> {r}')
         return r
