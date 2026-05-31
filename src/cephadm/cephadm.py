@@ -1247,16 +1247,8 @@ def deploy_daemon(
 
     # If this was a reconfig and the daemon is not a Ceph daemon, restart it
     # so it can pick up potential changes to its configuration files
-    if deployment_type == DeploymentType.RECONFIG and daemon_type not in ceph_daemons():
-        if not ctx.skip_restart_for_reconfig:
-            # ceph daemons do not need a restart; others (presumably) do to pick
-            # up the new config
-            call_throws(ctx, ['systemctl', 'reset-failed', ident.unit_name])
-            call_throws(ctx, ['systemctl', 'restart', ident.unit_name])
-        elif ctx.send_signal_to_daemon:
-            ctx.signal_name = ctx.send_signal_to_daemon
-            ctx.signal_number = None
-            command_signal(ctx)
+    if deployment_type == DeploymentType.RECONFIG:
+        restart_reconfigured_daemon(ctx, ident)
 
 
 def clean_cgroup(ctx: CephadmContext, fsid: str, unit_name: str) -> None:
@@ -1421,6 +1413,21 @@ def restart_deployed_daemon(
             logger.error(f'systemctl start failed for {unit_name}: {str(e)}')
             raise DaemonStartException()
 
+
+def restart_reconfigured_daemon(ctx: CephadmContext, ident: DaemonIdentity) -> None:
+    # If this was a reconfig and the daemon is not a Ceph daemon, restart it
+    # so it can pick up potential changes to its configuration files
+    daemon_type = ident.daemon_type
+    if daemon_type not in ceph_daemons():
+        if not ctx.skip_restart_for_reconfig:
+            # ceph daemons do not need a restart; others (presumably) do to pick
+            # up the new config
+            call_throws(ctx, ['systemctl', 'reset-failed', ident.unit_name])
+            call_throws(ctx, ['systemctl', 'restart', ident.unit_name])
+        elif ctx.send_signal_to_daemon:
+            ctx.signal_name = ctx.send_signal_to_daemon
+            ctx.signal_number = None
+            command_signal(ctx)
 
 def _osd_unit_run_commands(
     ctx: CephadmContext,
