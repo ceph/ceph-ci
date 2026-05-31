@@ -24,6 +24,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+CEPHADM_SVC_DISCOVERY_CERT_DURATION = (365 * 5)
+
+
 class Route(NamedTuple):
     name: str
     route: str
@@ -81,13 +84,13 @@ class ServiceDiscovery:
     def configure_tls(self) -> Dict[str, str]:
         addr = self.mgr.get_mgr_ip()
         host = self.mgr.get_hostname()
-        cert, key = self.mgr.cert_mgr.generate_cert(host, addr, duration_in_days = (365 * 5))
+        tls_pair = self.mgr.cert_mgr.generate_cert(host, addr, duration_in_days=CEPHADM_SVC_DISCOVERY_CERT_DURATION)
         self.cert_file = tempfile.NamedTemporaryFile()
-        self.cert_file.write(cert.encode('utf-8'))
+        self.cert_file.write(tls_pair.cert.encode('utf-8'))
         self.cert_file.flush()  # cert_tmp must not be gc'ed
 
         self.key_file = tempfile.NamedTemporaryFile()
-        self.key_file.write(key.encode('utf-8'))
+        self.key_file.write(tls_pair.key.encode('utf-8'))
         self.key_file.flush()  # pkey_tmp must not be gc'ed
 
         verify_tls_files(self.cert_file.name, self.key_file.name)
