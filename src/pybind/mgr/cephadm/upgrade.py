@@ -1,3 +1,4 @@
+from asyncio import gather
 import json
 import logging
 import time
@@ -9,8 +10,16 @@ import orchestrator
 from cephadm.registry import Registry
 from cephadm.serve import CephadmServe
 from cephadm.services.cephadmservice import CephadmDaemonDeploySpec
-from cephadm.utils import ceph_release_to_major, name_to_config_section, CEPH_UPGRADE_ORDER, \
-    CEPH_TYPES, CEPH_IMAGE_TYPES, NON_CEPH_IMAGE_TYPES, MONITORING_STACK_TYPES, GATEWAY_TYPES
+from cephadm.utils import (
+    ceph_release_to_major,
+    name_to_config_section,
+    CEPH_UPGRADE_ORDER,
+    CEPH_TYPES,
+    CEPH_IMAGE_TYPES,
+    NON_CEPH_IMAGE_TYPES,
+    MONITORING_STACK_TYPES,
+    GATEWAY_TYPES
+)
 from cephadm.ssh import HostConnectionError
 from orchestrator import OrchestratorError, DaemonDescription, DaemonDescriptionStatus, daemon_type_to_service
 
@@ -1211,86 +1220,148 @@ class CephadmUpgrade:
                 break
         return True, to_upgrade
 
+    async def _redeploy_daemons_per_host(
+        self,
+        hostname: str,
+        daemons: List[Tuple[DaemonDescription, bool]],
+        target_image: str
+    ) -> Tuple[str, Dict[str, str], Dict[str, str]]:
+        if not daemons:
+            return hostname, {}, {}
+        prepared_daemon_specs: List[CephadmDaemonDeploySpec] = []
+        successes: Dict[str, str] = {}
+        failures: Dict[str, str] = {}
+        for daemon in daemons:
+            daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(daemon[0])
+            try:
+                svc_type = daemon_type_to_service(daemon_spec.daemon_type)
+                if daemon_spec.daemon_type != 'osd':
+                    daemon_spec = service_registry.get_service(svc_type).prepare_create(daemon_spec)
+                    prepared_daemon_specs.append(daemon_spec)
+                else:
+                    # for OSDs, we still need to update config, just not carry out the full
+                    # prepare_create function
+                    daemon_spec.final_config, daemon_spec.deps = self.mgr.osd_service.generate_config(
+                        daemon_spec)
+                    prepared_daemon_specs.append(daemon_spec)
+                if daemon_spec.daemon_type in CEPH_IMAGE_TYPES:
+                    self.mgr._daemon_action_set_image(
+                        'redeploy',
+                        target_image,
+                        daemon_spec.daemon_type,
+                        daemon_spec.daemon_id
+                    )
+            except Exception as e:
+                failures[daemon_spec.name()] = str(e)
+
+        # with self.async_timeout_handler(hostname, f'cephadm deploy ({[d.name for d in prepared_daemon_specs]} daemons)'):
+        deploy_successes, deploy_failures = await CephadmServe(self.mgr)._create_daemon(prepared_daemon_specs)
+        successes.update(deploy_successes)
+        failures.update(deploy_failures)
+        self.mgr.cache.metadata_up_to_date[hostname] = False
+        self.mgr.cache.invalidate_host_daemons(hostname)
+        return hostname, successes, failures
+
+    async def _redeploy_daemons(
+        self,
+        daemons: List[Tuple[DaemonDescription, bool]],
+        target_image: str
+    ) -> List[Tuple[str, Dict[str, str], Dict[str, str]]]:
+        futures = []
+        for host in self.mgr.cache.get_hosts():
+            daemons_to_upgrade = [d for d in daemons if d[0].hostname == host]
+            futures.append(self._redeploy_daemons_per_host(host, daemons_to_upgrade, target_image))
+        return await gather(*futures)
+
     def _upgrade_daemons(self, to_upgrade: List[Tuple[DaemonDescription, bool]], target_image: str, target_digests: Optional[List[str]] = None) -> None:
         assert self.upgrade_state is not None
-        num = 1
         if target_digests is None:
             target_digests = []
-        for d_entry in to_upgrade:
-            if self.upgrade_state.remaining_count is not None and self.upgrade_state.remaining_count <= 0 and not d_entry[1]:
+        if self.upgrade_state.remaining_count is not None:
+            needs_actual_upgrade = [d for d in to_upgrade if d[1]]
+            needs_deployer_upgrade = [d for d in to_upgrade if not d[1]]
+            if not needs_deployer_upgrade and needs_actual_upgrade and self.upgrade_state.remaining_count <= 0:
                 self.mgr.log.info(
                     f'Hit upgrade limit of {self.upgrade_state.total_count}. Stopping upgrade')
                 return
-            d = d_entry[0]
-            assert d.daemon_type is not None
-            assert d.daemon_id is not None
-            assert d.hostname is not None
+            if len(needs_actual_upgrade) > self.upgrade_state.remaining_count:
+                needs_actual_upgrade = needs_actual_upgrade[:self.upgrade_state.remaining_count]
+                to_upgrade = needs_actual_upgrade + needs_deployer_upgrade
 
-            # make sure host has latest container image
-            with self.mgr.async_timeout_handler(d.hostname, 'cephadm inspect-image'):
+        hosts = list(set([d[0].hostname for d in to_upgrade if d[0].hostname is not None]))
+        for host in hosts:
+            with self.mgr.async_timeout_handler(host, 'cephadm inspect-image'):
                 out, errs, code = self.mgr.wait_async(CephadmServe(self.mgr)._run_cephadm(
-                    d.hostname, '', 'inspect-image', [],
+                    host, '', 'inspect-image', [],
                     image=target_image, no_fsid=True, error_ok=True))
             if code or not any(d in target_digests for d in json.loads(''.join(out)).get('repo_digests', [])):
                 logger.info('Upgrade: Pulling %s on %s' % (target_image,
-                                                           d.hostname))
-                self.upgrade_info_str = 'Pulling %s image on host %s' % (
-                    target_image, d.hostname)
-                with self.mgr.async_timeout_handler(d.hostname, 'cephadm pull'):
+                                                           host))
+                with self.mgr.async_timeout_handler(host, 'cephadm pull'):
                     out, errs, code = self.mgr.wait_async(CephadmServe(self.mgr)._run_cephadm(
-                        d.hostname, '', 'pull', [],
+                        host, '', 'pull', [],
                         image=target_image, no_fsid=True, error_ok=True))
-                if code:
-                    self._fail_upgrade('UPGRADE_FAILED_PULL', {
-                        'severity': 'warning',
-                        'summary': 'Upgrade: failed to pull target image',
-                        'count': 1,
-                        'detail': [
-                            'failed to pull %s on host %s' % (target_image,
-                                                              d.hostname)],
-                    })
-                    return
-                r = json.loads(''.join(out))
-                if not any(d in target_digests for d in r.get('repo_digests', [])):
-                    logger.info('Upgrade: image %s pull on %s got new digests %s (not %s), restarting' % (
-                        target_image, d.hostname, r['repo_digests'], target_digests))
-                    self.upgrade_info_str = 'Image %s pull on %s got new digests %s (not %s), restarting' % (
-                        target_image, d.hostname, r['repo_digests'], target_digests)
-                    self.upgrade_state.target_digests = r['repo_digests']
-                    self._save_upgrade_state()
-                    return
-
-                self.upgrade_info_str = 'Currently upgrading %s daemons' % (d.daemon_type)
-
-            if len(to_upgrade) > 1:
-                logger.info('Upgrade: Updating %s.%s (%d/%d)' % (d.daemon_type, d.daemon_id, num, min(len(to_upgrade),
-                            self.upgrade_state.remaining_count if self.upgrade_state.remaining_count is not None else 9999999)))
-            else:
-                logger.info('Upgrade: Updating %s.%s' %
-                            (d.daemon_type, d.daemon_id))
-            action = 'Upgrading' if not d_entry[1] else 'Redeploying'
-            try:
-                daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(d)
-                self.mgr._daemon_action(
-                    daemon_spec,
-                    'redeploy',
-                    image=target_image if not d_entry[1] else None
-                )
-                self.mgr.cache.metadata_up_to_date[d.hostname] = False
-            except Exception as e:
-                self._fail_upgrade('UPGRADE_REDEPLOY_DAEMON', {
-                    'severity': 'warning',
-                    'summary': f'{action} daemon {d.name()} on host {d.hostname} failed.',
-                    'count': 1,
-                    'detail': [
-                        f'Upgrade daemon: {d.name()}: {e}'
-                    ],
-                })
-                return
-            num += 1
-            if self.upgrade_state.remaining_count is not None and not d_entry[1]:
-                self.upgrade_state.remaining_count -= 1
+                    if code:
+                        self._fail_upgrade('UPGRADE_FAILED_PULL', {
+                            'severity': 'warning',
+                            'summary': 'Upgrade: failed to pull target image',
+                            'count': 1,
+                            'detail': [
+                                'failed to pull %s on host(s) %s' % (target_image,
+                                                                     host)],
+                        })
+            r = json.loads(''.join(out))
+            if not any(d in target_digests for d in r.get('repo_digests', [])):
+                logger.info('Upgrade: image %s pull on %s got new digests %s (not %s), restarting' % (
+                    target_image, host, r['repo_digests'], target_digests))
+                self.upgrade_info_str = 'Image %s pull on %s got new digests %s (not %s), restarting' % (
+                    target_image, host, r['repo_digests'], target_digests)
+                self.upgrade_state.target_digests = r['repo_digests']
                 self._save_upgrade_state()
+                return
+
+        if to_upgrade:
+            self.upgrade_info_str = 'Currently upgrading %s daemons' % (to_upgrade[0][0].daemon_type)
+
+        daemons_to_upgrade_names = [f'{d.daemon_type}.{d.daemon_id}' for d in [t[0] for t in to_upgrade]]
+        if daemons_to_upgrade_names:
+            logger.info(f'Upgrade: Updating {[daemons_to_upgrade_names]}')
+
+        with self.mgr.async_timeout_handler(cmd=f'cephadm Upgrading ({[d[0].name() for d in to_upgrade]} daemons)'):
+            results = self.mgr.wait_async(self._redeploy_daemons(to_upgrade, target_image))
+
+        # These failure/success structures end up structured as a mapping from
+        # hostnames to a dictionary mapping daemon names to success messages or
+        # failure reasons
+        # {
+        #     'host1': {
+        #         'osd.1': 'failure reason 1',
+        #         'osd.2': 'failure reason 2'
+        #     }
+        # }
+        failures: Dict[str, Dict[str, str]] = {r[0]: r[2] for r in results if r[2]}
+        successes: Dict[str, Dict[str, str]] = {r[0]: r[1] for r in results if r[1]}
+        success_count = 0
+        for per_host_successes in successes.values():
+            success_count += len(per_host_successes.keys())
+        if self.upgrade_state.remaining_count is not None:
+            self.upgrade_state.remaining_count -= success_count
+        self._save_upgrade_state()
+        if any(failures):
+            failed_daemons: List[str] = []
+            failed_hosts: List[str] = []
+            daemons_to_failures: List[str] = []
+            for hostname, fails in failures.items():
+                failed_hosts.append(hostname)
+                failed_daemons.extend([dname for dname in fails.keys()])
+                daemons_to_failures.extend([f'{dname}: {failure_reason}' for dname, failure_reason in fails.items()])
+            self._fail_upgrade('UPGRADE_REDEPLOY_DAEMON', {
+                'severity': 'warning',
+                'summary': f'Upgrading daemon(s) {", ".join(failed_daemons)} on host(s) {", ".join(failed_hosts)} failed.',
+                'count': 1,
+                'detail': daemons_to_failures,
+            })
+            return
 
     def _handle_need_upgrade_self(self, need_upgrade_self: bool, upgrading_mgrs: bool) -> None:
         if need_upgrade_self:
