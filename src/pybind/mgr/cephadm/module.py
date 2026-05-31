@@ -3453,7 +3453,7 @@ Then run the following:
             raise OrchestratorError(msg)
         else:
             self.log.info(f'Host {hostname} executed command sos {sos_params}: {out}')
-            result = out[0] if len(out) == 1 else '\n'.join(out)
+            result = out
 
         return result
 
