@@ -95,6 +95,8 @@ from .inventory import (
     NodeProxyCache,
     OrchSecretNotFound,
     CoredumpctlOverrides,
+    DaemonDeployQueue,
+    DaemonRemovalQueue,
 )
 from .upgrade import CephadmUpgrade
 from .template import TemplateMgr
@@ -742,6 +744,8 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule):
         self.ceph_volume: CephVolume = CephVolume(self)
 
         self.last_stray_daemon_check: Optional[datetime.datetime] = None
+        self.daemon_deploy_queue = DaemonDeployQueue()
+        self.daemon_removal_queue = DaemonRemovalQueue()
 
     def shutdown(self) -> None:
         self.log.debug('shutdown')
