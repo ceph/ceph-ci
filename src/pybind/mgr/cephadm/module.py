@@ -416,6 +416,12 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule):
             desc='Comma separated list of OSD flags to set for the duration of an upgrade'
         ),
         Option(
+            'max_parallel_osd_upgrades',
+            type='int',
+            default=16,
+            desc='Maximum number of OSD daemons upgraded in parallel.'
+        ),
+        Option(
             'service_discovery_port',
             type='int',
             default=8765,
