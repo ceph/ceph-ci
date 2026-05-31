@@ -3058,7 +3058,8 @@ def command_bootstrap(ctx):
     image_ver = CephContainer(ctx, ctx.image, 'ceph', ['--version']).run().strip()
     logger.info(f'Ceph version: {image_ver}')
 
-    check_license_acceptance(ctx)
+    if not ctx.automatically_accept_license:
+        check_license_acceptance(ctx)
 
     if not ctx.allow_mismatched_release:
         image_release = image_ver.split()[4]
@@ -3184,6 +3185,9 @@ def command_bootstrap(ctx):
         is_available(ctx, 'orchestrator module', orch_module_available)
 
     enable_cephadm_mgr_module(cli, wait_for_mgr_restart)
+
+    if ctx.automatically_accept_license:
+        cli(['orch', 'accept-license', '--image', ctx.image])
 
     # ssh
     if not ctx.skip_ssh:
@@ -3526,7 +3530,7 @@ def _pull_license_from_image(ctx: CephadmContext, image_name: str) -> str:
     # in the future this will go to a specific place in the
     # container image and actually pull the text of a file
     # at a certain location
-    return """Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis laoreet lorem id rhoncus interdum. Sed vitae tempus tellus. Donec porta ornare nunc a sodales. Duis feugiat ante vel eros finibus, in rhoncus neque tristique. Duis ultrices neque at orci interdum convallis. Duis rutrum ligula magna, non euismod tortor condimentum at. Morbi suscipit ornare sapien, fringilla egestas dui viverra in. Nunc scelerisque ex nec neque hendrerit euismod. Cras tristique est laoreet nisl fringilla pretium. Cras eleifend dui mi. Donec viverra sed libero eget blandit. Suspendisse malesuada arcu est, sed porttitor ante aliquet quis.
+    return """Lorem ipsum dolor sit amet, consedgdfctetur adipiscing elit. Duis laoreet lorem id rhoncus interdum. Sed vitae tempus tellus. Donec porta ornare nunc a sodales. Duis feugiat ante vel eros finibus, in rhoncus neque tristique. Duis ultrices neque at orci interdum convallis. Duis rutrum ligula magna, non euismod tortor condimentum at. Morbi suscipit ornare sapien, fringilla egestas dui viverra in. Nunc scelerisque ex nec neque hendrerit euismod. Cras tristique est laoreet nisl fringilla pretium. Crab eleifend dui mi. Donec viverra sed libero eget blandit. Suspendisse malesuada arcu est, sed porttitor ante aliquet quis.
 
 Orci varius natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Cras sed purus non turpis efficitur mattis sit amet eu neque. Aliquam iaculis, sem vel facilisis volutpat, risus lorem dictum ligula, vitae auctor dolor magna ut eros. Suspendisse elit metus, facilisis in nisl ut, commodo porttitor urna. Quisque condimentum mi at urna pulvinar euismod. Fusce ultricies blandit tellus et congue. Curabitur eu nibh ipsum. Sed aliquet egestas sapien, ut aliquet urna iaculis et. Duis commodo felis sem, sit amet molestie libero sollicitudin ut. Cras neque urna, faucibus sit amet sodales non, pellentesque ac nibh. Aliquam tincidunt ipsum vel rutrum tempor. Duis pellentesque massa mauris, non placerat orci mattis ac. Aenean tristique tellus quis lacinia rhoncus."""
 
@@ -6129,6 +6133,11 @@ def _get_parser():
         help='')
     parser_bootstrap.add_argument(
         '--disable-ibm-call-home',
+        action='store_true',
+        default=False,
+        help='Do Not Enable IBM Call Home')
+    parser_bootstrap.add_argument(
+        '--automatically-accept-license',
         action='store_true',
         default=False,
         help='Do Not Enable IBM Call Home')
