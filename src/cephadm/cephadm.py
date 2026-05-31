@@ -2343,6 +2343,31 @@ def create_initial_monmap(
     return monmap
 
 
+def check_license_acceptance(ctx: CephadmContext) -> None:
+    license_text = _pull_license_from_image(ctx, ctx.image)
+    failure_count = 0
+
+    response = input(
+        f'IBM license for image {ctx.image}:\n\n\n {license_text}\n\n\n'
+        'License must be accepted to bootstrap cluster.\nTo accept license '
+        'respond "yes" or "y". To decline, respond "no" or "n": '
+    ).lower()
+
+    while failure_count < 3:
+        if response in ['y', 'yes']:
+            return
+        elif response in ['n', 'no']:
+            raise Error('User declined IBM license. Bootstrap aborting...')
+        else:
+            response = input(
+                'Invalid input. To accept license respond "yes" or "y". '
+                'To decline, respond "no" or "n": '
+            )
+            failure_count += 1
+
+    raise Error('Got invalid response too many times requesting license acceptance. Bootstrap aborting...')
+
+
 def prepare_create_mon(
     ctx: CephadmContext,
     uid: int, gid: int,
@@ -3032,6 +3057,8 @@ def command_bootstrap(ctx):
 
     image_ver = CephContainer(ctx, ctx.image, 'ceph', ['--version']).run().strip()
     logger.info(f'Ceph version: {image_ver}')
+
+    check_license_acceptance(ctx)
 
     if not ctx.allow_mismatched_release:
         image_release = image_ver.split()[4]
