@@ -425,6 +425,19 @@ class Orchestrator(object):
         """
         raise NotImplementedError()
 
+    def set_host_topological_labels(
+        self,
+        host: str,
+        topological_labels: Optional[Union[str, List[str], Dict[str, str]]]
+    ) -> OrchResult[str]:
+        """
+        Update a host's topological labels
+
+        :param host: hostname
+        :param topological_labels: arbitrary relational host metadata
+        """
+        raise NotImplementedError()
+
     def get_hosts(self) -> OrchResult[List[HostSpec]]:
         """
         Report the hosts in the cluster.
@@ -959,8 +972,17 @@ class Orchestrator(object):
     def upgrade_ls(self, image: Optional[str], tags: bool, show_all_versions: Optional[bool] = False) -> OrchResult[Dict[Any, Any]]:
         raise NotImplementedError()
 
-    def upgrade_start(self, image: Optional[str], version: Optional[str], daemon_types: Optional[List[str]],
-                      hosts: Optional[str], services: Optional[List[str]], limit: Optional[int], no_osd_flags: bool = False) -> OrchResult[str]:
+    def upgrade_start(
+        self,
+        image: Optional[str],
+        version: Optional[str],
+        daemon_types: Optional[List[str]],
+        hosts: Optional[str],
+        services: Optional[List[str]],
+        limit: Optional[int],
+        no_osd_flags: bool = False,
+        topolocial_labels: Optional[Union[str, List[str]]]
+    ) -> OrchResult[str]:
         raise NotImplementedError()
 
     def upgrade_pause(self) -> OrchResult[str]:

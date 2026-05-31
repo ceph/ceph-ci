@@ -22,7 +22,7 @@ from cephadm.tlsobject_store import TLSObjectScope, TLSObjectException
 import string
 from typing import List, Dict, Optional, Callable, Tuple, TypeVar, \
     Any, Set, TYPE_CHECKING, cast, NamedTuple, Sequence, \
-    Awaitable, Iterator
+    Awaitable, Iterator, Union
 
 import datetime
 import os
@@ -2392,6 +2392,16 @@ Then run the following:
         return "Updated host '{}' addr to '{}'".format(host, addr)
 
     @handle_orch_error
+    def set_host_topological_labels(
+        self,
+        host: str,
+        topological_labels: Optional[Union[str, List[str], Dict[str, str]]]
+    ) -> str:
+        self.inventory.set_topological_labels(host, topological_labels)
+        self.log.info('Set host %s topological_labels to %s' % (host, topological_labels))
+        return "Updated host '{}' topological_labels to '{}'".format(host, topological_labels)
+
+    @handle_orch_error
     def get_hosts(self):
         # type: () -> List[orchestrator.HostSpec]
         """
@@ -4521,8 +4531,17 @@ Then run the following:
         return self.upgrade.upgrade_ls(image, tags, show_all_versions)
 
     @handle_orch_error
-    def upgrade_start(self, image: str, version: str, daemon_types: Optional[List[str]] = None, host_placement: Optional[str] = None,
-                      services: Optional[List[str]] = None, limit: Optional[int] = None, no_osd_flags: bool = False) -> str:
+    def upgrade_start(
+        self,
+        image: str,
+        version: str,
+        daemon_types: Optional[List[str]] = None,
+        host_placement: Optional[str] = None,
+        services: Optional[List[str]] = None,
+        limit: Optional[int] = None,
+        no_osd_flags: bool = False,
+        topological_labels: Optional[Union[str, List[str]]] = None,
+    ) -> str:
         if self.inventory.get_host_with_state("maintenance"):
             raise OrchestratorError("Upgrade aborted - you have host(s) in maintenance state")
         if self.offline_hosts:
@@ -4543,14 +4562,41 @@ Then run the following:
                 if service not in self.spec_store:
                     raise OrchestratorError(f'Upgrade aborted - Got unknown service name "{service}".\n'
                                             f'Known services are: {self.spec_store.all_specs.keys()}')
-        hosts: Optional[List[str]] = None
+
+        tlabels: Optional[Dict[str, str]] = HostSpec.parse_topological_labels(topological_labels)
+        all_hosts = list(self.inventory.all_specs())
+        tlabel_matching_hosts: Set[str] = set()
+        if tlabels:
+            for host in all_hosts:
+                if host.matches_topological_labels(tlabels):
+                    tlabel_matching_hosts.add(host.hostname)
+            if not tlabel_matching_hosts:
+                raise OrchestratorError(
+                    f'Upgrade aborted - topological_labels parameter "{topological_labels}" did not match any hosts')
+
+        host_filter_matching_hosts: Optional[List[str]] = None
         if host_placement is not None:
-            all_hosts = list(self.inventory.all_specs())
             placement = PlacementSpec.from_string(host_placement)
-            hosts = placement.filter_matching_hostspecs(all_hosts)
-            if not hosts:
+            host_filter_matching_hosts = placement.filter_matching_hostspecs(all_hosts)
+            if not host_filter_matching_hosts:
                 raise OrchestratorError(
                     f'Upgrade aborted - hosts parameter "{host_placement}" provided did not match any hosts')
+
+        hosts = None
+        if host_filter_matching_hosts and tlabel_matching_hosts:
+            hosts = []
+            for hostname in host_filter_matching_hosts:
+                if hostname in tlabel_matching_hosts:
+                    hosts.append(hostname)
+            if not hosts:
+                raise OrchestratorError(
+                    'Upgrade aborted - hosts parameter and topological_labels together did not match any hosts. '
+                    f'Individually host placement "{host_placement}" matched {host_filter_matching_hosts} and '
+                    f'topological labels "{topological_labels}" matched {tlabel_matching_hosts}')
+        elif host_filter_matching_hosts:
+            hosts = host_filter_matching_hosts
+        elif tlabel_matching_hosts:
+            hosts = list(tlabel_matching_hosts)
 
         if limit is not None:
             if limit < 1:

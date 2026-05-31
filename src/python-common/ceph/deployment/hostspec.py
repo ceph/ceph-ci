@@ -1,7 +1,7 @@
 from collections import OrderedDict
 import errno
 import re
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, Union
 
 
 def normalize_hostname(hostname: str) -> str:
@@ -56,6 +56,7 @@ class HostSpec(object):
                  labels: Optional[List[str]] = None,
                  status: Optional[str] = None,
                  location: Optional[Dict[str, str]] = None,
+                 topological_labels: Optional[Union[Dict[str, str], str, List[str]]] = None,
                  oob: Optional[Dict[str, str]] = None,
                  ):
         self.service_type = 'host'
@@ -74,6 +75,8 @@ class HostSpec(object):
 
         self.location = location
 
+        self.topological_labels = self.parse_topological_labels(topological_labels)
+
         #: oob details, if provided
         self.oob = oob
 
@@ -91,6 +94,8 @@ class HostSpec(object):
         }
         if self.location:
             r['location'] = self.location
+        if self.topological_labels:
+            r['topological_labels'] = self.topological_labels
         if self.oob:
             r['oob'] = self.oob
         return r
@@ -105,6 +110,7 @@ class HostSpec(object):
                 host_spec['labels'])) if 'labels' in host_spec else None,
             host_spec['status'] if 'status' in host_spec else None,
             host_spec.get('location'),
+            host_spec.get('topological_labels') if 'topological_labels' in host_spec else None,
             host_spec['oob'] if 'oob' in host_spec else None,
         )
         return _cls
@@ -136,6 +142,17 @@ class HostSpec(object):
                     f'Location ({loc}) must be a dictionary of strings to strings'
                 )
 
+        tlabels = host_spec.get('topological_labels')
+        if tlabels is not None:
+            if (
+                    not isinstance(tlabels, dict)
+                    or any(not isinstance(k, str) for k in tlabels.keys())
+                    or any(not isinstance(v, str) for v in tlabels.values())
+            ):
+                raise SpecValidationError(
+                    f'Topological labels ({tlabels}) must be a dictionary of strings to strings'
+                )
+
         return host_spec
 
     def __repr__(self) -> str:
@@ -148,8 +165,97 @@ class HostSpec(object):
             args.append(self.status)
         if self.location:
             args.append(self.location)
+        if self.topological_labels:
+            args.append(self.topological_labels)
 
         return "HostSpec({})".format(', '.join(map(repr, args)))
+
+    def matches_topological_labels(
+        self,
+        topological_labels: Union[str, List[str], Dict[str, str]]
+    ) -> bool:
+        # checks if provided topological labels are either a perfect
+        # match or subset of the topological labels of this HostSpec object
+        # with the exception of when the provided topological labels are empty
+        # which returns false even though empty could be considered a subset
+        # of the HostSpec object's topological labels
+        tlabels = self.parse_topological_labels(topological_labels)
+        if not self.topological_labels or not tlabels:
+            return False
+        for tlabel_key, tlabel_value in tlabels.items():
+            if tlabel_key not in self.topological_labels:
+                return False
+            if self.topological_labels[tlabel_key] != tlabel_value:
+                return False
+        return True
+
+    @staticmethod
+    def parse_topological_labels(
+        topological_labels: Optional[Union[str, List[str], Dict[str, str]]]
+    ) -> Optional[Dict[str, str]]:
+        # Get case where we got no labels out of the way
+        if not topological_labels:
+            return None
+
+        tlabels: Dict[str, str] = {}
+        tlabels_list: List[str] = []
+
+        # Combine str and List[str] case. After this block
+        # either topological_labels was a Dict, or
+        # tlabels_list will be populated
+        if isinstance(topological_labels, str):
+            for tlabel in topological_labels.split(','):
+                tlabels_list.append(tlabel)
+        elif isinstance(topological_labels, List):
+            for tlabel in topological_labels:
+                if not isinstance(tlabel, str):
+                    raise SpecValidationError(
+                        f'Got non-string topological label {tlabel}'
+                    )
+                if ',' in tlabel:
+                    tlabels_list.extend(tlabel.split(','))
+                else:
+                    tlabels_list.append(tlabel)
+
+        # Now that we've combined str and List[str] case into just
+        # List[str] (marked by tlabels_list being populated), if we have
+        # that case, convert into a Dict[str, str]
+        if tlabels_list:
+            for tlabel in tlabels_list:
+                if tlabel.find('=') == -1 or len(tlabel.split('=')) != 2:
+                    raise SpecValidationError(
+                        f'Got topological label "{tlabel}" not containing a single "=". Format '
+                        'should be "key1=val1,key2=val2..."'
+                    )
+                tlabel_key, tlabel_val = tlabel.split('=')
+                if tlabel_key in tlabels:
+                    raise SpecValidationError(
+                        f'Invalid topological labels. Found duplicate key {tlabel_key}')
+                tlabels[tlabel_key] = tlabel_val
+
+        # At this point if we got a str or List[str], tlabels is
+        # already populated. If we got None, we returned immediately.
+        # So If tlabels isn't populated, topological_labels
+        # should be a Dict[str, str] itself
+        if not tlabels:
+            if not isinstance(topological_labels, dict):
+                raise SpecValidationError(
+                    f'Got topological labels {topological_labels} of unexpected '
+                    f'type {type(topological_labels)}'
+                )
+            for tlabel_key, tlabel_value in topological_labels.items():
+                if not isinstance(tlabel_key, str):
+                    raise SpecValidationError(
+                        f'Got topological label key {tlabel_key} of unexpected '
+                        f'type {type(tlabel_key)}'
+                    )
+                if not isinstance(tlabel_value, str):
+                    raise SpecValidationError(
+                        f'Got topological label value {tlabel_value} of unexpected '
+                        f'type {type(tlabel_value)}'
+                    )
+            tlabels = topological_labels
+        return tlabels
 
     def __str__(self) -> str:
         if self.hostname != self.addr:
@@ -163,4 +269,5 @@ class HostSpec(object):
         return self.hostname == other.hostname and \
             self.addr == other.addr and \
             sorted(self.labels) == sorted(other.labels) and \
-            self.location == other.location
+            self.location == other.location and \
+            self.topological_labels == other.topological_labels

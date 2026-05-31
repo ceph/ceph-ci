@@ -214,6 +214,8 @@ class Inventory:
             # labels
             for label in spec.labels:
                 self.add_label(spec.hostname, label)
+            if self.get_topological_labels(spec.hostname) != spec.topological_labels:
+                self.set_topological_labels(spec.hostname, spec.topological_labels)
         else:
             self._inventory[spec.hostname] = spec.to_json()
             self.save()
@@ -227,6 +229,15 @@ class Inventory:
     def set_addr(self, host: str, addr: str) -> None:
         host = self._get_stored_name(host)
         self._inventory[host]['addr'] = addr
+        self.save()
+
+    def get_topological_labels(self, host: str) -> Optional[Dict[str, str]]:
+        host = self._get_stored_name(host)
+        return self._inventory[host].get('topological_labels', None)
+
+    def set_topological_labels(self, host: str, topological_labels: Optional[Union[str, List[str], Dict[str, str]]]) -> None:
+        host = self._get_stored_name(host)
+        self._inventory[host]['topological_labels'] = HostSpec.parse_topological_labels(topological_labels)
         self.save()
 
     def add_label(self, host: str, label: str) -> None:
@@ -266,6 +277,7 @@ class Inventory:
             hostname,
             addr=info.get('addr', hostname),
             labels=info.get('labels', []),
+            topological_labels=info.get('topological_labels', None),
             status='Offline' if hostname in self.mgr.offline_hosts else info.get('status', ''),
         )
 
