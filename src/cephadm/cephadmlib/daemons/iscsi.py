@@ -283,6 +283,6 @@ done
             # script.  This is intended to be a workaround backported to older
             # releases and should eventually be removed in at least squid
             # onward
-            entrypoint='/usr/local/scripts/tcmu-runner-entrypoint.sh',
+            entrypoint='/usr/bin/tcmu-runner',
         )
         return [tcmu_sidecar]
