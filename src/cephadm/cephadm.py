@@ -1189,6 +1189,9 @@ def deploy_daemon(
                 except Exception as e:
                     logger.warning(f'[D3N] failed to persist D3N state in {data_dir}: {e}')
 
+    # Disable automatic systemd enable for NFS and keepalived; the mgr
+    # starts them when appropriate (see cephadm serve / DISABLED_SERVICES).
+    enable_daemon = daemon_type not in ('nfs', 'keepalived')
     # only write out unit files and start daemon
     # with systemd if this is not a reconfig
     if deployment_type != DeploymentType.RECONFIG:
@@ -1200,9 +1203,6 @@ def deploy_daemon(
             cephadm_agent.deploy_daemon_unit(config_js)
         else:
             if c:
-                # Disable automatic systemd enable for NFS and keepalived; the mgr
-                # starts them when appropriate (see cephadm serve / DISABLED_SERVICES).
-                enable_daemon = daemon_type not in ('nfs', 'keepalived')
                 deploy_daemon_units(
                     ctx,
                     ident,
@@ -1241,7 +1241,6 @@ def deploy_daemon(
         gid=gid,
         endpoints=endpoints
     )
-    handle_post_writing_unit_files_deployment_actions(ctx)
 
 
 def set_deployment_post_unit_file_writing_ctx_attrs(
@@ -1302,7 +1301,6 @@ def handle_post_writing_unit_files_deployment_actions(
     else:
         # redeploy and fresh deployment cases. Basically if we rewrote your
         # unit files you should be here
-        call_throws(ctx, ['systemctl', 'daemon-reload'])
         restart_deployed_daemon(ctx, ident, enable, start)
         update_unit_created_and_configured_files(ctx, ident, uid, gid)
         handle_deployment_firewall_updates(ctx, ident, endpoints)
@@ -2564,6 +2562,8 @@ def create_mon(
     mon_c = get_container(ctx, ident)
     ctx.meta_properties = {'service_name': 'mon'}
     deploy_daemon(ctx, ident, mon_c, uid, gid)
+    call_throws(ctx, ['systemctl', 'daemon-reload'])
+    handle_post_writing_unit_files_deployment_actions(ctx)
 
 
 def wait_for_mon(
@@ -2623,6 +2623,8 @@ def create_mgr(
         keyring=mgr_keyring,
         endpoints=endpoints,
     )
+    call_throws(ctx, ['systemctl', 'daemon-reload'])
+    handle_post_writing_unit_files_deployment_actions(ctx)
 
     # wait for the service to become available
     logger.info('Waiting for mgr to start...')
@@ -3514,6 +3516,8 @@ def command_deploy(ctx):
     lock = FileLock(ctx, ctx.fsid)
     lock.acquire()
     _common_deploy(ctx)
+    call_throws(ctx, ['systemctl', 'daemon-reload'])
+    handle_post_writing_unit_files_deployment_actions(ctx)
 
 
 def apply_deploy_config_to_ctx(
@@ -3560,12 +3564,23 @@ def command_deploy_from(base_ctx: CephadmContext) -> None:
     lock = FileLock(base_ctx, base_ctx.fsid)
     lock.acquire()
 
-    def _deploy_daemon(ctx: CephadmContext) -> Tuple[str, int]:
+    def _prepare_daemon_deployment(ctx: CephadmContext) -> Tuple[str, int]:
         rc: int = 0
         try:
             _common_deploy(ctx)
-        except Exception:
+        except Exception as e:
             # TODO: better rc based on exception?
+            logger.exception(str(e))
+            rc = -1
+        return (ctx.name, rc)
+
+    def _start_daemons(ctx: CephadmContext) -> Tuple[str, int]:
+        rc: int = 0
+        try:
+            handle_post_writing_unit_files_deployment_actions(ctx)
+        except Exception as e:
+            # TODO: better rc based on exception?
+            logger.exception(str(e))
             rc = -1
         return (ctx.name, rc)
 
@@ -3578,7 +3593,19 @@ def command_deploy_from(base_ctx: CephadmContext) -> None:
         daemon_ctxs.append(ctx)
 
     with ThreadPoolExecutor(max_workers=10) as executor:
-        deploy_futures = {executor.submit(_deploy_daemon, daemon_ctx): daemon_ctx for daemon_ctx in daemon_ctxs}
+        deploy_prep_futures = {executor.submit(_prepare_daemon_deployment, daemon_ctx): daemon_ctx for daemon_ctx in daemon_ctxs}
+        for future in as_completed(deploy_prep_futures):
+            daemon_name, rc = future.result()
+            results[daemon_name] = rc
+
+    call_throws(ctx, ['systemctl', 'daemon-reload'])
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        deploy_futures = {}
+        # only do the next deployment step for daemons that had no errors in the first part
+        for deploy_ctx in daemon_ctxs:
+            if ctx._deployment_ident.daemon_name in results and not results[ctx._deployment_ident.daemon_name]:
+                deploy_futures[executor.submit(_start_daemons, deploy_ctx)] = deploy_ctx
         for future in as_completed(deploy_futures):
             daemon_name, rc = future.result()
             results[daemon_name] = rc
