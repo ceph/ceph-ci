@@ -235,11 +235,18 @@ class IngressService(CephService):
             }
         }
 
-        if spec.ssl_cert:
-            final_config['files']['haproxy.pem'] = spec.ssl_cert
-
-        if spec.ssl_key:
-            final_config['files']['haproxy.pem.key'] = spec.ssl_key
+        if spec.generate_cert:
+            cert, key = self.mgr.cert_mgr.generate_cert(
+                daemon_spec.host,
+                self.mgr.inventory.get_addr(daemon_spec.host),
+            )
+            pem = ''.join([key, cert])
+            final_config['files']['haproxy.pem'] = pem
+        else:
+            if spec.ssl_cert:
+                final_config['files']['haproxy.pem'] = spec.ssl_cert
+            if spec.ssl_key:
+                final_config['files']['haproxy.pem.key'] = spec.ssl_key
 
         if spec.haproxy_qat_support:
             final_config['qat_support'] = True
