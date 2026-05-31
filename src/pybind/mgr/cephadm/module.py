@@ -3178,6 +3178,14 @@ Then run the following:
                     f'key rotation not supported for {d.daemon_type}'
                 )
 
+        # Track user-initiated stop/start actions
+        if action == 'stop':
+            d.update_user_stopped_status(True)
+            self.cache.save_host(d.hostname)
+        elif action in ['start', 'restart']:
+            d.update_user_stopped_status(False)
+            self.cache.save_host(d.hostname)
+
         self._daemon_action_set_image(action, image, d.daemon_type, d.daemon_id)
 
         self.log.info(f'Schedule {action} daemon {daemon_name}')
