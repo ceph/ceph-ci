@@ -142,6 +142,8 @@ from cephadmlib.logging import (
     cephadm_init_logging,
     Highlight,
     LogDestination,
+    write_cephadm_logrotate_config,
+    write_cluster_logrotate_config,
 )
 from cephadmlib.systemd import check_unit, check_units, terminate_service, enable_service
 from cephadmlib import systemd_unit
@@ -4838,6 +4840,33 @@ def command_sos(ctx: CephadmContext):
 ##################################
 
 
+def command_custom_logrotate(ctx: CephadmContext) -> int:
+    """Writes out custom logrotate config for either cephadm.log or a cluster's cluster logs"""
+    custom_template: str = ''
+    if 'logrotate_config_file' in ctx and ctx.logrotate_config_file:
+        logger.info('Grabbing logrotate config from filepath...')
+        try:
+            with open(ctx.logrotate_config_file) as f:
+                custom_template = f.read()
+        except FileNotFoundError:
+            raise Error(f'Failed to find logrotate config at {os.path.abspath(ctx.logrotate_config_file)}')
+    else:
+        logger.info('Grabbing logrotate config from stdin...')
+        custom_template = sys.stdin.read()
+
+    if 'cluster' in ctx and ctx.cluster:
+        if not ctx.fsid:
+            raise Error('--cluster requires also passing the FSID with --fsid <FSID>')
+        write_cluster_logrotate_config(ctx, ctx.fsid, custom_template, overwrite=True)
+    else:
+        write_cephadm_logrotate_config(ctx, custom_template, overwrite=True)
+
+    logger.info('Successfully wrote out logrotate config')
+    return 0
+
+##################################
+
+
 def systemd_target_state(ctx: CephadmContext, target_name: str, subsystem: str = 'ceph') -> bool:
     # TODO: UNITTEST
     return os.path.exists(
@@ -6055,6 +6084,36 @@ def _get_parser():
         'parameters',
         nargs=argparse.REMAINDER,
         help='parameters for the sos command')
+
+    parser_custom_logrotate = subparsers.add_parser(
+        'write-custom-logrotate-config',
+        help='Takes a jinja2 template for a logrotate config and writes it to logrotate dir')
+    parser_custom_logrotate.set_defaults(func=command_custom_logrotate)
+    parser_custom_logrotate.add_argument(
+        '--fsid',
+        help='cluster FSID'
+    )
+    logrotate_pass_in_group = parser_custom_logrotate.add_mutually_exclusive_group(required=True)
+    logrotate_pass_in_group.add_argument(
+        '--logrotate-config-file',
+        help='Filepath to custom logrotate template'
+    )
+    logrotate_pass_in_group.add_argument(
+        '--logrotate-config-stdin',
+        help='Custom logrotate template passed over stdin',
+        action='store_true'
+    )
+    logrotate_choice_group = parser_custom_logrotate.add_mutually_exclusive_group(required=True)
+    logrotate_choice_group.add_argument(
+        '--cluster',
+        help='Custom template is for cluster logs logrotate config. Requires passing --fsid as well',
+        action='store_true'
+    )
+    logrotate_choice_group.add_argument(
+        '--cephadm',
+        help='Custom template is for cephadm.log logrotate config',
+        action='store_true'
+    )
 
     return parser
 
