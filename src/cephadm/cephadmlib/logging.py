@@ -272,6 +272,7 @@ def write_cluster_logrotate_config(
         should be harmless.
         """
         targets: List[str] = [
+            'ceph-exporter',
             'ceph-mon',
             'ceph-mgr',
             'ceph-mds',
