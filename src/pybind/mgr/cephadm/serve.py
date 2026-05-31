@@ -1430,6 +1430,7 @@ class CephadmServe:
             if last_deps is None:
                 last_deps = []
             action = self.mgr.cache.get_scheduled_daemon_action(dd.hostname, dd.name())
+            skip_restart = False
             if not last_config:
                 self.log.info('Reconfiguring %s (unknown last config time)...' % (
                     dd.name()))
@@ -1445,6 +1446,15 @@ class CephadmServe:
                     REDEPLOY_TRIGGERS = ['secure_monitoring_stack', 'mgmt-gateway']
                     if any(svc in e for e in diff for svc in REDEPLOY_TRIGGERS):
                         action = 'redeploy'
+
+                elif dd.daemon_type == 'nfs':
+                    # check what has changed, based on that decide action
+                    only_kmip_updated = all(s.startswith('kmip') for s in list(sym_diff))
+                    if not only_kmip_updated:
+                        action = 'redeploy'
+                    else:
+                        skip_restart = True
+
             elif dd.daemon_type == 'haproxy':
                 if spec and hasattr(spec, 'backend_service'):
                     backend_spec = self.mgr.spec_store[spec.backend_service].spec
@@ -1481,7 +1491,7 @@ class CephadmServe:
                     action = 'redeploy'
                 try:
                     daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(dd)
-                    self.mgr._daemon_action(daemon_spec, action=action, spec=spec)
+                    self.mgr._daemon_action(daemon_spec, action=action, spec=spec, skip_restart=skip_restart)
                     if self.mgr.cache.rm_scheduled_daemon_action(dd.hostname, dd.name()):
                         self.mgr.cache.save_host(dd.hostname)
                 except OrchestratorError as e:
@@ -1661,6 +1671,7 @@ class CephadmServe:
                              daemon_specs: List[CephadmDaemonDeploySpec],
                              reconfig: bool = False,
                              osd_uuid_map: Optional[Dict[str, Any]] = None,
+                             skip_restart: bool = False
                              ) -> Tuple[Dict[str, str], Dict[str, str]]:
 
         exchanges: List[exchange.Deploy] = []
@@ -1706,6 +1717,8 @@ class CephadmServe:
                 daemon_params['allow_ptrace'] = True
             if self.mgr.set_coredump_overrides:
                 daemon_params['limit_core_infinity'] = True
+            if skip_restart:
+                daemon_params['skip_restart'] = True
 
             daemon_spec, extra_container_args, extra_entrypoint_args = self._setup_extra_deployment_args(daemon_spec, daemon_params)
             init_containers = self._setup_init_containers(daemon_spec, daemon_params)

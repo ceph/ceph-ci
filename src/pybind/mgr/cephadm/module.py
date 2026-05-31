@@ -3097,7 +3097,8 @@ Then run the following:
                        daemon_spec: CephadmDaemonDeploySpec,
                        action: str,
                        image: Optional[str] = None,
-                       spec: Optional[ServiceSpec] = None) -> str:
+                       spec: Optional[ServiceSpec] = None,
+                       skip_restart: bool = False) -> str:
         self._daemon_action_set_image(action, image, daemon_spec.daemon_type,
                                       daemon_spec.daemon_id)
 
@@ -3123,7 +3124,7 @@ Then run the following:
                     daemon_spec)
             with self.async_timeout_handler(daemon_spec.host, f'cephadm deploy ({daemon_spec.daemon_type} daemon)'):
                 successes, failures = self.wait_async(
-                    CephadmServe(self)._create_daemon([daemon_spec], reconfig=(action == 'reconfig')))
+                    CephadmServe(self)._create_daemon([daemon_spec], reconfig=(action == 'reconfig'), skip_restart=skip_restart))
                 # we're only deploying one daemon here, so we expect successes or failures to container one entry
                 for res in [successes, failures]:
                     if daemon_spec.name() in res:
