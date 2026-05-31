@@ -21,7 +21,6 @@ class D3NDevicePlanner:
     mgr: "CephadmOrchestrator"
 
     def _d3n_fail_if_devs_used_by_other_rgw_service(self, host: str, devs: List[str], service_name: str) -> None:
-        logger.info("1361")
         wanted = set(devs)
 
         # check rgw daemons on this host
@@ -63,15 +62,26 @@ class D3NDevicePlanner:
             current_daemon_id: str,
             key: tuple[str, str],
     ) -> None:
+        """
+        Prune invalid and stale entries from the per-(service, host) D3N allocation map.
 
+        Keep in-flight allocations during fresh deployment to avoid losing initial
+        daemon-to-device assignments before daemons appear in the mgr cache.
+        """
         invalid = [did for did, dev in alloc.items() if dev not in devs]
         for did in invalid:
             del alloc[did]
-        logger.debug(f"[D3N][alloc] prune-invalid: removed={invalid} devs={devs} alloc_now={alloc}")
+
+        logger.debug(
+            f"[D3N][alloc] prune-invalid: key={key} removed={invalid} "
+            f"devs={devs} alloc_now={alloc}"
+        )
+
         if not daemon_details:
-            if alloc:
-                logger.info(f"[D3N][alloc] clear-stale: key={key} alloc_was={alloc}")
-                alloc.clear()
+            logger.debug(
+                f"[D3N][alloc] gc: key={key} no daemon_details yet; "
+                f"preserving in-flight alloc={alloc}"
+            )
             return
 
         live_daemon_ids: set[str] = set()
@@ -85,8 +95,9 @@ class D3NDevicePlanner:
         stale = [did for did in list(alloc.keys()) if did not in live_daemon_ids]
         for did in stale:
             del alloc[did]
+
         logger.debug(
-            f"gc: key={key} live={sorted(live_daemon_ids)} "
+            f"[D3N][alloc] gc: key={key} live={sorted(live_daemon_ids)} "
             f"removed={stale} alloc_now={alloc}"
         )
 

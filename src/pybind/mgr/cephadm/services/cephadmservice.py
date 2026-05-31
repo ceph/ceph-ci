@@ -1490,7 +1490,10 @@ class RgwService(CephService):
             raise OrchestratorError("missing host in daemon_spec")
 
         service_name = daemon_spec.service_name
-        daemon_details = self.mgr.cache.get_daemons_by_service(service_name)
+        daemon_details = [
+            dd for dd in self.mgr.cache.get_daemons_by_service(service_name)
+            if dd.hostname == host
+        ]
 
         fs_type, size_bytes, devs = d3n_get_host_devs(d3n, host)
         device = alloc.plan_device_for_daemon(service_name, host, devs, daemon_spec.daemon_id, daemon_details)
