@@ -104,8 +104,8 @@ def resolve_ip(hostname: str) -> str:
         # pick first v4 IP, if present
         for a in r:
             if a[0] == socket.AF_INET:
-                return a[4][0]
-        return r[0][4][0]
+                return cast(str, a[4][0])
+        return cast(str, r[0][4][0])
     except socket.gaierror as e:
         raise NFSInvalidOperation(f"Cannot resolve IP for host {hostname}: {e}")
 

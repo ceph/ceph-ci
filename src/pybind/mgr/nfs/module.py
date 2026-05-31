@@ -1,7 +1,7 @@
 import logging
 import threading
 from typing import Tuple, Optional, List, Dict, Any
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from .cli import NFSCLICommand
 

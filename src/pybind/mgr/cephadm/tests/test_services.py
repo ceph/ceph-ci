@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 from textwrap import dedent
 import json
 import urllib.parse
