@@ -62,6 +62,7 @@ class IngressService(CephService):
             self,
             daemon_spec: CephadmDaemonDeploySpec,
     ) -> CephadmDaemonDeploySpec:
+        super().prepare_create(daemon_spec)
         if daemon_spec.daemon_type == 'haproxy':
             return self.haproxy_prepare_create(daemon_spec)
         if daemon_spec.daemon_type == 'keepalived':
@@ -253,18 +254,10 @@ class IngressService(CephService):
             }
         }
 
-        if spec.generate_cert:
-            cert, key = self.mgr.cert_mgr.generate_cert(
-                daemon_spec.host,
-                self.mgr.inventory.get_addr(daemon_spec.host),
-            )
-            pem = ''.join([key, cert])
-            final_config['files']['haproxy.pem'] = pem
-        else:
-            if spec.ssl_cert:
-                final_config['files']['haproxy.pem'] = spec.ssl_cert
-            if spec.ssl_key:
-                final_config['files']['haproxy.pem.key'] = spec.ssl_key
+        if spec.ssl:
+            tls_pair = self.get_certificates(daemon_spec)
+            combined_pem = tls_pair.cert + '\n' + tls_pair.key
+            config_files['files']['haproxy.pem'] = combined_pem
 
         if spec.verify_backend_ssl_cert:
             if spec.generate_cert:

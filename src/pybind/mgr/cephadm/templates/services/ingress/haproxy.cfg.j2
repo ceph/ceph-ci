@@ -63,7 +63,7 @@ frontend stats
     monitor-uri /health
 
 frontend frontend
-{% if spec.ssl_cert or spec.generate_cert %}
+{% if spec.ssl or spec.ssl_cert %}
     bind {{ ip }}:{{ frontend_port }} ssl crt /var/lib/haproxy/haproxy.pem {{ v4v6_flag }}
     http-request set-header X-Forwarded-Proto https
 {% else %}
