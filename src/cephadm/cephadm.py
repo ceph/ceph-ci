@@ -1231,14 +1231,7 @@ def deploy_daemon(
 
     update_unit_created_and_configured_files(ctx, ident, uid, gid)
 
-    update_firewalld(ctx, daemon_form_create(ctx, ident))
-
-    # Open ports explicitly required for the daemon
-    if not ('skip_firewalld' in ctx and ctx.skip_firewalld):
-        if endpoints:
-            fw = Firewalld(ctx)
-            fw.open_ports([e.port for e in endpoints] + fw.external_ports.get(daemon_type, []))
-            fw.apply_rules()
+    handle_deployment_firewall_updates(ctx, ident, endpoints)
 
     # If this was a reconfig and the daemon is not a Ceph daemon, restart it
     # so it can pick up potential changes to its configuration files
@@ -1423,6 +1416,23 @@ def restart_reconfigured_daemon(ctx: CephadmContext, ident: DaemonIdentity) -> N
             ctx.signal_name = ctx.send_signal_to_daemon
             ctx.signal_number = None
             command_signal(ctx)
+
+
+def handle_deployment_firewall_updates(
+    ctx: CephadmContext,
+    ident: DaemonIdentity,
+    endpoints: Optional[List[EndPoint]] = None
+) -> None:
+    daemon_type = ident.daemon_type
+    update_firewalld(ctx, daemon_form_create(ctx, ident))
+
+    # Open ports explicitly required for the daemon
+    if not ('skip_firewalld' in ctx and ctx.skip_firewalld):
+        if endpoints:
+            fw = Firewalld(ctx)
+            fw.open_ports([e.port for e in endpoints] + fw.external_ports.get(daemon_type, []))
+            fw.apply_rules()
+
 
 def _osd_unit_run_commands(
     ctx: CephadmContext,
