@@ -4498,6 +4498,7 @@ def test_nfs_config_monitoring_ip(self, _run_cephadm, cephadm_module: CephadmOrc
             nfs_spec = NFSServiceSpec(service_id="foo", placement=PlacementSpec(hosts=['test']),
                                       kmip_cert='kmip_cert', kmip_key='kmip_key',
                                       kmip_ca_cert='kmip_ca_cert', kmip_host_list=['test'])
+
             with with_service(cephadm_module, nfs_spec) as _:
                 nfs_generated_conf, _ = service_registry.get_service('nfs').generate_config(
                     CephadmDaemonDeploySpec(host='test', daemon_id='foo.test.0.0', service_name=nfs_spec.service_name()))
@@ -4566,6 +4567,44 @@ def test_nfs_config_monitoring_ip(self, _run_cephadm, cephadm_module: CephadmOrc
                 assert nfs_generated_conf['files']['kmip_cert.pem'] == 'kmip_cert'
                 assert nfs_generated_conf['files']['kmip_key.pem'] == 'kmip_key'
                 assert nfs_generated_conf['files']['kmip_ca_cert.pem'] == 'kmip_ca_cert'
+
+    @patch("cephadm.serve.CephadmServe._run_cephadm")
+    @patch("cephadm.services.nfs.NFSService.fence_old_ranks", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.run_grace_tool", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.purge", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.create_rados_config_obj", MagicMock())
+    def test_nfs_tls(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test', addr='1.2.3.7'):
+            cephadm_module.cache.update_host_networks('test', {
+                '1.2.3.0/24': {
+                    'if0': ['1.2.3.1']
+                }
+            })
+
+            nfs_spec = NFSServiceSpec(service_id="foo", placement=PlacementSpec(hosts=['test']),
+                                      ssl=True, ssl_cert=ceph_generated_cert, ssl_key=ceph_generated_key,
+                                      ssl_ca_cert=cephadm_root_ca, certificate_source='inline', tls_ktls=True,
+                                      tls_debug=True, tls_min_version='TLSv1.3',
+                                      tls_ciphers='ECDHE-ECDSA-AES256')
+            with with_service(cephadm_module, nfs_spec) as _:
+                nfs_generated_conf, _ = service_registry.get_service('nfs').generate_config(
+                    CephadmDaemonDeploySpec(host='test', daemon_id='foo.test.0.0', service_name=nfs_spec.service_name()))
+                ganesha_conf = nfs_generated_conf['files']['ganesha.conf']
+                expected_tls_block = (
+                    'TLS_CONFIG{\n'
+                    '        Enable_TLS = True;\n'
+                    '        TLS_Cert_File = /etc/ganesha/tls/tls_cert.pem;\n'
+                    '        TLS_Key_File = /etc/ganesha/tls/tls_key.pem;\n'
+                    '        TLS_CA_File = /etc/ganesha/tls/tls_ca_cert.pem;\n'
+                    '        TLS_Ciphers = "ECDHE-ECDSA-AES256";\n'
+                    '        TLS_Min_Version = "TLSv1.3";\n'
+                    '        Enable_KTLS = True;\n'
+                    '        Enable_debug = True;\n'
+                    '}\n'
+                )
+                assert expected_tls_block in ganesha_conf
 
 
 class TestCephFsMirror:

@@ -1441,6 +1441,16 @@ class NFSServiceSpec(ServiceSpec):
                  kmip_ca_cert: Optional[str] = None,
                  kmip_host_list: Optional[List[Union[str, Dict[str, Union[str, int]]]]] = None,
                  cluster_qos_config: Optional[Dict[str, Union[str, bool, int]]] = None,
+                 ssl: bool = False,
+                 ssl_cert: Optional[str] = None,
+                 ssl_key: Optional[str] = None,
+                 ssl_ca_cert: Optional[str] = None,
+                 certificate_source: Optional[str] = None,
+                 custom_sans: Optional[List[str]] = None,
+                 tls_ktls: bool = False,
+                 tls_debug: bool = False,
+                 tls_min_version: Optional[str] = None,
+                 tls_ciphers: Optional[str] = None,
                  ):
         assert service_type == 'nfs'
         super(NFSServiceSpec, self).__init__(
@@ -1448,7 +1458,8 @@ class NFSServiceSpec(ServiceSpec):
             placement=placement, unmanaged=unmanaged, preview_only=preview_only,
             config=config, networks=networks, extra_container_args=extra_container_args,
             extra_entrypoint_args=extra_entrypoint_args, custom_configs=custom_configs,
-            ip_addrs=ip_addrs)
+            ip_addrs=ip_addrs, ssl=ssl, ssl_cert=ssl_cert, ssl_key=ssl_key, ssl_ca_cert=ssl_ca_cert,
+            certificate_source=certificate_source, custom_sans=custom_sans)
 
         self.port = port
 
@@ -1480,6 +1491,12 @@ class NFSServiceSpec(ServiceSpec):
                     raise SpecValidationError(
                         f'kmip_host_list contains an invalid element: {host_obj}.'
                     )
+
+        # TLS fields
+        self.tls_ciphers = tls_ciphers
+        self.tls_ktls = tls_ktls
+        self.tls_debug = tls_debug
+        self.tls_min_version = tls_min_version
 
     def get_port_start(self) -> List[int]:
         if self.port:
@@ -1556,6 +1573,21 @@ class NFSServiceSpec(ServiceSpec):
                     raise SpecValidationError(
                         f"Invalid NFS spec: IOPS '{key}' should be an integer"
                     )
+
+        # TLS certificate validation
+        if self.ssl and not self.certificate_source:
+            raise SpecValidationError('If SSL is enabled, a certificate source must be provided.')
+        if self.certificate_source == CertificateSource.INLINE.value:
+            tls_field_names = [
+                'ssl_cert',
+                'ssl_key',
+                'ssl_ca_cert',
+            ]
+            tls_fields = [getattr(self, tls_field) for tls_field in tls_field_names]
+            if any(tls_fields) and not all(tls_fields):
+                raise SpecValidationError(
+                    f'Either none or all of {tls_field_names} attributes must be set'
+                )
 
 
 yaml.add_representer(NFSServiceSpec, ServiceSpec.yaml_representer)

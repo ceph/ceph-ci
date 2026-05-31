@@ -116,11 +116,21 @@ class NFSService(CephService):
             deps.append(f'kmip_key: {str(utils.md5_hash(nfs_spec.kmip_key))}')
             deps.append(f'kmip_ca_cert: {str(utils.md5_hash(nfs_spec.kmip_ca_cert))}')
             deps.append(f'kmip_host_list: {nfs_spec.kmip_host_list}')
+        # TLS related fields
+        if (spec.ssl and spec.ssl_cert and spec.ssl_key and spec.ssl_ca_cert):
+            deps.append(f'ssl_cert: {str(utils.md5_hash(spec.ssl_cert))}')
+            deps.append(f'ssl_key: {str(utils.md5_hash(spec.ssl_key))}')
+            deps.append(f'ssl_ca_cert: {str(utils.md5_hash(spec.ssl_ca_cert))}')
+        deps.append(f'tls_ktls: {nfs_spec.tls_ktls}')
+        deps.append(f'tls_debug: {nfs_spec.tls_debug}')
+        deps.append(f'tls_min_version: {nfs_spec.tls_min_version}')
+        deps.append(f'tls_ciphers: {nfs_spec.tls_ciphers}')
         return sorted(deps)
 
     def generate_config(self, daemon_spec: CephadmDaemonDeploySpec) -> Tuple[Dict[str, Any], List[str]]:
         assert self.TYPE == daemon_spec.daemon_type
 
+        super().register_for_certificates(daemon_spec)
         daemon_type = daemon_spec.daemon_type
         daemon_id = daemon_spec.daemon_id
         host = daemon_spec.host
@@ -184,7 +194,12 @@ class NFSService(CephService):
                 "cluster_id": self.mgr._cluster_fsid,
                 "enable_virtual_server": str(spec.enable_virtual_server).lower(),
                 "kmip_addrs": spec.kmip_host_list if add_kmip_block else None,
-                "use_old_nodeid": False if nodeid.isdigit() else True
+                "use_old_nodeid": False if nodeid.isdigit() else True,
+                "tls_add": spec.ssl,
+                "tls_ciphers": spec.tls_ciphers,
+                "tls_min_version": spec.tls_min_version,
+                "tls_ktls": spec.tls_ktls,
+                "tls_debug": spec.tls_debug,
             }
             if spec.enable_haproxy_protocol:
                 context["haproxy_hosts"] = self._haproxy_hosts()
@@ -225,6 +240,14 @@ class NFSService(CephService):
                     'kmip_ca_cert',
                 ]:
                     config['files'][f'{kmip_cert_key_field}.pem'] = getattr(spec, kmip_cert_key_field)
+
+            if spec.ssl:
+                tls_creds = self.get_certificates(daemon_spec, ca_cert_required=True)
+                config['files'].update({
+                    'tls_cert.pem': tls_creds.cert,
+                    'tls_key.pem': tls_creds.key,
+                    'tls_ca_cert.pem': tls_creds.ca_cert,
+                })
             config.update(
                 self.get_config_and_keyring(
                     daemon_type, daemon_id,

@@ -161,6 +161,14 @@ class NFSCluster:
             kmip_ca_cert: Optional[str] = None,
             kmip_host_list: Optional[List[Union[str, Dict[str, Union[str, int]]]]] = None,
             cluster_qos_config: Optional[Dict[str, Union[str, bool, int]]] = None,
+            ssl: bool = False,
+            ssl_cert: Optional[str] = None,
+            ssl_key: Optional[str] = None,
+            ssl_ca_cert: Optional[str] = None,
+            tls_ktls: bool = False,
+            tls_debug: bool = False,
+            tls_min_version: Optional[str] = None,
+            tls_ciphers: Optional[str] = None,
     ) -> None:
         if not port:
             port = 2049   # default nfs port
@@ -199,7 +207,15 @@ class NFSCluster:
                                   kmip_key=kmip_key,
                                   kmip_ca_cert=kmip_ca_cert,
                                   kmip_host_list=kmip_host_list,
-                                  cluster_qos_config=cluster_qos_config)
+                                  cluster_qos_config=cluster_qos_config,
+                                  ssl=ssl,
+                                  ssl_cert=ssl_cert,
+                                  ssl_key=ssl_key,
+                                  ssl_ca_cert=ssl_ca_cert,
+                                  tls_ktls=tls_ktls,
+                                  tls_debug=tls_debug,
+                                  tls_min_version=tls_min_version,
+                                  tls_ciphers=tls_ciphers)
             completion = self.mgr.apply_nfs(spec)
             orchestrator.raise_if_exception(completion)
             ispec = IngressSpec(service_type='ingress',
@@ -223,7 +239,15 @@ class NFSCluster:
                                   kmip_key=kmip_key,
                                   kmip_ca_cert=kmip_ca_cert,
                                   kmip_host_list=kmip_host_list,
-                                  cluster_qos_config=cluster_qos_config)
+                                  cluster_qos_config=cluster_qos_config,
+                                  ssl=ssl,
+                                  ssl_cert=ssl_cert,
+                                  ssl_key=ssl_key,
+                                  ssl_ca_cert=ssl_ca_cert,
+                                  tls_ktls=tls_ktls,
+                                  tls_debug=tls_debug,
+                                  tls_min_version=tls_min_version,
+                                  tls_ciphers=tls_ciphers)
             completion = self.mgr.apply_nfs(spec)
             orchestrator.raise_if_exception(completion)
         log.debug("Successfully deployed nfs daemons with cluster id %s and placement %s",
@@ -253,6 +277,14 @@ class NFSCluster:
             kmip_ca_cert: Optional[str] = None,
             kmip_host_list: Optional[List[Union[str, Dict[str, Union[str, int]]]]] = None,
             cluster_qos_config: Optional[Dict[str, Union[str, bool, int]]] = None,
+            ssl: bool = False,
+            ssl_cert: Optional[str] = None,
+            ssl_key: Optional[str] = None,
+            ssl_ca_cert: Optional[str] = None,
+            tls_ktls: bool = False,
+            tls_debug: bool = False,
+            tls_min_version: Optional[str] = None,
+            tls_ciphers: Optional[str] = None,
     ) -> None:
         try:
             if virtual_ip:
@@ -287,7 +319,15 @@ class NFSCluster:
                     kmip_key,
                     kmip_ca_cert,
                     kmip_host_list,
-                    cluster_qos_config=cluster_qos_config
+                    cluster_qos_config=cluster_qos_config,
+                    ssl=ssl,
+                    ssl_cert=ssl_cert,
+                    ssl_key=ssl_key,
+                    ssl_ca_cert=ssl_ca_cert,
+                    tls_ktls=tls_ktls,
+                    tls_debug=tls_debug,
+                    tls_min_version=tls_min_version,
+                    tls_ciphers=tls_ciphers
                 )
                 return
             raise NonFatalError(f"{cluster_id} cluster already exists")

@@ -162,6 +162,9 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
         """Create an NFS Cluster"""
         kmip_cert = kmip_key = kmip_ca_cert = kmip_host_list = None
         cluster_qos_config = None
+        ssl_cert = ssl_key = ssl_ca_cert = tls_min_version = tls_ciphers = None
+        ssl = tls_ktls = tls_debug = False
+
         if inbuf:
             config = yaml.safe_load(inbuf)
             kmip_cert = config.get('kmip_cert')
@@ -169,6 +172,14 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
             kmip_ca_cert = config.get('kmip_ca_cert')
             kmip_host_list = config.get('kmip_host_list')
             cluster_qos_config = config.get('cluster_qos_config')
+            ssl = config.get('ssl')
+            ssl_cert = config.get('ssl_cert')
+            ssl_key = config.get('ssl_key')
+            ssl_ca_cert = config.get('ssl_ca_cert')
+            tls_min_version = config.get('tls_min_version')
+            tls_ktls = config.get('tls_ktls')
+            tls_debug = config.get('tls_debug')
+            tls_ciphers = config.get('tls_ciphers')
 
         return self.nfs.create_nfs_cluster(cluster_id=cluster_id, placement=placement,
                                            virtual_ip=virtual_ip, ingress=ingress,
@@ -176,7 +187,15 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
                                            enable_virtual_server=enable_virtual_server,
                                            kmip_cert=kmip_cert, kmip_key=kmip_key,
                                            kmip_ca_cert=kmip_ca_cert, kmip_host_list=kmip_host_list,
-                                           cluster_qos_config=cluster_qos_config)
+                                           cluster_qos_config=cluster_qos_config,
+                                           ssl=ssl,
+                                           ssl_cert=ssl_cert,
+                                           ssl_key=ssl_key,
+                                           ssl_ca_cert=ssl_ca_cert,
+                                           tls_ktls=tls_ktls,
+                                           tls_debug=tls_debug,
+                                           tls_min_version=tls_min_version,
+                                           tls_ciphers=tls_ciphers)
 
     @NFSCLICommand('nfs cluster rm', perm='rw')
     @object_format.EmptyResponder()
