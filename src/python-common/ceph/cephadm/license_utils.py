@@ -18,7 +18,7 @@ def generate_license_acceptance_key_value_entry(
 ) -> str:
     return json.dumps({
         'ceph_version': ceph_version,
-        'image_digest': image_digest,
-        'accept_time': datetime_now(),
+        'image_id': image_digest,
+        'accept_time': str(datetime_now()),
         'license': license_text
     })

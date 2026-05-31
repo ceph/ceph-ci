@@ -32,6 +32,10 @@ import subprocess
 from prettytable import PrettyTable
 
 from ceph.cephadm.images import DefaultImages
+from ceph.cephadm.license_utils import (
+    get_license_acceptance_key_value_entry_name,
+    generate_license_acceptance_key_value_entry,
+)
 from ceph.deployment import inventory
 from ceph.deployment.drive_group import DriveGroupSpec
 from ceph.deployment.service_spec import (
@@ -4797,6 +4801,19 @@ Then run the following:
         image_info = self.wait_async(CephadmServe(self)._get_container_image_info(image_name))
         license = self.wait_async(CephadmServe(self)._get_container_ibm_license(image_name))
         return license
+
+    @handle_orch_error
+    def accept_license(self, image_name: str) -> str:
+        image_info = self.wait_async(CephadmServe(self)._get_container_image_info(image_name))
+        license = self.wait_async(CephadmServe(self)._get_container_ibm_license(image_name))
+        entry_key = get_license_acceptance_key_value_entry_name(image_info.ceph_version, license)
+        entry_content = generate_license_acceptance_key_value_entry(
+            image_info.ceph_version,
+            license,
+            image_info.image_id
+        )
+        self.set_store(entry_key, entry_content)
+        return f'Accepted license for image with id <{image_info.image_id}> with ceph version {image_info.ceph_version}'
 
     @handle_orch_error
     def replace_device(self,

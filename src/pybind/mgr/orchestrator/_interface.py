@@ -981,6 +981,10 @@ class Orchestrator(object):
         """Display license for specific IBM ceph container image"""
         raise NotImplementedError()
 
+    def accept_license(self, image_name: str) -> OrchResult[str]:
+        """Accept license for specific IBM ceph container image"""
+        raise NotImplementedError()
+
     def upgrade_check(self, image: Optional[str], version: Optional[str]) -> OrchResult[str]:
         raise NotImplementedError()
 

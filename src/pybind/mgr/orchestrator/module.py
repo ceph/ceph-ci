@@ -2660,6 +2660,15 @@ Usage:
         raise_if_exception(completion)
         return HandleCommandResult(stdout=completion.result_str())
 
+    @OrchestratorCLICommand.Write('orch accept-license')
+    def _accept_ibm_license(self, image: str) -> HandleCommandResult:
+        """
+        Fetch and display the IBM license for a given container image
+        """
+        completion = self.accept_license(image)
+        raise_if_exception(completion)
+        return HandleCommandResult(stdout=completion.result_str())
+
     @OrchestratorCLICommand.Write('orch update service')
     def _update_service(self, service_type: NonCephImageServiceTypes, image: str) -> HandleCommandResult:
         """Update image for non-ceph image daemon"""
