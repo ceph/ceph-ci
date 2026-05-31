@@ -749,7 +749,7 @@ def start_hosts_parallel(
     Returns:
         List of hostnames that failed to start
     """
-    failed_hosts = []
+    failed_hosts: List[str] = []
 
     if not hosts:
         return failed_hosts
