@@ -57,7 +57,6 @@ from mgr_module import (
     MgrModule,
     HandleCommandResult,
     Option,
-    OptionLevel,
     NotifyType,
     MonCommandFailed,
 )
@@ -428,7 +427,6 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule):
         ),
         Option(
             'certificate_check_debug_mode',
-            level=OptionLevel.DEV,
             type='bool',
             default=False,
             desc='FOR TESTING ONLY: This flag forces the certificate check instead of waiting for certificate_check_period.',
