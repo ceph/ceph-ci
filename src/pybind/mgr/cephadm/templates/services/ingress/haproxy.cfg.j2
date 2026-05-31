@@ -17,6 +17,10 @@ global
     ssl-default-bind-options {{ spec.ssl_options | join(' ') }}
   {% endif %}
 {% endif %}
+{% if qat_support %}
+    ssl-engine qatengine algo ALL
+    ssl-mode-async
+{% endif %}
 
 defaults
     mode                    {{ mode }}
