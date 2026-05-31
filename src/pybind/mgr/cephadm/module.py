@@ -98,8 +98,14 @@ from .inventory import (
 )
 from .upgrade import CephadmUpgrade
 from .template import TemplateMgr
-from .utils import CEPH_IMAGE_TYPES, RESCHEDULE_FROM_OFFLINE_HOSTS_TYPES, forall_hosts, \
-    cephadmNoImage, SpecialHostLabels
+from .utils import (
+    CEPH_IMAGE_TYPES,
+    RESCHEDULE_FROM_OFFLINE_HOSTS_TYPES,
+    forall_hosts,
+    cephadmNoImage,
+    SpecialHostLabels,
+    LogrotateConfigType,
+)
 from .configchecks import CephadmConfigChecks
 from .offline_watcher import OfflineHostWatcher
 from .tuned_profiles import TunedProfileUtils
@@ -1647,7 +1653,19 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule):
         return 0, success_msg, ''
 
     @CephadmCLICommand.Write(
-        prefix='cephadm set-extra-ceph-conf')
+        'orch write-custom-logrotate')
+    def write_custom_logrotate_config(self, logrotate_type: LogrotateConfigType, inbuf: Optional[str] = None) -> Tuple[int, str, str]:
+        """Write logrotate file with custom template to all cluster hosts"""
+        if not inbuf:
+            raise OrchestratorError('write-custom-logrotate requires "-i LOGROTATE_CONFIG"')
+
+        self.set_store(logrotate_type.config_key_entry, inbuf)
+        self.cache.distribute_custom_logrotate_config()
+        self._kick_serve_loop()
+        return 0, f'Scheduled all hosts to receive new {str(logrotate_type)} logrotate config', ''
+
+    @CephadmCLICommand.Write(
+            prefix='cephadm set-extra-ceph-conf')
     def _set_extra_ceph_conf(self, inbuf: Optional[str] = None) -> HandleCommandResult:
         """
         Text that is appended to all daemon's ceph.conf.
