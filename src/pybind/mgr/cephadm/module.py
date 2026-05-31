@@ -4775,9 +4775,11 @@ Then run the following:
         host_placement: Optional[str] = None,
         services: Optional[List[str]] = None,
         limit: Optional[int] = None,
+        topological_labels: Optional[Union[str, List[str]]] = None, 
         no_osd_flags: bool = False,
-        topological_labels: Optional[Union[str, List[str]]] = None,
         automatically_accept_license: bool = False,
+        bucket_type: Optional[str] = None,
+        bucket_name: Optional[str] = None
     ) -> str:
         if self.inventory.get_host_with_state("maintenance"):
             raise OrchestratorError("Upgrade aborted - you have host(s) in maintenance state")
@@ -4786,6 +4788,7 @@ Then run the following:
                 f"Upgrade aborted - Some host(s) are currently offline: {self.offline_hosts}")
         if daemon_types is not None and services is not None:
             raise OrchestratorError('--daemon-types and --services are mutually exclusive')
+
         if daemon_types is not None:
             # Strip any whitespace around daemon types provided via the CLI so that
             # `--daemon_types "mon, crash"` is treated the same as `--daemon_types "mon,crash"`.
@@ -4835,12 +4838,18 @@ Then run the following:
         elif tlabel_matching_hosts:
             hosts = list(tlabel_matching_hosts)
 
+        if hosts and (bucket_type is not None or bucket_name is not None):
+            raise OrchestratorError(
+                '--hosts cannot be combined with --crush_bucket_type or --crush_bucket_name')
+
         if limit is not None:
             if limit < 1:
                 raise OrchestratorError(
                     f'Upgrade aborted - --limit arg must be a positive integer, not {limit}')
 
-        return self.upgrade.upgrade_start(image, version, daemon_types, hosts, services, limit, no_osd_flags, automatically_accept_license)
+        return self.upgrade.upgrade_start(image, version, daemon_types, hosts, services,
+                                          limit, no_osd_flags, automatically_accept_license,
+                                          bucket_type, bucket_name)
 
     @handle_orch_error
     def upgrade_pause(self) -> str:

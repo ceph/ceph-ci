@@ -182,9 +182,11 @@ class UpgradeManager(ResourceManager):
     @wait_api_result
     def start(self, image: str, version: str, daemon_types: Optional[List[str]] = None,
               host_placement: Optional[str] = None, services: Optional[List[str]] = None,
-              limit: Optional[int] = None, license_accepted: Optional[bool] = False) -> str:
+              limit: Optional[int] = None, license_accepted: Optional[bool] = False,
+              bucket_type: Optional[str] = None, bucket_name: Optional[str] = None) -> str:
         return self.api.upgrade_start(image, version, daemon_types, host_placement, services,
-                                      limit, automatically_accept_license=license_accepted)
+                                      limit, automatically_accept_license=license_accepted,
+                                      bucket_type=bucket_type, bucket_name=bucket_name)
 
     @wait_api_result
     def pause(self) -> str:

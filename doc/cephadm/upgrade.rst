@@ -116,7 +116,45 @@ For example, to upgrade to v16.2.6, run a command of the following form:
   ceph orch upgrade start --image quay.io/ceph/ceph:v16.2.6
 
 
-Monitoring the upgrade
+CRUSH bucket scoped OSD upgrades (``osd ok-to-upgrade``)
+========================================================
+
+For **OSD-only** upgrades you can limit which failure domain cephadm works
+through and ask the monitor which OSDs under a given CRUSH bucket may safely
+move to the target **Ceph short version** (the same string as
+``ceph_version_short`` in OSD metadata, e.g. ``20.3.0-3803-g63ca1ffb5a2`` or
+``20.1.0-144.el9cp``).
+
+Requirements:
+
+* For OSD-only upgrades, pass both ``--crush_bucket_type`` and ``--crush_bucket_name``. 
+  Supported types today are ``host``, ``rack``, and ``chassis``.
+* The monitor's ``osd ok-to-upgrade`` expects the target **short** Ceph version
+  (same shape as ``ceph_version_short`` in ``ceph osd metadata``). Cephadm does
+  **not** fall back to ``osd ok-to-stop`` for bucket-scoped OSD runs. If the mon
+  returns no OSDs (e.g. unknown bucket name), cephadm logs details and retries.
+* If bucket parameters are not provided, cephadm will fall back to ``osd ok-to-stop`` 
+  for OSD upgrades.
+* Bucket scope applies only to OSDs. Other daemon types (mon, mgr, mds) are 
+  upgraded cluster-wide without bucket constraints.
+
+Example:
+
+.. prompt:: bash #
+
+  ceph orch upgrade start --image quay.ceph.io/ceph-ci/ceph:recent-git-branch-name
+    --daemon-types osd \\
+    --crush_bucket_type rack --crush_bucket_name rack-a
+
+For each failure domain batch, cephadm calls ``ceph osd ok-to-upgrade`` with the 
+specified failure domain name, the target short version, and ``max`` set to
+:confval:`mgr/cephadm/max_parallel_osd_upgrades`
+
+Note that it is not recommended to change the CRUSH bucket type or name after
+the upgrade has started as it may cause the upgrade to fail.
+
+
+Monitoring the Upgrade
 ======================
 
 Determine (1) whether an upgrade is in progress and (2) which version the
