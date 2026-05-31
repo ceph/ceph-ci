@@ -4406,7 +4406,7 @@ Then run the following:
             rank_map=rank_map
         )
         ha.validate()
-        hosts, to_add, to_remove = ha.place()
+        hosts, to_add, to_remove, _ = ha.place()
 
         return {
             'service_name': spec.service_name(),

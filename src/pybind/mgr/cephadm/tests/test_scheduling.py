@@ -136,7 +136,7 @@ def run_scheduler_test(results, mk_spec, hosts, daemons, key_elems):
     except IndexError:
         try:
             spec = mk_spec()
-            host_res, to_add, to_remove = HostAssignment(
+            host_res, to_add, to_remove, _ = HostAssignment(
                 spec=spec,
                 hosts=hosts,
                 unreachable_hosts=[],
@@ -153,7 +153,7 @@ def run_scheduler_test(results, mk_spec, hosts, daemons, key_elems):
     for _ in range(10):  # scheduler has a random component
         try:
             spec = mk_spec()
-            host_res, to_add, to_remove = HostAssignment(
+            host_res, to_add, to_remove, _ = HostAssignment(
                 spec=spec,
                 hosts=hosts,
                 unreachable_hosts=[],
@@ -394,10 +394,11 @@ class NodeAssignmentTest(NamedTuple):
     post_rank_map: Optional[Dict[int, Dict[int, Optional[str]]]]
     expected: List[str]
     expected_add: List[str]
-    expected_remove: List[DaemonDescription]
+    expected_remove: List[str]
+    expected_redeploy: List[str]
 
 
-@pytest.mark.parametrize("service_type,placement,hosts,daemons,rank_map,post_rank_map,expected,expected_add,expected_remove",
+@pytest.mark.parametrize("service_type,placement,hosts,daemons,rank_map,post_rank_map,expected,expected_add,expected_remove,expected_redeploy",
     [   # noqa: E128
         # just hosts
         NodeAssignmentTest(
@@ -406,7 +407,7 @@ class NodeAssignmentTest(NamedTuple):
             ['smithi060'],
             [],
             None, None,
-            ['mgr:smithi060'], ['mgr:smithi060'], []
+            ['mgr:smithi060'], ['mgr:smithi060'], [], []
         ),
         # all_hosts
         NodeAssignmentTest(
@@ -420,7 +421,7 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['mgr:host1', 'mgr:host2', 'mgr:host3'],
             ['mgr:host3'],
-            []
+            [], []
         ),
         # all_hosts + count_per_host
         NodeAssignmentTest(
@@ -434,7 +435,7 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['mds:host1', 'mds:host2', 'mds:host3', 'mds:host1', 'mds:host2', 'mds:host3'],
             ['mds:host3', 'mds:host1', 'mds:host2', 'mds:host3'],
-            []
+            [], []
         ),
         # count that is bigger than the amount of hosts. Truncate to len(hosts)
         # mgr should not be co-located to each other.
@@ -446,7 +447,7 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['mgr:host1', 'mgr:host2', 'mgr:host3'],
             ['mgr:host1', 'mgr:host2', 'mgr:host3'],
-            []
+            [], []
         ),
         # count that is bigger than the amount of hosts; wrap around.
         NodeAssignmentTest(
@@ -457,7 +458,7 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['mds:host1', 'mds:host2', 'mds:host3', 'mds:host1', 'mds:host2', 'mds:host3'],
             ['mds:host1', 'mds:host2', 'mds:host3', 'mds:host1', 'mds:host2', 'mds:host3'],
-            []
+            [], []
         ),
         # count + partial host list
         NodeAssignmentTest(
@@ -471,7 +472,7 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['mgr:host3'],
             ['mgr:host3'],
-            ['mgr.a', 'mgr.b']
+            ['mgr.a', 'mgr.b'], []
         ),
         # count + partial host list (with colo)
         NodeAssignmentTest(
@@ -485,7 +486,7 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['mds:host3', 'mds:host3', 'mds:host3'],
             ['mds:host3', 'mds:host3', 'mds:host3'],
-            ['mds.a', 'mds.b']
+            ['mds.a', 'mds.b'], []
         ),
         # count 1 + partial host list
         NodeAssignmentTest(
@@ -499,7 +500,7 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['mgr:host3'],
             ['mgr:host3'],
-            ['mgr.a', 'mgr.b']
+            ['mgr.a', 'mgr.b'], []
         ),
         # count + partial host list + existing
         NodeAssignmentTest(
@@ -512,7 +513,7 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['mgr:host3'],
             ['mgr:host3'],
-            ['mgr.a']
+            ['mgr.a'], []
         ),
         # count + partial host list + existing (deterministic)
         NodeAssignmentTest(
@@ -525,7 +526,7 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['mgr:host1'],
             [],
-            []
+            [], []
         ),
         # count + partial host list + existing (deterministic)
         NodeAssignmentTest(
@@ -538,7 +539,7 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['mgr:host1'],
             ['mgr:host1'],
-            ['mgr.a']
+            ['mgr.a'], []
         ),
         # label only
         NodeAssignmentTest(
@@ -549,7 +550,7 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['mgr:host1', 'mgr:host2', 'mgr:host3'],
             ['mgr:host1', 'mgr:host2', 'mgr:host3'],
-            []
+            [], []
         ),
         # label + count (truncate to host list)
         NodeAssignmentTest(
@@ -560,7 +561,7 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['mgr:host1', 'mgr:host2', 'mgr:host3'],
             ['mgr:host1', 'mgr:host2', 'mgr:host3'],
-            []
+            [], []
         ),
         # label + count (with colo)
         NodeAssignmentTest(
@@ -571,7 +572,7 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['mds:host1', 'mds:host2', 'mds:host3', 'mds:host1', 'mds:host2', 'mds:host3'],
             ['mds:host1', 'mds:host2', 'mds:host3', 'mds:host1', 'mds:host2', 'mds:host3'],
-            []
+            [], []
         ),
         # label only + count_per_hst
         NodeAssignmentTest(
@@ -584,7 +585,7 @@ class NodeAssignmentTest(NamedTuple):
              'mds:host1', 'mds:host2', 'mds:host3'],
             ['mds:host1', 'mds:host2', 'mds:host3', 'mds:host1', 'mds:host2', 'mds:host3',
              'mds:host1', 'mds:host2', 'mds:host3'],
-            []
+            [], []
         ),
         # host_pattern
         NodeAssignmentTest(
@@ -595,7 +596,7 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['mgr:mgrhost1', 'mgr:mgrhost2'],
             ['mgr:mgrhost1', 'mgr:mgrhost2'],
-            []
+            [], []
         ),
         # host_pattern + count_per_host
         NodeAssignmentTest(
@@ -606,7 +607,7 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['mds:mdshost1', 'mds:mdshost2', 'mds:mdshost1', 'mds:mdshost2', 'mds:mdshost1', 'mds:mdshost2'],
             ['mds:mdshost1', 'mds:mdshost2', 'mds:mdshost1', 'mds:mdshost2', 'mds:mdshost1', 'mds:mdshost2'],
-            []
+            [], []
         ),
         # label + count_per_host + ports
         NodeAssignmentTest(
@@ -619,9 +620,10 @@ class NodeAssignmentTest(NamedTuple):
              'rgw:host1(*:81)', 'rgw:host2(*:81)', 'rgw:host3(*:81)'],
             ['rgw:host1(*:80)', 'rgw:host2(*:80)', 'rgw:host3(*:80)',
              'rgw:host1(*:81)', 'rgw:host2(*:81)', 'rgw:host3(*:81)'],
-            []
+            [], []
         ),
         # label + count_per_host + ports (+ existing)
+        # daemon c on host1:82 is matched to slot host1:80 (port change only) -> redeploy, not remove+add
         NodeAssignmentTest(
             'rgw',
             PlacementSpec(count=6, label='foo'),
@@ -634,9 +636,8 @@ class NodeAssignmentTest(NamedTuple):
             None, None,
             ['rgw:host1(*:80)', 'rgw:host2(*:80)', 'rgw:host3(*:80)',
              'rgw:host1(*:81)', 'rgw:host2(*:81)', 'rgw:host3(*:81)'],
-            ['rgw:host1(*:80)', 'rgw:host3(*:80)',
-             'rgw:host2(*:81)', 'rgw:host3(*:81)'],
-            ['rgw.c']
+            ['rgw:host3(*:80)', 'rgw:host2(*:81)', 'rgw:host3(*:81)'],
+            [], ['rgw.c']
         ),
         # label + host pattern
         # Note all hosts will get the "foo" label, we are checking
@@ -647,7 +648,7 @@ class NodeAssignmentTest(NamedTuple):
             'mgr1 mgr2 osd1'.split(),
             [],
             None, None,
-            ['mgr:mgr1', 'mgr:mgr2'], ['mgr:mgr1', 'mgr:mgr2'], []
+            ['mgr:mgr1', 'mgr:mgr2'], ['mgr:mgr1', 'mgr:mgr2'], [], []
         ),
         # cephadm.py teuth case
         NodeAssignmentTest(
@@ -660,7 +661,7 @@ class NodeAssignmentTest(NamedTuple):
             ],
             None, None,
             ['mgr:host1(name=y)', 'mgr:host2(name=x)'],
-            [], []
+            [], [], []
         ),
 
         # note: host -> rank mapping is psuedo-random based on svc name, so these
@@ -677,7 +678,7 @@ class NodeAssignmentTest(NamedTuple):
             {0: {0: None}, 1: {0: None}, 2: {0: None}},
             ['nfs:host3(rank=0.0 *:2049,9587,31311)', 'nfs:host2(rank=1.0 *:2049,9587,31311)', 'nfs:host1(rank=2.0 *:2049,9587,31311)'],
             ['nfs:host3(rank=0.0 *:2049,9587,31311)', 'nfs:host2(rank=1.0 *:2049,9587,31311)', 'nfs:host1(rank=2.0 *:2049,9587,31311)'],
-            []
+            [], []
         ),
         # 21: ranked, exist
         NodeAssignmentTest(
@@ -691,7 +692,7 @@ class NodeAssignmentTest(NamedTuple):
             {0: {1: '0.1'}, 1: {0: None}, 2: {0: None}},
             ['nfs:host1(rank=0.1 *:2049,9587,31311)', 'nfs:host3(rank=1.0 *:2049,9587,31311)', 'nfs:host2(rank=2.0 *:2049,9587,31311)'],
             ['nfs:host3(rank=1.0 *:2049,9587,31311)', 'nfs:host2(rank=2.0 *:2049,9587,31311)'],
-            []
+            [], []
         ),
         # ranked, exist, different ranks
         NodeAssignmentTest(
@@ -706,7 +707,7 @@ class NodeAssignmentTest(NamedTuple):
             {0: {1: '0.1'}, 1: {1: '1.1'}, 2: {0: None}},
             ['nfs:host1(rank=0.1 *:2049,9587,31311)', 'nfs:host2(rank=1.1 *:2049,9587,31311)', 'nfs:host3(rank=2.0 *:2049,9587,31311)'],
             ['nfs:host3(rank=2.0 *:2049,9587,31311)'],
-            []
+            [], []
         ),
         # ranked, exist, different ranks (2)
         NodeAssignmentTest(
@@ -721,7 +722,7 @@ class NodeAssignmentTest(NamedTuple):
             {0: {1: '0.1'}, 1: {1: '1.1'}, 2: {0: None}},
             ['nfs:host1(rank=0.1 *:2049,9587,31311)', 'nfs:host3(rank=1.1 *:2049,9587,31311)', 'nfs:host2(rank=2.0 *:2049,9587,31311)'],
             ['nfs:host2(rank=2.0 *:2049,9587,31311)'],
-            []
+            [], []
         ),
         # ranked, exist, extra ranks
         NodeAssignmentTest(
@@ -737,7 +738,7 @@ class NodeAssignmentTest(NamedTuple):
             {0: {5: '0.5'}, 1: {5: '1.5'}, 2: {0: None}},
             ['nfs:host1(rank=0.5 *:2049,9587,31311)', 'nfs:host2(rank=1.5 *:2049,9587,31311)', 'nfs:host3(rank=2.0 *:2049,9587,31311)'],
             ['nfs:host3(rank=2.0 *:2049,9587,31311)'],
-            ['nfs.4.5']
+            ['nfs.4.5'], []
         ),
         # 25: ranked, exist, extra ranks (scale down: kill off high rank)
         NodeAssignmentTest(
@@ -753,7 +754,7 @@ class NodeAssignmentTest(NamedTuple):
             {0: {5: '0.5'}, 1: {5: '1.5'}, 2: {5: '2.5'}},
             ['nfs:host1(rank=0.5 *:2049,9587,31311)', 'nfs:host2(rank=1.5 *:2049,9587,31311)'],
             [],
-            ['nfs.2.5']
+            ['nfs.2.5'], []
         ),
         # ranked, exist, extra ranks (scale down hosts)
         NodeAssignmentTest(
@@ -769,7 +770,7 @@ class NodeAssignmentTest(NamedTuple):
             {0: {5: '0.5'}, 1: {5: '1.5', 6: None}, 2: {5: '2.5'}},
             ['nfs:host1(rank=0.5 *:2049,9587,31311)', 'nfs:host3(rank=1.6 *:2049,9587,31311)'],
             ['nfs:host3(rank=1.6 *:2049,9587,31311)'],
-            ['nfs.2.5', 'nfs.1.5']
+            ['nfs.2.5', 'nfs.1.5'], []
         ),
         # ranked, exist, duplicate rank
         NodeAssignmentTest(
@@ -785,7 +786,7 @@ class NodeAssignmentTest(NamedTuple):
             {0: {0: '0.0'}, 1: {2: '1.2'}, 2: {0: None}},
             ['nfs:host1(rank=0.0 *:2049,9587,31311)', 'nfs:host3(rank=1.2 *:2049,9587,31311)', 'nfs:host2(rank=2.0 *:2049,9587,31311)'],
             ['nfs:host2(rank=2.0 *:2049,9587,31311)'],
-            ['nfs.1.1']
+            ['nfs.1.1'], []
         ),
         # 28: ranked, all gens stale (failure during update cycle)
         NodeAssignmentTest(
@@ -800,7 +801,7 @@ class NodeAssignmentTest(NamedTuple):
             {0: {2: '0.2'}, 1: {2: '1.2', 3: '1.3', 4: None}},
             ['nfs:host1(rank=0.2 *:2049,9587,31311)', 'nfs:host3(rank=1.4 *:2049,9587,31311)'],
             ['nfs:host3(rank=1.4 *:2049,9587,31311)'],
-            ['nfs.1.2']
+            ['nfs.1.2'], []
         ),
         # ranked, not enough hosts (with colocation, 4th daemon can be placed)
         NodeAssignmentTest(
@@ -814,8 +815,8 @@ class NodeAssignmentTest(NamedTuple):
             {0: {2: '0.2'}, 1: {2: '1.2'}},
             {0: {2: '0.2'}, 1: {2: '1.2'}, 2: {0: None}, 3: {0: None}},
             ['nfs:host1(rank=0.2 *:2049,9587,31311)', 'nfs:host2(rank=1.2 *:2049,9587,31311)', 'nfs:host3(rank=2.0 *:2049,9587,31311)'],
-            ['nfs:host3(rank=2.0 *:2049,9587,31311)', 'nfs:host3(rank=3.0 *:2050,9588,31311)'],
-            []
+            ['nfs:host3(rank=2.0 *:2049,9587,31311)'],
+            [], []
         ),
         # ranked, scale down
         NodeAssignmentTest(
@@ -831,7 +832,7 @@ class NodeAssignmentTest(NamedTuple):
             {0: {2: '0.2', 3: None}, 1: {2: '1.2'}, 2: {2: '2.2'}},
             ['nfs:host2(rank=0.3 *:2049,9587,31311)'],
             ['nfs:host2(rank=0.3 *:2049,9587,31311)'],
-            ['nfs.0.2', 'nfs.1.2', 'nfs.2.2']
+            ['nfs.0.2', 'nfs.1.2', 'nfs.2.2'], []
         ),
         # NFS colocation - count > hosts, ports should increment
         NodeAssignmentTest(
@@ -879,7 +880,7 @@ class NodeAssignmentTest(NamedTuple):
         ),
     ])
 def test_node_assignment(service_type, placement, hosts, daemons, rank_map, post_rank_map,
-                         expected, expected_add, expected_remove):
+                         expected, expected_add, expected_remove, expected_redeploy):
     spec = None
     service_id = None
     allow_colo = False
@@ -918,7 +919,7 @@ def test_node_assignment(service_type, placement, hosts, daemons, rank_map, post
                            service_id=service_id,
                            placement=placement)
 
-    all_slots, to_add, to_remove = HostAssignment(
+    all_slots, to_add, to_remove, to_redeploy = HostAssignment(
         spec=spec,
         hosts=[HostSpec(h, labels=['foo']) for h in hosts],
         unreachable_hosts=[],
@@ -951,6 +952,7 @@ def test_node_assignment(service_type, placement, hosts, daemons, rank_map, post
     assert num_wildcard == len(got)
 
     assert sorted([d.name() for d in to_remove]) == sorted(expected_remove)
+    assert sorted([d.name() for d in to_redeploy]) == sorted(expected_redeploy)
 
 
 class NodeAssignmentTest5(NamedTuple):
@@ -1098,7 +1100,7 @@ class NodeAssignmentTest2(NamedTuple):
     ])
 def test_node_assignment2(service_type, placement, hosts,
                           daemons, expected_len, in_set):
-    hosts, to_add, to_remove = HostAssignment(
+    hosts, to_add, to_remove, _ = HostAssignment(
         spec=ServiceSpec(service_type, placement=placement),
         hosts=[HostSpec(h, labels=['foo']) for h in hosts],
         unreachable_hosts=[],
@@ -1133,7 +1135,7 @@ def test_node_assignment2(service_type, placement, hosts,
     ])
 def test_node_assignment3(service_type, placement, hosts,
                           daemons, expected_len, must_have):
-    hosts, to_add, to_remove = HostAssignment(
+    hosts, to_add, to_remove, _ = HostAssignment(
         spec=ServiceSpec(service_type, placement=placement),
         hosts=[HostSpec(h) for h in hosts],
         unreachable_hosts=[],
@@ -1231,7 +1233,7 @@ class NodeAssignmentTest4(NamedTuple):
     ])
 def test_node_assignment4(spec, networks, daemons,
                           expected, expected_add, expected_remove):
-    all_slots, to_add, to_remove = HostAssignment(
+    all_slots, to_add, to_remove, _ = HostAssignment(
         spec=spec,
         hosts=[HostSpec(h, labels=['foo']) for h in networks.keys()],
         unreachable_hosts=[],
@@ -1318,7 +1320,7 @@ class NodeAssignmentTestBadSpec(NamedTuple):
     ])
 def test_bad_specs(service_type, placement, hosts, daemons, expected):
     with pytest.raises(OrchestratorValidationError) as e:
-        hosts, to_add, to_remove = HostAssignment(
+        hosts, to_add, to_remove, _ = HostAssignment(
             spec=ServiceSpec(service_type, placement=placement),
             hosts=[HostSpec(h) for h in hosts],
             unreachable_hosts=[],
@@ -1539,7 +1541,7 @@ def test_active_assignment(service_type, placement, hosts, daemons, expected, ex
                        service_id=None,
                        placement=placement)
 
-    hosts, to_add, to_remove = HostAssignment(
+    hosts, to_add, to_remove, _ = HostAssignment(
         spec=spec,
         hosts=[HostSpec(h) for h in hosts],
         unreachable_hosts=[],
@@ -1637,7 +1639,7 @@ def test_unreachable_host(service_type, placement, hosts, unreachable_hosts, dae
                        service_id=None,
                        placement=placement)
 
-    hosts, to_add, to_remove = HostAssignment(
+    hosts, to_add, to_remove, _ = HostAssignment(
         spec=spec,
         hosts=[HostSpec(h) for h in hosts],
         unreachable_hosts=[HostSpec(h) for h in unreachable_hosts],
@@ -1742,7 +1744,7 @@ def test_remove_from_offline(service_type, placement, hosts, maintenance_hosts, 
         if h.hostname in maintenance_hosts:
             h.status = 'maintenance'
 
-    hosts, to_add, to_remove = HostAssignment(
+    hosts, to_add, to_remove, _ = HostAssignment(
         spec=spec,
         hosts=host_specs,
         unreachable_hosts=[h for h in host_specs if h.status],
@@ -1811,7 +1813,7 @@ def test_drain_from_explict_placement(service_type, placement, hosts, maintenanc
         if h.hostname in maintenance_hosts:
             h.status = 'maintenance'
 
-    hosts, to_add, to_remove = HostAssignment(
+    hosts, to_add, to_remove, _ = HostAssignment(
         spec=spec,
         hosts=host_specs,
         unreachable_hosts=[h for h in host_specs if h.status],
@@ -1851,7 +1853,7 @@ def test_placement_regex_host_pattern(service_type, placement, hosts, expected_a
 
     host_specs = [HostSpec(h) for h in hosts]
 
-    hosts, to_add, to_remove = HostAssignment(
+    hosts, to_add, to_remove, _ = HostAssignment(
         spec=spec,
         hosts=host_specs,
         unreachable_hosts=[],
@@ -1953,7 +1955,7 @@ def test_blocking_daemon_host(
                        service_id=None,
                        placement=placement)
 
-    hosts, to_add, to_remove = HostAssignment(
+    hosts, to_add, to_remove, _ = HostAssignment(
         spec=spec,
         hosts=[HostSpec(h) for h in hosts],
         unreachable_hosts=[HostSpec(h) for h in unreachable_hosts],

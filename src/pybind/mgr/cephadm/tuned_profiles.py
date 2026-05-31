@@ -41,7 +41,7 @@ class TunedProfileUtils():
                 daemons=[],
                 networks=self.mgr.cache.networks,
             )
-            all_slots, _, _ = ha.place()
+            all_slots, _, _, _ = ha.place()
             for host in {s.hostname for s in all_slots}:
                 host_profile_mapping[host].append({profile.profile_name: p_str})
 

@@ -667,10 +667,11 @@ class CephadmServe:
         all_daemons_to_deploy: Dict[int, List[CephadmDaemonDeploySpec]] = {}
         all_daemons_to_remove: List[orchestrator.DaemonDescription] = []
         services_in_need_of_fencing: List[Tuple[ServiceSpec, Dict[int, Dict[int, Optional[str]]]]] = []
+        all_daemons_to_redeploy: List[CephadmDaemonDeploySpec] = []
         for spec in specs:
             try:
                 # this will populate daemon deploy/removal queue for this service spec
-                rank_map = self._apply_service(spec)
+                rank_map, daemons_to_redeploy = self._apply_service(spec)
                 # this finalizes what to deploy for this service
                 conflicting_daemons, daemons_to_deploy, daemons_to_remove, daemons_to_fence, service_needs_fencing = self.prepare_daemons_to_add_and_remove_by_service(spec, rank_map)
                 # compiles all these lists so we can split on host instead of service
@@ -685,6 +686,10 @@ class CephadmServe:
                 all_daemons_to_remove.extend(daemons_to_remove)
                 if service_needs_fencing and rank_map is not None:
                     services_in_need_of_fencing.append((spec, rank_map))
+                for dd in daemons_to_redeploy:
+                    daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(dd)
+                    daemon_spec = service_registry.get_service(spec.service_type).prepare_create(daemon_spec)
+                    all_daemons_to_redeploy.append(daemon_spec)
             except Exception as e:
                 msg = f'Failed to apply {spec.service_name()} spec {spec}: {str(e)}'
                 self.log.exception(msg)
@@ -710,7 +715,8 @@ class CephadmServe:
             to_fence: List[orchestrator.DaemonDescription],
             conflicts: List[orchestrator.DaemonDescription],
             to_deploy: List[CephadmDaemonDeploySpec],
-            to_remove: List[orchestrator.DaemonDescription]
+            to_remove: List[orchestrator.DaemonDescription],
+            daemons_to_redeploy: List[CephadmDaemonDeploySpec]
         ) -> Tuple[bool, Set[str], List[str]]:
             r: bool = False
             removed_fencing_daemons, fencing_hosts_altered = await self.remove_given_daemons(to_fence)
@@ -729,13 +735,19 @@ class CephadmServe:
             if removed_daemons:
                 r = True
                 hosts_altered.update(conflict_hosts_altered)
+            if daemons_to_redeploy:
+                daemon_redeployed, daemon_redeployed_hosts, redeploy_failed_daemons = await self.deploy_given_daemons(daemons_to_redeploy, reconfig=True)
+                if daemon_redeployed:
+                    hosts_altered.update(daemon_redeployed_hosts)
+
             return (r, hosts_altered, daemon_place_fails)
 
         async def _deploy_and_remove_all(
             all_needing_fencing: List[orchestrator.DaemonDescription],
             all_conflicts: List[orchestrator.DaemonDescription],
             all_to_deploy: List[CephadmDaemonDeploySpec],
-            all_to_remove: List[orchestrator.DaemonDescription]
+            all_to_remove: List[orchestrator.DaemonDescription],
+            all_daemons_to_redeploy: List[CephadmDaemonDeploySpec]
         ) -> List[Tuple[bool, Set[str], List[str]]]:
             futures = []
 
@@ -744,7 +756,8 @@ class CephadmServe:
                 conflicting_daemons = [dd for dd in all_conflicts if dd.hostname == host]
                 daemons_to_deploy = [dd for dd in all_to_deploy if dd.host == host]
                 daemons_to_remove = [dd for dd in all_to_remove if dd.hostname == host]
-                futures.append(_parallel_deploy_and_remove(host, need_fencing_daemons, conflicting_daemons, daemons_to_deploy, daemons_to_remove))
+                daemons_to_redeploy = [dd for dd in all_daemons_to_redeploy if dd.host == host]
+                futures.append(_parallel_deploy_and_remove(host, need_fencing_daemons, conflicting_daemons, daemons_to_deploy, daemons_to_remove, daemons_to_redeploy))
 
             return await gather(*futures)
 
@@ -759,10 +772,10 @@ class CephadmServe:
             deploy_names = [d.name() for d in all_daemons_in_tier_to_deploy]
             if tier == 0:
                 with self.mgr.async_timeout_handler(cmd=f'cephadm deploying ({deploy_names} and removing {rm_names} daemons)'):
-                    results = self.mgr.wait_async(_deploy_and_remove_all(all_daemons_needing_fencing, all_conflicting_daemons, all_daemons_in_tier_to_deploy, all_daemons_to_remove))
+                    results = self.mgr.wait_async(_deploy_and_remove_all(all_daemons_needing_fencing, all_conflicting_daemons, all_daemons_in_tier_to_deploy, all_daemons_to_remove, all_daemons_to_redeploy))
             else:
                 with self.mgr.async_timeout_handler(cmd=f'cephadm deploying ({deploy_names} daemons)'):
-                    results = self.mgr.wait_async(_deploy_and_remove_all([], [], all_daemons_in_tier_to_deploy, []))
+                    results = self.mgr.wait_async(_deploy_and_remove_all([], [], all_daemons_in_tier_to_deploy, [], []))
 
         if any(res[0] for res in results):
             changed = True
@@ -886,7 +899,7 @@ class CephadmServe:
             self.log.debug(f'Successfully updated rgw zone endpoints: {out}')
             self.mgr.remove_health_warning('CEPHADM_RGW')
 
-    def _apply_service(self, spec: ServiceSpec) -> Optional[Dict[int, Dict[int, Optional[str]]]]:
+    def _apply_service(self, spec: ServiceSpec) -> Tuple[Optional[Dict[int, Dict[int, Optional[str]]]], List[orchestrator.DaemonDescription]]:
         """
         Schedule a service.  Deploy new daemons or remove old ones, depending
         on the target label and count specified in the placement.
@@ -897,10 +910,10 @@ class CephadmServe:
         service_name = spec.service_name()
         if spec.unmanaged:
             self.log.debug('Skipping unmanaged service %s' % service_name)
-            return None
+            return None, []
         if spec.preview_only:
             self.log.debug('Skipping preview_only service %s' % service_name)
-            return None
+            return None, []
         self.log.debug('Applying service %s spec' % service_name)
 
         if service_type == 'agent':
@@ -910,7 +923,7 @@ class CephadmServe:
             except Exception:
                 self.log.info(
                     'Delaying applying agent spec until cephadm endpoint root cert created')
-                return None
+                return None, []
 
         self._apply_service_config(spec)
 
@@ -919,21 +932,21 @@ class CephadmServe:
             # TODO: return True would result in a busy loop
             # can't know if daemon count changed; create_from_spec doesn't
             # return a solid indication
-            return None
+            return None, []
 
         if service_type == 'nfs':
             if not self.mgr.created_ganesha_pool:
                 self.mgr.create_nfs_pool()
 
         try:
-            slots_to_add, daemons_to_remove, rank_map = self.discover_daemons_to_add_and_remove_by_service(spec)
+            slots_to_add, daemons_to_remove, daemons_to_redeploy, rank_map = self.discover_daemons_to_add_and_remove_by_service(spec)
             self.mgr.daemon_deploy_queue.add_to_queue([(daemon_to_add, spec) for daemon_to_add in slots_to_add])
             self.mgr.daemon_removal_queue.add_to_queue([(daemon_to_remove, spec) for daemon_to_remove in daemons_to_remove])
-            return rank_map
+            return rank_map, daemons_to_redeploy
         except OrchestratorError:
-            return None
+            return None, []
 
-    def discover_daemons_to_add_and_remove_by_service(self, spec: ServiceSpec) -> Tuple[List[DaemonPlacement], List[orchestrator.DaemonDescription], Optional[Dict[int, Dict[int, Optional[str]]]]]:
+    def discover_daemons_to_add_and_remove_by_service(self, spec: ServiceSpec) -> Tuple[List[DaemonPlacement], List[orchestrator.DaemonDescription], List[orchestrator.DaemonDescription], Optional[Dict[int, Dict[int, Optional[str]]]]]:
         service_type = spec.service_type
         service_name = spec.service_name()
         svc = service_registry.get_service(service_type)
@@ -1024,10 +1037,10 @@ class CephadmServe:
         )
 
         try:
-            all_slots, slots_to_add, daemons_to_remove = ha.place()
+            all_slots, slots_to_add, daemons_to_remove, daemons_to_redeploy = ha.place()
             daemons_to_remove = [d for d in daemons_to_remove if (d.hostname and self.mgr.inventory._inventory[d.hostname].get(
                 'status', '').lower() not in ['maintenance', 'offline'] and d.hostname not in self.mgr.offline_hosts)]
-            self.log.debug('Add %s, remove %s' % (slots_to_add, daemons_to_remove))
+            self.log.debug('Add %s, remove %s, redeploy %s', slots_to_add, daemons_to_remove, daemons_to_redeploy)
         except OrchestratorError as e:
             msg = f'Failed to apply {spec.service_name()} spec {spec}: {str(e)}'
             self.log.error(msg)
@@ -1045,7 +1058,7 @@ class CephadmServe:
         if slots_to_add or daemons_to_remove:
             self.mgr.spec_store.mark_needs_configuration(spec.service_name())
 
-        return slots_to_add, daemons_to_remove, rank_map
+        return slots_to_add, daemons_to_remove, daemons_to_redeploy, rank_map
 
     def gather_conflicting_daemons_for_service(self, spec: ServiceSpec) -> List[orchestrator.DaemonDescription]:
         slots_to_add = self.mgr.daemon_deploy_queue.get_queued_daemon_placements_by_service(spec.service_name())
@@ -1223,7 +1236,7 @@ class CephadmServe:
             self.mgr.cache.append_tmp_daemon(slot.hostname, sd)
         return daemon_specs, prepare_create_fails
 
-    async def deploy_given_daemons(self, to_deploy: List[CephadmDaemonDeploySpec]) -> Tuple[bool, Set[str], List[str]]:
+    async def deploy_given_daemons(self, to_deploy: List[CephadmDaemonDeploySpec], reconfig: bool = False) -> Tuple[bool, Set[str], List[str]]:
         if not to_deploy:
             return (False, set(), [])
         r = False
@@ -1235,14 +1248,14 @@ class CephadmServe:
         if any(d.host != hostname for d in to_deploy):
             raise OrchestratorError(f'Got deploy request with multiple different hosts {set([d.host for d in to_deploy])}')
         try:
-            successes, failures = await self._create_daemon(to_deploy)
+            successes, failures = await self._create_daemon(to_deploy, reconfig=reconfig)
             if successes:
                 r = True
                 hosts_altered.add(hostname)
         except (RuntimeError, OrchestratorError) as e:
             # this is for general failures not necessarily tied to the
             # deployment of an individual daemon
-            msg = (f"Failed while placing {daemon_names} "
+            msg = (f"Failed while {'Deploying' if not reconfig else 'Redeploying'} {daemon_names} "
                    f"on {hostname}: {e}")
             self.mgr.log.error(msg)
             return (False, set(), [msg])
@@ -1609,7 +1622,7 @@ class CephadmServe:
                     daemons=[],
                     networks=self.mgr.cache.networks,
                 )
-                all_slots, _, _ = ha.place()
+                all_slots, _, _, _ = ha.place()
                 for host in {s.hostname for s in all_slots}:
                     if host not in client_files:
                         client_files[host] = {}
@@ -1640,7 +1653,7 @@ class CephadmServe:
                     daemons=[],
                     networks=self.mgr.cache.networks,
                 )
-                all_slots, _, _ = ha.place()
+                all_slots, _, _, _ = ha.place()
                 for host in {s.hostname for s in all_slots}:
                     if host not in client_files:
                         client_files[host] = {}

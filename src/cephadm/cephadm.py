@@ -1217,6 +1217,16 @@ def deploy_daemon(
                 )
             else:
                 raise RuntimeError('attempting to deploy a daemon without a container image')
+    else:
+        # Reconfig: update unit.meta so ports/ip from deploy payload are persisted
+        meta: Dict[str, Any] = fetch_meta(ctx)
+        data: Dict[str, Any] = {}
+        if meta.get('ports'):
+            data.update({'ports': meta.get('ports')})
+        if meta.get('ip'):
+            data.update({'ip': meta.get('ip')})
+        if data:
+            update_meta_file(os.path.join(data_dir, 'unit.meta'), data)
 
     if not os.path.exists(data_dir + '/unit.created'):
         with write_new(data_dir + '/unit.created', owner=(uid, gid)) as f:

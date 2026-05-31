@@ -1217,6 +1217,14 @@ class HostCache():
             'last_config': stamp,
         }
 
+    def update_daemon(self, host: str, name: str, ports: Optional[List[int]], ip: Optional[str]) -> None:
+        # update daemons port and ip
+        dd = self.daemons[host][name]
+        if ports:
+            dd.ports = ports
+        if ip:
+            dd.ip = ip
+
     def update_last_host_check(self, host):
         # type: (str) -> None
         self.last_host_check[host] = datetime_now()
