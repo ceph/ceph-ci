@@ -19,6 +19,7 @@ from ceph.deployment.service_spec import (
     PrometheusSpec,
     RGWSpec,
     ServiceSpec,
+    YamlLiteralString,
 )
 from ceph.deployment.drive_group import DriveGroupSpec
 from ceph.deployment.hostspec import SpecValidationError
@@ -1532,3 +1533,37 @@ def test_non_osd_services_do_not_get_default_termination_if_not_provided(spec_da
 
     spec_section = j.get('spec', {})
     assert 'termination_grace_period_seconds' not in spec_section
+
+def test_yaml_literal_string_class_represents_multiline_strings_as_literal():
+    multiline_string = "test1\ntest2\n"
+    dumped = yaml.dump(YamlLiteralString(multiline_string))
+
+    assert dumped.startswith('|')
+
+def test_yaml_representer_can_handle_multiline_strings_for_export():
+    spec_data = """
+service_type: iscsi
+service_id: iscsi
+placement:
+  label: iscsi
+spec:
+  pool: testpool
+  ssl_cert: |
+    -----BEGIN CERTIFICATE-----
+    FILLERFILLERFILLERFILLERFILLERFILLERFILLERFILLERFILLERFILLER
+    FILLERFILLERFILLERFILLERFILLERFILLERFILLERFILLERFILLERFILLER
+    -----END CERTIFICATE-----
+  ssl_key: |
+    -----BEGIN PRIVATE KEY-----
+    FILLERFILLERFILLERFILLERFILLERFILLERFILLERFILLERFILLERFILLER
+    FILLERFILLERFILLERFILLERFILLERFILLERFILLERFILLERFILLERFILLER
+    -----END PRIVATE KEY-----
+"""
+
+    data = yaml.safe_load(spec_data)
+    spec_obj = ServiceSpec.from_json(data)
+
+    dumped = yaml.dump(spec_obj, default_flow_style=False)
+
+    assert 'ssl_cert: |' in dumped
+    assert 'ssl_key: |' in dumped
