@@ -281,12 +281,6 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
 
     def export_apply(self, cluster_id: str, export_config: str) -> AppliedExportResults:
         """Create or update an export by `export_config` which can be json string or ganesha export specification"""
-        earmark_resolver = CephFSEarmarkResolver(self)
-        return self.export_mgr.apply_export(cluster_id, export_config=export_config,
-                                            earmark_resolver=earmark_resolver)
-
-    def export_apply(self, cluster_id: str, export_config: str) -> AppliedExportResults:
-        """Create or update an export by `export_config` which can be json string or ganesha export specification"""
         earmark_resolver = CephFSEarmarkResolver(
             self, client=cephfs_client_for_mgr(self))
         return self.export_mgr.apply_export(cluster_id, export_config=export_config,

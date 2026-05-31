@@ -416,8 +416,6 @@ def test_pg_autoscale_skipped_when_upgrade_excludes_osds(
         (True, True, True),    # Case 4: prior on, opt-in -> autoscale on after
     ],
 )
-
-
 @mock.patch("cephadm.serve.CephadmServe._run_cephadm", _run_cephadm('{}'))
 @mock.patch("cephadm.serve.CephadmServe._get_container_image_info")
 @mock.patch("cephadm.CephadmOrchestrator.check_mon_command")

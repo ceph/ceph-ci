@@ -1499,8 +1499,9 @@ class CephadmServe:
                 elif dd.daemon_type == 'keepalived':
                     # Redeploy when deps changed while keepalived is down
                     if dd.status == DaemonDescriptionStatus.stopped:
-                        self.log.debug('Redeploying %s instead of reconfig '
-                            '(deps changed while daemon is stopped)', dd.name())
+                        self.log.debug(
+                            'Redeploying %s instead of reconfig (deps changed while daemon is stopped)', dd.name()
+                        )
                         action = 'redeploy'
 
                 elif dd.daemon_type == 'haproxy':

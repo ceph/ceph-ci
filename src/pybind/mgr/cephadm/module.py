@@ -1658,7 +1658,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule):
     ) -> Tuple[str, bool, str]:
         return self._prepare_host_for_sudo_hardening(host, cephadm_args, addr)
 
-    @orchestrator._cli_write_command('cephadm prepare-host-and-enable-sudo-hardening')
+    @CephadmCLICommand.Write('cephadm prepare-host-and-enable-sudo-hardening')
     def _prepare_host_and_enable_sudo_hardening(
         self,
         user: str,
@@ -4787,7 +4787,7 @@ Then run the following:
         host_placement: Optional[str] = None,
         services: Optional[List[str]] = None,
         limit: Optional[int] = None,
-        topological_labels: Optional[Union[str, List[str]]] = None, 
+        topological_labels: Optional[Union[str, List[str]]] = None,
         no_osd_flags: bool = False,
         automatically_accept_license: bool = False,
         bucket_type: Optional[str] = None,
