@@ -4061,9 +4061,9 @@ Then run the following:
         return self.cert_mgr.key_ls(include_cephadm_generated_keys)
 
     @handle_orch_error
-    def get_nvmeof_tls_bundle(self, service_name: str) -> Dict[str, str]:
+    def get_nvmeof_tls_bundle(self, service_name: str, daemon_name: str) -> Dict[str, str]:
         nvmeof_svc = cast(NvmeofService, service_registry.get_service('nvmeof'))
-        tls_bundle = nvmeof_svc.get_nvmeof_tls_bundle(service_name)
+        tls_bundle = nvmeof_svc.get_nvmeof_tls_bundle(service_name, daemon_name)
         return tls_bundle._asdict() if tls_bundle else {}
 
     @handle_orch_error
