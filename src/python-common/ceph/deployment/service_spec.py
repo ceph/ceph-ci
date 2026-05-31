@@ -1501,7 +1501,7 @@ class NFSServiceSpec(ServiceSpec):
         self.tls_min_version = tls_min_version
 
     def get_port_start(self) -> List[int]:
-        return [self.port or 2049, self.monitoring_port or 9587, self.cluster_qos_port or 31311]
+        return [self.port or 2049, self.monitoring_port or 9587]
 
     def rados_config_name(self):
         # type: () -> str

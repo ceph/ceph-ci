@@ -232,3 +232,27 @@ def with_units_to_int(v: str) -> int:
         mult = bytes_mult * bytes_mult * bytes_mult * bytes_mult
         v = v[:-1]
     return int(float(v) * mult)
+
+
+def size_to_bytes(v: Union[str, int]) -> int:
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        m = _SIZE_RE.match(v)
+        if not m:
+            raise ValueError(
+                f'invalid size "{v}" (examples: 10737418240, 10G, 512M)'
+            )
+        num = int(m.group(1))
+        unit = m.group(2) or ''
+        unit = unit.upper()
+        mult = {
+            '': 1,
+            'K': 1024,
+            'M': 1024**2,
+            'G': 1024**3,
+            'T': 1024**4,
+            'P': 1024**5,
+        }[unit]
+        return num * mult
+    raise ValueError(f'invalid size type {type(v)} (expected int or str)')

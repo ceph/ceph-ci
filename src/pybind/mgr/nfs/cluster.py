@@ -2,7 +2,7 @@ import ipaddress
 import logging
 import re
 import socket
-from typing import cast, Dict, List, Any, Optional, TYPE_CHECKING
+from typing import cast, Dict, List, Any, Optional, TYPE_CHECKING, Union
 
 from mgr_module import NFS_POOL_NAME as POOL_NAME
 from ceph.deployment.service_spec import NFSServiceSpec, PlacementSpec, IngressSpec
