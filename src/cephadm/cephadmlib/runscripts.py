@@ -98,6 +98,9 @@ def write_service_scripts(
             assert isinstance(sidecar.identity, DaemonSubIdentity)
             script_path = sidecar.identity.sidecar_script(ctx.data_dir)
             scsf = estack.enter_context(write_new(script_path))
+            if ident.daemon_type == 'iscsi':
+                for command in pre_start_commands or []:
+                    _write_command(ctx, scsf, command)
             _write_sidecar_script(
                 ctx,
                 scsf,
