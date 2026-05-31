@@ -1229,12 +1229,7 @@ def deploy_daemon(
         if data:
             update_meta_file(os.path.join(data_dir, 'unit.meta'), data)
 
-    if not os.path.exists(data_dir + '/unit.created'):
-        with write_new(data_dir + '/unit.created', owner=(uid, gid)) as f:
-            f.write('mtime is time the daemon deployment was created\n')
-
-    with write_new(data_dir + '/unit.configured', owner=(uid, gid)) as f:
-        f.write('mtime is time we were last configured\n')
+    update_unit_created_and_configured_files(ctx, ident, uid, gid)
 
     update_firewalld(ctx, daemon_form_create(ctx, ident))
 
@@ -1487,6 +1482,24 @@ def _osd_unit_run_commands(
         )
         cmds.append(runscripts.ContainerCommand(prestart, comment='LVM OSDs use ceph-volume lvm activate'))
     return cmds
+
+
+def update_unit_created_and_configured_files(
+    ctx: CephadmContext,
+    ident: DaemonIdentity,
+    uid: int,
+    gid: int
+) -> None:
+    # Write out files for when we created/configured our unit files.
+    # Should be called after we've finished writing them
+
+    data_dir = ident.data_dir(ctx.data_dir)
+    if not os.path.exists(data_dir + '/unit.created'):
+        with write_new(data_dir + '/unit.created', owner=(uid, gid)) as f:
+            f.write('mtime is time the daemon deployment was created\n')
+
+    with write_new(data_dir + '/unit.configured', owner=(uid, gid)) as f:
+        f.write('mtime is time we were last configured\n')
 
 
 def _osd_unit_poststop_commands(
