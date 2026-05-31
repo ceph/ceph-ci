@@ -12,6 +12,7 @@ from .container_engines import Docker, Podman
 from .context import CephadmContext
 from .daemon_identity import DaemonIdentity, DaemonSubIdentity
 from .file_utils import write_new
+from .locking import FileLock
 from .logging import write_cluster_logrotate_config
 
 
@@ -173,6 +174,8 @@ def _install_base_units(ctx: CephadmContext, fsid: str) -> None:
     Set up ceph.target and ceph-$fsid.target units.
     """
     # global unit
+    base_units_lock = FileLock(ctx, f'{fsid}-base-units')
+    base_units_lock.acquire()
     existed = os.path.exists(ctx.unit_dir + '/ceph.target')
     with write_new(ctx.unit_dir + '/ceph.target', perms=None) as f:
         f.write(
@@ -209,6 +212,7 @@ def _install_base_units(ctx: CephadmContext, fsid: str) -> None:
         call_throws(ctx, ['systemctl', 'start', 'ceph-%s.target' % fsid])
 
     write_cluster_logrotate_config(ctx, fsid)
+    base_units_lock.release()
 
 
 def update_files(
