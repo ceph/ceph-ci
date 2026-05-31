@@ -40,9 +40,62 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class ClusterQosAction(Enum):
-    enable = 'enable'
-    disable = 'disable'
+# Mapping from old integer values to new string values for QoS type migration
+QOS_TYPE_INT_TO_STR_MAP = {
+    1: "Per_Export",
+    2: "Per_Client",
+    3: "Per_Export_Per_Client"
+}
+
+
+def update_qos_type_for_cluster(mgr: 'MgrModule', cluster_id: str) -> bool:
+    """
+    Migrate QoS type from integer to string for a specific cluster.
+    This function is used during Ceph upgrade (cephadm migration 8 -> 9) to
+    convert QoS type values from the old integer format (1, 2, 3) to the new
+    string format ("Per_Export", "Per_Client", "Per_Export_Per_Client").
+    """
+    from rados import ObjectNotFound
+
+    rados_obj = NFSRados(mgr.rados, cluster_id)
+    qos_conf_name = qos_conf_obj_name(cluster_id)
+    try:
+        conf = rados_obj.read_obj(qos_conf_name)
+        if not conf:
+            log.debug('QoS config not found for cluster %s', cluster_id)
+            return False
+        qos_blocks = GaneshaConfParser(conf).parse()
+        if not qos_blocks:
+            log.debug('No QoS blocks found in config for cluster %s', cluster_id)
+            return False
+
+        qos_block = qos_blocks[0]
+        qos_type_value = qos_block.values.get(QOSParams.qos_type.value)
+        if qos_type_value is None:
+            log.debug('No qos_type found in QoS config for cluster %s', cluster_id)
+            return False
+
+        # Check if the value is an integer (old format)
+        if isinstance(qos_type_value, int):
+            if qos_type_value not in QOS_TYPE_INT_TO_STR_MAP:
+                log.error('Invalid QoS type integer value %s for cluster %s', qos_type_value, cluster_id)
+                return False
+            new_qos_type_value = QOS_TYPE_INT_TO_STR_MAP[qos_type_value]
+            log.debug('Updating QoS type for cluster %s: %s -> %s', cluster_id, qos_type_value, new_qos_type_value)
+
+            qos_block.values[QOSParams.qos_type.value] = new_qos_type_value
+
+            updated_conf = format_block(qos_block)
+            rados_obj.update_obj(updated_conf, qos_conf_name, conf_obj_name(cluster_id),
+                                 should_notify=False)
+            log.debug('Successfully updated QoS type for cluster %s', cluster_id)
+        return True
+    except ObjectNotFound:
+        log.debug('QoS config object not found for cluster %s', cluster_id)
+        return False
+    except Exception as e:
+        log.exception('Error updating QoS type for cluster %s: %s', cluster_id, e)
+        raise
 
 
 def resolve_ip(hostname: str) -> str:
