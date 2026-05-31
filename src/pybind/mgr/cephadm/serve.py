@@ -53,6 +53,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 REQUIRES_POST_ACTIONS = ['grafana', 'iscsi', 'prometheus', 'alertmanager', 'rgw', 'nvmeof', 'mgmt-gateway']
+DISABLED_SERVICES = ['nfs']
 
 CEPHADM_EXE = ssh.RemoteExecutable('/usr/bin/cephadm')
 
@@ -1489,6 +1490,10 @@ class CephadmServe:
                     dd.daemon_type in CEPH_TYPES:
                 self.log.info('Reconfiguring %s (extra config changed)...' % dd.name())
                 action = 'reconfig'
+            elif dd.daemon_type in DISABLED_SERVICES:
+                if dd.status == 0 and not dd.user_stopped:
+                    self.log.debug(f'Starting daemon {dd.name()}')
+                    action = 'start'
 
             if action:
                 if self.mgr.cache.get_scheduled_daemon_action(dd.hostname, dd.name()) == 'redeploy' \

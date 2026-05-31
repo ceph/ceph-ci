@@ -283,6 +283,7 @@ class TestCephadm(object):
                         'is_active': False,
                         'ports': [],
                         'pending_daemon_config': False,
+                        'user_stopped': False
                     }
                 ]
 

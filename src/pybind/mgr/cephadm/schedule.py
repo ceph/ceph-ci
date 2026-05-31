@@ -354,6 +354,7 @@ class HostAssignment(object):
 
         # get candidate hosts based on [hosts, label(s), host_pattern]
         candidates = self.get_candidates()  # type: List[DaemonPlacement]
+        all_candidates = candidates
         if self.primary_daemon_type in RESCHEDULE_FROM_OFFLINE_HOSTS_TYPES:
             # remove unreachable hosts that are not in maintenance so daemons
             # on these hosts will be rescheduled
@@ -396,7 +397,7 @@ class HostAssignment(object):
         existing_slots: List[DaemonPlacement] = []
         to_add: List[DaemonPlacement] = []
         to_remove: List[orchestrator.DaemonDescription] = []
-        ranks: List[int] = list(range(len(candidates)))
+        ranks: List[int] = list(range(len(all_candidates)))
         others: List[DaemonPlacement] = candidates.copy()
         for dd in daemons:
             found = False
