@@ -1461,6 +1461,17 @@ class CephadmServe:
                         skip_restart_for_reconfig = True
                         send_signal_to_daemon = 'SIGHUP'
 
+                elif dd.daemon_type == 'haproxy':
+                    if spec and hasattr(spec, 'backend_service'):
+                        backend_spec = self.mgr.spec_store[spec.backend_service].spec
+                        if backend_spec.service_type == 'nfs':
+                            if all(s.startswith(f'nfs.{backend_spec.service_id}') for s in list(sym_diff)):
+                                # this means only nfs daemons has changed and we don't need to
+                                # restart haproxy during redeploy
+                                self.log.debug(f'Reconfigure HAProxy daemon {dd.name()} with SIGHUP '
+                                               'due to change in NFS backend.')
+                                skip_restart_for_reconfig = True
+                                send_signal_to_daemon = 'SIGHUP'
             elif dd.daemon_type == 'haproxy':
                 if spec and hasattr(spec, 'backend_service'):
                     backend_spec = self.mgr.spec_store[spec.backend_service].spec
