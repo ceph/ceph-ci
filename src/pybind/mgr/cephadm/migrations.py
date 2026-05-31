@@ -118,6 +118,10 @@ class Migrations:
             if self.migrate_7_8():
                 self.set(8)
 
+        if self.mgr.migration_current == 8 and not startup:
+            if self.migrate_8_9():
+                self.set(9)
+
         if self.mgr.migration_current == 9:
             if self.migrate_9_10():
                 self.set(10)
@@ -486,6 +490,16 @@ class Migrations:
         if nfs_services:
             self.mgr.set_store('nfs_services_with_old_nodeid', ','.join(nfs_services))
         self.mgr.remove_health_warning('CEPHADM_MIGRATION_FAILURE')
+        return True
+
+    def migrate_8_9(self) -> bool:
+        # Store extisting NFS services to mon store, to use old userid for them
+        nfs_services = []
+        service_specs = self.mgr.spec_store.get_specs_by_type('nfs')
+        for service_name, spec in service_specs.items():
+            nfs_services.append(service_name)
+        if nfs_services:
+            self.mgr.set_store('nfs_services_with_old_userid', ','.join(nfs_services))
         return True
 
     def migrate_9_10(self) -> bool:
