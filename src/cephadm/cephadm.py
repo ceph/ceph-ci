@@ -2528,7 +2528,8 @@ def create_initial_monmap(
 
 
 def check_license_acceptance(ctx: CephadmContext) -> None:
-    license_text = _pull_license_from_image(ctx, ctx.image)
+    license_text = _pull_license_from_image(
+        ctx, ctx.image, ctx.license_language)
     failure_count = 0
 
     response = input(
@@ -3753,7 +3754,8 @@ def command_display_license(ctx: CephadmContext) -> int:
         logger.error(f'Got exception pulling requested container image to display license: {str(e)}')
         raise e
 
-    license_text = _pull_license_from_image(ctx, ctx.image)
+    license_text = _pull_license_from_image(
+        ctx, ctx.image, ctx.license_language)
 
     if 'json' in ctx and ctx.json:
         print(json.dumps({'license': license_text}, indent=4))
@@ -3763,15 +3765,65 @@ def command_display_license(ctx: CephadmContext) -> int:
     return 0
 
 
-def _pull_license_from_image(ctx: CephadmContext, image_name: str) -> str:
+def _license_basename_from_language(language: str) -> str:
+    if not language or not str(language).strip():
+        raise Error('License language must not be empty')
+    code = str(language).strip()
+    if code.startswith('LA_'):
+        raise Error(
+            'License language must be the part after LA_ in the license file '
+            'name (e.g. en or zh_TW), not %r' % (language,)
+        )
+    if not re.fullmatch(r'[A-Za-z0-9_.-]+', code):
+        raise Error(
+            'Invalid license language %r (use e.g. en, de, or zh_TW)' % (language,)
+        )
+    return 'LA_' + code
+
+
+def _pull_license_from_image(
+    ctx: CephadmContext, image_name: str, license_language: str
+) -> str:
     logger.info('Pulling license from image %s...' % image_name)
+    basename = _license_basename_from_language(license_language)
 
-    # in the future this will go to a specific place in the
-    # container image and actually pull the text of a file
-    # at a certain location
-    return """Lorem ipsum dolor sit amet, consedgdfctetur adipiscing elit. Duis laoreet lorem id rhoncus interdum. Sed vitae tempus tellus. Donec porta ornare nunc a sodales. Duis feugiat ante vel eros finibus, in rhoncus neque tristique. Duis ultrices neque at orci interdum convallis. Duis rutrum ligula magna, non euismod tortor condimentum at. Morbi suscipit ornare sapien, fringilla egestas dui viverra in. Nunc scelerisque ex nec neque hendrerit euismod. Cras tristique est laoreet nisl fringilla pretium. Crab eleifend dui mi. Donec viverra sed libero eget blandit. Suspendisse malesuada arcu est, sed porttitor ante aliquet quis.
+    # IBM images ship text under /usr/share/ibm-storage-ceph-license/<id>/UTF8/LA_<lang>
+    script = (
+        'set -eu\n'
+        'base=/usr/share/ibm-storage-ceph-license\n'
+        'if [ ! -d "$base" ]; then\n'
+        '  echo "IBM license directory not found in container image" >&2\n'
+        '  exit 1\n'
+        'fi\n'
+        'found=""\n'
+        'for d in "$base"/*; do\n'
+        '  [ -d "$d" ] || continue\n'
+        '  f="$d/UTF8/$LICENSE_BASENAME"\n'
+        '  if [ -f "$f" ]; then\n'
+        '    found="$f"\n'
+        '    break\n'
+        '  fi\n'
+        'done\n'
+        'if [ -z "$found" ]; then\n'
+        '  echo "License file not found: $base/*/UTF8/$LICENSE_BASENAME" >&2\n'
+        '  exit 1\n'
+        'fi\n'
+        'cat "$found"\n'
+    )
 
-Orci varius natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Cras sed purus non turpis efficitur mattis sit amet eu neque. Aliquam iaculis, sem vel facilisis volutpat, risus lorem dictum ligula, vitae auctor dolor magna ut eros. Suspendisse elit metus, facilisis in nisl ut, commodo porttitor urna. Quisque condimentum mi at urna pulvinar euismod. Fusce ultricies blandit tellus et congue. Curabitur eu nibh ipsum. Sed aliquet egestas sapien, ut aliquet urna iaculis et. Duis commodo felis sem, sit amet molestie libero sollicitudin ut. Cras neque urna, faucibus sit amet sodales non, pellentesque ac nibh. Aliquam tincidunt ipsum vel rutrum tempor. Duis pellentesque massa mauris, non placerat orci mattis ac. Aenean tristique tellus quis lacinia rhoncus."""
+    try:
+        return CephContainer(
+            ctx,
+            image_name,
+            entrypoint='/bin/sh',
+            args=['-c', script],
+            envs=['LICENSE_BASENAME=%s' % basename],
+        ).run()
+    except RuntimeError as e:
+        raise Error(
+            'Failed to read IBM license file %s from image %s: %s'
+            % (basename, image_name, e)
+        )
 
 #################################
 
@@ -6020,6 +6072,15 @@ def _get_parser():
         action='store_true',
         help='Can provide the license as part of a json blob formatted {"license": <actual-license-text>}',
     )
+    parser_display_license.add_argument(
+        '--license-language',
+        default='en',
+        metavar='LANG',
+        help=(
+            'Suffix after LA_ for the license file in the image UTF8 folder '
+            '(default: en for file LA_en)'
+        ),
+    )
     parser_display_license.set_defaults(func=command_display_license)
 
     parser_unit = subparsers.add_parser(
@@ -6324,6 +6385,15 @@ def _get_parser():
         action='store_true',
         default=False,
         help='Accept the IBM license without an interactive prompt')
+    parser_bootstrap.add_argument(
+        '--license-language',
+        default='en',
+        metavar='LANG',
+        help=(
+            'Suffix after LA_ for the IBM license file shown during bootstrap '
+            '(default: en); same as display-license --license-language'
+        ),
+    )
 
     parser_bootstrap.add_argument(
         '--storage-insights-tenant-id',

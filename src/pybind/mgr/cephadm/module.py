@@ -4849,15 +4849,17 @@ Then run the following:
         return self.upgrade.update_service(service_type, service_image, image)
 
     @handle_orch_error
-    def display_license(self, image_name: str) -> str:
+    def display_license(self, image_name: str, license_language: str = 'en') -> str:
         self.wait_async(CephadmServe(self)._get_container_image_info(image_name))
-        license = self.wait_async(CephadmServe(self)._get_container_ibm_license(image_name))
+        license = self.wait_async(
+            CephadmServe(self)._get_container_ibm_license(image_name, license_language)
+        )
         return license
 
     @handle_orch_error
     def accept_license(self, image_name: str) -> str:
         image_info = self.wait_async(CephadmServe(self)._get_container_image_info(image_name))
-        license = self.wait_async(CephadmServe(self)._get_container_ibm_license(image_name))
+        license = self.wait_async(CephadmServe(self)._get_container_ibm_license(image_name, 'en'))
         ceph_version = image_info.ceph_version or 'unknown_version'
         entry_key = get_license_acceptance_key_value_entry_name(ceph_version, license)
         entry_content = generate_license_acceptance_key_value_entry(
