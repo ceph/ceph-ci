@@ -323,6 +323,11 @@ class CephadmUpgrade:
         - All OSDs must be up+in
         - All PGs must be in an upgrade safe state (active+clean, without any bad flags)
         """
+        # Preflight checks are optional (disabled by default). If they are disabled,
+        # don't block the upgrade and clear any stale warning from earlier runs.
+        if not self.mgr.get_module_option('upgrade_preflight_checks'):
+            self.mgr.remove_health_warning('UPGRADE_PREFLIGHT_CHECK_FAILED')
+            return
         # Gather errors and details from each pre-upgrade check and summarize them together for a clear report.
         health_errors = self._pre_upgrade_check_cluster_health()
         osd_errors = self._pre_upgrade_check_osds()
