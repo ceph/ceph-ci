@@ -4872,6 +4872,7 @@ Then run the following:
         return f'Accepted license for image with id <{image_info.image_id}> with ceph version {image_info.ceph_version}'
 
     def raise_call_home_warning(self) -> None:
+        self.log.info('Raising warning for call home automatic enablement')
         self.set_health_warning(
             'CALL_HOME_ENABLED_AUTOMATICALLY',
             'Call home module enabled automatically',
@@ -4881,6 +4882,7 @@ Then run the following:
              'accept call-home-enabled` if call home is desired or ceph orch deny call-home-enabled to turn off the module']
         )
         self.call_home_needs_acceptance = True
+        self.set_module_option('call_home_needs_acceptance', True)
 
     @handle_orch_error
     def enable_call_home(self, raise_automation_warning: bool = False) -> str:
@@ -4897,18 +4899,22 @@ Then run the following:
 
     @handle_orch_error
     def accept_call_home(self) -> str:
+        self.log.info('Clearing call home warning as call home was accepted')
         self.remove_health_warning('CALL_HOME_ENABLED_AUTOMATICALLY')
         self.call_home_needs_acceptance = False
+        self.set_module_option('call_home_needs_acceptance', False)
         return 'Health warning for call home enablement cleared'
 
     @handle_orch_error
     def deny_call_home(self) -> str:
+        self.log.info('Clearing call home warning as call home was denied')
         self.remove_health_warning('CALL_HOME_ENABLED_AUTOMATICALLY')
         self.check_mon_command({
             'prefix': 'mgr module disable',
             'module': 'call_home_agent'
         })
         self.call_home_needs_acceptance = False
+        self.set_module_option('call_home_needs_acceptance', False)
         return 'Call home agent module disabled and health warning for call home enablement cleared'
 
     @handle_orch_error
