@@ -215,6 +215,7 @@ class UpgradeState:
                  prior_autoscale: Optional[bool] = True,
                  crush_bucket_type: Optional[str] = None,
                  crush_bucket_name: Optional[str] = None,
+                 rotated_mgr_mon_auth_key_daemons: Optional[List[str]] = None,
                  ):
 
         self._target_name: str = target_name  # Use CephadmUpgrade.target_image instead.
@@ -239,6 +240,7 @@ class UpgradeState:
         self.prior_autoscale = prior_autoscale
         self.crush_bucket_type = crush_bucket_type
         self.crush_bucket_name = crush_bucket_name
+        self.rotated_mgr_mon_auth_key_daemons = rotated_mgr_mon_auth_key_daemons
 
     def to_json(self) -> dict:
         return {
@@ -262,6 +264,7 @@ class UpgradeState:
             'prior_autoscale': self.prior_autoscale,
             'crush_bucket_type': self.crush_bucket_type,
             'crush_bucket_name': self.crush_bucket_name,
+            'rotated_mgr_mon_auth_key_daemons': self.rotated_mgr_mon_auth_key_daemons,
         }
 
     @classmethod
@@ -287,6 +290,7 @@ class CephadmUpgrade:
         'UPGRADE_OFFLINE_HOST',
         'UPGRADE_INVALID_CRUSH_BUCKET',
         'UPGRADE_OSD_NO_VERSION',
+        'UPGRADE_KEY_ROTATION',
     ]
 
     def __init__(self, mgr: "CephadmOrchestrator"):
@@ -1907,10 +1911,51 @@ class CephadmUpgrade:
             futures.append(self._redeploy_daemons_per_host(host, daemons_to_upgrade, target_image))
         return await gather(*futures)
 
+    def _rotate_mgr_mon_auth_keys(self, target_image: str, target_digests: Optional[List[str]] = None) -> None:
+        if self.upgrade_state:
+            if self.upgrade_state.rotated_mgr_mon_auth_key_daemons is None:
+                self.upgrade_state.rotated_mgr_mon_auth_key_daemons = []
+            # do mgr and mon keyrings as one off after mons have been upgraded
+            mon_daemons = self.mgr.cache.get_daemons_by_service('mon')
+            _, mons_needing_upgrade, __, ___ = self._detect_need_upgrade(mon_daemons, target_digests, target_image)
+            if not mons_needing_upgrade:
+                # all mons have been upgraded if we get here
+                for dd in self.mgr.cache.get_daemons_by_service('mgr'):
+                    if dd.name() in self.upgrade_state.rotated_mgr_mon_auth_key_daemons:
+                        continue
+                    daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(dd)
+                    self.mgr.key_rotate(daemon_spec)
+                    if self.mgr.daemon_is_self(daemon_spec.daemon_type, daemon_spec.daemon_id):
+                        self.mgr._schedule_daemon_action(daemon_spec.name(), 'redeploy')
+                    else:
+                        self.mgr._daemon_action(daemon_spec, action='redeploy')
+                    self.upgrade_state.rotated_mgr_mon_auth_key_daemons.append(daemon_spec.name())
+                    self._save_upgrade_state()
+                # mon daemons share a key, only do one key rotation
+                # but still trigger redeploy for each mon
+                if 'mon' not in self.upgrade_state.rotated_mgr_mon_auth_key_daemons:
+                    self.mgr.key_rotate(
+                        CephadmDaemonDeploySpec.from_daemon_description(
+                            mon_daemons[0]
+                        )
+                    )
+                    self.upgrade_state.rotated_mgr_mon_auth_key_daemons.append('mon')
+                    self._save_upgrade_state()
+                for dd in mon_daemons:
+                    if dd.name() in self.upgrade_state.rotated_mgr_mon_auth_key_daemons:
+                        continue
+                    daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(dd)
+                    self.mgr._daemon_action(daemon_spec, action='redeploy')
+                    self.upgrade_state.rotated_mgr_mon_auth_key_daemons.append(daemon_spec.name())
+                    self._save_upgrade_state()
+            else:
+                self.mgr.log.debug('Skipping mgr/mon key rotation, mons not upgraded')
+
     def _upgrade_daemons(self, to_upgrade: List[Tuple[DaemonDescription, bool]], target_image: str, target_digests: Optional[List[str]] = None) -> None:
         assert self.upgrade_state is not None
         if target_digests is None:
             target_digests = []
+        self._rotate_mgr_mon_auth_keys(target_image, target_digests)
         if self.upgrade_state.remaining_count is not None:
             needs_actual_upgrade = [d for d in to_upgrade if d[1]]
             needs_deployer_upgrade = [d for d in to_upgrade if not d[1]]
@@ -1960,6 +2005,23 @@ class CephadmUpgrade:
         daemons_to_upgrade_names = [f'{d.daemon_type}.{d.daemon_id}' for d in [t[0] for t in to_upgrade]]
         if daemons_to_upgrade_names:
             logger.info(f'Upgrade: Updating {[daemons_to_upgrade_names]}')
+
+            daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(d)
+
+            try:
+                if daemon_spec.daemon_type in ['mds', 'osd']:
+                    daemon_spec.keyring = None
+                    self.mgr.key_rotate(daemon_spec)
+            except Exception as e:
+                self._fail_upgrade('UPGRADE_KEY_ROTATION', {
+                    'severity': 'warning',
+                    'summary': f'Rotation of cephx key for daemon {d.name()} on host {d.hostname} failed.',
+                    'count': 1,
+                    'detail': [
+                        f'Upgrade daemon key rotation: {d.name()}: {e}'
+                    ],
+                })
+                return
 
         with self.mgr.async_timeout_handler(cmd=f'cephadm Upgrading ({[d[0].name() for d in to_upgrade]} daemons)'):
             results = self.mgr.wait_async(self._redeploy_daemons(to_upgrade, target_image))
