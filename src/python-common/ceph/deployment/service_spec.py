@@ -1439,7 +1439,7 @@ class NFSServiceSpec(ServiceSpec):
                  kmip_cert: Optional[str] = None,
                  kmip_key: Optional[str] = None,
                  kmip_ca_cert: Optional[str] = None,
-                 kmip_host_list: Optional[List[str]] = None,
+                 kmip_host_list: Optional[List[Union[str, Dict[str, Union[str, int]]]]] = None,
                  cluster_qos_config: Optional[Dict[str, Union[str, bool, int]]] = None,
                  ):
         assert service_type == 'nfs'
@@ -1468,8 +1468,18 @@ class NFSServiceSpec(ServiceSpec):
         self.kmip_cert = kmip_cert
         self.kmip_key = kmip_key
         self.kmip_ca_cert = kmip_ca_cert
-        self.kmip_host_list = kmip_host_list
         self.cluster_qos_config = cluster_qos_config
+        self.kmip_host_list: list[Dict[str, Union[str, int]]] = []
+        if isinstance(kmip_host_list, list):
+            # convert kmip host list of str to list of dict
+            if len(kmip_host_list) and isinstance(kmip_host_list[0], str):
+                self.kmip_host_list = [
+                    {'addr': host}
+                    for host in kmip_host_list
+                    if isinstance(host, str)
+                ]
+            else:
+                self.kmip_host_list = [host for host in kmip_host_list if isinstance(host, dict)]
 
     def get_port_start(self) -> List[int]:
         if self.port:
@@ -1498,6 +1508,16 @@ class NFSServiceSpec(ServiceSpec):
             raise SpecValidationError(
                 f'Either none or all of {kmip_field_names} attrbutes must be set'
             )
+        for kmip_host in self.kmip_host_list:
+            if 'addr' not in kmip_host:
+                raise SpecValidationError(
+                    "Each dictionary in kmip_host_list must include the 'addr' key."
+                    f"{kmip_host} is missing 'addr'."
+                )
+            if 'port' in kmip_host and not isinstance(kmip_host['port'], int):
+                raise SpecValidationError(
+                    f'Provided port is not valid for {kmip_host} in kmip_host_list.'
+                )
 
         # validate qos dict
         if self.cluster_qos_config:
@@ -1517,18 +1537,25 @@ class NFSServiceSpec(ServiceSpec):
             qos_type = self.cluster_qos_config.get('qos_type')
             valid_qos_types = ['PerShare', 'PerClient', 'PerShare_PerClient']
             if not qos_type:
-                raise SpecValidationError('Invalid NFS spec: to set cluster-level QoS, "qos_type" must be provided.')
+                raise SpecValidationError(
+                    'Invalid NFS spec: to set cluster-level QoS, "qos_type" must be provided.'
+                )
             if qos_type not in valid_qos_types:
                 raise SpecValidationError(
-                    f'Invalid NFS spec: "{qos_type}" is not a valid qos_type. Valid types are: {"|".join(valid_qos_types)}.'
+                    f'Invalid NFS spec: "{qos_type}" is not a valid qos_type. Valid types '
+                    f'are: {"|".join(valid_qos_types)}.'
                 )
 
             # Verify bandwidth and IOPS types
             for key, value in self.cluster_qos_config.items():
                 if key.endswith('bw') and not isinstance(value, str):
-                    raise SpecValidationError(f"Invalid NFS spec: bandwidth '{key}' should be a string")
+                    raise SpecValidationError(
+                        f"Invalid NFS spec: bandwidth '{key}' should be a string"
+                    )
                 if key.endswith('iops') and not isinstance(value, int):
-                    raise SpecValidationError(f"Invalid NFS spec: IOPS '{key}' should be an integer")
+                    raise SpecValidationError(
+                        f"Invalid NFS spec: IOPS '{key}' should be an integer"
+                    )
 
 
 yaml.add_representer(NFSServiceSpec, ServiceSpec.yaml_representer)

@@ -159,7 +159,7 @@ class NFSCluster:
             kmip_cert: Optional[str] = None,
             kmip_key: Optional[str] = None,
             kmip_ca_cert: Optional[str] = None,
-            kmip_host_list: Optional[List[str]] = None,
+            kmip_host_list: Optional[List[Union[str, Dict[str, Union[str, int]]]]] = None,
             cluster_qos_config: Optional[Dict[str, Union[str, bool, int]]] = None,
     ) -> None:
         if not port:
@@ -251,7 +251,7 @@ class NFSCluster:
             kmip_cert: Optional[str] = None,
             kmip_key: Optional[str] = None,
             kmip_ca_cert: Optional[str] = None,
-            kmip_host_list: Optional[List[str]] = None,
+            kmip_host_list: Optional[List[Union[str, Dict[str, Union[str, int]]]]] = None,
             cluster_qos_config: Optional[Dict[str, Union[str, bool, int]]] = None,
     ) -> None:
         try:
