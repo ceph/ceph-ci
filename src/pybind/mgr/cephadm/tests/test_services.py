@@ -3758,8 +3758,8 @@ class TestIngressService:
             '        Enable_UDP = false;\n'
             '        NFS_Port = 2049;\n'
             '        allow_set_io_flusher_fail = true;\n'
-            '        HAProxy_Hosts = 192.168.122.111, 10.10.2.20, 192.168.122.222;\n'
             '        Monitoring_Port = 9587;\n'
+            '        HAProxy_Hosts = 192.168.122.111, 10.10.2.20, 192.168.122.222;\n'
             '}\n'
             '\n'
             'NFSv4 {\n'
@@ -3781,6 +3781,8 @@ class TestIngressService:
             '        UserId = "nfs.foo";\n'
             '        watch_url = '
             '"rados://.nfs/foo/conf-nfs.foo";\n'
+            '        UserId = "nfs.foo.test.0.0";\n'
+            '        watch_url = "rados://.nfs/foo/conf-nfs.foo";\n'
             '}\n'
             '\n'
             'RGW {\n'
@@ -3788,7 +3790,7 @@ class TestIngressService:
             '        name = "client.nfs.foo.test.0.0-rgw";\n'
             '}\n'
             '\n'
-            "%url    rados://.nfs/foo/conf-nfs.foo"
+            '%url    rados://.nfs/foo/conf-nfs.foo'
         )
         nfs_expected_conf = {
             'files': {'ganesha.conf': nfs_ganesha_txt, 'idmap.conf': ''},
