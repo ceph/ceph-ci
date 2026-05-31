@@ -55,6 +55,7 @@ from cephadmlib.constants import (
     DATEFMT,
     DEFAULT_RETRY,
     DEFAULT_TIMEOUT,
+    IBM_DISPLAY_LICENSE_CALL_HOME_NOTICE,
     LATEST_STABLE_RELEASE,
     LOGROTATE_DIR,
     LOG_DIR,
@@ -2532,6 +2533,9 @@ def check_license_acceptance(ctx: CephadmContext) -> None:
         ctx, ctx.image, ctx.license_language)
     failure_count = 0
 
+    print(IBM_DISPLAY_LICENSE_CALL_HOME_NOTICE)
+    _pause_before_ibm_license_body()
+
     response = input(
         f'IBM license for image {ctx.image}:\n\n\n {license_text}\n\n\n'
         'License must be accepted to bootstrap cluster.\nTo accept license '
@@ -3745,6 +3749,19 @@ def command_run(ctx):
 ##################################
 
 
+def _pause_before_ibm_license_body() -> None:
+    """Give the user time to read Call Home messaging before the license wall of text."""
+    if not sys.stdin.isatty():
+        return
+    prompt = (
+        '\nPress a key to continue and display the license (press Enter).\n'
+    )
+    try:
+        input(prompt)
+    except EOFError:
+        pass
+
+
 def command_display_license(ctx: CephadmContext) -> int:
     if not ctx.image:
         raise Error('No image provided. Command should be formatted cephadm --image <image-name> display-license')
@@ -3758,8 +3775,16 @@ def command_display_license(ctx: CephadmContext) -> int:
         ctx, ctx.image, ctx.license_language)
 
     if 'json' in ctx and ctx.json:
-        print(json.dumps({'license': license_text}, indent=4))
+        print(json.dumps(
+            {
+                'call_home_notice': IBM_DISPLAY_LICENSE_CALL_HOME_NOTICE,
+                'license': license_text,
+            },
+            indent=4,
+        ))
     else:
+        print(IBM_DISPLAY_LICENSE_CALL_HOME_NOTICE)
+        _pause_before_ibm_license_body()
         print(license_text)
 
     return 0
@@ -6070,7 +6095,10 @@ def _get_parser():
     parser_display_license.add_argument(
         '--json',
         action='store_true',
-        help='Can provide the license as part of a json blob formatted {"license": <actual-license-text>}',
+        help=(
+            'Emit JSON with call_home_notice (Call Home messaging) and '
+            'license (LA_* file text from the image)'
+        ),
     )
     parser_display_license.add_argument(
         '--license-language',

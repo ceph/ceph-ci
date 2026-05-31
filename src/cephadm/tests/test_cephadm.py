@@ -24,7 +24,10 @@ from .fixtures import (
 from pyfakefs import fake_filesystem
 from pyfakefs import fake_filesystem_unittest
 
-from cephadmlib.constants import DEFAULT_REGISTRY
+from cephadmlib.constants import (
+    DEFAULT_REGISTRY,
+    IBM_DISPLAY_LICENSE_CALL_HOME_NOTICE,
+)
 
 _cephadm = import_cephadm()
 
@@ -2729,15 +2732,18 @@ class TestLicenseLanguage:
             with pytest.raises(_cephadm.Error, match='Failed to read IBM license file LA_en'):
                 _cephadm._pull_license_from_image(ctx, 'registry/ceph:v1', 'en')
 
-    @mock.patch('cephadm.CephContainer')
+    @mock.patch('cephadm.sys.stdin.isatty', return_value=False)
     @mock.patch('cephadm._pull_image')
-    def test_command_display_license_plain(self, _pull_image, mock_cc, capsys):
+    @mock.patch('cephadm.CephContainer')
+    def test_command_display_license_plain(self, mock_cc, _pull_image, _isatty, capsys):
         mock_cc.return_value.run.return_value = 'plain license\n'
         cmd = ['--image', 'registry/ceph:v1', 'display-license', '--license-language', 'de']
         with with_cephadm_ctx(cmd) as ctx:
             rc = _cephadm.command_display_license(ctx)
         assert rc == 0
-        assert capsys.readouterr().out == 'plain license\n'
+        out = capsys.readouterr().out
+        assert out.startswith(IBM_DISPLAY_LICENSE_CALL_HOME_NOTICE)
+        assert out.endswith('plain license\n')
         _pull_image.assert_called_once_with(ctx, 'registry/ceph:v1', False)
         _args, kwargs = mock_cc.call_args
         assert kwargs['envs'] == ['LICENSE_BASENAME=LA_de']
@@ -2751,7 +2757,10 @@ class TestLicenseLanguage:
             rc = _cephadm.command_display_license(ctx)
         assert rc == 0
         blob = json.loads(capsys.readouterr().out)
-        assert blob == {'license': 'line1\nline2\n'}
+        assert blob == {
+            'call_home_notice': IBM_DISPLAY_LICENSE_CALL_HOME_NOTICE,
+            'license': 'line1\nline2\n',
+        }
 
 
 class TestApplySpec:
