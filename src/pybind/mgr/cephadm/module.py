@@ -4837,12 +4837,32 @@ Then run the following:
         return f'Accepted license for image with id <{image_info.image_id}> with ceph version {image_info.ceph_version}'
 
     @handle_orch_error
-    def accept_call_home(self, image_name: str) -> str:
+    def enable_call_home(self, raise_automation_warning: bool = False) -> str:
+        self.check_mon_command({
+            'prefix': 'mgr module enable',
+            'module': 'call_home_agent'
+        })
+        if raise_automation_warning:
+            self.set_health_warning(
+                'CALL_HOME_ENABLED_AUTOMATICALLY',
+                'Call home module enabled automatically',
+                1,
+                ['The call home agent mgr module has been enabled automatically as IBM license was accepted '
+                 'To clear this warning either run `ceph orch accept call-home-enabled` if call home is desired or '
+                 'ceph orch deny call-home-enabled to turn off the module']
+            )
+        return (
+            'Call home agent module enabled.'
+            + ' Health warning about automatic enablement raised' if raise_automation_warning else ''
+        )
+
+    @handle_orch_error
+    def accept_call_home(self) -> str:
         self.remove_health_warning('CALL_HOME_ENABLED_AUTOMATICALLY')
         return 'Health warning for call home enablement cleared'
 
     @handle_orch_error
-    def deny_call_home(self, image_name: str) -> str:
+    def deny_call_home(self) -> str:
         self.remove_health_warning('CALL_HOME_ENABLED_AUTOMATICALLY')
         self.check_mon_command({
             'prefix': 'mgr module disable',

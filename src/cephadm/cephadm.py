@@ -2970,7 +2970,7 @@ def apply_call_home_settings(ctx: CephadmContext, cli: Callable, wait_for_mgr_re
         return
 
     # if we got here, attempt to setup call home integration
-    cli(['mgr', 'module', 'enable', 'call_home_agent'])
+    cli(['orch', 'enable-call-home', '--raise-automation-warning'])
     wait_for_mgr_restart()
     # store user info for call home module to use
     if 'call_home_icn' in ctx and ctx.call_home_icn:

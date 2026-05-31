@@ -2660,6 +2660,15 @@ Usage:
         raise_if_exception(completion)
         return HandleCommandResult(stdout=completion.result_str())
 
+    @OrchestratorCLICommand.Write('orch enable-call-home')
+    def _enable_call_home(self, raise_automation_warning: bool = False) -> HandleCommandResult:
+        """
+        Enable the call-home-agent module
+        """
+        completion = self.enable_call_home(raise_automation_warning)
+        raise_if_exception(completion)
+        return HandleCommandResult(stdout=completion.result_str())
+
     @OrchestratorCLICommand.Write('orch accept call-home-enabled')
     def _accept_call_home_enablement(self) -> HandleCommandResult:
         """
