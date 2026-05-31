@@ -5,12 +5,12 @@ import orchestrator  # noqa
 from mgr_util import build_url
 from typing import Dict, List, TYPE_CHECKING, cast, Collection, Callable, NamedTuple, Optional, IO, Tuple
 from cephadm.services.nfs import NFSService
+from cephadm.services.ingress import IngressService
 from cephadm.services.monitoring import AlertmanagerService, NodeExporterService, PrometheusService
 import secrets
 from mgr_util import verify_tls_files
 import tempfile
 
-from cephadm.services.ingress import IngressSpec
 from cephadm.services.cephadmservice import CephExporterService, RGWSpec
 from cephadm.services.nvmeof import NvmeofService
 from cephadm.services.service_registry import service_registry
@@ -205,14 +205,14 @@ class Root:
         # haproxy daemons as part of an ingress service
         for dd in self.mgr.cache.get_daemons_by_type('ingress'):
             if dd.service_name() in self.mgr.spec_store:
+                assert dd.hostname is not None
                 spec = self.mgr.spec_store[dd.service_name()].spec
                 if spec.service_type == 'rgw':
                     port = cast(RGWSpec, spec).concentrator_monitor_port
                 else:
-                    port = cast(IngressSpec, spec).monitor_port
-                assert dd.hostname is not None
-                if dd.daemon_type == 'haproxy':
-                    addr = self.mgr.inventory.get_addr(dd.hostname)
+                    ingress = cast(IngressService, service_registry.get_service('ingress'))
+                    monitor_ip, port = ingress.get_monitoring_details(dd.service_name(), dd.hostname)
+                    addr = monitor_ip or dd.ip or self.mgr.inventory.get_addr(dd.hostname)
                     srv_entries.append({
                         'targets': [f"{build_url(host=addr, port=port).lstrip('/')}"],
                         'labels': {'ingress': dd.service_name(), 'instance': dd.hostname}

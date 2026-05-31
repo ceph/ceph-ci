@@ -1281,7 +1281,8 @@ class TestMonitoring:
                                                              monitor_password='12345',
                                                              keepalived_password='12345',
                                                              virtual_ip="1.2.3.4/32",
-                                                             backend_service='rgw.foo')) as _, \
+                                                             backend_service='rgw.foo',
+                                                             enable_stats=True)) as _, \
                     with_service(cephadm_module, NvmeofServiceSpec(service_id=f'{pool}.{group}',
                                                                    group=group,
                                                                    pool=pool)) as _, \
@@ -1444,7 +1445,8 @@ class TestMonitoring:
                                                              monitor_password='12345',
                                                              keepalived_password='12345',
                                                              virtual_ip="1.2.3.4/32",
-                                                             backend_service='rgw.foo')) as _, \
+                                                             backend_service='rgw.foo',
+                                                             enable_stats=True)) as _, \
                     with_service(cephadm_module, NvmeofServiceSpec(service_id=f'{pool}.{group}',
                                                                    group=group,
                                                                    pool=pool)) as _, \
@@ -2772,6 +2774,7 @@ class TestIngressService:
             monitor_password='12345',
             keepalived_password='12345',
             enable_haproxy_protocol=enable_haproxy_protocol,
+            enable_stats=True
         )
 
         cephadm_module.spec_store._specs = {
@@ -2892,7 +2895,8 @@ class TestIngressService:
                                 monitor_password='12345',
                                 keepalived_password='12345',
                                 virtual_interface_networks=['1.2.3.0/24'],
-                                virtual_ip="1.2.3.4/32")
+                                virtual_ip="1.2.3.4/32",
+                                enable_stats=True)
             with with_service(cephadm_module, s) as _, with_service(cephadm_module, ispec) as _:
                 # generate the keepalived conf based on the specified spec
                 keepalived_generated_conf = service_registry.get_service('ingress').keepalived_generate_config(
@@ -3021,7 +3025,8 @@ class TestIngressService:
                                 monitor_password='12345',
                                 keepalived_password='12345',
                                 virtual_interface_networks=['1.2.3.0/24'],
-                                virtual_ip="1.2.3.4/32")
+                                virtual_ip="1.2.3.4/32",
+                                enable_stats=True)
             with with_service(cephadm_module, s) as _, with_service(cephadm_module, ispec) as _:
                 # generate the keepalived conf based on the specified spec
                 keepalived_generated_conf = service_registry.get_service('ingress').keepalived_generate_config(
@@ -3226,7 +3231,8 @@ class TestIngressService:
                                 monitor_password='12345',
                                 keepalived_password='12345',
                                 virtual_interface_networks=['1.2.3.0/24'],
-                                virtual_ips_list=["1.2.3.4/32"])
+                                virtual_ip="1.2.3.4/32",
+                                enable_stats=True)
             with with_service(cephadm_module, s) as _, with_service(cephadm_module, ispec) as _:
                 # generate the keepalived conf based on the specified spec
                 # Test with only 1 IP on the list, as it will fail with more VIPS but only one host.
@@ -3308,7 +3314,7 @@ class TestIngressService:
                                 'maxconn                 8000\n'
                                 '\nfrontend stats\n    '
                                 'mode http\n    '
-                                'bind [::]:8999\n    '
+                                'bind 1.2.3.4:8999\n    '
                                 'bind 1.2.3.7:8999\n    '
                                 'stats enable\n    '
                                 'stats uri /stats\n    '
@@ -3317,7 +3323,7 @@ class TestIngressService:
                                 'http-request use-service prometheus-exporter if { path /metrics }\n    '
                                 'monitor-uri /health\n'
                                 '\nfrontend frontend\n    '
-                                'bind [::]:8089 v4v6\n    '
+                                'bind 1.2.3.4:8089 \n    '
                                 'default_backend backend\n\n'
                                 'backend backend\n    '
                                 'option forwardfor\n    '
@@ -3365,7 +3371,8 @@ class TestIngressService:
                                     monitor_user='admin',
                                     monitor_password='12345',
                                     keepalived_password='12345',
-                                    virtual_ips_list=["1.2.3.100/24", "100.100.100.100/24"])
+                                    virtual_ips_list=["1.2.3.100/24", "100.100.100.100/24"],
+                                    enable_stats=True)
                 with with_service(cephadm_module, s) as _, with_service(cephadm_module, ispec) as _:
                     keepalived_generated_conf = service_registry.get_service('ingress').keepalived_generate_config(
                         CephadmDaemonDeploySpec(host='test', daemon_id='ingress', service_name=ispec.service_name()))
@@ -3478,7 +3485,8 @@ class TestIngressService:
                                             monitor_user='admin',
                                             monitor_password='12345',
                                             keepalived_password='12345',
-                                            virtual_ips_list=["1.2.3.100/24", "100.100.100.100/24"])
+                                            virtual_ips_list=["1.2.3.100/24", "100.100.100.100/24"],
+                                            enable_stats=True)
                         with with_service(cephadm_module, s) as _, with_service(cephadm_module, ispec) as _:
                             # since we're never actually going to refresh the host here,
                             # check the tmp daemons to see what was placed during the apply
@@ -3516,7 +3524,8 @@ class TestIngressService:
                                 monitor_user='admin',
                                 monitor_password='12345',
                                 keepalived_password='12345',
-                                virtual_ip=f"{ip}/24")
+                                virtual_ip=f"{ip}/24",
+                                enable_stats=True)
             with with_service(cephadm_module, s) as _, with_service(cephadm_module, ispec) as _:
                 # generate the haproxy conf based on the specified spec
                 haproxy_daemon_spec = service_registry.get_service('ingress').prepare_create(
@@ -3664,6 +3673,7 @@ class TestIngressService:
             monitor_password='12345',
             keepalived_password='12345',
             enable_haproxy_protocol=True,
+            enable_stats=True
         )
 
         cephadm_module.spec_store._specs = {
@@ -3848,6 +3858,993 @@ class TestIngressService:
             ),
         )
         assert nfs_generated_conf == nfs_expected_conf
+
+    @patch("cephadm.services.nfs.NFSService.fence_old_ranks", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.run_grace_tool", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.purge", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.create_rados_config_obj", MagicMock())
+    @patch("cephadm.inventory.Inventory.keys")
+    @patch("cephadm.inventory.Inventory.get_addr")
+    @patch("cephadm.utils.resolve_ip")
+    @patch("cephadm.inventory.HostCache.get_daemons_by_service")
+    @patch("cephadm.serve.CephadmServe._run_cephadm")
+    def test_haproxy_protocol_nfs_config_with_ip_addrs(
+        self,
+        _run_cephadm,
+        _get_daemons_by_service,
+        _resolve_ip,
+        _get_addr,
+        _inventory_keys,
+        cephadm_module: CephadmOrchestrator,
+    ):
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+        nfs_service = NFSServiceSpec(
+            service_id="foo",
+            placement=PlacementSpec(
+                count=1,
+                hosts=['host1', 'host2']),
+            port=12049,
+            ip_addrs={
+                'host1': '10.10.2.20',
+                'host2': '10.10.2.21'
+            },
+            enable_haproxy_protocol=True,
+        )
+
+        ispec = IngressSpec(
+            service_type='ingress',
+            service_id='nfs.foo',
+            backend_service='nfs.foo',
+            frontend_port=2049,
+            monitor_port=9049,
+            virtual_ip='192.168.122.100/24',
+            monitor_user='admin',
+            monitor_password='12345',
+            keepalived_password='12345',
+            enable_haproxy_protocol=True,
+            placement=PlacementSpec(
+                count=1,
+                hosts=['host1', 'host2']),
+
+        )
+        cephadm_module.spec_store._specs = {
+            'nfs.foo': nfs_service,
+            'ingress.nfs.foo': ispec
+        }
+        cephadm_module.spec_store.spec_created = {
+            'nfs.foo': datetime_now(),
+            'ingress.nfs.foo': datetime_now()
+        }
+        nfs_daemons = [
+            DaemonDescription(
+                daemon_type='nfs',
+                daemon_id='foo.0.1.host1.qwerty',
+                hostname='host1',
+                ip='10.10.2.20',
+                rank=0,
+                rank_generation=1,
+                ports=[12049],
+            ),
+            DaemonDescription(
+                daemon_type='nfs',
+                daemon_id='foo.0.0.host2.abcdef',
+                hostname='host2',
+                ip='10.10.2.21',
+                rank=0,
+                rank_generation=0,
+                ports=[12049],
+            ),
+        ]
+        _get_daemons_by_service.return_value = nfs_daemons
+
+        ingress_svc = service_registry.get_service('ingress')
+        nfs_svc = service_registry.get_service('nfs')
+
+        cephadm_module.cache.update_host_networks('host1', {
+            # this one is additional
+            '10.10.2.0/24': {
+                'eth1': ['10.10.2.20']
+            },
+            # this is redundant and will be skipped
+            '192.168.122.0/24': {
+                'eth0': ['192.168.122.111']
+            },
+        })
+        cephadm_module.cache.update_host_networks('host2', {
+            # this one is additional
+            '10.10.2.0/24': {
+                'eth1': ['10.10.2.22']
+            },
+            # this is redundant and will be skipped
+            '192.168.122.0/24': {
+                'eth0': ['192.168.122.112']
+            },
+        })
+
+        haproxy_generated_conf, _ = ingress_svc.haproxy_generate_config(
+            CephadmDaemonDeploySpec(
+                host='host1',
+                daemon_id='ingress',
+                service_name=ispec.service_name(),
+            ),
+        )
+        gen_config_lines = haproxy_generated_conf['files']['haproxy.cfg']
+        assert 'server nfs.foo.0 10.10.2.20:12049 check' in gen_config_lines
+
+        nfs_generated_conf, _ = nfs_svc.generate_config(
+            CephadmDaemonDeploySpec(
+                host='test',
+                daemon_id='foo.test.0.0',
+                service_name=nfs_service.service_name(),
+                rank=0,
+                ip='10.10.2.20'
+            ),
+        )
+        ganesha_conf = nfs_generated_conf['files']['ganesha.conf']
+        assert "Bind_addr = 10.10.2.20" in ganesha_conf
+
+
+class TestNFS:
+    @patch("cephadm.serve.CephadmServe._run_cephadm")
+    @patch("cephadm.services.nfs.NFSService.fence_old_ranks", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.run_grace_tool", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.purge", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.create_rados_config_obj", MagicMock())
+    def test_nfs_config_monitoring_ip(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test', addr='1.2.3.7'):
+            cephadm_module.cache.update_host_networks('test', {
+                '1.2.3.0/24': {
+                    'if0': ['1.2.3.1']
+                }
+            })
+
+            nfs_spec = NFSServiceSpec(service_id="foo", placement=PlacementSpec(hosts=['test']),
+                                      monitoring_ip_addrs={'test': '1.2.3.1'})
+            with with_service(cephadm_module, nfs_spec) as _:
+                nfs_generated_conf, _ = service_registry.get_service('nfs').generate_config(
+                    CephadmDaemonDeploySpec(host='test', daemon_id='foo.test.0.0', service_name=nfs_spec.service_name()))
+                ganesha_conf = nfs_generated_conf['files']['ganesha.conf']
+                assert "Monitoring_Addr = 1.2.3.1" in ganesha_conf
+                assert "Monitoring_Port = 9587" in ganesha_conf
+
+            nfs_spec = NFSServiceSpec(service_id="foo", placement=PlacementSpec(hosts=['test']),
+                                      monitoring_networks=['1.2.3.0/24'])
+            with with_service(cephadm_module, nfs_spec) as _:
+                nfs_generated_conf, _ = service_registry.get_service('nfs').generate_config(
+                    CephadmDaemonDeploySpec(host='test', daemon_id='foo.test.0.0', service_name=nfs_spec.service_name()))
+                ganesha_conf = nfs_generated_conf['files']['ganesha.conf']
+                assert "Monitoring_Addr = 1.2.3.1" in ganesha_conf
+
+    @patch("cephadm.serve.CephadmServe._run_cephadm")
+    @patch("cephadm.services.nfs.NFSService.fence_old_ranks", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.run_grace_tool", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.purge", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.create_rados_config_obj", MagicMock())
+    def test_nfs_config_monitoring_loopback_ip(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'host1', addr='1.2.3.7'):
+            # Note: We don't add loopback addresses to host networks cache
+            cephadm_module.cache.update_host_networks('host1', {
+                '1.2.3.0/24': {
+                    'if0': ['1.2.3.1']
+                }
+            })
+
+            # Test with a loopback monitoring IP
+            nfs_spec = NFSServiceSpec(service_id="foo", placement=PlacementSpec(hosts=['host1']),
+                                      monitoring_ip_addrs={'host1': '127.0.0.50'})
+            with with_service(cephadm_module, nfs_spec) as _:
+                nfs_generated_conf, _ = service_registry.get_service('nfs').generate_config(
+                    CephadmDaemonDeploySpec(host='host1', daemon_id='foo.host1.0.0', service_name=nfs_spec.service_name()))
+                ganesha_conf = nfs_generated_conf['files']['ganesha.conf']
+                # Loopback IP should be accepted even though it's not in host network cache
+                assert "Monitoring_Addr = 127.0.0.50" in ganesha_conf
+                assert "Monitoring_Port = 9587" in ganesha_conf
+
+            # Test with non-loopback IP that's not in host networks (should be ignored)
+            nfs_spec = NFSServiceSpec(service_id="foo", placement=PlacementSpec(hosts=['host1']),
+                                      monitoring_ip_addrs={'host1': '192.168.9.9'})
+            with with_service(cephadm_module, nfs_spec) as _:
+                nfs_generated_conf, _ = service_registry.get_service('nfs').generate_config(
+                    CephadmDaemonDeploySpec(host='host1', daemon_id='foo.host1.0.0', service_name=nfs_spec.service_name()))
+                ganesha_conf = nfs_generated_conf['files']['ganesha.conf']
+                # Non-loopback IP not in host networks should not be in config
+                assert "Monitoring_Addr = 192.168.9.9" not in ganesha_conf
+
+            # Test with invalid IP (should be ignored)
+            nfs_spec = NFSServiceSpec(service_id="foo", placement=PlacementSpec(hosts=['host1']),
+                                      monitoring_ip_addrs={'host1': 'not-an-ip'})
+            with with_service(cephadm_module, nfs_spec) as _:
+                nfs_generated_conf, _ = service_registry.get_service('nfs').generate_config(
+                    CephadmDaemonDeploySpec(host='host1', daemon_id='foo.host1.0.0', service_name=nfs_spec.service_name()))
+                ganesha_conf = nfs_generated_conf['files']['ganesha.conf']
+                # Invalid IP should not be in config
+                assert "Monitoring_Addr = not-an-ip" not in ganesha_conf
+
+    @patch("cephadm.serve.CephadmServe._run_cephadm")
+    @patch("cephadm.services.nfs.NFSService.fence_old_ranks", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.run_grace_tool", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.purge", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.create_rados_config_obj", MagicMock())
+    def test_nfs_config_bind_addr(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'host1', addr='1.2.3.7'):
+            cephadm_module.cache.update_host_networks('host1', {
+                '1.2.3.0/24': {
+                    'if0': ['1.2.3.7']
+                }
+            })
+
+            nfs_spec = NFSServiceSpec(service_id="foo", placement=PlacementSpec(hosts=['host1']),
+                                      ip_addrs={'host1': '1.2.3.7'})
+            with with_service(cephadm_module, nfs_spec, status_running=True) as _:
+                dds = wait(cephadm_module, cephadm_module.list_daemons())
+                daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(dds[0])
+                nfs_generated_conf, _ = service_registry.get_service('nfs').generate_config(daemon_spec)
+                ganesha_conf = nfs_generated_conf['files']['ganesha.conf']
+                assert "Bind_addr = 1.2.3.7" in ganesha_conf
+
+        with with_host(cephadm_module, 'host1', addr='1.2.3.7'):
+            cephadm_module.cache.update_host_networks('host1', {
+                '1.2.3.0/24': {
+                    'if0': ['1.2.3.7']
+                }
+            })
+            nfs_spec = NFSServiceSpec(service_id="foo", placement=PlacementSpec(hosts=['host1']),
+                                      networks=['1.2.3.0/24'])
+            with with_service(cephadm_module, nfs_spec, status_running=True) as _:
+                dds = wait(cephadm_module, cephadm_module.list_daemons())
+                daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(dds[0])
+                nfs_generated_conf, _ = service_registry.get_service('nfs').generate_config(daemon_spec)
+                ganesha_conf = nfs_generated_conf['files']['ganesha.conf']
+                assert "Bind_addr = 1.2.3.7" in ganesha_conf
+
+    @patch("cephadm.serve.CephadmServe._run_cephadm")
+    def test_ingress_without_haproxy_stats(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test', addr='1.2.3.7'):
+            cephadm_module.cache.update_host_networks('test', {
+                '1.2.3.0/24': {
+                    'if0': [
+                        '1.2.3.4',  # simulate already assigned VIP
+                        '1.2.3.1',  # simulate interface IP
+                    ]
+                }
+            })
+
+            # the ingress backend
+            s = RGWSpec(service_id="foo", placement=PlacementSpec(count=1),
+                        rgw_frontend_type='beast')
+
+            ispec = IngressSpec(service_type='ingress',
+                                service_id='test',
+                                backend_service='rgw.foo',
+                                frontend_port=8089,
+                                monitor_port=8999,
+                                monitor_user='admin',
+                                monitor_password='12345',
+                                keepalived_password='12345',
+                                virtual_interface_networks=['1.2.3.0/24'],
+                                virtual_ip="1.2.3.4/32")
+            with with_service(cephadm_module, s) as _, with_service(cephadm_module, ispec) as _:
+                # generate the haproxy conf based on the specified spec
+                haproxy_generated_conf = service_registry.get_service('ingress').haproxy_generate_config(
+                    CephadmDaemonDeploySpec(host='test', daemon_id='ingress', service_name=ispec.service_name()))
+
+                haproxy_expected_conf = {
+                    'files':
+                        {
+                            'haproxy.cfg':
+                                '# This file is generated by cephadm.'
+                                '\nglobal\n    log         '
+                                '127.0.0.1 local2\n    '
+                                'chroot      /var/lib/haproxy\n    '
+                                'pidfile     /var/lib/haproxy/haproxy.pid\n    '
+                                'maxconn     8000\n    '
+                                'daemon\n    '
+                                'stats socket /var/lib/haproxy/stats\n'
+                                '\ndefaults\n    '
+                                'mode                    http\n    '
+                                'log                     global\n    '
+                                'option                  httplog\n    '
+                                'option                  dontlognull\n    '
+                                'option http-server-close\n    '
+                                'option forwardfor       except 127.0.0.0/8\n    '
+                                'option                  redispatch\n    '
+                                'retries                 3\n    '
+                                'timeout queue           20s\n    '
+                                'timeout connect         5s\n    '
+                                'timeout http-request    1s\n    '
+                                'timeout http-keep-alive 5s\n    '
+                                'timeout client          30s\n    '
+                                'timeout server          30s\n    '
+                                'timeout check           5s\n    '
+                                'maxconn                 8000\n'
+                                '\nfrontend stats\n'
+                                '    mode http\n'
+                                '    bind 1.2.3.4:8999\n'
+                                '    bind 1.2.3.7:8999\n'
+                                '    monitor-uri /health\n'
+                                '\nfrontend frontend\n    '
+                                'bind 1.2.3.4:8089\n    '
+                                'default_backend backend\n\n'
+                                'backend backend\n    '
+                                'option forwardfor\n    '
+                                'balance static-rr\n    '
+                                'option httpchk HEAD / HTTP/1.0\n    '
+                                'server '
+                                + haproxy_generated_conf[1][0] + ' 1.2.3.7:80 check weight 100 inter 2s\n'
+                        }
+                }
+                gen_config_lines = [line.rstrip() for line in haproxy_generated_conf[0]['files']['haproxy.cfg'].splitlines()]
+                exp_config_lines = [line.rstrip() for line in haproxy_expected_conf['files']['haproxy.cfg'].splitlines()]
+                assert gen_config_lines == exp_config_lines
+
+    @patch("cephadm.serve.CephadmServe._run_cephadm")
+    def test_ingress_haproxy_ssl(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test', addr='1.2.3.7'):
+            cephadm_module.cache.update_host_networks('test', {
+                '1.2.3.0/24': {
+                    'if0': [
+                        '1.2.3.4',  # simulate already assigned VIP
+                        '1.2.3.1',  # simulate interface IP
+                    ]
+                }
+            })
+
+            # the ingress backend
+            s = RGWSpec(service_id="foo", placement=PlacementSpec(count=1),
+                        rgw_frontend_type='beast')
+
+            ispec = IngressSpec(service_type='ingress',
+                                service_id='test',
+                                backend_service='rgw.foo',
+                                frontend_port=8089,
+                                monitor_port=8999,
+                                monitor_user='admin',
+                                monitor_password='12345',
+                                keepalived_password='12345',
+                                virtual_interface_networks=['1.2.3.0/24'],
+                                virtual_ip="1.2.3.4/32",
+                                ssl=True,
+                                enable_stats=True,
+                                monitor_ssl=True)
+            with with_service(cephadm_module, s) as _, with_service(cephadm_module, ispec) as _:
+                # generate the haproxy conf based on the specified spec
+                haproxy_generated_conf = service_registry.get_service('ingress').haproxy_generate_config(
+                    CephadmDaemonDeploySpec(host='test', daemon_id='ingress', service_name=ispec.service_name()))
+
+                haproxy_expected_conf = {
+                    'files':
+                        {
+                            'haproxy.cfg':
+                                '# This file is generated by cephadm.'
+                                '\nglobal\n    log         '
+                                '127.0.0.1 local2\n    '
+                                'chroot      /var/lib/haproxy\n    '
+                                'pidfile     /var/lib/haproxy/haproxy.pid\n    '
+                                'maxconn     8000\n    '
+                                'daemon\n    '
+                                'stats socket /var/lib/haproxy/stats\n'
+                                '\ndefaults\n    '
+                                'mode                    http\n    '
+                                'log                     global\n    '
+                                'option                  httplog\n    '
+                                'option                  dontlognull\n    '
+                                'option http-server-close\n    '
+                                'option forwardfor       except 127.0.0.0/8\n    '
+                                'option                  redispatch\n    '
+                                'retries                 3\n    '
+                                'timeout queue           20s\n    '
+                                'timeout connect         5s\n    '
+                                'timeout http-request    1s\n    '
+                                'timeout http-keep-alive 5s\n    '
+                                'timeout client          30s\n    '
+                                'timeout server          30s\n    '
+                                'timeout check           5s\n    '
+                                'maxconn                 8000\n'
+                                '\nfrontend stats\n    '
+                                'mode http\n    '
+                                'bind 1.2.3.4:8999 ssl crt /var/lib/haproxy/haproxy.pem\n    '
+                                'bind 1.2.3.7:8999 ssl crt /var/lib/haproxy/haproxy.pem\n    '
+                                'stats enable\n    '
+                                'stats uri /stats\n    '
+                                'stats refresh 10s\n    '
+                                'stats auth admin:12345\n    '
+                                'http-request use-service prometheus-exporter if { path /metrics }\n    '
+                                'monitor-uri /health\n'
+                                '\nfrontend frontend\n    '
+                                'bind 1.2.3.4:8089 ssl crt /var/lib/haproxy/haproxy.pem\n    '
+                                'default_backend backend\n\n'
+                                'backend backend\n    '
+                                'option forwardfor\n    '
+                                'balance static-rr\n    '
+                                'option httpchk HEAD / HTTP/1.0\n    '
+                                'server '
+                                + haproxy_generated_conf[1][0] + ' 1.2.3.7:80 check weight 100 inter 2s\n'
+                        }
+                }
+                gen_config_lines = [line.rstrip() for line in haproxy_generated_conf[0]['files']['haproxy.cfg'].splitlines()]
+                exp_config_lines = [line.rstrip() for line in haproxy_expected_conf['files']['haproxy.cfg'].splitlines()]
+                assert gen_config_lines == exp_config_lines
+
+    @patch("cephadm.serve.CephadmServe._run_cephadm")
+    def test_ingress_haproxy_with_different_stats_cert(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test', addr='1.2.3.7'):
+            cephadm_module.cache.update_host_networks('test', {
+                '1.2.3.0/24': {
+                    'if0': [
+                        '1.2.3.4',  # simulate already assigned VIP
+                        '1.2.3.1',  # simulate interface IP
+                    ]
+                }
+            })
+
+            # the ingress backend
+            s = RGWSpec(service_id="foo", placement=PlacementSpec(count=1),
+                        rgw_frontend_type='beast')
+
+            ispec = IngressSpec(service_type='ingress',
+                                service_id='test',
+                                backend_service='rgw.foo',
+                                frontend_port=8089,
+                                monitor_port=8999,
+                                monitor_user='admin',
+                                monitor_password='12345',
+                                keepalived_password='12345',
+                                virtual_interface_networks=['1.2.3.0/24'],
+                                virtual_ip="1.2.3.4/32",
+                                ssl=True,
+                                enable_stats=True,
+                                monitor_ssl=True,
+                                monitor_cert_source='cephadm-signed'
+                                )
+            with with_service(cephadm_module, s) as _, with_service(cephadm_module, ispec) as _:
+                # generate the haproxy conf based on the specified spec
+                haproxy_generated_conf = service_registry.get_service('ingress').haproxy_generate_config(
+                    CephadmDaemonDeploySpec(host='test', daemon_id='ingress', service_name=ispec.service_name()))
+
+                haproxy_expected_conf = {
+                    'files':
+                        {
+                            'haproxy.cfg':
+                                '# This file is generated by cephadm.'
+                                '\nglobal\n    log         '
+                                '127.0.0.1 local2\n    '
+                                'chroot      /var/lib/haproxy\n    '
+                                'pidfile     /var/lib/haproxy/haproxy.pid\n    '
+                                'maxconn     8000\n    '
+                                'daemon\n    '
+                                'stats socket /var/lib/haproxy/stats\n'
+                                '\ndefaults\n    '
+                                'mode                    http\n    '
+                                'log                     global\n    '
+                                'option                  httplog\n    '
+                                'option                  dontlognull\n    '
+                                'option http-server-close\n    '
+                                'option forwardfor       except 127.0.0.0/8\n    '
+                                'option                  redispatch\n    '
+                                'retries                 3\n    '
+                                'timeout queue           20s\n    '
+                                'timeout connect         5s\n    '
+                                'timeout http-request    1s\n    '
+                                'timeout http-keep-alive 5s\n    '
+                                'timeout client          30s\n    '
+                                'timeout server          30s\n    '
+                                'timeout check           5s\n    '
+                                'maxconn                 8000\n'
+                                '\nfrontend stats\n    '
+                                'mode http\n    '
+                                'bind 1.2.3.4:8999 ssl crt /var/lib/haproxy/stats_haproxy.pem\n    '
+                                'bind 1.2.3.7:8999 ssl crt /var/lib/haproxy/stats_haproxy.pem\n    '
+                                'stats enable\n    '
+                                'stats uri /stats\n    '
+                                'stats refresh 10s\n    '
+                                'stats auth admin:12345\n    '
+                                'http-request use-service prometheus-exporter if { path /metrics }\n    '
+                                'monitor-uri /health\n'
+                                '\nfrontend frontend\n    '
+                                'bind 1.2.3.4:8089 ssl crt /var/lib/haproxy/haproxy.pem\n    '
+                                'default_backend backend\n\n'
+                                'backend backend\n    '
+                                'option forwardfor\n    '
+                                'balance static-rr\n    '
+                                'option httpchk HEAD / HTTP/1.0\n    '
+                                'server '
+                                + haproxy_generated_conf[1][0] + ' 1.2.3.7:80 check weight 100 inter 2s\n'
+                        }
+                }
+                gen_config_lines = [line.rstrip() for line in haproxy_generated_conf[0]['files']['haproxy.cfg'].splitlines()]
+                exp_config_lines = [line.rstrip() for line in haproxy_expected_conf['files']['haproxy.cfg'].splitlines()]
+                assert gen_config_lines == exp_config_lines
+
+    @patch("cephadm.serve.CephadmServe._run_cephadm")
+    def test_ingress_haproxy_monitor_ip(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test', addr='1.2.3.7'):
+            cephadm_module.cache.update_host_networks('test', {
+                '1.2.3.0/24': {
+                    'if0': [
+                        '1.2.3.4',  # simulate already assigned VIP
+                        '1.2.3.1',  # simulate interface IP
+                    ]
+                }
+            })
+
+            # the ingress backend
+            s = RGWSpec(service_id="foo", placement=PlacementSpec(count=1),
+                        rgw_frontend_type='beast')
+
+            ispec = IngressSpec(service_type='ingress',
+                                service_id='test',
+                                backend_service='rgw.foo',
+                                frontend_port=8089,
+                                monitor_port=8999,
+                                monitor_user='admin',
+                                monitor_password='12345',
+                                keepalived_password='12345',
+                                virtual_interface_networks=['1.2.3.0/24'],
+                                virtual_ip="1.2.3.4/32",
+                                enable_stats=True,
+                                monitor_ip_addrs={'test': '1.2.3.1'})
+            with with_service(cephadm_module, s) as _, with_service(cephadm_module, ispec) as _:
+                # generate the haproxy conf based on the specified spec
+                haproxy_generated_conf = service_registry.get_service('ingress').haproxy_generate_config(
+                    CephadmDaemonDeploySpec(host='test', daemon_id='ingress', service_name=ispec.service_name()))
+
+                haproxy_expected_conf = {
+                    'files':
+                        {
+                            'haproxy.cfg':
+                                '# This file is generated by cephadm.'
+                                '\nglobal\n    log         '
+                                '127.0.0.1 local2\n    '
+                                'chroot      /var/lib/haproxy\n    '
+                                'pidfile     /var/lib/haproxy/haproxy.pid\n    '
+                                'maxconn     8000\n    '
+                                'daemon\n    '
+                                'stats socket /var/lib/haproxy/stats\n'
+                                '\ndefaults\n    '
+                                'mode                    http\n    '
+                                'log                     global\n    '
+                                'option                  httplog\n    '
+                                'option                  dontlognull\n    '
+                                'option http-server-close\n    '
+                                'option forwardfor       except 127.0.0.0/8\n    '
+                                'option                  redispatch\n    '
+                                'retries                 3\n    '
+                                'timeout queue           20s\n    '
+                                'timeout connect         5s\n    '
+                                'timeout http-request    1s\n    '
+                                'timeout http-keep-alive 5s\n    '
+                                'timeout client          30s\n    '
+                                'timeout server          30s\n    '
+                                'timeout check           5s\n    '
+                                'maxconn                 8000\n'
+                                '\nfrontend stats\n    '
+                                'mode http\n    '
+                                'bind 1.2.3.1:8999\n    '
+                                'stats enable\n    '
+                                'stats uri /stats\n    '
+                                'stats refresh 10s\n    '
+                                'stats auth admin:12345\n    '
+                                'http-request use-service prometheus-exporter if { path /metrics }\n    '
+                                'monitor-uri /health\n'
+                                '\nfrontend frontend\n    '
+                                'bind 1.2.3.4:8089\n    '
+                                'default_backend backend\n\n'
+                                'backend backend\n    '
+                                'option forwardfor\n    '
+                                'balance static-rr\n    '
+                                'option httpchk HEAD / HTTP/1.0\n    '
+                                'server '
+                                + haproxy_generated_conf[1][0] + ' 1.2.3.7:80 check weight 100 inter 2s\n'
+                        }
+                }
+
+                gen_config_lines = [line.rstrip() for line in haproxy_generated_conf[0]['files']['haproxy.cfg'].splitlines()]
+                exp_config_lines = [line.rstrip() for line in haproxy_expected_conf['files']['haproxy.cfg'].splitlines()]
+
+                assert gen_config_lines == exp_config_lines
+
+    @patch("cephadm.serve.CephadmServe._run_cephadm")
+    @patch("cephadm.services.nfs.NFSService.fence_old_ranks", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.run_grace_tool", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.purge", MagicMock())
+    @patch("cephadm.services.nfs.NFSService.create_rados_config_obj", MagicMock())
+    def test_nfs_tls(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test', addr='1.2.3.7'):
+            cephadm_module.cache.update_host_networks('test', {
+                '1.2.3.0/24': {
+                    'if0': ['1.2.3.1']
+                }
+            })
+
+            nfs_spec = NFSServiceSpec(service_id="foo", placement=PlacementSpec(hosts=['test']),
+                                      ssl=True, ssl_cert=ceph_generated_cert, ssl_key=ceph_generated_key,
+                                      ssl_ca_cert=cephadm_root_ca, certificate_source='inline', tls_ktls=True,
+                                      tls_debug=True, tls_min_version='TLSv1.3',
+                                      tls_ciphers='ECDHE-ECDSA-AES256')
+            with with_service(cephadm_module, nfs_spec) as _:
+                nfs_generated_conf, _ = service_registry.get_service('nfs').generate_config(
+                    CephadmDaemonDeploySpec(host='test', daemon_id='foo.test.0.0', service_name=nfs_spec.service_name()))
+                ganesha_conf = nfs_generated_conf['files']['ganesha.conf']
+                expected_tls_block = (
+                    'TLS_CONFIG{\n'
+                    '        Enable_TLS = True;\n'
+                    '        TLS_Cert_File = /etc/ganesha/tls/tls_cert.pem;\n'
+                    '        TLS_Key_File = /etc/ganesha/tls/tls_key.pem;\n'
+                    '        TLS_CA_File = /etc/ganesha/tls/tls_ca_cert.pem;\n'
+                    '        TLS_Ciphers = "ECDHE-ECDSA-AES256";\n'
+                    '        TLS_Min_Version = "TLSv1.3";\n'
+                    '        Enable_KTLS = True;\n'
+                    '        Enable_debug = True;\n'
+                    '}\n'
+                )
+                assert expected_tls_block in ganesha_conf
+
+    def test_ingress_without_haproxy_stats(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test', addr='1.2.3.7'):
+            cephadm_module.cache.update_host_networks('test', {
+                '1.2.3.0/24': {
+                    'if0': [
+                        '1.2.3.4',  # simulate already assigned VIP
+                        '1.2.3.1',  # simulate interface IP
+                    ]
+                }
+            })
+
+            # the ingress backend
+            s = RGWSpec(service_id="foo", placement=PlacementSpec(count=1),
+                        rgw_frontend_type='beast')
+
+            ispec = IngressSpec(service_type='ingress',
+                                service_id='test',
+                                backend_service='rgw.foo',
+                                frontend_port=8089,
+                                monitor_port=8999,
+                                monitor_user='admin',
+                                monitor_password='12345',
+                                keepalived_password='12345',
+                                virtual_interface_networks=['1.2.3.0/24'],
+                                virtual_ip="1.2.3.4/32")
+            with with_service(cephadm_module, s) as _, with_service(cephadm_module, ispec) as _:
+                # generate the haproxy conf based on the specified spec
+                haproxy_generated_conf = service_registry.get_service('ingress').haproxy_generate_config(
+                    CephadmDaemonDeploySpec(host='test', daemon_id='ingress', service_name=ispec.service_name())
+                )
+
+                haproxy_expected_conf = {
+                    'files':
+                        {
+                            'haproxy.cfg':
+                                '# This file is generated by cephadm.'
+                                '\nglobal\n    log         '
+                                '127.0.0.1 local2\n    '
+                                'chroot      /var/lib/haproxy\n    '
+                                'pidfile     /var/lib/haproxy/haproxy.pid\n    '
+                                'maxconn     8000\n    '
+                                'daemon\n    '
+                                'stats socket /var/lib/haproxy/stats\n'
+                                '\ndefaults\n    '
+                                'mode                    http\n    '
+                                'log                     global\n    '
+                                'option                  httplog\n    '
+                                'option                  dontlognull\n    '
+                                'option http-server-close\n    '
+                                'option forwardfor       except 127.0.0.0/8\n    '
+                                'option                  redispatch\n    '
+                                'retries                 3\n    '
+                                'timeout queue           20s\n    '
+                                'timeout connect         5s\n    '
+                                'timeout http-request    1s\n    '
+                                'timeout http-keep-alive 5s\n    '
+                                'timeout client          30s\n    '
+                                'timeout server          30s\n    '
+                                'timeout check           5s\n    '
+                                'maxconn                 8000\n'
+                                '\nfrontend frontend\n    '
+                                'bind 1.2.3.4:8089\n    '
+                                'default_backend backend\n\n'
+                                'backend backend\n    '
+                                'option forwardfor\n    '
+                                'balance static-rr\n    '
+                                'option httpchk HEAD / HTTP/1.0\n    '
+                                'server '
+                                + haproxy_generated_conf[1][0] + ' 1.2.3.7:80 check weight 100 inter 2s\n'
+                        }
+                }
+                gen_config_lines = [line.rstrip() for line in haproxy_generated_conf[0]['files']['haproxy.cfg'].splitlines()]
+                exp_config_lines = [line.rstrip() for line in haproxy_expected_conf['files']['haproxy.cfg'].splitlines()]
+                assert gen_config_lines == exp_config_lines
+
+    @patch("cephadm.serve.CephadmServe._run_cephadm")
+    def test_ingress_haproxy_ssl(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test', addr='1.2.3.7'):
+            cephadm_module.cache.update_host_networks('test', {
+                '1.2.3.0/24': {
+                    'if0': [
+                        '1.2.3.4',  # simulate already assigned VIP
+                        '1.2.3.1',  # simulate interface IP
+                    ]
+                }
+            })
+
+            # the ingress backend
+            s = RGWSpec(service_id="foo", placement=PlacementSpec(count=1),
+                        rgw_frontend_type='beast')
+
+            ispec = IngressSpec(service_type='ingress',
+                                service_id='test',
+                                backend_service='rgw.foo',
+                                frontend_port=8089,
+                                monitor_port=8999,
+                                monitor_user='admin',
+                                monitor_password='12345',
+                                keepalived_password='12345',
+                                virtual_interface_networks=['1.2.3.0/24'],
+                                virtual_ip="1.2.3.4/32",
+                                ssl=True,
+                                enable_stats=True,
+                                monitor_ssl=True)
+            with with_service(cephadm_module, s) as _, with_service(cephadm_module, ispec) as _:
+                # generate the haproxy conf based on the specified spec
+                haproxy_generated_conf = service_registry.get_service('ingress').haproxy_generate_config(
+                    CephadmDaemonDeploySpec(host='test', daemon_id='ingress', service_name=ispec.service_name())
+                )
+
+                haproxy_expected_conf = {
+                    'files':
+                        {
+                            'haproxy.cfg':
+                                '# This file is generated by cephadm.'
+                                '\nglobal\n    log         '
+                                '127.0.0.1 local2\n    '
+                                'chroot      /var/lib/haproxy\n    '
+                                'pidfile     /var/lib/haproxy/haproxy.pid\n    '
+                                'maxconn     8000\n    '
+                                'daemon\n    '
+                                'stats socket /var/lib/haproxy/stats\n'
+                                '\ndefaults\n    '
+                                'mode                    http\n    '
+                                'log                     global\n    '
+                                'option                  httplog\n    '
+                                'option                  dontlognull\n    '
+                                'option http-server-close\n    '
+                                'option forwardfor       except 127.0.0.0/8\n    '
+                                'option                  redispatch\n    '
+                                'retries                 3\n    '
+                                'timeout queue           20s\n    '
+                                'timeout connect         5s\n    '
+                                'timeout http-request    1s\n    '
+                                'timeout http-keep-alive 5s\n    '
+                                'timeout client          30s\n    '
+                                'timeout server          30s\n    '
+                                'timeout check           5s\n    '
+                                'maxconn                 8000\n'
+                                '\nfrontend stats\n    '
+                                'mode http\n    '
+                                'bind 1.2.3.4:8999 ssl crt /var/lib/haproxy/haproxy.pem\n    '
+                                'bind 1.2.3.7:8999 ssl crt /var/lib/haproxy/haproxy.pem\n    '
+                                'stats enable\n    '
+                                'stats uri /stats\n    '
+                                'stats refresh 10s\n    '
+                                'stats auth admin:12345\n    '
+                                'http-request use-service prometheus-exporter if { path /metrics }\n    '
+                                'monitor-uri /health\n'
+                                '\nfrontend frontend\n    '
+                                'bind 1.2.3.4:8089 ssl crt /var/lib/haproxy/haproxy.pem\n    '
+                                'default_backend backend\n\n'
+                                'backend backend\n    '
+                                'option forwardfor\n    '
+                                'balance static-rr\n    '
+                                'option httpchk HEAD / HTTP/1.0\n    '
+                                'server '
+                                + haproxy_generated_conf[1][0] + ' 1.2.3.7:80 check weight 100 inter 2s\n'
+                        }
+                }
+                gen_config_lines = [line.rstrip() for line in haproxy_generated_conf[0]['files']['haproxy.cfg'].splitlines()]
+                exp_config_lines = [line.rstrip() for line in haproxy_expected_conf['files']['haproxy.cfg'].splitlines()]
+                assert gen_config_lines == exp_config_lines
+
+    @patch("cephadm.serve.CephadmServe._run_cephadm")
+    def test_ingress_haproxy_with_different_stats_cert(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test', addr='1.2.3.7'):
+            cephadm_module.cache.update_host_networks('test', {
+                '1.2.3.0/24': {
+                    'if0': [
+                        '1.2.3.4',  # simulate already assigned VIP
+                        '1.2.3.1',  # simulate interface IP
+                    ]
+                }
+            })
+
+            # the ingress backend
+            s = RGWSpec(service_id="foo", placement=PlacementSpec(count=1),
+                        rgw_frontend_type='beast')
+
+            ispec = IngressSpec(service_type='ingress',
+                                service_id='test',
+                                backend_service='rgw.foo',
+                                frontend_port=8089,
+                                monitor_port=8999,
+                                monitor_user='admin',
+                                monitor_password='12345',
+                                keepalived_password='12345',
+                                virtual_interface_networks=['1.2.3.0/24'],
+                                virtual_ip="1.2.3.4/32",
+                                ssl=True,
+                                enable_stats=True,
+                                monitor_ssl=True,
+                                monitor_cert_source='cephadm-signed')
+            with with_service(cephadm_module, s) as _, with_service(cephadm_module, ispec) as _:
+                # generate the haproxy conf based on the specified spec
+                haproxy_generated_conf = service_registry.get_service('ingress').haproxy_generate_config(
+                    CephadmDaemonDeploySpec(host='test', daemon_id='ingress', service_name=ispec.service_name())
+                )
+
+                haproxy_expected_conf = {
+                    'files':
+                        {
+                            'haproxy.cfg':
+                                '# This file is generated by cephadm.'
+                                '\nglobal\n    log         '
+                                '127.0.0.1 local2\n    '
+                                'chroot      /var/lib/haproxy\n    '
+                                'pidfile     /var/lib/haproxy/haproxy.pid\n    '
+                                'maxconn     8000\n    '
+                                'daemon\n    '
+                                'stats socket /var/lib/haproxy/stats\n'
+                                '\ndefaults\n    '
+                                'mode                    http\n    '
+                                'log                     global\n    '
+                                'option                  httplog\n    '
+                                'option                  dontlognull\n    '
+                                'option http-server-close\n    '
+                                'option forwardfor       except 127.0.0.0/8\n    '
+                                'option                  redispatch\n    '
+                                'retries                 3\n    '
+                                'timeout queue           20s\n    '
+                                'timeout connect         5s\n    '
+                                'timeout http-request    1s\n    '
+                                'timeout http-keep-alive 5s\n    '
+                                'timeout client          30s\n    '
+                                'timeout server          30s\n    '
+                                'timeout check           5s\n    '
+                                'maxconn                 8000\n'
+                                '\nfrontend stats\n    '
+                                'mode http\n    '
+                                'bind 1.2.3.4:8999 ssl crt /var/lib/haproxy/stats_haproxy.pem\n    '
+                                'bind 1.2.3.7:8999 ssl crt /var/lib/haproxy/stats_haproxy.pem\n    '
+                                'stats enable\n    '
+                                'stats uri /stats\n    '
+                                'stats refresh 10s\n    '
+                                'stats auth admin:12345\n    '
+                                'http-request use-service prometheus-exporter if { path /metrics }\n    '
+                                'monitor-uri /health\n'
+                                '\nfrontend frontend\n    '
+                                'bind 1.2.3.4:8089 ssl crt /var/lib/haproxy/haproxy.pem\n    '
+                                'default_backend backend\n\n'
+                                'backend backend\n    '
+                                'option forwardfor\n    '
+                                'balance static-rr\n    '
+                                'option httpchk HEAD / HTTP/1.0\n    '
+                                'server '
+                                + haproxy_generated_conf[1][0] + ' 1.2.3.7:80 check weight 100 inter 2s\n'
+                        }
+                }
+                gen_config_lines = [line.rstrip() for line in haproxy_generated_conf[0]['files']['haproxy.cfg'].splitlines()]
+                exp_config_lines = [line.rstrip() for line in haproxy_expected_conf['files']['haproxy.cfg'].splitlines()]
+                assert gen_config_lines == exp_config_lines
+
+    @patch("cephadm.serve.CephadmServe._run_cephadm")
+    def test_ingress_haproxy_monitor_ip(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test', addr='1.2.3.7'):
+            cephadm_module.cache.update_host_networks('test', {
+                '1.2.3.0/24': {
+                    'if0': [
+                        '1.2.3.4',  # simulate already assigned VIP
+                        '1.2.3.1',  # simulate interface IP
+                    ]
+                }
+            })
+
+            # the ingress backend
+            s = RGWSpec(service_id="foo", placement=PlacementSpec(count=1),
+                        rgw_frontend_type='beast')
+
+            ispec = IngressSpec(service_type='ingress',
+                                service_id='test',
+                                backend_service='rgw.foo',
+                                frontend_port=8089,
+                                monitor_port=8999,
+                                monitor_user='admin',
+                                monitor_password='12345',
+                                keepalived_password='12345',
+                                virtual_interface_networks=['1.2.3.0/24'],
+                                virtual_ip="1.2.3.4/32",
+                                enable_stats=True,
+                                monitor_ip_addrs={'test': '1.2.3.1'})
+            with with_service(cephadm_module, s) as _, with_service(cephadm_module, ispec) as _:
+                # generate the haproxy conf based on the specified spec
+                haproxy_generated_conf = service_registry.get_service('ingress').haproxy_generate_config(
+                    CephadmDaemonDeploySpec(host='test', daemon_id='ingress', service_name=ispec.service_name())
+                )
+
+                haproxy_expected_conf = {
+                    'files':
+                        {
+                            'haproxy.cfg':
+                                '# This file is generated by cephadm.'
+                                '\nglobal\n    log         '
+                                '127.0.0.1 local2\n    '
+                                'chroot      /var/lib/haproxy\n    '
+                                'pidfile     /var/lib/haproxy/haproxy.pid\n    '
+                                'maxconn     8000\n    '
+                                'daemon\n    '
+                                'stats socket /var/lib/haproxy/stats\n'
+                                '\ndefaults\n    '
+                                'mode                    http\n    '
+                                'log                     global\n    '
+                                'option                  httplog\n    '
+                                'option                  dontlognull\n    '
+                                'option http-server-close\n    '
+                                'option forwardfor       except 127.0.0.0/8\n    '
+                                'option                  redispatch\n    '
+                                'retries                 3\n    '
+                                'timeout queue           20s\n    '
+                                'timeout connect         5s\n    '
+                                'timeout http-request    1s\n    '
+                                'timeout http-keep-alive 5s\n    '
+                                'timeout client          30s\n    '
+                                'timeout server          30s\n    '
+                                'timeout check           5s\n    '
+                                'maxconn                 8000\n'
+                                '\nfrontend stats\n    '
+                                'mode http\n    '
+                                'bind 1.2.3.1:8999\n    '
+                                'stats enable\n    '
+                                'stats uri /stats\n    '
+                                'stats refresh 10s\n    '
+                                'stats auth admin:12345\n    '
+                                'http-request use-service prometheus-exporter if { path /metrics }\n    '
+                                'monitor-uri /health\n'
+                                '\nfrontend frontend\n    '
+                                'bind 1.2.3.4:8089\n    '
+                                'default_backend backend\n\n'
+                                'backend backend\n    '
+                                'option forwardfor\n    '
+                                'balance static-rr\n    '
+                                'option httpchk HEAD / HTTP/1.0\n    '
+                                'server '
+                                + haproxy_generated_conf[1][0] + ' 1.2.3.7:80 check weight 100 inter 2s\n'
+                        }
+                }
+
+                gen_config_lines = [line.rstrip() for line in haproxy_generated_conf[0]['files']['haproxy.cfg'].splitlines()]
+                exp_config_lines = [line.rstrip() for line in haproxy_expected_conf['files']['haproxy.cfg'].splitlines()]
+
+                assert gen_config_lines == exp_config_lines
 
 
 class TestCephFsMirror:

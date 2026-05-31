@@ -59,6 +59,13 @@ class FakeInventory:
         return '1.2.3.4'
 
 
+class FakeIngressServiceSpec:
+    def __init__(self, port):
+        self.monitor_port = port
+        self.monitor_ip_addrs = {}
+        self.monitor_networks = {}
+
+
 class FakeServiceSpec:
     def __init__(self, port, service_type: Optional[str] = ''):
         self.monitor_port = port
