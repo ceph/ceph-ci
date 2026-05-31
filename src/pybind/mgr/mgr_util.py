@@ -440,6 +440,28 @@ class CephFSEarmarkResolver:
             return False
 
 
+class NvmeofMetadataPoolHelper:
+    def __init__(self, mgr: "MgrModule") -> None:
+        self.mgr = mgr
+
+    def is_module_enabled(self, module: str) -> bool:
+        mgr_map = self.mgr.get('mgr_map')
+        return (
+            module in mgr_map.get('modules', [])
+            or module in mgr_map.get('always_on_modules', {}).get(self.mgr.release_name, [])
+        )
+
+    def create_pool_if_needed(self) -> None:
+        from orchestrator import OrchestratorError
+
+        if not self.is_module_enabled('nvmeof'):
+            raise OrchestratorError(
+                'NVMe-oF support requires the nvmeof manager module to be enabled before proceeding. '
+                'Enable it with: ceph mgr module enable nvmeof'
+            )
+        self.mgr.remote('nvmeof', 'create_pool_if_not_exists')
+
+
 @contextlib.contextmanager
 def open_filesystem(fsc: CephfsClient, fs_name: str) -> Generator["cephfs.LibCephFS", None, None]:
     """

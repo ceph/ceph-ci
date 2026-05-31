@@ -22,7 +22,7 @@ from ceph.deployment.hostspec import SpecValidationError
 from ceph.deployment.utils import unwrap_ipv6
 from ceph.utils import datetime_now
 from ceph.cephadm.images import NonCephImageServiceTypes
-from mgr_util import to_pretty_timedelta, format_bytes, parse_combined_pem_file
+from mgr_util import to_pretty_timedelta, format_bytes, parse_combined_pem_file, NvmeofMetadataPoolHelper
 from mgr_module import MgrModule, HandleCommandResult, Option
 from object_format import Format
 
@@ -2150,18 +2150,6 @@ Usage:
 
         return self._apply_misc([spec], dry_run, format, no_overwrite)
 
-    def _is_module_enabled(self, module: str) -> bool:
-        mgr_map = self.get('mgr_map')
-        return (
-            module in mgr_map.get('modules', [])
-            or module in mgr_map.get('always_on_modules', []).get(self.release_name, [])
-        )
-
-    def _create_nvmeof_metadata_pool_if_needed(self) -> None:
-        if not self._is_module_enabled('nvmeof'):
-            raise OrchestratorError('nvmeof module must be enabled to use .nvmeof pool')
-        self.remote('nvmeof', 'create_pool_if_not_exists')
-
     @OrchestratorCLICommand.Write('orch apply nvmeof')
     def _apply_nvmeof(self,
                       _end_positional_: int = 0,
@@ -2181,7 +2169,8 @@ Usage:
             raise OrchestratorValidationError('unrecognized command -i; -h or --help for usage')
 
         if pool == ".nvmeof":
-            self._create_nvmeof_metadata_pool_if_needed()
+            nvmeof_pool_helper = NvmeofMetadataPoolHelper(self)
+            nvmeof_pool_helper.create_pool_if_needed()
 
         cleanpool = pool.lstrip('.')
         spec = NvmeofServiceSpec(
