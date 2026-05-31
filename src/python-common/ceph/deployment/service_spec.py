@@ -1441,6 +1441,7 @@ class NFSServiceSpec(ServiceSpec):
                  kmip_ca_cert: Optional[str] = None,
                  kmip_host_list: Optional[List[Union[str, Dict[str, Union[str, int]]]]] = None,
                  cluster_qos_config: Optional[Dict[str, Union[str, bool, int]]] = None,
+                 cluster_qos_port: Optional[int] = None,
                  ssl: bool = False,
                  ssl_cert: Optional[str] = None,
                  ssl_key: Optional[str] = None,
@@ -1482,6 +1483,7 @@ class NFSServiceSpec(ServiceSpec):
         self.kmip_key = kmip_key
         self.kmip_ca_cert = kmip_ca_cert
         self.cluster_qos_config = cluster_qos_config
+        self.cluster_qos_port = cluster_qos_port
         self.kmip_host_list: list[Dict[str, Union[str, int]]] = []
         if kmip_host_list:
             for host_obj in kmip_host_list:
@@ -1501,7 +1503,7 @@ class NFSServiceSpec(ServiceSpec):
         self.tls_min_version = tls_min_version
 
     def get_port_start(self) -> List[int]:
-        return [self.port or 2049, self.monitoring_port or 9587]
+        return [self.port or 2049, self.monitoring_port or 9587, self.cluster_qos_port or 31311]
 
     def rados_config_name(self):
         # type: () -> str
@@ -1559,8 +1561,8 @@ class NFSServiceSpec(ServiceSpec):
                 )
             if qos_type not in valid_qos_types:
                 raise SpecValidationError(
-                    f'Invalid NFS spec: "{qos_type}" is not a valid qos_type. Valid types '
-                    f'are: {"|".join(valid_qos_types)}.'
+                    f'Invalid NFS spec: "{qos_type}" is not a valid qos_type. '
+                    f'Valid types are: {"|".join(valid_qos_types)}.'
                 )
 
             # Verify bandwidth and IOPS types
