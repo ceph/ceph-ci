@@ -428,7 +428,7 @@ class HostAssignment(object):
         to_add: List[DaemonPlacement] = []
         to_remove: List[orchestrator.DaemonDescription] = []
         to_redeploy: List[orchestrator.DaemonDescription] = []
-        ranks: List[int] = list(range(len(all_candidates)))
+        ranks: List[int] = list(range(len(all_candidates if len(all_candidates) > len(candidates) else candidates)))
         others: List[DaemonPlacement] = candidates.copy()
         for dd in daemons:
             found = False
