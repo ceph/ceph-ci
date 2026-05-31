@@ -150,7 +150,7 @@ QOS {
     enable_bw_control = true;
     combined_rw_bw_control = false;
     qos_type = 3;
-    max_export_write_bw = 1000000;
+    max_export_write_bw = 2000000;
     max_export_read_bw = 2000000;
     max_client_write_bw = 3000000;
     max_client_read_bw = 4000000;
@@ -164,7 +164,7 @@ QOS_BLOCK {
     enable_qos = true;
     enable_bw_control = true;
     combined_rw_bw_control = false;
-    max_export_write_bw = 1000000;
+    max_export_write_bw = 2000000;
     max_export_read_bw = 2000000;
     max_client_write_bw = 3000000;
     max_client_read_bw = 4000000;
@@ -193,7 +193,7 @@ QOS_BLOCK {
         "max_client_read_bw": "4000000",
         "max_client_write_bw": "3000000",
         "max_export_read_bw": "2000000",
-        "max_export_write_bw": "1000000",
+        "max_export_write_bw": "2000000",
         "qos_type": "PerShare_PerClient",
         "enable_iops_control": False
     }
@@ -215,7 +215,7 @@ QOS_BLOCK {
         "max_client_read_bw": "4000000",
         "max_client_write_bw": "3000000",
         "max_export_read_bw": "2000000",
-        "max_export_write_bw": "1000000",
+        "max_export_write_bw": "2000000",
         "enable_iops_control": False
     }
 
