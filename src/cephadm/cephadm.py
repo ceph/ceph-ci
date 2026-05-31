@@ -6117,7 +6117,7 @@ def _get_parser():
         '--automatically-accept-license',
         action='store_true',
         default=False,
-        help='Do Not Enable IBM Call Home')
+        help='Accept the IBM license without an interactive prompt')
 
     parser_bootstrap.add_argument(
         '--storage-insights-tenant-id',
