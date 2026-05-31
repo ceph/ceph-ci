@@ -77,7 +77,7 @@ class CephNvmeof(ContainerDaemonForm):
         mounts[os.path.join(data_dir, 'keyring')] = '/etc/ceph/keyring:z'
         mounts[
             os.path.join(data_dir, 'ceph-nvmeof.conf')
-        ] = '/src/ceph-nvmeof.conf:z'
+        ] = '/remote-source/ceph-nvmeof/app/ceph-nvmeof.conf:z'
         mounts[os.path.join(data_dir, 'configfs')] = '/sys/kernel/config'
         mounts[log_dir] = '/var/log/ceph:z'
         if mtls_dir:
