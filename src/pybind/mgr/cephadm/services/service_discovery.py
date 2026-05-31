@@ -250,8 +250,10 @@ class Root:
         srv_entries = []
         for dd in self.mgr.cache.get_daemons_by_type('nfs'):
             assert dd.hostname is not None
-            addr = dd.ip if dd.ip else self.mgr.inventory.get_addr(dd.hostname)
-            port = NFSService.DEFAULT_EXPORTER_PORT
+            nfs = cast(NFSService, service_registry.get_service('nfs'))
+            monitoring_ip, monitoring_port = nfs.get_monitoring_details(dd.service_name(), dd.hostname)
+            addr = monitoring_ip or dd.ip or self.mgr.inventory.get_addr(dd.hostname)
+            port = monitoring_port or NFSService.DEFAULT_EXPORTER_PORT
             srv_entries.append({
                 'targets': [build_url(host=addr, port=port).lstrip('/')],
                 'labels': {'instance': dd.hostname}

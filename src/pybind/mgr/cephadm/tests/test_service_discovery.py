@@ -66,6 +66,13 @@ class FakeIngressServiceSpec:
         self.monitor_networks = {}
 
 
+class FakeNFSServiceSpec:
+    def __init__(self, port):
+        self.monitoring_port = None
+        self.monitoring_ip_addrs = None
+        self.monitoring_networks = None
+
+
 class FakeServiceSpec:
     def __init__(self, port, service_type: Optional[str] = ''):
         self.monitor_port = port
@@ -77,20 +84,25 @@ class FakeServiceSpec:
 
 
 class FakeSpecDescription:
-    def __init__(self, port):
-        self.spec = FakeServiceSpec(port)
+    def __init__(self, service, port):
+        if service == 'ingress':
+            self.spec = FakeIngressServiceSpec(port)
+        elif service == 'nfs':
+            self.spec = FakeNFSServiceSpec(port)
+        else:
+            self.spec = FakeServiceSpec(port)
 
 
 class FakeSpecStore():
     def __init__(self, mgr):
         self.mgr = mgr
-        self._specs = {'ingress': FakeSpecDescription(9049)}
+        self._specs = {'ingress': FakeSpecDescription('ingress', 9049), 'nfs': FakeSpecDescription('nfs', 9587)}
 
     def __contains__(self, name):
         return name in self._specs
 
     def __getitem__(self, name):
-        return self._specs['ingress']
+        return self._specs[name]
 
 
 class FakeMgr:
