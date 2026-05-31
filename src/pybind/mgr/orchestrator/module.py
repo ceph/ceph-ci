@@ -491,6 +491,14 @@ class OrchestratorCli(OrchestratorClientMixin, MgrModule):
     def _get_fail_fs_value(self) -> bool:
         return bool(self.get_module_option("fail_fs"))
 
+    @OrchestratorCLICommand.Write('orch sos')
+    def _sos(self, hostname: str, sos_params: str) -> HandleCommandResult:
+        """ Execute the sos command in the requested host
+        """
+        completion = self.sos(hostname, sos_params)
+        raise_if_exception(completion)
+        return HandleCommandResult(stdout=completion.result_str())
+
     @OrchestratorCLICommand.Write('orch host add')
     def _add_host(self,
                   hostname: str,
