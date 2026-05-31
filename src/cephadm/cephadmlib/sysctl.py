@@ -38,6 +38,8 @@ def read_in_sysctl_settings(ctx: CephadmContext) -> None:
 def write_sysctl_files(ctx: CephadmContext, fsid: str, daemon: DaemonForm) -> bool:
     """
     Write out sysctl files if there is anything to write.
+    Uses file locking to prevent race conditions when multiple daemons
+    write to the same sysctl config file.
     Return a bool of whether we need a `sysctl --system` afterward (only if we write something)
     """
     def _write(conf: Path, lines: List[str]) -> None:
@@ -66,13 +68,26 @@ def write_sysctl_files(ctx: CephadmContext, fsid: str, daemon: DaemonForm) -> bo
         )
 
     lines = daemon.get_sysctl_settings()
-    lines = filter_sysctl_settings(ctx, lines)
 
-    if lines:
+    # Acquire lock to serialize sysctl file operations
+    # This prevents race conditions when multiple daemons (e.g., OSDs)
+    # try to write the same sysctl config file simultaneously
+    from .locking import FileLock
+
+    lock = FileLock(ctx, f'{fsid}-{daemon_type}-sysctl')
+    lock.acquire()
+    try:
+        lines = filter_sysctl_settings(ctx, lines)
+        if not lines:
+            logger.debug('All sysctl settings for %s already correct', daemon_type)
+            return False
+
         Path(ctx.sysctl_dir).mkdir(mode=0o755, exist_ok=True)
+        logger.info('Writing sysctl config to %s', conf)
         _write(conf, lines)
         return True
-    return False
+    finally:
+        lock.release()
 
 
 def sysctl_get(ctx: CephadmContext, variable: str) -> Union[str, None]:
