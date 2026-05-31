@@ -241,7 +241,7 @@ def _did_rexec():
     return bool(os.environ.get("_BUILD_PYTHON_SET", ""))
 
 
-def _build(dest, src, config):
+def _build(dest, src, config, overrides_file_path):
     """Build the binary."""
     os.chdir(src)
     tempdir = pathlib.Path(tempfile.mkdtemp(suffix=".cephadm.build"))
@@ -278,6 +278,8 @@ def _build(dest, src, config):
         shutil.copytree(
             "../python-common/ceph", appdir / "ceph"
         )
+        if overrides_file_path:
+            shutil.copyfile(overrides_file_path, appdir / "cephadmlib" / "override_vars.py")
         if versioning_vars:
             generate_version_file(versioning_vars, mdir / "version.py")
         if dinfo:
@@ -706,6 +708,11 @@ def main():
         default=DependencyMode.pip.name,
         help="Source for bundled dependencies",
     )
+    parser.add_argument(
+        "--overrides",
+        help=("Pass a path to a python file that allows overriding specific cephadm binary "
+              "settings at build time")
+    )
     args = parser.parse_args()
 
     if not _did_rexec() and args.python:
@@ -732,10 +739,14 @@ def main():
         source = pathlib.Path(args.source).absolute()
     else:
         source = pathlib.Path(__file__).absolute().parent
+    if args.overrides:
+        overrides_file_path = pathlib.Path(args.overrides).absolute()
+    else:
+        overrides_file_path = None
     dest = pathlib.Path(args.dest).absolute()
     log.info("Source Dir: %s", source)
     log.info("Destination Path: %s", dest)
-    _build(dest, source, Config(args))
+    _build(dest, source, Config(args), overrides_file_path)
 
 
 if __name__ == "__main__":
