@@ -236,6 +236,8 @@ class NFSCluster:
             ip_addrs: Optional[Dict[str, str]] = None,
             monitoring_ip_addrs: Optional[Dict[str, str]] = None,
             monitoring_port: Optional[int] = None,
+            enable_rdma: bool = False,
+            rdma_port: Optional[int] = None,
     ) -> None:
         if not port:
             port = 2049   # default nfs port
@@ -286,7 +288,9 @@ class NFSCluster:
                                   tls_ciphers=tls_ciphers,
                                   ip_addrs=ip_addrs,
                                   monitoring_ip_addrs=monitoring_ip_addrs,
-                                  monitoring_port=monitoring_port)
+                                  monitoring_port=monitoring_port,
+                                  enable_rdma=enable_rdma,
+                                  rdma_port=rdma_port)
             completion = self.mgr.apply_nfs(spec)
             orchestrator.raise_if_exception(completion)
             ispec = IngressSpec(service_type='ingress',
@@ -322,7 +326,9 @@ class NFSCluster:
                                   tls_ciphers=tls_ciphers,
                                   ip_addrs=ip_addrs,
                                   monitoring_ip_addrs=monitoring_ip_addrs,
-                                  monitoring_port=monitoring_port)
+                                  monitoring_port=monitoring_port,
+                                  enable_rdma=enable_rdma,
+                                  rdma_port=rdma_port)
             completion = self.mgr.apply_nfs(spec)
             orchestrator.raise_if_exception(completion)
         log.debug("Successfully deployed nfs daemons with cluster id %s and placement %s",
@@ -367,6 +373,8 @@ class NFSCluster:
             ip_addrs: Optional[Dict[str, str]] = None,
             monitoring_ip_addrs: Optional[Dict[str, str]] = None,
             monitoring_port: Optional[int] = None,
+            enable_rdma: bool = False,
+            rdma_port: Optional[int] = None,
     ) -> None:
         try:
             if virtual_ip:
@@ -413,7 +421,9 @@ class NFSCluster:
                     tls_ciphers=tls_ciphers,
                     ip_addrs=ip_addrs,
                     monitoring_ip_addrs=monitoring_ip_addrs,
-                    monitoring_port=monitoring_port
+                    monitoring_port=monitoring_port,
+                    enable_rdma=enable_rdma,
+                    rdma_port=rdma_port
                 )
                 return
             raise NonFatalError(f"{cluster_id} cluster already exists")

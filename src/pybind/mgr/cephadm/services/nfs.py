@@ -168,6 +168,10 @@ class NFSService(CephService):
         deps.append(f'tls_min_version: {nfs_spec.tls_min_version}')
         deps.append(f'tls_ciphers: {nfs_spec.tls_ciphers}')
 
+        # RDMA dependency
+        deps.append(f'enable_rdma: {nfs_spec.enable_rdma}')
+        deps.append(f'rdma_port: {nfs_spec.rdma_port}')
+
         parent_deps = super().get_dependencies(mgr, spec, daemon_type)
         return sorted(deps + parent_deps)
 
@@ -216,6 +220,15 @@ class NFSService(CephService):
             logger.warning(f'Bind address in {daemon_type}.{daemon_id}\'s ganesha conf is defaulting to empty')
         else:
             logger.debug("using haproxy bind address: %r", bind_addr)
+            if spec.enable_rdma:
+                logger.warning(
+                    'NFS RDMA is enabled with Bind_Addr %s on host %s. '
+                    'Ensure the network interface for this address is RDMA-capable. '
+                    "On the host, run 'rdma link show' and confirm the netdev for the interface "
+                    'with this IP is listed.',
+                    bind_addr.split('/')[0] if bind_addr else bind_addr,
+                    host,
+                )
 
         if monitoring_ip:
             daemon_spec.port_ips.update({str(monitoring_port): monitoring_ip})
@@ -228,6 +241,12 @@ class NFSService(CephService):
             ceph_nodes.append(host_ip)
 
         # generate the ganesha config
+        rdma_port = None
+        if spec.enable_rdma and daemon_spec.ports and len(daemon_spec.ports) > 3:
+            rdma_port = daemon_spec.ports[3]
+        elif spec.enable_rdma:
+            rdma_port = spec.rdma_port
+
         def get_ganesha_conf() -> str:
             context: Dict[str, Any] = {
                 "user": rados_user,
@@ -245,6 +264,8 @@ class NFSService(CephService):
                 "haproxy_hosts": [],
                 "nfs_idmap_conf": nfs_idmap_conf,
                 "enable_nlm": str(spec.enable_nlm).lower(),
+                "enable_rdma": spec.enable_rdma,
+                "rdma_port": rdma_port,
                 "cluster_id": self.mgr._cluster_fsid,
                 "enable_virtual_server": str(spec.enable_virtual_server).lower(),
                 "kmip_addrs": spec.kmip_host_list if add_kmip_block else None,

@@ -47,7 +47,8 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
             cmount_path: Optional[str] = "/",
             skip_notify_nfs_server: bool = False,
             kmip_key_id: Optional[str] = None,
-            xprtsec: Optional[str] = None
+            xprtsec: Optional[str] = None,
+            transports: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Create a CephFS export"""
         self.export_mgr.skip_notify_nfs_server = skip_notify_nfs_server
@@ -65,7 +66,8 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
             xprtsec=xprtsec,
             cmount_path=cmount_path,
             earmark_resolver=earmark_resolver,
-            kmip_key_id=kmip_key_id
+            kmip_key_id=kmip_key_id,
+            transports=transports,
         )
 
     @NFSCLICommand('nfs export create rgw', perm='rw')
@@ -83,6 +85,7 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
             skip_notify_nfs_server: bool = False,
             kmip_key_id: Optional[str] = None,
             xprtsec: Optional[str] = None,
+            transports: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Create an RGW export"""
         self.export_mgr.skip_notify_nfs_server = skip_notify_nfs_server
@@ -97,7 +100,8 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
             addr=client_addr,
             sectype=sectype,
             kmip_key_id=kmip_key_id,
-            xprtsec=xprtsec
+            xprtsec=xprtsec,
+            transports=transports,
         )
 
     @NFSCLICommand('nfs export rm', perm='rw')
@@ -165,6 +169,8 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
                                 bind_addrs: Optional[str] = None,
                                 monitoring_addrs: Optional[str] = None,
                                 monitoring_port: Optional[int] = None,
+                                enable_rdma: bool = False,
+                                rdma_port: Optional[int] = None,
                                 inbuf: Optional[str] = None) -> None:
         """Create an NFS Cluster"""
         kmip_cert = kmip_key = kmip_ca_cert = kmip_host_list = None
@@ -223,7 +229,9 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
                                            tls_ktls=tls_ktls,
                                            tls_debug=tls_debug,
                                            tls_min_version=tls_min_version,
-                                           tls_ciphers=tls_ciphers)
+                                           tls_ciphers=tls_ciphers,
+                                           enable_rdma=enable_rdma,
+                                           rdma_port=rdma_port)
 
     @NFSCLICommand('nfs cluster rm', perm='rw')
     @object_format.EmptyResponder()

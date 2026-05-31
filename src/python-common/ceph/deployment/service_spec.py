@@ -1416,6 +1416,7 @@ yaml.add_representer(ServiceSpec, ServiceSpec.yaml_representer)
 
 class NFSServiceSpec(ServiceSpec):
     COLOCATION_PORT_FIELDS = ['data_port', 'monitoring_port', 'cluster_qos_port']
+    COLOCATION_PORT_FIELDS_WITH_RDMA = ['data_port', 'monitoring_port', 'cluster_qos_port', 'rdma_port']
 
     def __init__(self,
                  service_type: str = 'nfs',
@@ -1433,6 +1434,8 @@ class NFSServiceSpec(ServiceSpec):
                  virtual_ip: Optional[str] = None,
                  enable_nlm: bool = False,
                  enable_haproxy_protocol: bool = False,
+                 enable_rdma: bool = False,
+                 rdma_port: Optional[int] = None,
                  extra_container_args: Optional[GeneralArgList] = None,
                  extra_entrypoint_args: Optional[GeneralArgList] = None,
                  idmap_conf: Optional[Dict[str, Dict[str, str]]] = None,
@@ -1498,6 +1501,8 @@ class NFSServiceSpec(ServiceSpec):
                     raise SpecValidationError(
                         f'kmip_host_list contains an invalid element: {host_obj}.'
                     )
+        self.enable_rdma = enable_rdma
+        self.rdma_port = rdma_port
 
         # colocation_ports is a list of port dicts for ADDITIONAL colocated daemons
         # The first daemon always uses port and monitoring_port from the spec
@@ -1510,8 +1515,17 @@ class NFSServiceSpec(ServiceSpec):
         self.tls_debug = tls_debug
         self.tls_min_version = tls_min_version
 
+    def get_colocation_port_fields(self) -> List[str]:
+        """Return port fields for colocation; include rdma_port when RDMA is enabled."""
+        if self.enable_rdma:
+            return self.COLOCATION_PORT_FIELDS_WITH_RDMA
+        return self.COLOCATION_PORT_FIELDS
+
     def get_port_start(self) -> List[int]:
-        return [self.port or 2049, self.monitoring_port or 9587, self.cluster_qos_port or 31311]
+        ports = [self.port or 2049, self.monitoring_port or 9587, self.cluster_qos_port or 31311]
+        if self.enable_rdma:
+            ports.append(self.rdma_port or 20049)
+        return ports
 
     def get_colocation_ports_list(self) -> List[List[int]]:
         """
@@ -1520,7 +1534,8 @@ class NFSServiceSpec(ServiceSpec):
         """
         if not self.colocation_ports:
             return []
-        return [[port_dict[field] for field in self.COLOCATION_PORT_FIELDS]
+        fields = self.get_colocation_port_fields()
+        return [[port_dict[field] for field in fields]
                 for port_dict in self.colocation_ports]
 
     def rados_config_name(self):
@@ -1551,16 +1566,17 @@ class NFSServiceSpec(ServiceSpec):
                         "ports, remaining need custom ports."
                     )
         # Validate that each entry has the required port fields
+        fields = self.get_colocation_port_fields()
         for idx, port_dict in enumerate(self.colocation_ports):
             if not isinstance(port_dict, dict):
                 raise SpecValidationError(
                     f"colocation_ports[{idx}] must be a dict with "
-                    f"fields: {', '.join(self.COLOCATION_PORT_FIELDS)}"
+                    f"fields: {', '.join(fields)}"
                 )
-            missing = [f for f in self.COLOCATION_PORT_FIELDS if f not in port_dict]
+            missing = [f for f in fields if f not in port_dict]
             if missing:
                 missing_str = ', '.join(missing)
-                format_str = ', '.join(f'{f!r}: <port>' for f in self.COLOCATION_PORT_FIELDS)
+                format_str = ', '.join(f'{f!r}: <port>' for f in fields)
                 raise SpecValidationError(
                     f"Invalid NFS spec: colocation_ports[{idx}] missing required "
                     f"fields: {missing_str}. Expected format: {{{format_str}}}"
