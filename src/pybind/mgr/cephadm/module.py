@@ -1556,7 +1556,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule):
     ) -> Tuple[str, bool, str]:
         return self._prepare_host_for_sudo_hardening(host, cephadm_args, addr)
 
-    @CephadmCLICommand.Write('cephadm prepare-host-and-enable-sudo-hardening')
+    @orchestrator._cli_write_command('cephadm prepare-host-and-enable-sudo-hardening')
     def _prepare_host_and_enable_sudo_hardening(
         self,
         user: str,
