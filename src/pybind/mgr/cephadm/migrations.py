@@ -9,8 +9,7 @@ from cephadm.utils import SpecialHostLabels
 from cephadm.services.nfs import NFSService
 from cephadm.services.service_registry import service_registry
 import rados
-from mgr_util import parse_combined_pem_file, get_cert_issuer_info
-from cephadm.tlsobject_types import CertKeyPair
+from mgr_util import get_cert_issuer_info
 
 from mgr_module import NFS_POOL_NAME
 from orchestrator import OrchestratorError, DaemonDescription
@@ -18,7 +17,7 @@ from orchestrator import OrchestratorError, DaemonDescription
 if TYPE_CHECKING:
     from .module import CephadmOrchestrator
 
-LAST_MIGRATION = 11
+LAST_MIGRATION = 10
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +43,6 @@ class Migrations:
 
         r = mgr.get_store('rgw_migration_queue')
         self.rgw_migration_queue = json.loads(r) if r else []
-
-        r = mgr.get_store('rgw_ssl_migration_queue')
-        self.rgw_ssl_migration_queue = json.loads(r) if r else []
 
         # for some migrations, we don't need to do anything except for
         # incrementing migration_current.
@@ -125,10 +121,6 @@ class Migrations:
         if self.mgr.migration_current == 9:
             if self.migrate_9_10():
                 self.set(10)
-
-        if self.mgr.migration_current == 10:
-            if self.migrate_10_11():
-                self.set(11)
 
     def migrate_0_1(self) -> bool:
         """
@@ -501,37 +493,6 @@ class Migrations:
         return True
 
     def migrate_9_10(self) -> bool:
-        logger.info(f'Starting rgw SSL/TLS migration (queue length is {len(self.rgw_ssl_migration_queue)})')
-        for s in self.rgw_ssl_migration_queue:
-
-            svc_spec = s['spec']  # this is the RGWspec
-
-            if 'spec' not in svc_spec:
-                logger.info(f"No SSL/TLS fields migration is needed for rgw spec: {svc_spec}")
-                continue
-
-            cert_field = svc_spec['spec'].get('rgw_frontend_ssl_certificate')
-            if not cert_field:
-                logger.info(f"No SSL/TLS fields migration is needed for rgw spec: {svc_spec}")
-                continue
-
-            cert_str = '\n'.join(cert_field) if isinstance(cert_field, list) else cert_field
-            ssl_cert, ssl_key = parse_combined_pem_file(cert_str)
-            new_spec = svc_spec.copy()
-            new_spec['spec'].update({
-                'rgw_frontend_ssl_certificate': None,
-                'certificate_source': CertificateSource.INLINE.value,
-                'ssl_cert': ssl_cert,
-                'ssl_key': ssl_key,
-            })
-
-            logger.info(f"Migrating {svc_spec} to new RGW SSL/TLS format {new_spec}")
-            self.mgr.spec_store.save(RGWSpec.from_json(new_spec))
-
-        self.rgw_ssl_migration_queue = []
-        return True
-
-    def migrate_10_11(self) -> bool:
         """
         Replace Promtail with Alloy.
 
@@ -609,15 +570,6 @@ def queue_migrate_rgw_spec(mgr: "CephadmOrchestrator", spec_dict: Dict[Any, Any]
     ls.append(spec_dict)
     mgr.set_store('rgw_migration_queue', json.dumps(ls))
     logger.info(f'Queued rgw.{service_id} for migration')
-
-
-def queue_migrate_rgw_ssl_spec(mgr: "CephadmOrchestrator", spec_dict: Dict[Any, Any]) -> None:
-    service_id = spec_dict['spec']['service_id']
-    queued = mgr.get_store('rgw_ssl_migration_queue') or '[]'
-    ls = json.loads(queued)
-    ls.append(spec_dict)
-    mgr.set_store('rgw_ssl_migration_queue', json.dumps(ls))
-    logger.info(f'Queued rgw.{service_id} for TLS migration')
 
 
 def queue_migrate_nfs_spec(mgr: "CephadmOrchestrator", spec_dict: Dict[Any, Any]) -> None:
