@@ -78,6 +78,9 @@ class CephNvmeof(ContainerDaemonForm):
         mounts[
             os.path.join(data_dir, 'ceph-nvmeof.conf')
         ] = '/src/ceph-nvmeof.conf:z'
+        mounts[
+            os.path.join(data_dir, 'ceph-nvmeof.legacy.conf')
+        ] = '/remote-source/ceph-nvmeof/app/ceph-nvmeof.conf:z'
         mounts[os.path.join(data_dir, 'configfs')] = '/sys/kernel/config'
         mounts[log_dir] = '/var/log/ceph:z'
         if mtls_dir:
@@ -201,6 +204,9 @@ class CephNvmeof(ContainerDaemonForm):
         logger.info('Creating ceph-nvmeof config...')
         configfs_dir = os.path.join(data_dir, 'configfs')
         makedirs(configfs_dir, uid, gid, 0o755)
+
+        if 'ceph-nvmeof.conf' in self.files:
+            self.files['ceph-nvmeof.legacy.conf'] = self.files['ceph-nvmeof.conf']
 
         # populate files from the config-json
         populate_files(data_dir, self.files, uid, gid)
