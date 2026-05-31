@@ -35,11 +35,6 @@ class DefaultImages(Enum):
     KEEPALIVED = _create_image('quay.io/ceph/keepalived:2.2.4', 'keepalived')
     NVMEOF = _create_image('quay.io/ceph/nvmeof:1.6', 'nvmeof')
     SNMP_GATEWAY = _create_image('docker.io/maxwo/snmp-notifier:v1.2.1', 'snmp_gateway')
-    ELASTICSEARCH = _create_image('quay.io/omrizeneva/elasticsearch:6.8.23', 'elasticsearch')
-    JAEGER_COLLECTOR = _create_image('quay.io/jaegertracing/jaeger-collector:1.29',
-                                     'jaeger_collector')
-    JAEGER_AGENT = _create_image('quay.io/jaegertracing/jaeger-agent:1.29', 'jaeger_agent')
-    JAEGER_QUERY = _create_image('quay.io/jaegertracing/jaeger-query:1.29', 'jaeger_query')
     SAMBA = _create_image(
         'quay.io/samba.org/samba-server:ceph20-centos-amd64', 'samba'
     )
