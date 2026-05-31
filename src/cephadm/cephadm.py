@@ -3474,6 +3474,37 @@ def command_run(ctx):
 ##################################
 
 
+def command_display_license(ctx: CephadmContext) -> str:
+    # type: (CephadmContext) -> int
+    if not ctx.image:
+        raise Error('No image provided. Command should be formatted cephadm --image <image-name> display-license')
+    try:
+        _pull_image(ctx, ctx.image, ctx.insecure)
+    except Exception as e:
+        logger.error(f'Got exception pulling requested container image to display license: {str(e)}')
+        raise e
+
+    license_text = _pull_license_from_image(ctx, ctx.image)
+
+    if 'json' in ctx and ctx.json:
+        print(json.dumps({'license': license_text}, indent=4))
+    else:
+        print(license_text)
+
+
+def _pull_license_from_image(ctx: CephadmContext, image_name: str) -> str:
+    logger.info('Pulling license from image %s...' % image_name)
+
+    # in the future this will go to a specific place in the
+    # container image and actually pull the text of a file
+    # at a certain location
+    return """Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis laoreet lorem id rhoncus interdum. Sed vitae tempus tellus. Donec porta ornare nunc a sodales. Duis feugiat ante vel eros finibus, in rhoncus neque tristique. Duis ultrices neque at orci interdum convallis. Duis rutrum ligula magna, non euismod tortor condimentum at. Morbi suscipit ornare sapien, fringilla egestas dui viverra in. Nunc scelerisque ex nec neque hendrerit euismod. Cras tristique est laoreet nisl fringilla pretium. Cras eleifend dui mi. Donec viverra sed libero eget blandit. Suspendisse malesuada arcu est, sed porttitor ante aliquet quis.
+
+Orci varius natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Cras sed purus non turpis efficitur mattis sit amet eu neque. Aliquam iaculis, sem vel facilisis volutpat, risus lorem dictum ligula, vitae auctor dolor magna ut eros. Suspendisse elit metus, facilisis in nisl ut, commodo porttitor urna. Quisque condimentum mi at urna pulvinar euismod. Fusce ultricies blandit tellus et congue. Curabitur eu nibh ipsum. Sed aliquet egestas sapien, ut aliquet urna iaculis et. Duis commodo felis sem, sit amet molestie libero sollicitudin ut. Cras neque urna, faucibus sit amet sodales non, pellentesque ac nibh. Aliquam tincidunt ipsum vel rutrum tempor. Duis pellentesque massa mauris, non placerat orci mattis ac. Aenean tristique tellus quis lacinia rhoncus."""
+
+#################################
+
+
 @infer_fsid
 @infer_config
 @infer_image
@@ -5759,6 +5790,22 @@ def _get_parser():
         '--force',
         action='store_true',
         help='proceed, even though this may destroy valuable data')
+
+    parser_display_license = subparsers.add_parser(
+        'display-license',
+        help='Pull license from IBM ceph container and display it.',
+        usage='Should be formatted cephadm --image <container-image-name> display-license')
+    parser_display_license.add_argument(
+        '--insecure',
+        action='store_true',
+        help=argparse.SUPPRESS,
+    )
+    parser_display_license.add_argument(
+        '--json',
+        action='store_true',
+        help='Can provide the license as part of a json blob formatted {"license": <actual-license-text>}',
+    )
+    parser_display_license.set_defaults(func=command_display_license)
 
     parser_unit = subparsers.add_parser(
         'unit', help="operate on the daemon's systemd unit")
