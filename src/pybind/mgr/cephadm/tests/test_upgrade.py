@@ -1,4 +1,5 @@
 import json
+import logging
 from unittest import mock
 
 import pytest
@@ -7,6 +8,7 @@ from ceph.deployment.service_spec import PlacementSpec, ServiceSpec
 from cephadm import CephadmOrchestrator
 from cephadm.upgrade import (
     CephadmUpgrade,
+    OkToUpgradeMonReport,
     UpgradeState,
     parse_ok_to_upgrade_mon_json,
     request_osd_ok_to_upgrade_report,
@@ -530,18 +532,173 @@ def test_parse_ok_to_upgrade_mon_json_nested_and_flat():
     assert d['ok_to_upgrade'] is True
 
 
+def test_ok_to_upgrade_mon_report_from_parsed_body():
+    rep = OkToUpgradeMonReport.from_parsed_body({
+        'ok_to_upgrade': True,
+        'all_osds_upgraded': False,
+        'osds_ok_to_upgrade': [0, 1],
+        'osds_in_crush_bucket': [2, 3],
+        'osds_upgraded': [4],
+        'bad_no_version': [5],
+    })
+    assert rep.ok_to_upgrade is True
+    assert rep.all_osds_upgraded is False
+    assert rep.osds_ok_to_upgrade == [0, 1]
+    assert rep.osds_in_crush_bucket == [2, 3]
+    assert rep.osds_upgraded == [4]
+    assert rep.bad_no_version == [5]
+    assert rep.mon_resp_as_dict()['bad_no_version'] == [5]
+
+
+def test_ok_to_upgrade_mon_report_non_list_osd_array_becomes_empty():
+    rep = OkToUpgradeMonReport.from_parsed_body({
+        'ok_to_upgrade': True,
+        'all_osds_upgraded': False,
+        'osds_ok_to_upgrade': 'not-a-list',
+    })
+    assert rep.osds_ok_to_upgrade == []
+
+
+def test_ok_to_upgrade_mon_report_matches_mgr_json_formatter_shape():
+    """
+    Shape produced by upgrade_osd_report::dump + JSONFormatter (DaemonServer):
+    array sections are bare int lists, not objects per element.
+    """
+    mon_stdout = (
+        '{"ok_to_upgrade":{'
+        '"ok_to_upgrade":true,'
+        '"all_osds_upgraded":false,'
+        '"osds_in_crush_bucket":[10,11],'
+        '"osds_ok_to_upgrade":[10],'
+        '"osds_upgraded":[],'
+        '"bad_no_version":[]'
+        '}}'
+    )
+    body = parse_ok_to_upgrade_mon_json(mon_stdout)
+    rep = OkToUpgradeMonReport.from_parsed_body(body)
+    assert rep.ok_to_upgrade is True
+    assert rep.all_osds_upgraded is False
+    assert rep.osds_in_crush_bucket == [10, 11]
+    assert rep.osds_ok_to_upgrade == [10]
+    assert rep.osds_upgraded == []
+    assert rep.bad_no_version == []
+
+
+def test_ok_to_upgrade_mon_report_from_parsed_body_rejects_non_mapping():
+    with pytest.raises(ValueError, match='expected JSON object'):
+        OkToUpgradeMonReport.from_parsed_body([])
+
+
+def test_ok_to_upgrade_mon_report_warns_on_non_boolean_flags(caplog):
+    caplog.set_level(logging.WARNING)
+    rep = OkToUpgradeMonReport.from_parsed_body({
+        'ok_to_upgrade': 'unexpected-string',
+        'all_osds_upgraded': False,
+    })
+    assert rep.ok_to_upgrade is None
+    assert rep.all_osds_upgraded is False
+    assert any('expected boolean' in r.message for r in caplog.records)
+
+
 def test_request_osd_ok_to_upgrade_report(cephadm_module: CephadmOrchestrator):
     cephadm_module.check_mon_command = mock.MagicMock(
         return_value=(0, '{"ok_to_upgrade": {"ok_to_upgrade": true}}', ''))
     rep = request_osd_ok_to_upgrade_report(
         cephadm_module, 'mybucket', '20.1.0-144.el9cp', max_osds=3)
-    assert rep['ok_to_upgrade'] is True
+    assert rep.ok_to_upgrade is True
     cephadm_module.check_mon_command.assert_called_once()
     cmd = cephadm_module.check_mon_command.call_args[0][0]
     assert cmd['prefix'] == 'osd ok-to-upgrade'
     assert cmd['crush_bucket'] == 'mybucket'
     assert cmd['ceph_version'] == '20.1.0-144.el9cp'
     assert cmd['max'] == 3
+
+
+def test_parse_ok_to_upgrade_mon_json_invalid_raises():
+    with pytest.raises(json.JSONDecodeError):
+        parse_ok_to_upgrade_mon_json('not-json{')
+
+
+def test_request_osd_ok_to_upgrade_report_invalid_json(cephadm_module: CephadmOrchestrator):
+    cephadm_module.check_mon_command = mock.MagicMock(
+        return_value=(0, 'not-json{', ''))
+    with pytest.raises(json.JSONDecodeError):
+        request_osd_ok_to_upgrade_report(
+            cephadm_module, 'mybucket', '20.1.0', max_osds=3)
+
+
+@mock.patch("cephadm.serve.CephadmServe._run_cephadm", _run_cephadm('{}'))
+def test_wait_for_ok_to_upgrade_osd_batch_json_decode_pauses(cephadm_module: CephadmOrchestrator):
+    cephadm_module.upgrade.upgrade_state = UpgradeState(
+        'img',
+        'pid',
+        target_version='20.1.0',
+        crush_bucket_type='host',
+        crush_bucket_name='host1',
+    )
+    with mock.patch(
+        'cephadm.upgrade.request_osd_ok_to_upgrade_report',
+        side_effect=json.JSONDecodeError('msg', 'doc', 0),
+    ):
+        ok = cephadm_module.upgrade._wait_for_ok_to_upgrade_osd_batch([])
+    assert ok is False
+    assert cephadm_module.upgrade.upgrade_state.paused is True
+    assert 'UPGRADE_EXCEPTION' in cephadm_module.health_checks
+    assert 'invalid JSON' in cephadm_module.health_checks['UPGRADE_EXCEPTION']['summary']
+
+
+@mock.patch("cephadm.serve.CephadmServe._run_cephadm", _run_cephadm('{}'))
+def test_wait_for_ok_to_upgrade_osd_batch_value_error_pauses(cephadm_module: CephadmOrchestrator):
+    cephadm_module.upgrade.upgrade_state = UpgradeState(
+        'img',
+        'pid',
+        target_version='20.1.0',
+        crush_bucket_type='host',
+        crush_bucket_name='host1',
+    )
+    with mock.patch(
+        'cephadm.upgrade.request_osd_ok_to_upgrade_report',
+        side_effect=ValueError(
+            "osd ok-to-upgrade: expected JSON object after unwrap, got <class 'list'>"),
+    ):
+        ok = cephadm_module.upgrade._wait_for_ok_to_upgrade_osd_batch([])
+    assert ok is False
+    assert cephadm_module.upgrade.upgrade_state.paused is True
+    assert 'UPGRADE_EXCEPTION' in cephadm_module.health_checks
+    assert (
+        'unexpected JSON shape'
+        in cephadm_module.health_checks['UPGRADE_EXCEPTION']['summary']
+    )
+
+
+@mock.patch("cephadm.serve.CephadmServe._run_cephadm", _run_cephadm('{}'))
+def test_wait_for_ok_to_upgrade_osd_batch_bad_no_version_pauses(
+        cephadm_module: CephadmOrchestrator):
+    cephadm_module.upgrade.upgrade_state = UpgradeState(
+        'img',
+        'pid',
+        target_version='20.1.0',
+        crush_bucket_type='host',
+        crush_bucket_name='host1',
+    )
+    bad_rep = OkToUpgradeMonReport(
+        ok_to_upgrade=True,
+        all_osds_upgraded=False,
+        osds_ok_to_upgrade=[],
+        osds_in_crush_bucket=[0, 1],
+        osds_upgraded=[],
+        bad_no_version=[99],
+    )
+    with mock.patch(
+        'cephadm.upgrade.request_osd_ok_to_upgrade_report',
+        return_value=bad_rep,
+    ):
+        ok = cephadm_module.upgrade._wait_for_ok_to_upgrade_osd_batch([])
+    assert ok is False
+    assert cephadm_module.upgrade.upgrade_state.paused is True
+    assert 'UPGRADE_OSD_NO_VERSION' in cephadm_module.health_checks
+    detail = cephadm_module.health_checks['UPGRADE_OSD_NO_VERSION']['detail'][0]
+    assert 'osd.99' in detail
 
 
 def test_validate_failure_domain_upgrade_options_ok(cephadm_module: CephadmOrchestrator):
