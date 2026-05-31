@@ -11,7 +11,8 @@ from typing import (
     TypeVar,
     Callable,
     Set,
-    cast)
+    cast,
+)
 from os.path import normpath
 from ceph.fs.earmarking import EarmarkTopScope
 import cephfs
@@ -42,7 +43,9 @@ from .utils import (
     conf_obj_name,
     available_clusters,
     check_fs,
-    restart_nfs_service, cephfs_path_is_dir)
+    restart_nfs_service,
+    cephfs_path_is_dir,
+)
 from .rados_utils import NFSRados
 
 if TYPE_CHECKING:
