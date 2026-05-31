@@ -1451,6 +1451,7 @@ class NFSServiceSpec(ServiceSpec):
                  tls_debug: bool = False,
                  tls_min_version: Optional[str] = None,
                  tls_ciphers: Optional[str] = None,
+                 enable_nfsv3: bool = False,
                  ):
         assert service_type == 'nfs'
         super(NFSServiceSpec, self).__init__(
@@ -1476,6 +1477,7 @@ class NFSServiceSpec(ServiceSpec):
         self.idmap_conf = idmap_conf
         self.enable_nlm = enable_nlm
         self.enable_virtual_server = enable_virtual_server
+        self.enable_nfsv3 = enable_nfsv3
         self.kmip_cert = kmip_cert
         self.kmip_key = kmip_key
         self.kmip_ca_cert = kmip_ca_cert
