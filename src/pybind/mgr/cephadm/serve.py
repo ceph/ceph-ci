@@ -1497,6 +1497,13 @@ class CephadmServe:
                         skip_restart_for_reconfig = True
                         send_signal_to_daemon = 'SIGHUP'
 
+                elif dd.daemon_type == 'keepalived':
+                    # Redeploy when deps changed while keepalived is down
+                    if dd.status == DaemonDescriptionStatus.stopped:
+                        self.log.debug('Redeploying %s instead of reconfig '
+                            '(deps changed while daemon is stopped)', dd.name())
+                        action = 'redeploy'
+
                 elif dd.daemon_type == 'haproxy':
                     if spec and hasattr(spec, 'backend_service'):
                         backend_spec = self.mgr.spec_store[spec.backend_service].spec
