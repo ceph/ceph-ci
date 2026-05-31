@@ -257,7 +257,7 @@ class IngressService(CephService):
         if spec.ssl:
             tls_pair = self.get_certificates(daemon_spec)
             combined_pem = tls_pair.cert + '\n' + tls_pair.key
-            config_files['files']['haproxy.pem'] = combined_pem
+            final_config['files']['haproxy.pem'] = combined_pem
 
         if spec.verify_backend_ssl_cert:
             if spec.generate_cert:
