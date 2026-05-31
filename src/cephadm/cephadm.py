@@ -1321,6 +1321,17 @@ def deploy_daemon_units(
         post_stop_commands.append(
             f'! {tcmu_container_exists % container.cname} || {" ".join(tcmu_container.stop_cmd())} \n'
         )
+    daemon = daemon_form_create(ctx, ident)
+    if ident.daemon_type == 'nvmeof':
+        hp = '4096'
+        files = getattr(daemon, 'files', None)
+        if isinstance(files, dict):
+            val = files.get('spdk_huge_pages')
+            if isinstance(val, int):
+                hp = str(val)
+            elif isinstance(val, str) and val.isdigit():
+                hp = val
+        pre_start_commands.append(f'/usr/sbin/sysctl -w vm.nr_hugepages={hp} || true\n')
 
     runscripts.write_service_scripts(
         ctx,
@@ -1335,7 +1346,7 @@ def deploy_daemon_units(
     )
 
     # sysctl
-    install_sysctl(ctx, ident.fsid, daemon_form_create(ctx, ident))
+    install_sysctl(ctx, ident.fsid, daemon)
 
     # systemd
     ic_ids = [
