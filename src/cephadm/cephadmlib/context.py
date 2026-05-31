@@ -15,7 +15,9 @@ from .constants import (
 )
 
 # valid fields that can be overriden and their default values
-SUPPORTED_OVERRIDES: Dict[str, Any] = {}
+SUPPORTED_OVERRIDES: Dict[str, Any] = {
+    'IBM_BUILD': False
+}
 
 
 class BaseConfig:

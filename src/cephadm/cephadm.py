@@ -3042,10 +3042,11 @@ def command_bootstrap(ctx):
     if not is_fsid(fsid):
         raise Error('not an fsid: %s' % fsid)
 
-    if ctx.enable_storage_insights and ctx.disable_ibm_call_home:
-        raise Error('Cannot enable Storage Insights while disabling call home (--disable-ibm-call-home)')
-    elif not ctx.disable_ibm_call_home:
-        verify_call_home_settings(ctx)
+    if ctx.ibm_build:
+        if ctx.enable_storage_insights and ctx.disable_ibm_call_home:
+            raise Error('Cannot enable Storage Insights while disabling call home (--disable-ibm-call-home)')
+        elif not ctx.disable_ibm_call_home:
+            verify_call_home_settings(ctx)
 
     # verify output files
     for f in [ctx.output_config, ctx.output_keyring, ctx.output_pub_ssh_key]:
@@ -3103,8 +3104,9 @@ def command_bootstrap(ctx):
     image_ver = CephContainer(ctx, ctx.image, 'ceph', ['--version']).run().strip()
     logger.info(f'Ceph version: {image_ver}')
 
-    if not ctx.automatically_accept_license:
-        check_license_acceptance(ctx)
+    if ctx.ibm_build:
+        if not ctx.automatically_accept_license:
+            check_license_acceptance(ctx)
 
     if not ctx.allow_mismatched_release:
         image_release = image_ver.split()[4]
@@ -3256,8 +3258,9 @@ def command_bootstrap(ctx):
         except Exception:
             logger.info('Unable to set up "admin" label; assuming older version of Ceph')
 
-    if ctx.automatically_accept_license:
-        cli(['orch', 'accept-license', '--image', ctx.image])
+    if ctx.ibm_build:
+        if ctx.automatically_accept_license:
+            cli(['orch', 'accept-license', '--image', ctx.image])
 
     if ctx.apply_spec:
         logger.info('Applying %s to cluster' % ctx.apply_spec)
@@ -3281,7 +3284,8 @@ def command_bootstrap(ctx):
 
     save_cluster_config(ctx, uid, gid, fsid)
 
-    apply_call_home_settings(ctx, cli, wait_for_mgr_restart)
+    if ctx.ibm_build:
+        apply_call_home_settings(ctx, cli, wait_for_mgr_restart)
 
     # Notify the Dashboard to show the 'Expand cluster' page on first log in.
     cli(['config-key', 'set', 'mgr/dashboard/cluster/status', 'INSTALLED'])
