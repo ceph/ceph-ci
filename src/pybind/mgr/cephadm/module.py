@@ -49,6 +49,7 @@ from ceph.utils import str_to_datetime, datetime_to_str, datetime_now
 from ceph.cryptotools.select import choose_crypto_caller
 from cephadm.serve import CephadmServe, REQUIRES_POST_ACTIONS
 from cephadm.services.cephadmservice import CephadmDaemonDeploySpec
+from cephadm.services.osd import OsdIdClaims
 from cephadm.http_server import CephadmHttpServer
 from cephadm.agent import CephadmAgentHelpers
 from cephadm.services.service_registry import service_registry
@@ -748,6 +749,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule):
         self.recently_altered_daemons: Dict[str, datetime.datetime] = {}
 
         self.ceph_volume: CephVolume = CephVolume(self)
+        self.osd_id_claims: OsdIdClaims = OsdIdClaims(self)
 
         self.last_stray_daemon_check: Optional[datetime.datetime] = None
         self.daemon_deploy_queue = DaemonDeployQueue()
@@ -4953,6 +4955,87 @@ Then run the following:
             self.cache.invalidate_host_daemons(host)
         self._kick_serve_loop()
         return f"Updated service for osd {','.join(success_osds)}" + (f" and failed for {','.join(failed_osds)}" if failed_osds else "")
+
+    @handle_orch_error
+    def get_osd_devices(self, osd_id: str) -> str:
+        """
+        Get devices used by a specific OSD
+        """
+        return json.dumps(self._get_osd_devices(osd_id), indent=4)
+
+    def _get_osd_devices(self, osd_id: str) -> Dict[str, List[str]]:
+        try:
+            osd: DaemonDescription = self.cache.get_daemon(f'osd.{osd_id}')
+        except OrchestratorError:
+            raise OrchestratorError(f'Failed to find OSD with id {osd_id}')
+
+        assert osd.hostname is not None
+        osd_metadata: dict = self.wait_async(CephadmServe(self)._run_cephadm_json(
+            osd.hostname, 'osd', 'ceph-volume',
+            [
+                '--',
+                'lvm', 'list',
+                '--format', 'json',
+            ])
+        )
+        if str(osd_id) not in osd_metadata.keys():
+            raise OrchestratorError(f'No data for osd with id {osd_id} found in ceph-volume lvm list on {osd.hostname}')
+
+        devices: Dict[str, List[str]] = {}
+        for dev_info in osd_metadata.get(str(osd_id), {}):
+            type = dev_info.get('type')  # block, db, wal
+            devs = dev_info.get('devices')  # list of device paths
+            devices[type] = devs
+
+        return devices
+
+    @handle_orch_error
+    def osd_rebuild(self, hostname: str, osd_id: str, rebuild_osds_sharing_devices: bool = False) -> str:
+        """
+        Get devices used by a specific OSD
+        """
+        try:
+            self.cache.get_daemon(f'osd.{osd_id}', host=hostname)
+        except OrchestratorError:
+            return f'Failed to find OSD with id {osd_id} on host {hostname} in inventory'
+
+        try:
+            self.cache.get_specific_osd_cv_commands(str(osd_id), host=hostname)
+        except OrchestratorError as e:
+            return f'{str(e)}'
+
+        self.ceph_volume.lvm_list.get_data(hostname)
+        device_osd_mapping = self.ceph_volume.lvm_list.device_osd_mapping()
+        osds_to_zap = []
+        shared_devices = []
+        for dev_list in self._get_osd_devices(osd_id).values():
+            for dev in dev_list:
+                osds_to_zap.extend(device_osd_mapping[dev]['osd_ids'])
+                if self.ceph_volume.lvm_list.is_shared_device(dev):
+                    shared_devices.append(dev)
+        osds_to_zap = list(set(osds_to_zap))
+        shared_devices = list(set(shared_devices))
+
+        if shared_devices:
+            if not rebuild_osds_sharing_devices:
+                raise OrchestratorError(
+                    f'{shared_devices} are being shared between OSDs.\n'
+                    f'Rebuilding osd.{osd_id} requires also rebuilding OSD(s): {osds_to_zap}.\n'
+                    'To rebuild all OSDs pass --rebuild_osds_sharing_devices'
+                )
+
+        self.remove_osds(
+            osds_to_zap,
+            replace=True,
+            force=True,
+            zap=True,
+            no_destroy=False
+        )
+        self.cache.set_osds_for_rebuild(hostname, [int(osd_id) for osd_id in osds_to_zap])
+        if len(osds_to_zap) > 1:
+            return f'Scheduled OSDs {osds_to_zap} for rebuild'
+        else:
+            return f'Scheduled OSD {osds_to_zap} for rebuild'
 
     @handle_orch_error
     @host_exists()

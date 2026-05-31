@@ -126,6 +126,8 @@ class CephadmServe:
                         self.mgr.daemon_removal_queue.clear_queued_daemons()
                         raise
 
+                    self._handle_osd_rebuilds()
+
                     self._check_daemons()
 
                     self._check_certificates()
@@ -1322,6 +1324,64 @@ class CephadmServe:
                 self.log.info('Removing orphan daemon %s...' % dd.name())
                 discovered_orphans.append(dd)
         return discovered_orphans
+
+    def _handle_osd_rebuilds(self) -> None:
+        self.mgr.log.debug('_handle_osd_rebuilds')
+        hosts_needing_rebuild = []
+        for host in self.mgr.cache.get_hosts():
+            if self.mgr.cache.get_osds_needing_rebuild(host):
+                hosts_needing_rebuild.append(host)
+        if not hosts_needing_rebuild:
+            return
+
+        self.mgr.log.debug(f'_handle_osd_rebuilds found hosts {hosts_needing_rebuild} needing OSD rebuild')
+
+        if self.mgr.to_remove_osds.queue_size():
+            self.mgr.log.debug('_handle_osd_rebuilds found OSDs still in removal queue. Delaying until removal completes')
+            return
+
+        for host in hosts_needing_rebuild:
+            osd_ids = self.mgr.cache.get_osds_needing_rebuild(host)
+            unbuilt_osd_ids: List[int] = []
+            for osd_id in osd_ids:
+                try:
+                    self.mgr.cache.get_daemon(f'osd.{osd_id}', host)
+                    self.mgr.log.debug(
+                        f'_handle_osd_rebuilds found OSD with id {osd_id} already on host {host}. '
+                        'Either removal/rebuild was cancelled or it was rebuilt through a '
+                        'spec file. Skipping'
+                    )
+                    continue
+                except OrchestratorError:
+                    unbuilt_osd_ids.append(osd_id)
+            self.mgr.log.debug(
+                f'_handle_osd_rebuilds found OSD(s) with id(s) {osd_id} on host {host} '
+                'in need of rebuild'
+            )
+            osd_id_claims_for_host = self.mgr.osd_id_claims.filtered_by_host(host)
+            cv_prep_cmds = self.mgr.cache.get_host_osd_cv_commands(host)
+            cmds_needed: List[str] = []
+            for osd_id, cmds in cv_prep_cmds.items():
+                for oid in osd_ids:
+                    if int(oid) == int(osd_id):
+                        cmds_needed.extend(cmds)
+            cmds_needed = list(set([cmd for cmd in cmds_needed]))
+
+            dg_placeholder = DriveGroupSpec(
+                service_id=f'{host}.rebuild',
+                placement=PlacementSpec(hosts=[host]),
+                unmanaged=True
+            )
+            self.mgr.osd_id_claims.refresh()
+            osd_id_claims_for_host = self.mgr.osd_id_claims.filtered_by_host(host)
+            self.mgr.wait_async(self.mgr.osd_service.create_single_host(
+                dg_placeholder,
+                host,
+                cmds_needed,
+                osd_id_claims_for_host,
+                [f"CEPH_VOLUME_OSDSPEC_AFFINITY={dg_placeholder.service_id}"]
+            ))
+            self.mgr.cache.clear_all_osd_for_rebuild_on_host(host)
 
     def _check_daemons(self) -> None:
         self.log.debug('_check_daemons')

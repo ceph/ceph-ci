@@ -1675,6 +1675,22 @@ Usage:
 
         return HandleCommandResult(stdout=res)
 
+    @OrchestratorCLICommand.Write('orch osd get-devices')
+    def _osd_get_devices(self, osd_id: str) -> HandleCommandResult:
+        """Fetch the devices used by a certain OSD"""
+        completion = self.get_osd_devices(osd_id)
+        res = raise_if_exception(completion)
+
+        return HandleCommandResult(stdout=res)
+
+    @OrchestratorCLICommand.Write('orch osd rebuild')
+    def _osd_rebuild(self, hostname: str, osd_id: str, rebuild_osds_sharing_devices: bool = False) -> HandleCommandResult:
+        """Rebuild OSD. OSD must have been created after this command was added"""
+        completion = self.osd_rebuild(hostname, osd_id)
+        res = raise_if_exception(completion)
+
+        return HandleCommandResult(stdout=res)
+
     @OrchestratorCLICommand.Write('orch daemon add')
     def daemon_add_misc(self,
                         daemon_type: Optional[ServiceType] = None,

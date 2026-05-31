@@ -785,6 +785,14 @@ class Orchestrator(object):
         """ set service of osd """
         raise NotImplementedError()
 
+    def get_osd_devices(self, osd_id: str) -> OrchResult:
+        """ Get devices used for a specific OSD"""
+        raise NotImplementedError()
+
+    def osd_rebuild(self, hostname: str, osd_id: str, rebuild_osds_sharing_devices: bool = False) -> OrchResult:
+        """Rebuild OSD. OSD must have been created after this feature was added"""
+        raise NotImplementedError()
+
     def blink_device_light(self, ident_fault: str, on: bool, locations: List['DeviceLightLoc']) -> OrchResult[List[str]]:
         """
         Instructs the orchestrator to enable or disable either the ident or the fault LED.

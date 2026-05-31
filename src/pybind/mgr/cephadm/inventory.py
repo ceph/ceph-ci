@@ -975,6 +975,8 @@ class HostCache():
         self.scheduled_daemon_actions: Dict[str, Dict[str, str]] = {}
 
         self.metadata_up_to_date = {}  # type: Dict[str, bool]
+        self.osd_cv_commands: Dict[str, Dict[int, List[str]]] = {}
+        self.osds_to_rebuild: Dict[str, List[int]] = {}
 
     def load(self):
         # type: () -> None
@@ -1038,6 +1040,8 @@ class HostCache():
                 self.custom_logrotate_write_queue.add(host)
                 self.scheduled_daemon_actions[host] = j.get('scheduled_daemon_actions', {})
                 self.metadata_up_to_date[host] = j.get('metadata_up_to_date', False)
+                self.osd_cv_commands[host] = j.get('osd_cv_commands', {})
+                self.osds_to_rebuild[host] = j.get('osds_to_rebuild', {})
 
                 self.mgr.log.debug(
                     'HostCache.load: host %s has %d daemons, '
@@ -1257,6 +1261,8 @@ class HostCache():
         self.registry_login_queue.add(host)
         self.custom_logrotate_write_queue.add(host)
         self.last_client_files[host] = {}
+        self.osd_cv_commands[host] = {}
+        self.osds_to_rebuild[host] = []
 
     def refresh_all_host_info(self, host):
         # type: (str) -> None
@@ -1343,6 +1349,10 @@ class HostCache():
             j['scheduled_daemon_actions'] = self.scheduled_daemon_actions[host]
         if host in self.metadata_up_to_date:
             j['metadata_up_to_date'] = self.metadata_up_to_date[host]
+        if host in self.osd_cv_commands:
+            j['osd_cv_commands'] = self.osd_cv_commands[host]
+        if host in self.osds_to_rebuild:
+            j['osds_to_rebuild'] = self.osds_to_rebuild[host]
         if host in self.devices:
             self.save_host_devices(host)
 
@@ -1447,6 +1457,45 @@ class HostCache():
         if host in self.last_client_files:
             del self.last_client_files[host]
         self._cleanup_potential_split_host_entries(host)
+
+    def store_osd_cv_commands(self, hostname: str, osd_id: int, cmds: List[str]) -> None:
+        self.osd_cv_commands[hostname][osd_id] = cmds
+        self.save_host(hostname)
+
+    def get_host_osd_cv_commands(self, host: str) -> Dict[int, List[str]]:
+        return self.osd_cv_commands.get(host, {})
+
+    def get_specific_osd_cv_commands(self, osd_id: str, host: Optional[str] = None) -> List[str]:
+        osd_cv_commands: Dict[int, List[str]] = {}
+        if host:
+            osd_cv_commands = self.get_host_osd_cv_commands(host)
+        else:
+            for hostname in self.osd_cv_commands:
+                osd_cv_commands.update(self.osd_cv_commands[hostname])
+
+        if osd_id not in osd_cv_commands:
+            raise orchestrator.OrchestratorError(
+                f'Unable to find ceph-volume commands for preparing devices for osd.{osd_id}. '
+                'Perhaps this OSD was created before the rebuild feature was added'
+            )
+        return osd_cv_commands.get(int(osd_id), [])
+
+    def set_osds_for_rebuild(self, hostname: str, osd_ids: List[int]) -> None:
+        self.osds_to_rebuild[hostname].extend(osd_ids)
+        self.save_host(hostname)
+
+    def clear_osd_for_rebuild(self, hostname: str, osd_ids: List[int]) -> None:
+        self.osds_to_rebuild[hostname] = [
+            osd_id for osd_id in self.osds_to_rebuild[hostname] if osd_id not in osd_ids
+        ]
+        self.save_host(hostname)
+
+    def clear_all_osd_for_rebuild_on_host(self, hostname: str) -> None:
+        self.osds_to_rebuild[hostname] = []
+        self.save_host(hostname)
+
+    def get_osds_needing_rebuild(self, hostname: str) -> List[int]:
+        return self.osds_to_rebuild[hostname]
 
     def get_hosts(self):
         # type: () -> List[str]

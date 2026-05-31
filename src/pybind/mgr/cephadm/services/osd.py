@@ -106,10 +106,11 @@ class OSDService(CephService):
                 raise RuntimeError(
                     'cephadm exited with an error code: %d, stderr:%s' % (
                         code, '\n'.join(err)))
-        return await self.deploy_osd_daemons_for_existing_osds(host, drive_group,
+        return await self.deploy_osd_daemons_for_existing_osds(host, drive_group, cmds,
                                                                replace_osd_ids)
 
     async def deploy_osd_daemons_for_existing_osds(self, host: str, spec: DriveGroupSpec,
+                                                   cv_cmds: Optional[List[str]] = None,
                                                    replace_osd_ids: Optional[List[str]] = None) -> str:
 
         if replace_osd_ids is None:
@@ -175,6 +176,8 @@ class OSDService(CephService):
                 await CephadmServe(self.mgr)._create_daemon(
                     [daemon_spec],
                     osd_uuid_map=osd_uuid_map)
+                if cv_cmds:
+                    self.mgr.cache.store_osd_cv_commands(host, osd_id, cv_cmds)
 
         # check result: raw
         raw_elems: dict = await CephadmServe(self.mgr)._run_cephadm_json(
