@@ -1185,8 +1185,12 @@ class OrchestratorCli(OrchestratorClientMixin, MgrModule):
         return HandleCommandResult(stdout=output)
 
     @OrchestratorCLICommand.Read('orch certmgr cert ls')
-    def _cert_store_cert_ls(self, show_details: bool = False, format: Format = Format.plain) -> HandleCommandResult:
-        completion = self.cert_store_cert_ls(show_details)
+    def _cert_store_cert_ls(self,
+                            filter_by: str = '',
+                            show_details: bool = False,
+                            include_cephadm_signed: bool = False,
+                            format: Format = Format.plain) -> HandleCommandResult:
+        completion = self.cert_store_cert_ls(filter_by, show_details, include_cephadm_signed)
         cert_ls = raise_if_exception(completion)
         if format != Format.plain:
             return HandleCommandResult(stdout=to_format(cert_ls, format, many=False, cls=None))
@@ -1194,14 +1198,14 @@ class OrchestratorCli(OrchestratorClientMixin, MgrModule):
             result_str = self._process_cert_store_json(cert_ls, 0)
             return HandleCommandResult(stdout=result_str)
 
-    @OrchestratorCLICommand.Read('orch certmgr entity ls')
-    def _cert_store_entity_ls(self, format: Format = Format.plain) -> HandleCommandResult:
-        completion = self.cert_store_entity_ls()
-        entity_ls = raise_if_exception(completion)
+    @OrchestratorCLICommand.Read('orch certmgr bindings ls')
+    def _cert_store_bindings_ls(self, format: Format = Format.plain) -> HandleCommandResult:
+        completion = self.cert_store_bindings_ls()
+        bindings_ls = raise_if_exception(completion)
         if format != Format.plain:
-            return HandleCommandResult(stdout=to_format(entity_ls, format, many=False, cls=None))
+            return HandleCommandResult(stdout=to_format(bindings_ls, format, many=False, cls=None))
         else:
-            result_str = yaml.dump(entity_ls, default_flow_style=False, sort_keys=False)
+            result_str = yaml.dump(bindings_ls, default_flow_style=False, sort_keys=False)
             return HandleCommandResult(stdout=result_str)
 
     @OrchestratorCLICommand.Read('orch certmgr cert check')
@@ -1215,8 +1219,10 @@ class OrchestratorCli(OrchestratorClientMixin, MgrModule):
             return HandleCommandResult(stdout=result_str)
 
     @OrchestratorCLICommand.Read('orch certmgr key ls')
-    def _cert_store_key_ls(self, format: Format = Format.plain) -> HandleCommandResult:
-        completion = self.cert_store_key_ls()
+    def _cert_store_key_ls(self,
+                           include_cephadm_generated_keys: bool = False,
+                           format: Format = Format.plain) -> HandleCommandResult:
+        completion = self.cert_store_key_ls(include_cephadm_generated_keys)
         key_ls = raise_if_exception(completion)
         if format != Format.plain:
             return HandleCommandResult(stdout=to_format(key_ls, format, many=False, cls=None))
@@ -1263,14 +1269,14 @@ class OrchestratorCli(OrchestratorClientMixin, MgrModule):
     @OrchestratorCLICommand.Write('orch certmgr cert-key set')
     def _cert_store_cert_key_set(
         self,
-        entity: str,
+        consumer: str,
         _end_positional_: int = 0,
         cert: Optional[str] = None,
         key: Optional[str] = None,
         cert_name: Optional[str] = None,
         service_name: Optional[str] = None,
         hostname: Optional[str] = None,
-        force: Optional[bool] = False,
+        force: bool = False,
         inbuf: Optional[str] = None
     ) -> HandleCommandResult:
         """
@@ -1288,7 +1294,7 @@ class OrchestratorCli(OrchestratorClientMixin, MgrModule):
         completion = self.cert_store_set_pair(
             cert_content,
             key_content,
-            entity,
+            consumer,
             cert_name,
             service_name,
             hostname,
@@ -1305,6 +1311,7 @@ class OrchestratorCli(OrchestratorClientMixin, MgrModule):
         cert: Optional[str] = None,
         service_name: Optional[str] = None,
         hostname: Optional[str] = None,
+        force: bool = False,
         inbuf: Optional[str] = None
     ) -> HandleCommandResult:
         """
@@ -1319,6 +1326,7 @@ class OrchestratorCli(OrchestratorClientMixin, MgrModule):
             cert_content,
             service_name,
             hostname,
+            force
         )
         output = raise_if_exception(completion)
         return HandleCommandResult(stdout=output)
