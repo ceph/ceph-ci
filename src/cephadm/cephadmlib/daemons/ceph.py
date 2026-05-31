@@ -99,6 +99,8 @@ class Ceph(ContainerDaemonForm):
             if 'objectstore' in config_json:
                 objectstore = config_json['objectstore']
                 ctr.args = ctr.args + [f'--osd-objectstore={objectstore}']
+            if config_json.get('fcm_device_spec', False):
+                ctr.args = ctr.args + ['--set-keepcaps']
         return ctr
 
     _uid_gid: Optional[Tuple[int, int]] = None
