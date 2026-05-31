@@ -1463,6 +1463,7 @@ class RgwService(CephService):
                 'default_server_opts': [],
                 'health_check_interval': '2s',
                 'v4v6_flag': v4v6_flag,
+                'qat_support': False,
             }
         )
         config_files = {
