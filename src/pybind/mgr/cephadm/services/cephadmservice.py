@@ -280,6 +280,10 @@ class CephadmService(metaclass=ABCMeta):
     """
 
     @property
+    def needs_monitoring(self) -> bool:
+        return False
+
+    @property
     @abstractmethod
     def TYPE(self) -> str:
         pass
@@ -1679,6 +1683,10 @@ class CrashService(CephService):
 class CephExporterService(CephService):
     TYPE = 'ceph-exporter'
     DEFAULT_SERVICE_PORT = 9926
+
+    @property
+    def needs_monitoring(self) -> bool:
+        return True
 
     @classmethod
     def get_dependencies(cls, mgr: "CephadmOrchestrator",
