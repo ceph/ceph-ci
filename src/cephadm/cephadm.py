@@ -24,6 +24,7 @@ import re
 import uuid
 
 from contextlib import redirect_stdout
+from copy import deepcopy
 from functools import wraps
 from glob import glob
 from io import StringIO
@@ -3357,8 +3358,8 @@ def command_deploy_from(base_ctx: CephadmContext) -> None:
     daemon_ctxs: List[CephadmContext] = []
     for config in config_data:
         ctx = CephadmContext()
-        ctx._conf = base_ctx._conf
-        ctx._args = base_ctx._args
+        ctx._conf = deepcopy(base_ctx._conf)
+        ctx._args = deepcopy(base_ctx._args)
         apply_deploy_config_to_ctx(config, ctx)
         daemon_ctxs.append(ctx)
 
