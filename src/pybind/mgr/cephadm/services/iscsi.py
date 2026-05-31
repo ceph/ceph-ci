@@ -44,11 +44,15 @@ class IscsiService(CephService):
                          spec: Optional[ServiceSpec] = None,
                          daemon_type: Optional[str] = None,
                          hostname: Optional[str] = None) -> List[str]:
+        deps = []
         if spec:
             iscsi_spec = cast(IscsiServiceSpec, spec)
-            return [get_trusted_ips(mgr, iscsi_spec)]
+            deps = [get_trusted_ips(mgr, iscsi_spec)]
         else:
-            return [mgr.get_mgr_ip()]
+            deps = [mgr.get_mgr_ip()]
+
+        parent_deps = super().get_dependencies(mgr, spec, daemon_type)
+        return sorted(deps + parent_deps)
 
     def prepare_create(self, daemon_spec: CephadmDaemonDeploySpec) -> CephadmDaemonDeploySpec:
         assert self.TYPE == daemon_spec.daemon_type

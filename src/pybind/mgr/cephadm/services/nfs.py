@@ -18,6 +18,7 @@ from .service_registry import register_cephadm_service
 from orchestrator import DaemonDescription, OrchestratorError
 
 from cephadm import utils
+
 from cephadm.services.cephadmservice import AuthEntity, CephadmDaemonDeploySpec, CephService
 if TYPE_CHECKING:
     from ..module import CephadmOrchestrator
@@ -156,16 +157,15 @@ class NFSService(CephService):
             deps.append(f'kmip_key: {str(utils.md5_hash(nfs_spec.kmip_key))}')
             deps.append(f'kmip_ca_cert: {str(utils.md5_hash(nfs_spec.kmip_ca_cert))}')
             deps.append(f'kmip_host_list: {nfs_spec.kmip_host_list}')
-        # TLS related fields
-        if (spec.ssl and spec.ssl_cert and spec.ssl_key and spec.ssl_ca_cert):
-            deps.append(f'ssl_cert: {str(utils.md5_hash(spec.ssl_cert))}')
-            deps.append(f'ssl_key: {str(utils.md5_hash(spec.ssl_key))}')
-            deps.append(f'ssl_ca_cert: {str(utils.md5_hash(spec.ssl_ca_cert))}')
+
+        # add dependency of tls fields
         deps.append(f'tls_ktls: {nfs_spec.tls_ktls}')
         deps.append(f'tls_debug: {nfs_spec.tls_debug}')
         deps.append(f'tls_min_version: {nfs_spec.tls_min_version}')
         deps.append(f'tls_ciphers: {nfs_spec.tls_ciphers}')
-        return sorted(deps)
+
+        parent_deps = super().get_dependencies(mgr, spec, daemon_type)
+        return sorted(deps + parent_deps)
 
     def generate_config(self, daemon_spec: CephadmDaemonDeploySpec) -> Tuple[Dict[str, Any], List[str]]:
         assert self.TYPE == daemon_spec.daemon_type
