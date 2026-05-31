@@ -2592,9 +2592,10 @@ Usage:
                        hosts: Optional[str] = None,
                        services: Optional[str] = None,
                        limit: Optional[int] = None,
+                       topological_labels: Optional[List[str]] = None,
                        no_osd_flags: bool = False,
                        ceph_version: Optional[str] = None,
-                       topological_labels: Optional[List[str]] = None) -> HandleCommandResult:
+                       ) -> HandleCommandResult:
         """Initiate upgrade"""
         self._upgrade_check_image_name(image, ceph_version)
         # Split comma-separated lists and trim whitespace so "mon, crash" and "mon,crash" are equivalent.
@@ -2607,8 +2608,8 @@ Usage:
             hosts,
             service_names,
             limit,
+            topological_labels,
             no_osd_flags,
-            topological_labels
         )
         raise_if_exception(completion)
         return HandleCommandResult(stdout=completion.result_str())

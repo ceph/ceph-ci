@@ -1720,7 +1720,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule):
         return 0, f'Scheduled all hosts to receive new {str(logrotate_type)} logrotate config', ''
 
     @CephadmCLICommand.Write(
-            prefix='cephadm set-extra-ceph-conf')
+        prefix='cephadm set-extra-ceph-conf')
     def _set_extra_ceph_conf(self, inbuf: Optional[str] = None) -> HandleCommandResult:
         """
         Text that is appended to all daemon's ceph.conf.
@@ -3181,9 +3181,11 @@ Then run the following:
         # Track user-initiated stop/start actions
         if action == 'stop':
             d.update_user_stopped_status(True)
+            assert d.hostname is not None
             self.cache.save_host(d.hostname)
         elif action in ['start', 'restart']:
             d.update_user_stopped_status(False)
+            assert d.hostname is not None
             self.cache.save_host(d.hostname)
 
         self._daemon_action_set_image(action, image, d.daemon_type, d.daemon_id)
@@ -3443,7 +3445,7 @@ Then run the following:
             raise OrchestratorError(msg)
         else:
             self.log.info(f'Host {hostname} executed command sos {sos_params}: {out}')
-            result = out
+            result = out[0] if len(out) == 1 else '\n'.join(out)
 
         return result
 

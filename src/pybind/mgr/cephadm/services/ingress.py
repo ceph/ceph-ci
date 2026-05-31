@@ -323,7 +323,7 @@ class IngressService(CephService):
         if spec.monitor_ssl and spec.monitor_cert_source != MonitorCertSource.REUSE_SERVICE_CERT.value:
             tls_creds = self.get_stats_certs(spec, daemon_spec, monitor_ips)
             monitor_ssl_cert = [tls_creds.cert, tls_creds.key]
-            config_files['files']['stats_haproxy.pem'] = '\n'.join(monitor_ssl_cert)
+            final_config['files']['stats_haproxy.pem'] = '\n'.join(monitor_ssl_cert)
 
         return final_config, self.get_haproxy_dependencies(self.mgr, spec)
 

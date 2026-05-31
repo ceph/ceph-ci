@@ -137,7 +137,6 @@ class NFSService(CephService):
                 "nfs_idmap_conf": nfs_idmap_conf,
                 "enable_nlm": str(spec.enable_nlm).lower(),
                 "cluster_id": self.mgr._cluster_fsid,
-                "enable_virtual_server": str(spec.enable_virtual_server).lower(),
                 "use_old_nodeid": False if nodeid.isdigit() else True
             }
             if spec.enable_haproxy_protocol:

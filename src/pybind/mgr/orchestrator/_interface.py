@@ -983,8 +983,8 @@ class Orchestrator(object):
         hosts: Optional[str],
         services: Optional[List[str]],
         limit: Optional[int],
+        topological_labels: Optional[Union[str, List[str]]],
         no_osd_flags: bool = False,
-        topolocial_labels: Optional[Union[str, List[str]]]
     ) -> OrchResult[str]:
         raise NotImplementedError()
 
