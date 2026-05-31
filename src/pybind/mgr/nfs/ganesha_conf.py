@@ -48,10 +48,17 @@ def _validate_access_type(access_type: str) -> None:
 
 
 def _validate_sec_type(sec_type: str) -> None:
-    valid_sec_types = ["none", "sys", "krb5", "krb5i", "krb5p", "tls", "mtls"]
+    valid_sec_types = ["none", "sys", "krb5", "krb5i", "krb5p"]
     if not isinstance(sec_type, str) or sec_type not in valid_sec_types:
         raise NFSInvalidOperation(
             f"SecType {sec_type} invalid, valid types are {valid_sec_types}")
+
+
+def _validate_xprtsec_type(xprtsec: str) -> None:
+    valid_xprtsec_types = ['none', 'tls', 'mtls']
+    if not isinstance(xprtsec, str) or xprtsec not in valid_xprtsec_types:
+        raise NFSInvalidOperation(
+            f"XprtSec {xprtsec} invalid, valid types are {valid_xprtsec_types}")
 
 
 class GaneshaConfParser:
@@ -357,7 +364,8 @@ class Export:
             clients: Optional[List[Client]] = None,
             sectype: Optional[List[str]] = None,
             qos_block: Optional[QOS] = None,
-            kmip_key_id: Optional[str] = None) -> None:
+            kmip_key_id: Optional[str] = None,
+            xprtsec: Optional[str] = None) -> None:
         self.export_id = export_id
         self.path = path
         self.fsal = fsal
@@ -373,6 +381,7 @@ class Export:
         self.sectype = sectype
         self.qos_block = qos_block
         self.kmip_key_id = kmip_key_id
+        self.xprtsec = xprtsec
 
     @classmethod
     def from_export_block(cls, export_block: RawBlock, cluster_id: str) -> 'Export':
@@ -406,6 +415,9 @@ class Export:
         # https://github.com/ceph/go-ceph/issues/1097
         if sectype is not None and not isinstance(sectype, list):
             sectype = [sectype]
+
+        xprtsec = export_block.values.get('XprtSec')
+
         return cls(export_block.values['export_id'],
                    export_block.values['path'],
                    cluster_id,
@@ -420,8 +432,8 @@ class Export:
                     for client in client_blocks],
                    sectype=sectype,
                    qos_block=qos_block,
-                   kmip_key_id=export_block.values.get('kmip_key_id')
-                   )
+                   kmip_key_id=export_block.values.get('kmip_key_id'),
+                   xprtsec=xprtsec)
 
     def to_export_block(self) -> RawBlock:
         # if kmip_key_id is present, it should be first line of export block
@@ -442,6 +454,8 @@ class Export:
         })
         if self.sectype:
             values['SecType'] = self.sectype
+        if self.xprtsec:
+            values['XprtSec'] = self.xprtsec
         result = RawBlock("EXPORT", values=values)
         result.blocks = [
             self.fsal.to_fsal_block()
@@ -472,8 +486,8 @@ class Export:
                    [Client.from_dict(client) for client in ex_dict.get('clients', [])],
                    sectype=ex_dict.get("sectype"),
                    qos_block=qos_block,
-                   kmip_key_id=ex_dict.get('kmip_key_id')
-                   )
+                   kmip_key_id=ex_dict.get('kmip_key_id'),
+                   xprtsec=ex_dict.get('XprtSec'))
 
     def to_dict(self) -> Dict[str, Any]:
         values = {
@@ -495,6 +509,8 @@ class Export:
             values['qos_block'] = self.qos_block.to_dict()
         if self.kmip_key_id:
             values['kmip_key_id'] = self.kmip_key_id
+        if self.xprtsec:
+            values['XprtSec'] = self.xprtsec
         return values
 
     def validate(self, mgr: 'Module') -> None:
@@ -537,6 +553,8 @@ class Export:
 
         for st in (self.sectype or []):
             _validate_sec_type(st)
+        if self.xprtsec:
+            _validate_xprtsec_type(self.xprtsec)
 
     def __eq__(self, other: Any) -> bool:
         if not isinstance(other, Export):

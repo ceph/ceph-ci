@@ -675,6 +675,7 @@ class ExportMgr:
                              access_type: str,
                              clients: list = [],
                              sectype: Optional[List[str]] = None,
+                             xprtsec: Optional[str] = None,
                              cmount_path: Optional[str] = "/",
                              earmark_resolver: Optional[CephFSEarmarkResolver] = None,
                              kmip_key_id: Optional[str] = None
@@ -702,7 +703,8 @@ class ExportMgr:
                     },
                     "clients": clients,
                     "sectype": sectype,
-                    "kmip_key_id": kmip_key_id
+                    "kmip_key_id": kmip_key_id,
+                    "XprtSec": xprtsec,
                 },
                 earmark_resolver
             )
@@ -729,7 +731,8 @@ class ExportMgr:
                           user_id: Optional[str] = None,
                           clients: list = [],
                           sectype: Optional[List[str]] = None,
-                          kmip_key_id: Optional[str] = None) -> Dict[str, Any]:
+                          kmip_key_id: Optional[str] = None,
+                          xprtsec: Optional[str] = None) -> Dict[str, Any]:
         pseudo_path = normalize_path(pseudo_path)
 
         if not bucket and not user_id:
@@ -750,7 +753,8 @@ class ExportMgr:
                     },
                     "clients": clients,
                     "sectype": sectype,
-                    "kmip_key_id": kmip_key_id
+                    "kmip_key_id": kmip_key_id,
+                    "XprtSec": xprtsec,
                 }
             )
             log.debug("creating rgw export %s", export)
