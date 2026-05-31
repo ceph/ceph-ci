@@ -3429,6 +3429,11 @@ def command_bootstrap(ctx):
     else:
         logger.info('Enabling the logrotate.timer service to perform daily log rotation.')
         enable_service(ctx, 'logrotate.timer')
+
+    if ctx.ibm_build:
+        if not ctx.disable_ibm_call_home:
+            cli(['config', 'set', 'mgr', 'mgr/cephadm/call_home_needs_acceptance', 'true'])
+
     return ctx.error_code
 
 ##################################

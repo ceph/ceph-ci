@@ -547,6 +547,12 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule):
             default=32,
             desc='Size cephadm should override the max coredump size to in Gigabytes'
         ),
+        Option(
+            'call_home_needs_acceptance',
+            type='bool',
+            default=False,
+            desc='Internal option for tracking call home acceptance. Do no modify'
+        ),
     ]
     for image in DefaultImages:
         MODULE_OPTIONS.append(Option(image.key, default=image.image_ref, desc=image.desc))
@@ -657,6 +663,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule):
             self.certificate_check_period = 0
             self.set_coredump_overrides = True
             self.coredump_max_size = 0
+            self.call_home_needs_acceptance = False
 
         self.notify(NotifyType.mon_map, None)
         self.config_notify()
@@ -4862,21 +4869,25 @@ Then run the following:
         self.remove_health_warning('IBM_LICENSE_NOT_ACCEPTED')
         return f'Accepted license for image with id <{image_info.image_id}> with ceph version {image_info.ceph_version}'
 
+    def raise_call_home_warning(self) -> None:
+        self.set_health_warning(
+            'CALL_HOME_ENABLED_AUTOMATICALLY',
+            'Call home module enabled automatically',
+            1,
+            ['The call home agent mgr module has been enabled automatically as IBM license was accepted '
+             'and a bootstrap or upgrade operation occurred. To clear this warning either run `ceph orch '
+             'accept call-home-enabled` if call home is desired or ceph orch deny call-home-enabled to turn off the module']
+        )
+        self.call_home_needs_acceptance = True
+
     @handle_orch_error
     def enable_call_home(self, raise_automation_warning: bool = False) -> str:
+        if raise_automation_warning:
+            self.raise_call_home_warning()
         self.check_mon_command({
             'prefix': 'mgr module enable',
             'module': 'call_home_agent'
         })
-        if raise_automation_warning:
-            self.set_health_warning(
-                'CALL_HOME_ENABLED_AUTOMATICALLY',
-                'Call home module enabled automatically',
-                1,
-                ['The call home agent mgr module has been enabled automatically as IBM license was accepted '
-                 'To clear this warning either run `ceph orch accept call-home-enabled` if call home is desired or '
-                 'ceph orch deny call-home-enabled to turn off the module']
-            )
         return (
             'Call home agent module enabled.'
             + ' Health warning about automatic enablement raised' if raise_automation_warning else ''
@@ -4885,6 +4896,7 @@ Then run the following:
     @handle_orch_error
     def accept_call_home(self) -> str:
         self.remove_health_warning('CALL_HOME_ENABLED_AUTOMATICALLY')
+        self.call_home_needs_acceptance = False
         return 'Health warning for call home enablement cleared'
 
     @handle_orch_error
@@ -4894,6 +4906,7 @@ Then run the following:
             'prefix': 'mgr module disable',
             'module': 'call_home_agent'
         })
+        self.call_home_needs_acceptance = False
         return 'Call home agent module disabled and health warning for call home enablement cleared'
 
     @handle_orch_error

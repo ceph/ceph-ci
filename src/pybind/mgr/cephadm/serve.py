@@ -92,6 +92,8 @@ class CephadmServe:
 
             try:
 
+                self.handle_call_home_warning()
+
                 self.convert_tags_to_repo_digest()
 
                 # refresh daemons
@@ -209,6 +211,11 @@ class CephadmServe:
                                         "'ceph orch resume' to resume"])
         else:
             self.mgr.remove_health_warning('CEPHADM_PAUSED')
+
+    def handle_call_home_warning(self) -> None:
+        if not self.mgr.call_home_needs_acceptance:
+            return
+        self.mgr.raise_call_home_warning()
 
     def _autotune_host_memory(self, host: str) -> None:
         total_mem = self.mgr.cache.get_facts(host).get('memory_total_kb', 0)
