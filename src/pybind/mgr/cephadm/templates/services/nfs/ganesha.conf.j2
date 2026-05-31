@@ -19,6 +19,9 @@ NFS_CORE_PARAM {
 {% if haproxy_hosts %}
         HAProxy_Hosts = {{ haproxy_hosts|join(", ") }};
 {% endif %}
+{% if cqos_port %}
+     	Cqos_Port = {{ cqos_port }};
+{% endif %}
 
 NFSv4 {
         Delegations = false;
