@@ -161,19 +161,22 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
                                 ) -> None:
         """Create an NFS Cluster"""
         kmip_cert = kmip_key = kmip_ca_cert = kmip_host_list = None
+        cluster_qos_config = None
         if inbuf:
-            kmip_config = yaml.safe_load(inbuf)
-            kmip_cert = kmip_config.get('kmip_cert')
-            kmip_key = kmip_config.get('kmip_key')
-            kmip_ca_cert = kmip_config.get('kmip_ca_cert')
-            kmip_host_list = kmip_config.get('kmip_host_list')
+            config = yaml.safe_load(inbuf)
+            kmip_cert = config.get('kmip_cert')
+            kmip_key = config.get('kmip_key')
+            kmip_ca_cert = config.get('kmip_ca_cert')
+            kmip_host_list = config.get('kmip_host_list')
+            cluster_qos_config = config.get('cluster_qos_config')
 
         return self.nfs.create_nfs_cluster(cluster_id=cluster_id, placement=placement,
                                            virtual_ip=virtual_ip, ingress=ingress,
                                            ingress_mode=ingress_mode, port=port,
                                            enable_virtual_server=enable_virtual_server,
                                            kmip_cert=kmip_cert, kmip_key=kmip_key,
-                                           kmip_ca_cert=kmip_ca_cert, kmip_host_list=kmip_host_list)
+                                           kmip_ca_cert=kmip_ca_cert, kmip_host_list=kmip_host_list,
+                                           cluster_qos_config=cluster_qos_config)
 
     @NFSCLICommand('nfs cluster rm', perm='rw')
     @object_format.EmptyResponder()

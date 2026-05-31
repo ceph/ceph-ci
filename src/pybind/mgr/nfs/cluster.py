@@ -27,7 +27,8 @@ from .qos_conf import (
     QOS,
     QOSType,
     QOSBandwidthControl,
-    QOSOpsControl)
+    QOSOpsControl,
+    QOSParams)
 
 if TYPE_CHECKING:
     from nfs.module import Module
@@ -62,6 +63,87 @@ def create_ganesha_pool(mgr: 'MgrModule') -> None:
         log.debug("Successfully created nfs-ganesha pool %s", POOL_NAME)
 
 
+def config_cluster_qos_from_dict(
+    mgr: 'MgrModule',
+    cluster_id: str,
+    qos_dict: Dict[str, Union[str, bool, int]],
+    update_existing_obj: bool = False,
+) -> None:
+    qos_type = qos_dict.get(QOSParams.qos_type.value)
+    if not qos_type:
+        raise NFSInvalidOperation('qos_type is not specified in qos dict')
+    qos_type = QOSType[str(qos_type)]
+    enable_bw_ctrl = qos_dict.get(QOSParams.enable_bw_ctrl.value)
+    combined_bw_ctrl = qos_dict.get(QOSParams.combined_bw_ctrl.value)
+    enable_iops_ctrl = qos_dict.get(QOSParams.enable_iops_ctrl.value)
+    bw_obj = ops_obj = None
+    if enable_bw_ctrl:
+        bw_obj = QOSBandwidthControl(
+            bool(enable_bw_ctrl),
+            bool(combined_bw_ctrl),
+            export_writebw=str(qos_dict.get(QOSParams.export_writebw.value, "0")),
+            export_readbw=str(qos_dict.get(QOSParams.export_readbw.value, "0")),
+            client_writebw=str(qos_dict.get(QOSParams.client_writebw.value, "0")),
+            client_readbw=str(qos_dict.get(QOSParams.client_readbw.value, "0")),
+            export_rw_bw=str(qos_dict.get(QOSParams.export_rw_bw.value, "0")),
+            client_rw_bw=str(qos_dict.get(QOSParams.client_rw_bw.value, "0")),
+        )
+        bw_obj.qos_bandwidth_checks(qos_type)
+    if enable_iops_ctrl:
+        ops_obj = QOSOpsControl(
+            bool(enable_iops_ctrl),
+            max_export_iops=int(qos_dict.get(QOSParams.max_export_iops.value, 0)),
+            max_client_iops=int(qos_dict.get(QOSParams.max_client_iops.value, 0)),
+        )
+        ops_obj.qos_ops_checks(qos_type)
+
+    write_cluster_qos_obj(
+        mgr=mgr,
+        cluster_id=cluster_id,
+        qos_obj=None,
+        enable_qos=True,
+        qos_type=qos_type,
+        bw_obj=bw_obj,
+        ops_obj=ops_obj,
+        update_existing_obj=update_existing_obj
+    )
+
+
+def write_cluster_qos_obj(
+    mgr: 'MgrModule',
+    cluster_id: str,
+    qos_obj: Optional[QOS],
+    enable_qos: bool,
+    qos_type: Optional[QOSType] = None,
+    bw_obj: Optional[QOSBandwidthControl] = None,
+    ops_obj: Optional[QOSOpsControl] = None,
+    update_existing_obj: bool = False
+) -> None:
+    qos_obj_exists = False
+    if not qos_obj:
+        log.debug(f"Creating new QoS block for cluster {cluster_id}")
+        qos_obj = QOS(True, enable_qos, qos_type, bw_obj, ops_obj)
+    else:
+        log.debug(f"Updating existing QoS block for cluster {cluster_id}")
+        qos_obj_exists = True
+        qos_obj.enable_qos = enable_qos
+        qos_obj.qos_type = qos_type
+        if bw_obj:
+            qos_obj.bw_obj = bw_obj
+        if ops_obj:
+            qos_obj.ops_obj = ops_obj
+
+    qos_config = format_block(qos_obj.to_qos_block())
+    rados_obj = NFSRados(mgr.rados, cluster_id)
+    if not qos_obj_exists and not update_existing_obj:
+        rados_obj.write_obj(qos_config, qos_conf_obj_name(cluster_id),
+                            conf_obj_name(cluster_id))
+    else:
+        rados_obj.update_obj(qos_config, qos_conf_obj_name(cluster_id),
+                             conf_obj_name(cluster_id), should_notify=False)
+    log.debug(f"Successfully saved {cluster_id}s QOS bandwidth control config: \n {qos_config}")
+
+
 class NFSCluster:
     def __init__(self, mgr: 'Module') -> None:
         self.mgr = mgr
@@ -77,7 +159,8 @@ class NFSCluster:
             kmip_cert: Optional[str] = None,
             kmip_key: Optional[str] = None,
             kmip_ca_cert: Optional[str] = None,
-            kmip_host_list: Optional[List[str]] = None
+            kmip_host_list: Optional[List[str]] = None,
+            cluster_qos_config: Optional[Dict[str, Union[str, bool, int]]] = None,
     ) -> None:
         if not port:
             port = 2049   # default nfs port
@@ -115,7 +198,8 @@ class NFSCluster:
                                   kmip_cert=kmip_cert,
                                   kmip_key=kmip_key,
                                   kmip_ca_cert=kmip_ca_cert,
-                                  kmip_host_list=kmip_host_list)
+                                  kmip_host_list=kmip_host_list,
+                                  cluster_qos_config=cluster_qos_config)
             completion = self.mgr.apply_nfs(spec)
             orchestrator.raise_if_exception(completion)
             ispec = IngressSpec(service_type='ingress',
@@ -138,7 +222,8 @@ class NFSCluster:
                                   kmip_cert=kmip_cert,
                                   kmip_key=kmip_key,
                                   kmip_ca_cert=kmip_ca_cert,
-                                  kmip_host_list=kmip_host_list)
+                                  kmip_host_list=kmip_host_list,
+                                  cluster_qos_config=cluster_qos_config)
             completion = self.mgr.apply_nfs(spec)
             orchestrator.raise_if_exception(completion)
         log.debug("Successfully deployed nfs daemons with cluster id %s and placement %s",
@@ -166,7 +251,8 @@ class NFSCluster:
             kmip_cert: Optional[str] = None,
             kmip_key: Optional[str] = None,
             kmip_ca_cert: Optional[str] = None,
-            kmip_host_list: Optional[List[str]] = None
+            kmip_host_list: Optional[List[str]] = None,
+            cluster_qos_config: Optional[Dict[str, Union[str, bool, int]]] = None,
     ) -> None:
         try:
             if virtual_ip:
@@ -201,6 +287,7 @@ class NFSCluster:
                     kmip_key,
                     kmip_ca_cert,
                     kmip_host_list,
+                    cluster_qos_config=cluster_qos_config
                 )
                 return
             raise NonFatalError(f"{cluster_id} cluster already exists")
@@ -449,29 +536,15 @@ class NFSCluster:
                                bw_obj: Optional[QOSBandwidthControl] = None,
                                ops_obj: Optional[QOSOpsControl] = None) -> None:
         """Update cluster QOS config"""
-        qos_obj_exists = False
-        if not qos_obj:
-            log.debug(f"Creating new QOS block for cluster {cluster_id}")
-            qos_obj = QOS(True, enable_qos, qos_type, bw_obj, ops_obj)
-        else:
-            log.debug(f"Updating existing QOS block for cluster {cluster_id}")
-            qos_obj_exists = True
-            qos_obj.enable_qos = enable_qos
-            qos_obj.qos_type = qos_type
-            if bw_obj:
-                qos_obj.bw_obj = bw_obj
-            if ops_obj:
-                qos_obj.ops_obj = ops_obj
-
-        qos_config = format_block(qos_obj.to_qos_block())
-        rados_obj = self._rados(cluster_id)
-        if not qos_obj_exists:
-            rados_obj.write_obj(qos_config, qos_conf_obj_name(cluster_id),
-                                conf_obj_name(cluster_id))
-        else:
-            rados_obj.update_obj(qos_config, qos_conf_obj_name(cluster_id),
-                                 conf_obj_name(cluster_id), should_notify=False)
-        log.debug(f"Successfully saved {cluster_id}s QOS bandwidth control config: \n {qos_config}")
+        write_cluster_qos_obj(
+            mgr=self.mgr,
+            cluster_id=cluster_id,
+            qos_obj=qos_obj,
+            enable_qos=enable_qos,
+            qos_type=qos_type,
+            bw_obj=bw_obj,
+            ops_obj=ops_obj
+        )
 
     def update_cluster_qos(self,
                            cluster_id: str,

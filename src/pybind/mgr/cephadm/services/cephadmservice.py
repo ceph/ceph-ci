@@ -891,6 +891,9 @@ class CephadmService(metaclass=ABCMeta):
     def has_placement_changed(self, deps: List[str], spec: ServiceSpec) -> bool:
         return False
 
+    def pre_daemon_service_config(self, spec: ServiceSpec) -> None:
+        return
+
 
 class CephService(CephadmService):
 

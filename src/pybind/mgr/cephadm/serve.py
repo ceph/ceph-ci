@@ -1269,6 +1269,9 @@ class CephadmServe:
             self.log.debug('cannot scale mon|mgr below 1)')
             return ([], [], [], [], False)
 
+        if service_type == 'nfs' and self.mgr.spec_store.needs_configuration(spec.service_name()):
+            svc.pre_daemon_service_config(spec)
+
         try:
             # assign names
             needs_fencing, slots_to_add, daemons_to_fence = self.handle_slot_names_and_rank_map_for_service(spec, rank_map)
