@@ -79,7 +79,11 @@ backend backend
     option forwardfor
 {% if backend_spec.ssl is defined and backend_spec.ssl %}
     default-server ssl
+{% if spec.verify_backend_ssl_cert %}
+    default-server ssl check verify required ca-file /var/lib/haproxy/ca_cert.pem
+{% else %}
     default-server verify none
+{% endif %}
 {% endif %}
     balance static-rr
     option httpchk HEAD / HTTP/1.0
