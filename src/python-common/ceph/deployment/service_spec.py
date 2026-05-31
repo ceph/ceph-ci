@@ -33,7 +33,12 @@ from typing import (
 
 import yaml
 
-from ceph.deployment.hostspec import HostSpec, SpecValidationError, normalize_hostname, assert_valid_host
+from ceph.deployment.hostspec import (
+    HostSpec,
+    SpecValidationError,
+    normalize_hostname,
+    assert_valid_host,
+)
 from ceph.deployment.utils import unwrap_ipv6, valid_addr, verify_non_negative_int
 from ceph.deployment.utils import verify_positive_int, verify_non_negative_number
 from ceph.deployment.utils import verify_boolean, verify_enum, verify_int
@@ -363,7 +368,9 @@ class PlacementSpec(object):
         if all(isinstance(h, HostPlacementSpec) for h in hosts):
             # All items are HostPlacementSpec → normalize directly
             self.hosts = [
-                HostPlacementSpec(normalize_hostname(h.hostname), h.network, h.name)  # type: ignore[union-attr]
+                HostPlacementSpec(
+                    normalize_hostname(h.hostname), h.network, h.name  # type: ignore[union-attr]
+                )
                 for h in hosts
             ]
         else:
