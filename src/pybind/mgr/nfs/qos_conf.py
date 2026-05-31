@@ -29,7 +29,6 @@ class QOSParams(Enum):
     clust_block = "QOS_DEFAULT_CONFIG"
     export_block = "QOS_BLOCK"
     enable_qos = "enable_qos"
-    enable_cluster_qos = "enable_cluster_qos"
     clust_qos_msg_interval = "cqos_msg_interval"
     qos_type = "qos_type"
     # bandwidth control
@@ -303,7 +302,6 @@ class QOS(object):
         self,
         cluster_op: bool = False,
         enable_qos: bool = False,
-        enable_cluster_qos: Optional[bool] = None,
         clust_qos_msg_interval: int = 0,
         qos_type: Optional[QOSType] = None,
         bw_obj: Optional[QOSBandwidthControl] = None,
@@ -311,7 +309,6 @@ class QOS(object):
     ) -> None:
         self.cluster_op = cluster_op
         self.enable_qos = enable_qos
-        self.enable_cluster_qos = enable_cluster_qos
         self.clust_qos_msg_interval: int = validate_clust_qos_msg_interval(clust_qos_msg_interval)
         self.qos_type = qos_type
         self.bw_obj = bw_obj
@@ -325,7 +322,6 @@ class QOS(object):
             qos_type = qos_dict.get(QOSParams.qos_type.value)
             if qos_type:
                 kwargs["qos_type"] = QOSType[qos_type]
-            kwargs["enable_cluster_qos"] = qos_dict.get(QOSParams.enable_cluster_qos.value)
             kwargs['clust_qos_msg_interval'] = qos_dict.get(QOSParams.clust_qos_msg_interval.value)
         kwargs["enable_qos"] = qos_dict.get(QOSParams.enable_qos.value)
         kwargs["bw_obj"] = QOSBandwidthControl.from_dict(qos_dict)
@@ -340,7 +336,6 @@ class QOS(object):
             qos_type = qos_block.values.get(QOSParams.qos_type.value)
             if qos_type:
                 kwargs["qos_type"] = QOSType(qos_type)
-            kwargs["enable_cluster_qos"] = qos_block.values.get(QOSParams.enable_cluster_qos.value)
             kwargs['clust_qos_msg_interval'] = qos_block.values.get(QOSParams.clust_qos_msg_interval.value)
         kwargs["enable_qos"] = qos_block.values.get(QOSParams.enable_qos.value)
         kwargs["bw_obj"] = QOSBandwidthControl.from_qos_block(qos_block)
@@ -356,8 +351,6 @@ class QOS(object):
         if self.cluster_op:
             if self.qos_type:
                 result.values[QOSParams.qos_type.value] = self.qos_type.value
-            if self.enable_cluster_qos is not None:
-                result.values[QOSParams.enable_cluster_qos.value] = self.enable_cluster_qos
             if self.clust_qos_msg_interval:
                 result.values[QOSParams.clust_qos_msg_interval.value] = self.clust_qos_msg_interval
         if self.bw_obj and (res := self.bw_obj.to_qos_block()):
@@ -372,8 +365,6 @@ class QOS(object):
         if self.cluster_op:
             if self.qos_type:
                 r[QOSParams.qos_type.value] = self.qos_type.name
-            if self.enable_cluster_qos is not None:
-                r[QOSParams.enable_cluster_qos.value] = self.enable_cluster_qos
             if self.clust_qos_msg_interval:
                 r[QOSParams.clust_qos_msg_interval.value] = self.clust_qos_msg_interval
         if self.bw_obj and (res := self.bw_obj.to_dict(ret_bw_in_bytes)):
