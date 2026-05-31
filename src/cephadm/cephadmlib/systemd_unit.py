@@ -174,8 +174,6 @@ def _install_base_units(ctx: CephadmContext, fsid: str) -> None:
     Set up ceph.target and ceph-$fsid.target units.
     """
     # global unit
-    base_units_lock = FileLock(ctx, f'{fsid}-base-units')
-    base_units_lock.acquire()
     existed = os.path.exists(ctx.unit_dir + '/ceph.target')
     with write_new(ctx.unit_dir + '/ceph.target', perms=None) as f:
         f.write(
@@ -212,7 +210,6 @@ def _install_base_units(ctx: CephadmContext, fsid: str) -> None:
         call_throws(ctx, ['systemctl', 'start', 'ceph-%s.target' % fsid])
 
     write_cluster_logrotate_config(ctx, fsid)
-    base_units_lock.release()
 
 
 def update_files(
@@ -223,6 +220,8 @@ def update_files(
     sidecar_ids: Optional[List[DaemonSubIdentity]] = None,
     limit_core_infinity: Optional[bool] = False,
 ) -> None:
+    systemd_files_lock = FileLock(ctx, f'{ident.fsid}-systemd-unit')
+    systemd_files_lock.acquire()
     _install_base_units(ctx, ident.fsid)
     unit = _get_unit_file(
         ctx, ident.fsid, limit_core_infinity=limit_core_infinity
@@ -233,6 +232,7 @@ def update_files(
     _install_extended_systemd_services(
         ctx, pathinfo, ident, bool(init_container_ids)
     )
+    systemd_files_lock.release()
 
 
 def update_base_ceph_unit_file(
