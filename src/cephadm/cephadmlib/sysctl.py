@@ -20,9 +20,26 @@ def install_sysctl(
     ctx: CephadmContext, fsid: str, daemon: DaemonForm
 ) -> None:
     """
-    Set up sysctl settings
+    Set up sysctl settings.
+    Handles both writing sysctl conf files and telling sysctl to re-read values if necessary
     """
+    needs_read_in = write_sysctl_files(ctx, fsid, daemon)
 
+    if needs_read_in:
+        read_in_sysctl_settings(ctx)
+
+
+def read_in_sysctl_settings(ctx: CephadmContext) -> None:
+    # Tell sysctl to read values from system directories
+    # Should be done after writing out new sysctl conf files
+    call_throws(ctx, ['sysctl', '--system'])
+
+
+def write_sysctl_files(ctx: CephadmContext, fsid: str, daemon: DaemonForm) -> bool:
+    """
+    Write out sysctl files if there is anything to write.
+    Return a bool of whether we need a `sysctl --system` afterward (only if we write something)
+    """
     def _write(conf: Path, lines: List[str]) -> None:
         lines = [
             '# created by cephadm',
@@ -34,7 +51,7 @@ def install_sysctl(
             f.write('\n'.join(lines))
 
     if not isinstance(daemon, SysctlDaemonForm):
-        return
+        return False
 
     daemon_type = daemon.identity.daemon_type
     conf = Path(ctx.sysctl_dir).joinpath(f'90-ceph-{fsid}-{daemon_type}.conf')
@@ -51,11 +68,11 @@ def install_sysctl(
     lines = daemon.get_sysctl_settings()
     lines = filter_sysctl_settings(ctx, lines)
 
-    # apply the sysctl settings
     if lines:
         Path(ctx.sysctl_dir).mkdir(mode=0o755, exist_ok=True)
         _write(conf, lines)
-        call_throws(ctx, ['sysctl', '--system'])
+        return True
+    return False
 
 
 def sysctl_get(ctx: CephadmContext, variable: str) -> Union[str, None]:
