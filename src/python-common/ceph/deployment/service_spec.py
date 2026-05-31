@@ -2580,6 +2580,7 @@ class IngressSpec(ServiceSpec):
                  monitor_cert_source: Optional[str] = MonitorCertSource.REUSE_SERVICE_CERT.value,
                  monitor_networks: Optional[List[str]] = None,
                  monitor_ip_addrs: Optional[Dict[str, str]] = None,
+                 haproxy_peer_communication_port: Optional[int] = None,
                  ):
         assert service_type == 'ingress'
 
@@ -2629,6 +2630,7 @@ class IngressSpec(ServiceSpec):
         self.monitor_cert_source = monitor_cert_source
         self.monitor_networks = monitor_networks
         self.monitor_ip_addrs = monitor_ip_addrs
+        self.haproxy_peer_communication_port = haproxy_peer_communication_port
 
     def get_port_start(self) -> List[int]:
         ports = []
@@ -2636,6 +2638,11 @@ class IngressSpec(ServiceSpec):
             ports.append(cast(int, self.frontend_port))
         if self.monitor_port is not None:
             ports.append(cast(int, self.monitor_port))
+        is_nfs_backend = bool(
+            self.backend_service and self.backend_service.split('.')[0] == 'nfs'
+        )
+        if self.haproxy_peer_communication_port or is_nfs_backend:
+            ports.append(cast(int, self.haproxy_peer_communication_port) or 1024)
         return ports
 
     def get_virtual_ip(self) -> Optional[str]:
@@ -2666,6 +2673,7 @@ class IngressSpec(ServiceSpec):
                 raise SpecValidationError(
                     f'Cannot add ingress: Invalid health_check_interval specified. '
                     f'Valid units are: {valid_units}')
+
         if self.generate_cert and not self.ssl:
             raise SpecValidationError('"generate_cert" cannot be set without setting the "ssl" '
                                       'field to true')
@@ -2687,6 +2695,11 @@ class IngressSpec(ServiceSpec):
                                       'the backend service, or setting the "verification_ca_cert" '
                                       'field to be the ca cert used to sign the cert being used '
                                       'by the backend service.')
+
+        if self.haproxy_peer_communication_port and self.backend_service.split('.')[0] != 'nfs':
+            raise SpecValidationError(
+                'The haproxy_peer_communication_port is valid only for NFS backend.'
+            )
 
         # validate SSL parametes
         if self.monitor_ssl:

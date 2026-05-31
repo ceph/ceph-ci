@@ -12,6 +12,7 @@ from ceph.deployment.service_spec import (
     CustomContainerSpec,
     GrafanaSpec,
     HostPlacementSpec,
+    IngressSpec,
     IscsiServiceSpec,
     NFSServiceSpec,
     PlacementSpec,
@@ -773,6 +774,57 @@ spec:
     assert spec.virtual_ip == "192.168.20.1/24"
     assert spec.frontend_port == 8080
     assert spec.monitor_port == 8081
+
+
+def test_ingress_spec_haproxy_peer_communication_port():
+    """NFS ingress reserves peer port 1024 by default; custom value overrides."""
+    nfs_ingress = IngressSpec(
+        service_type='ingress',
+        service_id='nfs.foo',
+        backend_service='nfs.foo',
+        frontend_port=2049,
+        monitor_port=9049,
+        virtual_ip='192.168.1.1/24',
+    )
+    assert nfs_ingress.get_port_start() == [2049, 9049, 1024]
+
+    nfs_custom = IngressSpec(
+        service_type='ingress',
+        service_id='nfs.foo',
+        backend_service='nfs.foo',
+        frontend_port=2049,
+        monitor_port=9049,
+        virtual_ip='192.168.1.1/24',
+        haproxy_peer_communication_port=5000,
+    )
+    assert nfs_custom.get_port_start() == [2049, 9049, 5000]
+
+    rgw_ingress = IngressSpec(
+        service_type='ingress',
+        service_id='rgw.foo',
+        backend_service='rgw.foo',
+        frontend_port=8080,
+        monitor_port=8081,
+        virtual_ip='192.168.1.1/24',
+    )
+    assert rgw_ingress.get_port_start() == [8080, 8081]
+
+    yaml_str = """service_type: ingress
+service_id: nfs.foo
+placement:
+  hosts:
+    - host1
+spec:
+  virtual_ip: 192.168.20.1/24
+  backend_service: nfs.foo
+  frontend_port: 2049
+  monitor_port: 9049
+  haproxy_peer_communication_port: 5000
+"""
+    loaded = ServiceSpec.from_json(yaml.safe_load(yaml_str))
+    assert isinstance(loaded, IngressSpec)
+    assert loaded.haproxy_peer_communication_port == 5000
+    assert loaded.get_port_start() == [2049, 9049, 5000]
 
 
 @pytest.mark.parametrize("y, error_match", [

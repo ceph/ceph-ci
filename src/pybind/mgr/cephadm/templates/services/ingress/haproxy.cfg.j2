@@ -83,7 +83,7 @@ frontend frontend
 {% if backend_spec.service_type == 'nfs' and peer_hosts %}
 peers haproxy_peers
     {% for hostname, ip in peer_hosts.items() %}
-     peer {{ hostname }} {{ ip }}:1024
+     peer {{ hostname }} {{ ip }}:{{ spec.haproxy_peer_communication_port  | default(1024, true) }}
     {% endfor %}
 
 {% endif %}

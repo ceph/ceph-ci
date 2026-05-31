@@ -314,6 +314,7 @@ Ingress for NFS can be deployed for an existing NFS service
       frontend_port: 2049
       monitor_port: 9000
       virtual_ip: 10.0.0.123/24
+      haproxy_peer_communication_port: <integer> # optional: NFS ingress only; HAProxy peer TCP port (default 1024)
 
 A few notes:
 
@@ -338,7 +339,14 @@ A few notes:
     .. prompt:: bash #
 
 	ceph config-key get mgr/cephadm/ingress.nfs.myfoo/monitor_password
-	
+
+  * The optional ``haproxy_peer_communication_port`` is used when ``backend_service``
+    refers to an NFS service. HAProxy uses this TCP port for peer communication
+    (stick-table synchronization between HAProxy instances on different hosts). The
+    default is *1024*. Cephadm reserves this port alongside other ingress ports when
+    scheduling daemons. Set a different value if *1024* is already in use or blocked.
+    For RGW backends, HAProxy does not use a peers section, so this field is not applicable.
+
   * The backend service (``nfs.mynfs`` in this example) should include
     a *port* property that is not 2049 to avoid conflicting with the
     ingress service, which could be placed on the same host(s).
