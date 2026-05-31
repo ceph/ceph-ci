@@ -4815,6 +4815,7 @@ Then run the following:
             image_info.image_id
         )
         self.set_store(entry_key, entry_content)
+        self.remove_health_warning('LICENSE_NOT_ACCEPTED_WARNING')
         return f'Accepted license for image with id <{image_info.image_id}> with ceph version {image_info.ceph_version}'
 
     @handle_orch_error

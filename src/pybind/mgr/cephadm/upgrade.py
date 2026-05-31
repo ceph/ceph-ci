@@ -1761,6 +1761,25 @@ class CephadmUpgrade:
         logger.info('Upgrade: Finalizing container_image settings')
         self.mgr.set_container_image('global', target_image)
 
+        mgr_map = self.mgr.get('mgr_map')
+        if 'call_home_agent' not in mgr_map.get('services', {}):
+            self.mgr.check_mon_command({
+                'prefix': 'mgr module enable',
+                'module': 'call_home_agent'
+            })
+        image_info = self.mgr.wait_async(CephadmServe(self.mgr)._get_container_image_info(self.target_image))
+        license = self.mgr.wait_async(CephadmServe(self.mgr)._get_container_ibm_license(self.target_image))
+        entry_key = get_license_acceptance_key_value_entry_name(image_info.ceph_version or 'unknown_release', license)
+        license_acceptance_entry = self.mgr.get_store(entry_key, None)
+        if not license_acceptance_entry:
+            self.mgr.set_health_warning(
+                'LICENSE_NOT_ACCEPTED_WARNING',
+                'Call home has been enabled but cluster does not have license acceptance entry',
+                1,
+                [f'To accept license use `ceph orch display-license --image {self.target_image}` and `ceph orch accept-license --image {self.target_image}` '
+                 'Alternatively, the call_home_agent module can be disabled and this health warning muted']
+            )
+
         for daemon_type in CEPH_UPGRADE_ORDER:
             ret, image, err = self.mgr.check_mon_command({
                 'prefix': 'config rm',
