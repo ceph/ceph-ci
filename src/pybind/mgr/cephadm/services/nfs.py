@@ -234,7 +234,7 @@ class NFSService(CephService):
                 bind_ip = bind_addr.split('/')[0]
                 iface = self.mgr.cache.get_interface_for_ip(host, bind_ip)
                 rdma_netdevs = {d.get('netdev', '') for d in rdma_devices}
-                if iface not in rdma_netdevs:
+                if iface and iface not in rdma_netdevs:
                     raise OrchestratorError(
                         f'NFS RDMA is enabled with bind address {bind_addr} on host {host}, '
                         f'but interface {iface} (for this IP) is not RDMA-capable. '
