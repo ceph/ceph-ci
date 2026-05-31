@@ -4788,7 +4788,9 @@ Then run the following:
                 f"Upgrade aborted - Some host(s) are currently offline: {self.offline_hosts}")
         if daemon_types is not None and services is not None:
             raise OrchestratorError('--daemon-types and --services are mutually exclusive')
-
+        if bool(topological_labels) and (bucket_type is not None or bucket_name is not None):
+            raise OrchestratorError(
+                '--topological_labels cannot be combined with --crush_bucket_type or --crush_bucket_name')
         if daemon_types is not None:
             # Strip any whitespace around daemon types provided via the CLI so that
             # `--daemon_types "mon, crash"` is treated the same as `--daemon_types "mon,crash"`.
