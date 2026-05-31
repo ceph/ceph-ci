@@ -2985,6 +2985,7 @@ def apply_call_home_settings(ctx: CephadmContext, cli: Callable, wait_for_mgr_re
         cli(['config', 'set', 'mgr', 'mgr/call_home_agent/customer_last_name', ctx.ceph_call_home_contact_last_name])
     if 'ceph_call_home_country_code' in ctx and ctx.ceph_call_home_country_code:
         cli(['config', 'set', 'mgr', 'mgr/call_home_agent/customer_country_code', ctx.ceph_call_home_country_code])
+    logger.warning('Call-home-agent module automatically enabled as --disable-ibm-call-home not passed to bootstrap')
 
     if not ctx.enable_storage_insights:
         logger.info('Skipping Storage Insights integration. --enable-storage-insights not provided')

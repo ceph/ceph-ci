@@ -984,6 +984,14 @@ class Orchestrator(object):
         """Display license for specific IBM ceph container image"""
         raise NotImplementedError()
 
+    def accept_call_home(self) -> OrchResult[str]:
+        """Accept call home has been automatically enabled and clear warning"""
+        raise NotImplementedError()
+
+    def deny_call_home(self, image_name: str) -> OrchResult[str]:
+        """Disable automatically enabled call home agent module and clear warning"""
+        raise NotImplementedError()
+
     def accept_license(self, image_name: str) -> OrchResult[str]:
         """Accept license for specific IBM ceph container image"""
         raise NotImplementedError()

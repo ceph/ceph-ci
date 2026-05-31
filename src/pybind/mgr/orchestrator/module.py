@@ -2671,6 +2671,24 @@ Usage:
         raise_if_exception(completion)
         return HandleCommandResult(stdout=completion.result_str())
 
+    @OrchestratorCLICommand.Write('orch accept call-home-enabled')
+    def _accept_call_home_enablement(self) -> HandleCommandResult:
+        """
+        Accept call home has been automatically enabled and clear warning
+        """
+        completion = self.accept_call_home()
+        raise_if_exception(completion)
+        return HandleCommandResult(stdout=completion.result_str())
+
+    @OrchestratorCLICommand.Write('orch deny call-home-enabled')
+    def _deny_call_home_enablement(self) -> HandleCommandResult:
+        """
+        Disable automatically enabled call home agent module and clear warning
+        """
+        completion = self.deny_call_home()
+        raise_if_exception(completion)
+        return HandleCommandResult(stdout=completion.result_str())
+
     @OrchestratorCLICommand.Write('orch update service')
     def _update_service(self, service_type: NonCephImageServiceTypes, image: str) -> HandleCommandResult:
         """Update image for non-ceph image daemon"""

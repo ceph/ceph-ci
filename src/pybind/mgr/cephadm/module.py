@@ -4876,8 +4876,22 @@ Then run the following:
             image_info.image_id
         )
         self.set_store(entry_key, entry_content)
-        self.remove_health_warning('LICENSE_NOT_ACCEPTED_WARNING')
+        self.remove_health_warning('IBM_LICENSE_NOT_ACCEPTED')
         return f'Accepted license for image with id <{image_info.image_id}> with ceph version {image_info.ceph_version}'
+
+    @handle_orch_error
+    def accept_call_home(self, image_name: str) -> str:
+        self.remove_health_warning('CALL_HOME_ENABLED_AUTOMATICALLY')
+        return 'Health warning for call home enablement cleared'
+
+    @handle_orch_error
+    def deny_call_home(self, image_name: str) -> str:
+        self.remove_health_warning('CALL_HOME_ENABLED_AUTOMATICALLY')
+        self.check_mon_command({
+            'prefix': 'mgr module disable',
+            'module': 'call_home_agent'
+        })
+        return 'Call home agent module disabled and health warning for call home enablement cleared'
 
     @handle_orch_error
     def replace_device(self,
