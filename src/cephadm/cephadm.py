@@ -6013,6 +6013,14 @@ def _get_parser():
         '--fsid',
         help='cluster FSID')
     parser_rm_daemon_from.add_argument(
+        '--force',
+        action='store_true',
+        help='proceed, even though this may destroy valuable data')
+    parser_rm_daemon_from.add_argument(
+        '--force-delete-data',
+        action='store_true',
+        help='delete valuable daemon data instead of making a backup')
+    parser_rm_daemon_from.add_argument(
         'source',
         default='-',
         nargs='?',
