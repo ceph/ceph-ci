@@ -7,7 +7,7 @@ from cherrypy.process.servers import ServerAdapter
 from cherrypy_mgr import CherryPyMgr
 
 from cephadm.agent import AgentEndpoint
-from cephadm.service_discovery import ServiceDiscovery
+from cephadm.services.service_discovery import ServiceDiscovery
 from mgr_util import test_port_allocation, PortAlreadyInUse
 from orchestrator import OrchestratorError
 
