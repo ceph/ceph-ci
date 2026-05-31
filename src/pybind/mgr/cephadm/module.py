@@ -4844,6 +4844,10 @@ Then run the following:
             raise OrchestratorError(
                 '--hosts cannot be combined with --crush_bucket_type or --crush_bucket_name')
 
+        if services is not None and (bucket_type is not None or bucket_name is not None):
+            raise OrchestratorError(
+                '--services cannot be combined with --crush_bucket_type or --crush_bucket_name')
+
         if limit is not None:
             if limit < 1:
                 raise OrchestratorError(
