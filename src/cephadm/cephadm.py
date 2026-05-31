@@ -4781,7 +4781,8 @@ def command_prepare_host(ctx: CephadmContext) -> None:
         # the service
         check_time_sync(ctx)
 
-    install_required_services(ctx, pkg=pkg)
+    if hasattr(ctx, 'install_service_dependencies') and ctx.install_service_dependencies:
+        install_required_services(ctx, pkg=pkg)
 
     if 'expect_hostname' in ctx and ctx.expect_hostname and ctx.expect_hostname != get_hostname():
         logger.warning('Adjusting hostname from %s -> %s...' % (get_hostname(), ctx.expect_hostname))
@@ -6178,6 +6179,10 @@ def _get_parser():
     parser_prepare_host.add_argument(
         '--expect-hostname',
         help='Set hostname')
+    parser_prepare_host.add_argument(
+        '--install-service-dependencies',
+        action='store_true',
+        help='Installs the required system packages on the host that are needed for services to run.')
 
     parser_setup_ssh_user = subparsers.add_parser(
         'setup-ssh-user', help='set up SSH user with passwordless sudo and key')
