@@ -2129,6 +2129,30 @@ def command_inspect_image(ctx):
     ver = CephContainer(ctx, ctx.image, 'ceph', ['--version']).run().strip()
     info_from['ceph_version'] = ver
 
+    # Identify the image vendor (IBM vs Red Hat).
+    # Use /etc/redhat-storage-release from inside the image.
+    release = ''
+    try:
+        release = CephContainer(
+            ctx,
+            ctx.image,
+            entrypoint='/bin/sh',
+            args=['-c', 'cat /etc/redhat-storage-release 2>/dev/null || true'],
+        ).run().strip()
+    except RuntimeError:
+        logger.debug('inspect-image: could not read /etc/redhat-storage-release')
+        release = ''
+    if release:
+        info_from['redhat_storage_release'] = release
+
+    vendor = None  # type: Optional[str]
+    if release.startswith('IBM Storage Ceph'):
+        vendor = 'ibm'
+    elif release.startswith('Red Hat Ceph Storage'):
+        vendor = 'redhat'
+    if vendor:
+        info_from['image_vendor'] = vendor
+
     print(json.dumps(info_from, indent=4, sort_keys=True))
     return 0
 

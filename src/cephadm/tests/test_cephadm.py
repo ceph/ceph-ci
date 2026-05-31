@@ -2658,6 +2658,38 @@ class TestPull:
                 assert ctx.image == 'cephadm_image_param'
 
 
+class TestInspectImage:
+    @mock.patch('cephadm.call_throws')
+    @mock.patch('cephadm.CephContainer.run')
+    def test_vendor_ibm(self, _run, _call_throws, capsys):
+        _call_throws.return_value = ('deadbeef,', '', 0)
+        _run.side_effect = [
+            'ceph version 19.2.0-139.el9cp squid (stable)\n',
+            'IBM Storage Ceph 8 (Container)\n',
+        ]
+        cmd = ['--image', 'example', 'inspect-image']
+        with with_cephadm_ctx(cmd) as ctx:
+            _cephadm.command_inspect_image(ctx)
+            out = json.loads(capsys.readouterr().out)
+        assert out['image_vendor'] == 'ibm'
+        assert out['redhat_storage_release'].startswith('IBM Storage Ceph')
+
+    @mock.patch('cephadm.call_throws')
+    @mock.patch('cephadm.CephContainer.run')
+    def test_vendor_redhat(self, _run, _call_throws, capsys):
+        _call_throws.return_value = ('deadbeef,', '', 0)
+        _run.side_effect = [
+            'ceph version 19.2.1-354.el9cp squid (stable)\n',
+            'Red Hat Ceph Storage Server 8 (Container)\n',
+        ]
+        cmd = ['--image', 'example', 'inspect-image']
+        with with_cephadm_ctx(cmd) as ctx:
+            _cephadm.command_inspect_image(ctx)
+            out = json.loads(capsys.readouterr().out)
+        assert out['image_vendor'] == 'redhat'
+        assert out['redhat_storage_release'].startswith('Red Hat Ceph Storage')
+
+
 class TestApplySpec:
 
     def test_extract_host_info_from_applied_spec(self, cephadm_fs):
