@@ -1,10 +1,10 @@
 # constants.py - constant values used throughout the cephadm sources
 
 # Default container images -----------------------------------------------------
-DEFAULT_IMAGE = 'quay.io/ceph/ceph:v20'
+DEFAULT_IMAGE = 'registry.redhat.io/rhceph/rhceph-9-rhel9:latest'
 DEFAULT_IMAGE_IS_MAIN = False
 DEFAULT_IMAGE_RELEASE = 'tentacle'
-DEFAULT_REGISTRY = 'quay.io'  # normalize unqualified digests to this
+DEFAULT_REGISTRY = 'registry.redhat.io'  # normalize unqualified digests to this
 # ------------------------------------------------------------------------------
 
 LATEST_STABLE_RELEASE = 'tentacle'
