@@ -139,6 +139,7 @@ from cephadmlib.net_utils import (
 from cephadmlib.locking import FileLock
 from cephadmlib.daemon_identity import DaemonIdentity, DaemonSubIdentity
 from cephadmlib.packagers import create_packager
+from cephadmlib.service_installer import install_required_services
 from cephadmlib.logging import (
     cephadm_init_logging,
     Highlight,
@@ -4779,6 +4780,8 @@ def command_prepare_host(ctx: CephadmContext) -> None:
         # check again, and this time try to enable
         # the service
         check_time_sync(ctx)
+
+    install_required_services(ctx, pkg=pkg)
 
     if 'expect_hostname' in ctx and ctx.expect_hostname and ctx.expect_hostname != get_hostname():
         logger.warning('Adjusting hostname from %s -> %s...' % (get_hostname(), ctx.expect_hostname))
