@@ -44,7 +44,8 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
             squash: str = 'none',
             sectype: Optional[List[str]] = None,
             cmount_path: Optional[str] = "/",
-            skip_notify_nfs_server: bool = False
+            skip_notify_nfs_server: bool = False,
+            kmip_key_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Create a CephFS export"""
         self.export_mgr.skip_notify_nfs_server = skip_notify_nfs_server
@@ -60,7 +61,8 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
             addr=client_addr,
             sectype=sectype,
             cmount_path=cmount_path,
-            earmark_resolver=earmark_resolver
+            earmark_resolver=earmark_resolver,
+            kmip_key_id=kmip_key_id
         )
 
     @NFSCLICommand('nfs export create rgw', perm='rw')
@@ -75,7 +77,8 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
             client_addr: Optional[List[str]] = None,
             squash: str = 'none',
             sectype: Optional[List[str]] = None,
-            skip_notify_nfs_server: bool = False
+            skip_notify_nfs_server: bool = False,
+            kmip_key_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Create an RGW export"""
         self.export_mgr.skip_notify_nfs_server = skip_notify_nfs_server
@@ -89,6 +92,7 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
             squash=squash,
             addr=client_addr,
             sectype=sectype,
+            kmip_key_id=kmip_key_id
         )
 
     @NFSCLICommand('nfs export rm', perm='rw')
@@ -151,12 +155,19 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
                                 virtual_ip: Optional[str] = None,
                                 ingress_mode: Optional[IngressType] = None,
                                 port: Optional[int] = None,
-                                enable_virtual_server: bool = False) -> None:
+                                enable_virtual_server: bool = False,
+                                kmip_cert: Optional[str] = None,
+                                kmip_key: Optional[str] = None,
+                                kmip_ca_cert: Optional[str] = None,
+                                kmip_host_list: Optional[List[str]] = None,
+                                ) -> None:
         """Create an NFS Cluster"""
         return self.nfs.create_nfs_cluster(cluster_id=cluster_id, placement=placement,
                                            virtual_ip=virtual_ip, ingress=ingress,
                                            ingress_mode=ingress_mode, port=port,
-                                           enable_virtual_server=enable_virtual_server)
+                                           enable_virtual_server=enable_virtual_server,
+                                           kmip_cert=kmip_cert, kmip_key=kmip_key,
+                                           kmip_ca_cert=kmip_ca_cert, kmip_host_list=kmip_host_list)
 
     @NFSCLICommand('nfs cluster rm', perm='rw')
     @object_format.EmptyResponder()

@@ -356,7 +356,8 @@ class Export:
             fsal: FSAL,
             clients: Optional[List[Client]] = None,
             sectype: Optional[List[str]] = None,
-            qos_block: Optional[QOS] = None) -> None:
+            qos_block: Optional[QOS] = None,
+            kmip_key_id: Optional[str] = None) -> None:
         self.export_id = export_id
         self.path = path
         self.fsal = fsal
@@ -371,6 +372,7 @@ class Export:
         self.clients: List[Client] = clients or []
         self.sectype = sectype
         self.qos_block = qos_block
+        self.kmip_key_id = kmip_key_id
 
     @classmethod
     def from_export_block(cls, export_block: RawBlock, cluster_id: str) -> 'Export':
@@ -417,11 +419,17 @@ class Export:
                    [Client.from_client_block(client)
                     for client in client_blocks],
                    sectype=sectype,
-                   qos_block=qos_block
+                   qos_block=qos_block,
+                   kmip_key_id=export_block.values.get('kmip_key_id')
                    )
 
     def to_export_block(self) -> RawBlock:
-        values = {
+        # if kmip_key_id is present, it should be first line of export block
+        values: Dict[str, Any] = {}
+        if self.kmip_key_id:
+            values['kmip_key_id'] = self.kmip_key_id
+
+        values.update({
             'export_id': self.export_id,
             'path': self.path,
             'pseudo': self.pseudo,
@@ -431,7 +439,7 @@ class Export:
             'security_label': self.security_label,
             'protocols': self.protocols,
             'transports': self.transports,
-        }
+        })
         if self.sectype:
             values['SecType'] = self.sectype
         result = RawBlock("EXPORT", values=values)
@@ -463,7 +471,8 @@ class Export:
                    FSAL.from_dict(ex_dict.get('fsal', {})),
                    [Client.from_dict(client) for client in ex_dict.get('clients', [])],
                    sectype=ex_dict.get("sectype"),
-                   qos_block=qos_block
+                   qos_block=qos_block,
+                   kmip_key_id=ex_dict.get('kmip_key_id')
                    )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -484,6 +493,8 @@ class Export:
             values['sectype'] = self.sectype
         if self.qos_block:
             values['qos_block'] = self.qos_block.to_dict()
+        if self.kmip_key_id:
+            values['kmip_key_id'] = self.kmip_key_id
         return values
 
     def validate(self, mgr: 'Module') -> None:
@@ -535,14 +546,15 @@ class Export:
 
 def _format_block_body(block: RawBlock, depth: int = 0) -> str:
     conf_str = ""
-    for blo in block.blocks:
-        conf_str += format_block(blo, depth)
-
     for key, val in block.values.items():
         if val is not None:
             conf_str += _indentation(depth)
             fval = _format_val(block.block_name, key, val)
             conf_str += '{} = {};\n'.format(key, fval)
+
+    for blo in block.blocks:
+        conf_str += format_block(blo, depth)
+
     return conf_str
 
 

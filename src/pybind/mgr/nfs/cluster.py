@@ -73,7 +73,11 @@ class NFSCluster:
             virtual_ip: Optional[str] = None,
             ingress_mode: Optional[IngressType] = None,
             port: Optional[int] = None,
-            enable_virtual_server: bool = False
+            enable_virtual_server: bool = False,
+            kmip_cert: Optional[str] = None,
+            kmip_key: Optional[str] = None,
+            kmip_ca_cert: Optional[str] = None,
+            kmip_host_list: Optional[List[str]] = None
     ) -> None:
         if not port:
             port = 2049   # default nfs port
@@ -101,14 +105,17 @@ class NFSCluster:
                 keepalive_only = True
                 ganesha_port = port
                 frontend_port = None
-
             spec = NFSServiceSpec(service_type='nfs', service_id=cluster_id,
                                   placement=pspec,
                                   # use non-default port so we don't conflict with ingress
                                   port=ganesha_port,
                                   virtual_ip=virtual_ip_for_ganesha,
                                   enable_haproxy_protocol=enable_haproxy_protocol,
-                                  enable_virtual_server=enable_virtual_server)
+                                  enable_virtual_server=enable_virtual_server,
+                                  kmip_cert=kmip_cert,
+                                  kmip_key=kmip_key,
+                                  kmip_ca_cert=kmip_ca_cert,
+                                  kmip_host_list=kmip_host_list)
             completion = self.mgr.apply_nfs(spec)
             orchestrator.raise_if_exception(completion)
             ispec = IngressSpec(service_type='ingress',
@@ -126,7 +133,12 @@ class NFSCluster:
             # standalone nfs
             spec = NFSServiceSpec(service_type='nfs', service_id=cluster_id,
                                   placement=PlacementSpec.from_string(placement),
-                                  port=port, enable_virtual_server=enable_virtual_server)
+                                  port=port,
+                                  enable_virtual_server=enable_virtual_server,
+                                  kmip_cert=kmip_cert,
+                                  kmip_key=kmip_key,
+                                  kmip_ca_cert=kmip_ca_cert,
+                                  kmip_host_list=kmip_host_list)
             completion = self.mgr.apply_nfs(spec)
             orchestrator.raise_if_exception(completion)
         log.debug("Successfully deployed nfs daemons with cluster id %s and placement %s",
@@ -150,7 +162,11 @@ class NFSCluster:
             ingress: Optional[bool] = None,
             ingress_mode: Optional[IngressType] = None,
             port: Optional[int] = None,
-            enable_virtual_server: bool = False
+            enable_virtual_server: bool = False,
+            kmip_cert: Optional[str] = None,
+            kmip_key: Optional[str] = None,
+            kmip_ca_cert: Optional[str] = None,
+            kmip_host_list: Optional[List[str]] = None
     ) -> None:
         try:
             if virtual_ip:
@@ -180,7 +196,11 @@ class NFSCluster:
                     virtual_ip,
                     ingress_mode,
                     port,
-                    enable_virtual_server
+                    enable_virtual_server,
+                    kmip_cert,
+                    kmip_key,
+                    kmip_ca_cert,
+                    kmip_host_list,
                 )
                 return
             raise NonFatalError(f"{cluster_id} cluster already exists")
