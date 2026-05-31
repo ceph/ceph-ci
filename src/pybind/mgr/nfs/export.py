@@ -739,10 +739,13 @@ class ExportMgr:
         ex_dict["fsal"] = fsal
         ex_dict["cluster_id"] = cluster_id
         # When RDMA is enabled at cluster level, default export transports to tcp, RDMA
-        if "transports" not in ex_dict:
-            nfs_spec = get_nfs_spec_for_cluster(self.mgr, cluster_id)
-            if nfs_spec and getattr(nfs_spec, "enable_rdma", False):
-                ex_dict["transports"] = ["TCP", "RDMA"]
+        nfs_spec = get_nfs_spec_for_cluster(self.mgr, cluster_id)
+        rdma_status = getattr(nfs_spec, "enable_rdma", False)
+        if "transports" not in ex_dict and rdma_status:
+            ex_dict["transports"] = ["TCP", "RDMA"]
+        elif "RDMA" in ex_dict.get("transports", []) and not rdma_status:
+            raise NFSInvalidOperation("Can't set Transport as RDMA as RDMA not enabled at NFS cluster level")
+
         export = Export.from_dict(ex_id, ex_dict)
         if export.fsal.name == NFS_GANESHA_SUPPORTED_FSALS[0]:
             self._ensure_cephfs_export_user(export)
