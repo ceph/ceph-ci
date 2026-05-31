@@ -550,13 +550,18 @@ def test_ok_to_upgrade_mon_report_from_parsed_body():
     assert rep.mon_resp_as_dict()['bad_no_version'] == [5]
 
 
-def test_ok_to_upgrade_mon_report_non_list_osd_array_becomes_empty():
+def test_ok_to_upgrade_mon_report_non_list_osd_array_becomes_empty(caplog):
+    caplog.set_level(logging.WARNING, logger='cephadm.upgrade')
     rep = OkToUpgradeMonReport.from_parsed_body({
         'ok_to_upgrade': True,
         'all_osds_upgraded': False,
         'osds_ok_to_upgrade': 'not-a-list',
     })
     assert rep.osds_ok_to_upgrade == []
+    assert any(
+        'expected list of osd ids' in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_ok_to_upgrade_mon_report_matches_mgr_json_formatter_shape():
