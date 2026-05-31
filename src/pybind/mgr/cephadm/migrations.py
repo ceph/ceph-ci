@@ -3,12 +3,14 @@ import re
 import logging
 from typing import TYPE_CHECKING, Iterator, Optional, Dict, Any, List, cast
 
-from ceph.deployment.service_spec import PlacementSpec, ServiceSpec, HostPlacementSpec, RGWSpec, NFSServiceSpec
+from ceph.deployment.service_spec import PlacementSpec, ServiceSpec, HostPlacementSpec, RGWSpec, CertificateSource, NFSServiceSpec
 from cephadm.schedule import HostAssignment
 from cephadm.utils import SpecialHostLabels
 from cephadm.services.nfs import NFSService
 from cephadm.services.service_registry import service_registry
 import rados
+from mgr_util import parse_combined_pem_file, get_cert_issuer_info
+from cephadm.tlsobject_types import CertKeyPair
 
 from mgr_module import NFS_POOL_NAME
 from orchestrator import OrchestratorError, DaemonDescription
@@ -42,6 +44,9 @@ class Migrations:
 
         r = mgr.get_store('rgw_migration_queue')
         self.rgw_migration_queue = json.loads(r) if r else []
+
+        r = mgr.get_store('rgw_ssl_migration_queue')
+        self.rgw_ssl_migration_queue = json.loads(r) if r else []
 
         # for some migrations, we don't need to do anything except for
         # incrementing migration_current.
@@ -83,7 +88,7 @@ class Migrations:
                 "cephadm migration still ongoing. Please wait, until the migration is complete.")
 
     def migrate(self, startup: bool = False) -> None:
-        logger.info('running migrations')
+        logger.debug('running migrations')
 
         if self.mgr.migration_current == 0:
             if self.migrate_0_1():
@@ -417,7 +422,7 @@ class Migrations:
         Any extra arguments detected on rgw_frontend_type field will be parsed and passed in the
         new spec field rgw_frontend_extra_args.
         """
-        self.mgr.log.debug(f'Starting rgw migration (queue length is {len(self.rgw_migration_queue)})')
+        logger.info(f'Starting rgw migration (queue length is {len(self.rgw_migration_queue)})')
         for s in self.rgw_migration_queue:
             spec = s['spec']
             if self.rgw_spec_needs_migration(spec):
@@ -427,6 +432,7 @@ class Migrations:
                     self.mgr.spec_store.save(rgw_spec)
             else:
                 logger.info(f"No Migration is needed for rgw spec: {spec}")
+
         self.rgw_migration_queue = []
         return True
 
@@ -437,7 +443,8 @@ class Migrations:
                 logger.info(f'Migrating certs/keys for {spec.service_name()} spec to cert store')
                 self.mgr.spec_store._save_certs_and_keys(spec)
 
-        # grafana certs are stored based on the host they are placed on
+        # Grafana certs are stored based on the host they are placed on
+        grafana_cephadm_signed_certs = True
         for grafana_daemon in self.mgr.cache.get_daemons_by_type('grafana'):
             logger.info(f'Checking for cert/key for {grafana_daemon.name()}')
             hostname = grafana_daemon.hostname
@@ -445,13 +452,24 @@ class Migrations:
             grafana_cert_path = f'{hostname}/grafana_crt'
             grafana_key_path = f'{hostname}/grafana_key'
             grafana_cert = self.mgr.get_store(grafana_cert_path)
-            if grafana_cert:
-                logger.info(f'Migrating {grafana_daemon.name()} cert to cert store')
-                self.mgr.cert_mgr.save_cert('grafana_cert', grafana_cert, host=hostname)
             grafana_key = self.mgr.get_store(grafana_key_path)
-            if grafana_key:
-                logger.info(f'Migrating {grafana_daemon.name()} key to cert store')
-                self.mgr.cert_mgr.save_key('grafana_key', grafana_key, host=hostname)
+            if grafana_cert:
+                (org, cn) = get_cert_issuer_info(grafana_cert)
+                if org == 'Ceph':
+                    logger.info(f'Migrating {grafana_daemon.name()}/{hostname} cert/key to cert store (as cephadm-signed certs)')
+                    self.mgr.cert_mgr.register_self_signed_cert_key_pair('grafana')
+                    self.mgr.cert_mgr.save_self_signed_cert_key_pair('grafana', CertKeyPair(grafana_cert, grafana_key), host=hostname)
+                else:
+                    logger.info(f'Migrating {grafana_daemon.name()}/{hostname} cert/key to cert store (as custom-certs)')
+                    grafana_cephadm_signed_certs = False
+                    self.mgr.cert_mgr.save_cert('grafana_ssl_cert', grafana_cert, host=hostname)
+                    self.mgr.cert_mgr.save_key('grafana_ssl_key', grafana_key, host=hostname)
+
+        if not grafana_cephadm_signed_certs:
+            # Update the spec to specify the right certificate source
+            grafana_spec = self.mgr.spec_store['grafana'].spec
+            grafana_spec.certificate_source = CertificateSource.REFERENCE.value
+            self.mgr.spec_store.save(grafana_spec)
 
         # NOTE: prometheus, alertmanager, and node-exporter certs were not stored
         # and appeared to just be generated at daemon deploy time if secure_monitoring_stack
@@ -590,7 +608,16 @@ def queue_migrate_rgw_spec(mgr: "CephadmOrchestrator", spec_dict: Dict[Any, Any]
     ls = json.loads(queued)
     ls.append(spec_dict)
     mgr.set_store('rgw_migration_queue', json.dumps(ls))
-    mgr.log.info(f'Queued rgw.{service_id} for migration')
+    logger.info(f'Queued rgw.{service_id} for migration')
+
+
+def queue_migrate_rgw_ssl_spec(mgr: "CephadmOrchestrator", spec_dict: Dict[Any, Any]) -> None:
+    service_id = spec_dict['spec']['service_id']
+    queued = mgr.get_store('rgw_ssl_migration_queue') or '[]'
+    ls = json.loads(queued)
+    ls.append(spec_dict)
+    mgr.set_store('rgw_ssl_migration_queue', json.dumps(ls))
+    logger.info(f'Queued rgw.{service_id} for TLS migration')
 
 
 def queue_migrate_nfs_spec(mgr: "CephadmOrchestrator", spec_dict: Dict[Any, Any]) -> None:
