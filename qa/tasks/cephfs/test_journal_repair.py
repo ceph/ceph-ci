@@ -639,3 +639,90 @@ wait
             raise RuntimeError("Expected journal import to fail")
         finally:
             self.mount_a.run_shell(["sudo", "rm", fname], omit_sudo=False)
+
+    def test_recover_header(self):
+        """
+        Validates the discovery of segment boundaries, dry-run reporting,
+        and header field modification (trimmed_pos, expire_pos, write_pos) via --force.
+        after a deliberate journal corruption that breaks MDS replay.
+        """
+        # Generate metadata events in the journal
+        log.info("Creating file system activity to populate the journal...")
+        test_dir = "header_recover_test_dir"
+        self.mount_a.run_shell(["mkdir", "-p", test_dir])
+        for i in range(20):
+            self.mount_a.run_shell(["touch", f"{test_dir}/file_{i}"])
+
+        # Flush entries out of memory into the RADOS journal objects
+        self.mount_a.run_shell(["sync"])
+
+        # Fail the filesystem to run journal operations.
+        log.info("Fail the filesystem to run offline journal operations...")
+        self.fs.fail()
+
+        # corrupt the journal header
+        log.info("Corrupting the journal header...")
+        # Move the write position backward or expire position ahead of the stream
+        self.fs.journal_tool(["header", "set", "write_pos", "1000"], 0)
+
+        log.info("Verifying that MDS daemon fails to replay the corrupted journal...")
+        self.fs.set_joinable()
+        try:
+            # We expect wait_for_daemons to time out or raise an exception as the MDS cannot boot
+            self.fs.wait_for_daemons(timeout=30)
+            raise RuntimeError("MDS successfully booted up even with journal corruption!")
+        except Exception as e:
+            log.info(f"MDS failed to start as expected: {e}")
+
+        # Fail the filesystem again to regain exclusive access to the journal
+        self.fs.fail()
+
+        # Step 3: Test Dry-Run Mode on the corrupted journal
+        log.info("Executing recover_header in dry-run mode (without --force)...")
+        dry_run_output = self.fs.journal_tool(["header", "recover"], 0)
+        log.info(f"Dry-run output:\n{dry_run_output}")
+
+        # Assert against outputs printed in JournalTool::recover_header
+        self.assertIn("Proposed Journal Header Updates:", dry_run_output)
+        self.assertIn("trimmed_pos:", dry_run_output)
+        self.assertIn("expire_pos:", dry_run_output)
+        self.assertIn("read_pos:", dry_run_output)
+        self.assertIn("write_pos:", dry_run_output)
+        self.assertIn("Target event type at proposed read_pos:", dry_run_output)
+        self.assertIn("Dry-run mode enabled. Header modifications skipped.", dry_run_output)
+
+        # Test Mutation Mode (--force)
+        log.info("Executing recover_header with --force to commit changes to RADOS...")
+        mutation_output = self.fs.journal_tool(["header", "recover", "--force"], 0)
+        log.info(f"Mutation output:\n{mutation_output}")
+
+        # Verify the success indicators printed upon successful RADOS synchronization
+        self.assertIn("Proposed Journal Header Updates:", mutation_output)
+        self.assertIn("trimmed_pos:", mutation_output)
+        self.assertIn("expire_pos:", mutation_output)
+        self.assertIn("read_pos:", mutation_output)
+        self.assertIn("write_pos:", mutation_output)
+        self.assertIn("Successfully recovered journal header.", mutation_output)
+        self.assertNotIn("Dry-run mode enabled", mutation_output)
+
+        # Verify Header Persistence via 'header get'
+        log.info("Fetching updated header to confirm correctness...")
+        header_raw = self.fs.journal_tool(["header", "get"], 0)
+        header_json = json.loads(header_raw)
+        log.info(f"Persisted Header JSON: {header_json}")
+        self.assertGreater(header_json["write_pos"], 1000) # Ensure it realigned past our corruption value
+
+        # Bring the filesystem back up and confirm MDS can now replay successfully
+        log.info("Verify file system stability post-recovery...")
+        self.fs.set_joinable()
+        # Wait for the daemons report healthy and active. This should succeed now.
+        try:
+            self.fs.wait_for_daemons()
+            log.info("MDS successfully booted up after journal recovery")
+        except Exception as e:
+            raise RuntimeError(f"MDS failed to start after journal recovery: {e}")
+
+        # Ensure data can still be read without MDS crashing
+        log.info("Verifying that directory contents are readable...")
+        dir_list = self.mount_a.run_shell(["ls", test_dir])
+        self.assertIn("file_19", dir_list.stdout.getvalue().strip())
