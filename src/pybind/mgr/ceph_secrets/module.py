@@ -38,7 +38,7 @@ class Module(MgrModule):
       - CLI commands: `ceph secret ...`
 
     Storage keys inside the mgr KV store:
-      secret data:   secret_store/v1/<namespace>/<scope>/<target>/<name>
+      secret data:   secret_store/v1/<namespace>/<scope>/...
       epoch (meta):  secret_store/meta/<namespace>/_epoch
 
     Epoch is per-namespace: a mutation in namespace A does not affect the epoch
@@ -90,20 +90,32 @@ class Module(MgrModule):
     def secret_get_versions(self, refs: List[Dict[str, str]]) -> Dict[str, Optional[int]]:
         """Batch-get versions for a list of secret identifiers.
 
-        Each entry in `refs` must contain: namespace, scope, target, name.
-        Returns a dict keyed by 'namespace:scope:target:name' -> version (or None).
+        Each entry in `refs` must contain: namespace, scope, name, and target
+        for targeted scopes (service/host). Global and custom scopes must use
+        an empty target. Returns a dict keyed by
+        'namespace:scope:target:name' -> version (or None).
         """
         out: Dict[str, Optional[int]] = {}
         for r in refs or []:
             ns = r.get('namespace', '')
-            sc = r.get('scope', '')
+            sc_s = r.get('scope', '')
             tgt = r.get('target', '')
             name = r.get('name', '')
-            key = f"{ns}:{sc}:{tgt}:{name}"
+            key = f"{ns}:{sc_s}:{tgt}:{name}"
             try:
-                if not (ns and sc and name):  # target is optional for global scope
+                if not (ns and sc_s and name):
                     out[key] = None
                     continue
+
+                sc = SecretScope.from_str(sc_s)
+                if sc in (SecretScope.GLOBAL, SecretScope.CUSTOM):
+                    if tgt:
+                        out[key] = None
+                        continue
+                elif not tgt:
+                    out[key] = None
+                    continue
+
                 ver = self.secret_get_version(namespace=ns, scope=sc, target=tgt, name=name)
                 out[key] = ver
             except Exception as e:
@@ -224,7 +236,7 @@ class Module(MgrModule):
                                        target=sec_target,
                                        show_values=reveal,
                                        show_internals=show_internals)
-            out = good | bad
+            out = {'secrets': good, 'errors': bad}
             return HandleCommandResult(0, json.dumps(out, indent=2, sort_keys=True), '')
         except CephSecretException as e:
             return HandleCommandResult(-errno.EINVAL, '', f'secret error: {e}')
