@@ -22,6 +22,67 @@ class CephSecretDataError(CephSecretException):
     pass
 
 
+# ---------------------------------------------------------------------------
+# Segment grammar
+# ---------------------------------------------------------------------------
+# Accepted characters: alphanumeric, dot, hyphen, underscore.
+# Additional rule: a segment must not end with '.' (Vault API restriction).
+# Applies to: namespace, global name, service/host target and name,
+# and each individual segment of a custom path.
+
+_SEGMENT_RE = re.compile(r'^[A-Za-z0-9._-]+$')
+
+
+def _validate_segment(label: str, value: str) -> None:
+    """Raise ValueError with a field-level message. No URI context — callers re-wrap."""
+    if not isinstance(value, str):
+        raise ValueError(f'{label} must be a string')
+    if not value:
+        raise ValueError(f'{label} must not be empty')
+    if not _SEGMENT_RE.fullmatch(value):
+        raise ValueError(f'{label} contains unsupported characters')
+    if value.endswith('.'):
+        raise ValueError(f"{label} must not end with '.'")
+
+
+def validate_secret_namespace(namespace: str) -> None:
+    """Validate a secret namespace segment. Raises ValueError."""
+    _validate_segment('namespace', namespace)
+
+
+def _validate_custom_path(value: str) -> None:
+    """Validate a slash-delimited custom path. Raises ValueError."""
+    if not isinstance(value, str):
+        raise ValueError('custom path must be a string')
+    if not value:
+        raise ValueError('custom path must not be empty')
+    parts = value.split('/')
+    if any(p == '' for p in parts):
+        raise ValueError('custom path must not contain empty segments')
+    for part in parts:
+        _validate_segment('custom path segment', part)
+
+
+# ---------------------------------------------------------------------------
+# URI serialisation helpers
+# ---------------------------------------------------------------------------
+# With strict segment validation, quoting is effectively a no-op. Kept as
+# defensive correctness for round-trip safety.
+
+def _quote_segment(v: str) -> str:
+    """Percent-encode a single path segment (slashes not preserved)."""
+    return quote(v, safe='')
+
+
+def _quote_custom_path(v: str) -> str:
+    """Percent-encode a custom path, preserving '/' as segment delimiters."""
+    return quote(v, safe='/')
+
+
+# ---------------------------------------------------------------------------
+# Scope
+# ---------------------------------------------------------------------------
+
 class SecretScope(str, Enum):
     GLOBAL = 'global'
     SERVICE = 'service'
@@ -38,6 +99,12 @@ class SecretScope(str, Enum):
                 f'Invalid secret scope {s!r}. Expected one of: {allowed}'
             ) from e
 
+    def validate_fields(self, target: str, name: str) -> None:
+        """Validate target/name for this scope. Raises ValueError."""
+        if self == SecretScope.GLOBAL:
+            if target:
+                raise ValueError('target must be empty for global scope')
+            _validate_segment('name', name)
 
 _TARGETED_SCOPES = frozenset((SecretScope.SERVICE, SecretScope.HOST))
 
@@ -54,7 +121,14 @@ def _q_path(v: str) -> str:
     # CUSTOM stores a slash-delimited path in name. Preserve path separators, but
     # encode URI-reserved characters such as '?', '#', and '%'.
     return quote(v, safe='/')
+        elif self == SecretScope.CUSTOM:
+            if target:
+                raise ValueError('target must be empty for custom scope')
+            _validate_custom_path(name)
 
+        elif self in (SecretScope.SERVICE, SecretScope.HOST):
+            _validate_segment('target', target)
+            _validate_segment('name', name)
 
 def _has_empty_path_component(v: str) -> bool:
     return v.startswith('/') or v.endswith('/') or '//' in v
@@ -120,6 +194,8 @@ class SecretRef:
             )
         except CephSecretException as e:
             raise ValueError(str(e)) from e
+        _validate_segment('namespace', self.namespace)
+        scope.validate_fields(self.target, self.name)
 
     def ident(self) -> Tuple[str, str, str, str]:
         return (self.namespace, self.scope.value, self.target, self.name)
