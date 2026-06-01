@@ -125,11 +125,15 @@ class Module(MgrModule):
         records = self.secret_mgr.ls(namespace=namespace, scope=sc, target=target)
         out: Dict[str, Any] = {}
         for r in records:
-            if r.target:
-                key = f'{r.namespace}/{r.scope.value}/{r.target}/{r.name}'
+            if r.ref.target:
+                key = f'{r.ref.namespace}/{r.ref.scope.value}/{r.ref.target}/{r.ref.name}'
             else:
-                key = f'{r.namespace}/{r.scope.value}/{r.name}'
-            out[key] = r.to_json(include_data=bool(show_values), include_internal=show_internals)
+                key = f'{r.ref.namespace}/{r.ref.scope.value}/{r.ref.name}'
+            out[key] = r.to_public_json(
+                include_data=bool(show_values),
+                include_policy=show_internals,
+                include_ref=True,
+            )
         return out
 
     def secret_get(
@@ -227,9 +231,9 @@ class Module(MgrModule):
             # Corruption is not the same as absence; let callers/CLI report a
             # data error instead of returning the same sentinel as "not found".
             raise
-        except CephSecretException:
-            return {}
-        return rec.to_json(include_data=reveal, include_internal=False)
+        except CephSecretNotFoundError:
+            return None
+        return rec.to_public_json(include_data=reveal, include_policy=False, include_ref=False)
 
     def _secret_get_version(self, ref: SecretRef) -> Optional[int]:
         try:
@@ -238,7 +242,7 @@ class Module(MgrModule):
             raise
         except CephSecretException:
             return None
-        return rec.version
+        return rec.metadata.version
 
     def _secret_set(
         self,
@@ -256,7 +260,7 @@ class Module(MgrModule):
             user_made=user_made,
             editable=editable,
         )
-        return rec.to_json(include_data=False, include_internal=False)
+        return rec.to_public_json(include_data=False, include_policy=False, include_ref=False)
 
     def _secret_rm(self, ref: SecretRef) -> bool:
         return self.secret_mgr.rm(ref.namespace, ref.scope, ref.target, ref.name)
