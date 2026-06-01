@@ -21,6 +21,10 @@ class CephSecretDataError(CephSecretException):
     pass
 
 
+class CephSecretNotFoundError(CephSecretException):
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Segment grammar
 # ---------------------------------------------------------------------------

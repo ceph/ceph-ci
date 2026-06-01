@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Set, Union
 
 from .secret_store import SecretRecord
 from ceph_secrets_types import (CephSecretException,
+                                CephSecretNotFoundError,
                                 SecretURI,
                                 SecretRef,
                                 BadSecretURI,
@@ -20,7 +21,7 @@ _SECRET_URI_RE = re.compile(rf"{re.escape(_SECRET_URI_PREFIX)}(?!/)[^\s\"']*")
 logger = logging.getLogger(__name__)
 
 
-def _coerce_scope(scope: SecretScope | str) -> SecretScope:
+def _coerce_scope(scope: Union[SecretScope, str]) -> SecretScope:
     if isinstance(scope, SecretScope):
         return scope
     return SecretScope.from_str(str(scope))
@@ -42,7 +43,7 @@ class SecretMgr:
     def make_ref(
         self,
         namespace: str,
-        scope: SecretScope | str,
+        scope: Union[SecretScope, str],
         target: str = '',
         name: str = '',
     ) -> SecretRef:
@@ -59,7 +60,7 @@ class SecretMgr:
     def get(self, ref: SecretRef) -> SecretRecord:
         rec = self.store.get(ref.namespace, ref.scope, ref.target, ref.name)
         if rec is None:
-            raise CephSecretException(f"Secret not found: {ref.to_uri()}")
+            raise CephSecretNotFoundError(f"Secret not found: {ref.to_uri()}")
         return rec
 
     def get_value(self, ref: SecretRef) -> Any:
@@ -98,7 +99,7 @@ class SecretMgr:
     def rm(
         self,
         namespace: str,
-        scope: SecretScope | str,
+        scope: Union[SecretScope, str],
         target: str,
         name: str,
     ) -> bool:
@@ -108,7 +109,7 @@ class SecretMgr:
     def ls(
         self,
         namespace: Optional[str] = None,
-        scope: Optional[SecretScope | str] = None,
+        scope: Optional[Union[SecretScope, str]] = None,
         target: Optional[str] = None,
     ) -> List[SecretRecord]:
         sc = _coerce_scope(scope) if scope else None

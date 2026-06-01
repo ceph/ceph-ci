@@ -14,6 +14,7 @@ from .secret_mgr import SecretMgr
 from ceph_secrets_types import (
     CephSecretException,
     CephSecretDataError,
+    CephSecretNotFoundError,
     SecretRef,
     SecretScope,
     parse_secret_path,
@@ -143,7 +144,7 @@ class Module(MgrModule):
         target: str,
         name: str,
         reveal: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> Optional[Dict[str, Any]]:
         """RPC surface — called via mgr.remote(). Internal code uses _secret_get()."""
         return self._secret_get(
             self.secret_mgr.make_ref(namespace, scope, target, name),
@@ -224,7 +225,7 @@ class Module(MgrModule):
 
     # ------------------------------------------------------------------ ref-based implementations
 
-    def _secret_get(self, ref: SecretRef, reveal: bool = False) -> Dict[str, Any]:
+    def _secret_get(self, ref: SecretRef, reveal: bool = False) -> Optional[Dict[str, Any]]:
         try:
             rec = self.secret_mgr.get(ref)
         except CephSecretDataError:
@@ -240,7 +241,7 @@ class Module(MgrModule):
             rec = self.secret_mgr.get(ref)
         except CephSecretDataError:
             raise
-        except CephSecretException:
+        except CephSecretNotFoundError:
             return None
         return rec.metadata.version
 
@@ -296,7 +297,7 @@ class Module(MgrModule):
     ) -> Dict[str, Any]:
         ref = parse_secret_path(path)
         res = self._secret_get(ref, reveal=reveal)
-        if not res:
+        if res is None:
             raise ErrorResponse('secret error: not found', return_value=-errno.ENOENT)
         return res
 
