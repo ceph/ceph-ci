@@ -1513,7 +1513,7 @@ int FilterRestore::trim_entries(const DoutPrefixProvider *dpp, optional_yield y,
 }
 
 int FilterCloudDeleteSerializer::try_lock(const DoutPrefixProvider *dpp,
-					  utime_t dur, optional_yield y)
+					  ceph::timespan dur, optional_yield y)
 {
   return next->try_lock(dpp, dur, y);
 }

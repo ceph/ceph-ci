@@ -444,7 +444,7 @@ int CloudDelete::process(optional_yield y, ceph::real_time* earliest_retry) {
    * We renew the lease inside the batch loop to handle arbitrarily
    * long processing runs. */
   int lock_secs = static_cast<int>(std::max((int64_t{interval_secs} * 5) / 4, int64_t{interval_secs} + 60));
-  utime_t lock_dur(lock_secs, 0);
+  ceph::timespan lock_dur = std::chrono::seconds(lock_secs);
 
   ceph::real_time min_retry_time = ceph::real_time::max();
   ConnCache conn_cache;

@@ -5149,7 +5149,7 @@ RadosCloudDeleteSerializer::RadosCloudDeleteSerializer(
 }
 
 int RadosCloudDeleteSerializer::try_lock(const DoutPrefixProvider *dpp,
-                                         utime_t dur, optional_yield y)
+                                         ceph::timespan dur, optional_yield y)
 {
   lock.set_duration(dur);
   return lock.lock_exclusive(&ioctx, oid);
