@@ -1,4 +1,4 @@
-@let data=(data$ | async);
+@let summary=(summary$ | async);
 @let hwEnabled = (enabled$ | async);
 @let hwSections = (sections$ | async);
 
@@ -94,20 +94,11 @@
   <cds-skeleton-placeholder></cds-skeleton-placeholder>
   }
 
-  @if(data?.summary?.version) {
+  @if(summary?.version) {
   <!-- CEPH VERSION -->
   <p class="cds--type-label-02">
     <span i18n>Ceph version:&nbsp;</span>
-    <span class="cds--type-heading-compact-01">{{ data?.summary?.version | cephVersion  }}</span>&nbsp;
-    @if (data?.upgrade?.versions?.length) {
-    <a [routerLink]="['/upgrade']"
-       cdsLink
-       [inline]="true"
-       i18n>
-      Upgrade available
-      <cd-icon type="upgrade"></cd-icon>
-    </a>
-    }
+    <span class="cds--type-heading-compact-01">{{ summary?.version | cephVersion  }}</span>&nbsp;
   </p>
   } @else {
   <cds-skeleton-text
