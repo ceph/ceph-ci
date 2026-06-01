@@ -969,9 +969,7 @@ public:
   RadosRestoreSerializer(RadosStore* store, const std::string& oid, const std::string& lock_name, const std::string& cookie);
 
   virtual int try_lock(const DoutPrefixProvider *dpp, utime_t dur, optional_yield y) override;
-  virtual int unlock() override {
-    return lock.unlock(&ioctx, oid);
-  }
+  virtual int unlock(const DoutPrefixProvider* dpp, optional_yield y) override;
 };
 
 class RadosRestore : public StoreRestore {
@@ -1024,9 +1022,7 @@ public:
                              const std::string& lock_name, const std::string& cookie);
 
   virtual int try_lock(const DoutPrefixProvider *dpp, utime_t dur, optional_yield y) override;
-  virtual int unlock() override {
-    return lock.unlock(&ioctx, oid);
-  }
+  virtual int unlock(const DoutPrefixProvider* dpp, optional_yield y) override;
 };
 
 class RadosCloudDelete : public StoreCloudDelete {

@@ -280,6 +280,20 @@ int Restore::process(RestoreWorker* worker, optional_yield y)
  * While processing the entries, if any of their restore operation is still in
  * progress, such entries are added back to the list.
  */ 
+/*
+ * unique_lock needs a no-arg unlock(); RestoreSerializer::unlock() takes
+ * dpp and optional_yield, so bind them here.
+ */
+struct RestoreLockAdapter {
+  rgw::sal::RestoreSerializer& serializer;
+  const DoutPrefixProvider* dpp = nullptr;
+  optional_yield y;
+
+  void unlock() {
+    serializer.unlock(dpp, y);
+  }
+};
+
 int Restore::process(int index, int max_secs, optional_yield y)
 {
   ldpp_dout(this, 20) << __PRETTY_FUNCTION__ << ": process entered index="	
@@ -314,7 +328,8 @@ int Restore::process(int index, int max_secs, optional_yield y)
   if (ret < 0)
     return 0;
 
-  std::unique_lock<rgw::sal::RestoreSerializer> lock(*(serializer.get()), std::adopt_lock);
+  auto lock_adapter = RestoreLockAdapter{*serializer, this, y};
+  std::unique_lock<RestoreLockAdapter> lock(lock_adapter, std::adopt_lock);
   std::string marker;
   std::string next_marker;
   bool truncated = false;

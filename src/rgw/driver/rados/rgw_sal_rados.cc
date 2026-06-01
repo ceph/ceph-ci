@@ -4908,6 +4908,14 @@ int RadosRestoreSerializer::try_lock(const DoutPrefixProvider *dpp, utime_t dur,
   return lock.lock_exclusive((librados::IoCtx*)(&ioctx), oid);
 }
 
+int RadosRestoreSerializer::unlock(const DoutPrefixProvider *dpp, optional_yield y)
+{
+  librados::ObjectWriteOperation op;
+  op.assert_exists();
+  lock.unlock(&op);
+  return rgw_rados_operate(dpp, ioctx, oid, std::move(op), y);
+}
+
 RadosRestore::RadosRestore(RadosStore* _st) : store(_st),
        	ioctx(*store->getRados()->get_restore_pool_ctx()),
 	r(store->get_neorados()),
@@ -5145,6 +5153,14 @@ int RadosCloudDeleteSerializer::try_lock(const DoutPrefixProvider *dpp,
 {
   lock.set_duration(dur);
   return lock.lock_exclusive(&ioctx, oid);
+}
+
+int RadosCloudDeleteSerializer::unlock(const DoutPrefixProvider *dpp, optional_yield y)
+{
+  librados::ObjectWriteOperation op;
+  op.assert_exists();
+  lock.unlock(&op);
+  return rgw_rados_operate(dpp, ioctx, oid, std::move(op), y);
 }
 
 // RadosCloudDelete implementation

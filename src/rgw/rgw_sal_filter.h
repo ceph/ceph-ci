@@ -1078,7 +1078,7 @@ public:
   FilterRestoreSerializer(std::unique_ptr<RestoreSerializer> _next) : next(std::move(_next)) {}
   virtual ~FilterRestoreSerializer() = default;
   virtual int try_lock(const DoutPrefixProvider *dpp, utime_t dur, optional_yield y) override;
-  virtual int unlock() override { return next->unlock(); }
+  virtual int unlock(const DoutPrefixProvider* dpp, optional_yield y) override { return next->unlock(dpp, y); }
   virtual void print(std::ostream& out) const override { return next->print(out); }
 };
 
@@ -1122,7 +1122,7 @@ public:
     : next(std::move(_next)) {}
   ~FilterCloudDeleteSerializer() override = default;
   int try_lock(const DoutPrefixProvider *dpp, utime_t dur, optional_yield y) override;
-  int unlock() override { return next->unlock(); }
+  int unlock(const DoutPrefixProvider* dpp, optional_yield y) override { return next->unlock(dpp, y); }
   void print(std::ostream& out) const override { return next->print(out); }
 };
 

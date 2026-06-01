@@ -429,7 +429,7 @@ struct CloudDeleteLockAdapter {
 
   void unlock() {
     if (!lock_lost) {
-      serializer.unlock();
+      serializer.unlock(dpp, y);
     }
   }
 };
