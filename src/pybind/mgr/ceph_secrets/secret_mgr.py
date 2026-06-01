@@ -46,7 +46,15 @@ class SecretMgr:
         target: str = '',
         name: str = '',
     ) -> SecretRef:
-        return SecretRef(namespace=namespace, scope=_coerce_scope(scope), target=target or '', name=name)
+        try:
+            return SecretRef(
+                namespace=namespace,
+                scope=_coerce_scope(scope),
+                target=target or '',
+                name=name,
+            )
+        except ValueError as e:
+            raise CephSecretException(str(e)) from e
 
     def get(self, ref: SecretRef) -> SecretRecord:
         rec = self.store.get(ref.namespace, ref.scope, ref.target, ref.name)
@@ -55,10 +63,9 @@ class SecretMgr:
         return rec
 
     def get_value(self, ref: SecretRef) -> Any:
-        rec = self.get(ref)
-
         # If exactly one entry exists, return the single value; otherwise return
         # the full dict. Field-level selection is intentionally not supported.
+        rec = self.get(ref)
         if len(rec.data) == 1:
             return next(iter(rec.data.values()))
 
@@ -74,16 +81,29 @@ class SecretMgr:
         user_made: bool = True,
         editable: bool = True,
     ) -> SecretRecord:
-        sc = _coerce_scope(scope)
-        tgt = target or ""
-        if sc in (SecretScope.GLOBAL, SecretScope.CUSTOM) and tgt:
-            raise CephSecretException(f"target must be empty for {sc.value} scope")
-        if sc not in (SecretScope.GLOBAL, SecretScope.CUSTOM) and not tgt:
-            raise CephSecretException("target is required")
-        return self.store.set(namespace, sc, tgt, name, data, user_made, editable)
+        if not isinstance(data, dict):
+            raise CephSecretException('Secret data must be a JSON object')
 
-    def rm(self, namespace: str, scope: SecretScope | str, target: str, name: str) -> bool:
-        return self.store.rm(namespace, _coerce_scope(scope), target or '', name)
+        ref = self.make_ref(namespace, scope, target, name)
+        return self.store.set(
+            ref.namespace,
+            ref.scope,
+            ref.target,
+            ref.name,
+            data,
+            user_made,
+            editable,
+        )
+
+    def rm(
+        self,
+        namespace: str,
+        scope: SecretScope | str,
+        target: str,
+        name: str,
+    ) -> bool:
+        ref = self.make_ref(namespace, scope, target, name)
+        return self.store.rm(ref.namespace, ref.scope, ref.target, ref.name)
 
     def ls(
         self,

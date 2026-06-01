@@ -270,7 +270,9 @@ def _coerce_scope(s: str) -> 'SecretScope':
             return SecretScope[s_norm.upper()]
         except Exception:
             allowed = ', '.join(x.value for x in SecretScope)
-            raise CephSecretException(f'Unknown scope {s!r}. Expected one of: {allowed}')
+            raise CephSecretException(
+                f'Unknown scope {s!r}. Expected one of: {allowed}'
+            )
 
 
 def parse_secret_path(path: str) -> SecretRef:
@@ -284,6 +286,9 @@ def parse_secret_path(path: str) -> SecretRef:
     Returns a validated SecretRef. Raises CephSecretException on any
     structural or content error.
     """
+    if not isinstance(path, str):
+        raise CephSecretException('secret path must be a string')
+
     p = path.strip()
     if not p:
         raise CephSecretException('Invalid secret path: empty')

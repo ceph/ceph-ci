@@ -11,7 +11,13 @@ from mgr_module import (
     Option
 )
 from .secret_mgr import SecretMgr
-from ceph_secrets_types import CephSecretException, CephSecretDataError, SecretScope, parse_secret_path
+from ceph_secrets_types import (
+    CephSecretException,
+    CephSecretDataError,
+    SecretRef,
+    SecretScope,
+    parse_secret_path,
+)
 from .backends import BACKENDS
 
 
@@ -22,7 +28,6 @@ def _parse_data_arg(data: str) -> Dict[str, Any]:
     s = (data or "").strip()
     if not s:
         raise CephSecretException("--data must not be empty")
-
     try:
         payload = json.loads(s)
     except Exception:
@@ -60,6 +65,13 @@ class Module(MgrModule):
     of namespace B, so consumers only see changes relevant to their namespace.
     Epoch logic lives entirely in the store backend so future backends
     (e.g. Vault) can implement it natively.
+
+    Method organisation:
+      - Public methods (no leading underscore): RPC surface called via
+        mgr.remote(). Accept individual kwargs for wire-format compatibility.
+        Each delegates immediately to the corresponding _secret_* method.
+      - Private _secret_* methods: real implementations, operate on SecretRef.
+        Called directly by CLI handlers and internal code.
     """
     CLICommand = CephSecretsCLICommand
 
@@ -81,7 +93,6 @@ class Module(MgrModule):
             raise RuntimeError(
                 f"Unsupported secrets backend: {backend_name}"
             ) from e
-
         try:
             self.secret_mgr = SecretMgr(backend_cls(self))
         except Exception as e:
@@ -100,46 +111,7 @@ class Module(MgrModule):
         """
         return self.secret_mgr.store.get_epoch(namespace)
 
-    # ------------------------------------------------------------------ batch helpers
-
-    def secret_get_versions(self, refs: List[Dict[str, str]]) -> Dict[str, Optional[int]]:
-        """Batch-get versions for a list of secret identifiers.
-
-        Each entry in `refs` must contain: namespace, scope, name, and target
-        for targeted scopes (service/host). Global and custom scopes must use
-        an empty target. Returns a dict keyed by
-        'namespace:scope:target:name' -> version (or None).
-        """
-        out: Dict[str, Optional[int]] = {}
-        for r in refs or []:
-            ns = r.get('namespace', '')
-            sc_s = r.get('scope', '')
-            tgt = r.get('target', '')
-            name = r.get('name', '')
-            key = f"{ns}:{sc_s}:{tgt}:{name}"
-            try:
-                if not (ns and sc_s and name):
-                    out[key] = None
-                    continue
-
-                sc = SecretScope.from_str(sc_s)
-                if sc in (SecretScope.GLOBAL, SecretScope.CUSTOM):
-                    if tgt:
-                        out[key] = None
-                        continue
-                elif not tgt:
-                    out[key] = None
-                    continue
-
-                ver = self.secret_get_version(namespace=ns, scope=sc, target=tgt, name=name)
-                out[key] = ver
-            except Exception as e:
-                # never fail the whole batch for one bad entry
-                self.log.warning("secret_get_versions: failed for %r: %s", key, e)
-                out[key] = None
-        return out
-
-    # ---------------------- helper methods ----------------------
+    # ------------------------------------------------------------------ RPC surface
 
     def secret_ls(
         self,
@@ -147,7 +119,7 @@ class Module(MgrModule):
         scope: Optional[str] = None,
         target: Optional[str] = None,
         show_values: bool = False,
-        show_internals: bool = False
+        show_internals: bool = False,
     ) -> Dict[str, Any]:
         sc = SecretScope.from_str(scope) if scope else None
         records = self.secret_mgr.ls(namespace=namespace, scope=sc, target=target)
@@ -163,21 +135,16 @@ class Module(MgrModule):
     def secret_get(
         self,
         namespace: str,
-        scope: SecretScope,
+        scope: Union[SecretScope, str],
         target: str,
         name: str,
         reveal: bool = False,
     ) -> Dict[str, Any]:
-        ref = self.secret_mgr.make_ref(namespace, scope, target, name)
-        try:
-            rec = self.secret_mgr.get(ref)
-        except CephSecretDataError:
-            # Corruption is not the same as absence; let callers/CLI report a
-            # data error instead of returning the same sentinel as "not found".
-            raise
-        except CephSecretException:
-            return {}
-        return rec.to_json(include_data=reveal, include_internal=False)
+        """RPC surface — called via mgr.remote(). Internal code uses _secret_get()."""
+        return self._secret_get(
+            self.secret_mgr.make_ref(namespace, scope, target, name),
+            reveal=reveal,
+        )
 
     def secret_get_version(
         self,
@@ -186,41 +153,61 @@ class Module(MgrModule):
         target: str,
         name: str,
     ) -> Optional[int]:
-        sc = SecretScope.from_str(scope)
-        ref = self.secret_mgr.make_ref(namespace, sc, target, name)
-        try:
-            rec = self.secret_mgr.get(ref)
-        except CephSecretDataError:
-            raise
-        except CephSecretException:
-            return None
-        return rec.version
+        """RPC surface — called via mgr.remote(). Internal code uses _secret_get_version()."""
+        return self._secret_get_version(
+            self.secret_mgr.make_ref(namespace, scope, target, name)
+        )
 
-    def secret_set(self,
-                   namespace: str,
-                   scope: SecretScope,
-                   target: str,
-                   name: str,
-                   data: Dict[str, Any],
-                   user_made: bool = True,
-                   editable: bool = True) -> Dict[str, Any]:
-        """Internal entrypoint (data is a dict)."""
-        rec = self.secret_mgr.set(
-            namespace=namespace,
-            scope=scope,
-            target=target,
-            name=name,
+    def secret_get_versions(self, refs: List[Dict[str, str]]) -> Dict[str, Optional[int]]:
+        """Batch-get versions for a list of secret identifiers.
+
+        Each entry in `refs` must contain: namespace, scope, name, and target
+        for targeted scopes (service/host). Returns a dict keyed by
+        'namespace:scope:target:name' -> version (or None).
+        """
+        out: Dict[str, Optional[int]] = {}
+        for r in refs or []:
+            ns = r.get('namespace', '')
+            sc_s = r.get('scope', '')
+            tgt = r.get('target', '')
+            name = r.get('name', '')
+            key = f"{ns}:{sc_s}:{tgt}:{name}"
+            try:
+                ref = SecretRef(namespace=ns, scope=SecretScope.from_str(sc_s), target=tgt, name=name)
+                out[key] = self._secret_get_version(ref)
+            except Exception as e:
+                # Never fail the whole batch for one bad entry.
+                self.log.warning("secret_get_versions: failed for %r: %s", key, e)
+                out[key] = None
+        return out
+
+    def secret_set(
+        self,
+        namespace: str,
+        scope: Union[SecretScope, str],
+        target: str,
+        name: str,
+        data: Dict[str, Any],
+        user_made: bool = True,
+        editable: bool = True,
+    ) -> Dict[str, Any]:
+        """RPC surface — called via mgr.remote(). Internal code uses _secret_set()."""
+        return self._secret_set(
+            self.secret_mgr.make_ref(namespace, scope, target, name),
             data=data,
             user_made=user_made,
-            editable=editable)
-        return rec.to_json(include_data=False, include_internal=False)
+            editable=editable,
+        )
 
-    def secret_rm(self,
-                  namespace: str,
-                  scope: SecretScope,
-                  target: str,
-                  name: str) -> bool:
-        return self.secret_mgr.rm(namespace, scope, target, name)
+    def secret_rm(
+        self,
+        namespace: str,
+        scope: Union[SecretScope, str],
+        target: str,
+        name: str,
+    ) -> bool:
+        """RPC surface — called via mgr.remote(). Internal code uses _secret_rm()."""
+        return self._secret_rm(self.secret_mgr.make_ref(namespace, scope, target, name))
 
     def resolve_object(self, obj: Any) -> Any:
         return self.secret_mgr.resolve_object(obj)
@@ -231,7 +218,50 @@ class Module(MgrModule):
     def scan_unresolved_refs(self, obj: Any, namespace: str) -> Any:
         return self.secret_mgr.scan_unresolved_refs(obj, namespace)
 
-    # ---------------------- Module CLI commands ----------------------
+    # ------------------------------------------------------------------ ref-based implementations
+
+    def _secret_get(self, ref: SecretRef, reveal: bool = False) -> Dict[str, Any]:
+        try:
+            rec = self.secret_mgr.get(ref)
+        except CephSecretDataError:
+            # Corruption is not the same as absence; let callers/CLI report a
+            # data error instead of returning the same sentinel as "not found".
+            raise
+        except CephSecretException:
+            return {}
+        return rec.to_json(include_data=reveal, include_internal=False)
+
+    def _secret_get_version(self, ref: SecretRef) -> Optional[int]:
+        try:
+            rec = self.secret_mgr.get(ref)
+        except CephSecretDataError:
+            raise
+        except CephSecretException:
+            return None
+        return rec.version
+
+    def _secret_set(
+        self,
+        ref: SecretRef,
+        data: Dict[str, Any],
+        user_made: bool = True,
+        editable: bool = True,
+    ) -> Dict[str, Any]:
+        rec = self.secret_mgr.set(
+            namespace=ref.namespace,
+            scope=ref.scope,
+            target=ref.target,
+            name=ref.name,
+            data=data,
+            user_made=user_made,
+            editable=editable,
+        )
+        return rec.to_json(include_data=False, include_internal=False)
+
+    def _secret_rm(self, ref: SecretRef) -> bool:
+        return self.secret_mgr.rm(ref.namespace, ref.scope, ref.target, ref.name)
+
+    # ------------------------------------------------------------------ CLI commands
 
     @CephSecretsCLICommand.Read('secret ls')
     @Responder(functools.partial(ObjectFormatAdapter, compatible=True))
@@ -258,10 +288,10 @@ class Module(MgrModule):
     def _cli_secret_get_by_path(
         self,
         path: str,
-        reveal: bool = False
+        reveal: bool = False,
     ) -> Dict[str, Any]:
-        ns, sc, target, name = parse_secret_path(path)
-        res = self.secret_get(namespace=ns, scope=sc, target=target, name=name, reveal=reveal)
+        ref = parse_secret_path(path)
+        res = self._secret_get(ref, reveal=reveal)
         if not res:
             raise ErrorResponse('secret error: not found', return_value=-errno.ENOENT)
         return res
@@ -272,27 +302,20 @@ class Module(MgrModule):
     def _cli_secret_set_by_path(
         self,
         path: str,
-        inbuf: Optional[str] = None
+        inbuf: Optional[str] = None,
     ) -> Dict[str, Any]:
         if inbuf is None:
             raise ErrorResponse('secret error: use -i to provide secret data')
-        parsed_data = _parse_data_arg(inbuf)
-        ns, sc, target, name = parse_secret_path(path)
-        return self.secret_set(
-            namespace=ns,
-            scope=sc,
-            target=target,
-            name=name,
-            data=parsed_data,
-        )
+        ref = parse_secret_path(path)
+        return self._secret_set(ref, data=_parse_data_arg(inbuf))
 
     @CephSecretsCLICommand.Write('secret rm')
     @Responder(functools.partial(ObjectFormatAdapter, compatible=True))
     @_handle_secret_errors
     def _cli_secret_rm_by_path(
         self,
-        path: str
+        path: str,
     ) -> Dict[str, Any]:
-        ns, sc, target, name = parse_secret_path(path)
-        existed = self.secret_rm(namespace=ns, scope=sc, target=target, name=name)
+        ref = parse_secret_path(path)
+        existed = self._secret_rm(ref)
         return {'status': 'removed' if existed else 'not_found'}
