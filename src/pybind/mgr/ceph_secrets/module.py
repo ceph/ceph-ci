@@ -163,27 +163,27 @@ class Module(MgrModule):
             self.secret_mgr.make_ref(namespace, scope, target, name)
         )
 
-    def secret_get_versions(self, refs: List[Dict[str, str]]) -> Dict[str, Optional[int]]:
-        """Batch-get versions for a list of secret identifiers.
+    def secret_get_versions(self, uris: List[str]) -> Dict[str, Optional[int]]:
+        """Batch-fetch version numbers for a list of secret URIs.
 
-        Each entry in `refs` must contain: namespace, scope, name, and target
-        for targeted scopes (service/host). Returns a dict keyed by
-        'namespace:scope:target:name' -> version (or None).
+        Each entry in *uris* must be a canonical ``secret:/...`` URI as returned
+        by ``scan_refs()`` or ``SecretRef.to_uri()``. URIs that cannot be parsed
+        are skipped and logged at ERROR level; a missing key in the result
+        indicates malformed input rather than a not-found secret.
+
+        Returns a dict keyed by the input URI mapping to the current version
+        integer, or ``None`` if the secret does not exist.
         """
         out: Dict[str, Optional[int]] = {}
-        for r in refs or []:
-            ns = r.get('namespace', '')
-            sc_s = r.get('scope', '')
-            tgt = r.get('target', '')
-            name = r.get('name', '')
-            key = f"{ns}:{sc_s}:{tgt}:{name}"
+        for uri in uris or []:
             try:
-                ref = SecretRef(namespace=ns, scope=SecretScope.from_str(sc_s), target=tgt, name=name)
-                out[key] = self._secret_get_version(ref)
-            except Exception as e:
-                # Never fail the whole batch for one bad entry.
-                self.log.warning("secret_get_versions: failed for %r: %s", key, e)
-                out[key] = None
+                ref = parse_secret_path(uri)
+                out[uri] = self._secret_get_version(ref)
+            except Exception:
+                self.log.error(
+                    "secret_get_versions: skipping invalid URI %r",
+                    uri, exc_info=True
+                )
         return out
 
     def secret_set(

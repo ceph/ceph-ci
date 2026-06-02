@@ -153,34 +153,32 @@ class CephSecretsClient:
             name=name,
         )
 
-    def secret_get_versions(self, refs: List[Dict[str, str]]) -> Dict[str, Optional[int]]:
-        """Batch-fetch version numbers for a list of secret references.
+    def secret_get_versions(self, uris: List[str]) -> Dict[str, Optional[int]]:
+        """Batch-fetch version numbers for a list of secret URIs.
 
         More efficient than calling :meth:`secret_get_version` in a loop when
         you need to check many secrets at once (e.g. during a cephadm
         reconciliation pass).
 
-        Each entry in *refs* must be a dict with the keys ``namespace``,
-        ``scope``, ``name``, and ``target`` (empty string for untargeted
-        scopes).  Malformed or missing entries are silently mapped to ``None``
-        rather than raising, so the batch never fails partially.
+        Each entry in *uris* must be a canonical ``secret:/...`` URI as returned
+        by :meth:`scan_refs` or ``SecretRef.to_uri()``. URIs that cannot be
+        parsed are skipped and logged at ERROR level on the module side; a
+        missing key in the result indicates malformed input rather than a
+        not-found secret.
 
         Args:
-            refs: A list of secret address dicts.  Example::
+            uris: A list of canonical secret URIs.  Example::
 
                     [
-                        {"namespace": "cephadm", "scope": "host",
-                         "target": "node1", "name": "ssh_key"},
-                        {"namespace": "cephadm", "scope": "global",
-                         "target": "", "name": "dashboard_password"},
+                        "secret:/cephadm/host/node1/ssh_key",
+                        "secret:/cephadm/global/dashboard_password",
                     ]
 
         Returns:
-            A dict keyed by ``"namespace:scope:target:name"`` mapping to the
-            current version integer, or ``None`` if the secret does not exist
-            or the reference was invalid.
+            A dict keyed by the input URI mapping to the current version
+            integer, or ``None`` if the secret does not exist.
         """
-        return self._remote("secret_get_versions", refs=refs)
+        return self._remote("secret_get_versions", uris=uris)
 
     def secret_set(
         self,
