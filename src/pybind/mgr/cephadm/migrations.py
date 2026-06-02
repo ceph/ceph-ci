@@ -84,7 +84,7 @@ class Migrations:
                 "cephadm migration still ongoing. Please wait, until the migration is complete.")
 
     def migrate(self, startup: bool = False) -> None:
-        logger.info('running migrations')
+        logger.debug('running migrations')
 
         if self.mgr.migration_current == 0:
             if self.migrate_0_1():
