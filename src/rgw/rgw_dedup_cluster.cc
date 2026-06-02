@@ -1190,27 +1190,6 @@ namespace rgw::dedup {
   }
 
   //---------------------------------------------------------------------------
-  static void report_throttle_state(const struct rgw::dedup::control_t &ctl)
-  {
-    if (!ctl.bucket_index_throttle.is_disabled()) {
-      std::cout << "bucket-index throttle="
-                << ctl.bucket_index_throttle.get_max_calls_per_second()
-                << std::endl;
-    }
-    else {
-      std::cout << "bucket-index throttle is disabled" << std::endl;
-    }
-
-    if (!ctl.metadata_access_throttle.is_disabled()) {
-      std::cout << "metadata throttle="
-                << ctl.metadata_access_throttle.get_max_calls_per_second()
-                << std::endl;
-    }
-    else {
-      std::cout << "metadata throttle is disabled" << std::endl;
-    }
-  }
-
   static void report_throttle_state(const struct rgw::dedup::control_t &ctl,
                                     Formatter *fmt)
   {
@@ -1235,7 +1214,8 @@ namespace rgw::dedup {
                                 const DoutPrefixProvider *dpp,
                                 urgent_msg_t urgent_msg,
                                 bufferlist urgent_msg_bl,
-                                Formatter *fmt)
+                                Formatter *fmt,
+                                optional_yield y)
   {
     librados::IoCtx ctl_ioctx;
     int ret = get_control_ioctx(store, dpp, ctl_ioctx);
@@ -1247,7 +1227,7 @@ namespace rgw::dedup {
     const uint64_t timeout_ms = 0;
     bufferlist reply_bl;
     ret = rgw_rados_notify(dpp, ctl_ioctx, DEDUP_WATCH_OBJ, urgent_msg_bl,
-                           timeout_ms, &reply_bl, null_yield);
+                           timeout_ms, &reply_bl, y);
     if (ret < 0) {
       ldpp_dout(dpp, 1) << __func__ << "::failed rgw_rados_notify("
                         << DEDUP_WATCH_OBJ << ")::err="<<cpp_strerror(-ret) << dendl;
@@ -1273,12 +1253,9 @@ namespace rgw::dedup {
         decode(ctl, iter);
         ldpp_dout(dpp, 10) << __func__ << "::++ACK::ctl=" << ctl << "::ret=" << ret << dendl;
         if (urgent_msg == URGENT_MSG_THROTTLE && !throttle_reported) {
+          ceph_assert(fmt);
           // report only once
-          if (fmt) {
-            report_throttle_state(ctl, fmt);
-          } else {
-            report_throttle_state(ctl);
-          }
+          report_throttle_state(ctl, fmt);
           throttle_reported = true;
         }
       } catch (buffer::error& err) {
@@ -1299,7 +1276,8 @@ namespace rgw::dedup {
   // command-line called from radosgw-admin.cc
   int cluster::dedup_control(rgw::sal::RadosStore *store,
                              const DoutPrefixProvider *dpp,
-                             urgent_msg_t urgent_msg)
+                             urgent_msg_t urgent_msg,
+                             optional_yield y)
   {
     ldpp_dout(dpp, 10) << __func__ << "::dedup_control req = "
                        << get_urgent_msg_names(urgent_msg) << dendl;
@@ -1313,7 +1291,7 @@ namespace rgw::dedup {
 
     bufferlist urgent_msg_bl;
     ceph::encode(urgent_msg, urgent_msg_bl);
-    return dedup_control_bl(store, dpp, urgent_msg, urgent_msg_bl);
+    return dedup_control_bl(store, dpp, urgent_msg, urgent_msg_bl, nullptr, y);
   }
 
   //---------------------------------------------------------------------------
@@ -1321,7 +1299,8 @@ namespace rgw::dedup {
   int cluster::dedup_restart_scan(rgw::sal::RadosStore *store,
                                   dedup_req_type_t dedup_type,
                                   const DoutPrefixProvider *dpp,
-                                  const dedup_filter_t *p_filter)
+                                  const dedup_filter_t *p_filter,
+                                  optional_yield y)
   {
     ldpp_dout(dpp, 1) << __func__ << "::dedup_type = " << dedup_type << dendl;
 
@@ -1341,7 +1320,7 @@ namespace rgw::dedup {
     }
 
     // first abort all dedup work!
-    ret = dedup_control(store, dpp, URGENT_MSG_ABORT);
+    ret = dedup_control(store, dpp, URGENT_MSG_ABORT, y);
     if (ret != 0) {
       return ret;
     }
@@ -1386,7 +1365,8 @@ namespace rgw::dedup {
 
         encode(*p_filter, urgent_msg_bl);
       }
-      return dedup_control_bl(store, dpp, URGENT_MSG_RESTART, urgent_msg_bl);
+      return dedup_control_bl(store, dpp, URGENT_MSG_RESTART, urgent_msg_bl,
+                              nullptr, y);
     }
     else {
       return ret;
