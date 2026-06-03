@@ -18,6 +18,7 @@ from ceph_secrets_types import (
     SecretRef,
     SecretScope,
     parse_secret_path,
+    parse_secret_uri,
 )
 from .backends import BACKENDS
 
@@ -28,13 +29,13 @@ _T = TypeVar('_T')
 def _parse_data_arg(data: str) -> Dict[str, Any]:
     s = (data or "").strip()
     if not s:
-        raise CephSecretException("--data must not be empty")
+        raise CephSecretException("Secret data must not be empty")
     try:
         payload = json.loads(s)
     except Exception:
         raise CephSecretException("Invalid JSON for secret data")
     if not isinstance(payload, dict):
-        raise CephSecretException("Secret --data must be a JSON object")
+        raise CephSecretException("Secret data must be a JSON object")
     return payload
 
 
@@ -177,9 +178,9 @@ class Module(MgrModule):
         out: Dict[str, Optional[int]] = {}
         for uri in uris or []:
             try:
-                ref = parse_secret_path(uri)
+                ref = parse_secret_uri(uri)
                 out[uri] = self._secret_get_version(ref)
-            except Exception:
+            except CephSecretException:
                 self.log.error(
                     "secret_get_versions: skipping invalid URI %r",
                     uri, exc_info=True
@@ -217,11 +218,13 @@ class Module(MgrModule):
     def resolve_object(self, obj: Any) -> Any:
         return self.secret_mgr.resolve_object(obj)
 
-    def scan_refs(self, obj: Any, namespace: str) -> Any:
-        return self.secret_mgr.scan_refs(obj, namespace)
+    def scan_refs(self, obj: Any, namespace: str) -> List[str]:
+        return sorted({u.to_uri() for u in
+                       self.secret_mgr.scan_refs(obj, namespace)})
 
-    def scan_unresolved_refs(self, obj: Any, namespace: str) -> Any:
-        return self.secret_mgr.scan_unresolved_refs(obj, namespace)
+    def scan_unresolved_refs(self, obj: Any, namespace: str) -> List[str]:
+        return sorted({u.to_uri() for u in
+                       self.secret_mgr.scan_unresolved_refs(obj, namespace)})
 
     # ------------------------------------------------------------------ ref-based implementations
 

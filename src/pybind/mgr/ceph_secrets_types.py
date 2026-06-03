@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Hashable, Protocol, Tuple
+from typing import Tuple
 from urllib.parse import urlparse, quote
 
 
@@ -120,10 +120,6 @@ class SecretScope(str, Enum):
 
         else:
             raise ValueError(f'unsupported scope {self!r}')
-
-
-class SecretURI(Protocol, Hashable):
-    def to_uri(self) -> str: ...
 
 
 # ---------------------------------------------------------------------------

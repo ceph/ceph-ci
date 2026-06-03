@@ -294,7 +294,7 @@ class SecretStoreMon(SecretStorageBackend):
       secret_store/meta/<namespace>/_epoch
     """
 
-    def __init__(self, mgr: Any):
+    def __init__(self, mgr: Any) -> None:
         self.mgr = mgr
 
     # ------------------------------------------------------------------ epoch
@@ -378,20 +378,15 @@ class SecretStoreMon(SecretStorageBackend):
         try:
             existing = self.get(ref.namespace, ref.scope, ref.target, ref.name)
             if existing and not existing.policy.editable:
-                raise CephSecretException(
-                    f'Secret {ref.namespace}/{ref.scope.value}/'
-                    f'{ref.target}/{ref.name} is not editable'
-                )
+                raise CephSecretException(f'Secret {ref.to_uri()} is not editable')
         except CephSecretDataError as e:
-            raise CephSecretException(
-                f'Secret {ref.namespace}/{ref.scope.value}/'
-                f'{ref.target}/{ref.name} is corrupted.'
-            ) from e
+            raise CephSecretException(f'Secret {ref.to_uri()} is corrupted.') from e
 
         now = _now_iso()
         if existing:
             metadata = SecretMetadata(
                 version=existing.metadata.version + 1,
+                # Preserve the original creation timestamp across updates.
                 created=existing.metadata.created or now,
                 updated=now,
             )
@@ -406,6 +401,9 @@ class SecretStoreMon(SecretStorageBackend):
         )
         k = self._kv_key_from_ref(ref)
         self.mgr.set_store(k, json.dumps(rec.to_store_json(), sort_keys=True))
+
+        # Bump epoch after a successful write so consumers can detect any change
+        # in this namespace without enumerating all secrets.
         self.bump_epoch(ref.namespace)
         return rec
 

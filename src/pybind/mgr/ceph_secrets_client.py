@@ -13,7 +13,8 @@ ScopeArg = Union[SecretScope, str]
 
 class MgrRemote(Protocol):
     """Minimal interface required from the mgr object."""
-    def remote(self, module: str, method: str, **kwargs: Any) -> Any: ...
+    def remote(self, module: str, method: str, **kwargs: Any) -> Any:
+        ...
 
 
 class CephSecretsClient:
@@ -74,50 +75,50 @@ class CephSecretsClient:
     # ---- module API wrappers ----
 
     def secret_get(
-            self,
-            namespace: str,
-            scope: ScopeArg,
-            target: str,
-            name: str,
-            reveal: bool = False,
-        ) -> Optional[Dict[str, Any]]:
-            """Retrieve a secret record by its full address.
+        self,
+        namespace: str,
+        scope: ScopeArg,
+        target: str,
+        name: str,
+        reveal: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve a secret record by its full address.
 
-            Returns the secret's metadata and, if *reveal* is True, its data
-            payload.  Returns ``None`` if the secret does not exist; raises
-            RuntimeError if the module is unreachable.
+        Returns the secret's metadata and, if *reveal* is True, its data
+        payload.  Returns ``None`` if the secret does not exist; raises
+        RuntimeError if the module is unreachable.
 
-            The returned dict contains a ``metadata`` object with fields such as ``version``,
-            ``created``, and ``updated``, etc.  It intentionally does not include a
-            ``ref`` object because the caller already supplied the identity.
-            The ``data`` key is only present when *reveal* is True.
+        The returned dict contains a ``metadata`` object with fields such as ``version``,
+        ``created``, and ``updated``, etc.  It intentionally does not include a
+        ``ref`` object because the caller already supplied the identity.
+        The ``data`` key is only present when *reveal* is True.
 
-            Args:
-                namespace: The secret namespace (e.g. ``"cephadm"``).
-                scope:     The secret scope — a :class:`SecretScope` value or its
-                           string equivalent (``"global"``, ``"service"``,
-                           ``"host"``, ``"custom"``).
-                target:    The scope target.  Must be non-empty for ``service`` and
-                           ``host`` scopes; must be empty for ``global`` and
-                           ``custom``.
-                name:      The secret name or, for ``custom`` scope, the
-                           slash-delimited path (e.g. ``"app/db/password"``).
-                reveal:    If True, include the secret's data payload in the
-                           response.  Defaults to False to avoid accidental
-                           exposure in logs.
+        Args:
+            namespace: The secret namespace (e.g. ``"cephadm"``).
+            scope:     The secret scope — a :class:`SecretScope` value or its
+                       string equivalent (``"global"``, ``"service"``,
+                       ``"host"``, ``"custom"``).
+            target:    The scope target.  Must be non-empty for ``service`` and
+                       ``host`` scopes; must be empty for ``global`` and
+                       ``custom``.
+            name:      The secret name or, for ``custom`` scope, the
+                       slash-delimited path (e.g. ``"app/db/password"``).
+            reveal:    If True, include the secret's data payload in the
+                       response.  Defaults to False to avoid accidental
+                       exposure in logs.
 
-            Returns:
-                A dict of the form ``{"metadata": {...}}`` plus optional ``data``,
-            or ``None`` if not found.
-            """
-            return self._remote(
-                "secret_get",
-                namespace=namespace,
-                scope=scope,
-                target=target,
-                name=name,
-                reveal=reveal,
-            )
+        Returns:
+            A dict of the form ``{"metadata": {...}}`` plus optional ``data``,
+        or ``None`` if not found.
+        """
+        return self._remote(
+            "secret_get",
+            namespace=namespace,
+            scope=scope,
+            target=target,
+            name=name,
+            reveal=reveal,
+        )
 
     def secret_get_version(
         self,
@@ -264,9 +265,8 @@ class CephSecretsClient:
         """Return all unresolved secret URI references found in *obj*.
 
         Walks *obj* recursively (dicts, lists, strings) and collects every
-        ``secret:/...`` URI that cannot currently be resolved — either because
-        the referenced secret does not exist or because it is outside the
-        caller's *namespace*.
+        ``secret:/...`` URI that cannot currently be resolved — because
+        the referenced secret does not exist.
 
         Useful for validation: call this before deploying a configuration
         object to detect missing secrets early.
@@ -275,8 +275,7 @@ class CephSecretsClient:
             obj:       The object to scan.  May be a dict, list, or any
                        JSON-like structure.
             namespace: The namespace the caller is authorised to resolve
-                       secrets from.  URIs referencing other namespaces are
-                       treated as unresolved.
+                       secrets from.
 
         Returns:
             A collection of unresolvable URI strings found in *obj*.
@@ -301,19 +300,18 @@ class CephSecretsClient:
         return self._remote("scan_refs", obj=obj, namespace=namespace)
 
     def resolve_object(self, obj: Any) -> Any:
-        """Resolve all secret URI references in *obj* in-place.
+        """Resolve all secret URI references in *obj*.
 
         Walks *obj* recursively and replaces every ``secret:/...`` URI string
-        with the plaintext value of the referenced secret.  The replacement is
-        the value associated with the URI's key within the secret's data dict,
-        or the entire data dict if no key is specified.
+        with the plaintext value of the referenced secret.
 
         Args:
-            obj: The object to resolve.  May be a dict, list, or any
-                 JSON-like structure containing ``secret:/...`` URI strings.
+            obj: The object to resolve. May be a dict, list, or any JSON-like
+                  structure containing ``secret:/...`` URI strings.
 
         Returns:
-            A copy of *obj* with all resolvable secret URIs replaced by their
-            plaintext values.  Unresolvable URIs are left unchanged.
+             A resolved copy of *obj* with all secret URIs replaced by their plaintext values.
+             Raises RuntimeError if any referenced secret cannot be resolved
+             or if the module is unreachable.
         """
         return self._remote("resolve_object", obj=obj)

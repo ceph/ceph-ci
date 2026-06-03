@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
 import logging
 import re
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Union, Hashable, Protocol
 
 from .secret_store import SecretRecord
-from ceph_secrets_types import (CephSecretException,
-                                CephSecretNotFoundError,
-                                SecretURI,
-                                SecretRef,
-                                BadSecretURI,
-                                SecretScope,
-                                parse_secret_uri,
-                                SECRET_SCHEME)
+from ceph_secrets_types import (
+    CephSecretException,
+    CephSecretNotFoundError,
+    SecretRef,
+    BadSecretURI,
+    SecretScope,
+    parse_secret_uri,
+    SECRET_SCHEME
+)
 
 
 _SECRET_URI_PREFIX = f'{SECRET_SCHEME}:/'
@@ -19,6 +20,11 @@ _SECRET_URI_RE = re.compile(rf"{re.escape(_SECRET_URI_PREFIX)}(?!/)[^\s\"']*")
 
 
 logger = logging.getLogger(__name__)
+
+
+class SecretURI(Protocol, Hashable):
+    def to_uri(self) -> str:
+        ...
 
 
 def _coerce_scope(scope: Union[SecretScope, str]) -> SecretScope:
@@ -33,11 +39,10 @@ class SecretMgr:
 
     Resolution rule:
       - If secret.data has exactly one key, return that single value.
-      - Otherwise, return the dict as-is. Embedded substitutions require the
-        resolved value to be a string.
+      - Otherwise, return the dict as-is.
     """
 
-    def __init__(self, store: Any):
+    def __init__(self, store: Any) -> None:
         self.store = store
 
     def make_ref(
