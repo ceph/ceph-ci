@@ -6,6 +6,7 @@
 #include <chrono>
 #include <iostream>
 #include <map>
+#include <mutex>
 #include <thread>
 
 #include <boost/asio/steady_timer.hpp>
@@ -21,6 +22,7 @@
 #include "rgw_rest.h"
 #include "svc_zone.h"
 #include "rgw_rados.h"
+#include "common/async/call_once.h"
 
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string.hpp>
@@ -1618,30 +1620,47 @@ static int cloud_tier_create_bucket(RGWLCCloudTierCtx& tier_ctx) {
 
 static int do_cloud_tier_transfer_object(RGWLCCloudTierCtx& tier_ctx, std::set<std::string>& cloud_targets) {
   int ret = 0;
+  const std::string& name = tier_ctx.target_bucket_name;
 
-  // check if target bucket is in local cache
-  auto it = cloud_targets.find(tier_ctx.target_bucket_name);
-  tier_ctx.target_bucket_created = (it != cloud_targets.end());
+  if (!cloud_targets.contains(name)) {
+    using OnceResult = ceph::async::once_result<int>;
+    static std::mutex mtx;
+    static std::map<std::string, std::shared_ptr<OnceResult>> probes;
 
-  if (!tier_ctx.target_bucket_created) {
-    // not in cache; check if bucket exists on remote
-    ret = cloud_tier_bucket_exists(tier_ctx);
-    if (ret == -EBUSY) return ret;
-    if (ret == -ENOENT) {
-      ret = cloud_tier_create_bucket(tier_ctx);
-      if (ret == -EBUSY) return ret;
-      if (ret < 0) {
-        ldpp_dout(tier_ctx.dpp, 0) << "ERROR: failed to create target bucket on the cloud endpoint ret=" << ret << dendl;
-        return ret;
+    std::shared_ptr<OnceResult> probe;
+    {
+      std::lock_guard lock{mtx};
+      auto& entry = probes[name];
+      if (!entry) {
+        entry = std::make_shared<OnceResult>();
       }
-    } else if (ret < 0) {
-      ldpp_dout(tier_ctx.dpp, 0) << "ERROR: failed to check target bucket on the cloud endpoint ret=" << ret << dendl;
+      probe = entry;
+    }
+
+    ret = call_once(*probe, tier_ctx.y, [&tier_ctx] {
+      int r = cloud_tier_bucket_exists(tier_ctx);
+      if (r == -ENOENT) {
+        r = cloud_tier_create_bucket(tier_ctx);
+      }
+      return r;
+    });
+
+    // drop the round's entry so a failed probe gets a new leader on retry
+    {
+      std::lock_guard lock{mtx};
+      auto it = probes.find(name);
+      if (it != probes.end() && it->second == probe) {
+        probes.erase(it);
+      }
+    }
+
+    if (ret < 0) {
+      ldpp_dout(tier_ctx.dpp, 0) << "ERROR: failed to check or create target bucket "
+          << name << " on the cloud endpoint ret=" << ret << dendl;
       return ret;
     }
-    tier_ctx.target_bucket_created = true;
-    cloud_targets.insert(tier_ctx.target_bucket_name);
+    cloud_targets.insert(name);
   }
-
   /* Since multiple zones may try to transition the same object to the cloud,
    * verify if the object is already transitioned. And since its just a best
    * effort, do not bail out in case of any errors.
