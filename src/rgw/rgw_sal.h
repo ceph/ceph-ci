@@ -21,6 +21,7 @@
 #include <boost/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 #include <boost/asio/cancellation_type.hpp>
+#include <boost/asio/any_io_executor.hpp>
 
 #include "common/tracer.h"
 #include "rgw_cksum.h"
@@ -53,6 +54,8 @@ class RGWZonePlacementInfo;
 struct rgw_pubsub_topic;
 struct RGWOIDCProviderInfo;
 struct RGWRoleInfo;
+
+namespace ceph::async { template <typename Executor> class SharedMutex; }
 
 using RGWBucketListNameFilter = std::function<bool (const std::string&)>;
 
@@ -1317,6 +1320,7 @@ class Object {
 			   rgw::sal::PlacementTier* tier,
 			   rgw_bucket_dir_entry& o,
 			   std::set<std::string>& cloud_targets,
+			   ceph::async::SharedMutex<boost::asio::any_io_executor>* cloud_target_mutex,
 			   CephContext* cct,
 			   bool update_object,
 			   const DoutPrefixProvider* dpp,

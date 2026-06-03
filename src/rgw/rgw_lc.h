@@ -20,9 +20,12 @@
 #include "cls/rgw/cls_rgw_types.h"
 #include "rgw_tag.h"
 #include "rgw_sal.h"
+#include "common/async/shared_mutex.h"
 
 #include <atomic>
 #include <tuple>
+#include <optional>
+#include <boost/asio/any_io_executor.hpp>
 
 #define HASH_PRIME 7877
 #define MAX_ID_LEN 255
@@ -591,6 +594,12 @@ public:
      * to cloud. This list is maintained for the duration of each RGWLC::process()
      * post which it is discarded. */
     std::set<std::string> cloud_targets;
+    /*
+     * Async mutex serializing remote target-bucket creation across the
+     * per-bucket workpool coroutines; rebound to each bucket_lc_process()
+     * run's executor and empty outside an active run.
+     */
+    std::optional<ceph::async::SharedMutex<boost::asio::any_io_executor>> cloud_target_mutex;
 
   public:
 
@@ -610,6 +619,9 @@ public:
     bool should_work(utime_t& now);
     int schedule_next_start_time(utime_t& start, utime_t& now);
     std::set<std::string>& get_cloud_targets() { return cloud_targets; }
+    ceph::async::SharedMutex<boost::asio::any_io_executor>* get_cloud_target_mutex() {
+      return cloud_target_mutex ? &*cloud_target_mutex : nullptr;
+    }
     virtual ~LCWorker() override;
 
     friend class RGWRados;

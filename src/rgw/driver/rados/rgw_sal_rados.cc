@@ -3342,6 +3342,7 @@ int RadosObject::transition_to_cloud(Bucket* bucket,
 			   rgw::sal::PlacementTier* tier,
 			   rgw_bucket_dir_entry& o,
 			   std::set<std::string>& cloud_targets,
+			   ceph::async::SharedMutex<boost::asio::any_io_executor>* cloud_target_mutex,
 			   CephContext* cct,
 			   bool update_object,
 			   const DoutPrefixProvider* dpp,
@@ -3380,6 +3381,7 @@ int RadosObject::transition_to_cloud(Bucket* bucket,
   tier_ctx.storage_class = tier->get_storage_class();
   tier_ctx.location_constraint = rtier->get_rt().t.s3.location_constraint;
   tier_ctx.retain_current_version = rtier->get_rt().retain_current_version;
+  tier_ctx.cloud_target_mutex = cloud_target_mutex;
 
   ldpp_dout(dpp, 0) << "Transitioning object(" << o.key << ") to the cloud endpoint(" << endpoint << ")" << dendl;
 

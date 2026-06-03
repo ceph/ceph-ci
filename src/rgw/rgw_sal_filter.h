@@ -840,6 +840,7 @@ public:
 				  rgw::sal::PlacementTier* tier,
 				  rgw_bucket_dir_entry& o,
 				  std::set<std::string>& cloud_targets,
+				  ceph::async::SharedMutex<boost::asio::any_io_executor>* cloud_target_mutex,
 				  CephContext* cct,
 				  bool update_object,
 				  const DoutPrefixProvider* dpp,

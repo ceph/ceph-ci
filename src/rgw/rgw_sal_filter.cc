@@ -1150,13 +1150,14 @@ int FilterObject::transition_to_cloud(Bucket* bucket,
 				      rgw::sal::PlacementTier* tier,
 				      rgw_bucket_dir_entry& o,
 				      std::set<std::string>& cloud_targets,
+				      ceph::async::SharedMutex<boost::asio::any_io_executor>* cloud_target_mutex,
 				      CephContext* cct,
 				      bool update_object,
 				      const DoutPrefixProvider* dpp,
 				      optional_yield y)
 {
   return next->transition_to_cloud(nextBucket(bucket), nextPlacementTier(tier),
-				   o, cloud_targets, cct, update_object, dpp, y);
+				   o, cloud_targets, cloud_target_mutex, cct, update_object, dpp, y);
 }
 
 int FilterObject::restore_obj_from_cloud(Bucket* bucket,

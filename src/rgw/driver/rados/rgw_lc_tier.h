@@ -46,6 +46,9 @@ struct RGWLCCloudTierCtx {
 
   optional_yield y;
 
+  // serializes remote target-bucket creation across workpool coroutines; may be null
+  ceph::async::SharedMutex<boost::asio::any_io_executor>* cloud_target_mutex{nullptr};
+
   // set by resolve_cloud_target_name() before restore so that
   // make_target_obj_name() returns the verified key
   std::string resolved_target_name;

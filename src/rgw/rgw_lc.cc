@@ -1490,6 +1490,7 @@ public:
 
     ret = oc.obj->transition_to_cloud(oc.bucket, oc.tier.get(), oc.o,
 				      oc.env.worker->get_cloud_targets(),
+				      oc.env.worker->get_cloud_target_mutex(),
 				      oc.cct, !delete_object, oc.dpp, y);
     if (ret < 0) {
       return ret;
@@ -1851,6 +1852,9 @@ int RGWLC::bucket_lc_process(string& shard_id, LCWorker* worker,
    */
   size_t limit = cct->_conf.get_val<int64_t>("rgw_lc_max_wp_worker");
   auto workpool = ceph::async::spawn_throttle{yield, limit};
+
+  // serialize remote target-bucket creation across this run's workpool coroutines
+  worker->cloud_target_mutex.emplace(yield.get_executor());
 
   auto perf_counters = rgw::lc_counters::get(bucket->get_name(), bucket_tenant);
   uint64_t batch_threshold = cct->_conf->rgw_lc_counters_batch_size;

@@ -1723,27 +1723,45 @@ static int do_cloud_tier_transfer_object(RGWLCCloudTierCtx& tier_ctx, std::set<s
   int ret = 0;
 
   // check if target bucket is in local cache
-  auto it = cloud_targets.find(tier_ctx.target_bucket_name);
-  tier_ctx.target_bucket_created = (it != cloud_targets.end());
+  if (cloud_targets.find(tier_ctx.target_bucket_name) == cloud_targets.end()) {
+    /*
+     * Not created yet this run. Serialize creation across the per-bucket
+     * workpool coroutines: the first to arrive creates the bucket while the
+     * rest suspend on the async lock and find it cached on the re-check below.
+     * The lock is released before the (slow) object transfer.
+     */
+    std::optional<std::unique_lock<
+        ceph::async::SharedMutex<boost::asio::any_io_executor>>> lk;
+    if (tier_ctx.cloud_target_mutex && tier_ctx.y) {
+      boost::system::error_code ec;
+      lk = tier_ctx.cloud_target_mutex->async_lock(
+          tier_ctx.y.get_yield_context()[ec]);
+      if (ec) {
+        ldpp_dout(tier_ctx.dpp, 5) << "cloud tier: target-bucket lock aborted: "
+                                   << ec.message() << dendl;
+        return -ECANCELED;
+      }
+    }
 
-  if (!tier_ctx.target_bucket_created) {
-    // not in cache; check if bucket exists on remote
-    ret = cloud_tier_bucket_exists(tier_ctx);
-    if (ret == -EBUSY) return ret;
-    if (ret == -ENOENT) {
-      ret = cloud_tier_create_bucket(tier_ctx);
+    if (cloud_targets.find(tier_ctx.target_bucket_name) == cloud_targets.end()) {
+      // not in cache; check if bucket exists on remote
+      ret = cloud_tier_bucket_exists(tier_ctx);
       if (ret == -EBUSY) return ret;
-      if (ret < 0) {
-        ldpp_dout(tier_ctx.dpp, 0) << "ERROR: failed to create target bucket on the cloud endpoint ret=" << ret << dendl;
+      if (ret == -ENOENT) {
+        ret = cloud_tier_create_bucket(tier_ctx);
+        if (ret == -EBUSY) return ret;
+        if (ret < 0) {
+          ldpp_dout(tier_ctx.dpp, 0) << "ERROR: failed to create target bucket on the cloud endpoint ret=" << ret << dendl;
+          return ret;
+        }
+      } else if (ret < 0) {
+        ldpp_dout(tier_ctx.dpp, 0) << "ERROR: failed to check target bucket on the cloud endpoint ret=" << ret << dendl;
         return ret;
       }
-    } else if (ret < 0) {
-      ldpp_dout(tier_ctx.dpp, 0) << "ERROR: failed to check target bucket on the cloud endpoint ret=" << ret << dendl;
-      return ret;
+      cloud_targets.insert(tier_ctx.target_bucket_name);
     }
-    tier_ctx.target_bucket_created = true;
-    cloud_targets.insert(tier_ctx.target_bucket_name);
   }
+  tier_ctx.target_bucket_created = true;
 
   /* Since multiple zones may try to transition the same object to the cloud,
    * verify if the object is already transitioned. And since its just a best
