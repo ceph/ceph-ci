@@ -15,6 +15,7 @@ from tasks.util import get_remote_for_role
 from tasks.util.rgw import rgwadmin, wait_for_radosgw
 from tasks.util.rados import (create_ec_pool,
                               create_replicated_pool,
+                              create_ec_cache_pool,
                               create_cache_pool)
 
 log = logging.getLogger(__name__)
@@ -361,17 +362,26 @@ def create_pools(ctx, clients):
         data_pool = '{}.rgw.buckets.data'.format(ctx.rgw.zone)
         cluster_name, daemon_type, client_id = teuthology.split_role(client)
 
-        if ctx.rgw.ec_data_pool:
+        if ctx.rgw.ec_data_pool or ctx.rgw.ec_pools:
             create_ec_pool(remote, data_pool, client, ctx.rgw.data_pool_pg_size,
                            ctx.rgw.erasure_code_profile, cluster_name, 'rgw')
         else:
             create_replicated_pool(remote, data_pool, ctx.rgw.data_pool_pg_size, cluster_name, 'rgw')
 
         index_pool = '{}.rgw.buckets.index'.format(ctx.rgw.zone)
-        create_replicated_pool(remote, index_pool, ctx.rgw.index_pool_pg_size, cluster_name, 'rgw')
+
+        if ctx.rgw.ec_pools:
+            create_ec_pool(remote, index_pool, client, ctx.rgw.index_pool_pg_size,
+                           ctx.rgw.erasure_code_profile, cluster_name, 'rgw')
+        else:
+            create_replicated_pool(remote, index_pool, ctx.rgw.index_pool_pg_size, cluster_name, 'rgw')
 
         if ctx.rgw.cache_pools:
-            create_cache_pool(remote, data_pool, data_pool + '.cache', 64,
+            if ctx.rgw.ec_pools:
+                create_ec_cache_pool(remote, data_pool, data_pool + '.cache', 64, client, ctx.rgw.erasure_code_profile,
+                              64*1024*1024, cluster_name)
+            else:
+                create_cache_pool(remote, data_pool, data_pool + '.cache', 64,
                               64*1024*1024, cluster_name)
     log.debug('Pools created')
     yield
@@ -511,6 +521,7 @@ def task(ctx, config):
     ctx.rgw_cloudtier = None
 
     ctx.rgw.ec_data_pool = bool(config.pop('ec-data-pool', False))
+    ctx.rgw.ec_pools = bool(config.pop('ec-pools', False))
     ctx.rgw.erasure_code_profile = config.pop('erasure_code_profile', {})
     ctx.rgw.cache_pools = bool(config.pop('cache-pools', False))
     ctx.rgw.frontend = config.pop('frontend', 'beast')
