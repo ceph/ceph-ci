@@ -414,7 +414,8 @@ private:
   void update_paddr_sync(
     Transaction &t,
     laddr_t laddr,
-    paddr_t paddr);
+    paddr_t paddr,
+    std::optional<paddr_t> shadow);
 
 
   /**
