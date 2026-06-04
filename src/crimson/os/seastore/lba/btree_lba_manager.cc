@@ -1278,7 +1278,8 @@ BtreeLBAManager::remap_mappings(
 void BtreeLBAManager::update_paddr_sync(
   Transaction &t,
   laddr_t laddr,
-  paddr_t paddr)
+  paddr_t paddr,
+  std::optional<paddr_t> shadow)
 {
   LOG_PREFIX(BtreeLBAManager::update_paddr_sync);
   DEBUGT("laddr={}, paddr={}", t, laddr, paddr);
@@ -1302,6 +1303,7 @@ void BtreeLBAManager::update_paddr_sync(
     lba_map_val_t{
       cursor->get_length(),
       pladdr_t{std::move(paddr)},
+      (shadow ? *shadow : cursor->get_shadow_paddr()),
       cursor->get_refcount(),
       cursor->get_checksum(),
       cursor->get_extent_type()},
@@ -1345,8 +1347,8 @@ BtreeLBAManager::_copy_mapping(
   c.trans.new_lba_key_copied(
     ret.src->get_key(),
     dest_laddr,
-    [this, c](laddr_t laddr, paddr_t paddr) {
-      update_paddr_sync(c.trans, laddr, paddr);
+    [this, c](laddr_t laddr, paddr_t paddr, std::optional<paddr_t> shadow) {
+      update_paddr_sync(c.trans, laddr, paddr, shadow);
     });
   auto [niter, inserted] = co_await btree.copy(
       c,
