@@ -77,7 +77,6 @@ set(librgw_common_srcs
   rgw_object_ownership.cc
   rgw_period.cc
   rgw_realm.cc
-  rgw_sync.cc
   rgw_sync_policy.cc
   rgw_notify_event_type.cc
   rgw_period_history.cc
@@ -96,6 +95,7 @@ set(librgw_common_srcs
   rgw_rest_client.cc
   rgw_rest_config.cc
   rgw_rest_conn.cc
+  rgw_rest_dedup.cc
   rgw_rest_metadata.cc
   rgw_rest_ratelimit.cc
   rgw_rest_role.cc
@@ -429,6 +429,7 @@ set(rgw_a_srcs
   rgw_realm_reloader.cc
   rgw_rest_config.cc
   rgw_rest_info.cc
+  rgw_rest_dedup.cc
   rgw_rest_metadata.cc
   rgw_rest_ratelimit.cc
   rgw_rest_sts.cc
@@ -540,6 +541,12 @@ set(radosgw_admin_srcs
   radosgw-admin/sync_checkpoint.cc
   radosgw-admin/orphan.cc)
 
+set(radosgw_admin_srcs_without_rados
+  radosgw-admin/radosgw-admin.cc
+  driver/rados/rgw_user.cc
+  driver/rados/rgw_bucket.cc
+  driver/rados/rgw_obj_manifest.cc)
+
 # this is unsatisfying and hopefully temporary; ARROW should not be
 # part of radosgw_admin
 if(WITH_RADOSGW_ARROW_FLIGHT)
@@ -558,6 +565,12 @@ target_link_libraries(radosgw-admin
   OATH::OATH
   ${CURL_LIBRARIES} ${EXPAT_LIBRARIES} ${BLKID_LIBRARIES})
 endif()
+
+if(WITH_RADOSGW_POSIX AND NOT WITH_RADOSGW_RADOS)
+add_executable(radosgw-admin ${radosgw_admin_srcs_without_rados})
+target_link_libraries(radosgw-admin
+  ${rgw_libs} librados)
+endif(WITH_RADOSGW_POSIX AND NOT WITH_RADOSGW_RADOS)
 
 # this is unsatisfying and hopefully temporary; ARROW should not be
 # part of radosgw_admin

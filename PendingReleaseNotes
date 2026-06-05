@@ -13,6 +13,10 @@
 * ceph-volume: Raw BlueStore OSD preparation now pre-formats NVMe devices and
   skips the slower BlueStore discard phase,reducing mkfs time on
   very large namespaces.
+* RGW: Omap backing for the RGW Datalog is deprecated and support will be removed in a future version.
+  - The `rgw default data log backing` option is removed and it is no longer
+    possible to create clusters with an omap based datalog.
+  - `radosgw-admin datalog type` will only accept `--log_type=fifo`.
 * RGW: Bucket Logging suppports creating log buckets in EC pools.
   Implicit logging object commits are now performed asynchronously.
 * RGW: radosgw-admin bucket list now supports pagination for versioned buckets by using
@@ -109,6 +113,9 @@
 
 >=20.0.0
 
+* Client: New config value osd_min_split_replica_read_size, which allows control
+  of the minimum size a read can be when a client breaks up the read into multiple
+  smaller reads across PG shards.
 * RADOS: The lead Monitor and stretch mode status are now displayed by `ceph status`.
   Related Tracker: https://tracker.ceph.com/issues/70406
 * RGW: The User Account feature introduced in Squid provides first-class support for

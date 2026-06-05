@@ -5172,8 +5172,8 @@ void BlueStore::DeferredBatch::prepare_write(
 	   << " 0x" << std::hex << offset << "~" << length
 	   << " crc " << i.first->second.bl.crc32c(-1)
 	   << std::dec << dendl;
-  seq_bytes[seq] += length;
 #ifdef DEBUG_DEFERRED
+  seq_bytes[seq] += length;
   _audit(cct);
 #endif
 }
@@ -5183,6 +5183,7 @@ void BlueStore::DeferredBatch::_discard(
 {
   generic_dout(20) << __func__ << " 0x" << std::hex << offset << "~" << length
 		   << std::dec << dendl;
+  [[maybe_unused]] uint64_t delta;
   auto p = iomap.lower_bound(offset);
   if (p != iomap.begin()) {
     --p;
@@ -5193,8 +5194,6 @@ void BlueStore::DeferredBatch::_discard(
       dout(20) << __func__ << "  keep head " << p->second.seq
 	       << " 0x" << std::hex << p->first << "~" << p->second.bl.length()
 	       << " -> 0x" << head.length() << std::dec << dendl;
-      auto i = seq_bytes.find(p->second.seq);
-      ceph_assert(i != seq_bytes.end());
       if (end > offset + length) {
 	bufferlist tail;
 	tail.substr_of(p->second.bl, offset + length - p->first,
@@ -5205,11 +5204,16 @@ void BlueStore::DeferredBatch::_discard(
 	auto &n = iomap[offset + length];
 	n.bl.swap(tail);
 	n.seq = p->second.seq;
-	i->second -= length;
+	delta = length;
       } else {
-	i->second -= end - offset;
+	delta = end - offset;
       }
+#if defined(DEBUG_DEFERRED)
+      auto i = seq_bytes.find(p->second.seq);
+      ceph_assert(i != seq_bytes.end());
+      i->second -= delta;
       ceph_assert(i->second >= 0);
+#endif
       p->second.bl.swap(head);
     }
     ++p;
@@ -5218,8 +5222,6 @@ void BlueStore::DeferredBatch::_discard(
     if (p->first >= offset + length) {
       break;
     }
-    auto i = seq_bytes.find(p->second.seq);
-    ceph_assert(i != seq_bytes.end());
     auto end = p->first + p->second.bl.length();
     if (end > offset + length) {
       unsigned drop_front = offset + length - p->first;
@@ -5232,18 +5234,24 @@ void BlueStore::DeferredBatch::_discard(
       auto &s = iomap[offset + length];
       s.seq = p->second.seq;
       s.bl.substr_of(p->second.bl, drop_front, keep_tail);
-      i->second -= drop_front;
+      delta = drop_front;
     } else {
       dout(20) << __func__ << "  drop " << p->second.seq
 	       << " 0x" << std::hex << p->first << "~" << p->second.bl.length()
 	       << std::dec << dendl;
-      i->second -= p->second.bl.length();
+      delta = p->second.bl.length();
     }
+#if defined(DEBUG_DEFERRED)
+      auto i = seq_bytes.find(p->second.seq);
+      ceph_assert(i != seq_bytes.end());
+      i->second -= delta;
     ceph_assert(i->second >= 0);
+#endif
     p = iomap.erase(p);
   }
 }
 
+#if defined(DEBUG_DEFERRED)
 void BlueStore::DeferredBatch::_audit(CephContext *cct)
 {
   map<uint64_t,int> sb;
@@ -5258,7 +5266,7 @@ void BlueStore::DeferredBatch::_audit(CephContext *cct)
   }
   ceph_assert(sb == seq_bytes);
 }
-
+#endif
 
 // Collection
 
@@ -5898,7 +5906,8 @@ std::vector<std::string> BlueStore::get_tracked_keys() const noexcept
     "bluestore_onode_segment_size"s,
     "bluestore_allocator_lookup_policy"s,
     "bluestore_volume_selection_reserved_factor"s,
-    "bluestore_volume_selection_reserved"s
+    "bluestore_volume_selection_reserved"s,
+    "bluefs_spillover_cleaner"s
   };
 }
 
@@ -5981,6 +5990,11 @@ void BlueStore::handle_conf_change(const ConfigProxy& conf,
     changed.count("bluestore_volume_selection_reserved")) {
     if (bluefs)
       bluefs->update_volume_selector_from_config();
+  }
+  if (changed.count("bluefs_spillover_cleaner")) {
+    if (bluefs) {
+      bluefs->update_spillover_cleaner_from_config();
+    }
   }
 }
 
@@ -9636,6 +9650,10 @@ int BlueStore::_mount()
     }
   }
 
+  if (bluefs && cct->_conf.get_val<bool>("bluefs_spillover_cleaner")) {
+    bluefs->spillover_cleaner_start();
+  }
+
   mounted = true;
   return 0;
 }
@@ -9645,6 +9663,10 @@ int BlueStore::umount()
   dout(5) << __func__ << dendl;
   ceph_assert(_kv_only || mounted);
   _osr_drain_all();
+
+  if (bluefs) {
+    bluefs->spillover_cleaner_stop();
+  }
 
   mounted = false;
 
@@ -14523,6 +14545,9 @@ uint64_t BlueStore::_assign_blobid(TransContext *txc)
 
 void BlueStore::get_db_statistics(Formatter *f)
 {
+  if (db == nullptr) {
+    return;
+  }
   db->get_statistics(f);
 }
 
@@ -15703,7 +15728,7 @@ void BlueStore::_deferred_submit_unlock(OpSequencer *osr)
   ceph_assert(!osr->deferred_running);
 
   auto b = osr->deferred_pending;
-  deferred_queue_size -= b->seq_bytes.size();
+  deferred_queue_size -= b->txcs.size();
   ceph_assert(deferred_queue_size >= 0);
 
   osr->deferred_running = osr->deferred_pending;
@@ -19419,6 +19444,10 @@ const string prefix_other = "Z";
 //Itrerates through the db and collects the stats
 void BlueStore::generate_db_histogram(Formatter *f)
 {
+  if (db == nullptr) {
+    return;
+  }
+
   //globals
   uint64_t num_onodes = 0;
   uint64_t num_shards = 0;
