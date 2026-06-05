@@ -179,12 +179,13 @@ class Module(MgrModule):
         for uri in uris or []:
             try:
                 ref = parse_secret_uri(uri)
-                out[uri] = self._secret_get_version(ref)
             except CephSecretException:
                 self.log.error(
                     "secret_get_versions: skipping invalid URI %r",
                     uri, exc_info=True
                 )
+                continue
+            out[uri] = self._secret_get_version(ref)  # CephSecretDataError propagates
         return out
 
     def secret_set(
