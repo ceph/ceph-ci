@@ -190,7 +190,6 @@ add_executable(unittest_ec_acting_stretch
 add_ceph_unittest(unittest_ec_acting_stretch)
 target_link_libraries(unittest_ec_acting_stretch osd os global ${CMAKE_DL_LIBS} ${BLKID_LIBRARIES})
 add_dependencies(unittest_ec_acting_stretch ec_isa ec_jerasure)
-
 # unittest_hitset
 add_executable(unittest_hitset
   hitset.cc
