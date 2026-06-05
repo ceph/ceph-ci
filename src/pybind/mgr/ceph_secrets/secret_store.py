@@ -6,7 +6,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, TypeAlias
 
 from ceph_secrets_types import (
     SecretScope,
@@ -33,7 +33,17 @@ SECRET_STORE_FORMAT_VERSION = 1
 SECRET_META_PREFIX = 'secret_store/meta/'
 
 
-JsonDict = Dict[str, Any]
+JsonType: TypeAlias = Union[
+    None,
+    bool,
+    int,
+    float,
+    str,
+    List["JsonType"],
+    Dict[str, "JsonType"],
+]
+
+JsonDict: TypeAlias = Dict[str, JsonType]
 
 
 def _checked_namespace(namespace: str) -> str:
@@ -266,12 +276,14 @@ class SecretRecord:
                 f'unsupported SecretRecord.format_version: {format_version!r}'
             )
 
+        metadata = _expect_object('SecretRecord.metadata', payload['metadata'])
         data = _expect_object('SecretRecord.data', payload['data'])
+        policy = _expect_object('SecretRecord.policy', payload['policy'])
         return SecretRecord(
             ref=ref,
-            metadata=SecretMetadata.from_json(payload['metadata']),
+            metadata=SecretMetadata.from_json(metadata),
             data=copy.deepcopy(data),
-            policy=SecretPolicy.from_json(payload['policy']),
+            policy=SecretPolicy.from_json(policy),
         )
 
 
@@ -368,10 +380,6 @@ class SecretStoreMon(SecretStorageBackend):
 
         if not isinstance(data, dict):
             raise CephSecretException('Secret data must be a JSON object')
-        if not isinstance(user_made, bool):
-            raise CephSecretException('user_made must be a boolean')
-        if not isinstance(editable, bool):
-            raise CephSecretException('editable must be a boolean')
 
         ref = _checked_ref(namespace, scope, target, name)
         existing = None
