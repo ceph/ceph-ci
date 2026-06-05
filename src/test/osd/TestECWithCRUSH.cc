@@ -403,12 +403,50 @@ protected:
 };
 
 // Losing a whole zone leaves the PG peered until degraded stretch mode names the surviving zone as mandatory.
+TEST_F(TestECStretchPeering, ZoneLoss_PeeredUntilDegradedStretchMode)
+{
+  ASSERT_TRUE(all_shards_active());
+  vector<int> acting;
+  int acting_primary;
+  osdmap->pg_to_acting_osds(pgid, &acting, &acting_primary);
+  const int zone_size = k + m;
+  const int primary_zone =
+    osdmap->crush->get_parent_of_type(acting_primary, 8,
+                                      osdmap->get_pg_pool(pool_id)->crush_rule);
+  vector<int> other_zone_osds;
+  for (int i = 0; i < num_zones * zone_size; ++i) {
+    if (osdmap->crush->get_parent_of_type(
+          i, 8, osdmap->get_pg_pool(pool_id)->crush_rule) != primary_zone) {
+      other_zone_osds.push_back(i);
+    }
+  }
+  ASSERT_EQ(other_zone_osds.size(), (size_t)zone_size);
+
+  mark_osds_down(other_zone_osds);
+  PeeringState *ps = get_primary_test_pg()->get_peering_state();
+  EXPECT_TRUE(ps->is_peered()) << get_state_name(0);
+  EXPECT_FALSE(ps->is_active()) << get_state_name(0);
+
+  auto new_osdmap = std::make_shared<OSDMap>();
+  new_osdmap->deepish_copy_from(*osdmap);
+  pg_pool_t degraded = *new_osdmap->get_pg_pool(pool_id);
+  degraded.peering_crush_bucket_count = 1;
+  degraded.peering_crush_bucket_target = 1;
+  degraded.peering_crush_mandatory_member = primary_zone;
+  OSDMap::Incremental inc(new_osdmap->get_epoch() + 1);
+  inc.fsid = new_osdmap->get_fsid();
+  inc.new_pools[pool_id] = degraded;
+  new_osdmap->apply_incremental(inc);
+  update_osdmap_with_peering(new_osdmap);
+
+  ps = get_primary_test_pg()->get_peering_state();
+  EXPECT_TRUE(ps->is_active()) << get_state_name(0);
+}
 
 // A pg-upmap swapping the two zone blocks while a pg_temp still pins the old
 // acting set, with a trimmed log so the up OSDs need backfill for their new
 // shards.  The old acting set keeps serving and the up OSDs are backfilled.
 
-// Zone 1 loses two OSDs, then a pg-upmap moves zone block 1 onto the zone 0
-// OSDs serving block 0 while a pg_temp keeps block 0 there with a lone
-// shard 3 in zone 1.  Once the up OSDs are backfilled, Recovered must ask to
-// drop the pg_temp rather than abort in choose_acting.
+// A pg-upmap swaps the two zone blocks while a pg_temp keeps the old acting
+// set.  Once every up OSD is backfilled, Recovered must ask to drop the
+// pg_temp rather than abort in choose_acting.
