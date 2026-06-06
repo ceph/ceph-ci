@@ -4786,6 +4786,14 @@ int RGWRados::fetch_remote_obj(RGWObjectCtx& dest_obj_ctx,
           "replicated " << fetched_obj << dendl;
       // decode error isn't fatal, but we might put the wrong size in the index
     }
+  } else {
+    // AEAD object transferred encrypted: list the plaintext size, not the
+    // on-disk (encrypted) size used for the truncation check above.
+    uint64_t logical = 0;
+    if (rgw_get_aead_original_size(rctx.dpp, cb.get_attrs(), &logical) ||
+        rgw_get_aead_decrypted_size(rctx.dpp, cb.get_attrs(), accounted_size, &logical)) {
+      accounted_size = logical;
+    }
   }
 
   // decode the ACLOwner from RGW_ATTR_ACL for the bucket index
