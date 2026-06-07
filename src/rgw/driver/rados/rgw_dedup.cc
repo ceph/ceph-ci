@@ -91,30 +91,23 @@ namespace rgw::dedup {
   //   uncompressed -> physical object size
   // We cannot use p_obj->get_accounted_size() because the stat path patches
   // it via the manifest (set_head / get_obj_size).
-  static int64_t derive_head_accounted_size(const DoutPrefixProvider *dpp,
-                                             const bufferlist &compression_bl,
-                                             uint64_t obj_size,
-                                             std::string *p_compression_type = nullptr)
+  static int64_t derive_accounted_size(const DoutPrefixProvider *dpp,
+                                       const bufferlist &compression_bl,
+                                       std::string *p_compression_type = nullptr)
   {
-    if (compression_bl.length() > 0) {
-      RGWCompressionInfo cs_info;
-      auto bl_iter = compression_bl.cbegin();
-      try {
-        decode(cs_info, bl_iter);
-      } catch (buffer::error&) {
-        ldpp_dout(dpp, 5) << __func__
-                          << "::ERR: failed to decode compression info" << dendl;
-        return -EINVAL;
-      }
-      if (p_compression_type) {
-        *p_compression_type = cs_info.compression_type;
-      }
-      return cs_info.orig_size;
+    RGWCompressionInfo cs_info;
+    auto bl_iter = compression_bl.cbegin();
+    try {
+      decode(cs_info, bl_iter);
+    } catch (buffer::error&) {
+      ldpp_dout(dpp, 5) << __func__
+                        << "::ERR: failed to decode compression info" << dendl;
+      return -EINVAL;
     }
     if (p_compression_type) {
-      *p_compression_type = "none";
+      *p_compression_type = cs_info.compression_type;
     }
-    return obj_size;
+    return cs_info.orig_size;
   }
 
   //---------------------------------------------------------------------------
@@ -420,11 +413,16 @@ namespace rgw::dedup {
   const std::string& Background::get_placement_compression_type(const rgw_placement_rule &rule)
   {
     const std::string key = rule.to_str();
+    // check if we have a cache compression_type for this rule
     auto it = d_placement_compression_type.find(key);
     if (it != d_placement_compression_type.end()) {
       return it->second;
     }
+
+    // no local cache, check zoneparams
     const std::string& comp_type = store->svc()->zone->get_zone_params().get_compression_type(rule);
+
+    // store in local cache to speedup next access
     auto result = d_placement_compression_type.emplace(key, comp_type);
     return result.first->second;
   }
@@ -1107,11 +1105,6 @@ namespace rgw::dedup {
       }
     }
 
-    // Set RGW_ATTR_COMPRESSION on TGT unconditionally from SRC state.
-    // TGT now shares SRC's tail objects so its compression state must match.
-    bool src_compressed = (p_src_rec->compression_bl.length() > 0);
-    bool tgt_compressed = (p_tgt_rec->compression_bl.length() > 0);
-
     librados::ObjectWriteOperation tgt_op;
     {
       bufferlist tgt_hash_bl;
@@ -1126,14 +1119,17 @@ namespace rgw::dedup {
         p_stats->set_hash_attrs++;
       }
 
-      if (src_compressed) {
+      // Set RGW_ATTR_COMPRESSION on TGT unconditionally from SRC state.
+      // TGT now shares SRC's tail objects so its compression state must match.
+      if (p_src_rec->compression_bl.length() > 0) {
         tgt_op.setxattr(RGW_ATTR_COMPRESSION, p_src_rec->compression_bl);
-        if (!tgt_compressed) {
+        if (p_tgt_rec->compression_bl.length() == 0) {
           p_stats->set_compression_on_tgt++;
         }
-      } else {
+      }
+      else {
         tgt_op.rmxattr(RGW_ATTR_COMPRESSION);
-        if (tgt_compressed) {
+        if (p_tgt_rec->compression_bl.length() > 0) {
           p_stats->clear_compression_on_tgt++;
         }
       }
@@ -1680,9 +1676,14 @@ namespace rgw::dedup {
       return 0;
     }
 
+    std::string obj_compression_type = "none";
+    int64_t accounted_size = p_obj->get_size();
     {
+      p_rec->compression_bl.clear();
+      p_rec->s.compression_len = 0;
+
       auto comp_itr = attrs.find(RGW_ATTR_COMPRESSION);
-      if (comp_itr != attrs.end()) {
+      if (comp_itr != attrs.end() && comp_itr->second.length() > 0) {
         if (d_skip_compressed) {
           p_stats->ingress_skip_compressed++;
           p_stats->ingress_skip_compressed_bytes += ondisk_byte_size;
@@ -1691,26 +1692,21 @@ namespace rgw::dedup {
           return 0;
         }
         p_rec->compression_bl = comp_itr->second;
-        p_rec->s.compression_bl_len = p_rec->compression_bl.length();
+        p_rec->s.compression_len = p_rec->compression_bl.length();
         p_stats->ingress_compressed++;
         p_stats->ingress_compressed_bytes += ondisk_byte_size;
         ldpp_dout(dpp, 20) <<__func__ << "::compressed object "
                            << p_rec->obj_name << dendl;
-      } else {
-        p_rec->compression_bl.clear();
-        p_rec->s.compression_bl_len = 0;
-      }
-    }
 
-    std::string obj_compression_type;
-    int64_t head_accounted_size = derive_head_accounted_size(dpp, p_rec->compression_bl,
-                                                             p_obj->get_size(),
-                                                             &obj_compression_type);
-    if (unlikely(head_accounted_size < 0)) {
-      ldpp_dout(dpp, 5) << __func__
-                        << "::ERR: derive_head_accounted_size failed for "
-                        << p_rec->obj_name << dendl;
-      return head_accounted_size;
+        accounted_size = derive_accounted_size(dpp, p_rec->compression_bl,
+                                               &obj_compression_type);
+        if (unlikely(accounted_size < 0)) {
+          ldpp_dout(dpp, 5) << __func__
+                            << "::ERR: derive_accounted_size failed for "
+                            << p_rec->obj_name << dendl;
+          return accounted_size;
+        }
+      }
     }
 
     // extract ETAG and compare with values taken from the bucket-index
@@ -1750,11 +1746,11 @@ namespace rgw::dedup {
     // no need to check for remap success as we compare keys bellow
     sc_idx = remapper->remap(storage_class, dpp, &p_stats->failed_map_overflow);
     // Cross-check etag, num_parts, storage_class and size from object-head
-    // against bucket-index.  head_accounted_size was derived above from the
+    // against bucket-index.  accounted_size was derived above from the
     // compression attr (orig_size) or physical size - matching the write-path
     // logic, so it is safe to compare against the bucket-index value.
     key_t key_from_obj(parsed_etag.md5_high, parsed_etag.md5_low,
-                       byte_size_to_disk_blocks(head_accounted_size),
+                       byte_size_to_disk_blocks(accounted_size),
                        parsed_etag.num_parts, sc_idx);
     if (unlikely(key_from_obj != key_from_bucket_index)) {
       ldpp_dout(dpp, 15) <<__func__ << "::Skipping changed object "
@@ -1895,9 +1891,9 @@ namespace rgw::dedup {
   // Uses a single ioctx.getxattrs() call (all attrs returned in one round
   // trip), so fetching compression adds zero extra RADOS cost.
   static int fetch_head_obj_attrs(const DoutPrefixProvider *const dpp,
-                                    rgw::sal::Driver *driver,
-                                    rgw::sal::RadosStore *store,
-                                    disk_record_t *p_rec)
+                                  rgw::sal::Driver *driver,
+                                  rgw::sal::RadosStore *store,
+                                  disk_record_t *p_rec)
   {
     librados::IoCtx ioctx;
     std::string oid;
@@ -1959,7 +1955,7 @@ namespace rgw::dedup {
       itr = attrset.find(RGW_ATTR_COMPRESSION);
       if (itr != attrset.end()) {
         p_rec->compression_bl = itr->second;
-        p_rec->s.compression_bl_len = p_rec->compression_bl.length();
+        p_rec->s.compression_len = p_rec->compression_bl.length();
       }
     }
 
@@ -2326,7 +2322,7 @@ namespace rgw::dedup {
     // This records is a dedup target with source record on source_block_id
     disk_record_t src_rec, *p_src_rec = &src_rec;
     ret = load_record(d_dedup_cluster_ioctx, p_tgt_rec, p_src_rec, src_block_id,
-                      src_rec_id, md5_shard, dpp);
+                      src_rec_id, md5_shard, dpp, p_stats);
     if (unlikely(ret != 0)) {
       p_stats->failed_src_load++;
       // we can withstand most errors moving to the next object
@@ -2539,7 +2535,7 @@ namespace rgw::dedup {
           unsigned offset = p_header->rec_offsets[rec_id];
           // We deserialize the record inside the CTOR
           disk_record_t rec(p + offset);
-          ret = rec.validate(__func__, dpp, disk_block_id, rec_id);
+          ret = rec.validate(__func__, dpp, disk_block_id, rec_id, nullptr, p_stats);
           if (unlikely(ret != 0)) {
             p_stats->failed_rec_load++;
             return ret;
@@ -3650,6 +3646,10 @@ namespace rgw::dedup {
       throw std::runtime_error("Failed init_rados_access_handles()");
     }
     display_ioctx_state(dpp, d_dedup_cluster_ioctx, "dedup_bg->resume() done");
+
+    // pause()/resume() can modify placement compression state
+    d_placement_compression_type.clear();
+
     // create new watch request using the new pool handle
     watch_reload(dpp);
     d_ctl.local_pause_req = false;
@@ -3716,12 +3716,14 @@ namespace rgw::dedup {
 
       ldpp_dout(dpp, 10) << __func__ << "::Wait for object ingress completion, ttl="
                          << ttl << " seconds" << dendl;
-      std::unique_lock cond_lock(d_cond_mutex);
-      d_cond.wait_for(cond_lock, std::chrono::seconds(ttl),
-                      [this]{return d_ctl.should_stop() || d_ctl.should_pause();});
+      {
+        // limit the scope of cond_lock
+        std::unique_lock cond_lock(d_cond_mutex);
+        d_cond.wait_for(cond_lock, std::chrono::seconds(ttl),
+                        [this]{return d_ctl.should_stop() || d_ctl.should_pause();});
+      }
+
       if (unlikely(d_ctl.should_pause())) {
-        // must release lock before calling handle_pause_req()
-        cond_lock.unlock();
         handle_pause_req(__func__);
       }
       if (unlikely(d_ctl.should_stop())) {
@@ -3760,12 +3762,14 @@ namespace rgw::dedup {
     while (!all_md5_shards_completed(&d_cluster, store, num_md5_shards)) {
       ldpp_dout(dpp, 10) << __func__ << "::Wait for md5 completion, ttl="
                          << ttl << " seconds" << dendl;
-      std::unique_lock cond_lock(d_cond_mutex);
-      d_cond.wait_for(cond_lock, std::chrono::seconds(ttl),
-                      [this]{return d_ctl.should_stop() || d_ctl.should_pause();});
+      {
+        // limit the scope of cond_lock
+        std::unique_lock cond_lock(d_cond_mutex);
+        d_cond.wait_for(cond_lock, std::chrono::seconds(ttl),
+                        [this]{return d_ctl.should_stop() || d_ctl.should_pause();});
+      }
+
       if (unlikely(d_ctl.should_pause())) {
-        // must release lock before calling handle_pause_req()
-        cond_lock.unlock();
         handle_pause_req(__func__);
       }
       if (unlikely(d_ctl.should_stop())) {
@@ -3805,6 +3809,7 @@ namespace rgw::dedup {
           ldpp_dout(dpp, 1) << __func__ << "::failed setup()" << dendl;
           return;
         }
+
         d_placement_compression_type.clear();
         const rgw_pool& dedup_pool = store->svc()->zone->get_zone_params().dedup_pool;
         int64_t pool_id = rados_handle->pool_lookup(dedup_pool.name.c_str());
