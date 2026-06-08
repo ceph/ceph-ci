@@ -2,7 +2,6 @@
 import functools
 from typing import Any, Dict, List, Optional, Callable, TypeVar, Union
 import errno
-import json
 
 from .cli import CephSecretsCLICommand
 from object_format import ObjectFormatAdapter, ErrorResponse, Responder
@@ -24,19 +23,6 @@ from .backends import BACKENDS
 
 
 _T = TypeVar('_T')
-
-
-def _parse_data_arg(data: str) -> Dict[str, Any]:
-    s = (data or "").strip()
-    if not s:
-        raise CephSecretException("Secret data must not be empty")
-    try:
-        payload = json.loads(s)
-    except Exception:
-        raise CephSecretException("Invalid JSON for secret data")
-    if not isinstance(payload, dict):
-        raise CephSecretException("Secret data must be a JSON object")
-    return payload
 
 
 def _handle_secret_errors(fn: Callable[..., _T]) -> Callable[..., _T]:
@@ -167,10 +153,14 @@ class Module(MgrModule):
     def secret_get_versions(self, uris: List[str]) -> Dict[str, Optional[int]]:
         """Batch-fetch version numbers for a list of secret URIs.
 
-        Each entry in *uris* must be a canonical ``secret:/...`` URI as returned
-        by ``scan_refs()`` or ``SecretRef.to_uri()``. URIs that cannot be parsed
-        are skipped and logged at ERROR level; a missing key in the result
-        indicates malformed input rather than a not-found secret.
+        Each entry in *uris* must be a canonical ``secret:/...`` URI, such as
+        one returned by ``SecretRef.to_uri()``. URIs that cannot be parsed are
+        skipped and logged at ERROR level; a missing key in the result indicates
+        malformed input rather than a not-found secret.
+
+        Note that ``scan_refs()`` may also return malformed or embedded
+        secret-like strings for validation/reporting. Callers should pass only
+        canonical ``secret:/...`` URIs to this method.
 
         Returns a dict keyed by the input URI mapping to the current version
         integer, or ``None`` if the secret does not exist.
@@ -193,7 +183,7 @@ class Module(MgrModule):
         scope: Union[SecretScope, str],
         target: str,
         name: str,
-        data: Dict[str, Any],
+        data: str,
         user_made: bool = True,
         editable: bool = True,
     ) -> Dict[str, Any]:
@@ -251,7 +241,7 @@ class Module(MgrModule):
     def _secret_set(
         self,
         ref: SecretRef,
-        data: Dict[str, Any],
+        data: str,
         user_made: bool = True,
         editable: bool = True,
     ) -> Dict[str, Any]:
@@ -314,8 +304,10 @@ class Module(MgrModule):
     ) -> Dict[str, Any]:
         if inbuf is None:
             raise ErrorResponse('secret error: use -i to provide secret data')
+        if inbuf == '':
+            raise ErrorResponse('secret error: secret data must not be empty')
         ref = parse_secret_path(path)
-        return self._secret_set(ref, data=_parse_data_arg(inbuf))
+        return self._secret_set(ref, data=inbuf)
 
     @CephSecretsCLICommand.Write('secret rm')
     @Responder(functools.partial(ObjectFormatAdapter, compatible=True))
