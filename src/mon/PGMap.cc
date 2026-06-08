@@ -1159,9 +1159,17 @@ void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
   ceph_assert(inc.version == version+1);
   version++;
 
-  pool_stat_t pg_sum_old = pg_sum;
+  const bool has_pool_changes = !inc.pg_stat_updates.empty() ||
+                                 !inc.pool_statfs_updates.empty() ||
+                                 !inc.pg_remove.empty() ||
+                                 !inc.get_osd_stat_rm().empty();
+
+  pool_stat_t pg_sum_old;
   mempool::pgmap::unordered_map<int32_t, pool_stat_t> pg_pool_sum_old;
-  pg_pool_sum_old = pg_pool_sum;
+  if (has_pool_changes) {
+    pg_sum_old = pg_sum;
+    pg_pool_sum_old = pg_pool_sum;
+  }
 
   for (auto p = inc.pg_stat_updates.begin();
        p != inc.pg_stat_updates.end();
@@ -1260,28 +1268,32 @@ void PGMap::apply_incremental(CephContext *cct, const Incremental& inc)
     }
   }
 
-  // skip calculating delta while sum was not synchronized
-  if (!stamp.is_zero() && !pg_sum_old.stats.sum.is_zero()) {
-    utime_t delta_t;
-    delta_t = inc.stamp;
-    delta_t -= stamp;
-    // calculate a delta, and average over the last 2 deltas.
-    pool_stat_t d = pg_sum;
-    d.stats.sub(pg_sum_old.stats);
-    pg_sum_deltas.push_back(make_pair(d, delta_t));
-    stamp_delta += delta_t;
-    pg_sum_delta.stats.add(d.stats);
-    auto smooth_intervals =
-      cct ? cct->_conf.get_val<uint64_t>("mon_stat_smooth_intervals") : 1;
-    while (pg_sum_deltas.size() > smooth_intervals) {
-      pg_sum_delta.stats.sub(pg_sum_deltas.front().first.stats);
-      stamp_delta -= pg_sum_deltas.front().second;
-      pg_sum_deltas.pop_front();
+  if (has_pool_changes) {
+    // skip calculating delta while sum was not synchronized
+    if (!stamp.is_zero() && !pg_sum_old.stats.sum.is_zero()) {
+      utime_t delta_t;
+      delta_t = inc.stamp;
+      delta_t -= stamp;
+      // calculate a delta, and average over the last 2 deltas.
+      pool_stat_t d = pg_sum;
+      d.stats.sub(pg_sum_old.stats);
+      pg_sum_deltas.push_back(make_pair(d, delta_t));
+      stamp_delta += delta_t;
+      pg_sum_delta.stats.add(d.stats);
+      auto smooth_intervals =
+        cct ? cct->_conf.get_val<uint64_t>("mon_stat_smooth_intervals") : 1;
+      while (pg_sum_deltas.size() > smooth_intervals) {
+        pg_sum_delta.stats.sub(pg_sum_deltas.front().first.stats);
+        stamp_delta -= pg_sum_deltas.front().second;
+        pg_sum_deltas.pop_front();
+      }
     }
   }
   stamp = inc.stamp;
 
-  update_pool_deltas(cct, inc.stamp, pg_pool_sum_old);
+  if (has_pool_changes) {
+    update_pool_deltas(cct, inc.stamp, pg_pool_sum_old);
+  }
 
   for (auto p : deleted_pools) {
     if (cct)
