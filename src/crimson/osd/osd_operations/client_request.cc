@@ -172,6 +172,15 @@ ClientRequest::interruptible_future<> ClientRequest::with_pg_process_interruptib
       pg.wait_for_active_blocker,
       &decltype(pg.wait_for_active_blocker)::wait));
 
+  int cost  = std::max<uint64_t>(m->get_cost(), 1);
+  unsigned prio  = m->get_priority();
+  uint64_t owner = m->get_source().num();
+  DEBUGDPP("{}: get throttleing via scheduler path cost={} prio={} owner={}",
+             *pgref, *this, cost, prio, owner);
+  co_await interruptor::make_interruptible(
+    shard_services->get_throttle(
+      scheduler::params_t{cost, prio, owner, SchedulerClass::client}));
+
   DEBUGDPP("{}.{}: waited for active, entering get_obc stage ",
            pg, *this, this_instance_id);
 
