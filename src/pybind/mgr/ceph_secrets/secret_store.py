@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import copy
 import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union, TypeAlias
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from ceph_secrets_types import (
     SecretScope,
@@ -33,7 +32,7 @@ SECRET_STORE_FORMAT_VERSION = 1
 SECRET_META_PREFIX = 'secret_store/meta/'
 
 
-JsonType: TypeAlias = Union[
+JsonType = Union[
     None,
     bool,
     int,
@@ -43,7 +42,12 @@ JsonType: TypeAlias = Union[
     Dict[str, "JsonType"],
 ]
 
-JsonDict: TypeAlias = Dict[str, JsonType]
+JsonDict = Dict[str, JsonType]
+
+# Secret data is an opaque string. Callers are responsible for any structure
+# within it, for example JSON-encoding a dict before storing and decoding after
+# retrieval.
+SecretData = str
 
 
 def _checked_namespace(namespace: str) -> str:
@@ -199,9 +203,9 @@ class SecretPolicy:
 @dataclass
 class SecretRecord:
     ref: SecretRef
+    data: SecretData
     metadata: SecretMetadata = field(default_factory=SecretMetadata)
     policy: SecretPolicy = field(default_factory=SecretPolicy)
-    data: JsonDict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.ref, SecretRef):
@@ -210,8 +214,10 @@ class SecretRecord:
             raise CephSecretDataError('SecretRecord.metadata must be SecretMetadata')
         if not isinstance(self.policy, SecretPolicy):
             raise CephSecretDataError('SecretRecord.policy must be SecretPolicy')
-        if not isinstance(self.data, dict):
-            raise CephSecretDataError('SecretRecord.data must be a JSON object')
+        if not isinstance(self.data, str):
+            raise CephSecretDataError('SecretRecord.data must be a string')
+        if self.data == '':
+            raise CephSecretDataError('SecretRecord.data must not be empty')
 
     # Compatibility/readability helpers for key construction, sorting, and callers
     # that need the identity but should not mutate it directly.
@@ -246,7 +252,7 @@ class SecretRecord:
         if include_ref:
             result['ref'] = _ref_json(self.ref)
         if include_data:
-            result['data'] = copy.deepcopy(self.data)
+            result['data'] = self.data
         if include_policy:
             result['policy'] = self.policy.to_json()
         return result
@@ -256,7 +262,7 @@ class SecretRecord:
             'format_version': SECRET_STORE_FORMAT_VERSION,
             'metadata': self.metadata.to_json(),
             'policy': self.policy.to_json(),
-            'data': copy.deepcopy(self.data),
+            'data': self.data,
         }
 
     @staticmethod
@@ -277,12 +283,12 @@ class SecretRecord:
             )
 
         metadata = _expect_object('SecretRecord.metadata', payload['metadata'])
-        data = _expect_object('SecretRecord.data', payload['data'])
+        data = _expect_str('SecretRecord.data', payload['data'])
         policy = _expect_object('SecretRecord.policy', payload['policy'])
         return SecretRecord(
             ref=ref,
             metadata=SecretMetadata.from_json(metadata),
-            data=copy.deepcopy(data),
+            data=data,
             policy=SecretPolicy.from_json(policy),
         )
 
@@ -299,7 +305,7 @@ class SecretStoreMon(SecretStorageBackend):
         "format_version": 1,
         "metadata": {"version": 1, "created": "...", "updated": "..."},
         "policy": {"user_made": true, "editable": true}
-        "data": {...},
+        "data": "<opaque string>",
       }
 
     Per-namespace epoch keys (never touched by ls()):
@@ -374,12 +380,14 @@ class SecretStoreMon(SecretStorageBackend):
             scope: SecretScope,
             target: str,
             name: str,
-            data: Dict[str, Any],
+            data: SecretData,
             user_made: bool = True,
             editable: bool = True) -> SecretRecord:
 
-        if not isinstance(data, dict):
-            raise CephSecretException('Secret data must be a JSON object')
+        if not isinstance(data, str):
+            raise CephSecretException('Secret data must be a string')
+        if data == '':
+            raise CephSecretException('Secret data must not be empty')
 
         ref = _checked_ref(namespace, scope, target, name)
         existing = None
@@ -405,7 +413,7 @@ class SecretStoreMon(SecretStorageBackend):
             ref=ref,
             metadata=metadata,
             policy=SecretPolicy(user_made=user_made, editable=editable),
-            data=copy.deepcopy(data),
+            data=data,
         )
         k = self._kv_key_from_ref(ref)
         self.mgr.set_store(k, json.dumps(rec.to_store_json(), sort_keys=True))

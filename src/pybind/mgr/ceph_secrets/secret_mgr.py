@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 import logging
-import re
-from typing import Any, Dict, List, Optional, Set, Union, Hashable, Protocol
+from typing import Any, List, Optional, Set, Union, Hashable, Protocol
 
-from .secret_store import SecretRecord
+from .secret_store import SecretRecord, SecretData
 from ceph_secrets_types import (
     CephSecretException,
     CephSecretNotFoundError,
@@ -16,7 +15,6 @@ from ceph_secrets_types import (
 
 
 _SECRET_URI_PREFIX = f'{SECRET_SCHEME}:/'
-_SECRET_URI_RE = re.compile(rf"{re.escape(_SECRET_URI_PREFIX)}(?!/)[^\s\"']*")
 
 
 logger = logging.getLogger(__name__)
@@ -37,9 +35,10 @@ class SecretMgr:
     """
     Phase 1: Mon-store backend only.
 
-    Resolution rule:
-      - If secret.data has exactly one key, return that single value.
-      - Otherwise, return the dict as-is.
+    Secret data is an opaque string.  Callers are responsible for any
+    structure within it (e.g. JSON-encoding a dict before storing and
+    decoding after retrieval).  resolve_object() substitutes a secret URI
+    with the stored string directly.
     """
 
     def __init__(self, store: Any) -> None:
@@ -68,13 +67,9 @@ class SecretMgr:
             raise CephSecretNotFoundError(f"Secret not found: {ref.to_uri()}")
         return rec
 
-    def get_value(self, ref: SecretRef) -> Any:
-        # If exactly one entry exists, return the single value; otherwise return
-        # the full dict. Field-level selection is intentionally not supported.
+    def get_value(self, ref: SecretRef) -> str:
+        """Return the opaque data string for a secret."""
         rec = self.get(ref)
-        if len(rec.data) == 1:
-            return next(iter(rec.data.values()))
-
         return rec.data
 
     def set(
@@ -83,12 +78,14 @@ class SecretMgr:
         scope: Union[SecretScope, str],
         target: str,
         name: str,
-        data: Dict[str, Any],
+        data: SecretData,
         user_made: bool = True,
         editable: bool = True,
     ) -> SecretRecord:
-        if not isinstance(data, dict):
-            raise CephSecretException('Secret data must be a JSON object')
+        if not isinstance(data, str):
+            raise CephSecretException('Secret data must be a string')
+        if data == '':
+            raise CephSecretException('Secret data must not be empty')
 
         ref = self.make_ref(namespace, scope, target, name)
         return self.store.set(
@@ -136,6 +133,14 @@ class SecretMgr:
         return unresolved
 
     def scan_refs(self, obj: Any, namespace: str) -> Set[SecretURI]:
+        """Collect secret references from *obj*.
+
+        A reference must be the *entire* (stripped) value of a string field —
+        e.g. ``"secret:/ns/global/pw"``.  Embedded URIs inside a larger string
+        (e.g. ``"Bearer secret:/..."``) are not supported and are surfaced as
+        a BadSecretURI rather than silently ignored, so validation can flag
+        them before deploy.
+        """
         refs: Set[SecretURI] = set()
 
         def _scan(v: Any) -> None:
@@ -145,20 +150,27 @@ class SecretMgr:
             elif isinstance(v, (list, tuple)):
                 for vv in v:
                     _scan(vv)
-            elif isinstance(v, str) and _SECRET_URI_PREFIX in v:
-                for m in _SECRET_URI_RE.finditer(v):
-                    uri = m.group(0)
+            elif isinstance(v, str):
+                s = v.strip()
+                if s.startswith(_SECRET_URI_PREFIX):
                     try:
-                        refs.add(parse_secret_uri(uri))
+                        refs.add(parse_secret_uri(s))
                     except Exception as e:
-                        logger.warning("Failed to parse secret uri %r: %s", uri, e)
-                        refs.add(BadSecretURI(raw=uri, namespace=namespace, error=str(e)))
+                        logger.warning("Failed to parse secret uri %r: %s", s, e)
+                        refs.add(BadSecretURI(raw=s, namespace=namespace, error=str(e)))
+                elif _SECRET_URI_PREFIX in s:
+                    # Contains a secret URI but is not a whole-value reference.
+                    err = ('embedded secret URIs are not supported; the entire '
+                           'field value must be the secret URI')
+                    logger.warning("Rejecting embedded secret uri in %r", v)
+                    refs.add(BadSecretURI(raw=v, namespace=namespace, error=err))
+                # otherwise: plain data, not a reference
 
         _scan(obj)
         return refs
 
-    def _resolve_secret_uri(self, uri: str) -> Any:
-        """Resolve a single secret URI to its value."""
+    def _resolve_secret_uri(self, uri: str) -> str:
+        """Resolve a single secret URI to its opaque data string."""
         try:
             parsed_secret = parse_secret_uri(uri)
         except CephSecretException as e:
@@ -179,14 +191,27 @@ class SecretMgr:
             s = v.strip()
             if s.startswith(_SECRET_URI_PREFIX):
                 return self._resolve_secret_uri(s)
+            if _SECRET_URI_PREFIX in s:
+                # A field that embeds a secret URI inside other text would be
+                # deployed verbatim (leaking the unresolved placeholder).  Fail
+                # loudly rather than silently passing it through.
+                raise CephSecretException(
+                    f"Invalid secret reference {v!r}: embedded secret URIs are "
+                    f"not supported; the entire field value must be the secret URI"
+                )
         return v
 
     def resolve_object(self, obj: Any) -> Any:
         """Resolve secret references within nested dict/list/tuple structures.
-        Strings that are exactly a secret URI are replaced by their referenced
-        value.
 
-        Note: Embedded secret URIs within larger strings are not supported,
-        the entire string value must be a secret URI.
+        A string whose entire (stripped) value is a secret URI is replaced by
+        the stored opaque data string for that secret.  Surrounding whitespace
+        around an otherwise-clean URI is tolerated; non-secret strings are
+        returned unchanged, preserving their original whitespace.
+
+        A string that embeds a secret URI inside other text (e.g.
+        ``"Bearer secret:/..."``) is rejected with CephSecretException, since
+        partial substitution is not supported and silently emitting the literal
+        URI would leak an unresolved placeholder into deployed configuration.
         """
         return self._resolve(obj)

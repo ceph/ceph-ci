@@ -55,7 +55,8 @@ class CephSecretsClient:
         """Return the current mutation epoch for *namespace*.
 
         The epoch is a monotonically increasing integer that is incremented on
-        every successful set or rm operation within the namespace.  It is
+        every successful set and on rm only when an existing secret is actually
+        removed (an idempotent rm returning not-found does not bump the epoch).  It is
         deliberately per-namespace: a mutation in namespace A does not change
         the epoch of namespace B.
 
@@ -161,11 +162,14 @@ class CephSecretsClient:
         you need to check many secrets at once (e.g. during a cephadm
         reconciliation pass).
 
-        Each entry in *uris* must be a canonical ``secret:/...`` URI as returned
-        by :meth:`scan_refs` or ``SecretRef.to_uri()``. URIs that cannot be
-        parsed are skipped and logged at ERROR level on the module side; a
-        missing key in the result indicates malformed input rather than a
-        not-found secret.
+        Each entry in *uris* must be a canonical ``secret:/...`` URI, such as
+        one returned by ``SecretRef.to_uri()``. URIs that cannot be parsed are
+        skipped and logged at ERROR level on the module side; a missing key in
+        the result indicates malformed input rather than a not-found secret.
+
+        Note that :meth:`scan_refs` may also return malformed or embedded
+        secret-like strings for validation/reporting. Pass only canonical
+        ``secret:/...`` URIs to this method.
 
         Args:
             uris: A list of canonical secret URIs.  Example::
@@ -187,7 +191,7 @@ class CephSecretsClient:
         scope: ScopeArg,
         target: str,
         name: str,
-        data: Dict[str, Any],
+        data: str,
         user_made: bool = True,
         editable: bool = True,
     ) -> Dict[str, Any]:
@@ -203,9 +207,10 @@ class CephSecretsClient:
             scope:     The secret scope.
             target:    The scope target (empty for ``global`` and ``custom``).
             name:      The secret name or custom path.
-            data:      The secret payload as a JSON-serializable dict.  Scalar
-                       values should be represented as single-key objects, for
-                       example ``{"value": "s3cr3t"}``.
+            data:      The secret payload as an opaque string.  Callers are
+                       responsible for any structure within it (e.g.
+                       JSON-encoding a dict before storing and decoding after
+                       retrieval).
             user_made: Whether this secret was created by a human operator
                        rather than automatically by a Ceph component.  Defaults
                        to True; set to False for programmatically generated
@@ -265,30 +270,34 @@ class CephSecretsClient:
         """Return all unresolved secret URI references found in *obj*.
 
         Walks *obj* recursively (dicts, lists, strings) and collects every
-        ``secret:/...`` URI that cannot currently be resolved — because
-        the referenced secret does not exist.
+        secret-like reference that cannot currently be resolved because it is
+        missing, malformed, embedded inside a larger string, or cannot be read
+        successfully.
 
         Useful for validation: call this before deploying a configuration
-        object to detect missing secrets early.
+        object to detect missing or invalid secret references early.
 
         Args:
             obj:       The object to scan.  May be a dict, list, or any
                        JSON-like structure.
-            namespace: The namespace the caller is authorised to resolve
-                       secrets from.
+            namespace: The namespace context used while scanning/reporting
+                       references.
 
         Returns:
-            A collection of unresolvable URI strings found in *obj*.
+            A collection of unresolved reference strings found in *obj*.
         """
         return self._remote("scan_unresolved_refs", obj=obj, namespace=namespace)
 
     def scan_refs(self, obj: Any, namespace: str) -> Any:
         """Return all secret URI references found in *obj*.
 
-        Like :meth:`scan_unresolved_refs` but returns every ``secret:/...``
-        URI encountered, regardless of whether it can currently be resolved.
+        Like :meth:`scan_unresolved_refs` but returns every whole-value secret
+        URI and every malformed or embedded secret-like reference found while
+        scanning. Malformed or embedded entries are returned as their raw string
+        value so callers can report them.
 
-        Useful for auditing which secrets a configuration object depends on.
+        Useful for auditing which secrets a configuration object depends on and
+        for surfacing malformed or embedded references before deployment.
 
         Args:
             obj:       The object to scan.
@@ -302,15 +311,18 @@ class CephSecretsClient:
     def resolve_object(self, obj: Any) -> Any:
         """Resolve all secret URI references in *obj*.
 
-        Walks *obj* recursively and replaces every ``secret:/...`` URI string
-        with the plaintext value of the referenced secret.
+        Walks *obj* recursively and replaces every whole-value ``secret:/...``
+        URI string with the stored opaque string for the referenced secret.
+        Surrounding whitespace around a URI reference is ignored, but embedding
+        a secret URI inside a larger string is rejected because partial
+        substitution is not supported.
 
         Args:
             obj: The object to resolve. May be a dict, list, or any JSON-like
                   structure containing ``secret:/...`` URI strings.
 
         Returns:
-             A resolved copy of *obj* with all secret URIs replaced by their plaintext values.
+             A resolved copy of *obj* with all secret URIs replaced by their stored opaque strings.
              Raises RuntimeError if any referenced secret cannot be resolved
              or if the module is unreachable.
         """

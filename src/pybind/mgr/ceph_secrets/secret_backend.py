@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import List, Optional, TYPE_CHECKING
 from ceph_secrets_types import SecretScope
 
 
@@ -22,9 +22,9 @@ class SecretStorageBackend(ABC):
 
     Epoch:
       Each namespace has an independent monotonic epoch counter that is bumped
-      on every mutation (set/rm).  Consumers can use get_epoch(namespace) as a
-      cheap change-detector to avoid re-fetching secrets when nothing changed
-      in their namespace.
+      on every set and on rm only when an existing secret is actually removed.
+      Consumers can use get_epoch(namespace) as a cheap change-detector to
+      avoid re-fetching secrets when nothing changed in their namespace.
 
     Implementations:
       - SecretStoreMon  (Mon KV store)
@@ -42,7 +42,7 @@ class SecretStorageBackend(ABC):
         scope: SecretScope,
         target: str,
         name: str,
-        data: Dict[str, Any],
+        data: str,
         user_made: bool = True,
         editable: bool = True,
     ) -> "SecretRecord":
