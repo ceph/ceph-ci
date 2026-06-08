@@ -1,4 +1,4 @@
-from typing import List, cast, Optional, TYPE_CHECKING
+from typing import List, Tuple, cast, Optional, TYPE_CHECKING
 from cephadm.services.cephadmservice import CephadmService, CephadmDaemonDeploySpec
 from ceph.deployment.service_spec import TracingSpec, ServiceSpec
 from .service_registry import register_cephadm_service
@@ -57,12 +57,12 @@ class JaegerAgentService(CephadmService):
         spec: Optional[ServiceSpec],
         curr_deps: List[str],
         last_deps: List[str],
-    ) -> utils.Action:
+    ) -> Tuple[utils.Action, Optional[utils.Signal]]:
         """Given the scheduled_action, service spec, daemon_type, and
         current and previous dependency lists return the next action that
         this service would prefer cephadm take.
         """
-        action = super().choose_next_action(
+        action, signal = super().choose_next_action(
             scheduled_action, daemon_type, spec, curr_deps, last_deps
         )
         # changes to jaeger-agent deps affect the way the unit.run for
@@ -70,7 +70,7 @@ class JaegerAgentService(CephadmService):
         # on reconfig.
         if action is utils.Action.RECONFIG:
             action = utils.Action.REDEPLOY
-        return action
+        return action, signal
 
 
 @register_cephadm_service
