@@ -10880,3 +10880,48 @@ class TestCorruptedSubvolumes(TestVolumesHelper):
         self.run_ceph_cmd(f'fs subvolume snapshot rm {self.volname} {sv1} {ss1} '
                            '--force')
         self.run_ceph_cmd(f'fs subvolume rm {self.volname} {sv1} --force')
+
+class TestEmptyStringForCreates(CephFSTestCase):
+    CLIENTS_REQUIRED = 1
+    MDSS_REQUIRED = 1
+
+    def setUp(self):
+        super().setUp()
+        result = json.loads(self.get_ceph_cmd_stdout("fs", "volume", "ls"))
+        self.assertTrue(len(result) > 0)
+        self.volname = result[0]['name']
+
+    def tearDown(self):
+        # If tests failed and created bad entries,  attempt an aggressive purge
+        # so we don't brick the rest of the teuthology run.
+        # If the test passes, no empty subvolumegroup was created,
+        # so this 'rm' will fail. We cleanly catch and ignore that failure.
+        try:
+            self.run_ceph_cmd("fs", "subvolumegroup", "rm", self.volname, "")
+        except CommandFailedError:
+            pass
+        except Exception:
+            pass
+        super().tearDown()
+
+    def test_empty_name_string_for_subvolumegroup_name(self):
+        """Reject empty, literal empty, and whitespace-only strings for subvolume groups"""
+        invalid_inputs = ["", "''", '""', " ", "   "]
+        for inp in invalid_inputs:
+            with self.assertRaises(CommandFailedError):
+                self.run_ceph_cmd("fs", "subvolumegroup", "create", self.volname, inp)
+
+    def test_empty_name_string_for_subvolume_name(self):
+        """Reject empty, literal empty, and whitespace-only strings for subvolumes"""
+        invalid_inputs = ["", "''", '""', " ", "   "]
+        for inp in invalid_inputs:
+            with self.assertRaises(CommandFailedError):
+                self.run_ceph_cmd("fs", "subvolume", "create", self.volname, inp)
+
+    def test_empty_name_string_for_subvolumegroup_name_argument(self):
+        """Reject empty values assigned to optional group flag targets"""
+        invalid_inputs = ["", "''", '""', " "]
+        for inp in invalid_inputs:
+            with self.assertRaises(CommandFailedError):
+                # Explicitly attach the bad input directly linked to the key argument
+                self.run_ceph_cmd("fs", "subvolume", "create", self.volname, "sv1", "--group_name", inp)
