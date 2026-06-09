@@ -187,6 +187,8 @@ def test_small_object(r, client, s3):
     data = {}
     for entry in r.scan_iter(match="*_test.txt_0_4"):
         data = r.hgetall(entry)
+        print("data:")
+        print(data)
 
         # directory entry comparisons
         assert(data.get('blockID') == '0')
