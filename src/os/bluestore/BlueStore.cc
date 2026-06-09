@@ -16237,10 +16237,21 @@ void BlueStore::_txc_add_transaction(TransContext *txc, Transaction *t)
     if (!o) {
       ghobject_t oid = i.get_oid(op->oid);
       o = c->get_onode(oid, create, op->op == Transaction::OP_CREATE);
+      dout(10) << __func__ << " fetched onode"
+           << " op=" << op->op
+           << " create=" << create
+           << " oid=" << oid
+           << " result=" << (o ? "valid" : "null")
+           << dendl;
     }
     if (!create && (!o || !o->exists)) {
       dout(10) << __func__ << " op " << op->op << " got ENOENT on "
-	       << i.get_oid(op->oid) << dendl;
+	       << i.get_oid(op->oid)
+               << " ovec_slot=" << op->oid
+               << " o=" << (o ? "valid" : "null")
+               << " exists=" << (o ? o->exists : false)
+               << " nid=" << (o ? o->onode.nid : 0)
+               << dendl;
       r = -ENOENT;
       goto endop;
     }
@@ -16252,6 +16263,12 @@ void BlueStore::_txc_add_transaction(TransContext *txc, Transaction *t)
     case Transaction::OP_TOUCH_TEMP:
 #endif
       r = _touch(txc, c, o);
+      dout(10) << __func__ << " OP_TOUCH_TEMP after _touch:"
+               << " oid=" << o->oid
+               << " exists=" << o->exists
+               << " nid=" << o->onode.nid
+               << " ovec_slot=" << op->oid
+               << " r=" << r << dendl;
       break;
 
     case Transaction::OP_WRITE:
