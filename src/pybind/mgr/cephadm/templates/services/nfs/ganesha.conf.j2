@@ -29,6 +29,12 @@ NFS_CORE_PARAM {
 {% if enable_rdma and rdma_port %}
         NFS_RDMA_Port = {{ rdma_port }};
 {% endif %}
+{% if enable_tsm %}
+        enable_TSM = {{ enable_tsm|lower }};
+{% if tsm_port %}
+        Tsm_Port = {{ tsm_port }};
+{% endif %}
+{% endif %}
 }
 
 NFSv4 {
