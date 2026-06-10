@@ -4003,6 +4003,8 @@ int RGWRados::rewrite_obj(RGWBucketInfo& dest_bucket_info, const rgw_obj& obj, c
   attrset.erase(RGW_ATTR_ID_TAG);
   attrset.erase(RGW_ATTR_TAIL_TAG);
   attrset.erase(RGW_ATTR_STORAGE_CLASS);
+  attrset.erase(RGW_ATTR_SHARE_MANIFEST);
+  attrset.erase(RGW_ATTR_BLAKE3);
 
   ACLOwner owner;
   if (auto i = attrset.find(RGW_ATTR_ACL); i != attrset.end()) {
@@ -4894,6 +4896,8 @@ int RGWRados::fetch_remote_obj(RGWObjectCtx& dest_obj_ctx,
   if (!keep_tags) {
     attrs.erase(RGW_ATTR_TAGS);
   }
+  attrs.erase(RGW_ATTR_SHARE_MANIFEST);
+  attrs.erase(RGW_ATTR_BLAKE3);
 
   if (copy_if_newer) {
     uint64_t pg_ver = 0;
@@ -5304,6 +5308,8 @@ int RGWRados::copy_obj(RGWObjectCtx& src_obj_ctx,
 
   if (copy_data) { /* refcounting tail wouldn't work here, just copy the data */
     attrs.erase(RGW_ATTR_TAIL_TAG);
+    attrs.erase(RGW_ATTR_SHARE_MANIFEST);
+    attrs.erase(RGW_ATTR_BLAKE3);
     // Data is rewritten as a single stream; drop stale multipart boundaries
     attrs.erase(RGW_ATTR_CRYPT_PARTS);
     attrs.erase(RGW_ATTR_CRYPT_PART_NUMS);
@@ -5345,6 +5351,8 @@ int RGWRados::copy_obj(RGWObjectCtx& src_obj_ctx,
   if (!copy_itself) {
     aio = rgw::make_throttle(cct->_conf->rgw_max_copy_obj_concurrent_io, y);
     attrs.erase(RGW_ATTR_TAIL_TAG);
+    attrs.erase(RGW_ATTR_SHARE_MANIFEST);
+    attrs.erase(RGW_ATTR_BLAKE3);
     manifest = *amanifest;
     const rgw_bucket_placement& tail_placement = manifest.get_tail_placement();
     if (tail_placement.bucket.name.empty()) {
@@ -5706,6 +5714,8 @@ int RGWRados::transition_obj(RGWObjectCtx& obj_ctx,
   }
   attrs.erase(RGW_ATTR_ID_TAG);
   attrs.erase(RGW_ATTR_TAIL_TAG);
+  attrs.erase(RGW_ATTR_SHARE_MANIFEST);
+  attrs.erase(RGW_ATTR_BLAKE3);
 
   ACLOwner owner;
   if (auto i = attrs.find(RGW_ATTR_ACL); i != attrs.end()) {
