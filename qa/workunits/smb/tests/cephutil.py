@@ -66,3 +66,25 @@ def cephadm_shell_cmd(
     elif load is LoadJSON.ERROR:
         return JSONResult(proc.returncode, None, proc.stderr.decode())
     return proc
+
+
+def cephadm_enter_cmd(smb_cfg, cluster_id, args, **kwargs):
+    """Run a command inside the primary smbd container for the given
+    cluster_id on the cluster's admin node (derived via smb_cfg).
+    All kwargs are treated as arguments to subprocess.run.
+    """
+    cmd = [
+        'ssh',
+        '-oBatchMode=yes',
+        '-oUserKnownHostsFile=/dev/null',
+        '-oStrictHostKeyChecking=no',
+        '-q',
+        f'{smb_cfg.ssh_user}@{smb_cfg.ssh_admin_host}',
+        'sudo',
+        f'/home/{smb_cfg.ssh_user}/cephtest/cephadm',
+        'enter',
+        '-i',
+        f'smb.{cluster_id}',
+    ]
+    cmd += list(args)
+    return subprocess.run(cmd, **kwargs)
