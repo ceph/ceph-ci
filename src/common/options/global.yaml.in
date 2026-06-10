@@ -5374,7 +5374,7 @@ options:
   long_desc: The optimal value varies. For NVMe DBs may be as large as 8.
     Value 0 selects legacy recovery.
     Value 1 denotes new recovery but on single thread.
-  default: 0
+  default: 6
   with_legacy: false
   flags:
     - startup
@@ -5387,7 +5387,7 @@ options:
   long_desc: Chance to perform compare between procedures.
     Value in range <0..1>; defines chance to perform comparision between legacy
     and multithreaded allocation recovery. 0 means never compare. 1 means always compare.
-  default: 0
+  default: 0.75
   with_legacy: false
   flags:
     - startup
