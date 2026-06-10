@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import functools
-from typing import Any, Dict, List, Optional, Callable, TypeVar, Union
+from typing import Any, Dict, List, Optional, Callable, Tuple, TypeVar, Union
 import errno
 
 from .cli import CephSecretsCLICommand
@@ -138,6 +138,21 @@ class Module(MgrModule):
             reveal=reveal,
         )
 
+    def secret_get_value(
+        self,
+        namespace: str,
+        scope: Union[SecretScope, str],
+        target: str,
+        name: str,
+    ) -> Optional[str]:
+        """RPC surface — return the raw secret data string, or None if not found.
+
+        Called via mgr.remote(). Internal code uses _secret_get_value().
+        """
+        return self._secret_get_value(
+            self.secret_mgr.make_ref(namespace, scope, target, name)
+        )
+
     def secret_get_version(
         self,
         namespace: str,
@@ -229,6 +244,16 @@ class Module(MgrModule):
             return None
         return rec.to_public_json(include_data=reveal, include_policy=False, include_ref=False)
 
+    def _secret_get_value(self, ref: SecretRef) -> Optional[str]:
+        """Return the raw data string for a secret, or None if not found."""
+        try:
+            rec = self.secret_mgr.get(ref)
+        except CephSecretDataError:
+            raise
+        except CephSecretNotFoundError:
+            return None
+        return rec.data
+
     def _secret_get_version(self, ref: SecretRef) -> Optional[int]:
         try:
             rec = self.secret_mgr.get(ref)
@@ -293,6 +318,24 @@ class Module(MgrModule):
         if res is None:
             raise ErrorResponse('secret error: not found', return_value=-errno.ENOENT)
         return res
+
+    @CephSecretsCLICommand.Read('secret get-value')
+    @_handle_secret_errors
+    def _cli_secret_get_value_by_path(
+        self,
+        path: str,
+    ) -> Tuple[int, str, str]:
+        """Return the raw secret data string for the given path.
+
+        Unlike ``secret get --reveal``, this command outputs the secret value
+        directly as a plain string with no JSON envelope, making it suitable
+        for use in shell scripts and pipelines.
+        """
+        ref = parse_secret_path(path)
+        value = self._secret_get_value(ref)
+        if value is None:
+            raise ErrorResponse('secret error: not found', return_value=-errno.ENOENT)
+        return 0, value, ''
 
     @CephSecretsCLICommand.Write('secret set')
     @Responder(functools.partial(ObjectFormatAdapter, compatible=True))
