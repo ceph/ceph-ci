@@ -121,6 +121,40 @@ class CephSecretsClient:
             reveal=reveal,
         )
 
+    def secret_get_value(
+        self,
+        namespace: str,
+        scope: ScopeArg,
+        target: str,
+        name: str,
+    ) -> Optional[str]:
+        """Return the raw secret data string.
+
+        Returns the stored opaque string directly, without any JSON envelope
+        or metadata.  Returns ``None`` if the secret does not exist.
+
+        Use this when you need the secret value itself — for example, to pass
+        a password to a subprocess or to resolve a credential at deploy time.
+        For metadata inspection or change-detection, use :meth:`secret_get` or
+        :meth:`secret_get_version` instead.
+
+        Args:
+            namespace: The secret namespace.
+            scope:     The secret scope.
+            target:    The scope target (empty for ``global`` and ``custom``).
+            name:      The secret name or custom path.
+
+        Returns:
+            The stored string, or ``None`` if the secret does not exist.
+        """
+        return self._remote(
+            "secret_get_value",
+            namespace=namespace,
+            scope=scope,
+            target=target,
+            name=name,
+        )
+
     def secret_get_version(
         self,
         namespace: str,
