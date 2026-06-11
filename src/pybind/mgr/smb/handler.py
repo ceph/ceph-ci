@@ -41,6 +41,7 @@ from .internal import (
     CommonResourceEntry,
     ExternalCephClusterEntry,
     JoinAuthEntry,
+    RGWCredentialEntry,
     ShareEntry,
     TLSCredentialEntry,
     UsersAndGroupsEntry,
@@ -63,6 +64,7 @@ from .staging import (
     auth_refs,
     cross_check_resource,
     ext_cluster_refs,
+    rgw_credential_refs,
     tls_refs,
     ug_refs,
 )
@@ -95,6 +97,7 @@ class ClusterChangeGroup:
         join_auths: List[resources.JoinAuth],
         users_and_groups: List[resources.UsersAndGroups],
         tls_credentials: List[resources.TLSCredential],
+        rgw_credentials: List[resources.RGWCredential],
         ext_ceph_clusters: List[resources.ExternalCephCluster],
     ):
         self.cluster = cluster
@@ -102,6 +105,7 @@ class ClusterChangeGroup:
         self.join_auths = join_auths
         self.users_and_groups = users_and_groups
         self.tls_credentials = tls_credentials
+        self.rgw_credentials = rgw_credentials
         self.ext_ceph_clusters = ext_ceph_clusters
         # a cache for modified entries
         self.cache = config_store.EntryCache()
@@ -183,6 +187,7 @@ class _Matcher:
         resources.JoinAuth,
         resources.UsersAndGroups,
         resources.TLSCredential,
+        resources.RGWCredential,
         resources.ExternalCephCluster,
     )
 
@@ -401,6 +406,9 @@ class ClusterConfigHandler:
     def user_and_group_ids(self) -> List[str]:
         return list(UsersAndGroupsEntry.ids(self.internal_store))
 
+    def rgw_credential_ids(self) -> List[str]:
+        return list(RGWCredentialEntry.ids(self.internal_store))
+
     def all_resources(self) -> List[SMBResource]:
         with _store_transaction(self.internal_store):
             return self._search_resources(_Matcher())
@@ -532,13 +540,14 @@ class ClusterConfigHandler:
                 removed_cluster_ids.add(cluster_id)
                 continue
             present_cluster_ids.add(cluster_id)
+            cluster_shares = [
+                self._share_entry(cid, shid).get_share()
+                for cid, shid in share_ids
+                if cid == cluster_id
+            ]
             change_group = ClusterChangeGroup(
                 cluster,
-                [
-                    self._share_entry(cid, shid).get_share()
-                    for cid, shid in share_ids
-                    if cid == cluster_id
-                ],
+                cluster_shares,
                 [
                     self._join_auth_entry(_id).get_join_auth()
                     for _id in auth_refs(cluster)
@@ -552,6 +561,12 @@ class ClusterConfigHandler:
                         self.internal_store, _id
                     ).get_tls_credential()
                     for _id in tls_refs(cluster)
+                ],
+                [
+                    RGWCredentialEntry.from_store(
+                        self.internal_store, _id
+                    ).get_rgw_credential()
+                    for _id in rgw_credential_refs(cluster_shares)
                 ],
                 [
                     ExternalCephClusterEntry.from_store(
@@ -593,6 +608,7 @@ class ClusterConfigHandler:
         chg_join_ids: Set[str] = set()
         chg_ug_ids: Set[str] = set()
         chg_tls_ids: Set[str] = set()
+        chg_rgw_cred_ids: Set[str] = set()
         chg_extc_ids: Set[str] = set()
         for result in updated:
             state = (result.status or {}).get('state', None)
@@ -614,13 +630,21 @@ class ClusterConfigHandler:
                 chg_ug_ids.add(result.src.users_groups_id)
             elif isinstance(result.src, resources.TLSCredential):
                 chg_tls_ids.add(result.src.tls_credential_id)
+            elif isinstance(result.src, resources.RGWCredential):
+                chg_rgw_cred_ids.add(result.src.rgw_credential_id)
             elif isinstance(result.src, resources.ExternalCephCluster):
                 chg_extc_ids.add(result.src.external_ceph_cluster_id)
 
         # TODO: here's a lazy bit. if any join auths or users/groups changed we
         # will regen all clusters because these can be shared by >1 cluster.
         # In future, make this only pick clusters using the named resources.
-        if chg_join_ids or chg_ug_ids or chg_tls_ids or chg_extc_ids:
+        if (
+            chg_join_ids
+            or chg_ug_ids
+            or chg_tls_ids
+            or chg_extc_ids
+            or chg_rgw_cred_ids
+        ):
             chg_cluster_ids.update(ClusterEntry.ids(self.internal_store))
         return chg_cluster_ids
 
@@ -656,25 +680,13 @@ class ClusterConfigHandler:
         _save_pending_join_auths(self.priv_store, change_group)
         _save_pending_users_and_groups(self.priv_store, change_group)
         _save_pending_tls_credentials(self.priv_store, change_group)
-        _save_pending_rgw_credentials(self.priv_store, change_group)
-        rgw_credential_entries = {
-            share.share_id: change_group.cache[
-                external.rgw_credentials_key(
-                    change_group.cluster.cluster_id, share.share_id
-                )
-            ]
-            for share in change_group.shares
-            if share.rgw is not None
-            and share.rgw.access_key_id
-            and share.rgw.secret_access_key
-        }
         cluster_conf = _ClusterConf.assemble(
             change_group,
             self._path_resolver,
             self._authorizer,
-            rgw_credential_entries,
         )
         _save_pending_config(self.public_store, cluster_conf)
+        _save_pending_rgw_config(self.priv_store, cluster_conf)
         # remove any stray objects
         external.rm_other_in_ns(
             self.priv_store,
@@ -710,17 +722,6 @@ class ClusterConfigHandler:
                 )
             ]
             for tc in change_group.tls_credentials
-        }
-        rgw_credential_entries = {
-            share.share_id: change_group.cache[
-                external.rgw_credentials_key(
-                    cluster.cluster_id, share.share_id
-                )
-            ]
-            for share in change_group.shares
-            if share.rgw is not None
-            and share.rgw.access_key_id
-            and share.rgw.secret_access_key
         }
         ext_ceph_cluster = None
         if change_group.ext_ceph_clusters:
@@ -823,8 +824,6 @@ class _ShareConf:
     resolver: PathResolver
     cephx_entity: str
     ceph_cluster: str
-    rgw_access_key_uri: Optional[str] = None
-    rgw_secret_key_uri: Optional[str] = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -840,7 +839,6 @@ class _ClusterConf:
         change_group: ClusterChangeGroup,
         default_resolver: PathResolver,
         authorizer: AccessAuthorizer,
-        rgw_credential_entries: Dict[str, ConfigEntry],
     ) -> Self:
         extcc = None
         assert isinstance(change_group.cluster, resources.Cluster)
@@ -881,13 +879,12 @@ class _ClusterConf:
         return cls(
             change_group.cluster,
             [
-                _make_share_conf(
+                _ShareConf(
                     s,
                     change_group.cluster,
                     resolver,
                     cephx_entity,
                     ceph_cluster,
-                    rgw_credential_entries,
                 )
                 for s in change_group.shares
             ],
@@ -896,44 +893,18 @@ class _ClusterConf:
         )
 
 
-def _make_share_conf(
-    s: resources.Share,
-    cluster: resources.Cluster,
-    resolver: PathResolver,
-    cephx_entity: str,
-    ceph_cluster: str,
-    rgw_credential_entries: Dict[str, ConfigEntry],
-) -> _ShareConf:
-    creds_entry = rgw_credential_entries.get(s.share_id)
-    # Get the URI from the ConfigEntry object, not from the data
-    access_key_uri = (
-        f'URI:{creds_entry.uri}:access_key_id' if creds_entry else None
-    )
-    secret_key_uri = (
-        f'URI:{creds_entry.uri}:secret_access_key' if creds_entry else None
-    )
-    return _ShareConf(
-        s,
-        cluster,
-        resolver,
-        cephx_entity,
-        ceph_cluster,
-        rgw_access_key_uri=access_key_uri,
-        rgw_secret_key_uri=secret_key_uri,
-    )
-
-
 def _generate_rgw_share(
     conf: _ShareConf,
+    cred_map: Dict[str, resources.RGWCredential],
 ) -> Dict[str, Dict[str, str]]:
     """Generate Samba configuration for an RGW-backed share."""
     share = conf.resource
     rgw = share.rgw
     assert rgw is not None, "RGW storage configuration missing"
 
-    # Use URI-based credential references (already formatted in _make_share_conf)
-    access_key_uri = conf.rgw_access_key_uri or ''
-    secret_key_uri = conf.rgw_secret_key_uri or ''
+    # Get user_id from credential (credential_ref is guaranteed by validation)
+    assert rgw.credential_ref is not None
+    user_id = cred_map[rgw.credential_ref].user_id or ''
 
     cfg = {
         # smb.conf options
@@ -943,9 +914,12 @@ def _generate_rgw_share(
             'ceph_rgw:config_file': '/etc/ceph/ceph.conf',
             'ceph_rgw:keyring_file': '/etc/ceph/ceph.client.admin.keyring',
             'ceph_rgw:bucket': rgw.bucket,
-            'ceph_rgw:user_id': rgw.user_id or '',
-            'ceph_rgw:access_key': access_key_uri,
-            'ceph_rgw:secret_access_key': secret_key_uri,
+            'ceph_rgw:user_id': user_id,
+            # Credential values are left empty here; they are injected at
+            # deploy time via a config:merge stub in the private store so
+            # they never appear in the public RADOS config.
+            'ceph_rgw:access_key': '',
+            'ceph_rgw:secret_access_key': '',
             'ceph_rgw:debug': 'off',
             'read only': ynbool(share.readonly),
             'browseable': ynbool(share.browseable),
@@ -1149,9 +1123,13 @@ def _generate_config(conf: _ClusterConf) -> Dict[str, Any]:
     cluster_global_opts['smb ports'] = str(_smb_port(cluster))
     _set_debug_level(cluster_global_opts, conf)
 
+    cred_map = {
+        c.rgw_credential_id: c for c in conf.change_group.rgw_credentials
+    }
+
     share_configs = {
         share.resource.name: (
-            _generate_rgw_share(share)
+            _generate_rgw_share(share, cred_map)
             if share.resource.rgw
             else _generate_share(share)
         )
@@ -1439,31 +1417,6 @@ def _save_pending_tls_credentials(
         change_group.cache_updated_entry(tc_entry)
 
 
-def _save_pending_rgw_credentials(
-    store: ConfigStore,
-    change_group: ClusterChangeGroup,
-) -> None:
-    """Save RGW credentials for shares in the priv store."""
-    cluster = change_group.cluster
-    assert isinstance(cluster, resources.Cluster)
-
-    # Save credentials for each RGW share
-    for share in change_group.shares:
-        if share.rgw is not None:
-            # Only save if credentials are present
-            if share.rgw.access_key_id and share.rgw.secret_access_key:
-                ext_key = external.rgw_credentials_key(
-                    cluster.cluster_id, share.share_id
-                )
-                creds_entry = store[ext_key]
-                creds_data = {
-                    'access_key_id': share.rgw.access_key_id,
-                    'secret_access_key': share.rgw.secret_access_key,
-                }
-                creds_entry.set(creds_data)
-                change_group.cache_updated_entry(creds_entry)
-
-
 def _save_pending_config(
     store: ConfigStore,
     cluster_conf: _ClusterConf,
@@ -1472,6 +1425,49 @@ def _save_pending_config(
     cconfig = _generate_config(cluster_conf)
     centry = store[external.config_key(cluster_conf.resource.cluster_id)]
     centry.set(cconfig)
+    cluster_conf.change_group.cache_updated_entry(centry)
+
+
+def _save_pending_rgw_config(
+    store: ConfigStore,
+    cluster_conf: _ClusterConf,
+) -> None:
+    """Save an RGW credential stub to the private store for RGW clusters.
+
+    Writes a stub using sambacc's config:merge mechanism, which merges the
+    provided JSON on top of the primary config at load time.  The mgr
+    populates the stub with only the RGW credential fields here; everything else
+    stays in the public RADOS config.  The stub URI is passed to the container
+    via extra_config_uris so credentials never appear in the public pool.
+    """
+    cluster_id = cluster_conf.resource.cluster_id
+    rgw_shares = [s for s in cluster_conf.shares if s.resource.rgw]
+    if not rgw_shares:
+        return
+    cred_map = {
+        c.rgw_credential_id: c
+        for c in cluster_conf.change_group.rgw_credentials
+    }
+    merge_shares: Dict[str, Any] = {}
+    for sc in rgw_shares:
+        rgw = sc.resource.rgw
+        assert rgw is not None
+        assert rgw.credential_ref is not None
+        cred = cred_map[rgw.credential_ref]
+        access_key = cred.access_key_id or ''
+        secret_key = cred.secret_access_key or ''
+        merge_shares[sc.resource.name] = {
+            'options': {
+                'ceph_rgw:access_key': access_key,
+                'ceph_rgw:secret_access_key': secret_key,
+            }
+        }
+    stub = {
+        'samba-container-config': 'v0',
+        'config:merge': {'shares': merge_shares},
+    }
+    centry = store[external.rgw_config_key(cluster_id)]
+    centry.set(stub)
     cluster_conf.change_group.cache_updated_entry(centry)
 
 
