@@ -153,7 +153,7 @@ public:
     OP_COLL_SET_BITS = 42, // cid, bits
 
     OP_MERGE_COLLECTION = 43, // cid, destination
-#ifdef WITH_CRIMSON
+#if defined(WITH_CRIMSON) || defined(WITH_CRIMSON_OBJECTSTORE)
     OP_TOUCH_TEMP = 44, // cid, temp_oid, target_oid
 #endif
   };
@@ -653,7 +653,7 @@ public:
 
     ceph::buffer::list::const_iterator data_aligned_bl_p;
     ceph::buffer::list::const_iterator data_misaligned_bl_p;
-#ifdef WITH_CRIMSON
+#if defined(WITH_CRIMSON) || defined(WITH_CRIMSON_OBJECTSTORE)
     bool new_format;
 #else
     const bool new_format;
@@ -862,7 +862,7 @@ public:
     _op->oid = _get_object_id(oid);
     data.ops = data.ops + 1;
   }
-#ifdef WITH_CRIMSON
+#if defined(WITH_CRIMSON) || defined(WITH_CRIMSON_OBJECTSTORE)
   /**
    * touch_temp
    *
