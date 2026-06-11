@@ -1425,10 +1425,21 @@ int JournalTool::recover_header(bool dry_run)
     return -EIO;
   }
 
-  if (!js.header_present || !js.header_valid) {
-    derr << "Journal header is not present or is damaged, cannot execute recovery" << dendl;
-    return -EIO;
+ if (!js.header_present) {
+   derr << "Journal header object is missing entirely, cannot execute recovery" << dendl;
+   return -EIO;
   }
+
+ if (!js.header_valid) {
+   dout(1) << "Proceeding with recovery: " <<
+     "Journal header is present but marked invalid due to offset inconsistencies." << dendl;
+
+   // FORCE RAW RESET: Override corrupted fields so scan_events starts at absolute 0
+   js.header->trimmed_pos = 0;
+   js.header->expire_pos = 0;
+   js.header->unused_field = 0;
+   js.header->write_pos = 0;
+ }
 
   uint64_t first_pos = std::numeric_limits<uint64_t>::max();
   uint64_t last_pos = 0;
