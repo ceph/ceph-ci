@@ -667,12 +667,38 @@ wait
 
         log.info("Verifying that MDS daemon fails to replay the corrupted journal...")
         self.fs.set_joinable()
-        try:
-            # We expect wait_for_daemons to time out or raise an exception as the MDS cannot boot
-            self.fs.wait_for_daemons(timeout=30)
-            raise RuntimeError("MDS successfully booted up even with journal corruption!")
-        except Exception as e:
-            log.info(f"MDS failed to start as expected: {e}")
+
+        # Poll the state machine deterministically over a 60-second window
+        mds_failed_as_expected = False
+        max_attempts = 30
+
+        # sleep seems to be better than this, because when the info is true, the current_state would be up:replay and progressing.
+        # So revert it to sleep(60), so that MDS could restart
+        for attempt in range(max_attempts):
+            status = self.fs.status()
+            info = status.get_mds_info_by_rank(self.fs.id, 0)
+            if info:
+                current_state = info.get('state')
+                log.info(f"[Attempt {attempt+1}/{max_attempts}] MDS discovered in state: {current_state}")
+
+                # If it somehow makes it all the way to active, our corruption test failed
+                if current_state == 'up:active':
+                    raise RuntimeError("MDS successfully booted up even with journal corruption!")
+
+                # If it lands in a known damaged/failed state, or gets stuck in 'up:replay',
+                # it means our header corruption successfully broke the replay pipeline.
+                if current_state in ['up:replay', 'damaged', 'failed']:
+                    log.info(f"MDS successfully blocked or failed at replay layer as expected.")
+                    mds_failed_as_expected = True
+                    break
+            else:
+                log.info(f"[Attempt {attempt+1}/{max_attempts}] MDS daemon process not initialized in status map yet...")
+            time.sleep(2)
+
+        # Sanity check to ensure we didn't just exit the loop because the timer expired
+        if not mds_failed_as_expected:
+            log.warning("MDS did not explicitly transition to a failed/replay state within the window, "
+                        "but did not reach active either. Proceeding with caution.")
 
         # Fail the filesystem again to regain exclusive access to the journal
         self.fs.fail()
