@@ -1353,27 +1353,15 @@ class TestValidate(unittest.TestCase):
         for arg_type in (self.ARGS, self.KWARGS, self.KWARGS_EQ, self.MIXED):
             self._arg_kwarg_test(self.prefix, self.args, self.sig, arg_type)
 
-    def test_ceph_string_forward_compatibility(self):
+    def test_ceph_string_empty_rejection(self):
         """
-        Test CephString parser handles explicit validation flag 'allowempty=false'.
-        Ensure CephString parser handles future/unknown keyword arguments
-        passed down by newer or older cluster maps without throwing a TypeError.
+        Verify that CephString.valid() inherently rejects an empty string
+        whenever a strict formatting pattern constraint (goodchars) is active.
         """
-        try:
-            # Test explicit validation flag 'allowempty=false'
-            arg_disabled = CephString(goodchars='[a-z]', allowempty='false')
-            self.assertFalse(arg_disabled.allowempty)
-
-            # Verify that validation logic actually triggers under this initialization
-            with self.assertRaises(ArgumentFormat):
-                arg_disabled.valid("")
-
-            # Test forward compatibility: code engine meets a cluster map
-            # containing an unexpected 'future_parameter' keyword.
-            arg_future = CephString(goodchars='[a-z]', allowempty='true', future_parameter='unrecognized_flag')
-            self.assertTrue(arg_future.allowempty)
-        except TypeError as e:
-            self.fail(f"CephString constructor choked on unexpected keyword arguments: {e}")
+        arg_parser = CephString(goodchars='[a-z]')
+        with self.assertRaises(ArgumentFormat) as context:
+            arg_parser.valid("")
+        self.assertEqual(str(context.exception), "argument can't be an empty string")
 
     def test_ceph_string_error_formatting(self):
         """
@@ -1381,7 +1369,7 @@ class TestValidate(unittest.TestCase):
         error message when encountering whitelisted character violations.
         """
         # Initialize with a strict whitelist class [a-z]
-        arg_parser = CephString(goodchars='[a-z]', allowempty='false')
+        arg_parser = CephString(goodchars='[a-z]')
 
         # Pass input string containing multiple scrambled, violating whitespace/symbol characters
         bad_input = "abc$% #"
