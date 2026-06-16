@@ -417,7 +417,11 @@ void PG::queue_recovery()
     dout(10) << "queue_recovery -- not primary or not peered " << dendl;
     ceph_assert(!recovery_queued);
   } else if (recovery_queued) {
-    dout(10) << "queue_recovery -- already queued" << dendl;
+    dout(10) << "queue_recovery -- already queued"
+             << (state_test(PG_STATE_BACKFILL_WAIT) ? " backfill_wait" : "")
+             << (state_test(PG_STATE_BACKFILLING) ? " backfilling" : "")
+             << (state_test(PG_STATE_RECOVERING) ? " recovering" : "")
+             << dendl;
   } else {
     dout(10) << "queue_recovery -- queuing" << dendl;
     recovery_queued = true;

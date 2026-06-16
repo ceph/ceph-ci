@@ -9822,6 +9822,8 @@ void OSD::do_recovery(
     }
 
     if (pg->pg_has_reset_since(queued)) {
+      dout(10) << "do_recovery aborted: pg changed since epoch " << queued
+	       << " " << *pg << dendl;
       goto out;
     }
 

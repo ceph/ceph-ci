@@ -13353,6 +13353,8 @@ void PrimaryLogPG::on_change(ObjectStore::Transaction &t)
   }
 
   if (recovery_queued) {
+    dout(10) << __func__ << " clearing recovery_queued"
+             << " (PGRecovery may still be on op_wq)" << dendl;
     recovery_queued = false;
     osd->clear_queued_recovery(this);
   }
@@ -13569,7 +13571,9 @@ bool PrimaryLogPG::start_recovery_ops(
       !state_test(PG_STATE_BACKFILLING)) {
     /* TODO: I think this case is broken and will make do_recovery()
      * unhappy since we're returning false */
-    dout(10) << "recovery raced and were queued twice, ignoring!" << dendl;
+    dout(10) << __func__ << " not recovering/backfilling"
+             << (state_test(PG_STATE_BACKFILL_WAIT) ? " (backfill_wait)" : "")
+             << ", no recovery ops to start" << dendl;
     return have_unfound();
   }
 

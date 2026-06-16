@@ -104,6 +104,11 @@ class AsyncReserver {
 	preempt_one();
       }
       if (in_progress.size() >= max_allowed) {
+	if (!queues.empty()) {
+	  rdout(10) << __func__ << " full (" << in_progress.size()
+		    << "/" << max_allowed << "), cannot grant prio "
+		    << it->first << dendl;
+	}
 	break; // no room
       }
       // grant

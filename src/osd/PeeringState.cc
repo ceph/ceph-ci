@@ -5835,6 +5835,8 @@ PeeringState::WaitRemoteBackfillReserved::WaitRemoteBackfillReserved(my_context 
   DECLARE_LOCALS;
 
   ps->state_set(PG_STATE_BACKFILL_WAIT);
+  psdout(10) << __func__ << " local backfill reservation granted, "
+             << "requesting remote reservations" << dendl;
   pl->publish_stats_to_osd();
   post_event(RemoteBackfillReserved());
 }
@@ -5850,6 +5852,9 @@ PeeringState::WaitRemoteBackfillReserved::react(const RemoteBackfillReserved &ev
       context< Active >().remote_shards_to_reserve_backfill.end()) {
     // The primary never backfills itself
     ceph_assert(*backfill_osd_it != ps->pg_whoami);
+    psdout(10) << __func__ << " requesting backfill reservation from osd."
+               << backfill_osd_it->osd << " priority "
+               << ps->get_backfill_priority() << dendl;
     pl->send_cluster_message(
       backfill_osd_it->osd,
       TOPNSPC::make_message<MBackfillReserve>(
@@ -5914,6 +5919,8 @@ boost::statechart::result
 PeeringState::WaitRemoteBackfillReserved::react(const RemoteReservationRejectedTooFull &evt)
 {
   DECLARE_LOCALS;
+  psdout(10) << __func__ << " remote osd rejected backfill: disk too full"
+             << dendl;
   ps->state_set(PG_STATE_BACKFILL_TOOFULL);
   retry();
   return transit<NotBackfilling>();
@@ -5922,6 +5929,8 @@ PeeringState::WaitRemoteBackfillReserved::react(const RemoteReservationRejectedT
 boost::statechart::result
 PeeringState::WaitRemoteBackfillReserved::react(const RemoteReservationRevoked &evt)
 {
+  DECLARE_LOCALS;
+  psdout(10) << __func__ << " remote backfill reservation revoked" << dendl;
   retry();
   return transit<NotBackfilling>();
 }
@@ -5935,6 +5944,8 @@ PeeringState::WaitLocalBackfillReserved::WaitLocalBackfillReserved(my_context ct
   DECLARE_LOCALS;
 
   ps->state_set(PG_STATE_BACKFILL_WAIT);
+  psdout(10) << __func__ << " waiting for local backfill reservation"
+             << " priority " << ps->get_backfill_priority() << dendl;
   pl->request_local_background_io_reservation(
     ps->get_backfill_priority(),
     std::make_unique<PGPeeringEvent>(
@@ -6063,6 +6074,8 @@ boost::statechart::result
 PeeringState::RepWaitRecoveryReserved::react(const RemoteRecoveryReserved &evt)
 {
   DECLARE_LOCALS;
+  psdout(10) << __func__ << " granting recovery reservation to primary osd."
+             << ps->primary.osd << dendl;
   pl->send_cluster_message(
     ps->primary.osd,
     TOPNSPC::make_message<MRecoveryReserve>(
@@ -6108,8 +6121,12 @@ PeeringState::RepNotRecovering::react(const RequestBackfillPrio &evt)
 
   if (!pl->try_reserve_recovery_space(
 	evt.primary_num_bytes, evt.local_num_bytes)) {
+    psdout(10) << __func__ << " rejecting backfill reservation: disk too full"
+               << dendl;
     post_event(RejectTooFullRemoteReservation());
   } else {
+    psdout(10) << __func__ << " queueing remote backfill reservation"
+               << " priority " << evt.priority << dendl;
     PGPeeringEventURef preempt;
     if (HAVE_FEATURE(ps->upacting_features, RECOVERY_RESERVATION_2)) {
       // older peers will interpret preemption as TOOFULL
@@ -6170,7 +6187,8 @@ PeeringState::RepWaitBackfillReserved::react(const RemoteBackfillReserved &evt)
 {
   DECLARE_LOCALS;
 
-
+  psdout(10) << __func__ << " granting backfill reservation to primary osd."
+             << ps->primary.osd << dendl;
   pl->send_cluster_message(
       ps->primary.osd,
       TOPNSPC::make_message<MBackfillReserve>(
@@ -6186,6 +6204,7 @@ PeeringState::RepWaitBackfillReserved::react(
   const RejectTooFullRemoteReservation &evt)
 {
   DECLARE_LOCALS;
+  psdout(10) << __func__ << " not enough recovery space for backfill" << dendl;
   ps->reject_reservation();
   post_event(RemoteReservationRejectedTooFull());
   return discard_event();
