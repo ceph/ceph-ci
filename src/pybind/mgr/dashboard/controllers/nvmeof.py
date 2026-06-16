@@ -816,7 +816,7 @@ else:
     @APIRouter("/nvmeof/subsystem/{nqn}/listener", Scope.NVME_OF)
     @APIDoc("NVMe-oF Subsystem Listener Management API", "NVMe-oF Subsystem Listener")
     class NVMeoFListener(RESTController):
-        @pick("listeners")
+        @pick("listeners", inject_params=["nqn"])
         @NvmeofCLICommand("nvmeof listener list", model.ListenerList)
         @EndpointDoc(
             "List all NVMeoF listeners",
