@@ -19,6 +19,15 @@
 #include "bluestore_types.h"
 #include "common/ceph_mutex.h"
 #include "Allocator.h"
+#include "common/perf_counters.h"
+#include "common/perf_counters_collection.h"
+
+enum {
+  l_bluestore_allocator_first = 732300,
+  l_bluestore_allocator_alloc_process_lat,
+  l_bluestore_allocator_lock_wait_lat,
+  l_bluestore_allocator_last
+};
 
 class AllocatorBase : public Allocator {
 protected:
@@ -293,6 +302,27 @@ public:
 private:
   class SocketHook;
   SocketHook* asok_hook = nullptr;
+};
+
+class AllocatorPerf {
+private:
+  CephContext* cct = nullptr;
+protected:
+  PerfCounters *logger = nullptr;
+public:
+   AllocatorPerf() = default;
+  AllocatorPerf(CephContext* cct, std::string_view name)
+    : cct(cct)
+  {
+    if (cct) {
+      _init_logger(std::string(name));
+    }
+  }
+  ~AllocatorPerf() {
+    _shutdown_logger();
+  }
+  void _init_logger(std::string name);
+  void _shutdown_logger();
 };
 
 #endif
