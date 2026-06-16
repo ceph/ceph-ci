@@ -24,6 +24,7 @@ Btree2Allocator::Btree2Allocator(CephContext* _cct,
   bool with_cache,
   std::string_view name) :
     AllocatorBase(name, device_size, block_size),
+    AllocatorPerf(_cct, name),
     myTraits(RANGE_SIZE_BUCKET_COUNT),
     cct(_cct),
     range_count_cap(max_mem / sizeof(range_seg_t))
@@ -90,8 +91,23 @@ int64_t Btree2Allocator::allocate(
     extents->emplace_back(cached_chunk_offs, want);
     return want;
   }
+  auto lock_wait_start = mono_clock::now();
+
   std::lock_guard l(lock);
-  return _allocate(want, unit, max_alloc_size, hint, extents);
+
+  logger->tinc_with_max(
+      l_bluestore_allocator_lock_wait_lat,
+      mono_clock::now() - lock_wait_start);
+
+  auto alloc_start = mono_clock::now();
+
+  auto ret = _allocate(want, unit, max_alloc_size, hint, extents);
+
+  logger->tinc_with_max(
+      l_bluestore_allocator_alloc_process_lat,
+      mono_clock::now() - alloc_start);
+
+  return ret;
 }
 
 void Btree2Allocator::release(const release_set_t& release_set)
