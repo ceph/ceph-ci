@@ -281,11 +281,28 @@ else:
 
     # pylint: disable-next=redefined-outer-name
     def pick(field: str, first: bool = False,
+             inject_params: Optional[List[str]] = None
              ) -> Callable[..., Callable[..., object]]:
+        """Pick a field from the model result.
+        
+        Args:
+            field: The field name to extract from the model
+            first: If True, return the first element of the field (if it's a list)
+            inject_params: List of parameter names from the function signature to inject
+                          into the result. Useful for providing context like 'nqn' for
+                          empty message templates.
+        """
         def decorator(func: Callable[..., Dict]) -> Callable[..., object]:
             @functools.wraps(func)
             def wrapper(*args, **kwargs) -> object:
                 model = func(*args, **kwargs)
+                
+                # Inject specified parameters from kwargs into the model
+                if inject_params:
+                    for param_name in inject_params:
+                        if param_name in kwargs:
+                            model[param_name] = kwargs[param_name]
+                
                 field_to_ret = model[field]
                 if first:
                     field_to_ret = field_to_ret[0]
