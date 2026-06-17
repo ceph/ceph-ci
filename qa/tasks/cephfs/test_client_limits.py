@@ -403,3 +403,58 @@ class TestClientLimits(CephFSTestCase):
                 return False
 
         self.wait_until_true(expected_caps, timeout=60)
+
+    def test_ctime_bump_on_matching_atime(self):
+        """
+        Ensure ctime is advanced during a setattr(atime) operation
+        even if the requested atime matches the file's current atime value under
+        multi-client SHARED cap scenarios.
+        """
+        # Use Client 1 (mount_a) to create the base test file
+        test_dir = "test_ctime_noop_dir"
+        test_file = f"{test_dir}/target.bin"
+
+        self.mount_a.run_shell(["mkdir", "-p", test_dir])
+        self.mount_a.touch(test_file)
+
+        #  Read the file from Client 2 (mount_b) to force cap downgrade on Client 1
+        log.info("Opening file on client_b to force cap downgrade on client_a")
+        proc_b = self.mount_b.run_shell_background(["cat"])
+
+        # Gather the baseline ctime before making mutations
+        log.info("Gathering baseline metadata statistics from client_a")
+        initial_ctime = self.mount_a.run_shell([
+            "stat", "-c", "%Z.%N", test_file
+        ]).stdout.getvalue().strip()
+
+        # Extract current atime to feed it right back into touch
+        atime_sec = self.mount_a.run_shell(["stat", "-c", "%X", test_file]).stdout.getvalue().strip()
+
+        # Format matching time layout strings for the standard touch utility (-d)
+        timestamp_str = self.mount_a.run_shell([
+            "date", "-d", f"@{atime_sec}", "+%Y-%m-%d %H:%M:%S"
+        ]).stdout.getvalue().strip()
+
+        # Execute explicit setattr/touch payload with matching layout
+        log.info(f"Executing explicit setattr/touch with matching timestamp value: {timestamp_str}")
+        self.mount_a.run_shell([
+            "touch", "-a", "-d", timestamp_str, test_file
+        ])
+
+        # Gather post-transaction metadata metrics
+        post_ctime = self.mount_a.run_shell([
+            "stat", "-c", "%Z.%N", test_file
+        ]).stdout.getvalue().strip()
+
+        # Clean up client background processes
+        proc_b.stdin.close()
+        proc_b.wait()
+        self.mount_a.run_shell(["rm", "-rf", test_dir])
+
+        # Final Assertion Checklist
+        log.info(f"Initial ctime: {initial_ctime} | Post ctime: {post_ctime}")
+
+        self.assertNotEqual(initial_ctime, post_ctime,
+            "REGRESSION DETECTED: "
+            "The client stripped CEPH_SETATTR_ATIME from the mask, "
+            "causing the MDS to skip advancing ctime during value-equality matches.")
