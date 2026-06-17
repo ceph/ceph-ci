@@ -283,14 +283,21 @@ struct RGWZoneParams : RGWSystemMetaObj {
     } else {
       dedup_pool = name + ".rgw.dedup";
     }
-    if (struct_v >= 18) {
-      decode(bucket_logging_pool, bl);
-    } else {
+    /*
+     * struct_v 18 is overloaded: upstream assigns it bucket_logging_pool, but
+     * early production builds here assigned it cloud_delete_pool (added before
+     * bucket_logging_pool existed) and only ever wrote that. Decode v18 as
+     * cloud_delete_pool and default bucket_logging_pool; v19 encodes both in
+     * upstream order, migrating old data forward on the next write.
+     */
+    if (struct_v == 18) {
+      decode(cloud_delete_pool, bl);
       bucket_logging_pool = log_pool.name + ":logging";
-    }
-    if (struct_v >=19) {
+    } else if (struct_v >= 19) {
+      decode(bucket_logging_pool, bl);
       decode(cloud_delete_pool, bl);
     } else {
+      bucket_logging_pool = log_pool.name + ":logging";
       cloud_delete_pool = log_pool.name + ":cloud-delete";
     }
     DECODE_FINISH(bl);
