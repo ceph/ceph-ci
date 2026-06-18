@@ -345,6 +345,10 @@ TransactionManager::_remove(
   LBACursorRef direct_cursor = co_await lba_manager->update_mapping_refcount(
     t, mapping.direct_cursor, -1);
 
+  if (indirect_cursor) {
+    co_await indirect_cursor->refresh();
+  }
+
   auto ret = co_await resolve_cursor_to_mapping(
     t,
     indirect_cursor ? std::move(indirect_cursor) : std::move(direct_cursor)
