@@ -35,7 +35,15 @@ int64_t HybridAllocatorBase<T>::allocate(
     max_alloc_size = p2align(uint64_t(cap), (uint64_t)T::get_block_size());
   }
 
+  auto lock_wait_start = mono_clock::now();
+
   std::lock_guard l(T::get_lock());
+
+  this->logger->tinc_with_max(
+      l_bluestore_allocator_lock_wait_lat,
+      mono_clock::now() - lock_wait_start);
+
+  auto alloc_start = mono_clock::now();
 
   // try bitmap first to avoid unneeded contiguous extents split if
   // desired amount is less than shortes range in AVL or Btree2
@@ -63,6 +71,9 @@ int64_t HybridAllocatorBase<T>::allocate(
       ceph_assert(orig_size == extents->size());
     }
   }
+  this->logger->tinc_with_max(
+      l_bluestore_allocator_alloc_process_lat,
+      mono_clock::now() - alloc_start);
   return res ? res : -ENOSPC;
 }
 
