@@ -45,6 +45,7 @@ class TestSMB:
                 'cluster_id': 'foxtrot',
                 'features': [],
                 'config_uri': 'rados://.smb/foxtrot/config.json',
+                'extra_config_uris': ['rados:mon-config-key:smb/config/foxtrot/config.smb.rgw'],
                 'config': '',
                 'keyring': '[client.smb.config.tango.briskly]\nkey = None\n',
                 'config_auth_entity': 'client.smb.config.tango.briskly',
@@ -115,6 +116,7 @@ class TestSMB:
                 'cluster_id': 'foxtrot',
                 'features': ['domain'],
                 'config_uri': 'rados://.smb/foxtrot/config2.json',
+                'extra_config_uris': ['rados:mon-config-key:smb/config/foxtrot/config.smb.rgw'],
                 'join_sources': [
                     'rados://.smb/foxtrot/join1.json',
                     'rados:mon-config-key:smb/config/foxtrot/join2.json',
