@@ -262,10 +262,8 @@ macro(build_boost version)
       set_target_properties(Boost::${c} PROPERTIES
         INTERFACE_COMPILE_DEFINITIONS "BOOST_USE_VALGRIND")
     endif()
-    if((c MATCHES "context") AND (WITH_ASAN))
-      set_target_properties(Boost::${c} PROPERTIES
-        INTERFACE_COMPILE_DEFINITIONS "BOOST_USE_ASAN;BOOST_USE_UCONTEXT")
-    endif()
+    # ASan's BOOST_USE_ASAN/BOOST_USE_UCONTEXT are defined tree-wide in the
+    # top-level CMakeLists.txt, not per-target.
     list(APPEND Boost_LIBRARIES ${Boost_${upper_c}_LIBRARY})
   endforeach()
   foreach(c ${Boost_BUILD_COMPONENTS})
