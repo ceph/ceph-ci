@@ -18,6 +18,13 @@ using param_vec_t = std::vector<param_pair_t>;
 void rgw_http_client_init(CephContext *cct);
 void rgw_http_client_cleanup();
 
+// set RGW's standard libcurl transport options on a caller-owned easy handle
+void rgw_curl_apply_transport_options(void *easy_handle, CephContext *cct);
+
+struct curl_slist;
+// serialize RGW request headers into a libcurl header list (HTTP_* -> wire names)
+curl_slist *headers_to_slist(const param_vec_t& headers);
+
 struct rgw_http_req_data;
 class RGWHTTPManager;
 
@@ -260,6 +267,14 @@ public:
 
   void set_url(const std::string& _url) {
     endpoint.set_url(_url);
+  }
+
+  std::string get_url() const {
+    return endpoint.get_url();
+  }
+
+  const param_vec_t& get_request_headers() const {
+    return headers;
   }
 
   void set_method(const std::string& _method) {

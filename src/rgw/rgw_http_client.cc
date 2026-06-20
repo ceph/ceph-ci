@@ -538,13 +538,13 @@ void RGWHTTPClient::_set_read_paused(bool pause)
   }
 }
 
-static curl_slist *headers_to_slist(param_vec_t& headers)
+curl_slist *headers_to_slist(const param_vec_t& headers)
 {
   curl_slist *h = NULL;
 
-  param_vec_t::iterator iter;
+  param_vec_t::const_iterator iter;
   for (iter = headers.begin(); iter != headers.end(); ++iter) {
-    pair<string, string>& p = *iter;
+    const pair<string, string>& p = *iter;
     string val = p.first;
 
     if (strncmp(val.c_str(), "HTTP_", 5) == 0) {
@@ -602,6 +602,28 @@ int RGWHTTPClient::get_req_retcode()
   }
 
   return req_data->get_retcode();
+}
+
+void rgw_curl_apply_transport_options(void *easy_handle, CephContext *cct)
+{
+  curl_easy_setopt(easy_handle, CURLOPT_PATH_AS_IS, 1L);
+  curl_easy_setopt(easy_handle, CURLOPT_NOSIGNAL, 1L);
+  curl_easy_setopt(easy_handle, CURLOPT_TCP_KEEPALIVE, cct->_conf->rgw_curl_tcp_keepalive);
+  curl_easy_setopt(easy_handle, CURLOPT_BUFFERSIZE, cct->_conf->rgw_curl_buffersize);
+  curl_easy_setopt(easy_handle, CURLOPT_LOW_SPEED_TIME, cct->_conf->rgw_curl_low_speed_time);
+  curl_easy_setopt(easy_handle, CURLOPT_LOW_SPEED_LIMIT, cct->_conf->rgw_curl_low_speed_limit);
+  if (!cct->_conf->rgw_verify_ssl) {
+    curl_easy_setopt(easy_handle, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(easy_handle, CURLOPT_SSL_VERIFYHOST, 0L);
+  } else if (const char *ca_bundle = std::getenv("CURL_CA_BUNDLE")) {
+    const size_t max_len = PATH_MAX + NAME_MAX;
+    if (strlen(ca_bundle) > max_len) {
+      ldout(cct, 0) << "ERROR: " << __func__ << "(): CURL_CA_BUNDLE length exceeds the allowed maximum ("
+                    << max_len << " chars)" << dendl;
+    } else {
+      curl_easy_setopt(easy_handle, CURLOPT_CAINFO, ca_bundle);
+    }
+  }
 }
 
 /*

@@ -205,6 +205,9 @@ public:
   int send_prepare(const DoutPrefixProvider *dpp, RGWAccessKey& key, std::map<std::string, std::string>& extra_headers, const rgw_obj& obj);
   int send(RGWHTTPManager *mgr) override;
 
+  // sign the request like send() but don't dispatch it, for an alternate transport
+  int sign_only(const DoutPrefixProvider *dpp);
+
   int send_request(const DoutPrefixProvider *dpp, RGWAccessKey& key, std::map<std::string, std::string>& extra_headers, const rgw_obj& obj, RGWHTTPManager *mgr);
   int send_request(const DoutPrefixProvider *dpp, RGWAccessKey *key, std::map<std::string, std::string>& extra_headers, const std::string& resource, RGWHTTPManager *mgr, bufferlist *send_data = nullptr /* optional input data */);
 

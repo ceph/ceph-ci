@@ -890,8 +890,18 @@ int RGWRESTStreamRWRequest::send_request(const DoutPrefixProvider *dpp, RGWAcces
 
 int RGWRESTStreamRWRequest::send(RGWHTTPManager *mgr)
 {
+  int r = sign_only(this);
+  if (r < 0) {
+    return r;
+  }
+
+  return RGWHTTPStreamRWRequest::send(mgr);
+}
+
+int RGWRESTStreamRWRequest::sign_only(const DoutPrefixProvider *dpp)
+{
   if (!headers_gen) {
-    ldpp_dout(this, 0) << "ERROR: " << __func__ << "(): send_prepare() was not called: likely a bug!" << dendl;
+    ldpp_dout(dpp, 0) << "ERROR: " << __func__ << "(): send_prepare() was not called: likely a bug!" << dendl;
     return -EINVAL;
   }
 
@@ -902,9 +912,9 @@ int RGWRESTStreamRWRequest::send(RGWHTTPManager *mgr)
   }
 
   if (sign_key) {
-    int r = headers_gen->sign(this, *sign_key, outblp);
+    int r = headers_gen->sign(dpp, *sign_key, outblp);
     if (r < 0) {
-      ldpp_dout(this, 0) << "ERROR: failed to sign request" << dendl;
+      ldpp_dout(dpp, 0) << "ERROR: failed to sign request" << dendl;
       return r;
     }
   }
@@ -913,7 +923,7 @@ int RGWRESTStreamRWRequest::send(RGWHTTPManager *mgr)
     headers.emplace_back(kv);
   }
 
-  return RGWHTTPStreamRWRequest::send(mgr);
+  return 0;
 }
 
 int RGWHTTPStreamRWRequest::complete_request(const DoutPrefixProvider* dpp,
