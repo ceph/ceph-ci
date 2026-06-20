@@ -191,6 +191,7 @@ if(WITH_RADOSGW_RADOS)
           driver/rados/rgw_gc.cc
           driver/rados/rgw_gc_log.cc
           driver/rados/rgw_lc_tier.cc
+          driver/rados/rgw_restore_curl.cc
           driver/rados/rgw_log_backing.cc
           driver/rados/rgw_metadata.cc
           driver/rados/rgw_notify.cc

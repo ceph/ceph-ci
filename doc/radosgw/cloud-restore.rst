@@ -328,6 +328,15 @@ to drain a backlog faster -- keep it modest to avoid overloading or being
 rate-limited by the cloud endpoint -- and larger ``rgw_restore_batch_size``
 values trim (and update FIFO metadata) less often.
 
+.. note::
+
+   When restoring from remote cloud endpoints, enable
+   :confval:`rgw_curl_tcp_keepalive` (off by default). It keeps the restore
+   processor's pooled connections to the cloud endpoint alive between
+   processing cycles so they are reused rather than re-established, cutting
+   TLS handshakes and connection churn. The option applies to all of
+   radosgw's outbound libcurl connections, not only restore.
+
 
 
 Future Work

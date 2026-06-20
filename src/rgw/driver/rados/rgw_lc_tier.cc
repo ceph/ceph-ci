@@ -21,6 +21,10 @@
 #include "rgw_rest.h"
 #include "svc_zone.h"
 #include "rgw_rados.h"
+#include "rgw_restore_curl.h"
+#include "curl/client.h"
+#include "include/scope_guard.h"
+#include <curl/curl.h>
 
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string.hpp>
@@ -311,13 +315,14 @@ static const struct generic_attr generic_attrs[] = {
 /* Restore object from remote endpoint.
  */
 int rgw_cloud_tier_restore_object(RGWLCCloudTierCtx& tier_ctx,
+                         boost::asio::yield_context yield,
                          std::map<std::string, std::string>& headers,
-                         real_time* pset_mtime, std::string& etag,
+                         std::string& etag,
                          uint64_t& accounted_size, rgw::sal::Attrs& attrs,
                          std::optional<uint64_t> days,
                          RGWZoneGroupTierS3Glacier& glacier_params,
 			 bool& in_progress,
-                         void* cb) {
+                         RGWHTTPStreamRWRequest::ReceiveCB* cb) {
   RGWRESTConn::get_obj_params req_params;
   std::string target_obj_name;
   int ret = 0;
@@ -346,8 +351,8 @@ int rgw_cloud_tier_restore_object(RGWLCCloudTierCtx& tier_ctx,
     static constexpr int MAX_RETRIES = 2;
     uint32_t retries = 0;
     do {
-      ret = rgw_cloud_tier_get_object(tier_ctx, true, headers, nullptr, etag,
-                                      accounted_size, attrs, nullptr);
+      ret = rgw_cloud_tier_head_object(tier_ctx, headers, etag,
+                                       accounted_size, attrs);
       if (ret < 0) {
         ldpp_dout(tier_ctx.dpp, 0) << __func__ << "ERROR: failed to fetch HEAD from cloud for obj=" << tier_ctx.obj << " , ret = " << ret << dendl;
         return ret;
@@ -363,9 +368,10 @@ int rgw_cloud_tier_restore_object(RGWLCCloudTierCtx& tier_ctx,
     return 0;
   }
 
+  // now do the actual GET
   ret = retry_on_transient_error(tier_ctx.y, tier_ctx.dpp, tier_ctx.cct, __func__, [&]() {
-    return rgw_cloud_tier_get_object(tier_ctx, false, headers, pset_mtime,
-                                     etag, accounted_size, attrs, cb);
+    return rgw_cloud_tier_get_object_async(tier_ctx, yield, headers, etag,
+                                           accounted_size, attrs, cb);
   });
 
   ldpp_dout(tier_ctx.dpp, 20) << __func__ << "(): fetching object from cloud bucket:" << dest_bucket << ", object: " << target_obj_name << " returned ret:" << ret << dendl;
@@ -373,13 +379,157 @@ int rgw_cloud_tier_restore_object(RGWLCCloudTierCtx& tier_ctx,
   return ret;
 }
 
-/* Read object or just head from remote endpoint.
+// CURLOPT_HEADERFUNCTION: capture response headers in UPPER_SNAKE for the parsing below
+static size_t restore_header_cb(char* buffer, size_t size, size_t nitems, void* userdata)
+{
+  auto* headers = static_cast<std::map<std::string, std::string>*>(userdata);
+  const size_t len = size * nitems;
+  std::string line(buffer, len);
+  const auto colon = line.find(':');
+  if (colon != std::string::npos) {
+    std::string name = line.substr(0, colon);
+    std::string val = line.substr(colon + 1);
+    boost::algorithm::trim(val);
+    uppercase_dash_transform(name, name.begin());
+    (*headers)[name] = val;
+  }
+  return len;
+}
+
+/*
+ * Map captured response headers onto object attrs/size/etag; shared by the
+ * sync and async cloud get-object paths, which deliver identically cased
+ * (UPPER_SNAKE) header keys.
  */
-int rgw_cloud_tier_get_object(RGWLCCloudTierCtx& tier_ctx, bool head,
+static void headers_to_object_attrs(
+    const std::map<std::string, std::string>& headers,
+    std::string& etag, uint64_t& accounted_size, rgw::sal::Attrs& attrs)
+{
+  static const auto generic_attrs_map = [] {
+    std::map<std::string, std::string> m;
+    for (const auto& http2rgw : generic_attrs) {
+      m[http2rgw.http_header] = http2rgw.rgw_attr;
+    }
+    return m;
+  }();
+  for (const auto& [name, val] : headers) {
+    if (const auto aiter = generic_attrs_map.find(name);
+        aiter != generic_attrs_map.end()) {
+      const std::string aval =
+          (aiter->second == RGW_ATTR_ETAG) ? rgw_string_unquote(val) : val;
+      bufferlist bl;
+      bl.append(aval.c_str(), aval.size());
+      attrs[aiter->second] = std::move(bl);
+    }
+    if (name == "CONTENT_LENGTH") {
+      accounted_size = strtoull(val.c_str(), nullptr, 10);
+    } else if (name == "ETAG") {
+      etag = rgw_string_unquote(val);
+    } else if (name == "X_AMZ_META_RGWX_VERSIONED_EPOCH") {
+      bufferlist bl;
+      bl.append(val.c_str(), val.size());
+      attrs["x-amz-meta-rgwx-versioned-epoch"] = std::move(bl);
+    }
+  }
+}
+
+/*
+ * Download a cloud object over the rgw::curl client (cloud-s3 and the
+ * cloud-s3-glacier download leg). The request is still built and signed by
+ * RGWRESTConn; only the transport differs.
+ */
+int rgw_cloud_tier_get_object_async(RGWLCCloudTierCtx& tier_ctx,
+                         boost::asio::yield_context yield,
                          std::map<std::string, std::string>& headers,
-                         real_time* pset_mtime, std::string& etag,
+                         std::string& etag,
                          uint64_t& accounted_size, rgw::sal::Attrs& attrs,
-                         void* cb) {
+                         RGWHTTPStreamRWRequest::ReceiveCB* cb)
+{
+  RGWRESTConn::get_obj_params req_params;
+  rgw_bucket dest_bucket;
+  dest_bucket.name = tier_ctx.target_bucket_name;
+  std::string target_obj_name = make_target_obj_name(tier_ctx);
+  rgw_obj dest_obj(dest_bucket, rgw_obj_key(target_obj_name));
+
+  req_params.get_op = true;
+  req_params.cb = nullptr;   // rgw::curl installs its own write callback
+
+  ldpp_dout(tier_ctx.dpp, 20) << __func__ << "(): fetching cloud object bucket:"
+                              << dest_bucket << " object:" << target_obj_name << dendl;
+
+  int ret = 0;
+
+  RGWRESTStreamRWRequest* in_req = nullptr;
+  ret = tier_ctx.conn.get_obj(tier_ctx.dpp, dest_obj, req_params,
+                              false /* send */, &in_req);
+  if (ret < 0) {
+    return ret;
+  }
+  auto cleanup_req = make_scope_guard([&in_req] { delete in_req; });
+
+  ret = in_req->sign_only(tier_ctx.dpp);
+  if (ret < 0) {
+    return ret;
+  }
+
+  /* lift the signed URL + headers onto a raw easy handle for rgw::curl */
+  rgw::curl::error_code cec;
+  auto easy = rgw::curl::easy_init(cec);
+  if (cec) {
+    return -ENOMEM;
+  }
+  CURL* h = easy.get();
+
+  rgw::curl::slist_ptr hdr_list{headers_to_slist(in_req->get_request_headers())};
+
+  curl_easy_setopt(h, CURLOPT_URL, in_req->get_url().c_str());
+  curl_easy_setopt(h, CURLOPT_HTTPGET, 1L);
+  curl_easy_setopt(h, CURLOPT_HTTPHEADER, hdr_list.get());
+  curl_easy_setopt(h, CURLOPT_HEADERFUNCTION, restore_header_cb);
+  curl_easy_setopt(h, CURLOPT_HEADERDATA, &headers);
+  // fail the transfer on HTTP >= 400 rather than streaming the error body as data
+  curl_easy_setopt(h, CURLOPT_FAILONERROR, 1L);
+  rgw_curl_apply_transport_options(h, tier_ctx.cct);
+  curl_easy_setopt(h, CURLOPT_CONNECTTIMEOUT, 30L);
+
+  // carry the resolved-IP / failover mapping (CONNECT_TO) onto the raw handle
+  rgw::curl::slist_ptr connect_to_list;
+  const std::string& connect_to = in_req->get_endpoint().get_connect_to();
+  if (!connect_to.empty()) {
+    rgw::curl::slist_append(connect_to_list, connect_to.c_str(), cec);
+    if (cec) {
+      return -ENOMEM;
+    }
+    curl_easy_setopt(h, CURLOPT_CONNECT_TO, connect_to_list.get());
+  }
+
+  headers.clear();
+  bool connect_failed = false;
+  ret = rgw::restore::cloud_get_streamed(tier_ctx.dpp, yield, h, cb, connect_failed);
+
+  if (connect_failed) {
+    // count the failure so endpoint selection rotates away from it
+    tier_ctx.conn.set_endpoint_unconnectable(in_req->get_endpoint());
+  }
+  if (ret < 0) {
+    ldpp_dout(tier_ctx.dpp, 0) << "ERROR: " << __func__
+                               << "(): transfer ret=" << ret << dendl;
+    return ret;
+  }
+
+  /* populate attrs/size/etag from the captured response headers */
+  headers_to_object_attrs(headers, etag, accounted_size, attrs);
+
+  ldpp_dout(tier_ctx.dpp, 20) << __func__ << "(): fetched object:" << target_obj_name
+                              << " size=" << accounted_size << dendl;
+
+  return 0;
+}
+
+int rgw_cloud_tier_head_object(RGWLCCloudTierCtx& tier_ctx,
+                         std::map<std::string, std::string>& headers,
+                         std::string& etag,
+                         uint64_t& accounted_size, rgw::sal::Attrs& attrs) {
   RGWRESTConn::get_obj_params req_params;
   std::string target_obj_name;
   int ret = 0;
@@ -395,8 +545,8 @@ int rgw_cloud_tier_get_object(RGWLCCloudTierCtx& tier_ctx, bool head,
   rgw_obj dest_obj(dest_bucket, rgw_obj_key(target_obj_name));
 
   /* init input connection */
-  req_params.get_op = !head;
-  req_params.cb = (RGWHTTPStreamRWRequest::ReceiveCB *)cb;
+  req_params.get_op = false;
+  req_params.cb = nullptr;
 
   ldpp_dout(tier_ctx.dpp, 20) << __func__ << "(): fetching object from cloud bucket:" << dest_bucket << ", object: " << target_obj_name << dendl;
 
@@ -412,7 +562,7 @@ int rgw_cloud_tier_get_object(RGWLCCloudTierCtx& tier_ctx, bool head,
     // accounted_size in complete_request() reads from RGWX_OBJECT_SIZE which is set
     // only for internal ops/sync. So instead read from headers[CONTENT_LEN].
     // Same goes for pattrs.
-    ret = tier_ctx.conn.complete_request(tier_ctx.dpp, in_req, &etag, pset_mtime, nullptr, nullptr, &headers, tier_ctx.y);
+    ret = tier_ctx.conn.complete_request(tier_ctx.dpp, in_req, &etag, nullptr, nullptr, nullptr, &headers, tier_ctx.y);
     if (ret < 0) {
       if (ret == -EIO && tries < NUM_ENPOINT_IOERROR_RETRIES - 1) {
         ldpp_dout(tier_ctx.dpp, 20) << __func__  << "(): failed to fetch object from remote. retries=" << tries << dendl;
@@ -423,48 +573,7 @@ int rgw_cloud_tier_get_object(RGWLCCloudTierCtx& tier_ctx, bool head,
     break;
   }
 
-  static map<string, string> generic_attrs_map;
-  for (const auto& http2rgw : generic_attrs) {
-    generic_attrs_map[http2rgw.http_header] = http2rgw.rgw_attr;
-  }
-
-  for (auto header: headers) {
-    const char* name = header.first.c_str();
-    const string& val = header.second;
-    bufferlist bl;
-    bl.append(val.c_str(), val.size());
-
-    const auto aiter = generic_attrs_map.find(name);
-    if (aiter != std::end(generic_attrs_map)) {
-      attrs[aiter->second] = bl;
-    } else {
-      std::string s1 = boost::algorithm::to_lower_copy(header.first);
-      std::replace(s1.begin(), s1.end(), '_', '-');
-
-      // copy versioned epoch
-      if (s1 == "x-amz-meta-rgwx-versioned-epoch") {
-        attrs[s1] = bl;
-      }
-    }
-    
-    if (header.first == "CONTENT_LENGTH") {
-      char* end = nullptr;
-      accounted_size = strtoull(val.c_str(), &end, 10);	    
-    }
-  }
-
-  /*
-   * The HTTP ETag header value is a quoted-string per RFC 7232.
-   * Strip the surrounding quotes so we do not double quote them.
-   */
-  etag = rgw_string_unquote(etag);
-
-  if (auto i = attrs.find(RGW_ATTR_ETAG); i != attrs.end()) {
-    const string unquoted = rgw_string_unquote(i->second.to_str());
-    bufferlist bl;
-    bl.append(unquoted);
-    i->second = std::move(bl);
-  }
+  headers_to_object_attrs(headers, etag, accounted_size, attrs);
 
   ldpp_dout(tier_ctx.dpp, 20) << __func__ << "(): Successfully fetched object from cloud bucket:" << dest_bucket << ", object: " << target_obj_name << dendl;
   return ret;
@@ -1493,7 +1602,7 @@ static int cloud_tier_check_object(RGWLCCloudTierCtx& tier_ctx, bool& already_ti
   rgw::sal::Attrs attrs;
 
   /* Fetch Head object */
-  ret = rgw_cloud_tier_get_object(tier_ctx, true, headers, nullptr, etag, accounted_size, attrs, nullptr);
+  ret = rgw_cloud_tier_head_object(tier_ctx, headers, etag, accounted_size, attrs);
 
   if (ret < 0) {
     ldpp_dout(tier_ctx.dpp, 0) << "ERROR: failed to fetch HEAD from cloud for obj=" << tier_ctx.obj << " , ret = " << ret << dendl;

@@ -23,6 +23,7 @@
 #include "common/BackTrace.h"
 #include "common/ceph_time.h"
 #include "common/async/blocked_completion.h"
+#include "include/scope_guard.h"
 
 #include "rgw_asio_thread.h"
 #include "rgw_cksum.h"
@@ -5672,6 +5673,8 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
 			     uint64_t& size,
                              const DoutPrefixProvider *dpp,
                              optional_yield y) {
+  // the cloud fetch runs on rgw::curl and requires a real yield context
+  ceph_assert(tier_ctx.y);
 
   //XXX: read below from attrs .. check transition_obj()
   ACLOwner owner;
@@ -5683,12 +5686,10 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
   string tag;
   append_rand_alpha(cct, tag, tag, 32);
   /*
-   * The cloud fetch delivers data on the libcurl reqs_thread, so put-object
-   * writes run there, not on the restore coroutine. null_yield gives a
-   * thread-safe BlockingAioThrottle; a yielding throttle would abort when
-   * driven from the curl thread.
+   * Both tier types stream the download over rgw::curl; the glacier restore
+   * POST/HEAD stay on RGWHTTPManager.
    */
-  auto aio = rgw::make_throttle(cct->_conf->rgw_put_obj_min_window_size, null_yield);
+  auto aio = rgw::make_throttle(cct->_conf->rgw_put_obj_min_window_size, y);
   using namespace rgw::putobj;
   jspan_context no_trace{false, false};
 
@@ -5701,7 +5702,16 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
 
   uint64_t olh_epoch = 0; // read it from attrs fetched from cloud below
   rgw::putobj::AtomicObjectProcessor processor(aio.get(), this, dest_bucket_info, nullptr,
-                                  owner, obj_ctx, dest_obj_bi, olh_epoch, tag, dpp, null_yield, no_trace);
+                                  owner, obj_ctx, dest_obj_bi, olh_epoch, tag, dpp, y, no_trace);
+  // the destructor drains via a suspend; disarm the throw so a pending cancel can't abort the unwind
+  const int uncaught = std::uncaught_exceptions();
+  auto disarm_drain = make_scope_guard([&y, uncaught] {
+        if (std::uncaught_exceptions() > uncaught && y &&
+            y.get_yield_context().cancelled() !=
+                boost::asio::cancellation_type::none) {
+          y.get_yield_context().throw_if_cancelled(false);
+        }
+      });
  
   void (*progress_cb)(off_t, void *) = NULL;
   void *progress_data = NULL;
@@ -5761,15 +5771,15 @@ int RGWRados::restore_obj_from_cloud(RGWLCCloudTierCtx& tier_ctx,
   if (tier_config.tier_placement.tier_type == "cloud-s3-glacier") {
     ldpp_dout(dpp, 20) << "Restoring  object:" << dest_obj << " from the cloud" << dendl;
     RGWZoneGroupTierS3Glacier& glacier_params = tier_config.tier_placement.s3_glacier;
-    ret = rgw_cloud_tier_restore_object(tier_ctx, headers,
-                                &set_mtime, etag, accounted_size,
+    ret = rgw_cloud_tier_restore_object(tier_ctx, tier_ctx.y.get_yield_context(),
+                                headers, etag, accounted_size,
                                 attrs, days, glacier_params, in_progress, &cb);
   } else {
     ldpp_dout(dpp, 20) << "Fetching  object:" << dest_obj << "from the cloud" <<  dendl;
     ret = retry_on_transient_error(tier_ctx.y, dpp, cct, __func__, [&]() {
-      return rgw_cloud_tier_get_object(tier_ctx, false, headers,
-                                       &set_mtime, etag, accounted_size,
-                                       attrs, &cb);
+      return rgw_cloud_tier_get_object_async(tier_ctx, tier_ctx.y.get_yield_context(),
+                                             headers, etag, accounted_size,
+                                             attrs, &cb);
     });
     in_progress = false;
   }

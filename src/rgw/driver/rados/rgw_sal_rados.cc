@@ -3236,7 +3236,8 @@ int RadosObject::restore_obj_from_cloud(Bucket* bucket,
                                 tier_config, days, in_progress, size, dpp, y);
 
   if (ret == -ECANCELED && yield_cancelled(y)) {
-    // cancellation leaves HEAD as-is; the restore worker will retry later
+    // glacier POST/HEAD waits report cancellation as -ECANCELED;
+    // HEAD stays as-is and the restore worker will retry later
     ldpp_dout(dpp, 10) << "Restore of object(" << get_key() << ") from the cloud endpoint("
                        << endpoint << ") was canceled" << dendl;
     return ret;

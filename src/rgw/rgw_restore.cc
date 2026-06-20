@@ -351,11 +351,6 @@ int Restore::process(int index, int max_secs, boost::asio::yield_context yield)
 
   const ceph::timespan lock_dur = std::chrono::seconds(max_secs);
 
-  /*
-   * Renewal shares this single worker io_context: a cloud restore's blocking
-   * put-drain (null_yield in restore_obj_from_cloud) can starve it, so a RADOS
-   * write stall past the lease TTL may lapse the shard lock mid-restore.
-   */
   try {
     auto lock = sal_restore->get_lock_client(
         yield.get_executor(),
@@ -648,7 +643,8 @@ int Restore::process_restore_entry(RestoreEntry& entry, optional_yield y)
   ret = obj->restore_obj_from_cloud(bucket.get(), tier.get(), cct, days, in_progress, size, 
 		  		      this, y);
   if (ret == -ECANCELED && yield_cancelled(y)) {
-    // cancelled: HEAD left as-is, entry stays queued for retry
+    // glacier POST/HEAD waits report cancellation as -ECANCELED;
+    // HEAD left as-is, entry stays queued for retry
     return ret;
   }
   if (ret < 0) {

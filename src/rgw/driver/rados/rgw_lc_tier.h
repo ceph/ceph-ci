@@ -5,6 +5,8 @@
 
 #include <functional>
 
+#include <boost/asio/spawn.hpp>
+
 #include "rgw_lc.h"
 #include "rgw_rest_conn.h"
 #include "rgw_rados.h"
@@ -60,19 +62,25 @@ struct RGWLCCloudTierCtx {
 /* Transition object to cloud endpoint */
 int rgw_cloud_tier_transfer_object(RGWLCCloudTierCtx& tier_ctx, std::set<std::string>& cloud_targets);
 
-int rgw_cloud_tier_get_object(RGWLCCloudTierCtx& tier_ctx, bool head,
+int rgw_cloud_tier_head_object(RGWLCCloudTierCtx& tier_ctx,
                          std::map<std::string, std::string>& headers,
-                         real_time* pset_mtime, std::string& etag,
+                         std::string& etag,
+                         uint64_t& accounted_size, rgw::sal::Attrs& attrs);
+int rgw_cloud_tier_get_object_async(RGWLCCloudTierCtx& tier_ctx,
+                         boost::asio::yield_context yield,
+                         std::map<std::string, std::string>& headers,
+                         std::string& etag,
                          uint64_t& accounted_size, rgw::sal::Attrs& attrs,
-                         void* cb);
+                         RGWHTTPStreamRWRequest::ReceiveCB* cb);
 int rgw_cloud_tier_restore_object(RGWLCCloudTierCtx& tier_ctx,
+                         boost::asio::yield_context yield,
                          std::map<std::string, std::string>& headers,
-                         real_time* pset_mtime, std::string& etag,
+                         std::string& etag,
                          uint64_t& accounted_size, rgw::sal::Attrs& attrs,
                   	 std::optional<uint64_t> days,
                          RGWZoneGroupTierS3Glacier& glacier_params,
 			 bool& in_progress,
-                         void* cb);
+                         RGWHTTPStreamRWRequest::ReceiveCB* cb);
 
 int cloud_tier_restore(const DoutPrefixProvider *dpp,
                        RGWRESTConn& dest_conn, const rgw_obj& dest_obj,
