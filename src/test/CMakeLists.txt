@@ -84,7 +84,9 @@ if(WITH_RADOSGW)
   if(WITH_RADOSGW_AMQP_ENDPOINT)
     list(APPEND rgw_libs amqp_mock)
   endif()
-  if(WITH_RADOSGW_KAFKA_ENDPOINT)
+  if(WITH_RADOSGW_KAFKA_ENDPOINT AND WITH_SYSTEM_RDKAFKA)
+    # kafka_stub provides fake rd_kafka_* symbols for tests; only needed
+    # when linking against a dynamic system librdkafka. 
     list(APPEND rgw_libs kafka_stub)
   endif()
   add_subdirectory(rgw)
