@@ -1,6 +1,7 @@
 #include "curl/client.h"
 #include "curl/async_perform.h"
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <optional>
@@ -340,6 +341,84 @@ TEST(Client, two_keepalive)
   ASSERT_TRUE(cctx.stopped());
   ASSERT_TRUE(ceptr2);
   EXPECT_FALSE(*ceptr2);
+}
+
+size_t discard_write(char*, size_t size, size_t nmemb, void*)
+{
+  return size * nmemb;
+}
+
+// Stream a large body in small writes so the client must re-arm async_wait
+// while libcurl's interest stays CURL_POLL_IN.
+auto accept_slow_body(ip::tcp::acceptor& acceptor, size_t body_size,
+                      size_t chunk_size)
+    -> asio::awaitable<void>
+{
+  auto socket = co_await acceptor.async_accept(asio::use_awaitable);
+
+  std::string request;
+  co_await asio::async_read_until(socket, asio::dynamic_buffer(request),
+                                  "\r\n\r\n", asio::use_awaitable);
+
+  const auto header = fmt::format(
+      "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body_size);
+  co_await asio::async_write(socket, asio::buffer(header),
+                             asio::use_awaitable);
+
+  std::string chunk(chunk_size, 'x');
+  for (size_t sent = 0; sent < body_size; ) {
+    const size_t n = std::min(chunk_size, body_size - sent);
+    co_await asio::async_write(socket, asio::buffer(chunk.data(), n),
+                               asio::use_awaitable);
+    sent += n;
+    co_await asio::post(asio::use_awaitable);
+  }
+}
+
+auto perform_discard(Client& client, const char* url)
+    -> asio::awaitable<void>
+{
+  auto easy = easy_init();
+  ::curl_easy_setopt(easy.get(), CURLOPT_URL, url);
+  ::curl_easy_setopt(easy.get(), CURLOPT_WRITEFUNCTION, discard_write);
+
+  co_await client.async_perform(easy.get(), asio::use_awaitable);
+}
+
+TEST(Client, rearm_under_stable_interest)
+{
+  constexpr size_t body_size = 64 * 1024;
+  constexpr size_t chunk_size = 1024;
+
+  asio::io_context sctx;
+  const auto localhost = ip::make_address("127.0.0.1");
+  auto acceptor = ip::tcp::acceptor{sctx, ip::tcp::endpoint{localhost, 0}};
+  acceptor.listen(1);
+
+  std::optional<std::exception_ptr> septr;
+  asio::co_spawn(sctx, accept_slow_body(acceptor, body_size, chunk_size),
+                 capture(septr));
+
+  sctx.poll();
+  ASSERT_FALSE(sctx.stopped());
+
+  const std::string url = fmt::format("http://127.0.0.1:{}",
+                                      acceptor.local_endpoint().port());
+
+  asio::io_context cctx;
+  auto client = Client{cctx.get_executor()};
+
+  std::optional<std::exception_ptr> ceptr;
+  asio::co_spawn(cctx, perform_discard(client, url.c_str()), capture(ceptr));
+
+  while (!ceptr || !septr) {
+    cctx.poll();
+    sctx.poll();
+  }
+  ASSERT_TRUE(ceptr);
+  EXPECT_FALSE(*ceptr);
+  ASSERT_TRUE(septr);
+  EXPECT_FALSE(*septr);
 }
 
 TEST(SharedClient, two_keepalive)

@@ -1,6 +1,8 @@
 #include "client.h"
 
+#include <cstdint>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <variant>
 
@@ -10,6 +12,7 @@
 #include <boost/asio/generic/datagram_protocol.hpp>
 #include <boost/asio/generic/stream_protocol.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/posix/stream_descriptor.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
@@ -251,12 +254,19 @@ class Client::Impl :
   executor_type ex;
   boost::asio::steady_timer timer;
 
-  // holds either a tcp or udp socket
-  using client_socket = std::variant<
-      boost::asio::generic::stream_protocol::socket,
-      boost::asio::generic::datagram_protocol::socket>;
-  using client_socket_map = std::unordered_map<curl_socket_t, client_socket>;
-  client_socket_map sockets;
+  // a watch per fd that libcurl polls. libcurl only repeats its socket
+  // callback when the events it wants change, while asio waits are one-shot,
+  // so track what's armed and silence stale handlers by generation
+  struct socket_watch {
+    std::variant<boost::asio::generic::stream_protocol::socket,
+                 boost::asio::generic::datagram_protocol::socket,
+                 boost::asio::posix::stream_descriptor> io;
+    int interest = 0;    // CURL_POLL_* events libcurl asked for
+    int waiting = 0;     // CURL_CSELECT_* waits currently armed
+    uint64_t gen = 0;
+  };
+  std::unordered_map<curl_socket_t, socket_watch> watches;
+  uint64_t watch_gen = 0;
 
   using handler_map = std::unordered_map<CURL*, handler_type>;
   handler_map handlers;
@@ -359,8 +369,7 @@ class Client::Impl :
       return CURL_SOCKET_BAD;
     }
     curl_socket_t fd = socket.native_handle();
-    sockets.emplace(std::piecewise_construct, std::forward_as_tuple(fd),
-                    std::forward_as_tuple(std::move(socket)));
+    watches.emplace(fd, socket_watch{std::move(socket)});
     return fd;
   }
 
@@ -369,12 +378,21 @@ class Client::Impl :
   {
     auto impl = static_cast<Impl*>(user);
 
-    if (address->socktype == SOCK_STREAM) {
+    // libcurl may OR SOCK_CLOEXEC/SOCK_NONBLOCK into socktype
+    int socktype = address->socktype;
+#ifdef SOCK_CLOEXEC
+    socktype &= ~SOCK_CLOEXEC;
+#endif
+#ifdef SOCK_NONBLOCK
+    socktype &= ~SOCK_NONBLOCK;
+#endif
+
+    if (socktype == SOCK_STREAM) {
       using protocol_type = boost::asio::generic::stream_protocol;
       return impl->open_socket(protocol_type{address->family,
                                              address->protocol});
     }
-    if (address->socktype == SOCK_DGRAM) {
+    if (socktype == SOCK_DGRAM) {
       using protocol_type = boost::asio::generic::datagram_protocol;
       return impl->open_socket(protocol_type{address->family,
                                              address->protocol});
@@ -386,7 +404,7 @@ class Client::Impl :
   {
     auto impl = static_cast<Impl*>(user);
 
-    impl->sockets.erase(fd);
+    impl->watches.erase(fd);
     return 0;
   }
 
@@ -394,49 +412,98 @@ class Client::Impl :
     boost::intrusive_ptr<Impl> impl;
     curl_socket_t fd;
     int mask;
+    uint64_t gen;
 
-    socket_wait_handler(boost::intrusive_ptr<Impl> impl,
-                        curl_socket_t fd, int mask)
-      : impl(std::move(impl)), fd(fd), mask(mask) {}
+    socket_wait_handler(Impl* impl, curl_socket_t fd, int mask, uint64_t gen)
+      : impl(impl), fd(fd), mask(mask), gen(gen) {}
 
     // callback for async_wait()
     void operator()(error_code ec)
     {
-      if (ec) {
-        mask |= CURL_CSELECT_ERR;
+      auto i = impl->watches.find(fd);
+      if (i == impl->watches.end() || i->second.gen != gen ||
+          ec == boost::asio::error::operation_aborted) {
+        return;   // watch removed, re-registered, or canceled
       }
-      impl->socket_action(fd, mask);
-    }
+      i->second.waiting &= ~mask;
 
-    // variant visitor for udp/tcp sockets
-    void operator()(auto& socket)
-    {
-      auto wait_flag = (mask == CURL_CSELECT_IN)
-          ? socket.wait_read : socket.wait_write;
-      socket.async_wait(wait_flag, std::move(*this));
+      impl->socket_action(fd, ec ? mask | CURL_CSELECT_ERR : mask);
+
+      // libcurl repeats its socket callback only when the events it wants
+      // change, so a fired wait has to re-arm itself. socket_action() above
+      // may have removed or re-registered this watch, so look it up again
+      if (!ec) {
+        if (auto j = impl->watches.find(fd); j != impl->watches.end()) {
+          impl->arm_watch(fd, j->second);
+        }
+      }
     }
   };
+
+  void arm_watch(curl_socket_t fd, socket_watch& w)
+  {
+    if ((w.interest & CURL_POLL_IN) && !(w.waiting & CURL_CSELECT_IN)) {
+      w.waiting |= CURL_CSELECT_IN;
+      std::visit([&] (auto& io) {
+          io.async_wait(std::decay_t<decltype(io)>::wait_read,
+                        socket_wait_handler{this, fd, CURL_CSELECT_IN, w.gen});
+        }, w.io);
+    }
+    if ((w.interest & CURL_POLL_OUT) && !(w.waiting & CURL_CSELECT_OUT)) {
+      w.waiting |= CURL_CSELECT_OUT;
+      std::visit([&] (auto& io) {
+          io.async_wait(std::decay_t<decltype(io)>::wait_write,
+                        socket_wait_handler{this, fd, CURL_CSELECT_OUT, w.gen});
+        }, w.io);
+    }
+  }
 
   friend int socket_callback(CURL* easy, curl_socket_t fd, int what,
                              void* user, void* socket)
   {
     auto impl = static_cast<Impl*>(user);
+    auto i = impl->watches.find(fd);
 
     if (what == CURL_POLL_REMOVE) {
+      if (i == impl->watches.end()) {
+        return 0;
+      }
+      if (auto* desc = std::get_if<boost::asio::posix::stream_descriptor>(
+              &i->second.io); desc) {
+        (void) desc->release();   // libcurl owns this fd; don't close it
+        impl->watches.erase(i);
+      } else {
+        // our socket stays open until closesocket_callback()
+        i->second.interest = 0;
+        i->second.waiting = 0;
+        i->second.gen = ++impl->watch_gen;
+      }
       return 0;
     }
 
-    auto i = impl->sockets.find(fd);
-    if (i == impl->sockets.end()) {
-      return -1;
+    if (i == impl->watches.end()) {
+      // libcurl opened this fd itself (e.g. resolver wakeup); wait, don't own
+      error_code ec;
+      boost::asio::posix::stream_descriptor desc{impl->get_executor()};
+      desc.assign(fd, ec);
+      if (ec) {
+        return -1;
+      }
+      i = impl->watches.emplace(fd, socket_watch{std::move(desc)}).first;
     }
 
-    if (what & CURL_POLL_IN) {
-      std::visit(socket_wait_handler{impl, fd, CURL_CSELECT_IN}, i->second);
+    /*
+     * A changed interest leaves any wait armed for the old events pending.
+     * Bumping the generation retires it: when it fires, its handler sees the
+     * new value and returns without acting. It stays queued on the fd until
+     * the next readiness.
+     */
+    if (i->second.interest != what) {
+      i->second.interest = what;
+      i->second.waiting = 0;
+      i->second.gen = ++impl->watch_gen;
     }
-    if (what & CURL_POLL_OUT) {
-      std::visit(socket_wait_handler{impl, fd, CURL_CSELECT_OUT}, i->second);
-    }
+    impl->arm_watch(fd, i->second);
     return 0;
   }
 
