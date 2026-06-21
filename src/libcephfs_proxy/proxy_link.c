@@ -807,6 +807,9 @@ int32_t proxy_link_send(int32_t sd, struct iovec *iov, int32_t count)
 	total = 0;
 	while (count > 0) {
 		len = writev(sd, iov, count);
+		if ((len == -1) && (errno == EINTR)) {
+			continue;
+		}
 		if (len < 0) {
 			return proxy_log(LOG_ERR, errno, "Failed to send data");
 		}
@@ -842,6 +845,9 @@ int32_t proxy_link_recv(int32_t sd, struct iovec *iov, int32_t count)
 	total = 0;
 	while (count > 0) {
 		len = readv(sd, iov, count);
+		if ((len == -1) && (errno == EINTR)) {
+			continue;
+		}
 		if (len < 0) {
 			return proxy_log(LOG_ERR, errno,
 					 "Failed to receive data");
