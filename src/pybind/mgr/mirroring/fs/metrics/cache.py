@@ -7,8 +7,6 @@ import time
 from ..utils import norm_path
 from .format import format_and_order_sync_stat_for_display, format_peer_status_metrics
 
-CACHE_TTL_SECS = 15
-
 # Two caches are used instead of one unified cache:
 #
 # - Complete cache holds a full omap snapshot (all dirs, all peers) per
@@ -38,8 +36,8 @@ CacheInfo = namedtuple('CacheInfo', ['hits', 'misses', 'maxsize', 'currsize'])
 
 # functools.lru_cache is not sufficient here for two reasons:
 #
-# 1. TTL: entries must expire after CACHE_TTL_SECS. lru_cache has no TTL, so we
-#    bucket keys with a time_token derived from monotonic time.
+# 1. TTL: entries must expire after snapshot_mirror_metrics_cache_ttl. lru_cache
+#    has no TTL, so we bucket keys with a time_token derived from monotonic time.
 #
 # 2. cache_peek: single-directory status queries must read the complete cache
 #    without loading on miss (otherwise a cold complete cache would trigger a
@@ -58,8 +56,9 @@ class _TimedLRUCache:
         self.misses = 0
 
     def _key(self, time_token, args):
-        # time_token buckets entries by CACHE_TTL_SECS; args are the decorated
-        # method's positional arguments (e.g. filesystem, or filesystem+dir+peers).
+        # time_token buckets entries by snapshot_mirror_metrics_cache_ttl; args are
+        # the decorated method's positional arguments (e.g. filesystem, or
+        # filesystem+dir+peers).
         return (time_token,) + args
 
     def get(self, time_token, args, load=True):
