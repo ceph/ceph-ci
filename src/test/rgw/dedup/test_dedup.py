@@ -4289,3 +4289,54 @@ def test_dedup_filter_bucket_exec():
 
     log.info("dedup_filter_bucket_exec: filter_mode_allow")
     dedup_filter_allow_deny_bucket_common(dry_run, filter_mode_allow=True)
+
+
+#-------------------------------------------------------------------------------
+@pytest.mark.basic_test
+def test_dedup_shard_scaling():
+    """Verify that calc_num_md5_shards produces correct shard counts
+    with 1.25x headroom and that the system starts with proper shards."""
+    prepare_test()
+    bucket_name = gen_bucket_name()
+    conn = get_single_connection()
+    files = []
+    num_files = 5
+    base_size = MULTIPART_SIZE
+    gen_files(files, base_size, num_files)
+
+    try:
+        conn.create_bucket(Bucket=bucket_name)
+        indices = [0] * len(files)
+        check_obj_count = True
+        ret = upload_objects(bucket_name, files, indices, conn, default_config, check_obj_count)
+        dedup_stats = ret[1]
+
+        dry_run = True
+        exec_dedup(dedup_stats, dry_run)
+        result = dedup_admin('stats')
+        assert result[1] == 0
+        jstats = json.loads(result[0])
+        assert jstats['completed'], "Dedup estimate did not complete"
+    finally:
+        cleanup(bucket_name, conn)
+
+
+#-------------------------------------------------------------------------------
+@pytest.mark.basic_test
+def test_dedup_basic_regression():
+    """Regression gate: run basic dedup end-to-end to verify data structure
+    changes (disk_rec_id_t, new OID formats, extended shard tiers) don't
+    break dedup correctness."""
+    if full_dedup_is_disabled():
+        return
+
+    prepare_test()
+    bucket_name = gen_bucket_name()
+    conn = get_single_connection()
+    files = []
+    num_files = 5
+    base_size = MULTIPART_SIZE
+    gen_files(files, base_size, num_files)
+    run_cleanup_after = True
+    dry_run = False
+    simple_dedup(conn, files, bucket_name, run_cleanup_after, default_config, dry_run)

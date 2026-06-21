@@ -18,6 +18,7 @@
 #include "rgw_realm_reloader.h"
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include <variant>
 #include <iostream>
 #include <ostream>
@@ -47,91 +48,128 @@ namespace rgw::dedup {
   static constexpr unsigned MAX_REC_IN_BLOCK = 32;
   // we use 8bit record indices
   static_assert(MAX_REC_IN_BLOCK < 0xFF);
-  using slab_id_t      = uint16_t;
-  using block_offset_t = uint8_t;
+  using slab_id_t      = uint32_t;
+  using block_offset_t = uint16_t;
   using record_id_t    = uint8_t;
 
-  // disk_block_id_t is a 32 bits concataion of shard_id, slab_id and block_off
-  // ---8---- | -------16------- | ---8----
-  // shard_id |      slab_id     | block_off
-  struct __attribute__ ((packed)) disk_block_id_t
+  // disk_rec_id_t is a 48-bit address pointing directly to a record on disk.
+  // Replaces the old 32-bit disk_block_id_t. The rec_id field (previously stored
+  // separately in value_t) is now absorbed into the address.
+  //
+  // | 47-40      | 39-16    | 15-7      | 6-1    | 0   |
+  // | work_shard | slab_id  | block_off | rec_id | rsv |
+  // | 8 bits     | 24 bits  | 9 bits    | 6 bits | 1   |
+  //
+  // Stored as a 64-bit integer; only the lower 48 bits are used.
+  // sizeof(disk_rec_id_t) == 6 bytes via __attribute__((packed)).
+  struct __attribute__ ((packed)) disk_rec_id_t
   {
   public:
-    disk_block_id_t() {
-      block_id = 0;
+    disk_rec_id_t() {
+      store48(0);
     }
 
-    disk_block_id_t(work_shard_t shard_id, uint32_t seq_number) {
-      ceph_assert((seq_number & SEQ_NUMBER_MASK) == seq_number);
+    disk_rec_id_t(work_shard_t shard_id, uint32_t seq_number) {
       ceph_assert(shard_id <= MAX_WORK_SHARD);
-      block_id = (uint32_t)shard_id << OBJ_SHARD_SHIFT | seq_number;
+      slab_id_t slab = seq_num_to_slab_id(seq_number);
+      block_offset_t blk = seq_number & BLOCK_OFF_MASK;
+      uint64_t val = ((uint64_t)shard_id << WORK_SHARD_SHIFT) |
+                     ((uint64_t)slab     << SLAB_ID_SHIFT) |
+                     ((uint64_t)blk      << BLOCK_OFF_SHIFT);
+      store48(val);
     }
 
-    disk_block_id_t& operator =(const disk_block_id_t &other) {
-      this->block_id = other.block_id;
+    disk_rec_id_t(work_shard_t shard_id, uint32_t seq_number, record_id_t rec_id) {
+      ceph_assert(shard_id <= MAX_WORK_SHARD);
+      ceph_assert(rec_id < MAX_REC_IN_BLOCK);
+      slab_id_t slab = seq_num_to_slab_id(seq_number);
+      block_offset_t blk = seq_number & BLOCK_OFF_MASK;
+      uint64_t val = ((uint64_t)shard_id << WORK_SHARD_SHIFT) |
+                     ((uint64_t)slab     << SLAB_ID_SHIFT) |
+                     ((uint64_t)blk      << BLOCK_OFF_SHIFT) |
+                     ((uint64_t)rec_id   << REC_ID_SHIFT);
+      store48(val);
+    }
+
+    disk_rec_id_t& operator =(const disk_rec_id_t &other) {
+      memcpy(this->data, other.data, sizeof(data));
       return *this;
     }
 
-    inline disk_block_id_t& operator =(uint32_t val) {
-      this->block_id = val;
-      return *this;
+    inline bool operator ==(const disk_rec_id_t &other) const {
+      return memcmp(this->data, other.data, sizeof(data)) == 0;
     }
 
-    inline bool operator ==(const disk_block_id_t &other) const {
-      return (this->block_id == other.block_id);
-    }
-
-    inline explicit operator uint32_t() const {
-      return this->block_id;
-    }
-
-    friend std::ostream& operator<<(std::ostream& os, const disk_block_id_t& block_id);
+    friend std::ostream& operator<<(std::ostream& os, const disk_rec_id_t& rec_id);
 
     std::string get_slab_name(md5_shard_t md5_shard) const;
+    std::string get_coarse_slab_name(uint16_t group_id) const;
 
     static inline slab_id_t seq_num_to_slab_id(uint32_t seq_number) {
-      return (seq_number & SLAB_ID_MASK) >> SLAB_ID_SHIFT;
+      return seq_number >> BLOCK_OFF_WIDTH;
     }
 
     static inline uint32_t slab_id_to_seq_num(uint32_t slab_id) {
-      return (slab_id << SLAB_ID_SHIFT);
+      return slab_id << BLOCK_OFF_WIDTH;
     }
 
     inline block_offset_t get_block_offset() const {
-      return get_block_offset(get_seq_num());
+      return (load48() >> BLOCK_OFF_SHIFT) & BLOCK_OFF_MASK;
     }
 
     inline work_shard_t get_work_shard_id() const {
-      return (block_id & OBJ_SHARD_MASK) >> OBJ_SHARD_SHIFT;
-    }
-
-  private:
-    inline uint32_t get_seq_num() const {
-      return (block_id & SEQ_NUMBER_MASK);
+      return (load48() >> WORK_SHARD_SHIFT) & WORK_SHARD_MASK;
     }
 
     inline slab_id_t get_slab_id() const {
-      return seq_num_to_slab_id(get_seq_num());
+      return (load48() >> SLAB_ID_SHIFT) & SLAB_ID_MASK;
     }
 
-    inline block_offset_t get_block_offset(uint32_t seq_number) const {
-      return (seq_number & BLOCK_OFF_MASK);
+    inline record_id_t get_rec_id() const {
+      return (load48() >> REC_ID_SHIFT) & REC_ID_MASK;
     }
 
-    static constexpr uint32_t OBJ_SHARD_SHIFT  = 24;
-    static constexpr uint32_t OBJ_SHARD_MASK   = 0xFF000000;
+    inline void set_rec_id(record_id_t rec_id) {
+      ceph_assert(rec_id < MAX_REC_IN_BLOCK);
+      uint64_t val = load48();
+      val &= ~((uint64_t)REC_ID_MASK << REC_ID_SHIFT);
+      val |= ((uint64_t)rec_id << REC_ID_SHIFT);
+      store48(val);
+    }
 
-    static constexpr uint32_t SEQ_NUMBER_SHIFT = 0;
-    static constexpr uint32_t SEQ_NUMBER_MASK  = 0x00FFFFFF;
+    inline uint32_t get_seq_num() const {
+      return (get_slab_id() << BLOCK_OFF_WIDTH) | get_block_offset();
+    }
 
-    static constexpr uint32_t SLAB_ID_SHIFT    = 8;
-    static constexpr uint32_t SLAB_ID_MASK     = 0x00FFFF00;
+  private:
+    inline uint64_t load48() const {
+      uint64_t val = 0;
+      memcpy(&val, data, 6);
+      return le64toh(val) & 0x0000FFFFFFFFFFFF;
+    }
 
-    static constexpr uint32_t BLOCK_OFF_SHIFT  = 0;
-    static constexpr uint32_t BLOCK_OFF_MASK   = 0x000000FF;
+    inline void store48(uint64_t val) {
+      val = htole64(val);
+      memcpy(data, &val, 6);
+    }
 
-    uint32_t block_id;
+    static constexpr unsigned BLOCK_OFF_WIDTH   = 9;
+
+    static constexpr unsigned WORK_SHARD_SHIFT  = 40;
+    static constexpr uint64_t WORK_SHARD_MASK   = 0xFF;
+
+    static constexpr unsigned SLAB_ID_SHIFT     = 16;
+    static constexpr uint64_t SLAB_ID_MASK      = 0xFFFFFF;
+
+    static constexpr unsigned BLOCK_OFF_SHIFT   = 7;
+    static constexpr uint64_t BLOCK_OFF_MASK    = 0x1FF;
+
+    static constexpr unsigned REC_ID_SHIFT      = 1;
+    static constexpr uint64_t REC_ID_MASK       = 0x3F;
+
+    uint8_t data[6];
   };
+  static_assert(sizeof(disk_rec_id_t) == 6);
 
   struct __attribute__ ((packed)) record_flags_t {
   private:
@@ -176,7 +214,7 @@ namespace rgw::dedup {
     size_t length() const;
     int validate(const char *caller,
                  const DoutPrefixProvider* dpp,
-                 disk_block_id_t block_id,
+                 disk_rec_id_t rec_addr,
                  record_id_t rec_id) const;
     inline bool multipart_object() { return (this->s.num_parts > 0); }
     struct packed_rec_t
@@ -220,10 +258,10 @@ namespace rgw::dedup {
   static constexpr unsigned LAST_BLOCK_MAGIC = 0xCAD7;
   struct  __attribute__ ((packed)) disk_block_header_t {
     void deserialize();
-    int verify(disk_block_id_t block_id, const DoutPrefixProvider* dpp);
+    int verify(disk_rec_id_t rec_addr, const DoutPrefixProvider* dpp);
     uint16_t        offset;
     uint16_t        rec_count;
-    disk_block_id_t block_id;
+    disk_rec_id_t   block_id;
     uint16_t        rec_offsets[MAX_REC_IN_BLOCK];
   };
   static constexpr unsigned MAX_REC_SIZE = (DISK_BLOCK_SIZE - sizeof(disk_block_header_t));
@@ -237,7 +275,7 @@ namespace rgw::dedup {
     void init(work_shard_t worker_id, uint32_t seq_number);
     record_id_t add_record(const disk_record_t *p_rec, const DoutPrefixProvider *dpp);
     void close_block(const DoutPrefixProvider* dpp, bool has_more);
-    disk_block_id_t get_block_id() {
+    disk_rec_id_t get_rec_id() {
       disk_block_header_t *p_header = get_header();
       return p_header->block_id;
     }
@@ -247,8 +285,7 @@ namespace rgw::dedup {
   int load_record(librados::IoCtx          &ioctx,
                   const disk_record_t      *p_tgt_rec,
                   disk_record_t            *p_src_rec, /* OUT */
-                  disk_block_id_t           block_id,
-                  record_id_t               rec_id,
+                  disk_rec_id_t             rec_addr,
                   md5_shard_t               md5_shard,
                   const DoutPrefixProvider *dpp);
 
@@ -272,8 +309,8 @@ namespace rgw::dedup {
     friend class disk_block_array_t;
   public:
     struct record_info_t {
-      disk_block_id_t block_id;
-      record_id_t     rec_id;
+      disk_rec_id_t rec_addr;
+      record_id_t   rec_id;
     };
 
     disk_block_seq_t(const DoutPrefixProvider* dpp_in,
@@ -286,9 +323,9 @@ namespace rgw::dedup {
     int add_record(librados::IoCtx     &ioctx,
                    const disk_record_t *p_rec, // IN-OUT
                    record_info_t       *p_rec_info); // OUT-PARAM
+    disk_block_seq_t() {;}
 
   private:
-    disk_block_seq_t() {;}
     void activate(const DoutPrefixProvider* _dpp,
                   disk_block_t *_p_arr,
                   work_shard_t worker_id,
@@ -323,11 +360,11 @@ namespace rgw::dedup {
                               librados::IoCtx &ioctx);
     disk_block_seq_t* get_shard_block_seq(uint64_t md5_low) {
       md5_shard_t md5_shard = md5_low % d_num_md5_shards;
-      return d_disk_arr + md5_shard;
+      return &d_disk_arr[md5_shard];
     }
 
     //private:
-    disk_block_seq_t  d_disk_arr[MAX_MD5_SHARD];
+    std::vector<disk_block_seq_t> d_disk_arr;
     work_shard_t      d_worker_id;
     md5_shard_t       d_num_md5_shards;
   };
