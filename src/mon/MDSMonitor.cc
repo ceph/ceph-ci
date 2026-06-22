@@ -2378,7 +2378,11 @@ bool MDSMonitor::check_health(FSMap& fsmap, bool* propose_osdmap)
           const auto state = info.state;
           const mds_info_t* rep_info = nullptr;
           if (state == MDSMap::STATE_STANDBY_REPLAY) {
-            rep_info = fsmap.get_available_standby(fs);
+            const entity_addrvec_t* avoid_addrs = nullptr;
+            if (fs.get_mds_map().is_up(rank)) {
+              avoid_addrs = &fs.get_mds_map().get_info(rank).get_addrs();
+            }
+            rep_info = fsmap.get_available_standby(fs, avoid_addrs);
           } else if (state == MDSMap::STATE_ACTIVE) {
             rep_info = fsmap.find_replacement_for({fscid, rank});
           } else {
@@ -2447,23 +2451,32 @@ bool MDSMonitor::maybe_promote_standby(FSMap &fsmap, const Filesystem& fs)
     // There were no failures to replace, so try using any available standbys
     // as standby-replay daemons. Don't do this when the cluster is degraded
     // as a standby-replay daemon may try to read a journal being migrated.
-    for (;;) {
-      auto info = fsmap.get_available_standby(fs);
-      if (!info) break;
-      dout(20) << "standby available mds." << info->global_id << dendl;
-      bool changed = false;
+    while (true) {
+      const mds_info_t* assigned_info = nullptr;
+
       for (const auto& rank : mds_map.in) {
         dout(20) << "examining " << rank << dendl;
         if (mds_map.is_followable(rank)) {
-          dout(1) << "  setting mds." << info->global_id
-                  << " to follow mds rank " << rank << dendl;
-          fsmap.assign_standby_replay(info->global_id, fs.get_fscid(), rank);
-          do_propose = true;
-          changed = true;
-          break;
+          const entity_addrvec_t* avoid_addrs = nullptr;
+          if (mds_map.is_up(rank)) {
+            avoid_addrs = &mds_map.get_info(rank).get_addrs();
+          }
+
+          assigned_info = fsmap.get_available_standby(fs, avoid_addrs);
+          if (assigned_info) {
+            dout(1) << "  setting mds." << assigned_info->global_id
+                    << " to follow mds rank " << rank << dendl;
+            fsmap.assign_standby_replay(assigned_info->global_id, fs.get_fscid(), rank);
+            do_propose = true;
+            break; // Break the 'for' loop to re-evaluate standbys with the updated state
+          }
         }
       }
-      if (!changed) break;
+
+      // If scanned every rank and found no standby to assign, then it's fully done.
+      if (!assigned_info) {
+        break;
+      }
     }
   }
 
