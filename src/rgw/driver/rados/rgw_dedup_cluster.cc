@@ -668,8 +668,8 @@ namespace rgw::dedup {
   }
 
   //---------------------------------------------------------------------------
-  work_shard_t cluster::get_next_work_shard_token(rgw::sal::RadosStore *store,
-                                                  work_shard_t num_work_shards)
+  shard_t cluster::get_next_work_shard_token(rgw::sal::RadosStore *store,
+                                             work_shard_t num_work_shards)
   {
     int32_t shard = get_next_shard_token(store, d_curr_worker_shard,
                                          num_work_shards, WORKER_SHARD_PREFIX);
@@ -678,13 +678,13 @@ namespace rgw::dedup {
       return shard;
     }
     else {
-      return NULL_WORK_SHARD;
+      return NULL_SHARD;
     }
   }
 
   //---------------------------------------------------------------------------
-  md5_shard_t cluster::get_next_md5_shard_token(rgw::sal::RadosStore *store,
-                                                md5_shard_t num_md5_shards)
+  shard_t cluster::get_next_md5_shard_token(rgw::sal::RadosStore *store,
+                                            md5_shard_t num_md5_shards)
   {
     int32_t shard = get_next_shard_token(store, d_curr_md5_shard, num_md5_shards,
                                          MD5_SHARD_PREFIX);
@@ -693,7 +693,7 @@ namespace rgw::dedup {
       return shard;
     }
     else {
-      return NULL_MD5_SHARD;
+      return NULL_SHARD;
     }
   }
 

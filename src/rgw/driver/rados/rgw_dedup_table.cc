@@ -163,6 +163,7 @@ namespace rgw::dedup {
         val.count ++;
       }
       if (!val.has_shared_manifest() && shared_manifest) {
+        // replace value!
         ldpp_dout(dpp, 20) << __func__ << "::Replace with shared_manifest::["
                            << val.rec_addr << "] -> ["
                            << rec_addr << "]" << dendl;
@@ -185,7 +186,12 @@ namespace rgw::dedup {
     value_t &val = hash_tab[idx].val;
     ceph_assert(val.is_occupied());
 
+    // need to overwrite the rec_addr from the first pass
+    // unless already set with shared_manifest with the correct rec_addr
+    // We only set the shared_manifest flag on the second pass where we
+    // got valid rec_addr
     if (!val.has_shared_manifest()) {
+      // replace value!
       value_t new_val(rec_addr, shared_manifest);
       new_val.count = val.count;
       ldpp_dout(dpp, 20) << __func__ << "::Replaced table entry::["

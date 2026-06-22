@@ -30,7 +30,7 @@ namespace rgw::dedup {
   using namespace std::chrono;
   using work_shard_t   = uint16_t;
   using md5_shard_t    = uint32_t;
-
+  using shard_t        = uint32_t;
   const uint64_t MICROSECONDS_PER_SECOND = 1000000;
   // settings to help debug small systems
   const work_shard_t MIN_WORK_SHARD = 2;

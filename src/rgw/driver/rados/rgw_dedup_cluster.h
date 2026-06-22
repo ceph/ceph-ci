@@ -78,9 +78,9 @@ namespace rgw::dedup {
                        uint32_t num_group_tokens = 0);
 
     utime_t      get_epoch_time() { return d_epoch_time; }
-    work_shard_t get_next_work_shard_token(rgw::sal::RadosStore *store,
+    shard_t      get_next_work_shard_token(rgw::sal::RadosStore *store,
                                            work_shard_t num_work_shards);
-    md5_shard_t  get_next_md5_shard_token(rgw::sal::RadosStore *store,
+    shard_t      get_next_md5_shard_token(rgw::sal::RadosStore *store,
                                           md5_shard_t num_md5_shards);
     bool         can_start_new_scan(rgw::sal::RadosStore *store);
     static int   collect_all_shard_stats(rgw::sal::RadosStore *store,

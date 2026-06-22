@@ -253,29 +253,71 @@ absorbing `rec_id` into the address.
   uint8_t       flags;        //  8 bits (unchanged)
 ```
 
-`disk_rec_id_t` (48 bits):
+`disk_rec_id_t` (48 bits) -- packed bit-field struct, in-memory only:
+```cpp
+struct __attribute__((packed)) disk_rec_id_t {
+    work_shard_t  work_shard : 8;   // byte 0
+    uint32_t      slab_id    : 24;  // bytes 1-3
+    uint16_t      block_id   : 9;   // byte 4 + 1 bit
+    uint8_t       rec_id     : 6;   // 6 bits
+    uint8_t       rsv        : 1;   // reserved
+};
 ```
- 47      40 39              16 15       7 6     1   0
-+----------+------------------+----------+-------+---+
-| work_shard |    slab_id     | block_off | rec_id|rsv|
-|  8 bits    |   24 bits      |  9 bits   | 6 bits| 1 |
-+----------+------------------+----------+-------+---+
-```
+
+Constructors take `(work_shard, slab_id, block_id)` or
+`(work_shard, slab_id, block_id, rec_id)`. Fields are accessed directly
+as struct members. No endianness conversion needed.
 
 | Field      | Bits | Max Value      | Purpose                                |
 |------------|------|----------------|----------------------------------------|
 | work_shard | 8    | 255            | Worker ID (unchanged)                  |
-| slab_id    | 24   | 16,777,215     | Slab sequence within (shard, worker)   |
-| block_off  | 9    | 511            | Block within slab (256 at 2MB, 512 at 4MB) |
+| slab_id    | 24   | 16,777,215     | Slab index within (shard, worker)      |
+| block_id   | 9    | 511            | Block within slab (256 at 2MB, 512 at 4MB) |
 | rec_id     | 6    | 63             | Record within block (cap: MAX_REC_IN_BLOCK = 32) |
 | reserved   | 1    | —              | Future use                             |
 
 `sizeof(table_entry_t)` remains **32 bytes** (24-byte key + 8-byte value).
 No hash table density change.
 
+### disk_block_header_t
+
+The on-disk block header stores only a `uint16_t block_idx` (block index
+within the slab, 0..DISK_BLOCK_COUNT-1) instead of the full
+`disk_rec_id_t`. Saves 4 bytes per block header (6B -> 2B), since
+worker and slab identity are already encoded in the slab's OID.
+
+```cpp
+struct __attribute__((packed)) disk_block_header_t {
+    uint16_t  offset;                     // write cursor / magic
+    uint16_t  rec_count;
+    uint16_t  block_idx;                  // was: disk_rec_id_t block_id (6B -> 2B)
+    uint16_t  rec_offsets[MAX_REC_IN_BLOCK];
+};
+```
+
+`block_idx` is serialized with `HTOCEPH_16`/`CEPHTOH_16` (it IS on disk).
+
+### disk_block_seq_t
+
+The write-path state `d_seq_number` (a flat counter conflating slab
+identity and block position) is split into two fields:
+
+```cpp
+uint32_t  d_slab_id   = 0;   // slab index, incremented by flush()
+uint16_t  d_block_id  = 0;   // block index within slab, reset by slab_reset()
+```
+
+`store_slab()` and `load_slab()` take `slab_id` directly (not a composite
+`seq_number`).
+
+`add_record()` takes a `disk_rec_id_t*` out-param and constructs the full
+address inline: `disk_rec_id_t(d_worker_id, d_slab_id, d_block_id, rec_id)`.
+The old `record_info_t` wrapper struct was removed — `rec_id` is already
+embedded in the `disk_rec_id_t` bit-field and does not need a separate field.
+
 ### Slab Size Options
 
-The 9-bit `block_off` supports up to 512 blocks per slab, future-proofing
+The 9-bit `block_id` supports up to 512 blocks per slab, future-proofing
 for 4 MB slabs. The current implementation uses 2 MB slabs (256 blocks,
 8 of 9 bits used).
 
@@ -373,9 +415,25 @@ work_shard_t:         uint16_t (unchanged, 255 fits)
 ### `rgw_dedup_store.h`
 
 ```
-disk_block_id_t (32 bits) → disk_rec_id_t (48 bits):
-  work_shard: 8 bits, slab_id: 24 bits, block_off: 9 bits,
+disk_block_id_t (32 bits) → disk_rec_id_t (48 bits, packed bit-field struct):
+  work_shard: 8 bits, slab_id: 24 bits, block_id: 9 bits,
   rec_id: 6 bits, reserved: 1 bit
+  In-memory only, no endianness conversion. Direct field access.
+  Constructors: (ws, slab_id, block_id) and (ws, slab_id, block_id, rec_id)
+
+disk_block_header_t::block_id → block_idx:
+  disk_rec_id_t (6B) → uint16_t (2B), saves 4 bytes per block header
+  Serialized with HTOCEPH_16/CEPHTOH_16
+
+disk_block_seq_t::d_seq_number → d_slab_id + d_block_id:
+  uint32_t d_slab_id (slab index, incremented by flush)
+  uint16_t d_block_id (block index within slab, reset by slab_reset)
+
+disk_block_seq_t::add_record():
+  record_info_t removed — out-param is now disk_rec_id_t* directly
+  rec_id is embedded in disk_rec_id_t, no separate field needed
+
+store_slab() / load_slab(): parameter seq_number → slab_id
 
 table_entry_t::value_t:
   disk_rec_id_t rec_addr (6 bytes) + count (uint8_t) + flags (uint8_t)
@@ -519,11 +577,13 @@ Benefits:
    returns. The 8-bit `work_shard` field is retained.
 
 9. **disk_rec_id_t (replaces disk_block_id_t)**: Widened from 32 to 48 bits.
+   Implemented as a packed bit-field struct (in-memory only, no endianness).
    `rec_id` absorbed into the address (was a separate `value_t` field).
    `count` shrunk from `uint16_t` to `uint8_t` (128 cap fits).
    `slab_id` widened from 16 to 24 bits (max 16M, eliminates overflow
-   concern). `block_off` widened from 8 to 9 bits (supports future 4 MB
-   slabs). `sizeof(table_entry_t)` unchanged at 32 bytes.
+   concern). `block_id` widened from 8 to 9 bits (supports future 4 MB
+   slabs). Constructors take `(slab_id, block_id)` instead of composite
+   `seq_number`. `sizeof(table_entry_t)` unchanged at 32 bytes.
 
 10. **Coarse slab_seq overflow (resolved)**: The coarse slab format
     `CS%03X.%02X.%06X` uses 6 hex digits for `slab_seq` (max 16M = 2^24),

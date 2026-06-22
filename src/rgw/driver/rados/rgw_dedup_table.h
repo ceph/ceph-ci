@@ -104,7 +104,7 @@ namespace rgw::dedup {
       inline bool has_shared_manifest() const {return flags.has_shared_manifest(); }
       inline uint8_t         get_count() { return this->count; }
       inline disk_rec_id_t   get_src_rec_addr() { return this->rec_addr; }
-      inline record_id_t     get_src_rec_id() { return this->rec_addr.get_rec_id(); }
+      inline record_id_t     get_src_rec_id() { return this->rec_addr.rec_id; }
       inline bool has_valid_hash() const {return flags.has_valid_hash(); }
     private:
       inline void set_shared_manifest_src() { this->flags.set_shared_manifest(); }
