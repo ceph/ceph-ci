@@ -793,10 +793,21 @@ std::map<mds_gid_t, MDSMap::mds_info_t> FSMap::get_mds_info() const
   return result;
 }
 
-const MDSMap::mds_info_t* FSMap::get_available_standby(const Filesystem& fs) const
+/**
+ * Select the best available standby daemon for a given file system.
+ * @param fs The file system requiring a standby.
+ * @param avoid_addrs Optional. If provided, the selection matrix will
+ * deprioritize standbys sharing a host with these addresses. If nullptr,
+ * anti-affinity checking is safely bypassed.
+ */
+const MDSMap::mds_info_t* FSMap::get_available_standby(
+    const Filesystem& fs,
+    const entity_addrvec_t* avoid_addrs) const
 {
   const bool upgradeable = fs.is_upgradeable();
-  const mds_info_t* who = nullptr;
+  const mds_info_t* best_match = nullptr;
+  StandbyScore best_score = SCORE_NONE; // Higher score indicates a better candidate
+
   for (const auto& [gid, info] : standby_daemons) {
     ceph_assert(info.rank == MDS_RANK_NONE);
     ceph_assert(info.state == MDSMap::STATE_STANDBY);
@@ -811,17 +822,52 @@ const MDSMap::mds_info_t* FSMap::get_available_standby(const Filesystem& fs) con
       continue;
     }
 
+    // Evaluate host/IP anti-affinity across all active addresses
+    bool same_host = false;
+    if (avoid_addrs && !info.addrs.empty()) {
+      for (const auto& active_addr : avoid_addrs->v) {
+        if (info.addrs.front().is_same_host(active_addr)) {
+          same_host = true;
+          break; // Match at least one active host; mark it and stop scanning
+        }
+      }
+    }
+
+    // Score the candidate based on affinity and location constraint
+    /*
+     * Score-Based Selection Matrix
+     * ----------------------------
+     * Score standbys based on their affinity to this FS and their host location.
+     * Higher scores are better. Therefore, a standby on a different node
+     * will always outrank a standby on the same node.
+     *
+     *                     | Same Host (Fallback)    | Diff Host (Pref)    |
+     * --------------------|-------------------------|---------------------|
+     * Exact Match (fscid) | SCORE_FALLBACK_MATCH    | SCORE_PREF_MATCH    |
+     * Vanilla (NONE)      | SCORE_FALLBACK_VANILLA  | SCORE_PREF_VANILLA  |
+     * Last Resort (Other) | SCORE_FALLBACK_OTHER_FS | SCORE_PREF_OTHER_FS |
+     */
+    StandbyScore score = SCORE_NONE;
     if (info.join_fscid == fs.fscid) {
-      who = &info;
-      break;
+      score = same_host ? SCORE_FALLBACK_MATCH : SCORE_PREF_MATCH;
     } else if (info.join_fscid == FS_CLUSTER_ID_NONE) {
-      who = &info; /* vanilla standby */
-    } else if (who == nullptr &&
-	       !fs.mds_map.test_flag(CEPH_MDSMAP_REFUSE_STANDBY_FOR_ANOTHER_FS)) {
-      who = &info; /* standby for another fs, last resort */
+      score = same_host ? SCORE_FALLBACK_VANILLA : SCORE_PREF_VANILLA;
+    } else if (!fs.mds_map.test_flag(CEPH_MDSMAP_REFUSE_STANDBY_FOR_ANOTHER_FS)) {
+      score = same_host ? SCORE_FALLBACK_OTHER_FS : SCORE_PREF_OTHER_FS;
+    } else {
+      continue; // Last resort standby not permitted by flag
+    }
+
+    // Track the best candidate
+    if (score > best_score) {
+      best_match = &info;
+      best_score = score;
+      if (best_score == SCORE_PREF_MATCH) {
+        break; // Perfect match found (correct fscid & different host). Stop iterating.
+      }
     }
   }
-  return who;
+  return best_match;
 }
 
 mds_gid_t FSMap::find_mds_gid_by_name(std::string_view s) const
@@ -871,9 +917,22 @@ const MDSMap::mds_info_t* FSMap::find_replacement_for(mds_role_t role) const
         return &info;
       }
     }
+ }
+
+  /*
+   * 1. Hot Takeover (Rank is UP): Extract the active rank's address to
+   * enforce anti-affinity, preventing the standby from landing on the same host
+   * as the failing daemon.
+   * 2. Cold Crash (Rank is FAILED): The daemon is already dead and removed from
+   * the UP set. So pass nullptr to bypass the anti-affinity penalty and prioritize
+   * immediate cluster recovery.
+   */
+  const entity_addrvec_t* avoid_addrs = nullptr;
+  if (fs.mds_map.is_up(role.rank)) {
+    avoid_addrs = &fs.mds_map.get_info(role.rank).get_addrs();
   }
 
-  return get_available_standby(fs);
+  return get_available_standby(fs, avoid_addrs);
 }
 
 void FSMap::sanity(bool pending) const
