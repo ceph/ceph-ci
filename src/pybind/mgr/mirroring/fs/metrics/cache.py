@@ -88,35 +88,69 @@ class _TimedLRUCache:
         return CacheInfo(self.hits, self.misses, self.maxsize, len(self.store))
 
 
-def lru_cache_timeout(ttl_getter: Callable[[], int], maxsize: int = 128):
+def _resolve_ttl(ttl_getter, args, kwargs):
+    try:
+        return ttl_getter(*args, **kwargs)
+    except TypeError:
+        return ttl_getter()
+
+
+def lru_cache_timeout(ttl_getter: Callable[..., int], maxsize: int = 128):
     def decorator(func):
         cache = _TimedLRUCache(func, maxsize)
 
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            try:
-                ttl = ttl_getter(*args, **kwargs)
-            except TypeError:
-                ttl = ttl_getter()
-            if not ttl:
-                return func(*args, **kwargs)
-            time_token = int(time.monotonic() / ttl)
-            return cache.get(time_token, args)
+        # BoundCached is returned from CachedMethod.__get__ so cache_peek,
+        # cache_info, and cache_clear are bound to the instance. Attaching
+        # those helpers to a plain wrapper function would drop self (e.g.
+        # self.sync_stat_complete_cache.cache_peek(fs) would pass only fs),
+        # breaking ttl_getter lambdas that use self.mgr.
+        class BoundCached:
+            def __init__(self, instance):
+                self._instance = instance
 
-        def cache_peek(*args, **kwargs):
-            try:
-                ttl = ttl_getter(*args, **kwargs)
-            except TypeError:
-                ttl = ttl_getter()
-            if not ttl:
-                return None
-            time_token = int(time.monotonic() / ttl)
-            return cache.peek(time_token, args)
+            def _full_args(self, *args):
+                return (self._instance,) + args
 
-        wrapper.cache_peek = cache_peek  # type: ignore[attr-defined]
-        wrapper.cache_clear = cache.clear  # type: ignore[attr-defined]
-        wrapper.cache_info = cache.info  # type: ignore[attr-defined]
-        return wrapper
+            def __call__(self, *args, **kwargs):
+                full = self._full_args(*args)
+                ttl = _resolve_ttl(ttl_getter, full, kwargs)
+                if not ttl:
+                    return func(*full, **kwargs)
+                time_token = int(time.monotonic() / ttl)
+                return cache.get(time_token, full)
+
+            def cache_peek(self, *args, **kwargs):
+                full = self._full_args(*args)
+                ttl = _resolve_ttl(ttl_getter, full, kwargs)
+                if not ttl:
+                    return None
+                time_token = int(time.monotonic() / ttl)
+                return cache.peek(time_token, full)
+
+            def cache_clear(self):
+                cache.clear()
+
+            def cache_info(self):
+                return cache.info()
+
+        # Descriptor: self.method(...) and self.method.cache_peek(...) share
+        # the same BoundCached instance and cache keys.
+        class CachedMethod:
+            def __get__(self, obj, owner=None):
+                if obj is None:
+                    return self
+                return BoundCached(obj)
+
+            def __call__(self, *args, **kwargs):
+                ttl = _resolve_ttl(ttl_getter, args, kwargs)
+                if not ttl:
+                    return func(*args, **kwargs)
+                time_token = int(time.monotonic() / ttl)
+                return cache.get(time_token, args)
+
+        cached = CachedMethod()
+        wraps(func)(cached)
+        return cached
     return decorator
 
 

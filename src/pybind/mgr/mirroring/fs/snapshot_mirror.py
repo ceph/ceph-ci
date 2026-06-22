@@ -933,7 +933,7 @@ class FSSnapshotMirror:
             return me.args[0], '', me.args[1]
         except Exception as e:
             log.error(f'failed to get snapshot mirror metrics: {e}')
-            return e.args[0], '', 'failed to get snapshot mirror metrics'
+            return -errno.EINVAL, '', 'failed to get snapshot mirror metrics'
 
     def daemon_status(self, format='json'):
         try:
