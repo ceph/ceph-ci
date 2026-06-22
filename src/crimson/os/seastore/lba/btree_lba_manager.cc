@@ -1279,6 +1279,7 @@ void BtreeLBAManager::update_paddr_sync(
   Transaction &t,
   laddr_t laddr,
   paddr_t paddr,
+  extent_len_t len,
   std::optional<paddr_t> shadow)
 {
   LOG_PREFIX(BtreeLBAManager::update_paddr_sync);
@@ -1286,29 +1287,55 @@ void BtreeLBAManager::update_paddr_sync(
   auto c = get_context(t);
   auto btree = get_btree_sync<LBABtree>(c);
   auto iter = btree.lower_bound_sync(c, laddr);
-  assert(iter.get_leaf_node()->is_pending());
-  auto child = iter.get_leaf_node()->get_child_sync<LogicalChildNode>(
-    c.trans, c.cache, iter.get_leaf_pos(), iter.get_key());
-  ceph_assert(child);
-  if (child->is_initial_pending()) {
-    TRACET("{} is initial_pending, skipping", t, *child);
-    return;
+  while (iter.get_key() + iter.get_val().len <= laddr + len) {
+    assert(iter.get_leaf_node()->is_pending());
+    if (iter.get_val().pladdr.is_laddr() ||
+        iter.get_val().pladdr.get_paddr().is_zero()) {
+      TRACET("skipping mapping {}~{}", t, iter.get_key(), iter.get_val());
+      if (!iter.next_sync(c)) {
+        // can't reach the next mapping, which means the next
+        // mapping mustn't have been touched by the current
+        // transactions, we don't need to continue, just leave
+        return;
+      }
+      continue;
+    }
+    auto child = iter.get_leaf_node()->get_child_sync<LogicalChildNode>(
+      c.trans, c.cache, iter.get_leaf_pos(), iter.get_key());
+    ceph_assert(is_valid_child_ptr(child.get()));
+    if (child->is_initial_pending()) {
+      TRACET("{} is initial_pending, skipping", t, *child);
+      if (!iter.next_sync(c)) {
+        // can't reach the next mapping, which means the next
+        // mapping mustn't have been touched by the current
+        // transactions, we don't need to continue, just leave
+        return;
+      }
+      continue;
+    }
+    ceph_assert(child->is_exist_clean());
+    auto cursor = iter.get_cursor(c);
+    extent_len_t off = cursor->get_laddr().get_byte_distance<
+      extent_len_t>(laddr);
+    iter = btree.update(
+      c,
+      std::move(iter),
+      lba_map_val_t{
+        cursor->get_length(),
+        pladdr_t{paddr + off},
+        (shadow ? *shadow : cursor->get_shadow_paddr()),
+        cursor->get_refcount(),
+        cursor->get_checksum(),
+        cursor->get_extent_type()},
+      nullptr,
+      modification_t::TRANS_SYNC);
+    if (!iter.next_sync(c)) {
+      // can't reach the next mapping, which means the next
+      // mapping mustn't have been touched by the current
+      // transactions, we don't need to continue, just leave
+      return;
+    }
   }
-  ceph_assert(child->is_exist_clean());
-  auto cursor = iter.get_cursor(c);
-  assert(cursor->get_laddr() == laddr);
-  btree.update(
-    c,
-    std::move(iter),
-    lba_map_val_t{
-      cursor->get_length(),
-      pladdr_t{std::move(paddr)},
-      (shadow ? *shadow : cursor->get_shadow_paddr()),
-      cursor->get_refcount(),
-      cursor->get_checksum(),
-      cursor->get_extent_type()},
-    nullptr,
-    modification_t::TRANS_SYNC);
 }
 
 BtreeLBAManager::move_mapping_ret
@@ -1347,8 +1374,10 @@ BtreeLBAManager::_copy_mapping(
   c.trans.new_lba_key_copied(
     ret.src->get_key(),
     dest_laddr,
-    [this, c](laddr_t laddr, paddr_t paddr, std::optional<paddr_t> shadow) {
-      update_paddr_sync(c.trans, laddr, paddr, shadow);
+    ret.src->get_length(),
+    [this, c](laddr_t laddr, paddr_t paddr,
+              extent_len_t len, std::optional<paddr_t> shadow) {
+      update_paddr_sync(c.trans, laddr, paddr, len, shadow);
     });
   auto [niter, inserted] = co_await btree.copy(
       c,
