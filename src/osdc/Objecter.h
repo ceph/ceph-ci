@@ -2570,6 +2570,13 @@ public:
   ceph::timespan mon_timeout;
   ceph::timespan osd_timeout;
 
+
+  struct SplitOpBucket {
+    uint64_t latency_us;
+    uint64_t skip_budget;
+  };
+
+  std::array<SplitOpBucket, 5> split_op_buckets;
   uint64_t min_split_replica_read_size;
 
   // last time osdmap was requested
@@ -2984,6 +2991,10 @@ public:
 
   uint64_t get_min_split_replica_read_size() {
     return min_split_replica_read_size;
+  }
+
+  const std::array<SplitOpBucket, 5>& get_split_op_buckets() const {
+    return split_op_buckets;
   }
 
   /// cancel an in-progress request with the given return code

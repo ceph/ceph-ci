@@ -544,29 +544,34 @@ void SplitOp::complete() {
   // Only update throttle state for replicated split reads.
   if (!is_erasure) {
     uint32_t skip_budget = 0;
-    if (max_queue_latency_us >= 5000) {
-      skip_budget = 100;
-    } else if (max_queue_latency_us >= 4000) {
-      skip_budget = 50;
-    } else if (max_queue_latency_us >= 3000) {
-      skip_budget = 25;
-    } else if (max_queue_latency_us >= 2000) {
-      skip_budget = 10;
-    } else if (max_queue_latency_us >= 1000) {
-      skip_budget = 1;
+    bool threshold_exceeded = false;
+    
+    const auto& buckets = objecter.get_split_op_buckets();
+    
+    // Skip buckets with latency_us == 0 (disabled buckets)
+    for (int i = 4; i >= 0; i--) {
+      if (buckets[i].latency_us > 0 && max_queue_latency_us >= buckets[i].latency_us) {
+        skip_budget = buckets[i].skip_budget;
+        threshold_exceeded = true;
+        break;
+      }
     }
 
-    replica_split_op_skip_budget.store(skip_budget);
-
-    if (max_queue_latency_us >= 1000) {
-      ldout(cct, DBG_LVL) << __func__ << " queue latency detected: "
-                          << max_queue_latency_us << " usec, skip budget now: "
-                          << skip_budget << dendl;
+    if (threshold_exceeded) {
+      uint32_t current = replica_split_op_skip_budget.load();
+      while (skip_budget > current) {
+        if (replica_split_op_skip_budget.compare_exchange_weak(current, skip_budget)) {
+          ldout(cct, DBG_LVL) << __func__ << " queue latency detected: "
+                              << max_queue_latency_us << " usec, skip budget now: "
+                              << skip_budget << dendl;
+          break;
+        }
+      }
     }
   }
 
   int rc = assemble_rc();
-  if (rc >= 0) {
+    if (rc >= 0) {
 
     // In a "normal" completion, out_ops is generated in the MOSDOpReply reply
     // which we do not have here. Here we are going to mimic this behaviour
@@ -734,14 +739,15 @@ std::pair<bool, bool> is_single_chunk(const pg_pool_t *pi, uint64_t offset, uint
   return {true, offset % stripe_width < chunk_size};
 }
 
-bool throttle_replica_split_read() {
+bool throttle_replica_split_read(CephContext *cct) {
   uint32_t current = replica_split_op_skip_budget.load();
   while (current > 0) {
     if (replica_split_op_skip_budget.compare_exchange_weak(current, current - 1)) {
-      return false;
+      ldout(cct, DBG_LVL) << __func__ << " Skipping split read, remaining skip budget: " << (current - 1) << dendl;
+      return true;
     }
   }
-  return true;
+  return false;
 }
 
 /**
@@ -897,7 +903,7 @@ std::pair<bool, bool> validate(Objecter::Op *op, Objecter &objecter,
                                                  has_primary_ops, single_direct_op);
 
 // Only consult the counter for replicated split reads
-  if (!is_erasure && !throttle_replica_split_read()) {
+  if (!is_erasure && throttle_replica_split_read(cct)) {
     if (has_read_ops) {
       ldout(cct, DBG_LVL) << __func__ << " REJECT: splitting denied" << dendl;
     }

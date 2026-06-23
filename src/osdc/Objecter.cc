@@ -234,6 +234,16 @@ std::vector<std::string> Objecter::get_tracked_keys() const noexcept
     "rados_mon_op_timeout"s,
     "rados_osd_op_timeout"s,
     "osd_min_split_replica_read_size"s,
+    "osd_split_op_bucket_1_latency_us"s,
+    "osd_split_op_bucket_1_skip_budget"s,
+    "osd_split_op_bucket_2_latency_us"s,
+    "osd_split_op_bucket_2_skip_budget"s,
+    "osd_split_op_bucket_3_latency_us"s,
+    "osd_split_op_bucket_3_skip_budget"s,
+    "osd_split_op_bucket_4_latency_us"s,
+    "osd_split_op_bucket_4_skip_budget"s,
+    "osd_split_op_bucket_5_latency_us"s,
+    "osd_split_op_bucket_5_skip_budget"s,
   };
 }
 
@@ -253,6 +263,18 @@ void Objecter::handle_conf_change(const ConfigProxy& conf,
   if (changed.count("osd_min_split_replica_read_size")) {
     min_split_replica_read_size
       = conf.get_val<uint64_t>("osd_min_split_replica_read_size");
+  }
+
+  for (int i = 0; i < 5; i++) {
+    std::string latency_key = "osd_split_op_bucket_" + std::to_string(i + 1) + "_latency_us";
+    std::string budget_key = "osd_split_op_bucket_" + std::to_string(i + 1) + "_skip_budget";
+    
+    if (changed.count(latency_key)) {
+      split_op_buckets[i].latency_us = conf.get_val<uint64_t>(latency_key);
+    }
+    if (changed.count(budget_key)) {
+      split_op_buckets[i].skip_budget = conf.get_val<uint64_t>(budget_key);
+    }
   }
 
   auto read_policy = conf.get_val<std::string>("rados_replica_read_policy");
@@ -5466,6 +5488,13 @@ Objecter::Objecter(CephContext *cct,
   osd_timeout = cct->_conf.get_val<std::chrono::seconds>("rados_osd_op_timeout");
   min_split_replica_read_size
     = cct->_conf.get_val<uint64_t>("osd_min_split_replica_read_size");
+
+  for (int i = 0; i < 5; i++) {
+    std::string latency_key = "osd_split_op_bucket_" + std::to_string(i + 1) + "_latency_us";
+    std::string budget_key = "osd_split_op_bucket_" + std::to_string(i + 1) + "_skip_budget";
+    split_op_buckets[i].latency_us = cct->_conf.get_val<uint64_t>(latency_key);
+    split_op_buckets[i].skip_budget = cct->_conf.get_val<uint64_t>(budget_key);
+  }
 
   auto read_policy = cct->_conf.get_val<std::string>("rados_replica_read_policy");
   if (read_policy == "localize") {

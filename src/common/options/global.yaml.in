@@ -2957,6 +2957,66 @@ options:
   fmt_desc: The minimum size (in bytes) of a read to a single replica. For split
     reads, all reads will be at least this size before a client will split it
     across multiple replicas. Set to 0 to disable read splitting for replica pools.
+- name: osd_split_op_bucket_1_latency_us
+  type: uint
+  level: advanced
+  default: 1000
+  fmt_desc: Latency threshold in microseconds for bucket 1 of replica split operation
+    throttling. Set to 0 to disable this bucket.
+- name: osd_split_op_bucket_1_skip_budget
+  type: uint
+  level: advanced
+  default: 1
+  fmt_desc: Skip budget for bucket 1. When latency exceeds the bucket 1 threshold,
+    this many split operations will be skipped.
+- name: osd_split_op_bucket_2_latency_us
+  type: uint
+  level: advanced
+  default: 2000
+  fmt_desc: Latency threshold in microseconds for bucket 2 of replica split operation
+    throttling. Set to 0 to disable this bucket.
+- name: osd_split_op_bucket_2_skip_budget
+  type: uint
+  level: advanced
+  default: 10
+  fmt_desc: Skip budget for bucket 2. When latency exceeds the bucket 2 threshold,
+    this many split operations will be skipped.
+- name: osd_split_op_bucket_3_latency_us
+  type: uint
+  level: advanced
+  default: 3000
+  fmt_desc: Latency threshold in microseconds for bucket 3 of replica split operation
+    throttling. Set to 0 to disable this bucket.
+- name: osd_split_op_bucket_3_skip_budget
+  type: uint
+  level: advanced
+  default: 25
+  fmt_desc: Skip budget for bucket 3. When latency exceeds the bucket 3 threshold,
+    this many split operations will be skipped.
+- name: osd_split_op_bucket_4_latency_us
+  type: uint
+  level: advanced
+  default: 4000
+  fmt_desc: Latency threshold in microseconds for bucket 4 of replica split operation
+    throttling. Set to 0 to disable this bucket.
+- name: osd_split_op_bucket_4_skip_budget
+  type: uint
+  level: advanced
+  default: 50
+  fmt_desc: Skip budget for bucket 4. When latency exceeds the bucket 4 threshold,
+    this many split operations will be skipped.
+- name: osd_split_op_bucket_5_latency_us
+  type: uint
+  level: advanced
+  default: 5000
+  fmt_desc: Latency threshold in microseconds for bucket 5 of replica split operation
+    throttling. Set to 0 to disable this bucket.
+- name: osd_split_op_bucket_5_skip_budget
+  type: uint
+  level: advanced
+  default: 100
+  fmt_desc: Skip budget for bucket 5. When latency exceeds the bucket 5 threshold,
+    this many split operations will be skipped.
 # max number of parallel snap trims/pg
 - name: osd_pg_max_concurrent_snap_trims
   type: uint
