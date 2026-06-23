@@ -84,6 +84,7 @@ status_log() {
     ceph orch host ls
     ceph orch ls 
     ceph orch ps
+    ceph orch ps --daemon-type nvmeof --refresh
     ceph health detail
     ceph nvme-gw show $POOL $GROUP
     sudo nvme list
