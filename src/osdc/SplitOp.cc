@@ -25,7 +25,7 @@ inline boost::system::error_code osdcode(int r) {
 }
 
 namespace {
-  std::atomic<int> replica_split_op_throttle_counter;
+  std::atomic<uint32_t> replica_split_op_skip_budget{0};
 }
 
 constexpr static uint64_t kReplicaMinShardReads = 2;
@@ -528,28 +528,41 @@ void SplitOp::complete() {
   ldout(cct, DBG_LVL) << __func__ << " object_id=" << orig_op->target.base_oid << " entry this=" << this << dendl;
   boost::system::error_code handler_error;
 
-  // Check queue latency and increment counter if it was slow
-  // Only update counter for replicated split reads
+  // Check queue latency and update throttle state for replicated split reads.
   const pg_pool_t *pi = objecter.osdmap->get_pg_pool(orig_op->target.base_oloc.pool);
   bool is_erasure = pi && pi->is_erasure();
 
-  bool detected_high_latency = false;
+  uint64_t max_queue_latency_us = 0;
   for (auto & [index, sub_read] : sub_reads) {
-    if (sub_read.osd_queue_latency)
-    {
-      if (sub_read.osd_queue_latency.usec() > 3000) {
-        detected_high_latency = true;
-        ldout(cct, DBG_LVL) << __func__ << " slow queue latency detected: "
-                          << sub_read.osd_queue_latency.usec() << " usec, counter now: "
-                          << replica_split_op_throttle_counter.load() << dendl;
-      }
+    if (sub_read.osd_queue_latency) {
+      max_queue_latency_us = std::max<uint64_t>(
+        max_queue_latency_us,
+        sub_read.osd_queue_latency.usec());
     }
   }
 
-  // Only update counter for replicated split reads
-  if (!is_erasure && detected_high_latency) {
-    int expected = 0;
-    replica_split_op_throttle_counter.compare_exchange_strong(expected, 10);
+  // Only update throttle state for replicated split reads.
+  if (!is_erasure) {
+    uint32_t skip_budget = 0;
+    if (max_queue_latency_us >= 5000) {
+      skip_budget = 100;
+    } else if (max_queue_latency_us >= 4000) {
+      skip_budget = 50;
+    } else if (max_queue_latency_us >= 3000) {
+      skip_budget = 25;
+    } else if (max_queue_latency_us >= 2000) {
+      skip_budget = 10;
+    } else if (max_queue_latency_us >= 1000) {
+      skip_budget = 1;
+    }
+
+    replica_split_op_skip_budget.store(skip_budget);
+
+    if (max_queue_latency_us >= 1000) {
+      ldout(cct, DBG_LVL) << __func__ << " queue latency detected: "
+                          << max_queue_latency_us << " usec, skip budget now: "
+                          << skip_budget << dendl;
+    }
   }
 
   int rc = assemble_rc();
@@ -722,9 +735,9 @@ std::pair<bool, bool> is_single_chunk(const pg_pool_t *pi, uint64_t offset, uint
 }
 
 bool throttle_replica_split_read() {
-  int current = replica_split_op_throttle_counter.load();
+  uint32_t current = replica_split_op_skip_budget.load();
   while (current > 0) {
-    if (replica_split_op_throttle_counter.compare_exchange_weak(current, current - 1)) {
+    if (replica_split_op_skip_budget.compare_exchange_weak(current, current - 1)) {
       return false;
     }
   }
