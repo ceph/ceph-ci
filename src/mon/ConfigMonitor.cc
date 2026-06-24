@@ -19,6 +19,7 @@
 #include "crush/CrushWrapper.h"
 
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string/trim.hpp>
 
 #define dout_subsys ceph_subsys_mon
 #undef dout_prefix
@@ -296,6 +297,7 @@ bool ConfigMonitor::preprocess_command(MonOpRequestRef op)
   } else if (prefix == "config get") {
     string who, name;
     cmd_getval(cmdmap, "who", who);
+    boost::algorithm::trim(who);
 
     EntityName entity;
     if (!entity.from_str(who) &&
@@ -543,6 +545,7 @@ bool ConfigMonitor::prepare_command(MonOpRequestRef op)
     cmd_getval(cmdmap, "name", name);
     cmd_getval(cmdmap, "value", value);
     cmd_getval(cmdmap, "force", force);
+    boost::algorithm::trim(who);
     name = ConfFile::normalize_key_name(name);
     
     if (prefix == "config set" && !force) {
