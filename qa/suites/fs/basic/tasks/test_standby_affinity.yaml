@@ -1,0 +1,4 @@
+tasks:
+- cephfs_test_case:
+    tests:
+      - tasks.cephfs.test_standby_affinity
