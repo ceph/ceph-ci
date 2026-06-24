@@ -119,16 +119,19 @@ void CacheSession::process(ObjectCacheRequest* req) {
 
 void CacheSession::send(ObjectCacheRequest* reply) {
   ldout(m_cct, 20) << dendl;
+  // Hold the reply in a unique_ptr moved into the handler, so it is freed
+  // when the handler goes away. On teardown asio drops the pending handler
+  // without running it, which used to leak the reply.
+  auto reply_ptr = std::unique_ptr<ObjectCacheRequest>(reply);
   bufferlist bl;
-  reply->encode();
-  bl.append(reply->get_payload_bufferlist());
+  reply_ptr->encode();
+  bl.append(reply_ptr->get_payload_bufferlist());
 
   boost::asio::async_write(m_dm_socket,
         boost::asio::buffer(bl.c_str(), bl.length()),
         boost::asio::transfer_exactly(bl.length()),
-        [this, bl, reply](const boost::system::error_code& err,
+        [this, bl, reply_ptr=std::move(reply_ptr)](const boost::system::error_code& err,
           size_t bytes_transferred) {
-          delete reply;
           if (err || bytes_transferred != bl.length()) {
             fault(err);
             return;
