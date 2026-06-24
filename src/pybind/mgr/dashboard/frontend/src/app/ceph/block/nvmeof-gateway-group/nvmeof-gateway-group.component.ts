@@ -76,6 +76,7 @@ export class NvmeofGatewayGroupComponent implements OnInit, OnDestroy {
   gatewayCount = 0;
   selectedGatewayDetails: DetailItem[] = [];
   private lastGroupCount = 0;
+  showDetailsCard = false;
 
   viewUrl = `/${BASE_URL}/view`;
   icons = Icons;
@@ -128,14 +129,6 @@ export class NvmeofGatewayGroupComponent implements OnInit, OnDestroy {
       canBePrimary: (selection: CdTableSelection) => !selection.hasSelection
     };
 
-    const editAction: CdTableAction = {
-      permission: 'update',
-      icon: Icons.edit,
-      routerLink: () => this.urlBuilder.getEdit(this.selection.first()?.name),
-      name: this.actionLabels.EDIT,
-      canBePrimary: (selection: CdTableSelection) => selection.hasSingleSelection
-    };
-
     const viewAction: CdTableAction = {
       permission: 'read',
       icon: Icons.eye,
@@ -152,7 +145,7 @@ export class NvmeofGatewayGroupComponent implements OnInit, OnDestroy {
       canBePrimary: (selection: CdTableSelection) => selection.hasMultiSelection
     };
 
-    this.tableActions = [createAction, editAction, viewAction, deleteAction];
+    this.tableActions = [createAction, viewAction, deleteAction];
 
     this.gatewayGroup$ = this.subject.pipe(
       switchMap(() =>
@@ -224,6 +217,7 @@ export class NvmeofGatewayGroupComponent implements OnInit, OnDestroy {
   updateSelection(selection: CdTableSelection): void {
     this.selection = selection;
     this.selectedGatewayDetails = this.buildGatewayDetails(selection.first());
+    this.showDetailsCard = false;
   }
 
   deleteGatewayGroupModal() {
@@ -282,6 +276,11 @@ export class NvmeofGatewayGroupComponent implements OnInit, OnDestroy {
           })
           .pipe(
             tap({
+              next: () => {
+                this.table.data = this.table.data.filter(
+                  (row: CephServiceSpec) => row.spec?.group !== selectedGroup.spec.group
+                );
+              },
               complete: () => {
                 this.nvmeofStateService.requestRefresh();
               }
@@ -297,6 +296,14 @@ export class NvmeofGatewayGroupComponent implements OnInit, OnDestroy {
           );
       }
     });
+  }
+
+  onNameClick(row: any, event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    this.selection = new CdTableSelection([row]);
+    this.selectedGatewayDetails = this.buildGatewayDetails(row);
+    this.showDetailsCard = true;
   }
 
   private checkNodesAvailability(): void {
@@ -342,14 +349,6 @@ export class NvmeofGatewayGroupComponent implements OnInit, OnDestroy {
     this.router.navigate([this.viewUrl, groupName]);
   }
 
-  editSelectedGatewayGroup(): void {
-    const selectedGroup = this.selection.first();
-    if (!selectedGroup) {
-      return;
-    }
-    this.router.navigate([this.urlBuilder.getEdit(selectedGroup.name)]);
-  }
-
   private buildGatewayDetails(selectedGroup: any): DetailItem[] {
     if (!selectedGroup) {
       return [];
@@ -375,7 +374,7 @@ export class NvmeofGatewayGroupComponent implements OnInit, OnDestroy {
       },
       {
         label: $localize`mTLS`,
-        value: selectedGroup.spec?.enable_mtls ? $localize`Enabled` : $localize`Disabled`,
+        value: selectedGroup.spec?.enable_auth ? $localize`Enabled` : $localize`Disabled`,
         type: 'status'
       }
     ];
