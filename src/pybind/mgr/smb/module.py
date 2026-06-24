@@ -1,5 +1,4 @@
 from typing import (
-    TYPE_CHECKING,
     Any,
     List,
     Literal,
@@ -10,11 +9,12 @@ from typing import (
 )
 
 import logging
+import sqlite3
 from dataclasses import replace
 
 import orchestrator
 from ceph.deployment.service_spec import PlacementSpec, SMBSpec
-from mgr_module import MgrModule, Option, OptionLevel
+from mgr_module import MgrModule, MgrModuleRecoverDB, Option, OptionLevel
 from mgr_util import CephFSEarmarkResolver
 
 from . import (
@@ -40,9 +40,6 @@ from .enums import (
     UserGroupSourceType,
 )
 from .proto import AccessAuthorizer, ConfigStore, Simplified
-
-if TYPE_CHECKING:
-    import sqlite3
 
 log = logging.getLogger(__name__)
 
@@ -182,16 +179,13 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
             all_results = all_results.convert_results(out_op)
         return all_results
 
-    @SMBCLICommand('apply', perm='rw')
-    def apply_resources(
+    @MgrModuleRecoverDB
+    def _apply_resources_impl(
         self,
         inbuf: str,
         password_filter: InputPasswordFilter = InputPasswordFilter.NONE,
         password_filter_out: Optional[PasswordFilter] = None,
     ) -> results.ResultGroup:
-        """Create, update, or remove smb configuration resources based on YAML
-        or JSON specs
-        """
         try:
             return self._apply_res(
                 resources.load_text(inbuf),
@@ -205,7 +199,36 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
                 [results.InvalidResourceResult(err.resource_data, str(err))]
             )
 
+    @SMBCLICommand('apply', perm='rw')
+    def apply_resources(
+        self,
+        inbuf: str,
+        password_filter: InputPasswordFilter = InputPasswordFilter.NONE,
+        password_filter_out: Optional[PasswordFilter] = None,
+    ) -> results.ResultGroup:
+        """Create, update, or remove smb configuration resources based on YAML
+        or JSON specs
+        """
+        try:
+            return self._apply_resources_impl(
+                inbuf,
+                password_filter=password_filter,
+                password_filter_out=password_filter_out,
+            )
+        except sqlite3.DatabaseError as err:
+            # Reached only via remote() calls (e.g. dashboard), which bypass
+            # cli.py's error_wrapper. Return a result instead of raising so a
+            # transient db outage doesn't surface as an unhandled exception.
+            return results.ResultGroup(
+                [
+                    results.InvalidResourceResult(
+                        {}, f'smb database temporarily unavailable: {err}'
+                    )
+                ]
+            )
+
     @SMBCLICommand('cluster ls', perm='r')
+    @MgrModuleRecoverDB
     def cluster_ls(self) -> List[str]:
         """List smb clusters by ID"""
         return [cid for cid in self._handler.cluster_ids()]
@@ -607,6 +630,7 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
             return {"success": False, "error": str(e)}
 
     @SMBCLICommand('share ls', perm='r')
+    @MgrModuleRecoverDB
     def share_ls(self, cluster_id: str) -> List[str]:
         """List smb shares in a cluster by ID"""
         return [
@@ -728,16 +752,13 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
         except resources.InvalidResourceError as err:
             return results.InvalidResourceResult(err.resource_data, str(err))
 
-    @SMBCLICommand("show", perm="r")
-    def show(
+    @MgrModuleRecoverDB
+    def _show_impl(
         self,
         resource_names: Optional[List[str]] = None,
         results: ShowResults = ShowResults.COLLAPSED,
         password_filter: PasswordFilter = PasswordFilter.NONE,
     ) -> Simplified:
-        """Show resources fetched from the local config store based on resource
-        type or resource type and id(s).
-        """
         if not resource_names:
             resources = self._handler.all_resources()
         else:
@@ -752,6 +773,31 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
         if len(resources) == 1 and results is ShowResults.COLLAPSED:
             return resources[0].to_simplified()
         return {"resources": [r.to_simplified() for r in resources]}
+
+    @SMBCLICommand("show", perm="r")
+    def show(
+        self,
+        resource_names: Optional[List[str]] = None,
+        results: ShowResults = ShowResults.COLLAPSED,
+        password_filter: PasswordFilter = PasswordFilter.NONE,
+    ) -> Simplified:
+        """Show resources fetched from the local config store based on resource
+        type or resource type and id(s).
+        """
+        try:
+            return self._show_impl(
+                resource_names,
+                results=results,
+                password_filter=password_filter,
+            )
+        except sqlite3.DatabaseError as err:
+            # Reached only via remote() calls (e.g. dashboard), which bypass
+            # cli.py's error_wrapper. Return a value instead of raising so a
+            # transient db outage doesn't surface as an unhandled exception.
+            return {
+                "error": f"smb database temporarily unavailable: {err}",
+                "resources": [],
+            }
 
     def submit_smb_spec(self, spec: SMBSpec) -> None:
         """Submit a new or updated smb spec object to ceph orchestration."""
