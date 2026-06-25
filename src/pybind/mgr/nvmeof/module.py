@@ -33,13 +33,13 @@ class NVMeoF(MgrModule):
             logger.error(f"Error creating pool '{pool_name}", exc_info=True)
             raise
 
-    def _enable_rbd_application(self, pool_name: str) -> None:
+    def _enable_nvmeof_application(self, pool_name: str) -> None:
         try:
-            self.appify_pool(pool_name, 'rbd')
-            logger.info(f"'rbd' application enabled on pool '{pool_name}'.")
+            self.appify_pool(pool_name, 'nvmeof')
+            logger.info(f"'nvmeof' application enabled on pool '{pool_name}'.")
         except Exception:
             logger.error(
-                f"Failed to enable 'rbd' application on '{pool_name}'",
+                f"Failed to enable 'nvmeof' application on '{pool_name}'",
                 exc_info=True
             )
             raise
@@ -56,5 +56,5 @@ class NVMeoF(MgrModule):
     def create_pool_if_not_exists(self) -> None:
         if not self._pool_exists(POOL_NAME):
             self._create_pool(POOL_NAME)
-        self._enable_rbd_application(POOL_NAME)
+        self._enable_nvmeof_application(POOL_NAME)
         self._rbd_pool_init(POOL_NAME)
