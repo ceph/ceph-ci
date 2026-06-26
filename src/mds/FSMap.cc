@@ -920,22 +920,20 @@ const MDSMap::mds_info_t* FSMap::find_replacement_for(mds_role_t role) const
  }
 
   const entity_addrvec_t* avoid_addrs = nullptr;
-  if (fs.mds_map.is_up(role.rank)) {
-    // Hot Takeover (Rank is UP)/ Natural Failover / Laggy state: Fetch directly
-    // from the active roster and enforce anti-affinity.
-    avoid_addrs = &fs.mds_map.get_info(role.rank).get_addrs();
-  } else {
-    // Manual Administrative Eviction (mds_fail): The daemon is gone from the
-    // up roster. Loop safely through any matching ranks left in the master info
-    // registry to find its address footprint without triggering an out-of-bounds
-    // hang and then enforce anti-affinity on it.
-    for (const auto& [gid, info] : fs.mds_map.mds_info) {
-      if (info.rank == role.rank) {
-        avoid_addrs = &info.get_addrs();
-        break;
-      }
+  // Defensive Lookups: Verify the rank exists in the 'up' index map, then verify
+  // that its backing GID exists within 'mds_info' to completely avoid out-of-bounds crashes.
+  auto up_it = fs.mds_map.up.find(role.rank);
+  if (up_it != fs.mds_map.up.end()) {
+    auto info_it = fs.mds_map.mds_info.find(up_it->second);
+    if (info_it != fs.mds_map.mds_info.end()) {
+      // Hot Takeover / Natural Failover / Upgrade Reboot: Fetch the address vector
+      // to actively enforce host anti-affinity constraints.
+      avoid_addrs = &info_it->second.get_addrs();
     }
   }
+  // Cold Recovery / Manual Eviction (mds fail): Since the rank is immediately purged
+  // from the up roster, up_it evaluates to the end iterator. avoid_addrs remains nullptr,
+  // safely defaulting standby matchmaking back to normal cluster parameters.
 
   return get_available_standby(fs, avoid_addrs);
 }
