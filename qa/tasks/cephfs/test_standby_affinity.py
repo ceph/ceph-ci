@@ -139,8 +139,8 @@ class TestStandbyAffinity(CephFSTestCase):
         # This gives it an initial high priority tier, while the vanilla standby remains
         # at a baseline tier. This setup explicitly tests whether the host anti-affinity
         # scan loop can successfully degrade a preferred tier down to a fallback tier.
-        self.config_set('mds', f'mds_join_fs_{co_located_preferred_standby}', fs_name)
-        self.config_set('mds', f'mds_join_fs_{clean_vanilla_standby}', "")
+        self.config_set(f'mds.{co_located_preferred_standby}', 'mds_join_fs', fs_name)
+        self.config_set(f'mds.{clean_vanilla_standby}', 'mds_join_fs', "")
 
         # Apply and stabilize configurations
         self.mds_cluster.mds_restart(co_located_preferred_standby)
