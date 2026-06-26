@@ -48,14 +48,14 @@ class TestStandbyAffinity(CephFSTestCase):
         # sends it to the Monitor. The Monitor converts this into the
         # info.join_fscid integer inside the MDSMap::mds_info_t struct.
         # This feeds data into the scoring matrix.
-        self.config_set('mds', f'mds_join_fs_{preferred_standby}', fs_name)
+        self.config_set(f'mds.{preferred_standby}', 'mds_join_fs', fs_name)
         # Ensure the other is strictly vanilla
-        self.config_set('mds', f'mds_join_fs_{vanilla_standby}', "")
+        self.config_set(f'mds.{vanilla_standby}', 'mds_join_fs', "")
 
         # Restart daemons to apply configuration changes safely
         self.mds_cluster.mds_restart(preferred_standby)
         self.mds_cluster.mds_restart(vanilla_standby)
-        self.wait_until_healthy()
+        self.fs.wait_for_daemons()
 
         # Trigger the Failover on the verified active primary
         log.info(f"Killing active MDS {active_mds} to force failover...")
@@ -110,8 +110,7 @@ class TestStandbyAffinity(CephFSTestCase):
         active_mds = active_mds_names[0]
 
         # Query the runtime map to find the physical host string of the true active daemon
-        active_status = self.mds_cluster.status().get_daemon_status(active_mds)
-        active_host = active_status['host']
+        active_host = self.mds_cluster.mon_manager.find_remote('mds', active_mds).hostname
 
         co_located_preferred_standby = None
         clean_vanilla_standby = None
@@ -120,8 +119,7 @@ class TestStandbyAffinity(CephFSTestCase):
         for mds_id in mds_ids:
             if mds_id == active_mds:
                 continue
-            status = self.mds_cluster.status().get_daemon_status(mds_id)
-            current_host = status['host']
+            current_host = self.mds_cluster.mon_manager.find_remote('mds', mds_id).hostname
             if current_host == active_host and not co_located_preferred_standby:
                 co_located_preferred_standby = mds_id
             if current_host != active_host and not clean_vanilla_standby:
@@ -141,13 +139,13 @@ class TestStandbyAffinity(CephFSTestCase):
         # This gives it an initial high priority tier, while the vanilla standby remains
         # at a baseline tier. This setup explicitly tests whether the host anti-affinity
         # scan loop can successfully degrade a preferred tier down to a fallback tier.
-        self.config_set('mds', f'mds_join_fs_{co_located_preferred_standby}', fs_name)
-        self.config_set('mds', f'mds_join_fs_{clean_vanilla_standby}', "")
+        self.config_set(f'mds.{co_located_preferred_standby}', 'mds_join_fs', fs_name)
+        self.config_set(f'mds.{clean_vanilla_standby}', 'mds_join_fs', "")
 
         # Apply and stabilize configurations
         self.mds_cluster.mds_restart(co_located_preferred_standby)
         self.mds_cluster.mds_restart(clean_vanilla_standby)
-        self.wait_until_healthy()
+        self.fs.wait_for_daemons()
 
         # Kill the true active daemon to force election evaluation
         log.info(f"Triggering failover of active MDS {active_mds}...")
