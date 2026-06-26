@@ -1337,6 +1337,14 @@ seastar::future<> OSD::committed_osd_maps(
     }
     co_await update_heartbeat_peers();
     co_await check_osdmap_features();
+    // Seed any merge participants (target/source PGs) that this OSD must
+    // host for merges occurring in (first, last] but which are not currently
+    // instantiated locally.  Mirrors classic OSD::consume_map() ->
+    // prime_merges(): it must run *before* broadcast_map_to_pgs() so the
+    // newly-created participants are advanced through the merge epoch (and
+    // perform merge_from()) by the broadcast below instead of asserting in
+    // ShardServices::register_merge_source().
+    co_await pg_shard_manager.prime_merges(first, last);
     // yay!
     INFO("osd.{}: committed_osd_maps: broadcasting osdmaps up"
          " to {} epoch to pgs", whoami, osdmap->get_epoch());
