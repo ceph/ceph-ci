@@ -110,8 +110,7 @@ class TestStandbyAffinity(CephFSTestCase):
         active_mds = active_mds_names[0]
 
         # Query the runtime map to find the physical host string of the true active daemon
-        active_status = self.mds_cluster.status().get_daemon_status(active_mds)
-        active_host = active_status['host']
+        active_host = self.mds_cluster.mon_manager.find_remote('mds', active_mds).hostname
 
         co_located_preferred_standby = None
         clean_vanilla_standby = None
@@ -120,8 +119,7 @@ class TestStandbyAffinity(CephFSTestCase):
         for mds_id in mds_ids:
             if mds_id == active_mds:
                 continue
-            status = self.mds_cluster.status().get_daemon_status(mds_id)
-            current_host = status['host']
+            current_host = self.mds_cluster.mon_manager.find_remote('mds', mds_id).hostname
             if current_host == active_host and not co_located_preferred_standby:
                 co_located_preferred_standby = mds_id
             if current_host != active_host and not clean_vanilla_standby:
