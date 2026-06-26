@@ -60,7 +60,6 @@ class TestStandbyAffinity(CephFSTestCase):
         # Trigger the Failover on the verified active primary
         log.info(f"Killing active MDS {active_mds} to force failover...")
         self.mds_cluster.mds_stop(active_mds)
-        self.mds_cluster.mds_fail(active_mds)
 
         # The Monitor evaluates both standbys. Because preferred_standby has
         # a matching mds_join_fs configuration, it receives Score SCORE_PREF_MATCH (6)
@@ -150,7 +149,6 @@ class TestStandbyAffinity(CephFSTestCase):
         # Kill the true active daemon to force election evaluation
         log.info(f"Triggering failover of active MDS {active_mds}...")
         self.mds_cluster.mds_stop(active_mds)
-        self.mds_cluster.mds_fail(active_mds)
 
         # Allow time for the Monitor election loop to process and stabilize.
         # The Monitor evaluates both standbys. The preferred standby's score
