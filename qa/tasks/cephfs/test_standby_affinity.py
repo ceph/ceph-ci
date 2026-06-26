@@ -48,14 +48,14 @@ class TestStandbyAffinity(CephFSTestCase):
         # sends it to the Monitor. The Monitor converts this into the
         # info.join_fscid integer inside the MDSMap::mds_info_t struct.
         # This feeds data into the scoring matrix.
-        self.config_set('mds', f'mds_join_fs_{preferred_standby}', fs_name)
+        self.config_set(f'mds.{preferred_standby}', 'mds_join_fs', fs_name)
         # Ensure the other is strictly vanilla
-        self.config_set('mds', f'mds_join_fs_{vanilla_standby}', "")
+        self.config_set(f'mds.{vanilla_standby}', 'mds_join_fs', "")
 
         # Restart daemons to apply configuration changes safely
         self.mds_cluster.mds_restart(preferred_standby)
         self.mds_cluster.mds_restart(vanilla_standby)
-        self.wait_until_healthy()
+        self.fs.wait_for_daemons()
 
         # Trigger the Failover on the verified active primary
         log.info(f"Killing active MDS {active_mds} to force failover...")
@@ -145,7 +145,7 @@ class TestStandbyAffinity(CephFSTestCase):
         # Apply and stabilize configurations
         self.mds_cluster.mds_restart(co_located_preferred_standby)
         self.mds_cluster.mds_restart(clean_vanilla_standby)
-        self.wait_until_healthy()
+        self.fs.wait_for_daemons()
 
         # Kill the true active daemon to force election evaluation
         log.info(f"Triggering failover of active MDS {active_mds}...")
