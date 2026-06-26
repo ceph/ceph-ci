@@ -919,17 +919,22 @@ const MDSMap::mds_info_t* FSMap::find_replacement_for(mds_role_t role) const
     }
  }
 
-  /*
-   * 1. Hot Takeover (Rank is UP): Extract the active rank's address to
-   * enforce anti-affinity, preventing the standby from landing on the same host
-   * as the failing daemon.
-   * 2. Cold Crash (Rank is FAILED): The daemon is already dead and removed from
-   * the UP set. So pass nullptr to bypass the anti-affinity penalty and prioritize
-   * immediate cluster recovery.
-   */
   const entity_addrvec_t* avoid_addrs = nullptr;
   if (fs.mds_map.is_up(role.rank)) {
+    // Hot Takeover (Rank is UP)/ Natural Failover / Laggy state: Fetch directly
+    // from the active roster and enforce anti-affinity.
     avoid_addrs = &fs.mds_map.get_info(role.rank).get_addrs();
+  } else {
+    // Manual Administrative Eviction (mds_fail): The daemon is gone from the
+    // up roster. Loop safely through any matching ranks left in the master info
+    // registry to find its address footprint without triggering an out-of-bounds
+    // hang and then enforce anti-affinity on it.
+    for (const auto& [gid, info] : fs.mds_map.mds_info) {
+      if (info.rank == role.rank) {
+        avoid_addrs = &info.get_addrs();
+        break;
+      }
+    }
   }
 
   return get_available_standby(fs, avoid_addrs);
