@@ -12221,6 +12221,7 @@ void Server::_readdir_diff(
   size_t rollback_pos = 0;
   size_t rollback_num = 0;
 
+  bool waiting = false;
   bool end = build_snap_diff(
     mdr,
     dir,
@@ -12291,7 +12292,11 @@ void Server::_readdir_diff(
       mdcache->lru.lru_touch(dn);
       ++numfiles;
       return true;
-    });
+    },
+    &waiting);
+
+  if (waiting)
+    return;
 
   __u16 flags = 0;
   if (req_flags & CEPH_READDIR_REPLY_BITFLAGS) {
@@ -12312,7 +12317,8 @@ bool Server::build_snap_diff(
   snapid_t snapid_prev,
   snapid_t snapid,
   const bufferlist& dnbl,
-  std::function<bool (CDentry*, CInode*, bool)> add_result_cb)
+  std::function<bool (CDentry*, CInode*, bool)> add_result_cb,
+  bool *waiting)
 {
   client_t client = mdr->client_request->get_source().num();
 
@@ -12325,6 +12331,31 @@ bool Server::build_snap_diff(
       *this = EntryInfo();
     }
   } before;
+
+  auto get_synced_mtime = [&](CInode *in, utime_t &mtime) -> bool {
+    if (in->is_dir()) {
+      mtime = in->get_inode()->mtime;
+      return true;
+    }
+    if (mdr->is_rdlocked(&in->filelock)) {
+      mtime = in->get_inode()->mtime;
+      return true;
+    }
+    MutationImpl::LockOpVec lov;
+    lov.add_rdlock(&in->filelock);
+    if (!mds->locker->acquire_locks(mdr, lov)) {
+      dout(10) << __func__ << " waiting for snapflush, deferring readdir_snapdiff on "
+	       << *in << " snap " << snapid_prev << " vs. " << snapid << dendl;
+      if (waiting)
+	*waiting = true;
+      return false;
+    }
+    mtime = in->get_inode()->mtime;
+    auto lit = mdr->locks.find(&in->filelock);
+    ceph_assert(lit != mdr->locks.end());
+    mds->locker->rdlock_finish(lit, mdr.get(), nullptr);
+    return true;
+  };
 
   auto insert_deleted = [&](EntryInfo& ei) {
     dout(20) << "build_snap_diff deleted file " << ei.dn->get_name() << " "
@@ -12392,7 +12423,9 @@ bool Server::build_snap_diff(
     }
     ceph_assert(in);
 
-    utime_t mtime = in->get_inode()->mtime;
+    utime_t mtime;
+    if (!get_synced_mtime(in, mtime))
+      return false;
     if (in->is_dir()) {
 
       // we need to maintain the order of entries (determined by their name hashes)
