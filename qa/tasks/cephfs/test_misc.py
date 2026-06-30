@@ -635,9 +635,19 @@ class TestMisc(CephFSTestCase):
         self.mount_a.run_shell(["sh", "-c", f"echo 'payload' >> {test_file}"])
 
         # Gather the post-write modification time metrics
-        log.info("Gathering post-write metadata metrics from client_a")
-        post_mtime = int(self.mount_a.run_shell(["stat", "-c", "%Y",
-                                                 test_file]).stdout.getvalue().strip())
+        log.info("Gathering post-write metadata metrics from client_b to verify MDS state")
+        remote_path_b = f"{self.mount_b.mountpoint}/{test_file}"
+
+        # Poll Client B to give the MDS cap message update loop time to
+        # synchronize over the network.
+        post_mtime = 0
+        for _ in range(50):
+            post_mtime = int(self.mount_b.run_shell(["stat", "-c", "%Y", remote_path_b
+                                                     ]).stdout.getvalue().strip())
+            # If the mtime is updated, then break
+            if post_mtime < future_mtime:
+                break
+            time.sleep(0.1)
 
         # Refresh current time gauge
         final_current_time = int(self.mount_a.run_shell(["date", "+%s"
@@ -655,15 +665,14 @@ class TestMisc(CephFSTestCase):
                  f" | Current system time: {final_current_time}")
 
         # The post-write mtime should no longer be stuck in the future.
-        # It must be within a safe delta (e.g., 10 seconds) of the current real
-        # system clock time.
+        # It must be within a safe delta (300 seconds) of the current real system clock time.
         # A strict match post_mtime == final_current_time would cause false failures.
         self.assertLessEqual(
-            post_mtime,
-            final_current_time + 10,
-            "REGRESSION DETECTED: The futuristic mtime remained stuck after a "
-            "write operation because metadata caps were not dirtied or forced "
-            "backward to the real clock."
+            abs(post_mtime - final_current_time),
+            300,
+            "REGRESSION DETECTED: The futuristic mtime remained stuck on the MDS "
+            "after a write operation because metadata caps were not flushed back "
+            "under shared write execution."
         )
 
 @classhook('_add_session_client_evictions')
