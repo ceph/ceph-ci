@@ -6659,6 +6659,45 @@ void BlueStore::_init_logger()
   b.add_time_avg(l_bluestore_truncate_lat, "truncate_lat",
     "Average truncate latency",
     "tr_l", PerfCountersBuilder::PRIO_USEFUL);
+  b.add_time_avg(l_bluestore_exists_lat, "exists_lat",
+    "Average exists call latency",
+    "ex_l", PerfCountersBuilder::PRIO_USEFUL);
+  b.add_time_avg(l_bluestore_stat_lat, "stat_lat",
+    "Average stat call latency",
+    "st_l", PerfCountersBuilder::PRIO_USEFUL);
+  b.add_time_avg(l_bluestore_getattr_lat, "getattr_lat",
+    "Average getattr/getattrs call latency",
+    "ga_l", PerfCountersBuilder::PRIO_USEFUL);
+  b.add_time_avg(l_bluestore_fiemap_lat, "fiemap_lat",
+    "Average fiemap call latency",
+    "fm_l", PerfCountersBuilder::PRIO_USEFUL);
+  b.add_time_avg(l_bluestore_omap_get_lat, "omap_get_lat",
+    "Average omap read (omap_get/omap_get_header/omap_check_keys) latency",
+    "og_l", PerfCountersBuilder::PRIO_USEFUL);
+  b.add_time_avg(l_bluestore_clone_lat, "clone_lat",
+    "Average clone/clone_range operation latency",
+    "clnl", PerfCountersBuilder::PRIO_USEFUL);
+  b.add_time_avg(l_bluestore_attr_lat, "attr_lat",
+    "Average setattr/setattrs/rmattr/rmattrs latency",
+    "at_l", PerfCountersBuilder::PRIO_USEFUL);
+  b.add_time_avg(l_bluestore_touch_lat, "touch_lat",
+    "Average touch latency",
+    "to_l", PerfCountersBuilder::PRIO_USEFUL);
+  b.add_time_avg(l_bluestore_zero_lat, "zero_lat",
+    "Average zero latency",
+    "ze_l", PerfCountersBuilder::PRIO_USEFUL);
+  b.add_time_avg(l_bluestore_omap_set_lat, "omap_set_lat",
+    "Average omap write (setkeys/setheader/rmkeys/rmkey_range) latency",
+    "os_l", PerfCountersBuilder::PRIO_USEFUL);
+  b.add_time_avg(l_bluestore_rename_lat, "rename_lat",
+    "Average rename latency",
+    "rn_l", PerfCountersBuilder::PRIO_USEFUL);
+  b.add_time_avg(l_bluestore_collection_lat, "collection_lat",
+    "Average collection metadata query latency (list/exists/bits)",
+    "co_l", PerfCountersBuilder::PRIO_USEFUL);
+  b.add_time_avg(l_bluestore_other_write_lat, "other_write_lat",
+    "Average latency of other/rare write ops (set_alloc_hint, set_collection_opts, collection create/remove/split/merge)",
+    "ot_l", PerfCountersBuilder::PRIO_USEFUL);
   //****************************************
 
   // slow op count
@@ -12708,6 +12747,7 @@ bool BlueStore::exists(CollectionHandle &c_, const ghobject_t& oid)
   if (!c->exists)
     return false;
 
+  auto start = mono_clock::now();
   bool r = true;
 
   {
@@ -12716,7 +12756,10 @@ bool BlueStore::exists(CollectionHandle &c_, const ghobject_t& oid)
     if (!o || !o->exists)
       r = false;
   }
-
+  log_latency(__func__,
+    l_bluestore_exists_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   return r;
 }
 
@@ -12729,13 +12772,19 @@ int BlueStore::stat(
   Collection *c = static_cast<Collection *>(c_.get());
   if (!c->exists)
     return -ENOENT;
+  auto start = mono_clock::now();
   dout(10) << __func__ << " " << c->get_cid() << " " << oid << dendl;
 
   {
     std::shared_lock l(c->lock);
     OnodeRef o = c->get_onode(oid, false);
-    if (!o || !o->exists)
+    if (!o || !o->exists) {
+      log_latency(__func__,
+        l_bluestore_stat_lat,
+        mono_clock::now() - start,
+        cct->_conf->bluestore_log_op_age);
       return -ENOENT;
+    }
     st->st_size = o->onode.size;
     st->st_blksize = 4096;
     st->st_blocks = (st->st_size + st->st_blksize - 1) / st->st_blksize;
@@ -12747,8 +12796,13 @@ int BlueStore::stat(
     r = -EIO;
     derr << __func__ << " " << c->cid << " " << oid << " INJECT EIO" << dendl;
   }
+  log_latency(__func__,
+    l_bluestore_stat_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   return r;
 }
+
 int BlueStore::set_collection_opts(
   CollectionHandle& ch,
   const pool_opts_t& opts)
@@ -12757,6 +12811,7 @@ int BlueStore::set_collection_opts(
   dout(15) << __func__ << " " << ch->cid << " options " << opts << dendl;
   if (!c->exists)
     return -ENOENT;
+  auto start = mono_clock::now();
   std::unique_lock l{c->lock};
   c->pool_opts = opts;
 
@@ -12820,6 +12875,9 @@ int BlueStore::set_collection_opts(
   if (c->pool_opts.get(pool_opts_t::COMPRESSION_REQUIRED_RATIO, &dval)) {
     c->compression_req_ratio = dval;
   }
+  log_latency(__func__, l_bluestore_other_write_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   return 0;
 }
 
@@ -13467,11 +13525,16 @@ int BlueStore::_fiemap(
   Collection *c = static_cast<Collection *>(c_.get());
   if (!c->exists)
     return -ENOENT;
+  auto start = mono_clock::now();
   {
     std::shared_lock l(c->lock);
 
     OnodeRef o = c->get_onode(oid, false);
     if (!o || !o->exists) {
+      log_latency(__func__,
+        l_bluestore_fiemap_lat,
+        mono_clock::now() - start,
+        cct->_conf->bluestore_log_op_age);
       return -ENOENT;
     }
     _dump_onode<30>(cct, *o);
@@ -13521,6 +13584,10 @@ int BlueStore::_fiemap(
   }
 
  out:
+  log_latency(__func__,
+    l_bluestore_fiemap_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   dout(20) << __func__ << " 0x" << std::hex << offset << "~" << length
 	   << " size = 0x(" << destset << ")" << std::dec << dendl;
   return 0;
@@ -13813,7 +13880,7 @@ int BlueStore::getattr(
   dout(15) << __func__ << " " << c->cid << " " << oid << " " << name << dendl;
   if (!c->exists)
     return -ENOENT;
-
+  auto start = mono_clock::now();
   int r;
   {
     std::shared_lock l(c->lock);
@@ -13837,6 +13904,10 @@ int BlueStore::getattr(
     r = -EIO;
     derr << __func__ << " " << c->cid << " " << oid << " INJECT EIO" << dendl;
   }
+  log_latency(__func__,
+    l_bluestore_getattr_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   dout(10) << __func__ << " " << c->cid << " " << oid << " " << name
 	   << " = " << r << dendl;
   return r;
@@ -13851,7 +13922,7 @@ int BlueStore::getattrs(
   dout(15) << __func__ << " " << c->cid << " " << oid << dendl;
   if (!c->exists)
     return -ENOENT;
-
+  auto start = mono_clock::now();
   int r;
   {
     std::shared_lock l(c->lock);
@@ -13873,6 +13944,10 @@ int BlueStore::getattrs(
     r = -EIO;
     derr << __func__ << " " << c->cid << " " << oid << " INJECT EIO" << dendl;
   }
+  log_latency(__func__,
+    l_bluestore_getattr_lat,  // give getattr and getattrs a shared counter
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   dout(10) << __func__ << " " << c->cid << " " << oid
 	   << " = " << r << dendl;
   return r;
@@ -13880,16 +13955,24 @@ int BlueStore::getattrs(
 
 int BlueStore::list_collections(vector<coll_t>& ls)
 {
+  auto start = mono_clock::now();
   std::shared_lock l(coll_lock);
   ls.reserve(coll_map.size());
   for (auto p = coll_map.begin(); p != coll_map.end(); ++p)
     ls.push_back(p->first);
+  log_latency(__func__, l_bluestore_collection_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   return 0;
 }
 
 bool BlueStore::collection_exists(const coll_t& c)
 {
+  auto start = mono_clock::now();
   std::shared_lock l(coll_lock);
+  log_latency(__func__, l_bluestore_collection_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   return coll_map.count(c);
 }
 
@@ -13913,8 +13996,12 @@ int BlueStore::collection_empty(CollectionHandle& ch, bool *empty)
 int BlueStore::collection_bits(CollectionHandle& ch)
 {
   dout(15) << __func__ << " " << ch->cid << dendl;
+  auto start = mono_clock::now();
   Collection *c = static_cast<Collection*>(ch.get());
   std::shared_lock l(c->lock);
+  log_latency(__func__, l_bluestore_collection_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   dout(10) << __func__ << " " << ch->cid << " = " << c->cnode.bits << dendl;
   return c->cnode.bits;
 }
@@ -14072,7 +14159,12 @@ int BlueStore::omap_get(
   )
 {
   Collection *c = static_cast<Collection *>(c_.get());
-  return _omap_get(c, oid, header, out);
+  auto start = mono_clock::now();
+  int r = _omap_get(c, oid, header, out);   // 1. call, but capture the result instead of returning it
+  log_latency(__func__, l_bluestore_omap_get_lat,
+    mono_clock::now() - start,              // 2. now there's a place to stop the clock + log
+    cct->_conf->bluestore_log_op_age);
+  return r;                                 // 3. then return the captured value
 }
 
 int BlueStore::_omap_get(
@@ -14152,6 +14244,7 @@ int BlueStore::omap_get_header(
   dout(15) << __func__ << " " << c->get_cid() << " oid " << oid << dendl;
   if (!c->exists)
     return -ENOENT;
+  auto start = mono_clock::now();
   std::shared_lock l(c->lock);
   int r = 0;
   OnodeRef o = c->get_onode(oid, false);
@@ -14172,6 +14265,10 @@ int BlueStore::omap_get_header(
     }
   }
  out:
+  log_latency(__func__,
+    l_bluestore_omap_get_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   dout(10) << __func__ << " " << c->get_cid() << " oid " << oid << " = " << r
 	   << dendl;
   return r;
@@ -14239,6 +14336,7 @@ int BlueStore::omap_check_keys(
   dout(15) << __func__ << " " << c->get_cid() << " oid " << oid << dendl;
   if (!c->exists)
     return -ENOENT;
+  auto start = mono_clock::now();
   std::shared_lock l(c->lock);
   int r = 0;
   string final_key;
@@ -14270,6 +14368,10 @@ int BlueStore::omap_check_keys(
     }
   }
  out:
+  log_latency(__func__,
+    l_bluestore_omap_get_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   dout(10) << __func__ << " " << c->get_cid() << " oid " << oid << " = " << r
 	   << dendl;
   return r;
@@ -16560,8 +16662,20 @@ int BlueStore::_touch(TransContext *txc,
 {
   dout(15) << __func__ << " " << c->cid << " " << o->oid << dendl;
   int r = 0;
+  auto start = mono_clock::now();
   _assign_nid(txc, o);
   txc->write_onode(o);
+  log_latency_fn(
+    __func__,
+    l_bluestore_touch_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age,
+    [&](const ceph::timespan& lat) {
+      ostringstream ostr;
+      ostr << ", lat = " << timespan_str(lat)
+        << " cid =" << c->cid << " oid =" << o->oid;
+      return ostr.str();
+    });
   dout(10) << __func__ << " " << c->cid << " " << o->oid << " = " << r << dendl;
   return r;
 }
@@ -18186,6 +18300,7 @@ int BlueStore::_zero(TransContext *txc,
   dout(15) << __func__ << " " << c->cid << " " << o->oid
 	   << " 0x" << std::hex << offset << "~" << length << std::dec
 	   << dendl;
+  auto start = mono_clock::now();
   int r = 0;
   if (offset + length >= OBJECT_MAX_SIZE) {
     r = -E2BIG;
@@ -18193,6 +18308,17 @@ int BlueStore::_zero(TransContext *txc,
     _assign_nid(txc, o);
     r = _do_zero(txc, c, o, offset, length);
   }
+  log_latency_fn(
+    __func__,
+    l_bluestore_zero_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age,
+    [&](const ceph::timespan& lat) {
+      ostringstream ostr;
+      ostr << ", lat = " << timespan_str(lat)
+        << " cid =" << c->cid << " oid =" << o->oid;
+      return ostr.str();
+    });
   dout(10) << __func__ << " " << c->cid << " " << o->oid
 	   << " 0x" << std::hex << offset << "~" << length << std::dec
 	   << " = " << r << dendl;
@@ -18468,6 +18594,7 @@ int BlueStore::_setattr(TransContext *txc,
   dout(15) << __func__ << " " << c->cid << " " << o->oid
 	   << " " << name << " (" << val.length() << " bytes)"
 	   << dendl;
+  auto start = mono_clock::now();
   int r = 0;
   auto& b = o->onode.attrs[name.c_str()];
   if (val.length() == 0) {
@@ -18481,6 +18608,17 @@ int BlueStore::_setattr(TransContext *txc,
   b.reassign_to_mempool(mempool::mempool_bluestore_cache_meta);
 
   txc->write_onode(o);
+  log_latency_fn(
+    __func__,
+    l_bluestore_attr_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age,
+    [&](const ceph::timespan& lat) {
+      ostringstream ostr;
+      ostr << ", lat = " << timespan_str(lat)
+        << " cid =" << c->cid << " oid =" << o->oid;
+      return ostr.str();
+    });
   dout(10) << __func__ << " " << c->cid << " " << o->oid
 	   << " " << name << " (" << val.length() << " bytes)"
 	   << " = " << r << dendl;
@@ -18495,6 +18633,7 @@ int BlueStore::_setattrs(TransContext *txc,
   dout(15) << __func__ << " " << c->cid << " " << o->oid
 	   << " " << aset.size() << " keys"
 	   << dendl;
+  auto start = mono_clock::now();
   int r = 0;
   for (map<string,bufferptr>::const_iterator p = aset.begin();
        p != aset.end(); ++p) {
@@ -18508,6 +18647,17 @@ int BlueStore::_setattrs(TransContext *txc,
     }
   }
   txc->write_onode(o);
+  log_latency_fn(
+    __func__,
+    l_bluestore_attr_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age,
+    [&](const ceph::timespan& lat) {
+      ostringstream ostr;
+      ostr << ", lat = " << timespan_str(lat)
+        << " cid =" << c->cid << " oid =" << o->oid;
+      return ostr.str();
+    });
   dout(10) << __func__ << " " << c->cid << " " << o->oid
 	   << " " << aset.size() << " keys"
 	   << " = " << r << dendl;
@@ -18522,6 +18672,7 @@ int BlueStore::_rmattr(TransContext *txc,
 {
   dout(15) << __func__ << " " << c->cid << " " << o->oid
 	   << " " << name << dendl;
+  auto start = mono_clock::now();
   int r = 0;
   auto it = o->onode.attrs.find(name.c_str());
   if (it == o->onode.attrs.end())
@@ -18530,7 +18681,16 @@ int BlueStore::_rmattr(TransContext *txc,
   o->onode.attrs.erase(it);
   txc->write_onode(o);
 
- out:
+out:
+  log_latency_fn(
+    __func__, l_bluestore_attr_lat,
+    mono_clock::now() - start, cct->_conf->bluestore_log_op_age,
+    [&](const ceph::timespan& lat) {
+      ostringstream ostr;
+      ostr << ", lat = " << timespan_str(lat)
+        << " cid =" << c->cid << " oid =" << o->oid;
+      return ostr.str();
+    });
   dout(10) << __func__ << " " << c->cid << " " << o->oid
 	   << " " << name << " = " << r << dendl;
   return r;
@@ -18541,6 +18701,7 @@ int BlueStore::_rmattrs(TransContext *txc,
 			OnodeRef& o)
 {
   dout(15) << __func__ << " " << c->cid << " " << o->oid << dendl;
+  auto start = mono_clock::now();
   int r = 0;
 
   if (o->onode.attrs.empty())
@@ -18550,6 +18711,15 @@ int BlueStore::_rmattrs(TransContext *txc,
   txc->write_onode(o);
 
  out:
+  log_latency_fn(
+    __func__, l_bluestore_attr_lat,
+    mono_clock::now() - start, cct->_conf->bluestore_log_op_age,
+    [&](const ceph::timespan& lat) {
+      ostringstream ostr;
+      ostr << ", lat = " << timespan_str(lat)
+        << " cid =" << c->cid << " oid =" << o->oid;
+      return ostr.str();
+    });
   dout(10) << __func__ << " " << c->cid << " " << o->oid << " = " << r << dendl;
   return r;
 }
@@ -18593,6 +18763,7 @@ int BlueStore::_omap_setkeys(TransContext *txc,
 			     bufferlist &bl)
 {
   dout(15) << __func__ << " " << c->cid << " " << o->oid << dendl;
+  auto start = mono_clock::now();
   int r;
   auto p = bl.cbegin();
   __u32 num;
@@ -18635,6 +18806,17 @@ int BlueStore::_omap_setkeys(TransContext *txc,
   logger->inc(l_bluestore_omap_setkeys_records, num0);
   logger->inc(l_bluestore_omap_setkeys_bytes, total_bytes);
   r = 0;
+  log_latency_fn(
+    __func__,
+    l_bluestore_omap_set_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age,
+    [&](const ceph::timespan& lat) {
+      ostringstream ostr;
+      ostr << ", lat = " << timespan_str(lat)
+        << " cid =" << c->cid << " oid =" << o->oid;
+      return ostr.str();
+    });
   dout(10) << __func__ << " " << c->cid << " " << o->oid << " = " << r << dendl;
   return r;
 }
@@ -18645,6 +18827,7 @@ int BlueStore::_omap_setheader(TransContext *txc,
 			       bufferlist& bl)
 {
   dout(15) << __func__ << " " << c->cid << " " << o->oid << dendl;
+  auto start = mono_clock::now();
   int r;
   string key;
   if (!o->onode.has_omap()) {
@@ -18669,6 +18852,17 @@ int BlueStore::_omap_setheader(TransContext *txc,
   logger->inc(l_bluestore_omap_setheader_count);
   logger->inc(l_bluestore_omap_setheader_bytes, bl.length());
   r = 0;
+  log_latency_fn(
+    __func__,
+    l_bluestore_omap_set_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age,
+    [&](const ceph::timespan& lat) {
+      ostringstream ostr;
+      ostr << ", lat = " << timespan_str(lat)
+        << " cid =" << c->cid << " oid =" << o->oid;
+      return ostr.str();
+    });
   dout(10) << __func__ << " " << c->cid << " " << o->oid << " = " << r << dendl;
   return r;
 }
@@ -18679,6 +18873,7 @@ int BlueStore::_omap_rmkeys(TransContext *txc,
 			    bufferlist& bl)
 {
   dout(15) << __func__ << " " << c->cid << " " << o->oid << dendl;
+  auto start = mono_clock::now();
   int r = 0;
   auto p = bl.cbegin();
   __u32 num;
@@ -18705,6 +18900,17 @@ int BlueStore::_omap_rmkeys(TransContext *txc,
   txc->note_modified_object(o);
 
  out:
+  log_latency_fn(
+    __func__,
+    l_bluestore_omap_set_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age,
+    [&](const ceph::timespan& lat) {
+      ostringstream ostr;
+      ostr << ", lat = " << timespan_str(lat)
+        << " cid =" << c->cid << " oid =" << o->oid;
+      return ostr.str();
+    });
   dout(10) << __func__ << " " << c->cid << " " << o->oid << " = " << r << dendl;
   return r;
 }
@@ -18715,6 +18921,7 @@ int BlueStore::_omap_rmkey_range(TransContext *txc,
 				 const string& first, const string& last)
 {
   dout(15) << __func__ << " " << c->cid << " " << o->oid << dendl;
+  auto start = mono_clock::now();
   string key_first, key_last;
   int r = 0;
   if (!o->onode.has_omap()) {
@@ -18734,6 +18941,17 @@ int BlueStore::_omap_rmkey_range(TransContext *txc,
   txc->note_modified_object(o);
 
  out:
+  log_latency_fn(
+    __func__,
+    l_bluestore_omap_set_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age,
+    [&](const ceph::timespan& lat) {
+      ostringstream ostr;
+      ostr << ", lat = " << timespan_str(lat)
+        << " cid =" << c->cid << " oid =" << o->oid;
+      return ostr.str();
+    });
   return r;
 }
 
@@ -18750,11 +18968,15 @@ int BlueStore::_set_alloc_hint(
 	   << " write_size " << expected_write_size
 	   << " flags " << ceph_osd_alloc_hint_flag_string(flags)
 	   << dendl;
+  auto start = mono_clock::now();
   int r = 0;
   o->onode.expected_object_size = expected_object_size;
   o->onode.expected_write_size = expected_write_size;
   o->onode.alloc_hint_flags = flags;
   txc->write_onode(o);
+  log_latency(__func__, l_bluestore_other_write_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   dout(10) << __func__ << " " << c->cid << " " << o->oid
 	   << " object_size " << expected_object_size
 	   << " write_size " << expected_write_size
@@ -18776,7 +18998,7 @@ int BlueStore::_clone(TransContext *txc,
 	 << " and " << newo->oid << dendl;
     return -EINVAL;
   }
-
+  auto start = mono_clock::now();
   _assign_nid(txc, newo);
 
   // clone data
@@ -18842,6 +19064,20 @@ int BlueStore::_clone(TransContext *txc,
   r = 0;
 
  out:
+  log_latency_fn(
+    __func__,
+    l_bluestore_clone_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age,
+    [&](const ceph::timespan& lat) {
+      ostringstream ostr;
+      ostr << ", lat = " << timespan_str(lat)
+        << " cid =" << c->cid
+        << " old_oid =" << oldo->oid
+        << " new_oid =" << newo->oid;
+      return ostr.str();
+    }
+  );
   dout(10) << __func__ << " " << c->cid << " " << oldo->oid << " -> "
 	   << newo->oid << " = " << r << dendl;
   return r;
@@ -18888,7 +19124,7 @@ int BlueStore::_clone_range(TransContext *txc,
 	   << newo->oid << " from 0x" << std::hex << srcoff << "~" << length
 	   << " to offset 0x" << dstoff << std::dec << dendl;
   int r = 0;
-
+  auto start = mono_clock::now();
   if (srcoff + length >= OBJECT_MAX_SIZE ||
       dstoff + length >= OBJECT_MAX_SIZE) {
     r = -E2BIG;
@@ -18920,6 +19156,23 @@ int BlueStore::_clone_range(TransContext *txc,
   r = 0;
 
  out:
+  log_latency_fn(
+    __func__,
+    l_bluestore_clone_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age,
+    [&](const ceph::timespan& lat) {
+      ostringstream ostr;
+      ostr << ", lat = " << timespan_str(lat)
+        << " cid =" << c->cid
+        << " old_oid =" << oldo->oid
+        << " new_oid =" << newo->oid
+        << " srcoff = 0x" << std::hex << srcoff
+        << " length = 0x" << length
+        << " dstoff = 0x" << dstoff;
+      return ostr.str();
+    }
+  );
   dout(10) << __func__ << " " << c->cid << " " << oldo->oid << " -> "
 	   << newo->oid << " from 0x" << std::hex << srcoff << "~" << length
 	   << " to offset 0x" << dstoff << std::dec
@@ -18935,6 +19188,7 @@ int BlueStore::_rename(TransContext *txc,
 {
   dout(15) << __func__ << " " << c->cid << " " << oldo->oid << " -> "
 	   << new_oid << dendl;
+  auto start = mono_clock::now();
   int r;
   ghobject_t old_oid = oldo->oid;
   mempool::bluestore_cache_meta::string new_okey;
@@ -18978,6 +19232,20 @@ int BlueStore::_rename(TransContext *txc,
   txc->note_modified_object(oldo);
 
  out:
+  log_latency_fn(
+    __func__,
+    l_bluestore_rename_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age,
+    [&](const ceph::timespan& lat) {
+      ostringstream ostr;
+      ostr << ", lat = " << timespan_str(lat)
+        << " cid =" << c->cid
+        << " old_oid =" << old_oid
+        << " new_oid =" << new_oid;
+      return ostr.str();
+    }
+  );
   dout(10) << __func__ << " " << c->cid << " " << old_oid << " -> "
 	   << new_oid << " = " << r << dendl;
   return r;
@@ -18992,6 +19260,7 @@ int BlueStore::_create_collection(
   CollectionRef *c)
 {
   dout(15) << __func__ << " " << cid << " bits " << bits << dendl;
+  auto start = mono_clock::now();
   int r;
   bufferlist bl;
 
@@ -19013,6 +19282,9 @@ int BlueStore::_create_collection(
   r = 0;
 
  out:
+  log_latency(__func__, l_bluestore_other_write_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   dout(10) << __func__ << " " << cid << " bits " << bits << " = " << r << dendl;
   return r;
 }
@@ -19021,6 +19293,7 @@ int BlueStore::_remove_collection(TransContext *txc, const coll_t &cid,
 				  CollectionRef *c)
 {
   dout(15) << __func__ << " " << cid << dendl;
+  auto start = mono_clock::now();
   int r;
 
   (*c)->flush_all_but_last();
@@ -19077,6 +19350,9 @@ int BlueStore::_remove_collection(TransContext *txc, const coll_t &cid,
     }
   }
 out:
+  log_latency(__func__, l_bluestore_other_write_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   dout(10) << __func__ << " " << cid << " = " << r << dendl;
   return r;
 }
@@ -19099,6 +19375,7 @@ int BlueStore::_split_collection(TransContext *txc,
 {
   dout(15) << __func__ << " " << c->cid << " to " << d->cid << " "
 	   << " bits " << bits << dendl;
+  auto start = mono_clock::now();
   std::unique_lock l(c->lock);
   std::unique_lock l2(d->lock);
   int r;
@@ -19139,6 +19416,9 @@ int BlueStore::_split_collection(TransContext *txc,
   encode(c->cnode, bl);
   txc->t->set(PREFIX_COLL, stringify(c->cid), bl);
 
+  log_latency(__func__, l_bluestore_other_write_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   dout(10) << __func__ << " " << c->cid << " to " << d->cid << " "
 	   << " bits " << bits << " = " << r << dendl;
   return r;
@@ -19152,6 +19432,7 @@ int BlueStore::_merge_collection(
 {
   dout(15) << __func__ << " " << (*c)->cid << " to " << d->cid
 	   << " bits " << bits << dendl;
+  auto start = mono_clock::now();
   std::unique_lock l((*c)->lock);
   std::unique_lock l2(d->lock);
   int r;
@@ -19195,6 +19476,9 @@ int BlueStore::_merge_collection(
   encode(d->cnode, bl);
   txc->t->set(PREFIX_COLL, stringify(d->cid), bl);
 
+  log_latency(__func__, l_bluestore_other_write_lat,
+    mono_clock::now() - start,
+    cct->_conf->bluestore_log_op_age);
   dout(10) << __func__ << " " << cid << " to " << d->cid << " "
 	   << " bits " << bits << " = " << r << dendl;
   return r;
