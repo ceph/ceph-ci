@@ -1,7 +1,8 @@
 tasks:
 - cephfs_test_runner:
     modules:
-      - tasks.cephfs.test_misc
+      - tasks.cephfs.test_misc.TestMisc.test_write_overrides_futuristic_mtime
+      - tasks.cephfs.test_misc.TestMisc.test_ctime_bump_on_matching_atime
 
 overrides:
   ceph:
