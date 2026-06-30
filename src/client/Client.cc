@@ -12279,6 +12279,22 @@ int64_t Client::_write_success(Fh *f, utime_t start, uint64_t fpos,
   in->change_attr++;
   in->mark_caps_dirty(CEPH_CAP_FILE_WR);
 
+  /*
+   * If exclusive capabilities (EXCL) are missing, another
+   * client or concurrent reader can have an un-synchronized, stale view of
+   * a previously user-set futuristic timestamp. Since we have just overwritten
+   * the futuristic mtime/ctime with the real clock time locally, we must
+   * proactively flush these dirty attributes to the MDS synchronously via
+   * check_caps instead of relying on an asynchronous, lazy background sync.
+   */
+  if (!in->caps_issued_mask(CEPH_CAP_FILE_EXCL)) {
+    ceph_tid_t flush_tid = 0;
+    int flushing_flags = mark_caps_flushing(in, &flush_tid);
+    if (flushing_flags > 0 && flush_tid > 0) {
+      wait_sync_caps(flush_tid);
+    }
+  }
+
   return r;
 }
 
@@ -12751,19 +12767,6 @@ int64_t Client::_write(Fh *f, int64_t offset, uint64_t size, bufferlist bl,
     return r;
 
   put_cap_ref(in, CEPH_CAP_AUTH_SHARED);
-  /* A data write operation must unconditionally overwrite a futuristic mtime
-   * with the current clock time. When multiple clients hold file
-   * handles open, exclusive capabilities (EXCL) are revoked. This fix forces
-   * the client to actively advance the time and dirty the write capabilities
-   * even under shared write execution.
-   */
-  utime_t now = ceph_clock_now();
-  if (in->mtime > now || (in->caps_issued() & CEPH_CAP_FILE_EXCL)) {
-    in->mtime = now;
-    in->ctime = now;
-    in->mark_caps_dirty(CEPH_CAP_FILE_WR);
-  }
-
   if (size > 0) {
     r = clear_suid_sgid(in, f->actor_perms);
     if (r < 0) {
