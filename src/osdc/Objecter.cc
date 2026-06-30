@@ -240,10 +240,6 @@ std::vector<std::string> Objecter::get_tracked_keys() const noexcept
     "osd_split_op_bucket_2_skip_budget"s,
     "osd_split_op_bucket_3_latency_us"s,
     "osd_split_op_bucket_3_skip_budget"s,
-    "osd_split_op_bucket_4_latency_us"s,
-    "osd_split_op_bucket_4_skip_budget"s,
-    "osd_split_op_bucket_5_latency_us"s,
-    "osd_split_op_bucket_5_skip_budget"s,
   };
 }
 
@@ -265,7 +261,7 @@ void Objecter::handle_conf_change(const ConfigProxy& conf,
       = conf.get_val<uint64_t>("osd_min_split_replica_read_size");
   }
 
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 3; i++) {
     std::string latency_key = "osd_split_op_bucket_" + std::to_string(i + 1) + "_latency_us";
     std::string budget_key = "osd_split_op_bucket_" + std::to_string(i + 1) + "_skip_budget";
     
@@ -5489,7 +5485,7 @@ Objecter::Objecter(CephContext *cct,
   min_split_replica_read_size
     = cct->_conf.get_val<uint64_t>("osd_min_split_replica_read_size");
 
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 3; i++) {
     std::string latency_key = "osd_split_op_bucket_" + std::to_string(i + 1) + "_latency_us";
     std::string budget_key = "osd_split_op_bucket_" + std::to_string(i + 1) + "_skip_budget";
     split_op_buckets[i].latency_us = cct->_conf.get_val<uint64_t>(latency_key);

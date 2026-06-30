@@ -2576,7 +2576,7 @@ public:
     uint64_t skip_budget;
   };
 
-  std::array<SplitOpBucket, 5> split_op_buckets;
+  std::array<SplitOpBucket, 3> split_op_buckets;
   uint64_t min_split_replica_read_size;
 
   // last time osdmap was requested
@@ -2993,7 +2993,7 @@ public:
     return min_split_replica_read_size;
   }
 
-  const std::array<SplitOpBucket, 5>& get_split_op_buckets() const {
+  const std::array<SplitOpBucket, 3>& get_split_op_buckets() const {
     return split_op_buckets;
   }
 

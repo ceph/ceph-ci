@@ -549,7 +549,7 @@ void SplitOp::complete() {
     const auto& buckets = objecter.get_split_op_buckets();
     
     // Skip buckets with latency_us == 0 (disabled buckets)
-    for (int i = 4; i >= 0; i--) {
+    for (int i = 2; i >= 0; i--) {
       if (buckets[i].latency_us > 0 && max_queue_latency_us >= buckets[i].latency_us) {
         skip_budget = buckets[i].skip_budget;
         threshold_exceeded = true;
