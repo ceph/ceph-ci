@@ -17,18 +17,18 @@ CnLog::~CnLog() {
 }
 
 void CnLog::_flush(EntryVector& q, bool crash) {
-  // XXX: the waiting here will block the thread for an indeterministic peroid
-  seastar::alien::submit_to(inst, shard, [&q] {
-    for (auto& it : q) {
+  EntryVector entries;
+  entries.swap(q);
+  std::ignore = seastar::alien::submit_to(inst, shard,
+    [entries = std::move(entries)] {
+    for (const auto& it : entries) {
       crimson::get_logger(it.m_subsys).log(
         crimson::to_log_level(it.m_prio),
         "{}",
         it.strv());
     }
     return seastar::make_ready_future<>();
-  }).wait();
-  q.clear();
-  return;
+  });
 }
 
 } //namespace ceph::logging
