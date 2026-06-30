@@ -12752,13 +12752,14 @@ int64_t Client::_write(Fh *f, int64_t offset, uint64_t size, bufferlist bl,
 
   put_cap_ref(in, CEPH_CAP_AUTH_SHARED);
   /* A data write operation must unconditionally overwrite a futuristic mtime
-   * with the current clock time. When multiple clients hold file
-   * handles open, exclusive capabilities (EXCL) are revoked. This fix forces
-   * the client to actively advance the time and dirty the write capabilities
-   * even under shared write execution.
+   * with the current clock time. Additionally, if exclusive capabilities (EXCL)
+   * are missing (e.g., under multi-client SHARED execution), we must proactively
+   * advance the timestamps and dirty the write capabilities (CEPH_CAP_FILE_WR).
+   * This guarantees that the timestamp updates are aggressively flushed over the
+   * wire to the MDS rather than being optimized away or lost in local cache.
    */
   utime_t now = ceph_clock_now();
-  if (in->mtime > now || (in->caps_issued() & CEPH_CAP_FILE_EXCL)) {
+  if (in->mtime > now || !in->caps_issued_mask(CEPH_CAP_FILE_EXCL)) {
     in->mtime = now;
     in->ctime = now;
     in->mark_caps_dirty(CEPH_CAP_FILE_WR);
