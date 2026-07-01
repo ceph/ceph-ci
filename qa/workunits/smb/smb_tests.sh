@@ -23,5 +23,5 @@ fi
 trap cleanup EXIT
 
 cd "${HERE}"
-"${VENV}/bin/${PY}" -m pip install pytest smbprotocol
+"${VENV}/bin/${PY}" -m pip install pytest smbprotocol grpcio grpcio-reflection
 "${VENV}/bin/${PY}" -m pytest -v "$@"
