@@ -36,6 +36,7 @@ from .cephadmservice import (
 )
 from ..tlsobject_types import TLSCredentials, EMPTY_TLS_CREDENTIALS
 from ..schedule import DaemonPlacement
+from cephadm import utils
 
 if TYPE_CHECKING:
     from ..module import CephadmOrchestrator
@@ -534,7 +535,36 @@ class SMBService(CephService):
         for ccc in smb_spec.ceph_cluster_configs or []:
             value = _hash_ceph_cluster_config(ccc)
             out.append(Dep.META(f'ceph_cluster_config.{ccc.alias}', value))
+        # Add features as a dependency
+        out.append(Dep.FIELD('features', ','.join(sorted(smb_spec.features or []))))
         return out
+
+    def choose_next_action(
+        self,
+        scheduled_action: utils.Action,
+        daemon_type: Optional[str],
+        spec: Optional[ServiceSpec],
+        curr_deps: List[str],
+        last_deps: List[str],
+    ) -> utils.NextDaemonStep:
+        if curr_deps == last_deps:
+            return utils.NextDaemonStep(scheduled_action)
+        sym_diff = set(curr_deps).symmetric_difference(last_deps)
+        logger.info(
+            'Reconfigure wanted %s: deps %r -> %r (diff %r)',
+            spec.service_name() if spec else daemon_type,
+            last_deps,
+            curr_deps,
+            sym_diff,
+        )
+        needs_redeploy_prefixes = (
+            Dep.FIELD('features', ''),
+        )
+        if any(
+            d.startswith(p) for d in sym_diff for p in needs_redeploy_prefixes
+        ):
+            return utils.NextDaemonStep(utils.Action.REDEPLOY)
+        return utils.NextDaemonStep(utils.Action.RECONFIG)
 
 
 Network = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
