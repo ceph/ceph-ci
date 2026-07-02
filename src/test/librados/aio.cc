@@ -1103,7 +1103,6 @@ public:
 class LibRadosAioEC : public ::testing::TestWithParam<std::tuple<bool, bool>> {};
 
 TEST_P(LibRadosAioEC, SimpleWrite) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion;
   const auto& params = GetParam();
@@ -1138,7 +1137,6 @@ TEST_P(LibRadosAioEC, SimpleWrite) {
 }
 
 TEST_P(LibRadosAioEC, WaitForComplete) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion;
   const auto& params = GetParam();
@@ -1158,7 +1156,6 @@ TEST_P(LibRadosAioEC, WaitForComplete) {
 }
 
 TEST_P(LibRadosAioEC, RoundTrip) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion;
   const auto& params = GetParam();
@@ -1194,7 +1191,6 @@ TEST_P(LibRadosAioEC, RoundTrip) {
 }
 
 TEST_P(LibRadosAioEC, RoundTrip2) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion;
   const auto& params = GetParam();
@@ -1230,7 +1226,6 @@ TEST_P(LibRadosAioEC, RoundTrip2) {
 }
 
 TEST_P(LibRadosAioEC, RoundTripAppend) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion, my_completion2, my_completion3, my_completion4;
   const auto& params = GetParam();
@@ -1304,7 +1299,6 @@ TEST_P(LibRadosAioEC, RoundTripAppend) {
 }
 
 TEST_P(LibRadosAioEC, IsComplete) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion;
   const auto& params = GetParam();
@@ -1347,7 +1341,6 @@ TEST_P(LibRadosAioEC, IsComplete) {
 }
 
 TEST_P(LibRadosAioEC, IsSafe) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion;
   const auto& params = GetParam();
@@ -1390,7 +1383,6 @@ TEST_P(LibRadosAioEC, IsSafe) {
 }
 
 TEST_P(LibRadosAioEC, ReturnValue) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion;
   const auto& params = GetParam();
@@ -1412,7 +1404,6 @@ TEST_P(LibRadosAioEC, ReturnValue) {
 }
 
 TEST_P(LibRadosAioEC, Flush) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion;
   const auto& params = GetParam();
@@ -1445,7 +1436,6 @@ TEST_P(LibRadosAioEC, Flush) {
 }
 
 TEST_P(LibRadosAioEC, FlushAsync) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion;
   const auto& params = GetParam();
@@ -1487,7 +1477,6 @@ TEST_P(LibRadosAioEC, FlushAsync) {
 }
 
 TEST_P(LibRadosAioEC, RoundTripWriteFull) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion, my_completion2, my_completion3;
   const auto& params = GetParam();
@@ -1534,7 +1523,6 @@ TEST_P(LibRadosAioEC, RoundTripWriteFull) {
 }
 
 TEST_P(LibRadosAioEC, SimpleStat) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion;
   const auto& params = GetParam();
@@ -1571,7 +1559,6 @@ TEST_P(LibRadosAioEC, SimpleStat) {
 
 
 TEST_P(LibRadosAioEC, SimpleStatNS) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion;
   const auto& params = GetParam();
@@ -1635,7 +1622,6 @@ TEST_P(LibRadosAioEC, SimpleStatNS) {
 }
 
 TEST_P(LibRadosAioEC, StatRemove) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion;
   const auto& params = GetParam();
@@ -1694,7 +1680,6 @@ TEST_P(LibRadosAioEC, StatRemove) {
 }
 
 TEST_P(LibRadosAioEC, ExecuteClass) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion;
   const auto& params = GetParam();
@@ -1729,7 +1714,6 @@ TEST_P(LibRadosAioEC, ExecuteClass) {
 }
 
 TEST_P(LibRadosAioEC, MultiWrite) {
-  SKIP_IF_CRIMSON();
   AioTestDataEC test_data;
   rados_completion_t my_completion, my_completion2, my_completion3;
   const auto& params = GetParam();
