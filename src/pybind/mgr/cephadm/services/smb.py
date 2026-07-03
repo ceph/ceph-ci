@@ -36,6 +36,7 @@ from .cephadmservice import (
 )
 from ..tlsobject_types import TLSCredentials, EMPTY_TLS_CREDENTIALS
 from ..schedule import DaemonPlacement
+from cephadm import utils
 
 if TYPE_CHECKING:
     from ..module import CephadmOrchestrator
@@ -206,15 +207,19 @@ class SMBService(CephService):
             ca_cert=ssl_params.ssl_ca_cert or '',
         )
 
-    def _rgw_creds_uri(self, cluster_id: str) -> Optional[str]:
+    @classmethod
+    def _lookup_rgw_creds_uri(
+        cls, mgr: 'CephadmOrchestrator', cluster_id: str
+    ) -> Optional[str]:
         from smb.external import rgw_config_key as _smb_rgw_config_key
         from smb.mon_store import MonKeyConfigStore
-        _rgw_entry = MonKeyConfigStore(self.mgr)[
-            _smb_rgw_config_key(cluster_id)
-        ]
+        _rgw_entry = MonKeyConfigStore(mgr)[_smb_rgw_config_key(cluster_id)]
         if _rgw_entry.exists():
             return _rgw_entry.uri
         return None
+
+    def _rgw_creds_uri(self, cluster_id: str) -> Optional[str]:
+        return self._lookup_rgw_creds_uri(self.mgr, cluster_id)
 
     def generate_config(
         self, daemon_spec: CephadmDaemonDeploySpec
@@ -534,7 +539,39 @@ class SMBService(CephService):
         for ccc in smb_spec.ceph_cluster_configs or []:
             value = _hash_ceph_cluster_config(ccc)
             out.append(Dep.META(f'ceph_cluster_config.{ccc.alias}', value))
+        # Add features as a dependency
+        out.append(Dep.FIELD('features', ','.join(sorted(smb_spec.features or []))))
+        rgw_creds_uri = cls._lookup_rgw_creds_uri(mgr, smb_spec.cluster_id) or ''
+        out.append(Dep.FIELD('rgw_creds_uri', rgw_creds_uri))
         return out
+
+    def choose_next_action(
+        self,
+        scheduled_action: utils.Action,
+        daemon_type: Optional[str],
+        spec: Optional[ServiceSpec],
+        curr_deps: List[str],
+        last_deps: List[str],
+    ) -> utils.NextDaemonStep:
+        if curr_deps == last_deps:
+            return utils.NextDaemonStep(scheduled_action)
+        sym_diff = set(curr_deps).symmetric_difference(last_deps)
+        logger.info(
+            'Reconfigure wanted %s: deps %r -> %r (diff %r)',
+            spec.service_name() if spec else daemon_type,
+            last_deps,
+            curr_deps,
+            sym_diff,
+        )
+        needs_redeploy_prefixes = (
+            Dep.FIELD('features', ''),
+            Dep.FIELD('rgw_creds_uri', ''),
+        )
+        if any(
+            d.startswith(p) for d in sym_diff for p in needs_redeploy_prefixes
+        ):
+            return utils.NextDaemonStep(utils.Action.REDEPLOY)
+        return utils.NextDaemonStep(utils.Action.RECONFIG)
 
 
 Network = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]

@@ -1,4 +1,5 @@
 import json
+import pytest
 from unittest.mock import patch
 
 from ceph.smb.constants import REMOTE_CONTROL
@@ -233,5 +234,64 @@ def test_smb_get_dependencies(cephadm_module):
 
     deps = SMBService.get_dependencies(cephadm_module, spec, spec.service_type)
     assert deps == [
-        'smb+meta:ceph_cluster_config.exo=sha256:859b001f76df4d184b858b9c3e323ca8ff85a311414d0405f4484d17aa481ef3'
+        'smb+meta:ceph_cluster_config.exo=sha256:859b001f76df4d184b858b9c3e323ca8ff85a311414d0405f4484d17aa481ef3',
+        'smb+field:features=domain',
+        'smb+field:rgw_creds_uri=rados:mon-config-key:smb/config/foxtrot/config.smb.rgw',
     ]
+
+
+@pytest.mark.parametrize(
+    "curr_deps,last_deps,expected_action",
+    [
+        # features removed (e.g. cephfs-proxy removed when all CephFS shares deleted) → REDEPLOY
+        # to stop the now-unneeded proxy sidecar container
+        (
+            ['smb+field:features=domain', 'smb+field:rgw_creds_uri='],
+            ['smb+field:features=cephfs-proxy,domain', 'smb+field:rgw_creds_uri='],
+            'redeploy',
+        ),
+        # features gained → REDEPLOY (new sidecar container required)
+        (
+            ['smb+field:features=cephfs-proxy,domain', 'smb+field:rgw_creds_uri='],
+            ['smb+field:features=domain', 'smb+field:rgw_creds_uri='],
+            'redeploy',
+        ),
+        # rgw_creds_uri added → REDEPLOY (URI baked into sidecar run script)
+        (
+            ['smb+field:features=domain', 'smb+field:rgw_creds_uri=rados:mon-config-key:smb/config/c/config.smb.rgw'],
+            ['smb+field:features=domain', 'smb+field:rgw_creds_uri='],
+            'redeploy',
+        ),
+        # rgw_creds_uri removed → REDEPLOY (stale URI must be removed from sidecar)
+        (
+            ['smb+field:features=domain', 'smb+field:rgw_creds_uri='],
+            ['smb+field:features=domain', 'smb+field:rgw_creds_uri=rados:mon-config-key:smb/config/c/config.smb.rgw'],
+            'redeploy',
+        ),
+        # unrelated dep changed (e.g. ceph_cluster_config hash) → RECONFIG
+        (
+            ['smb+meta:ceph_cluster_config.ext=sha256:aabb', 'smb+field:features=domain', 'smb+field:rgw_creds_uri='],
+            ['smb+meta:ceph_cluster_config.ext=sha256:1122', 'smb+field:features=domain', 'smb+field:rgw_creds_uri='],
+            'reconfig',
+        ),
+        # no change → scheduled action passed through
+        (
+            ['smb+field:features=domain', 'smb+field:rgw_creds_uri='],
+            ['smb+field:features=domain', 'smb+field:rgw_creds_uri='],
+            '',
+        ),
+    ],
+)
+def test_smb_choose_next_action(cephadm_module, curr_deps, last_deps, expected_action):
+    from cephadm.services.smb import SMBService
+    from cephadm import utils
+
+    svc = SMBService(cephadm_module)
+    step = svc.choose_next_action(
+        utils.Action.NO_ACTION,
+        daemon_type='smb',
+        spec=None,
+        curr_deps=curr_deps,
+        last_deps=last_deps,
+    )
+    assert str(step.action) == expected_action
