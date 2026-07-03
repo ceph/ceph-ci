@@ -207,15 +207,19 @@ class SMBService(CephService):
             ca_cert=ssl_params.ssl_ca_cert or '',
         )
 
-    def _rgw_creds_uri(self, cluster_id: str) -> Optional[str]:
+    @classmethod
+    def _lookup_rgw_creds_uri(
+        cls, mgr: 'CephadmOrchestrator', cluster_id: str
+    ) -> Optional[str]:
         from smb.external import rgw_config_key as _smb_rgw_config_key
         from smb.mon_store import MonKeyConfigStore
-        _rgw_entry = MonKeyConfigStore(self.mgr)[
-            _smb_rgw_config_key(cluster_id)
-        ]
+        _rgw_entry = MonKeyConfigStore(mgr)[_smb_rgw_config_key(cluster_id)]
         if _rgw_entry.exists():
             return _rgw_entry.uri
         return None
+
+    def _rgw_creds_uri(self, cluster_id: str) -> Optional[str]:
+        return self._lookup_rgw_creds_uri(self.mgr, cluster_id)
 
     def generate_config(
         self, daemon_spec: CephadmDaemonDeploySpec
@@ -537,6 +541,8 @@ class SMBService(CephService):
             out.append(Dep.META(f'ceph_cluster_config.{ccc.alias}', value))
         # Add features as a dependency
         out.append(Dep.FIELD('features', ','.join(sorted(smb_spec.features or []))))
+        rgw_creds_uri = cls._lookup_rgw_creds_uri(mgr, smb_spec.cluster_id) or ''
+        out.append(Dep.FIELD('rgw_creds_uri', rgw_creds_uri))
         return out
 
     def choose_next_action(
@@ -559,6 +565,7 @@ class SMBService(CephService):
         )
         needs_redeploy_prefixes = (
             Dep.FIELD('features', ''),
+            Dep.FIELD('rgw_creds_uri', ''),
         )
         if any(
             d.startswith(p) for d in sym_diff for p in needs_redeploy_prefixes
