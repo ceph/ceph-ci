@@ -520,22 +520,22 @@ int JournalTool::main_event(std::vector<const char*> &argv)
     progress_tracker->start(js.header->write_pos - js.header->expire_pos);
 
     auto flush_events = [&]() {
-      for (auto& [off, rec] : js.events) {
-        auto& le = rec.log_event;
+      for (auto it = js.events.begin(); it != js.events.end(); ) {
+        const auto& le = it->second.log_event;
         EMetaBlob const *mb = le->get_metablob();
         if (mb) {
           int scav_r = recover_dentries(*mb, dry_run, &consumed_inos);
           if (scav_r) {
-            dout(1) << "Error processing event 0x" << std::hex << off << std::dec
+            dout(1) << "Error processing event 0x" << std::hex << it->first << std::dec
                     << ": " << cpp_strerror(scav_r) << ", continuing..." << dendl;
-            js.errors.insert(std::make_pair(off,
+            js.errors.insert(std::make_pair(it->first,
                   JournalScanner::EventError(scav_r, cpp_strerror(scav_r))));
           }
         }
+        it = js.events.erase(it);
         progress_tracker->increment();
         progress_tracker->display_progress();
       }
-      js.events.clear();
       batch_bytes = 0;
     };
 
