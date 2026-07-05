@@ -1,0 +1,44 @@
+overrides:
+  install:
+    extra_system_packages:
+      rpm:
+        - fio
+      deb:
+        - fio
+tasks:
+
+# stop kernel nfs server, if running
+- exec:
+    all-hosts:
+      - systemctl stop nfs-server
+
+- cephadm.shell:
+    host.a:
+      - ceph fs volume create foofs
+
+- cephadm.wait_for_service:
+    service: mds.foofs
+
+- cephadm.shell:
+    host.a:
+      - ceph nfs cluster create foo
+      - ceph nfs export create cephfs --fsname foofs --cluster-id foo --pseudo-path /fake
+
+- cephadm.wait_for_service:
+    service: nfs.foo
+
+- exec:
+    host.a:
+      - mkdir -p /mnt/foo
+
+- workunit:
+    timeout: 1h
+    env:
+      NFS_CLUSTER_ID: foo
+      NFS_FS_NAME: foofs
+      NFS_PSEUDO: /fake
+      NFS_MNT: /mnt/foo
+    no_coverage_and_limits: true
+    clients:
+      client.0:
+        - nfs/nfs_tests.sh -m 'rate_limiting or qos_enforcement' tests
