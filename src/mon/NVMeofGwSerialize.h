@@ -30,6 +30,9 @@ inline std::ostream& operator<<(
   case gw_exported_states_per_group_t::GW_EXPORTED_INACCESSIBLE_STATE:
     os << "INACCESSIBLE ";
     break;
+  case gw_exported_states_per_group_t::GW_EXPORTED_ACCESSIBLE_STATE:
+    os << "ACCESSIBLE ";
+    break;
   default:
     os << "Invalid " << (int)value << " ";
   }
@@ -48,15 +51,25 @@ inline std::ostream& operator<<(
   case gw_states_per_group_t::GW_ACTIVE_STATE:
     os << "ACTIVE ";
     break;
+  case gw_states_per_group_t::GW_ACCESSIBLE_STATE:
+    os << "ACCESSIBLE ";
+    break;
   case gw_states_per_group_t::GW_OWNER_WAIT_FAILBACK_PREPARED:
     os << "OWNER_FAILBACK_PREPARED ";
     break;
   case gw_states_per_group_t::GW_WAIT_FAILBACK_PREPARED:
     os << "WAIT_FAILBACK_PREPARED ";
     break;
+ /* case gw_states_per_group_t::GW_WAIT_FAILOVER_START:
+    os <<  "GW_WAIT_FAILOVER_START";
+    break;*/
   case gw_states_per_group_t::GW_WAIT_BLOCKLIST_CMPL:
     os <<   "WAIT_BLOCKLIST_CMPL ";
     break;
+  case gw_states_per_group_t::GW_WAIT_FAILOVER_CMPL:
+    os <<   "GW_WAIT_FAILOVER_CMPL ";
+    break;
+
   default:
     os << "Invalid " << (int)value << " ";
   }
@@ -267,6 +280,10 @@ inline std::ostream& operator<<(std::ostream& os, const NVMeofGwMap value) {
   for (auto& group_gws: value.disaster_locations) {
     os <<  "\n" <<  MODULE_PREFFIX  << "{ " << group_gws.first
        << " } -> disaster-locations: " << group_gws.second << " }";
+  }
+  for (auto& group_gws: value.fully_inaccessible) {
+      os <<  "\n" <<  MODULE_PREFFIX  << "{ " << group_gws.first
+         << " } -> fully_inaccessible: " << (uint32_t) group_gws.second << " }";
   }
   for (auto& group_gws: value.created_gws) {
    os <<  "\n" <<  MODULE_PREFFIX  << "{ " << group_gws.first
@@ -732,7 +749,7 @@ inline void encode_gws_beacon_diff_additions(
     auto& gws = group_gws.second;
     for (auto& gw : gws) {
       encode((uint8_t)gw.second.gw_admin_state, bl);
-      dout(10) << "encode location " << gw.second.location << " admin state " << (int)gw.second.gw_admin_state << dendl;
+      dout(20) << "encode location " << gw.second.location << " admin state " << (int)gw.second.gw_admin_state << dendl;
       encode(gw.second.location, bl);
       encode_beacon_change_descriptors(gw.second.subsystems, bl);
     }
@@ -987,6 +1004,40 @@ inline void decode(BeaconSubsystem& sub, ceph::buffer::list::const_iterator &bl)
     decode(ns, bl);
     sub.namespaces.push_back(ns);
   }
+  DECODE_FINISH(bl);
+}
+
+inline void encode(const WaitingList &waitlist, ceph::bufferlist &bl) {
+  ENCODE_START(1, 1, bl);
+  encode(waitlist.gw_id, bl);
+  encode(waitlist.group_key,bl);
+  encode(waitlist.grpid, bl);
+  encode((uint16_t)waitlist.hold_io_map_accepted, bl);
+
+  auto endtime  = waitlist.end_time;
+  // Convert the time point to milliseconds since the epoch
+  uint64_t  millisecondsSinceEpoch =
+  std::chrono::duration_cast<std::chrono::milliseconds>(
+    endtime.time_since_epoch()).count();
+  encode(millisecondsSinceEpoch , bl);
+
+  ENCODE_FINISH(bl);
+}
+
+inline void decode(WaitingList &waitlist, ceph::buffer::list::const_iterator &bl) {
+  DECODE_START(1, bl);
+  waitlist = WaitingList();
+  decode(waitlist.gw_id, bl);
+  decode(waitlist.group_key,bl);
+  decode(waitlist.grpid, bl);
+  uint16_t hold_io_map_accepted;
+  decode(hold_io_map_accepted, bl);
+  waitlist.hold_io_map_accepted = (bool)hold_io_map_accepted;
+  uint64_t milliseconds;
+  decode(milliseconds, bl);
+  auto duration = std::chrono::milliseconds(milliseconds);
+  waitlist.end_time = std::chrono::time_point<std::chrono::system_clock>(duration);
+
   DECODE_FINISH(bl);
 }
 

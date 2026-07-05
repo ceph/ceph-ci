@@ -88,6 +88,18 @@ public:
    * */
   std::map<NvmeGroupKey, LocationStates> disaster_locations;
 
+  /* in active-active configuration  failovers per pool-group begin from publishing the fencing map - black map
+     this map is removed only when all blacklists of overlapping failovers are set in osd.
+     failover_wait_list need to control the time when failover per ANA group is prepared in the monitor
+     its delay is set to 2 seconds - to gurrantee that fence map is applied before the blocklist is done
+     the fencing map in the pool-group is removed when failover_waiting_list [pool-group] is empty
+
+     in active-active configuration failovers are done just from the  failover_waiting_list
+     - in process_failover_list one brain
+  */
+  std::map<NvmeGroupKey, FailoverList> failover_wait_list; //todo explain , non persistent no need to serialize
+  std::map<NvmeGroupKey, uint8_t> fully_inaccessible; // indication per group to send fully inaccessible fencing map to subscribers
+
   void to_gmap(std::map<NvmeGroupKey, NvmeGwMonClientStates>& Gmap) const;
   void track_deleting_gws(const NvmeGroupKey& group_key,
     const BeaconSubsystems&  subs, bool &propose_pending);
@@ -168,15 +180,27 @@ private:
   void fsm_handle_failback_and_relocation(const NvmeGwId &owner_gw_id,
      const NvmeGwId &failover_gw_id, const NvmeGroupKey& group_key,
      NvmeAnaGrpId grpid, bool &map_modified);
-  void find_failover_candidate(
+  bool find_failover_candidate(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
     NvmeAnaGrpId grpid, bool &propose_pending);
   void find_failback_gw(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
     bool &propose_pending);
-  void set_failover_gw_for_ANA_group(
+  void set_failover_gw_for_ana_group(
     const NvmeGwId &failed_gw_id, const NvmeGroupKey& group_key,
     const NvmeGwId &gw_id, NvmeAnaGrpId groupid);
+  void set_failover_states_for_ana_group(
+      const NvmeGwId &failover_gw_id, const NvmeGroupKey& group_key,
+      NvmeAnaGrpId anagrpid, epoch_t osd_epoch);
+  void set_active_states_for_ana_group(
+      const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
+      NvmeAnaGrpId anagrpid);
+  void set_inaccessible_states_for_ana_group(
+      const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
+      NvmeAnaGrpId anagrpid);
+  void set_accessible_states_after_startup(
+       const NvmeGwId &gw_id, const NvmeGroupKey& group_key);
+
   int get_num_namespaces(const NvmeGwId &gw_id,
     const NvmeGroupKey& group_key, const BeaconSubsystems&  subs );
   int get_timer(
@@ -202,7 +226,15 @@ private:
    const NvmeGroupKey& group_key, NvmeAnaGrpId grpid,
    NvmeLocation& location, bool &propose);
 
+  // Functions that handle failover waiting list
+  void add_to_failover_list( const NvmeGwId& gw_id,
+              const NvmeGroupKey& group_key, NvmeAnaGrpId grpid,
+              std::chrono::system_clock::time_point end_time);
+  /*bool remove_from_failover_list(const NvmeGwId& gw_id,
+                                 const NvmeGroupKey& group_key,
+                                 NvmeAnaGrpId grpid);*/
 public:
+  void process_failover_list(bool &propose);
   int blocklist_gw(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
     NvmeAnaGrpId ANA_groupid, epoch_t &epoch, bool failover);
@@ -221,6 +253,8 @@ public:
     encode(disaster_locations, bl);
     encode(ever_enabled_features, bl);
     encode(published_features, bl);
+    encode(fully_inaccessible, bl);
+    encode(failover_wait_list, bl);
     ENCODE_FINISH(bl);
   }
 
@@ -243,6 +277,8 @@ public:
       decode(disaster_locations, bl);
       decode(ever_enabled_features, bl);
       decode(published_features, bl);
+      decode(fully_inaccessible, bl);
+      decode(failover_wait_list, bl);
       dout(20) << " decoded features " << published_features << dendl;
     }
     DECODE_FINISH(bl);

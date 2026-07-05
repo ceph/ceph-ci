@@ -203,6 +203,8 @@ version_t NVMeofGwMon::get_trim_to() const
  */
 void NVMeofGwMon::restore_pending_map_info(NVMeofGwMap & tmp_map) {
   std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+  //pending_map.failover_wait_list = tmp_map.failover_wait_list;
+
   for (auto& created_map_pair: tmp_map.created_gws) {
     auto group_key = created_map_pair.first;
     NvmeGwMonStates& gw_created_map = created_map_pair.second;
@@ -364,6 +366,7 @@ void NVMeofGwMon::check_sub(Subscription *sub)
       // respond with a map slice correspondent to the same GW
       unicast_map.epoch =  map.gw_epoch[group_key];//map.epoch;
       unicast_map.published_features =  map.published_features;
+      unicast_map.fully_inaccessible = map.fully_inaccessible;
       sub->session->con->send_message2(make_message<MNVMeofGwMap>(unicast_map));
       if (sub->onetime) {
         mon.session_map.remove_sub(sub);
@@ -919,6 +922,7 @@ void NVMeofGwMon::do_send_map_ack(MonOpRequestRef op,
     ack_map.created_gws[group_key][gw_id].beacon_sequence =
       pending_gw_map.beacon_sequence;
     ack_map.published_features = pending_map.published_features;
+    ack_map.fully_inaccessible = pending_map.fully_inaccessible;
     if (!is_correct_sequence) {
       dout(4) << " GW " << gw_id <<
       " sending ACK due to receiving beacon_sequence out of order" << dendl;
@@ -1100,6 +1104,7 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op)
   bool send_ack =  false;
 
   check_beacon_timeout(now, gw_propose);
+  pending_map.process_failover_list(gw_propose);
   if (avail == gw_availability_t::GW_CREATED) {
     if (!gw_exists) {
       gw_created = false;

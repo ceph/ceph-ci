@@ -516,7 +516,8 @@ void NVMeofGwMonitorClient::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> nmap)
 	initial_ana_state;
 
       // if no state change detected for this nqn, group id
-      if (new_group_state.first == old_group_state.first) {
+      if (new_group_state.first == old_group_state.first &&
+          new_group_state.second == old_group_state.second) { // maybe osd epoch changed due to failover - need to wait for latest osd epoch in spdk
         continue;
       }
       ana_group_state gs;
@@ -524,11 +525,22 @@ void NVMeofGwMonitorClient::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> nmap)
       const auto& new_agroup_state = new_group_state.first;
       const epoch_t& blocklist_epoch = new_group_state.second;
 
-      if (new_agroup_state == gw_exported_states_per_group_t::GW_EXPORTED_OPTIMIZED_STATE &&
+      if ((new_agroup_state == gw_exported_states_per_group_t::GW_EXPORTED_ACCESSIBLE_STATE ||
+           new_agroup_state == gw_exported_states_per_group_t::GW_EXPORTED_OPTIMIZED_STATE)  &&
           blocklist_epoch != 0) {
+        dout(10) << "new blocklist osd epoch " << blocklist_epoch
+                 << "max osd epoch " << max_blocklist_epoch << dendl;
         if (blocklist_epoch > max_blocklist_epoch) max_blocklist_epoch = blocklist_epoch;
       }
-      gs.set_state(new_agroup_state == gw_exported_states_per_group_t::GW_EXPORTED_OPTIMIZED_STATE ? OPTIMIZED : INACCESSIBLE); // Set the ANA state
+      ana_state state;
+      if (new_agroup_state == gw_exported_states_per_group_t::GW_EXPORTED_OPTIMIZED_STATE) {
+        state = OPTIMIZED;
+      } else if (new_agroup_state == gw_exported_states_per_group_t::GW_EXPORTED_ACCESSIBLE_STATE) {
+        state = NON_OPTIMIZED;
+      } else {
+        state = INACCESSIBLE;
+      }
+      gs.set_state(state); // Set the ANA state
       nas.mutable_states()->Add(std::move(gs));
       dout(10) << " grpid " << (ana_grp_index + 1) << " state: " << new_gw_state << dendl;
     }
