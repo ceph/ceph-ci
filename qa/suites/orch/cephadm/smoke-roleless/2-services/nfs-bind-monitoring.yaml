@@ -1,0 +1,39 @@
+tasks:
+
+# stop kernel nfs server, if running
+- exec:
+    all-hosts:
+      - systemctl stop nfs-server
+
+- cephadm.shell:
+    host.a:
+      - ceph fs volume create foofs
+
+- cephadm.wait_for_service:
+    service: mds.foofs
+
+- cephadm.shell:
+    host.a:
+      - ceph nfs cluster create foo
+      - ceph nfs export create cephfs --fsname foofs --cluster-id foo --pseudo-path /fake
+
+- cephadm.wait_for_service:
+    service: nfs.foo
+
+- exec:
+    host.a:
+      - mkdir -p /mnt/foo
+
+- nfs.workunit:
+    admin_node: host.a
+    nfs_nodes: [host.a]
+    cluster_id: foo
+    fs_name: foofs
+    pseudo_path: /fake
+    mount_point: /mnt/foo
+    bind_data_port: 12049
+    bind_mon_port: 10587
+    timeout: 1h
+    clients:
+      client.0:
+        - bind_monitoring
