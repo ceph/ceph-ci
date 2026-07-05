@@ -30,6 +30,9 @@ inline std::ostream& operator<<(
   case gw_exported_states_per_group_t::GW_EXPORTED_INACCESSIBLE_STATE:
     os << "INACCESSIBLE ";
     break;
+  case gw_exported_states_per_group_t::GW_EXPORTED_ACCESSIBLE_STATE:
+    os << "ACCESSIBLE ";
+    break;
   default:
     os << "Invalid " << (int)value << " ";
   }
@@ -48,6 +51,9 @@ inline std::ostream& operator<<(
   case gw_states_per_group_t::GW_ACTIVE_STATE:
     os << "ACTIVE ";
     break;
+  case gw_states_per_group_t::GW_ACCESSIBLE_STATE:
+    os << "ACCESSIBLE ";
+    break;
   case gw_states_per_group_t::GW_OWNER_WAIT_FAILBACK_PREPARED:
     os << "OWNER_FAILBACK_PREPARED ";
     break;
@@ -57,6 +63,10 @@ inline std::ostream& operator<<(
   case gw_states_per_group_t::GW_WAIT_BLOCKLIST_CMPL:
     os <<   "WAIT_BLOCKLIST_CMPL ";
     break;
+  case gw_states_per_group_t::GW_WAIT_FAILOVER_CMPL:
+    os <<   "GW_WAIT_FAILOVER_CMPL ";
+    break;
+
   default:
     os << "Invalid " << (int)value << " ";
   }

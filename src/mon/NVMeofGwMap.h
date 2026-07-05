@@ -171,9 +171,21 @@ private:
   void find_failback_gw(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
     bool &propose_pending);
-  void set_failover_gw_for_ANA_group(
+  void set_failover_gw_for_ana_group(
     const NvmeGwId &failed_gw_id, const NvmeGroupKey& group_key,
     const NvmeGwId &gw_id, NvmeAnaGrpId groupid);
+  void set_failover_states_for_ana_group(
+      const NvmeGwId &failover_gw_id, const NvmeGroupKey& group_key,
+      NvmeAnaGrpId anagrpid, epoch_t osd_epoch);
+  void set_active_states_for_ana_group(
+      const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
+      NvmeAnaGrpId anagrpid);
+  void set_inaccessible_states_for_ana_group(
+      const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
+      NvmeAnaGrpId anagrpid);
+  void set_accessible_states_after_startup(
+       const NvmeGwId &gw_id, const NvmeGroupKey& group_key);
+
   int get_num_namespaces(const NvmeGwId &gw_id,
     const NvmeGroupKey& group_key, const BeaconSubsystems&  subs );
   int get_timer(
