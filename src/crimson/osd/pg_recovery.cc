@@ -593,6 +593,9 @@ void PGRecovery::enqueue_push(
   if (!added)
     return;
   peering_state.prepare_backfill_for_missing(obj, v, peers);
+  // release the budget_retry_releaser now that we're dispatching a real
+  // push -- recover_object_with_throttle will acquire its own slot
+  budget_retry_releaser.reset();
   std::ignore = recover_object_with_throttle(obj, v).\
   handle_exception_interruptible([] (auto) {
     ceph_abort_msg("got exception on backfill's push");
@@ -705,9 +708,47 @@ bool PGRecovery::budget_available() const
   return ss.throttle_available();
 }
 
+PGRecovery::interruptible_future<>
+PGRecovery::do_request_budget_retry()
+{
+  LOG_PREFIX(PGRecovery::do_request_budget_retry);
+  DEBUGDPP("budget unavailable with nothing in flight, "
+           "waiting for throttle slot", *pg->get_dpp());
+  try {
+    auto releaser = co_await get_backfill_throttle();
+    if (!backfill_state) {
+      DEBUGDPP("backfill_state is null, skipping BudgetAvailable "
+               "(pg cleaned or interval changed)", *pg->get_dpp());
+      co_return;
+    }
+    // hold the releaser so the slot stays acquired until Enqueuing
+    budget_retry_releaser.emplace(std::move(releaser));
+    if (backfill_state->is_triggered()) {
+      backfill_state->post_event(
+        BackfillState::BudgetAvailable{}.intrusive_from_this());
+    } else {
+      backfill_state->process_event(
+        BackfillState::BudgetAvailable{}.intrusive_from_this());
+    }
+  } catch (const crimson::common::interruption& e) {
+    DEBUGDPP("budget retry interrupted: {}", *pg->get_dpp(), e.what());
+    co_return;
+  } catch (...) {
+    ceph_abort_msg(fmt::format(
+      "got unexpected exception on backfill budget retry for {}: {}",
+      pg->get_pgid(), std::current_exception()));
+  }
+}
+
+void PGRecovery::request_budget_retry()
+{
+  std::ignore = do_request_budget_retry();
+}
+
 void PGRecovery::on_pg_clean()
 {
   replica_scan_throttle_releasers.clear();
+  budget_retry_releaser.reset();
   backfill_state.reset();
 }
 
@@ -775,6 +816,7 @@ void PGRecovery::on_activate_complete()
   LOG_PREFIX(PGRecovery::on_activate_complete);
   DEBUGDPP("backfill_state={}", *pg->get_dpp(), fmt::ptr(backfill_state.get()));
   replica_scan_throttle_releasers.clear();
+  budget_retry_releaser.reset();
   backfill_state.reset();
 }
 
