@@ -165,6 +165,21 @@ int cleanup_crush_rule(Rados &cluster, const std::string &rule_name) {
   return cluster.mon_command(std::move(cmd), {}, nullptr, nullptr);
 }
 
+// Helper function to create a replicated pool with an explicit replica count.
+int create_replicated_pool_with_size(Rados &cluster,
+                                     const std::string &pool_name,
+                                     int size) {
+  std::string cmd = "{\"prefix\": \"osd pool create\", \"pool\": \"" +
+    pool_name + "\", \"pool_type\": \"replicated\", \"pg_num\": 8, "
+    "\"size\": " + std::to_string(size) + "}";
+  bufferlist outbl;
+  int ret = cluster.mon_command(std::move(cmd), {}, &outbl, nullptr);
+  if (ret == 0) {
+    cluster.wait_for_latest_osdmap();
+  }
+  return ret;
+}
+
 int set_pool_num_zones(Rados &cluster, const std::string &pool_name,
                        int num_zones) {
   std::string cmd = "{\"prefix\": \"osd pool set\", \"pool\": \"" +
@@ -538,43 +553,6 @@ TEST(ECPoolCreatePP, SharedProfileRetention) {
   cluster.shutdown();
 }
 
-TEST(ECPoolCreatePP, ReplicatedPoolSetNumZones) {
-  Rados cluster;
-  ASSERT_EQ("", connect_cluster_pp(cluster));
-
-  const std::string pool_name = get_temp_pool_name("repl_set_num_zones_");
-  std::string cmd = "{\"prefix\": \"osd pool create\", \"pool\": \"" +
-    pool_name + "\", \"pool_type\": \"replicated\", \"pg_num\": 8}";
-
-  bufferlist outbl;
-  ASSERT_EQ(0, cluster.mon_command(std::move(cmd), {}, &outbl, nullptr));
-  cluster.wait_for_latest_osdmap();
-
-  ASSERT_EQ(1, get_pool_num_zones(cluster, pool_name));
-  const std::string initial_crush_rule = get_pool_crush_rule(cluster, pool_name);
-  ASSERT_FALSE(initial_crush_rule.empty());
-  const int initial_size = get_pool_size(cluster, pool_name);
-  ASSERT_GT(initial_size, 0);
-
-  ASSERT_EQ(0, set_pool_num_zones(cluster, pool_name, 2));
-  ASSERT_EQ(2, get_pool_num_zones(cluster, pool_name));
-  const std::string stretch_crush_rule = get_pool_crush_rule(cluster, pool_name);
-  ASSERT_NE(initial_crush_rule, stretch_crush_rule);
-  const int stretch_size = get_pool_size(cluster, pool_name);
-  ASSERT_GT(stretch_size, initial_size);
-
-  ASSERT_EQ(0, set_pool_num_zones(cluster, pool_name, 1));
-  ASSERT_EQ(1, get_pool_num_zones(cluster, pool_name));
-  const std::string restored_crush_rule = get_pool_crush_rule(cluster, pool_name);
-  ASSERT_NE(stretch_crush_rule, restored_crush_rule);
-  const int restored_size = get_pool_size(cluster, pool_name);
-  ASSERT_EQ(initial_size, restored_size);
-
-  ASSERT_EQ(0, cluster.pool_delete(pool_name.c_str()));
-  cluster.wait_for_latest_osdmap();
-  cluster.shutdown();
-}
-
 TEST(ECPoolCreatePP, ErasurePoolSetNumZones) {
   Rados cluster;
   ASSERT_EQ("", connect_cluster_pp(cluster));
@@ -640,3 +618,40 @@ TEST(ECPoolCreatePP, ErasurePoolSetNumZones) {
 //   ASSERT_EQ(0, cleanup_ec_pool(cluster, pool_name));
 //   cluster.shutdown();
 // }
+
+TEST(ECPoolCreatePP, ReplicatedPoolSetNumZonesWithReplicas) {
+  Rados cluster;
+  ASSERT_EQ("", connect_cluster_pp(cluster));
+
+  for (const int size : {2, 3}) {
+    const std::string pool_name = get_temp_pool_name(
+        "repl_set_num_zones_r" + std::to_string(size) + "_");
+
+    ASSERT_EQ(0, create_replicated_pool_with_size(cluster, pool_name, size));
+
+    // Verify
+    ASSERT_EQ(1, get_pool_num_zones(cluster, pool_name));
+    const std::string initial_crush_rule = get_pool_crush_rule(cluster, pool_name);
+    ASSERT_FALSE(initial_crush_rule.empty());
+    ASSERT_EQ(size, get_pool_size(cluster, pool_name));
+
+    // Go to stretch mode, size should become size*2.
+    ASSERT_EQ(0, set_pool_num_zones(cluster, pool_name, 2));
+    ASSERT_EQ(2, get_pool_num_zones(cluster, pool_name));
+    const std::string stretch_crush_rule = get_pool_crush_rule(cluster, pool_name);
+    ASSERT_NE(initial_crush_rule, stretch_crush_rule);
+    ASSERT_EQ(size * 2, get_pool_size(cluster, pool_name));
+
+    // Revert to non-stretch mode, size should be restored.
+    ASSERT_EQ(0, set_pool_num_zones(cluster, pool_name, 1));
+    ASSERT_EQ(1, get_pool_num_zones(cluster, pool_name));
+    const std::string restored_crush_rule = get_pool_crush_rule(cluster, pool_name);
+    ASSERT_NE(stretch_crush_rule, restored_crush_rule);
+    ASSERT_EQ(size, get_pool_size(cluster, pool_name));
+
+    ASSERT_EQ(0, cluster.pool_delete(pool_name.c_str()));
+    cluster.wait_for_latest_osdmap();
+  }
+
+  cluster.shutdown();
+}

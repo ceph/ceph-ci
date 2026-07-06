@@ -8790,19 +8790,18 @@ void OSDMonitor::maybe_remove_unused_crush_rule(int64_t skip_pool,
   if (old_rule_id < 0) {
     return;
   }
+  // Never delete the cluster's default replicated rule
+  if (old_rule_id == osdmap.crush->get_osd_pool_default_crush_replicated_rule(cct)) {
+    return;
+  }
   // Check whether any pool other than current still references old_rule_id.
   for (const auto& [pid, committed_pool] : osdmap.pools) {
     if (pid == skip_pool) {
       continue;
     }
-    if (auto it = pending_inc.new_pools.find(pid);
-        it != pending_inc.new_pools.end()) {
-      if (it->second.crush_rule == old_rule_id) {
-        return;
-      }
-      continue;
-        }
-    if (committed_pool.crush_rule == old_rule_id) {
+    const auto it = pending_inc.new_pools.find(pid);
+    const auto& pp = (it != pending_inc.new_pools.end()) ? it->second : committed_pool;
+    if (pp.crush_rule == old_rule_id) {
       return;
     }
   }
@@ -8837,13 +8836,13 @@ int OSDMonitor::prepare_pool_num_zones_update(int64_t pool,
 
   int64_t current_num_zones = 1;
   p->opts.get(pool_opts_t::NUM_ZONES, &current_num_zones);
-  if (num_zones != 1 && num_zones != 2) {
-    ss << "num_zones must be 1 or 2";
+  if (num_zones < 1) {
+    ss << "num_zones must be >= 1";
     return -EINVAL;
   }
-  if (current_num_zones != 1 && current_num_zones != 2) {
+  if (current_num_zones < 1) {
     ss << "pool " << pool_name << " has unsupported current num_zones "
-       << current_num_zones << "; only 1 <-> 2 transitions are supported";
+       << current_num_zones;
     return -EINVAL;
   }
   if (current_num_zones == num_zones) {
@@ -8852,7 +8851,7 @@ int OSDMonitor::prepare_pool_num_zones_update(int64_t pool,
 
   const string zone_failure_domain = "datacenter";
 
-  if (num_zones == 2) {
+  if (num_zones > 1) {
     // Check if we can move to stretch mode
     if (osdmap.degraded_stretch_mode) {
       ss << "cannot enable stretch mode on a pool while cluster is in degraded stretch mode";
@@ -8864,12 +8863,12 @@ int OSDMonitor::prepare_pool_num_zones_update(int64_t pool,
     }
 
     // Calculate the new size/min_size
-    // For replicated pools use the ceph config vals (TO BE CHANGED)
     unsigned size = 0;
     unsigned min_size = 0;
     if (p->is_replicated()) {
-      size = g_conf().get_val<uint64_t>("mon_stretch_pool_size");
-      min_size = g_conf().get_val<uint64_t>("mon_stretch_pool_min_size");
+      unsigned replicas_per_zone = p->size / current_num_zones;
+      size = replicas_per_zone * num_zones;
+      min_size = p->min_size + replicas_per_zone * (num_zones - current_num_zones);
     } else {
       int r = prepare_pool_size(p->type, p->erasure_code_profile, p->size,
                                 num_zones, &size, &min_size, &ss);
@@ -8945,13 +8944,11 @@ int OSDMonitor::prepare_pool_num_zones_update(int64_t pool,
     }
 
     // All validation passed, can commit
-
     const int old_crush_rule = p->crush_rule;
     p->opts.set(pool_opts_t::NUM_ZONES, num_zones);
     p->size = size;
     p->min_size = min_size;
     p->crush_rule = crush_rule;
-    maybe_remove_unused_crush_rule(pool, old_crush_rule);
 
     if (p->is_erasure()) {
       int ec_opt_result = enable_pool_ec_optimizations(*p, &ss, true);
@@ -8960,6 +8957,8 @@ int OSDMonitor::prepare_pool_num_zones_update(int64_t pool,
       }
       enable_pool_ec_direct_reads(*p);
     }
+
+    maybe_remove_unused_crush_rule(pool, old_crush_rule);
 
     // Commit monmap stretch mode.
     if (!pending_monmap_stretch_enabled) {
@@ -9010,8 +9009,9 @@ int OSDMonitor::prepare_pool_num_zones_update(int64_t pool,
     unsigned size = 0;
     unsigned min_size = 0;
     if (p->is_replicated()) {
-      size = g_conf().get_val<uint64_t>("osd_pool_default_size");
-      min_size = g_conf().get_osd_pool_default_min_size(size);
+      unsigned replicas_per_zone = p->size / current_num_zones;
+      size = replicas_per_zone * num_zones;
+      min_size = p->min_size - replicas_per_zone * (current_num_zones - num_zones);
     } else {
       int r = prepare_pool_size(p->type, p->erasure_code_profile, p->size,
                                 num_zones, &size, &min_size, &ss);
