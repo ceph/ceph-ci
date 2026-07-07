@@ -134,9 +134,21 @@ private:
         if ((state == io::SPARSE_EXTENT_STATE_DNE) ||
             (key == io::INITIAL_WRITE_READ_SNAP_IDS &&
              state == io::SPARSE_EXTENT_STATE_ZEROED)) {
+          ldout(cct, 20) << "filtering snapshot_delta entry: key={"
+                         << key.first << "," << key.second << "}"
+                         << " off=" << snapshot_extent.get_off()
+                         << " len=" << snapshot_extent.get_len()
+                         << " state=" << state << dendl;
           continue;
         }
 
+        ldout(cct, 10) << "KEEPING snapshot_delta entry: key={"
+                       << key.first << "," << key.second << "}"
+                       << " off=" << snapshot_extent.get_off()
+                       << " len=" << snapshot_extent.get_len()
+                       << " state=" << state
+                       << " (image_extent " << m_image_offset
+                       << "~" << m_image_length << ")" << dendl;
         aggregate_snapshot_extents.insert(
           snapshot_extent.get_off(), snapshot_extent.get_len(),
           {state, snapshot_extent.get_len()});
@@ -145,9 +157,11 @@ private:
 
     // build delta callback set
     for (auto& snapshot_extent : aggregate_snapshot_extents) {
-      ldout(cct, 20) << "off=" << snapshot_extent.get_off() << ", "
-                     << "len=" << snapshot_extent.get_len() << ", "
-                     << "state=" << snapshot_extent.get_val().state << dendl;
+      ldout(cct, 5) << "reporting diff: off=" << snapshot_extent.get_off()
+                    << ", len=" << snapshot_extent.get_len()
+                    << ", state=" << snapshot_extent.get_val().state
+                    << " (image_extent " << m_image_offset
+                    << "~" << m_image_length << ")" << dendl;
       diffs->emplace_back(
         snapshot_extent.get_off(), snapshot_extent.get_len(),
         snapshot_extent.get_val().state == io::SPARSE_EXTENT_STATE_DATA);
@@ -365,7 +379,11 @@ int DiffIterate<I>::execute() {
 
   ldout(cct, 5) << "diff_iterate from " << from_snap_id << " to "
                 << end_snap_id << " size from " << from_size
-                << " to " << end_size << dendl;
+                << " to " << end_size
+                << ", data_offset=" << m_image_ctx.get_data_offset()
+                << ", off=" << m_offset << ", len=" << m_length
+                << ", whole_object=" << m_whole_object
+                << ", fast_diff=" << fast_diff_enabled << dendl;
   DiffContext diff_context(m_image_ctx, m_callback, m_callback_arg,
                            m_whole_object, m_include_parent, from_snap_id,
                            end_snap_id);
@@ -431,6 +449,10 @@ int DiffIterate<I>::execute() {
         }
       }
     } else {
+      ldout(cct, 10) << "slow-path: dispatching list_snaps for image extent "
+                     << off << "~" << read_len
+                     << " (DATA area, data_offset="
+                     << m_image_ctx.get_data_offset() << ")" << dendl;
       auto diff_object = new C_DiffObject<I>(m_image_ctx, diff_context, off,
                                              read_len);
       diff_object->send();

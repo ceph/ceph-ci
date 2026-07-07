@@ -79,6 +79,13 @@ struct C_AssembleSnapshotDeltas : public C_AioRequest {
                      << object_snapshot_delta << ", "
                      << "image_snapshot_delta=" << image_snapshot_delta
                      << dendl;
+      if (!object_snapshot_delta.empty()) {
+        ldout(cct, 10) << "C_AssembleSnapshotDeltas: object_no="
+                       << object_no
+                       << " (data_offset=" << image_ctx->get_data_offset()
+                       << ") has non-empty object_snapshot_delta="
+                       << object_snapshot_delta << dendl;
+      }
     }
 
     ldout(cct, 20) << "snapshot_delta=" << *snapshot_delta << dendl;

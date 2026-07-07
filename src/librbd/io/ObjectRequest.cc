@@ -779,6 +779,7 @@ void ObjectListSnapsRequest<I>::handle_list_snaps(int r) {
   I *image_ctx = this->m_ictx;
   auto cct = image_ctx->cct;
 
+  int raw_r = r;
   if (r >= 0) {
     r = -m_ec.value();
   }
@@ -794,6 +795,9 @@ void ObjectListSnapsRequest<I>::handle_list_snaps(int r) {
   librados::snap_t last_snap_id = *m_snap_ids.rbegin();
 
   if (r == -ENOENT) {
+    ldout(cct, 20) << data_object_name(image_ctx, this->m_object_no)
+                   << ": ENOENT (raw_r=" << raw_r
+                   << ", ec=" << m_ec.value() << ")" << dendl;
     // the object does not exist -- mark the missing extents
     zero_extent(first_snap_id, true);
     list_from_parent();
@@ -808,6 +812,22 @@ void ObjectListSnapsRequest<I>::handle_list_snaps(int r) {
   // helper function requires the librados legacy data structure
   librados::snap_set_t snap_set;
   convert_snap_set(m_snap_set, &snap_set);
+
+  ldout(cct, 10) << data_object_name(image_ctx, this->m_object_no)
+                 << ": list_snaps returned r=" << r
+                 << " (raw_r=" << raw_r << ", ec=" << m_ec.value() << ")"
+                 << ", snap_set.seq=" << snap_set.seq
+                 << ", clones=" << snap_set.clones.size()
+                 << ", snap_ids=" << m_snap_ids
+                 << ", list_snaps_flags=0x" << std::hex
+                 << m_list_snaps_flags << std::dec << dendl;
+  for (size_t i = 0; i < snap_set.clones.size(); ++i) {
+    ldout(cct, 10) << data_object_name(image_ctx, this->m_object_no)
+                   << ":   clone[" << i << "] cloneid=" << snap_set.clones[i].cloneid
+                   << " size=" << snap_set.clones[i].size
+                   << " snaps=" << snap_set.clones[i].snaps
+                   << " overlap=" << snap_set.clones[i].overlap << dendl;
+  }
 
   bool initial_extents_written = false;
 
@@ -933,6 +953,13 @@ void ObjectListSnapsRequest<I>::handle_list_snaps(int r) {
     zero_extent(first_snap_id, first_snap_id > 0);
   }
   ldout(cct, 20) << "snapshot_delta=" << snapshot_delta << dendl;
+
+  if (!snapshot_delta_empty) {
+    ldout(cct, 5) << data_object_name(image_ctx, this->m_object_no)
+                  << ": NON-EMPTY snapshot_delta=" << snapshot_delta
+                  << " (initial_extents_written="
+                  << initial_extents_written << ")" << dendl;
+  }
 
   if (snapshot_delta_empty) {
     list_from_parent();

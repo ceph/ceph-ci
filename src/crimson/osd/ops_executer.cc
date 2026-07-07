@@ -565,16 +565,18 @@ OpsExecuter::list_snaps_iertr::future<> OpsExecuter::do_list_snaps(
   }
 
   if (!os.oi.is_whiteout()) {
+    ceph_assert(os.exists);
     clone_info ci;
     ci.cloneid = CEPH_NOSNAP;
     ci.size = os.oi.size;
     resp.clones.push_back(std::move(ci));
   }
   resp.seq = ss.seq;
-  logger().error(
-    "OpsExecuter::do_list_snaps: {}, resp.clones.size(): {}",
-    os.oi.soid,
-    resp.clones.size());
+  logger().debug(
+    "OpsExecuter::do_list_snaps: {}, exists={}, size={}, "
+    "ss.seq={}, ss.clones.size()={}, resp.clones.size(): {}",
+    os.oi.soid, os.exists, os.oi.size,
+    ss.seq, ss.clones.size(), resp.clones.size());
   resp.encode(osd_op.outdata);
   return read_ierrorator::now();
 }
