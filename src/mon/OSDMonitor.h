@@ -793,6 +793,14 @@ public:
                                     int64_t num_zones,
                                     std::stringstream& ss);
   void maybe_remove_unused_crush_rule(int64_t skip_pool, int old_rule_id);
+  void maybe_teardown_cluster_stretch_mode(int64_t skip_pool);
+  int validate_per_pool_stretch_mode(pg_pool_t *pool_ptr,
+                                     const std::string& zone_failure_domain,
+                                     int64_t num_zones,
+                                     std::ostream& ss);
+  void commit_per_pool_stretch_mode(pg_pool_t *pool_ptr,
+                                    const std::string& zone_failure_domain,
+                                    int64_t num_zones);
   int prepare_command_pool_application(const std::string &prefix,
                                        const cmdmap_t& cmdmap,
                                        std::stringstream& ss);
