@@ -1048,15 +1048,113 @@ void ECTransaction::generate_transactions(
   });
 }
 
-void ECTransaction::Generate::log_shard_size_analysis() const {
-  // ----------------------------------------------------------------
-  // Step 1: Build per-shard sizes from the plan's orig/projected sizes.
-  //
-  // orig_shard_sizes[shard]  = on-disk shard size before this operation,
-  //                            derived from plan.orig_size via the stripe mapping.
-  // proj_shard_sizes[shard]  = expected on-disk shard size after the operation,
-  //                            as recorded in the projected object_info.
-  // ----------------------------------------------------------------
+void ECTransaction::Generate::dump_shard_size_detail(
+    int log_level,
+    const shard_id_map<uint64_t> &orig_shard_sizes,
+    const shard_id_map<uint64_t> &proj_shard_sizes,
+    const shard_id_map<uint64_t> &result_shard_sizes) {
+  ldpp_dout(dpp, log_level) << __func__ << ": oid=" << oid
+                     << " orig_size=" << plan.orig_size
+                     << " projected_size=" << plan.projected_size
+                     << dendl;
+  ldpp_dout(dpp, log_level) << __func__ << ": plan=" << plan << dendl;
+  if (entry) {
+    ldpp_dout(dpp, log_level) << __func__ << ": log_entry=" << *entry << dendl;
+  }
+  ldpp_dout(dpp, log_level) << __func__ << ": op"
+                     << " init_type=";
+  match(
+    op.init_type,
+    [&](const PGTransaction::ObjectOperation::Init::None &) {
+      *_dout << "none";
+    },
+    [&](const PGTransaction::ObjectOperation::Init::Create &) {
+      *_dout << "create";
+    },
+    [&](const PGTransaction::ObjectOperation::Init::Clone &c) {
+      *_dout << "clone(source=" << c.source << ")";
+    },
+    [&](const PGTransaction::ObjectOperation::Init::Rename &r) {
+      *_dout << "rename(source=" << r.source << ")";
+    });
+  *_dout << " delete_first=" << op.delete_first
+         << " truncate=";
+  if (op.truncate) {
+    *_dout << "[" << op.truncate->first << "," << op.truncate->second << "]";
+  } else {
+    *_dout << "none";
+  }
+  *_dout << " clear_omap=" << op.clear_omap
+         << dendl;
+  if (op.alloc_hint) {
+    ldpp_dout(dpp, log_level) << __func__ << ":   alloc_hint"
+                       << " expected_object_size=" << op.alloc_hint->expected_object_size
+                       << " expected_write_size=" << op.alloc_hint->expected_write_size
+                       << " flags=" << op.alloc_hint->flags
+                       << dendl;
+  }
+  using BufferUpdate = PGTransaction::ObjectOperation::BufferUpdate;
+  for (auto &extent : op.buffer_updates) {
+    ldpp_dout(dpp, log_level) << __func__ << ":   buffer_update off="
+                       << extent.get_off() << " len=" << extent.get_len()
+                       << " type=";
+    match(
+      extent.get_val(),
+      [&](const BufferUpdate::Write &w) {
+        *_dout << "write(bl_len=" << w.buffer.length()
+               << " fadvise=" << w.fadvise_flags << ")";
+      },
+      [&](const BufferUpdate::Zero &) {
+        *_dout << "zero";
+      },
+      [&](const BufferUpdate::CloneRange &c) {
+        *_dout << "clone_range(from=" << c.from
+               << " off=" << c.offset << " len=" << c.len << ")";
+      });
+    *_dout << dendl;
+  }
+  if (!op.attr_updates.empty()) {
+    ldpp_dout(dpp, log_level) << __func__ << ":   attr_updates: ";
+    for (auto &&[attr, val]: op.attr_updates) {
+      *_dout << attr << "(" << (val ? std::to_string(val->length()) : "del")
+             << ") ";
+    }
+    *_dout << dendl;
+  }
+  if (op.updated_snaps) {
+    ldpp_dout(dpp, log_level) << __func__ << ":   updated_snaps old="
+                       << op.updated_snaps->first
+                       << " new=" << op.updated_snaps->second
+                       << dendl;
+  }
+  if (obc) {
+    ldpp_dout(dpp, log_level) << __func__ << ":   cached_oi=" << obc->obs.oi
+                       << " exists=" << obc->obs.exists
+                       << dendl;
+  }
+  for (auto &&[shard, txn] : transactions) {
+    ldpp_dout(dpp, log_level) << __func__ << ":   shard " << shard
+                       << " orig=" << orig_shard_sizes.at(shard)
+                       << " projected=" << proj_shard_sizes.at(shard)
+                       << " computed=" << result_shard_sizes.at(shard)
+                       << (result_shard_sizes.at(shard) != proj_shard_sizes.at(shard)
+                           ? " MISMATCH" : "")
+                       << dendl;
+  }
+  for (auto &&[shard, txn] : transactions) {
+    ldpp_dout(dpp, log_level) << __func__ << ":   shard " << shard
+                       << " transaction: ";
+    Formatter *f = Formatter::create("json");
+    f->open_object_section("t");
+    txn.dump(f);
+    f->close_section();
+    f->flush(*_dout);
+    delete f;
+    *_dout << dendl;
+  }
+}
+
+void ECTransaction::Generate::log_shard_size_analysis() {
   shard_id_map<uint64_t> orig_shard_sizes(sinfo.get_k_plus_m());
   shard_id_map<uint64_t> proj_shard_sizes(sinfo.get_k_plus_m());
 
@@ -1065,40 +1163,20 @@ void ECTransaction::Generate::log_shard_size_analysis() const {
     proj_shard_sizes[shard] = sinfo.object_size_to_shard_size(plan.projected_size, shard);
   }
 
-  // ----------------------------------------------------------------
-  // Step 2: Compute the resulting per-shard size by replaying each
-  // shard's ObjectStore::Transaction via ECUtil::compute_shard_size_from_transaction().
-  // ----------------------------------------------------------------
   shard_id_map<uint64_t> result_shard_sizes(sinfo.get_k_plus_m());
-
   for (auto &&[shard, txn] : transactions) {
     const ghobject_t target_goid(oid, ghobject_t::NO_GEN, shard);
     result_shard_sizes[shard] = ECUtil::compute_shard_size_from_transaction(
       txn, target_goid, orig_shard_sizes[shard]);
   }
 
-  // ----------------------------------------------------------------
-  // Step 3: Assert that the transaction produces the projected shard size.
-  // Always log the summary so we can verify this code path is reached.
-  // ----------------------------------------------------------------
-  ldpp_dout(dpp, -1) << __func__ << ": oid=" << oid
-                     << " orig_size=" << plan.orig_size
-                     << " projected_size=" << plan.projected_size
-                     << dendl;
-  for (shard_id_t shard; shard < sinfo.get_k_plus_m(); ++shard) {
-    uint64_t orig_sz   = orig_shard_sizes[shard];
-    uint64_t proj_sz   = proj_shard_sizes[shard];
-    uint64_t result_sz = result_shard_sizes.count(shard)
-                           ? result_shard_sizes[shard]
-                           : orig_sz;
+  dump_shard_size_detail(30, orig_shard_sizes, proj_shard_sizes,
+                         result_shard_sizes);
 
-    ldpp_dout(dpp, -1) << __func__ << ":   shard " << shard
-                       << " orig=" << orig_sz
-                       << " projected=" << proj_sz
-                       << " computed=" << result_sz
-                       << dendl;
-
-    if (result_sz != proj_sz) {
+  for (auto &&[shard, txn] : transactions) {
+    if (result_shard_sizes[shard] != proj_shard_sizes[shard]) {
+      dump_shard_size_detail(-1, orig_shard_sizes, proj_shard_sizes,
+                             result_shard_sizes);
       ceph_abort_msg("EC transaction produces wrong shard size");
     }
   }

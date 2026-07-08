@@ -109,17 +109,12 @@ class Generate {
   void written_shards();
   void attr_updates();
 
-  /**
-   * Log analysis of per-shard size changes implied by the write plan and
-   * compute the size the object will be after applying the transaction to
-   * orig_size.  Called at dout(20) for debug purposes.
-   *
-   * For every shard the function reports:
-   *   - orig_shard_size  : size derived from plan.orig_size
-   *   - proj_shard_size  : size derived from plan.projected_size
-   *   - result_shard_size: size derived by replaying op against orig_size
-   */
-  void log_shard_size_analysis() const;
+  void dump_shard_size_detail(
+    int log_level,
+    const shard_id_map<uint64_t> &orig_shard_sizes,
+    const shard_id_map<uint64_t> &proj_shard_sizes,
+    const shard_id_map<uint64_t> &result_shard_sizes);
+  void log_shard_size_analysis();
 
  public:
   Generate(PGTransaction &t,
