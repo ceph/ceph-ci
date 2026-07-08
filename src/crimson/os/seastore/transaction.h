@@ -592,8 +592,8 @@ public:
     ool_write_stats = {};
     rewrite_stats = {};
     conflicted = false;
+    need_wait_visibility = false;
     force_rewrite_conflict = false;
-    blocked_by.clear();
     assert(backref_entries.empty());
     if (!has_reset) {
       has_reset = true;
@@ -723,13 +723,8 @@ public:
 
   btree_cursor_stats_t cursor_stats;
 
+  bool need_wait_visibility = false;
   bool force_rewrite_conflict = false;
-  // XXX: To allow multiple rewrite transactions to block the same
-  // transaction, we can't simply use a counter. Because a client
-  // transaction may be add to the read_transactions of an extent
-  // when the rewrite transactions that modifies the extent are
-  // committing.
-  std::set<transaction_id_t> blocked_by;;
 
   struct lmapping_t {
     laddr_t dest = L_ADDR_NULL;

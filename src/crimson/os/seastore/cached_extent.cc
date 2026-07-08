@@ -632,7 +632,7 @@ void ExtentCommitter::block_trans(Transaction &t) {
   for (auto &item : prior.read_transactions) {
     TRACET("blocking trans {} for rewriting {}",
       t, item.t->get_trans_id(), *item.ref);
-    item.t->blocked_by.insert(t.get_trans_id());
+    item.t->need_wait_visibility = true;
   }
 }
 
@@ -642,7 +642,7 @@ void ExtentCommitter::unblock_trans(Transaction &t) {
   for (auto &item : prior.read_transactions) {
     TRACET("unblocking trans {} for rewriting {}",
       t, item.t->get_trans_id(), *item.ref);
-    item.t->blocked_by.erase(t.get_trans_id());
+    item.t->need_wait_visibility = false;
   }
 }
 
