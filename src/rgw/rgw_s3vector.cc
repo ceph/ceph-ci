@@ -82,9 +82,14 @@ namespace rgw::s3vector {
   LanceDBConnection* connect(DoutPrefixProvider* dpp, const std::string& vector_bucket_name) {
     const auto dbname = fmt::format("/tmp/lancedb/{}", vector_bucket_name);
     LanceDBConnectBuilder* builder = lancedb_connect(dbname.c_str());
-    LanceDBConnection* conn = lancedb_connect_builder_execute(builder);
-    if (!conn) {
-      ldpp_dout(dpp, 1) << "ERROR: s3vector failed to connect to: " << dbname << dendl;
+    LanceDBConnection* conn = nullptr;
+    char* error_message = nullptr;
+    const auto rc = lancedb_connect_builder_execute(builder, &conn, &error_message);
+    if (rc != LANCEDB_SUCCESS) {
+      ldpp_dout(dpp, 1) << "ERROR: s3vector failed to connect to: " << dbname
+        << " error: " << (error_message ? error_message : "unknown") << dendl;
+      lancedb_free_string(error_message);
+      return nullptr;
     }
     return conn;
   }
@@ -101,9 +106,14 @@ namespace rgw::s3vector {
     }
     LanceDBConnectBuilder* builder = lancedb_connect(dbname.c_str());
     builder = lancedb_connect_builder_session(builder, session_sp.get());
-    LanceDBConnection* conn = lancedb_connect_builder_execute(builder);
-    if (!conn) {
-      ldpp_dout(dpp, 1) << "ERROR: s3vector failed to connect using session to: " << dbname << " falling back to connect without session" << dendl;
+    LanceDBConnection* conn = nullptr;
+    char* error_message = nullptr;
+    const auto rc = lancedb_connect_builder_execute(builder, &conn, &error_message);
+    if (rc != LANCEDB_SUCCESS) {
+      ldpp_dout(dpp, 1) << "ERROR: s3vector failed to connect using session to: " << dbname
+        << " error: " << (error_message ? error_message : "unknown")
+        << " falling back to connect without session" << dendl;
+      lancedb_free_string(error_message);
       return LanceDBSessionConnHandle{
         .conn = connect(dpp, vector_bucket_name)
       }; // fallback to connect without session
