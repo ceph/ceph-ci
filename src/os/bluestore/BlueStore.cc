@@ -6677,9 +6677,9 @@ void BlueStore::_init_logger()
   b.add_time_avg(l_bluestore_clone_lat, "clone_lat",
     "Average clone/clone_range operation latency",
     "clon", PerfCountersBuilder::PRIO_USEFUL);
-  b.add_time_avg(l_bluestore_attr_lat, "attr_lat",
+  b.add_time_avg(l_bluestore_change_attr_lat, "chgattr_lat",
     "Average setattr/setattrs/rmattr/rmattrs latency",
-    "attr", PerfCountersBuilder::PRIO_USEFUL);
+    "chg", PerfCountersBuilder::PRIO_USEFUL);
   b.add_time_avg(l_bluestore_touch_lat, "touch_lat",
     "Average touch latency",
     "tuch", PerfCountersBuilder::PRIO_USEFUL);
@@ -13945,12 +13945,14 @@ bool BlueStore::collection_exists(const coll_t& c)
 {
   auto start = mono_clock::now();
   std::shared_lock l(coll_lock);
-  return coll_map.count(c);
+  bool exists = coll_map.count(c);
   logger->tinc_with_max(l_bluestore_collection_lat, mono_clock::now() - start);
+  return exists;
 }
 
 int BlueStore::collection_empty(CollectionHandle& ch, bool *empty)
 {
+  // collection_empty delegates to collection_list; measuring both would double-count.
   dout(15) << __func__ << " " << ch->cid << dendl;
   vector<ghobject_t> ls;
   ghobject_t next;
@@ -18551,7 +18553,7 @@ int BlueStore::_setattr(TransContext *txc,
   b.reassign_to_mempool(mempool::mempool_bluestore_cache_meta);
 
   txc->write_onode(o);
-  logger->tinc_with_max(l_bluestore_attr_lat, mono_clock::now() - start);
+  logger->tinc_with_max(l_bluestore_change_attr_lat, mono_clock::now() - start);
   dout(10) << __func__ << " " << c->cid << " " << o->oid
 	   << " " << name << " (" << val.length() << " bytes)"
 	   << " = " << r << dendl;
@@ -18580,7 +18582,7 @@ int BlueStore::_setattrs(TransContext *txc,
     }
   }
   txc->write_onode(o);
-  logger->tinc_with_max(l_bluestore_attr_lat, mono_clock::now() - start);
+  logger->tinc_with_max(l_bluestore_change_attr_lat, mono_clock::now() - start);
   dout(10) << __func__ << " " << c->cid << " " << o->oid
 	   << " " << aset.size() << " keys"
 	   << " = " << r << dendl;
@@ -18605,7 +18607,7 @@ int BlueStore::_rmattr(TransContext *txc,
   txc->write_onode(o);
 
 out:
-  logger->tinc_with_max(l_bluestore_attr_lat, mono_clock::now() - start);
+  logger->tinc_with_max(l_bluestore_change_attr_lat, mono_clock::now() - start);
   dout(10) << __func__ << " " << c->cid << " " << o->oid
 	   << " " << name << " = " << r << dendl;
   return r;
@@ -18626,7 +18628,7 @@ int BlueStore::_rmattrs(TransContext *txc,
   txc->write_onode(o);
 
  out:
-  logger->tinc_with_max(l_bluestore_attr_lat, mono_clock::now() - start);
+  logger->tinc_with_max(l_bluestore_change_attr_lat, mono_clock::now() - start);
   dout(10) << __func__ << " " << c->cid << " " << o->oid << " = " << r << dendl;
   return r;
 }
