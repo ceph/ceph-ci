@@ -770,15 +770,13 @@ seastar::future<> TransactionManager::lock_mutated_nodes(
   }
   t.for_each_mutated_extent(
     [&mutated_extents](auto &extent) {
-      // We don't need to block conflicting transactions' mutated extents
-      if (should_lock_on_commit(extent)) {
-        std::ignore = mutated_extents.emplace(&extent);
-      }
+      std::ignore = mutated_extents.emplace(&extent);
   });
   if (is_rewrite_transaction(t.get_src())) {
     for (auto &ext : mutated_extents) {
-      assert(should_use_no_conflict_publish(t, ext->get_type()));
-      co_await ext->commit_lock.lock();
+      if (should_use_no_conflict_publish(t, ext->get_type())) {
+        co_await ext->commit_lock.lock();
+      }
     }
   } else {
     for (auto &ext : mutated_extents) {

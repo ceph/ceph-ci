@@ -495,7 +495,7 @@ public:
         if (!e->is_valid()) {
           return;
         }
-        std::invoke(f, *e);
+        std::invoke(f, *e->get_prior_instance());
       });
   }
 
@@ -1048,18 +1048,6 @@ constexpr bool should_use_no_conflict_publish(const Transaction &t,
 
   return !t.force_rewrite_conflict && is_rewrite_transaction(t.get_src());
 }
-
-constexpr bool should_lock_on_commit(const CachedExtent &extent) {
-  switch (extent.get_type()) {
-  case extent_types_t::LADDR_INTERNAL:
-  case extent_types_t::LADDR_LEAF:
-  case extent_types_t::BACKREF_INTERNAL:
-    return true;
-  default:
-    return false;
-  }
-}
-
 
 }
 
