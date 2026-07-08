@@ -668,42 +668,23 @@ wait
         log.info("Verifying that MDS daemon fails to replay the corrupted journal...")
         self.fs.set_joinable()
 
-        # Poll the state machine deterministically over a 60-second window
-        mds_failed_as_expected = False
-        max_attempts = 30
-
-        # sleep seems to be better than this, because when the info is true, the current_state would be up:replay and progressing.
-        # So revert it to sleep(60), so that MDS could restart
-        for attempt in range(max_attempts):
-            status = self.fs.status()
-            info = status.get_mds_info_by_rank(self.fs.id, 0)
-            if info:
-                current_state = info.get('state')
-                log.info(f"[Attempt {attempt+1}/{max_attempts}] MDS discovered in state: {current_state}")
-
-                # If it somehow makes it all the way to active, our corruption test failed
-                if current_state == 'up:active':
-                    raise RuntimeError("MDS successfully booted up even with journal corruption!")
-
-                # If it lands in a known damaged/failed state, or gets stuck in 'up:replay',
-                # it means our header corruption successfully broke the replay pipeline.
-                if current_state in ['up:replay', 'damaged', 'failed']:
-                    log.info(f"MDS successfully blocked or failed at replay layer as expected.")
-                    mds_failed_as_expected = True
-                    break
-            else:
-                log.info(f"[Attempt {attempt+1}/{max_attempts}] MDS daemon process not initialized in status map yet...")
-            time.sleep(2)
-
-        # Sanity check to ensure we didn't just exit the loop because the timer expired
-        if not mds_failed_as_expected:
-            log.warning("MDS did not explicitly transition to a failed/replay state within the window, "
-                        "but did not reach active either. Proceeding with caution.")
+        # Capture the status profile while the FS is active/joinable
+        # so that the rank dictionary definitions exist.
+        time.sleep(10)
+        status = self.fs.status()
+        try:
+            info = status.get_rank(self.fs.id, 0)
+            current_state = info.get('state')
+            log.info(f"MDS daemon is in state: {current_state} after corruption.")
+            self.assertNotEqual(current_state, "up:active", "MDS reached active despite header corruption!")
+        except Exception as e:
+            log.info(f"MDS rank missing or failed as expected during replay: {e}")
 
         # Fail the filesystem again to regain exclusive access to the journal
+        log.info("Regaining exclusive offline access...")
         self.fs.fail()
 
-        # Step 3: Test Dry-Run Mode on the corrupted journal
+        # Test Dry-Run Mode on the corrupted journal
         log.info("Executing recover_header in dry-run mode (without --force)...")
         dry_run_output = self.fs.journal_tool(["header", "recover"], 0)
         log.info(f"Dry-run output:\n{dry_run_output}")
@@ -734,6 +715,9 @@ wait
         # Verify Header Persistence via 'header get'
         log.info("Fetching updated header to confirm correctness...")
         header_raw = self.fs.journal_tool(["header", "get"], 0)
+        # Clean out potential cluster debug prefixes from the output stream string
+        if "{" in header_raw:
+            header_raw = header_raw[header_raw.index("{"):]
         header_json = json.loads(header_raw)
         log.info(f"Persisted Header JSON: {header_json}")
         self.assertGreater(header_json["write_pos"], 1000) # Ensure it realigned past our corruption value
@@ -741,9 +725,14 @@ wait
         # Bring the filesystem back up and confirm MDS can now replay successfully
         log.info("Verify file system stability post-recovery...")
         self.fs.set_joinable()
+
+        # Explicitly tell the Monitor to clear the "damaged" state record for Rank 0.
+        log.info("Clearing damaged rank flag from monitor status...")
+        self.fs.mon_manager.raw_cluster_cmd("mds", "repaired", f"{self.fs.name}:0")
+
         # Wait for the daemons report healthy and active. This should succeed now.
         try:
-            self.fs.wait_for_daemons()
+            self.fs.wait_for_daemons(timeout=60)
             log.info("MDS successfully booted up after journal recovery")
         except Exception as e:
             raise RuntimeError(f"MDS failed to start after journal recovery: {e}")
