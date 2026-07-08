@@ -56,6 +56,6 @@ class NVMeoF(MgrModule):
     def create_pool_if_not_exists(self) -> None:
         if not self._pool_exists(POOL_NAME):
             self._create_pool(POOL_NAME)
-        self._enable_application(POOL_NAME, 'rbd')
+        # self._enable_application(POOL_NAME, 'rbd')
         self._enable_application(POOL_NAME, 'nvmeof')
-        self._rbd_pool_init(POOL_NAME)
+        # self._rbd_pool_init(POOL_NAME)
