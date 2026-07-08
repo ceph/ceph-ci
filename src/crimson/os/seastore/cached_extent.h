@@ -1027,6 +1027,8 @@ private:
 
   bool is_shadow = false;
 
+  seastar::shared_mutex commit_lock;
+
 protected:
   trans_view_set_t mutation_pending_extents;
   trans_view_set_t retired_transactions;

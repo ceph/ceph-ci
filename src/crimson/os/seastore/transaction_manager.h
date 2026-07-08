@@ -1442,6 +1442,20 @@ private:
     return cache->can_drop_backref();
   }
 
+  // use memory addresses as the key for comparing extents,
+  // this makes sure that mutexes of extents are always
+  // acquired in the same order, avoiding dead locks.
+  struct mem_addr_cmp_t {
+    bool operator()(const CachedExtentRef &lhs,
+                    const CachedExtentRef &rhs) const {
+      return lhs.get() < rhs.get();
+    }
+  };
+
+  seastar::future<> lock_mutated_nodes(
+    Transaction &t,
+    std::set<CachedExtentRef, mem_addr_cmp_t> &stable_extents);
+
   using resolve_cursor_to_mapping_iertr = base_iertr;
   resolve_cursor_to_mapping_iertr::future<LBAMapping>
   resolve_cursor_to_mapping(

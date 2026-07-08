@@ -750,6 +750,45 @@ TransactionManager::update_lba_mappings(
   });
 }
 
+seastar::future<> TransactionManager::lock_mutated_nodes(
+  Transaction &t,
+  std::set<CachedExtentRef, mem_addr_cmp_t> &mutated_extents)
+{
+  if (epm->get_main_backend_type() == backend_type_t::SEGMENTED) {
+    // For now, it's only when RBM is used as the main backend that we
+    // need to lock extents, because:
+    // 1. Locking extents is to prevent transactions from ool-writing
+    //    extents whose content may be modified by rewrite transactions.
+    // 2. Only lba/backref internal nodes and lba leaf nodes content
+    //    may be modified by rewrite transactions.
+    // 3. SEGMENTED main backends would ool-write lba/backref nodes.
+    // 4. lba/backref nodes are always on the main device.
+    //
+    // TODO: this should be removed when other types of extents, like
+    // Onode and omaps, can also be merged like lba/backref nodes.
+    co_return;
+  }
+  t.for_each_mutated_extent(
+    [&mutated_extents](auto &extent) {
+      // We don't need to block conflicting transactions' mutated extents
+      if (should_lock_on_commit(extent)) {
+        std::ignore = mutated_extents.emplace(&extent);
+      }
+  });
+  if (is_rewrite_transaction(t.get_src())) {
+    for (auto &ext : mutated_extents) {
+      assert(should_use_no_conflict_publish(t, ext->get_type()));
+      co_await ext->commit_lock.lock();
+    }
+  } else {
+    for (auto &ext : mutated_extents) {
+      // There's no need for conflicting txns to block each other,
+      // txn invalidation will kick in.
+      co_await ext->commit_lock.lock_shared();
+    }
+  }
+}
+
 TransactionManager::submit_transaction_direct_ret
 TransactionManager::do_submit_transaction(
   Transaction &tref,
@@ -762,86 +801,121 @@ TransactionManager::do_submit_transaction(
     tref.get_handle().enter(write_pipeline.ool_writes_and_lba_updates)
   );
 
-  SUBTRACET(seastore_t, "write delayed ool extents", tref);
-  auto ool_start = std::chrono::steady_clock::now();
-  co_await epm->write_delayed_ool_extents(
-    tref, dispatch_result.alloc_map
-  );
-  tref.get_phase_durations().ool_write +=
-    std::chrono::steady_clock::now() - ool_start;
+  std::set<CachedExtentRef, mem_addr_cmp_t> mutated_extents;
+  try {
+    co_await trans_intr::make_interruptible(
+      lock_mutated_nodes(tref, mutated_extents));
 
-  auto allocated_extents = tref.get_valid_pre_alloc_list();
-  auto lba_start = std::chrono::steady_clock::now();
-  co_await update_lba_mappings(tref, allocated_extents);
-  tref.get_phase_durations().lba_update +=
-    std::chrono::steady_clock::now() - lba_start;
+    SUBTRACET(seastore_t, "write delayed ool extents", tref);
+    auto ool_start = std::chrono::steady_clock::now();
+    co_await epm->write_delayed_ool_extents(
+      tref, dispatch_result.alloc_map
+    );
+    tref.get_phase_durations().ool_write +=
+      std::chrono::steady_clock::now() - ool_start;
 
-  auto num_extents = allocated_extents.size();
-  SUBTRACET(seastore_t, "process {} allocated extents", tref, num_extents);
-  ool_start = std::chrono::steady_clock::now();
-  co_await epm->write_preallocated_ool_extents(tref, allocated_extents);
-  tref.get_phase_durations().ool_write +=
-    std::chrono::steady_clock::now() - ool_start;
+    auto allocated_extents = tref.get_valid_pre_alloc_list();
+    auto lba_start = std::chrono::steady_clock::now();
+    co_await update_lba_mappings(tref, allocated_extents);
+    tref.get_phase_durations().lba_update +=
+      std::chrono::steady_clock::now() - lba_start;
 
-  SUBTRACET(seastore_t, "entering prepare", tref);
-  auto prepare_enter_start = std::chrono::steady_clock::now();
-  co_await trans_intr::make_interruptible(
-    tref.get_handle().enter(write_pipeline.prepare)
-  );
-  tref.get_phase_durations().prepare_enter +=
-    std::chrono::steady_clock::now() - prepare_enter_start;
+    auto num_extents = allocated_extents.size();
+    SUBTRACET(seastore_t, "process {} allocated extents", tref, num_extents);
+    ool_start = std::chrono::steady_clock::now();
+    co_await epm->write_preallocated_ool_extents(tref, allocated_extents);
+    tref.get_phase_durations().ool_write +=
+      std::chrono::steady_clock::now() - ool_start;
 
-  if (trim_alloc_to && *trim_alloc_to != JOURNAL_SEQ_NULL) {
-    SUBTRACET(seastore_t, "trim backref_bufs to {}", tref, *trim_alloc_to);
-    cache->trim_backref_bufs(*trim_alloc_to);
-  }
+    SUBTRACET(seastore_t, "entering prepare", tref);
+    auto prepare_enter_start = std::chrono::steady_clock::now();
+    co_await trans_intr::make_interruptible(
+      tref.get_handle().enter(write_pipeline.prepare)
+    );
 
-  auto prepare_record_start = std::chrono::steady_clock::now();
-  auto record = cache->prepare_record(
-    tref,
-    journal->get_trimmer().get_journal_head(),
-    journal->get_trimmer().get_dirty_tail());
-  tref.get_phase_durations().prepare_record +=
-    std::chrono::steady_clock::now() - prepare_record_start;
+    if (!is_rewrite_transaction(tref.get_src())) {
+      // For conflicting transactions, we can release the lock
+      // now. Because other transactions accessing the same
+      // extents as the current one would be invalidated later
+      // in Cache::prepare_record()
+      for (auto &ext : mutated_extents) {
+        assert(!should_use_no_conflict_publish(tref, ext->get_type()));
+        ext->commit_lock.unlock_shared();
+      }
+      mutated_extents.clear();
+    }
 
-  tref.get_handle().maybe_release_collection_lock();
-  if (tref.get_src() == Transaction::src_t::MUTATE) {
-    --(shard_stats.processing_inlock_io_num);
-    ++(shard_stats.processing_postlock_io_num);
-  }
+    tref.get_phase_durations().prepare_enter +=
+      std::chrono::steady_clock::now() - prepare_enter_start;
 
-  SUBTRACET(seastore_t, "submitting record", tref);
-  auto journal_start = std::chrono::steady_clock::now();
-  co_await journal->submit_record(
-    std::move(record),
-    tref.get_handle(),
-    tref.get_src(),
-    [this, FNAME, &tref](record_locator_t submit_result) {
-    SUBDEBUGT(seastore_t, "committed with {}", tref, submit_result);
-    auto start_seq = submit_result.write_result.start_seq;
-    journal->get_trimmer().set_journal_head(start_seq);
-    cache->complete_commit(
+    if (trim_alloc_to && *trim_alloc_to != JOURNAL_SEQ_NULL) {
+      SUBTRACET(seastore_t, "trim backref_bufs to {}", tref, *trim_alloc_to);
+      cache->trim_backref_bufs(*trim_alloc_to);
+    }
+
+    auto prepare_record_start = std::chrono::steady_clock::now();
+    auto record = cache->prepare_record(
       tref,
-      submit_result.record_block_base,
-      start_seq);
-    journal->get_trimmer().update_journal_tails(
-      cache->get_oldest_dirty_from().value_or(start_seq),
-      cache->get_oldest_backref_dirty_from().value_or(start_seq));
-    if (support_logical_bucket()) {
-      for (auto &prefix : tref.get_touched_laddr_prefix()) {
-	logical_bucket->move_to_top(prefix.get_object_prefix());
+      journal->get_trimmer().get_journal_head(),
+      journal->get_trimmer().get_dirty_tail());
+    tref.get_phase_durations().prepare_record +=
+      std::chrono::steady_clock::now() - prepare_record_start;
+
+    tref.get_handle().maybe_release_collection_lock();
+    if (tref.get_src() == Transaction::src_t::MUTATE) {
+      --(shard_stats.processing_inlock_io_num);
+      ++(shard_stats.processing_postlock_io_num);
+    }
+
+    SUBTRACET(seastore_t, "submitting record", tref);
+    auto journal_start = std::chrono::steady_clock::now();
+    co_await journal->submit_record(
+      std::move(record),
+      tref.get_handle(),
+      tref.get_src(),
+      [&mutated_extents, this, FNAME, &tref](record_locator_t submit_result) {
+      SUBDEBUGT(seastore_t, "committed with {}", tref, submit_result);
+      auto start_seq = submit_result.write_result.start_seq;
+      journal->get_trimmer().set_journal_head(start_seq);
+      cache->complete_commit(
+        tref,
+        submit_result.record_block_base,
+        start_seq);
+      for (auto &ext : mutated_extents) {
+        assert(should_use_no_conflict_publish(tref, ext->get_type()));
+        ext->commit_lock.unlock();
+      }
+      journal->get_trimmer().update_journal_tails(
+        cache->get_oldest_dirty_from().value_or(start_seq),
+        cache->get_oldest_backref_dirty_from().value_or(start_seq));
+      if (support_logical_bucket()) {
+        for (auto &prefix : tref.get_touched_laddr_prefix()) {
+          logical_bucket->move_to_top(prefix.get_object_prefix());
+        }
+      }
+      }).handle_error(
+        submit_transaction_iertr::pass_further{},
+        crimson::ct_error::assert_all("Hit error submitting to journal")
+      );
+    tref.get_phase_durations().journal +=
+      std::chrono::steady_clock::now() - journal_start;
+
+    co_await trans_intr::make_interruptible(
+      tref.get_handle().complete()
+    );
+  } catch (...) {
+    if (is_rewrite_transaction(tref.get_src())) {
+      for (auto &ext : mutated_extents) {
+        assert(should_use_no_conflict_publish(tref, ext->get_type()));
+        ext->commit_lock.unlock();
+      }
+    } else {
+      for (auto &ext : mutated_extents) {
+        ext->commit_lock.unlock_shared();
       }
     }
-    }).handle_error(
-      submit_transaction_iertr::pass_further{},
-      crimson::ct_error::assert_all("Hit error submitting to journal")
-    );
-  tref.get_phase_durations().journal +=
-    std::chrono::steady_clock::now() - journal_start;
-
-  co_await trans_intr::make_interruptible(
-    tref.get_handle().complete()
-  );
+    throw;
+  }
 }
 
 seastar::future<> TransactionManager::flush(OrderingHandle &handle)
