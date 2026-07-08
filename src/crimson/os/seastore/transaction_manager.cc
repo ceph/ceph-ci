@@ -1290,7 +1290,7 @@ TransactionManager::promote_extent(
     auto orig_laddr = orig_ext->get_laddr();
     auto orig_paddr = orig_ext->get_paddr();
     auto orig_length = orig_ext->get_length();
-    t.force_rewrite_conflict = (promoted_raw_extents.size() > 1);
+    t.force_rewrite_conflict |= (promoted_raw_extents.size() > 1);
     for (auto &extent : promoted_raw_extents) {
       auto slice_laddr = (orig_laddr + offset).checked_to_laddr();
       auto slice_length = extent->get_length();
