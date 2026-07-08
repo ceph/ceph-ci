@@ -594,7 +594,6 @@ public:
     conflicted = false;
     force_rewrite_conflict = false;
     blocked_by.clear();
-    backref_lba_ool_written = false;
     assert(backref_entries.empty());
     if (!has_reset) {
       has_reset = true;
@@ -731,7 +730,6 @@ public:
   // when the rewrite transactions that modifies the extent are
   // committing.
   std::set<transaction_id_t> blocked_by;;
-  bool backref_lba_ool_written = false;
 
   struct lmapping_t {
     laddr_t dest = L_ADDR_NULL;

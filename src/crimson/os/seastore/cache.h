@@ -2043,10 +2043,6 @@ private:
 void stage_visibility_handoff(Transaction& t,
                               CachedExtentRef next,
                               CachedExtentRef prev);
-  void invalidate_trans(
-    Transaction &t,
-    CachedExtent &extent,
-    bool backref_lba_written_only);
 
   /// Invalidate extent and mark affected transactions
   void invalidate_extent(Transaction& t, CachedExtent& extent);

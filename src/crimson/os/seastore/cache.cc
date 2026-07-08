@@ -1030,19 +1030,20 @@ void Cache::commit_replace_extent(
 
 }
 
-void Cache::invalidate_trans(
-  Transaction &t,
-  CachedExtent &extent,
-  bool backref_lba_written_only)
+void Cache::invalidate_extent(
+    Transaction& t,
+    CachedExtent& extent)
 {
+  if (!extent.may_conflict()) {
+    assert(extent.read_transactions.empty());
+    extent.set_invalid(t);
+    return;
+  }
+
   LOG_PREFIX(Cache::invalidate_extent);
   bool do_conflict_log = true;
   std::vector<Transaction*> invalidated_trans;
   for (auto &&i: extent.read_transactions) {
-    if (likely(backref_lba_written_only &&
-               !i.t->backref_lba_ool_written)) {
-      continue;
-    }
     if (!i.t->conflicted) {
       if (do_conflict_log) {
         SUBDEBUGT(seastore_t, "conflict begin -- {}", t, extent);
@@ -1060,20 +1061,6 @@ void Cache::invalidate_trans(
     trans->retired_set.clear();
     trans->views.clear();
   }
-}
-
-void Cache::invalidate_extent(
-    Transaction& t,
-    CachedExtent& extent)
-{
-  if (!extent.may_conflict()) {
-    assert(extent.read_transactions.empty());
-    extent.set_invalid(t);
-    return;
-  }
-
-  invalidate_trans(t, extent, false);
-
   extent.set_invalid(t);
 }
 
@@ -1463,9 +1450,6 @@ record_t Cache::prepare_record(
     if (should_use_no_conflict_publish(t, i->get_type())) {
       i->new_committer(t);
       i->committer->block_trans(t);
-      if (is_lba_backref_node(i->get_type())) {
-        invalidate_trans(t, *i->prior_instance, true);
-      }
     }
     assert(i->is_exist_mutation_pending() ||
 	   i->prior_instance);
@@ -1748,9 +1732,6 @@ record_t Cache::prepare_record(
       assert(i->committer);
       auto &committer = *i->committer;
       committer.block_trans(t);
-      if (is_lba_backref_node(i->get_type())) {
-        invalidate_trans(t, *i->prior_instance, true);
-      }
       i->get_prior_instance()->set_io_wait(
         CachedExtent::extent_state_t::CLEAN,
         should_use_no_conflict_publish(t, i->get_type()));
@@ -1787,9 +1768,6 @@ record_t Cache::prepare_record(
       i->get_prior_instance()->committer = i->committer;
       auto &committer = *i->committer;
       committer.block_trans(t);
-      if (is_lba_backref_node(i->get_type())) {
-        invalidate_trans(t, *i->prior_instance, true);
-      }
       i->get_prior_instance()->set_io_wait(
         CachedExtent::extent_state_t::CLEAN, true);
     }
@@ -2135,7 +2113,6 @@ void Cache::complete_commit(
       committer.sync_checksum();
       committer.commit_and_share_paddr();
       if (is_lba_backref_node(i->get_type())) {
-        invalidate_trans(t, prior, true);
         committer.commit_data();
       }
       if (i->is_logical()) {
@@ -2232,7 +2209,6 @@ void Cache::complete_commit(
       prior.t = nullptr;
       ceph_assert(prior.is_valid());
       if (is_lba_backref_node(i->get_type())) {
-        invalidate_trans(t, prior, true);
         committer.commit_data();
       }
       committer.sync_version();
