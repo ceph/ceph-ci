@@ -592,7 +592,6 @@ public:
     ool_write_stats = {};
     rewrite_stats = {};
     conflicted = false;
-    need_wait_visibility = false;
     force_rewrite_conflict = false;
     assert(backref_entries.empty());
     if (!has_reset) {
@@ -723,7 +722,6 @@ public:
 
   btree_cursor_stats_t cursor_stats;
 
-  bool need_wait_visibility = false;
   bool force_rewrite_conflict = false;
 
   struct lmapping_t {
