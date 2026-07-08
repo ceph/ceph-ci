@@ -1303,6 +1303,81 @@ private:
     return cache->can_drop_backref();
   }
 
+  // use memory addresses as the key for comparing extents,
+  // this makes sure that mutexes of extents are always
+  // acquired in the same order, avoiding dead locks.
+  struct mem_addr_cmp_t {
+    bool operator()(const CachedExtentRef &lhs,
+                    const CachedExtentRef &rhs) const {
+      return lhs.get() < rhs.get();
+    }
+  };
+
+  using mutated_extents_set_t =
+    std::set<CachedExtentRef, mem_addr_cmp_t>;
+  struct mutated_extents_locker {
+    const Transaction &t;
+    mutated_extents_set_t mutated_extents;
+
+    mutated_extents_locker(const Transaction &t, mutated_extents_set_t &&extents)
+      : t(t), mutated_extents(std::move(extents)) {}
+    mutated_extents_locker(mutated_extents_locker&&) = default;
+
+    void release_lock() {
+      if (mutated_extents.empty()) {
+        return;
+      }
+      if (auto &e = *mutated_extents.begin();
+          !should_use_no_conflict_publish(t, e->get_type())) {
+        return;
+      }
+      for (auto &ext : mutated_extents) {
+        assert(should_use_no_conflict_publish(t, ext->get_type()));
+        ext->commit_lock.unlock();
+      }
+      mutated_extents.clear();
+    }
+
+    void release_shared_lock() {
+      if (mutated_extents.empty()) {
+        return;
+      }
+      if (auto &e = *mutated_extents.begin();
+          should_use_no_conflict_publish(t, e->get_type())) {
+        return;
+      }
+      for (auto &ext : mutated_extents) {
+        assert(!should_use_no_conflict_publish(t, ext->get_type()));
+        ext->commit_lock.unlock_shared();
+      }
+      mutated_extents.clear();
+    }
+
+    void release() {
+      if (mutated_extents.empty()) {
+        return;
+      }
+      if (auto &e = *mutated_extents.begin();
+          should_use_no_conflict_publish(t, e->get_type())) {
+        for (auto &ext : mutated_extents) {
+          assert(should_use_no_conflict_publish(t, ext->get_type()));
+          ext->commit_lock.unlock();
+        }
+      } else {
+        for (auto &ext : mutated_extents) {
+          assert(!should_use_no_conflict_publish(t, ext->get_type()));
+          ext->commit_lock.unlock_shared();
+        }
+      }
+      mutated_extents.clear();
+    }
+    ~mutated_extents_locker() {
+      release();
+    }
+  };
+  seastar::future<mutated_extents_locker> lock_mutated_nodes(
+    Transaction &t);
+
   using resolve_cursor_to_mapping_iertr = base_iertr;
   resolve_cursor_to_mapping_iertr::future<LBAMapping>
   resolve_cursor_to_mapping(
