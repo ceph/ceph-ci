@@ -391,15 +391,15 @@ int JournalTool::main_header(std::vector<const char*> &argv)
     if (arg != argv.end()) {
       if (std::string_view(*arg) == "--force") {
         dry_run = false;
-        arg = argv.erase(arg);
+        ++arg;
       } else {
         std::cerr << "Unknown argument trailing recover: " << *arg << std::endl;
         return -EINVAL;
       }
-      if (!argv.empty()) {
-        std::cerr << "Too many arguments passed to recover command." << std::endl;
-        return -EINVAL;
-      }
+    }
+    if (arg != argv.end()) {
+      std::cerr << "Too many arguments passed to recover command." << std::endl;
+      return -EINVAL;
     }
     return recover_header(dry_run);
   } else {
@@ -1408,7 +1408,7 @@ std::string_view JournalTool::get_event_name_str(int32_t event_type)
  * Analyzes journal corruptions and repositions header markers (write_pos, expire_pos)
  * safely to resolve broken log segments.
  * @params dry_run only displays the Proposed Journal Header Updates.
- * @returns 0 if success, error code otherwise
+ * @returns 0 if success, error code otherwise.
  */
 int JournalTool::recover_header(bool dry_run)
 {
@@ -1425,21 +1425,15 @@ int JournalTool::recover_header(bool dry_run)
     return -EIO;
   }
 
- if (!js.header_present) {
-   derr << "Journal header object is missing entirely, cannot execute recovery" << dendl;
-   return -EIO;
+  if (!js.header_present) {
+    derr << "Journal header object is missing entirely, cannot execute recovery" << dendl;
+    return -EIO;
   }
 
- if (!js.header_valid) {
-   dout(1) << "Proceeding with recovery: " <<
-     "Journal header is present but marked invalid due to offset inconsistencies." << dendl;
-
-   // FORCE RAW RESET: Override corrupted fields so scan_events starts at absolute 0
-   js.header->trimmed_pos = 0;
-   js.header->expire_pos = 0;
-   js.header->unused_field = 0;
-   js.header->write_pos = 0;
- }
+  if (!js.header_valid) {
+    dout(1) << "Journal header is present but marked invalid due to offset inconsistencies. "
+            << "Attempting analytical recovery from stream base..." << dendl;
+  }
 
   uint64_t first_pos = std::numeric_limits<uint64_t>::max();
   uint64_t last_pos = 0;
@@ -1453,8 +1447,13 @@ int JournalTool::recover_header(bool dry_run)
     if (is_first) {
       first_pos = pos;
     } else if (expected_next_pos != pos) {
+      // Alert the user
       std::cerr << "warning: Discontinuity detected in journal offsets. Expected: 0x"
-                << std::hex << expected_next_pos << ", Found: 0x" << pos << std::dec << std::endl;
+                << std::hex << expected_next_pos << ", Found: 0x" << pos << std::dec
+                << ". Attempting to skip gap and continue recovery..." << std::endl;
+      // Log it
+      dout(1) << "warning: Discontinuity detected in journal offsets. Expected: 0x"
+              << std::hex << expected_next_pos << ", Found: 0x" << pos << std::dec << dendl;
     }
     is_first = false;
     expected_next_pos = pos + er.raw_size;
@@ -1520,7 +1519,6 @@ int JournalTool::recover_header(bool dry_run)
   dout(4) << "Serializing modified header to pool layer..." << dendl;
   bufferlist header_bl;
   encode(*(js.header), header_bl);
-
   r = output.write_full(js.obj_name(0), header_bl);
   if (r < 0) {
     derr << "Failed writing updated journal header object: " << cpp_strerror(r) << dendl;
