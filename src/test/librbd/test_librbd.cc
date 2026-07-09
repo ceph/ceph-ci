@@ -7799,11 +7799,61 @@ TYPED_TEST(DiffIterateTest, DiffIterateDeterministicLUKS1PP)
   REQUIRE(!is_feature_enabled(RBD_FEATURE_STRIPINGV2));
   REQUIRE(!is_feature_enabled(RBD_FEATURE_JOURNALING));
 
-  EXPECT_NO_FATAL_FAILURE(this->test_deterministic_luks1_pp(0, 2));
-  EXPECT_NO_FATAL_FAILURE(this->test_deterministic_luks1_pp((3 << 20) - 2, 2));
-  EXPECT_NO_FATAL_FAILURE(this->test_deterministic_luks1_pp((3 << 20) - 1, 2));
-  EXPECT_NO_FATAL_FAILURE(this->test_deterministic_luks1_pp(3 << 20, 2));
-  EXPECT_NO_FATAL_FAILURE(this->test_deterministic_luks1_pp((4 << 20) - 2, 2));
+  // repeat the cycle multiple times to accumulate pool state
+  // (images, self-managed snaps, objects) and stress the OSD's
+  // list_snaps / object-lookup path
+  for (int round = 0; round < 10; round++) {
+    EXPECT_NO_FATAL_FAILURE(this->test_deterministic_luks1_pp(0, 2));
+    EXPECT_NO_FATAL_FAILURE(this->test_deterministic_luks1_pp((3 << 20) - 2, 2));
+    EXPECT_NO_FATAL_FAILURE(this->test_deterministic_luks1_pp((3 << 20) - 1, 2));
+    EXPECT_NO_FATAL_FAILURE(this->test_deterministic_luks1_pp(3 << 20, 2));
+    EXPECT_NO_FATAL_FAILURE(this->test_deterministic_luks1_pp((4 << 20) - 2, 2));
+  }
+}
+
+// Stress test: rapidly create LUKS1-formatted images and verify that
+// diff_iterate on a fresh image returns 0 extents. Each iteration
+// accumulates pool state (self-managed snaps, objects) without cleanup,
+// stressing the OSD's list_snaps path for non-existent objects.
+TYPED_TEST(DiffIterateTest, DiffIterateFreshLUKS1PPStress)
+{
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_STRIPINGV2));
+  REQUIRE(!is_feature_enabled(RBD_FEATURE_JOURNALING));
+
+  for (int i = 0; i < 50; i++) {
+    librados::IoCtx ioctx;
+    ASSERT_EQ(0, this->_rados.ioctx_create(this->m_pool_name.c_str(), ioctx));
+
+    librbd::RBD rbd;
+    librbd::Image image;
+    int order = 22;
+    std::string name = this->get_temp_image_name();
+    ASSERT_EQ(0, create_image_pp(rbd, ioctx, name.c_str(), 24 << 20, &order));
+    ASSERT_EQ(0, rbd.open(ioctx, image, name.c_str(), NULL));
+
+    librbd::encryption_luks1_format_options_t fopts = {
+        RBD_ENCRYPTION_ALGORITHM_AES256, "some passphrase"};
+    ASSERT_EQ(0, image.encryption_format(RBD_ENCRYPTION_FORMAT_LUKS1, &fopts,
+                                         sizeof(fopts)));
+
+    uint64_t size = 20 << 20;
+    librbd::image_info_t info;
+    ASSERT_EQ(0, image.stat(info, sizeof(info)));
+    ASSERT_EQ(size, info.size);
+
+    // the critical assertion: fresh LUKS1 image should have no data diffs
+    std::vector<diff_extent> extents;
+    ASSERT_EQ(0, image.diff_iterate2(NULL, 0, size, true, this->whole_object,
+                                     vector_iterate_cb, &extents));
+    ASSERT_EQ(0u, extents.size()) << "round " << i
+        << ": unexpected extents on fresh LUKS1 image";
+
+    // create a snap + write to accumulate pool state for the next round
+    ASSERT_EQ(0, image.snap_create("s"));
+    ceph::bufferlist bl;
+    bl.append(std::string(4096, 'x'));
+    ASSERT_EQ(4096, image.write(8 << 20, 4096, bl));
+  }
 }
 
 TYPED_TEST(DiffIterateTest, DiffIterateDeterministicLUKS2)
