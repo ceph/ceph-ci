@@ -724,6 +724,11 @@ wait
         self.assertIn("Successfully recovered journal header.", mutation_output)
         self.assertNotIn("Dry-run mode enabled", mutation_output)
 
+        log.info("Resetting session and inode allocation tables to prevent boot loops...")
+        target_rank = f"{self.fs.name}:0"
+        self.fs.table_tool([target_rank, "reset", "session"])
+        self.fs.table_tool([target_rank, "reset", "inode"])
+
         # Bring the filesystem back up and confirm MDS can now replay successfully
         log.info("Verify file system stability post-recovery...")
         self.fs.set_joinable()
