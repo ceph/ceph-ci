@@ -142,13 +142,13 @@ private:
           continue;
         }
 
-        ldout(cct, 10) << "KEEPING snapshot_delta entry: key={"
-                       << key.first << "," << key.second << "}"
-                       << " off=" << snapshot_extent.get_off()
-                       << " len=" << snapshot_extent.get_len()
-                       << " state=" << state
-                       << " (image_extent " << m_image_offset
-                       << "~" << m_image_length << ")" << dendl;
+        ldout(cct, 1) << "KEEPING snapshot_delta entry: key={"
+                      << key.first << "," << key.second << "}"
+                      << " off=" << snapshot_extent.get_off()
+                      << " len=" << snapshot_extent.get_len()
+                      << " state=" << state
+                      << " (image_extent " << m_image_offset
+                      << "~" << m_image_length << ")" << dendl;
         aggregate_snapshot_extents.insert(
           snapshot_extent.get_off(), snapshot_extent.get_len(),
           {state, snapshot_extent.get_len()});
@@ -157,7 +157,7 @@ private:
 
     // build delta callback set
     for (auto& snapshot_extent : aggregate_snapshot_extents) {
-      ldout(cct, 5) << "reporting diff: off=" << snapshot_extent.get_off()
+      ldout(cct, 1) << "reporting diff: off=" << snapshot_extent.get_off()
                     << ", len=" << snapshot_extent.get_len()
                     << ", state=" << snapshot_extent.get_val().state
                     << " (image_extent " << m_image_offset
@@ -377,7 +377,7 @@ int DiffIterate<I>::execute() {
     }
   }
 
-  ldout(cct, 5) << "diff_iterate from " << from_snap_id << " to "
+  ldout(cct, 1) << "diff_iterate from " << from_snap_id << " to "
                 << end_snap_id << " size from " << from_size
                 << " to " << end_size
                 << ", data_offset=" << m_image_ctx.get_data_offset()
@@ -449,10 +449,10 @@ int DiffIterate<I>::execute() {
         }
       }
     } else {
-      ldout(cct, 10) << "slow-path: dispatching list_snaps for image extent "
-                     << off << "~" << read_len
-                     << " (DATA area, data_offset="
-                     << m_image_ctx.get_data_offset() << ")" << dendl;
+      ldout(cct, 1) << "slow-path: dispatching list_snaps for image extent "
+                    << off << "~" << read_len
+                    << " (DATA area, data_offset="
+                    << m_image_ctx.get_data_offset() << ")" << dendl;
       auto diff_object = new C_DiffObject<I>(m_image_ctx, diff_context, off,
                                              read_len);
       diff_object->send();
