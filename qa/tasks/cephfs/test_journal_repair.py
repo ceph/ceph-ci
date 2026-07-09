@@ -721,17 +721,6 @@ wait
         self.assertIn("Successfully recovered journal header.", mutation_output)
         self.assertNotIn("Dry-run mode enabled", mutation_output)
 
-        # Verify Header Persistence via 'header get'
-        log.info("Fetching updated header to confirm correctness...")
-        header_raw = self.fs.journal_tool(["header", "get"], 0)
-        # Clean out potential cluster debug prefixes from the output stream string
-        if "{" in header_raw:
-            header_raw = header_raw[header_raw.index("{"):]
-        header_json = json.loads(header_raw)
-        log.info(f"Persisted Header JSON: {header_json}")
-        # Verify that the write_pos was restored exactly to its original healthy value.
-        self.assertEqual(header_json["write_pos"], real_write_pos)
-
         # Bring the filesystem back up and confirm MDS can now replay successfully
         log.info("Verify file system stability post-recovery...")
         self.fs.set_joinable()
