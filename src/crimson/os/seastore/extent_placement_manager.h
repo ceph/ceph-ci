@@ -921,7 +921,7 @@ private:
         "seastore_test_workload_write_through_probability");
       SUBINFO(seastore_epm, "crimson test workload supported, enabled: {}", test_workload);
       if (test_workload) {
-        set_next_arm_timepoint();
+        set_next_force_process();
       }
     }
 
@@ -1389,7 +1389,7 @@ private:
     seastar::timer<seastar::steady_clock_type> force_background_timer;
     int force_process_half_life;
 
-    void set_next_arm_timepoint() {
+    void set_next_force_process() {
       assert(test_workload);
       force_background_timer.rearm(
         seastar::steady_clock_type::now() +
@@ -1405,6 +1405,23 @@ private:
       }
 
       do_wake_background();
+    }
+
+    void maybe_reschedule_force_process() {
+      if (unlikely(test_workload &&
+                   force_process_state != ForceProcessState::STOP)) {
+        last_process_state = force_process_state;
+        force_process_state = ForceProcessState::STOP;
+        set_next_force_process();
+      }
+    }
+
+    bool should_force_trim() const {
+      return test_workload && force_process_state == ForceProcessState::TRIM;
+    }
+
+    bool should_force_clean() const {
+      return test_workload && force_process_state == ForceProcessState::CLEAN;
     }
 
     bool force_run_background() const {

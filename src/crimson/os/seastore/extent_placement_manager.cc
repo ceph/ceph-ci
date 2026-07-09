@@ -894,16 +894,12 @@ ExtentPlacementManager::BackgroundProcess::run()
       if (cold_cleaner) {
         cold_cleaner->maybe_adjust_thresholds();
       }
-      if (unlikely(test_workload && force_process_state != ForceProcessState::STOP)) {
-        last_process_state = force_process_state;
-        force_process_state = ForceProcessState::STOP;
-        set_next_arm_timepoint();
-      }
+      maybe_reschedule_force_process();
     } else {
       log_state("run(block)");
       assert(!blocking_background);
       if (unlikely(test_workload)) {
-        set_next_arm_timepoint();
+        set_next_force_process();
       }
       blocking_background = seastar::promise<>();
       co_await blocking_background->get_future();
@@ -1061,7 +1057,7 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
 
   bool force_trim = false;
   bool should_abort_cleaner_usage = true;
-  if (unlikely(test_workload && force_process_state == ForceProcessState::TRIM)) {
+  if (unlikely(should_force_trim())) {
     if (!proceed_trim) {
       should_abort_cleaner_usage = false;
     }
@@ -1115,7 +1111,7 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
       eviction_state.is_fast_mode(), logical_bucket->should_demote());
 
     bool abort_cold_cleaner_usage = true;
-    if (unlikely(test_workload && force_process_state == ForceProcessState::CLEAN)) {
+    if (unlikely(should_force_clean())) {
       if (!proceed_clean_main) {
         abort_cold_cleaner_usage = false;
       }
