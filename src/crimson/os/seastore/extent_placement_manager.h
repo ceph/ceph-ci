@@ -1172,7 +1172,8 @@ private:
       maybe_update_eviction_mode();
       return main_cleaner_should_run()
         || cold_cleaner_should_run()
-        || trimmer->should_trim();
+        || trimmer->should_trim()
+        || demote_should_run();
     }
 
     bool main_cleaner_should_fast_evict() const {
@@ -1192,6 +1193,13 @@ private:
       assert(is_ready());
       return has_cold_tier() &&
         cold_cleaner->should_clean_space();
+    }
+
+    bool demote_should_run() const {
+      return has_cold_tier() &&
+        logical_bucket->could_demote() &&
+        (eviction_state.is_fast_mode() ||
+         logical_bucket->should_demote());
     }
 
     bool should_block_io() const {

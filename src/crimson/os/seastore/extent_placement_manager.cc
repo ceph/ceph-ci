@@ -1095,10 +1095,7 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
     }
 
     bool proceed_demote = false;
-    if (has_cold_tier() &&
-        logical_bucket->could_demote() &&
-        (eviction_state.is_fast_mode() ||
-         logical_bucket->should_demote())) {
+    if (demote_should_run()) {
       proceed_demote = true;
     }
     INFO("proceed_demote: {}, could_demote: {}, fast_mode: {}, should_demote {}",
