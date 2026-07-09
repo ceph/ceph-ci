@@ -660,10 +660,19 @@ wait
         log.info("Fail the filesystem to run offline journal operations...")
         self.fs.fail()
 
-        # corrupt the journal header
-        log.info("Corrupting the journal header...")
-        # Move the write position backward or expire position ahead of the stream
-        self.fs.journal_tool(["header", "set", "write_pos", "1000"], 0)
+        # Fetch the real header first to avoid breaking trimmed_pos constraints
+        log.info("Fetching healthy header to calculate dynamic corruption offset...")
+        header_raw = self.fs.journal_tool(["header", "get"], 0)
+        if "{" in header_raw:
+            header_raw = header_raw[header_raw.index("{"):]
+        header_json = json.loads(header_raw)
+
+        # Calculate a corrupt write position relative to the valid active stream position
+        real_write_pos = header_json["write_pos"]
+        corrupt_write_pos = real_write_pos - 4096 if real_write_pos > 4096 else real_write_pos + 4096
+
+        log.info(f"Corrupting the journal header by shifting write_pos from {real_write_pos} to {corrupt_write_pos}...")
+        self.fs.journal_tool(["header", "set", "write_pos", str(corrupt_write_pos)], 0)
 
         log.info("Verifying that MDS daemon fails to replay the corrupted journal...")
         self.fs.set_joinable()
@@ -720,7 +729,8 @@ wait
             header_raw = header_raw[header_raw.index("{"):]
         header_json = json.loads(header_raw)
         log.info(f"Persisted Header JSON: {header_json}")
-        self.assertGreater(header_json["write_pos"], 1000) # Ensure it realigned past our corruption value
+        # Verify that the write_pos was restored exactly to its original healthy value.
+        self.assertEqual(header_json["write_pos"], real_write_pos)
 
         # Bring the filesystem back up and confirm MDS can now replay successfully
         log.info("Verify file system stability post-recovery...")
