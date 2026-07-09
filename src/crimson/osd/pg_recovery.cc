@@ -621,6 +621,10 @@ void PGRecovery::enqueue_drop(
 {
   LOG_PREFIX(PGRecovery::update_peers_last_backfill);
   DEBUGDPP("obj={} v={} target={}", *pg->get_dpp(), obj, v, target);
+  // release the budget_retry_releaser now that we're dispatching work
+  // (same as enqueue_push) -- slot was held to guarantee Enqueuing
+  // found budget available, drops don't need their own throttle slot
+  budget_retry_releaser.reset();
   // allocate a pair if target is seen for the first time
   auto& req = backfill_drop_requests[target];
   if (!req) {
