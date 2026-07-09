@@ -1185,7 +1185,7 @@ public:
   TCachedExtentRef<T> alloc_new_non_data_extent(
     Transaction &t,         ///< [in, out] current transaction
     extent_len_t length,    ///< [in] length
-    alloc_option_t opt
+    alloc_option_t opt      ///< [in] allocation options
   ) {
     LOG_PREFIX(Cache::alloc_new_non_data_extent);
     SUBTRACET(seastore_cache, "allocate {} 0x{:x}B, opt.hint={}, gen={}",
@@ -1227,7 +1227,7 @@ public:
   std::vector<TCachedExtentRef<T>> alloc_new_data_extents(
     Transaction &t,         ///< [in, out] current transaction
     extent_len_t length,    ///< [in] length
-    alloc_option_t opt
+    alloc_option_t opt      ///< [in] allocation options
   ) {
     LOG_PREFIX(Cache::alloc_new_data_extents);
     SUBTRACET(seastore_cache, "allocate {} 0x{:x}B, hint={}, gen={}",
