@@ -966,11 +966,16 @@ TransactionManager::rewrite_logical_extent(
           t,
           extent->get_type(),
           extent->get_length(),
-          extent->get_user_hint(),
-          // get target rewrite generation
-          extent->get_rewrite_generation(),
-          paddr_hint,
-          is_tracked);
+          {
+            extent->get_user_hint(),
+            // get target rewrite generation
+            extent->get_rewrite_generation(),
+            is_tracked,
+            paddr_hint,
+            // WRITH_THROUGH is only effective for client io, so
+            // always set the write policy to WRITE_BACK here
+            write_policy_t::WRITE_BACK
+          });
       } catch (crimson::ct_error::eagain&) {}
       if (extents.empty()) {
         epm->maybe_wake_background();
@@ -1272,10 +1277,13 @@ TransactionManager::promote_extent(
           t,
           orig_ext->get_type(),
           orig_ext->get_length(),
-          placement_hint_t::HOT,
-          INIT_GENERATION,
-          P_ADDR_NULL,
-          true);
+          {
+            placement_hint_t::HOT,
+            INIT_GENERATION,
+            true,
+            P_ADDR_NULL,
+            write_policy_t::WRITE_BACK
+          });
       } catch (crimson::ct_error::eagain&) {}
       if (promoted_raw_extents.empty()) {
         epm->maybe_wake_background();

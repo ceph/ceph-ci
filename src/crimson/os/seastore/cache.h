@@ -1339,10 +1339,7 @@ public:
     Transaction &t,        ///< [in, out] current transaction
     extent_types_t type,   ///< [in] type tag
     extent_len_t length,   ///< [in] length
-    placement_hint_t hint, ///< [in] user hint
-    rewrite_gen_t gen,     ///< [in] rewrite generation
-    paddr_t paddr_hint,
-    bool is_tracked
+    alloc_option_t opt     ///< [in] allocation options
     );
 
   /**
