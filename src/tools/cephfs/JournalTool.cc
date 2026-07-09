@@ -1497,7 +1497,15 @@ int JournalTool::recover_header(bool dry_run)
   const auto old_read_pos    = js.header->unused_field;
 
   // Calculate new parameters
-  js.header->trimmed_pos  = first_pos;
+  uint64_t obj_size = js.header->layout.object_size;
+  if (obj_size == 0) {
+    obj_size = 4194304; // 4MB fallback
+  }
+  if (js.header_present && old_trimmed_pos <= first_pos) {
+    js.header->trimmed_pos = old_trimmed_pos; // Safest: keep the known good boundary
+  } else {
+    js.header->trimmed_pos = first_pos - (first_pos % obj_size); // Fallback: force alignment
+  }
   js.header->expire_pos   = boundary_match.pos;
   js.header->write_pos    = last_pos + last_raw_size;
   js.header->unused_field = boundary_match.pos;
