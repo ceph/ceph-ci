@@ -24,14 +24,22 @@ namespace crimson::os::seastore {
 class Cache;
 
 class TokenBucket {
+  struct Blocker {
+    uint64_t size = 0;
+    seastar::promise<> pr;
+  };
 public:
   TokenBucket(uint64_t mt) :
-    tokens(mt), max_tokens(mt), timer(), sp(std::nullopt) {}
+    tokens(mt), max_tokens(mt), timer() {}
 
   void start() {
     if (max_tokens != 0) {
       tokens = max_tokens;
       timer.set_callback([this] {
+        if (tokens == max_tokens) {
+          return;
+        }
+        assert(tokens < max_tokens);
         tokens += max_tokens / 10;
         if (tokens > max_tokens) {
           tokens = max_tokens;
@@ -56,33 +64,36 @@ public:
     if (max_tokens == 0) {
       return seastar::now();
     }
-    return seastar::repeat([this, size] {
-      if (tokens < size) {
-        if (!sp) {
-          sp.emplace(seastar::shared_promise<>());
-        }
-        return sp->get_shared_future().then([] {
-          return seastar::stop_iteration::no;
-        });
-      } else {
-        tokens -= size;
-        return seastar::make_ready_future<
-          seastar::stop_iteration>(seastar::stop_iteration::yes);
-      }
-    });
+    if (tokens < size) {
+      size -= tokens;
+      tokens = 0;
+      blockers.emplace_back(size);
+      return blockers.back().pr.get_future();
+    } else {
+      tokens -= size;
+      return seastar::now();
+    }
   }
 
 private:
   void do_wake() {
-    if (sp) {
-      sp->set_value();
-      sp.reset();
+    while (!blockers.empty()) {
+      auto &next = blockers.front();
+      if (tokens < next.size) {
+        next.size -= tokens;
+        tokens = 0;
+        break;
+      } else {
+        tokens -= next.size;
+        next.pr.set_value();
+        blockers.pop_front();
+      }
     }
   }
   uint64_t tokens;
   const uint64_t max_tokens;
   seastar::timer<seastar::steady_clock_type> timer;
-  std::optional<seastar::shared_promise<>> sp;
+  std::list<Blocker> blockers;
 };
 
 using TokenBucketRef = std::unique_ptr<TokenBucket>;
