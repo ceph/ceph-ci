@@ -1103,9 +1103,9 @@ private:
       LOG_PREFIX(BackgroundProcess::wait_background);
       SUBINFO(seastore_epm, "");
       if (!blocking_io) {
-        blocking_io = seastar::promise<>();
+        blocking_io = seastar::shared_promise<>();
       }
-      return blocking_io->get_future();
+      return blocking_io->get_shared_future();
     }
 
   protected:
@@ -1355,7 +1355,7 @@ private:
 
     std::optional<seastar::future<>> process_join;
     std::optional<seastar::promise<>> blocking_background;
-    std::optional<seastar::promise<>> blocking_io;
+    std::optional<seastar::shared_promise<>> blocking_io;
     // Set by maybe_wake_blocked_io() whenever it actually unblocks a
     // user IO; consumed by run() to yield exactly once on that edge,
     // giving the woken continuation a chance to retry the reservation
