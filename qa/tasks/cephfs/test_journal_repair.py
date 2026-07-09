@@ -653,8 +653,11 @@ wait
         for i in range(20):
             self.mount_a.run_shell(["touch", f"{test_dir}/file_{i}"])
 
-        # Flush entries out of memory into the RADOS journal objects
+        # Force a deep metadata log flush from the MDS to RADOS layers
+        log.info("Forcing absolute metadata flush to RADOS storage...")
         self.mount_a.run_shell(["sync"])
+        # Follow the file's native multi-rank flush pattern to ensure write_pos > 0
+        self.fs.rank_asok(["flush", "journal"], rank=0)
 
         # Fail the filesystem to run journal operations.
         log.info("Fail the filesystem to run offline journal operations...")
