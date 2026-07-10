@@ -1195,6 +1195,15 @@ uint64_t compute_shard_size_from_transaction(
         }
         break;
       }
+      case ceph::os::Transaction::OP_COLL_MOVE_RENAME:
+        [[ fallthrough ]];
+
+      case ceph::os::Transaction::OP_TRY_RENAME:
+        [[ fallthrough ]];
+
+      case ceph::os::Transaction::OP_REMOVE: {
+        return static_cast<uint64_t>(-1);
+      }
       // -------- ops with inline data payloads that must be consumed --------
       case ceph::os::Transaction::OP_SETATTR: {
         it.decode_string();       // attr name

@@ -1174,7 +1174,8 @@ void ECTransaction::Generate::log_shard_size_analysis() {
                          result_shard_sizes);
 
   for (auto &&[shard, txn] : transactions) {
-    if (result_shard_sizes[shard] != proj_shard_sizes[shard]) {
+    if (result_shard_sizes[shard] != proj_shard_sizes[shard]
+        && result_shard_sizes[shard] != static_cast<uint64_t>(-1)) {
       dump_shard_size_detail(-1, orig_shard_sizes, proj_shard_sizes,
                              result_shard_sizes);
       ceph_abort_msg("EC transaction produces wrong shard size");
