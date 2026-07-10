@@ -196,9 +196,14 @@ SegmentedOolWriter::alloc_write_ool_extents(
     for (auto &e : extents) {
       size += e->get_length();
     }
-    co_await trans_intr::make_interruptible(
-      token_bucket.get(size));
-    co_await do_write(t, extents);
+    try {
+      co_await trans_intr::make_interruptible(
+        token_bucket.get(size));
+      co_await do_write(t, extents);
+    } catch (...) {
+      token_bucket.release(size);
+      throw;
+    }
   });
 }
 
@@ -1273,21 +1278,26 @@ RandomBlockOolWriter::alloc_write_ool_extents(
     for (auto &extent : extents) {
       size += extent->get_length();
     }
-    co_await trans_intr::make_interruptible(
-      token_bucket.get(size));
-    seastar::lw_shared_ptr<rbm_pending_ool_t> ptr =
-        seastar::make_lw_shared<rbm_pending_ool_t>();
-    ptr->pending_extents = t.get_pre_alloc_list();
-    assert(!t.is_conflicted());
-    t.set_pending_ool(ptr);
-    co_await do_write(t, extents
-    ).finally([this, ptr=ptr] {
-      if (ptr->is_conflicted) {
-        for (auto &e : ptr->pending_extents) {
-          rb_cleaner->mark_space_free(e->get_paddr(), e->get_length());
+    try {
+      co_await trans_intr::make_interruptible(
+        token_bucket.get(size));
+      seastar::lw_shared_ptr<rbm_pending_ool_t> ptr =
+          seastar::make_lw_shared<rbm_pending_ool_t>();
+      ptr->pending_extents = t.get_pre_alloc_list();
+      assert(!t.is_conflicted());
+      t.set_pending_ool(ptr);
+      co_await do_write(t, extents
+      ).finally([this, ptr=ptr] {
+        if (ptr->is_conflicted) {
+          for (auto &e : ptr->pending_extents) {
+            rb_cleaner->mark_space_free(e->get_paddr(), e->get_length());
+          }
         }
-      }
-    });
+      });
+    } catch (...) {
+      token_bucket.release(size);
+      throw;
+    }
   });
 }
 

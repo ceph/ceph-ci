@@ -40,10 +40,9 @@ public:
           return;
         }
         assert(tokens < max_tokens);
-        tokens += max_tokens / 10;
-        if (tokens > max_tokens) {
-          tokens = max_tokens;
-        }
+        tokens += std::min(
+          max_tokens / 10 + 1,
+          max_tokens - tokens);
         do_wake();
       });
       if (!timer.armed()) {
@@ -73,6 +72,15 @@ public:
       tokens -= size;
       return seastar::now();
     }
+  }
+
+  void release(uint64_t size) {
+    if (tokens == max_tokens) {
+      return;
+    }
+    assert(tokens < max_tokens);
+    tokens += std::min(size, max_tokens - tokens);
+    do_wake();
   }
 
 private:
