@@ -187,18 +187,18 @@ SegmentedOolWriter::alloc_write_ool_extents(
   std::list<CachedExtentRef>& extents)
 {
   if (extents.empty()) {
-    return alloc_write_iertr::now();
+    co_return;
   }
-  return seastar::with_gate(write_guard, [this, &t, &extents] {
+  co_await seastar::with_gate(
+    write_guard,
+    [this, &t, &extents] -> alloc_write_iertr::future<> {
     uint64_t size = 0;
     for (auto &e : extents) {
       size += e->get_length();
     }
-    return trans_intr::make_interruptible(
-      token_bucket.get(size)
-    ).then_interruptible([this, &t, &extents] {
-      return do_write(t, extents);
-    });
+    co_await trans_intr::make_interruptible(
+      token_bucket.get(size));
+    co_await do_write(t, extents);
   });
 }
 
