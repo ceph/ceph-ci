@@ -13,18 +13,20 @@
 #include "include/types.h"
 #include "include/rados/librados.hpp"
 #include "common/iso_8601.h"
-#include "common/async/context_pool.h"
 #include "rgw_common.h"
 #include "cls/rgw/cls_rgw_types.h"
 #include "rgw_sal.h"
 #include "rgw_notify.h"
 #include "rgw_restore_waiter.h"
 
+#include <future>
+#include <optional>
 #include <tuple>
 
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/cancellation_signal.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/strand.hpp>
 #include <boost/asio/basic_waitable_timer.hpp>
 
 #include "common/ceph_time.h"
@@ -80,15 +82,17 @@ class Restore : public DoutPrefixProvider {
   std::vector<std::string> obj_names;
   std::shared_ptr<RestoreWaiterRegistry> waiter_registry;
 
-  ceph::async::io_context_pool proc_pool;
-  boost::asio::basic_waitable_timer<ceph::coarse_mono_clock>
-      proc_timer{proc_pool.get_executor()};
+  using executor_t = boost::asio::io_context::executor_type;
+  std::optional<boost::asio::strand<executor_t>> proc_strand;
+  std::optional<boost::asio::basic_waitable_timer<ceph::coarse_mono_clock>> proc_timer;
   boost::asio::cancellation_signal proc_signal;
-  bool proc_started = false;
+  std::future<void> proc_future;
 
 public:
   ~Restore() {
-    stop_processor();
+    if (proc_future.valid()) {
+      ldpp_dout(this, -1) << "ERROR: Restore destructed without stop_processor" << dendl;
+    }
     finalize();
   }
 
@@ -99,7 +103,7 @@ public:
   int initialize(CephContext *_cct, rgw::sal::Driver* _driver);
   void finalize();
 
-  void start_processor();
+  void start_processor(boost::asio::io_context& context);
   void stop_processor();
   void wake_worker();
   std::shared_ptr<RestoreWaiterRegistry> get_waiter_registry() const { return waiter_registry; }

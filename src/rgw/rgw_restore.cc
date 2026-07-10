@@ -51,8 +51,8 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/bind_cancellation_slot.hpp>
 #include <boost/asio/cancellation_signal.hpp>
+#include <boost/asio/use_future.hpp>
 #include "common/async/spawn_throttle.h"
-#include "rgw_asio_thread.h"
 
 #define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_rgw_restore
@@ -228,49 +228,46 @@ static inline std::ostream& operator<<(std::ostream &os, RestoreEntry& ent) {
   return os;
 }
 
-void Restore::start_processor()
+void Restore::start_processor(boost::asio::io_context& context)
 {
-  // single thread: process_locked's spawn_throttle children share batch state
-  // without a lock, relying on a single-threaded executor
-  proc_pool.start(1, [] { is_asio_thread = true; });
-  proc_started = true;
-  boost::asio::spawn(proc_pool.get_executor(),
+  // strand: process_locked's spawn_throttle children share batch state
+  // without a lock, relying on serialized execution
+  proc_strand.emplace(context.get_executor());
+  proc_timer.emplace(*proc_strand);
+  proc_future = boost::asio::spawn(*proc_strand,
       [this] (boost::asio::yield_context yield) { process_cycles(yield); },
       boost::asio::bind_cancellation_slot(proc_signal.slot(),
-      [this] (std::exception_ptr eptr) {
-        if (!eptr)
-          return;
-        try {
-          std::rethrow_exception(eptr);
-        } catch (const boost::system::system_error& e) {
-          if (e.code() != boost::asio::error::operation_aborted)
-            ldpp_dout(this, -1) << "ERROR: restore processor coroutine exited: "
-                                << e.what() << dendl;
-        } catch (const std::exception& e) {
-          ldpp_dout(this, -1) << "ERROR: restore processor coroutine exited: "
-                              << e.what() << dendl;
-        }
-      }));
+                                          boost::asio::use_future));
 }
 
 void Restore::stop_processor()
 {
-  if (proc_started) {
-    // cancellation_signal isn't thread-safe; emit it on a pool thread
-    boost::asio::post(proc_pool.get_executor(),
-        [this] { proc_signal.emit(boost::asio::cancellation_type::terminal); });
-    proc_pool.finish();   // unwinds the coroutine, then joins the pool thread
-    proc_started = false;
+  if (!proc_future.valid())
+    return;
+  // cancellation_signal isn't thread-safe; emit it on the strand
+  boost::asio::post(*proc_strand,
+      [this] { proc_signal.emit(boost::asio::cancellation_type::terminal); });
+  try {
+    proc_future.get();
+  } catch (const boost::system::system_error& e) {
+    if (e.code() != boost::asio::error::operation_aborted) {
+      ldpp_dout(this, -1) << "ERROR: restore processor coroutine exited: "
+                          << e.what() << dendl;
+    }
+  } catch (const std::exception& e) {
+    ldpp_dout(this, -1) << "ERROR: restore processor coroutine exited: "
+                        << e.what() << dendl;
   }
 }
 
 void Restore::wake_worker()
 {
-  if (!proc_started)
+  // racing stop_processor() consumes the future; the timer outlives the worker
+  if (!proc_timer) {
     return;
-  // the timer must be cancelled on its own io_context thread
-  boost::asio::post(proc_pool.get_executor(),
-      [this] { proc_timer.cancel(); });
+  }
+  boost::asio::post(*proc_strand,
+      [this] { proc_timer->cancel(); });
 }
 
 unsigned Restore::get_subsys() const
@@ -303,7 +300,15 @@ void Restore::process_cycles(boost::asio::yield_context yield)
   while (!yield_cancelled(yield)) {
     const auto start = Clock::now();
 
-    process(yield);   // errors are logged at the point of failure
+    try {
+      process(yield);   // errors are logged at the point of failure
+    } catch (const boost::system::system_error& e) {
+      if (e.code() == boost::asio::error::operation_aborted) {
+        throw;   // shutdown; stop_processor() filters it
+      }
+      // a failed cycle must not kill the worker; retry next period
+      ldpp_dout(this, -1) << "ERROR: restore cycle threw: " << e.what() << dendl;
+    }
 
     int secs = cct->_conf->rgw_restore_processor_period;
     if (secs <= 0)
@@ -311,9 +316,9 @@ void Restore::process_cycles(boost::asio::yield_context yield)
 
     // start-to-start period: a deadline already in the past fires immediately
     const auto next = start + std::chrono::seconds(secs);
-    proc_timer.expires_at(next);
+    proc_timer->expires_at(next);
     boost::system::error_code ec;
-    proc_timer.async_wait(yield[ec]);   // cancellation -> ec, loop exits via yield_cancelled
+    proc_timer->async_wait(yield[ec]);   // cancellation -> ec, loop exits via yield_cancelled
   }
 }
 

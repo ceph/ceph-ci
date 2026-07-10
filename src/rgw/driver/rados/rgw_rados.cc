@@ -1175,9 +1175,6 @@ void RGWRados::finalize()
   }
   delete sync_tracer;
   
-  if (use_restore_thread) {
-    restore->stop_processor();
-  }
   restore = NULL;
 
   delete lc;
@@ -1495,7 +1492,7 @@ int RGWRados::init_complete(const DoutPrefixProvider *dpp, optional_yield y, rgw
     lc->start_processor();
 
   if (use_restore_thread)
-    restore->start_processor();
+    restore->start_processor(driver->get_io_context());
 
   if (run_reshard_thread)  {
     reshard->start_processor();

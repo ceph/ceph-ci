@@ -2561,6 +2561,11 @@ int RadosStore::meta_remove(const DoutPrefixProvider* dpp, std::string& metadata
 }
 
 void RadosStore::shutdown(void) {
+  // the io_context threads join before finalize() runs, so the restore
+  // worker has to stop here while they can still unwind it
+  if (auto restore = rados->get_restore()) {
+    restore->stop_processor();
+  }
   svc()->datalog_rados->blocking_shutdown();
   return;
 }
