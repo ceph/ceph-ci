@@ -30,6 +30,19 @@ endif()
 message(STATUS "BUILD_TYPE is ${CMAKE_BUILD_TYPE}")
 set(CEPH_BUILD_TYPE ${CMAKE_BUILD_TYPE})
 
+# GCC's assignment tracking improves local-variable locations in optimized
+# debug information. This helper can significantly reduce compile time and
+# memory use for selected expensive source files, and the reduced debugger
+# precision is usually acceptable. Remove the helper call for specific source
+# files when deep inspection is needed:
+function(ceph_disable_variable_tracking)
+  if(HAS_VTA)
+    set_source_files_properties(${ARGN}
+      PROPERTIES COMPILE_OPTIONS
+        "$<$<CONFIG:Debug,RelWithDebInfo>:-fno-var-tracking-assignments>")
+  endif()
+endfunction()
+
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
   set(LINUX ON)
   FIND_PACKAGE(Threads)
@@ -133,6 +146,18 @@ if(WITH_SCCACHE)
   set(CMAKE_C_COMPILER_LAUNCHER ${SCCACHE_EXECUTABLE})
   set(CMAKE_CXX_COMPILER_LAUNCHER ${SCCACHE_EXECUTABLE})
 endif(WITH_SCCACHE)
+
+set(CEPH_EXTERNAL_PROJECT_CMAKE_ARGS)
+foreach(language C CXX)
+  if(CMAKE_${language}_COMPILER_LAUNCHER)
+    string(REPLACE ";" "!" compiler_launcher
+      "${CMAKE_${language}_COMPILER_LAUNCHER}")
+    list(APPEND CEPH_EXTERNAL_PROJECT_CMAKE_ARGS
+      -DCMAKE_${language}_COMPILER_LAUNCHER=${compiler_launcher})
+  endif()
+endforeach()
+unset(compiler_launcher)
+unset(language)
 
 option(WITH_MANPAGE "Build man pages." ON)
 if(WITH_MANPAGE)

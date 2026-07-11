@@ -158,6 +158,8 @@ if(HAVE_LIBNBD)
           migration/test_mock_NBDStream.cc)
 endif()
 
+ceph_disable_variable_tracking(migration/test_mock_HttpClient.cc)
+
 # On Windows, we'll skip librbd unit tests for the time being, running just the
 # functional tests. The reason is that the unit tests require libcls*, which in
 # turn requires libos and libosd, however those libraries haven't been ported to

@@ -293,6 +293,11 @@ if(WITH_RADOSGW_D4N)
         driver/d4n/rgw_sal_d4n.cc)
 endif()
 
+ceph_disable_variable_tracking(
+  driver/d4n/d4n_directory.cc
+  driver/rados/rgw_datalog.cc
+  driver/rados/rgw_sal_rados.cc)
+
 add_library(rgw_common STATIC ${librgw_common_srcs})
 
 include(CheckCXXCompilerFlag)

@@ -66,10 +66,7 @@ add_executable(crimson-osd
   ${PROJECT_SOURCE_DIR}/src/mgr/OSDPerfMetricTypes.cc
   watch.cc
   )
-if(HAS_VTA)
-  set_source_files_properties(main.cc
-    PROPERTIES COMPILE_FLAGS -fno-var-tracking-assignments)
-endif()
+ceph_disable_variable_tracking(main.cc)
 if(USING_MOLD_LINKER AND WITH_BLUESTORE)
   # With Mold, duplicate symbols between crimson-alienstore and crimson-common
   # must be resolved in favor of crimson-alienstore (compiled without

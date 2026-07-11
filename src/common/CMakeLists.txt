@@ -173,12 +173,7 @@ endif()
 set_source_files_properties(${CMAKE_SOURCE_DIR}/src/common/version.cc
   APPEND PROPERTY OBJECT_DEPENDS ${CMAKE_BINARY_DIR}/src/include/ceph_ver.h)
 
-if(HAS_VTA)
-  set_source_files_properties(
-    config.cc
-    options.cc
-    PROPERTIES COMPILE_FLAGS -fno-var-tracking-assignments)
-endif()
+ceph_disable_variable_tracking(config.cc options.cc)
 
 if(FREEBSD)
   list(APPEND common_srcs freebsd_errno.cc)

@@ -60,10 +60,7 @@ set(osd_srcs
   ${osd_cyg_functions_src}
   ${osdc_osd_srcs}
   osd_tracer.cc)
-if(HAS_VTA)
-  set_source_files_properties(osdcap.cc
-    PROPERTIES COMPILE_FLAGS -fno-var-tracking-assignments)
-endif()
+ceph_disable_variable_tracking(OSD.cc OSDCap.cc PrimaryLogPG.cc)
 add_library(osd STATIC ${osd_srcs})
 target_link_libraries(osd
   PUBLIC dmclock::dmclock Boost::MPL
