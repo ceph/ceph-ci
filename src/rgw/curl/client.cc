@@ -194,7 +194,7 @@ static int debug_callback(CURL*, curl_infotype type, char* data,
 // This also overrides CURLOPT_OPENSOCKETFUNCTION on each request to manage the
 // pool of asio sockets.
 class Client::Impl :
-    public boost::intrusive_ref_counter<Impl, boost::thread_unsafe_counter>,
+    public boost::intrusive_ref_counter<Impl, boost::thread_safe_counter>,
     public ceph::async::service_list_base_hook
 {
  public:
@@ -242,13 +242,14 @@ class Client::Impl :
     }
 
     // arrange for per-op cancellation
+    const uint64_t id = ++next_op_id;
     auto slot = boost::asio::get_associated_cancellation_slot(handler);
     if (slot.is_connected()) {
-      slot.template emplace<op_cancellation>(this, easy);
+      slot.template emplace<op_cancellation>(this, easy, id);
     }
 
     // register the completion handler
-    handlers.emplace(easy, std::move(handler));
+    handlers.emplace(easy, op_state{std::move(handler), id});
 
     // kick things off if they haven't started yet
     socket_action(CURL_SOCKET_TIMEOUT, 0);
@@ -258,7 +259,7 @@ class Client::Impl :
   {
     auto h = handlers.begin();
     while (h != handlers.end()) {
-      auto handler = std::move(h->second);
+      auto handler = std::move(h->second.handler);
       ::curl_multi_remove_handle(multi.get(), h->first);
       h = handlers.erase(h);
       boost::asio::dispatch(boost::asio::append(std::move(handler), ec));
@@ -273,7 +274,7 @@ class Client::Impl :
   {
     auto h = handlers.begin();
     while (h != handlers.end()) {
-      auto handler = std::move(h->second);
+      auto handler = std::move(h->second.handler);
       ::curl_multi_remove_handle(multi.get(), h->first);
       h = handlers.erase(h);
     }
@@ -301,32 +302,45 @@ class Client::Impl :
   std::unordered_map<curl_socket_t, socket_watch> watches;
   uint64_t watch_gen = 0;
 
-  using handler_map = std::unordered_map<CURL*, handler_type>;
+  // handler plus an id that guards cancellation against easy handle reuse
+  struct op_state {
+    handler_type handler;
+    uint64_t id;
+  };
+  using handler_map = std::unordered_map<CURL*, op_state>;
   handler_map handlers;
+  uint64_t next_op_id = 0;
 
   multi_ptr multi;
 
   // handler for per-op cancellation
   struct op_cancellation {
-    Impl* impl;
+    boost::intrusive_ptr<Impl> impl;
     CURL* easy;
+    uint64_t id;
 
-    op_cancellation(Impl* impl, CURL* easy)
-      : impl(impl), easy(easy) {}
+    op_cancellation(Impl* impl, CURL* easy, uint64_t id)
+      : impl(impl), easy(easy), id(id) {}
 
     void operator()(boost::asio::cancellation_type_t type) {
       if (type == boost::asio::cancellation_type::none) {
         return;
       }
-      auto h = impl->handlers.find(easy);
-      if (h == impl->handlers.end()) {
-        return;
-      }
-      auto ec = make_error_code(boost::asio::error::operation_aborted);
-      auto handler = std::move(h->second);
-      ::curl_multi_remove_handle(impl->multi.get(), easy);
-      impl->handlers.erase(h);
-      boost::asio::dispatch(boost::asio::append(std::move(handler), ec));
+      // cancellation fires on the emitting thread; the handler map and
+      // multi handle are only safe to touch on the client's executor.
+      // post, not dispatch: an inline completion could resume the waiter
+      // inside emit() and destroy the signal under it
+      boost::asio::post(impl->ex, [impl = impl, easy = easy, id = id] {
+            auto h = impl->handlers.find(easy);
+            if (h == impl->handlers.end() || h->second.id != id) {
+              return;   // completed; the easy pointer may have been reused
+            }
+            auto ec = make_error_code(boost::asio::error::operation_aborted);
+            auto handler = std::move(h->second.handler);
+            ::curl_multi_remove_handle(impl->multi.get(), easy);
+            impl->handlers.erase(h);
+            boost::asio::dispatch(boost::asio::append(std::move(handler), ec));
+          });
     }
   };
 
@@ -395,7 +409,7 @@ class Client::Impl :
         }
         auto h = handlers.find(msg->easy_handle);
         if (h != handlers.end()) {
-          auto handler = std::move(h->second);
+          auto handler = std::move(h->second.handler);
           ::curl_multi_remove_handle(multi.get(), h->first);
           handlers.erase(h);
           boost::asio::dispatch(boost::asio::append(std::move(handler), ec));
