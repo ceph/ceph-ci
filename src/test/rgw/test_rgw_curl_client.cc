@@ -343,6 +343,66 @@ TEST(Client, two_keepalive)
   EXPECT_FALSE(*ceptr2);
 }
 
+// Hold the TCP connection open after the response so libcurl can park a
+// keep-alive socket with no further readability.
+auto accept_and_hold(ip::tcp::acceptor& acceptor)
+    -> asio::awaitable<void>
+{
+  auto socket = co_await acceptor.async_accept(asio::use_awaitable);
+
+  std::string request;
+  co_await asio::async_read_until(socket, asio::dynamic_buffer(request),
+                                  "\r\n\r\n", asio::use_awaitable);
+
+  static constexpr std::string_view response =
+      "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+  co_await asio::async_write(socket, asio::buffer(response),
+                             asio::use_awaitable);
+
+  asio::steady_timer hold{co_await asio::this_coro::executor};
+  hold.expires_at(asio::steady_timer::time_point::max());
+  boost::system::error_code ec;
+  co_await hold.async_wait(asio::redirect_error(asio::use_awaitable, ec));
+}
+
+// Destroying Client must cancel socket watches; otherwise an idle keep-alive
+// async_wait pins Impl and the io_context never drains.
+TEST(Client, destroy_after_keepalive)
+{
+  asio::io_context sctx;
+  const auto localhost = ip::make_address("127.0.0.1");
+  auto acceptor = ip::tcp::acceptor{sctx, ip::tcp::endpoint{localhost, 0}};
+  acceptor.listen(1);
+
+  std::optional<std::exception_ptr> septr;
+  asio::co_spawn(sctx, accept_and_hold(acceptor), capture(septr));
+
+  sctx.poll();
+  ASSERT_FALSE(sctx.stopped());
+
+  const std::string url = fmt::format("http://127.0.0.1:{}",
+                                      acceptor.local_endpoint().port());
+
+  asio::io_context cctx;
+  {
+    auto client = Client{cctx.get_executor()};
+
+    std::optional<std::exception_ptr> ceptr;
+    asio::co_spawn(cctx, perform(client, url.c_str()), capture(ceptr));
+
+    // Drive client/server until the request completes.
+    while (!ceptr) {
+      cctx.poll();
+      sctx.poll();
+    }
+    ASSERT_TRUE(ceptr);
+    EXPECT_FALSE(*ceptr);
+  } // ~Client must cancel watches on the pooled connection
+
+  cctx.poll();
+  ASSERT_TRUE(cctx.stopped());
+}
+
 size_t discard_write(char*, size_t size, size_t nmemb, void*)
 {
   return size * nmemb;

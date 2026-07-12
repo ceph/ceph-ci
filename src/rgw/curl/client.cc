@@ -199,6 +199,16 @@ class Client::Impl :
   ~Impl()
   {
     svc.remove(*this);
+    // curl_multi_cleanup() shuts down cached connections, which can
+    // invoke the socket callback; clear both callbacks so neither can
+    // resurrect a dying Impl
+    error_code ec;
+    multi_setopt(multi.get(), CURLMOPT_TIMERFUNCTION,
+                 static_cast<curl_multi_timer_callback>(nullptr), ec);
+    multi_setopt(multi.get(), CURLMOPT_SOCKETFUNCTION,
+                 static_cast<curl_socket_callback>(nullptr), ec);
+    // release foreign fds so ~stream_descriptor does not close them
+    cancel_watches();
   }
 
   executor_type get_executor() const noexcept { return ex; }
@@ -237,6 +247,9 @@ class Client::Impl :
       boost::asio::dispatch(boost::asio::append(std::move(handler), ec));
     }
     timer.cancel();
+    // abort the socket waits so their Impl refs drop; an idle keep-alive
+    // fd would otherwise pin Impl
+    cancel_watches();
   }
 
   void service_shutdown()
@@ -247,6 +260,9 @@ class Client::Impl :
       ::curl_multi_remove_handle(multi.get(), h->first);
       h = handlers.erase(h);
     }
+    // the reactor services are already shut down and their waits destroyed;
+    // only release the foreign fds so ~stream_descriptor does not close them
+    release_watches();
   }
 
  private:
@@ -403,9 +419,41 @@ class Client::Impl :
   friend int closesocket_callback(void* user, curl_socket_t fd)
   {
     auto impl = static_cast<Impl*>(user);
-
+    // erasing the watch destroys the socket and cancels its wait
     impl->watches.erase(fd);
     return 0;
+  }
+
+  // bump the generation to drop an in-flight completion, then cancel the waits
+  void retire_watch(socket_watch& w)
+  {
+    w.gen = ++watch_gen;
+    w.interest = 0;
+    error_code ec;
+    std::visit([&] (auto& io) { io.cancel(ec); }, w.io);
+    w.waiting = 0;
+  }
+
+  // release libcurl's foreign fds so ~stream_descriptor does not close them
+  void release_watches()
+  {
+    for (auto i = watches.begin(); i != watches.end(); ) {
+      if (auto* desc = std::get_if<boost::asio::posix::stream_descriptor>(
+              &i->second.io); desc) {
+        (void) desc->release();
+        i = watches.erase(i);
+      } else {
+        ++i;
+      }
+    }
+  }
+
+  void cancel_watches()
+  {
+    for (auto& w : watches) {
+      retire_watch(w.second);
+    }
+    release_watches();
   }
 
   struct socket_wait_handler {
@@ -470,13 +518,12 @@ class Client::Impl :
       }
       if (auto* desc = std::get_if<boost::asio::posix::stream_descriptor>(
               &i->second.io); desc) {
-        (void) desc->release();   // libcurl owns this fd; don't close it
+        // release aborts the wait and detaches libcurl's fd; erase drops it
+        (void) desc->release();
         impl->watches.erase(i);
       } else {
-        // our socket stays open until closesocket_callback()
-        i->second.interest = 0;
-        i->second.waiting = 0;
-        i->second.gen = ++impl->watch_gen;
+        // the socket stays open until closesocket_callback(); stop polling it
+        impl->retire_watch(i->second);
       }
       return 0;
     }
