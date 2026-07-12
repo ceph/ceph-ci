@@ -3,8 +3,10 @@
 
 #pragma once
 
-#include <map>
+#include <algorithm>
 #include <array>
+#include <chrono>
+#include <map>
 #include <string>
 #include <iostream>
 
@@ -39,33 +41,68 @@ static constexpr std::string_view restore_lock_cookie = "restore_thrd: ";
 
 namespace rgw::restore {
 
+inline bool is_transient_restore_error(int ret) {
+  return ret == -EIO || ret == -ECONNABORTED || ret == -EAGAIN ||
+         ret == -EBUSY || ret == -ERR_INTERNAL_ERROR;
+}
+
 /** Single Restore entry state */
 struct RestoreEntry {
   rgw_bucket bucket;
   rgw_obj_key obj_key;
   std::optional<uint64_t> days;
   std::string zone_id; // or should it be zone name?
-  rgw::sal::RGWRestoreStatus status;
+  rgw::sal::RGWRestoreStatus status{rgw::sal::RGWRestoreStatus::None};
+  uint32_t retry_count{0};
+  ceph::real_time enqueue_time{ceph::real_time::min()};
+  ceph::real_time next_retry_time{ceph::real_time::min()};
 
   RestoreEntry() {}
 
+  bool schedule_retry(ceph::real_time now,
+                      std::chrono::seconds retry_window,
+                      std::chrono::seconds retry_period) {
+    if (now - enqueue_time >= retry_window) {
+      return false;
+    }
+    ++retry_count;
+    constexpr std::chrono::seconds max_delay{60 * 60};
+    std::chrono::seconds delay = std::min(retry_period, max_delay);
+    for (uint32_t i = 1; i < retry_count && delay < max_delay; ++i) {
+      delay = std::min(max_delay, delay * 3 / 2);
+    }
+    next_retry_time = now + delay;
+    status = rgw::sal::RGWRestoreStatus::RestoreAlreadyInProgress;
+    return true;
+  }
+
   void encode(ceph::buffer::list& bl) const {
-    ENCODE_START(1, 1, bl);
+    ENCODE_START(2, 1, bl);
     encode(bucket, bl);
     encode(obj_key, bl);
     encode(days, bl);
     encode(zone_id, bl);
     encode(status, bl);
+    encode(retry_count, bl);
+    encode(enqueue_time, bl);
+    encode(next_retry_time, bl);
     ENCODE_FINISH(bl);
   }
 
   void decode(ceph::buffer::list::const_iterator& bl) {
-    DECODE_START(1, bl);
+    DECODE_START(2, bl);
     decode(bucket, bl);
     decode(obj_key, bl);
     decode(days, bl);
     decode(zone_id, bl);
     decode(status, bl);
+    if (struct_v >= 2) {
+      decode(retry_count, bl);
+      decode(enqueue_time, bl);
+      decode(next_retry_time, bl);
+    } else {
+      enqueue_time = ceph::real_clock::now();
+    }
     DECODE_FINISH(bl);
   }
   void dump(ceph::Formatter* f) const;

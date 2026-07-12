@@ -78,6 +78,13 @@ void RestoreEntry::dump(Formatter *f) const
   }
   encode_json("Zone_id", zone_id, f);
   encode_json("Status", static_cast<int>(status), f);
+  encode_json("RetryCount", retry_count, f);
+  encode_json("EnqueueTime", utime_t{enqueue_time}, f);
+  if (next_retry_time == ceph::real_time::min()) {
+    encode_json("NextRetryTime", std::string{"immediate"}, f);
+  } else {
+    encode_json("NextRetryTime", utime_t{next_retry_time}, f);
+  }
 }
 
 void RestoreEntry::decode_json(JSONObj *obj)
@@ -89,6 +96,7 @@ void RestoreEntry::decode_json(JSONObj *obj)
   int st;
   JSONDecoder::decode_json("Status", st, obj);
   status = static_cast<rgw::sal::RGWRestoreStatus>(st);
+  JSONDecoder::decode_json("RetryCount", retry_count, obj, false);
 }
 
 void RestoreEntry::generate_test_instances(std::list<RestoreEntry*>& l)
@@ -107,6 +115,9 @@ void RestoreEntry::generate_test_instances(std::list<RestoreEntry*>& l)
   p->zone_id = zone_id;
   p->days = days;
   p->status = status;
+  p->retry_count = 7;
+  p->enqueue_time = ceph::real_clock::from_time_t(1000);
+  p->next_retry_time = ceph::real_clock::from_time_t(1900);
   l.push_back(p);
 
   p = new RestoreEntry;
@@ -223,6 +234,8 @@ static inline std::ostream& operator<<(std::ostream &os, RestoreEntry& ent) {
   os << ent.zone_id;
   os << "; status=";
   os << rgw_restore_status_dump(ent.status);
+  os << "; retry_count=";
+  os << ent.retry_count;
   os << ">";
 
   return os;
@@ -618,6 +631,11 @@ int Restore::process_restore_entry(RestoreEntry& entry, optional_yield y)
     return 0;
   }
 
+  if (entry.next_retry_time > ceph::real_clock::now()) {
+    entry.status = rgw::sal::RGWRestoreStatus::RestoreAlreadyInProgress;
+    return 0;
+  }
+
   attr_iter = attrs.find(RGW_ATTR_STORAGE_CLASS);
   if (attr_iter != attrs.end()) {
     target_placement.storage_class = attr_iter->second.to_str();
@@ -645,20 +663,44 @@ int Restore::process_restore_entry(RestoreEntry& entry, optional_yield y)
 
   uint64_t size;
   // now go ahead with restoring object
-  ret = obj->restore_obj_from_cloud(bucket.get(), tier.get(), cct, days, in_progress, size, 
-		  		      this, y);
+  ret = obj->restore_obj_from_cloud(bucket.get(), tier.get(), cct, days,
+                                    in_progress, size, this, y);
   if (ret == -ECANCELED && yield_cancelled(y)) {
     // glacier POST/HEAD waits report cancellation as -ECANCELED;
     // HEAD left as-is, entry stays queued for retry
     return ret;
+  }
+  if (is_transient_restore_error(ret)) {
+    const auto now = ceph::real_clock::now();
+    const std::chrono::seconds retry_window{
+        cct->_conf->rgw_restore_retry_window};
+    const int period = cct->_conf->rgw_restore_processor_period;
+    const std::chrono::seconds retry_period{
+        period > 0 ? period : secs_in_a_day};
+    if (entry.schedule_retry(now, retry_window, retry_period)) {
+      const int status_ret = set_cloud_restore_status(
+          this, obj.get(), y,
+          rgw::sal::RGWRestoreStatus::RestoreAlreadyInProgress);
+      if (status_ret < 0) {
+        return status_ret;
+      }
+      ldpp_dout(this, 5) << __PRETTY_FUNCTION__ << ": transient failure for object("
+                         << obj->get_key() << "), requeueing retry "
+                         << entry.retry_count << " at "
+                         << utime_t{entry.next_retry_time}
+                         << ", ret=" << ret << dendl;
+      return 0;
+    }
   }
   if (ret < 0) {
     ldpp_dout(this, -1) << __PRETTY_FUNCTION__ << ": Restore of object(" << obj->get_key() << ") failed" << ret << dendl;	  
     auto reset_ret = set_cloud_restore_status(this, obj.get(), y, rgw::sal::RGWRestoreStatus::RestoreFailed);
     if (reset_ret < 0) {
       ldpp_dout(this, -1) << __PRETTY_FUNCTION__ << ": Setting restore status ad RestoreFailed failed for object(" << obj->get_key() << ") " << reset_ret << dendl;	    
+      return reset_ret;
     }
-    return finish(ret);
+    finish(ret);
+    return 0;
   }
 
   if (in_progress) {
@@ -835,6 +877,7 @@ int Restore::restore_obj_from_cloud(rgw::sal::Bucket* pbucket,
   entry.status = rgw::sal::RGWRestoreStatus::None;
   entry.days = days;
   entry.zone_id = driver->get_zone()->get_id(); 
+  entry.enqueue_time = ceph::real_clock::now();
  
   ldpp_dout(this, 10) << "Restore:: Adding restore entry of object(" << pobj->get_key() << ") entry: " << entry << dendl;
 

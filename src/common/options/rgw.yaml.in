@@ -677,6 +677,18 @@ options:
   services:
   - rgw
   with_legacy: true
+- name: rgw_restore_retry_window
+  type: int
+  level: advanced
+  desc: Maximum time in seconds to retry a failed cloud restore
+  long_desc: Transient cloud restore failures are requeued with backoff until
+    the entry's age exceeds this window.
+  default: 86400
+  min: 1
+  max: 604800
+  services:
+  - rgw
+  with_legacy: true
 - name: rgw_mp_lock_max_time
   type: int
   level: advanced

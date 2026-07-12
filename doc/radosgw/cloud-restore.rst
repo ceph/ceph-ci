@@ -319,6 +319,8 @@ configuration options:
 
 .. confval:: rgw_restore_batch_size
 
+.. confval:: rgw_restore_retry_window
+
 The processor renews the per-shard lock in the background for as long as it is
 draining a shard. Each run attempts every shard once; if a shard still has
 backlog after ``rgw_restore_lock_max_time``, the processor stops it after the

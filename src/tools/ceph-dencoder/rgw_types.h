@@ -261,4 +261,7 @@ TYPE(rgwrados::roles::resource_metadata)
 #include "driver/rados/users.h"
 TYPE(rgwrados::users::resource_metadata)
 
+#include "rgw_restore.h"
+TYPE(rgw::restore::RestoreEntry)
+
 #endif
