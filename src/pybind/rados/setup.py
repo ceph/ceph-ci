@@ -178,9 +178,11 @@ else:
     # Process the template with cython_constants
     processed = Tempita.sub(template_content, **cython_constants)
 
-    # Write processed output to current working directory
-    # (which is the build directory when invoked by CMake)
-    output_pyx = "rados_processed.pyx"
+    # Write the processed output to the build directory when invoked by
+    # CMake, which exports CYTHON_BUILD_DIR but runs setup.py from the
+    # source directory; fall back to the current working directory.
+    build_dir = os.environ.get("CYTHON_BUILD_DIR", os.getcwd())
+    output_pyx = os.path.join(build_dir, "rados_processed.pyx")
 
     with open(output_pyx, 'w') as f:
         f.write(processed)

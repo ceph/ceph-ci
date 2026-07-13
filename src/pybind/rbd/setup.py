@@ -185,9 +185,11 @@ else:
     # Process the template with cython_constants
     processed = Tempita.sub(template_content, **cython_constants)
 
-    # Write processed output to current working directory
-    # (which is the build directory when invoked by CMake)
-    source = "rbd_processed.pyx"
+    # Write the processed output to the build directory when invoked by
+    # CMake, which exports CYTHON_BUILD_DIR but runs setup.py from the
+    # source directory; fall back to the current working directory.
+    build_dir = os.environ.get("CYTHON_BUILD_DIR", os.getcwd())
+    source = os.path.join(build_dir, "rbd_processed.pyx")
 
     with open(source, 'w') as f:
         f.write(processed)
