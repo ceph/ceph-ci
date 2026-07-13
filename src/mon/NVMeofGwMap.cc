@@ -55,35 +55,10 @@ void NVMeofGwMap::to_gmap(
       auto gw_state = NvmeGwClientState(
 	gw_created.ana_grp_id, epoch, availability, gw_created.beacon_sequence,
 	gw_created.beacon_sequence_ooo, published_features);
-    auto &sm_state = gw_created.sm_state;
-    if (active_active_enabled) {
-      bool need_to_substitute = false;
-      for (auto& sm_state_it: sm_state) {
-        auto& state = sm_state_it.second;
-        if (state == gw_states_per_group_t::GW_WAIT_BLOCKLIST_CMPL ||
-            state == gw_states_per_group_t::GW_WAIT_FAILOVER_CMPL)
-        {
-          need_to_substitute = true; // need to send fully inaccessible map to all GWs
-                                     //during failover in ACTIVE-ACTIVE configuration
-          break;
-        }
-      }
-      if (need_to_substitute) {
-        for (auto& sm_state_it: sm_state) {
-          gw_states_per_group_t state = sm_state_it.second;
-          if (state == gw_states_per_group_t::GW_ACCESSIBLE_STATE ||
-              state == gw_states_per_group_t::GW_ACTIVE_STATE) {
-              state = gw_states_per_group_t::GW_STANDBY_STATE;
-              dout(10) << "substitute state upon send for GW " << gw_id
-                       << " anagrp " << sm_state_it.first << dendl;
-          }
-        }
-      }
-    }
       for (const auto& sub: gw_created.subsystems) {
 	gw_state.subsystems.insert({
 	    sub.nqn,
-	    NqnState(sub.nqn, sm_state, gw_created)
+	    NqnState(sub.nqn, gw_created.sm_state, gw_created)
 	  });
       }
       Gmap[group_key][gw_id] = gw_state;
@@ -1038,7 +1013,9 @@ void NVMeofGwMap::set_active_states_for_ana_group(
   if (active_active_enabled) {
     for (auto& gw_state_it: gws_states) {
       auto& st = gw_state_it.second;
-      if (gw_state_it.first != gw_id) {
+      if (gw_state_it.first != gw_id &&
+          gw_state_it.second.availability == gw_availability_t::GW_AVAILABLE) {
+        dout(4) << "setting Accessible state to GW " << gw_state_it << dendl;
         st.sm_state[anagrpid] = gw_states_per_group_t::GW_ACCESSIBLE_STATE;
       }
     }
@@ -1316,7 +1293,7 @@ void NVMeofGwMap::fsm_handle_gw_alive(
       cancel_timer(gw_id, group_key, grpid);
       map_modified = true;
     } else {
-      dout(20) << "osd epoch not changed from "
+      dout(10) << "osd epoch not changed from "
 	       <<  gw_map.blocklist_data[grpid].osd_epoch
 	       << " to "<< last_osd_epoch
 	       << " Ana-grp: " << grpid
@@ -1326,15 +1303,8 @@ void NVMeofGwMap::fsm_handle_gw_alive(
   break;
   case gw_states_per_group_t::GW_WAIT_FAILOVER_CMPL:
   {
-    // 1. Find the osd epoch of GW in WAIT_BLOCKLIST_CMPL
-    epoch_t osd_epoch = 0;
-    for (auto& gw_st: created_gws[group_key]) {
-      auto& st = gw_st.second;
-      // found GW  that was chosen as Failover for this ana grp
-      if (st.sm_state[grpid] == gw_states_per_group_t::GW_WAIT_BLOCKLIST_CMPL) {
-        osd_epoch = st.blocklist_data[grpid].osd_epoch;
-      }
-    }
+    // 1. Find the osd epoch
+    epoch_t osd_epoch = gw_state.blocklist_data[grpid].osd_epoch;
     if (osd_epoch == 0) {
        // Failover GW is down TODO - processing should be done in fsm_handle_gw_down
        dout(1) << "gw " << gw_id << " in " << state
@@ -1342,7 +1312,7 @@ void NVMeofGwMap::fsm_handle_gw_alive(
                 << gw_states_per_group_t::GW_WAIT_BLOCKLIST_CMPL << dendl;
        return;
     }
-    dout(10) << "osd epoch accepted " << osd_epoch << " wait for " << last_osd_epoch
+    dout(10) << "osd epoch accepted " << last_osd_epoch << " wait for " << osd_epoch
     		 << " gw-id " << gw_id << dendl;
 
     if (osd_epoch <= last_osd_epoch) {
@@ -1353,7 +1323,7 @@ void NVMeofGwMap::fsm_handle_gw_alive(
       cancel_timer(gw_id, group_key, grpid);
       map_modified = true;
     } else {
-      dout(20) << "gw " << gw_id << " in " << state
+      dout(10) << "gw " << gw_id << " in " << state
                << " osd epoch not changed from "
                << osd_epoch
                << " to "<< last_osd_epoch
