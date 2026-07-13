@@ -788,6 +788,519 @@ class TestNvmeofCLICommandSuccessMessage:
         assert test_cmd not in NvmeofCLICommand.COMMANDS
 
 
+class TestNvmeofCLICommandDeprecatedParams:
+    """Tests for the deprecated_params warning mechanism in NvmeofCLICommand."""
+
+    # ------------------------------------------------------------------ helpers
+
+    @staticmethod
+    def _make_cmd(test_cmd, deprecated_params=None, alias=None):
+        """Register a simple command and return the cmd key."""
+        class Model(NamedTuple):
+            status: str
+
+        kwargs = {}
+        if deprecated_params is not None:
+            kwargs['deprecated_params'] = deprecated_params
+        if alias is not None:
+            kwargs['alias'] = alias
+
+        @NvmeofCLICommand(test_cmd, Model, **kwargs)
+        def fn(self, new_param: str, old_param: Optional[str] = None):  # pylint: disable=unused-variable
+            return {'status': 'ok'}
+
+        return test_cmd
+
+    @staticmethod
+    def _cleanup(*cmds):
+        for cmd in cmds:
+            NvmeofCLICommand.COMMANDS.pop(cmd, None)
+
+    # ------------------------------------------------------------------ constructor
+
+    def test_deprecated_params_stored_on_instance(self):
+        """Mapping passed to constructor is stored as _deprecated_params."""
+        test_cmd = "test deprecated store"
+        mapping = {"old_param": "old_param is deprecated, use new_param"}
+        self._make_cmd(test_cmd, deprecated_params=mapping)
+        try:
+            cmd = NvmeofCLICommand.COMMANDS[test_cmd]
+            assert cmd._deprecated_params == mapping
+        finally:
+            self._cleanup(test_cmd)
+
+    def test_no_deprecated_params_defaults_to_empty_dict(self):
+        """Omitting deprecated_params leaves _deprecated_params as empty dict."""
+        test_cmd = "test deprecated empty"
+        self._make_cmd(test_cmd)
+        try:
+            cmd = NvmeofCLICommand.COMMANDS[test_cmd]
+            assert cmd._deprecated_params == {}
+        finally:
+            self._cleanup(test_cmd)
+
+    def test_none_deprecated_params_defaults_to_empty_dict(self):
+        """Passing deprecated_params=None is equivalent to omitting it."""
+        test_cmd = "test deprecated none"
+        self._make_cmd(test_cmd, deprecated_params=None)
+        try:
+            cmd = NvmeofCLICommand.COMMANDS[test_cmd]
+            assert cmd._deprecated_params == {}
+        finally:
+            self._cleanup(test_cmd)
+
+    # ------------------------------------------------------------------ alias inheritance
+
+    def test_alias_inherits_deprecated_params(self):
+        """Alias command receives the same deprecated_params mapping."""
+        test_cmd = "test deprecated alias main"
+        test_alias = "test deprecated alias alias"
+        mapping = {"old_param": "old_param is deprecated, use new_param"}
+        self._make_cmd(test_cmd, deprecated_params=mapping, alias=test_alias)
+        try:
+            assert NvmeofCLICommand.COMMANDS[test_alias]._deprecated_params == mapping
+        finally:
+            self._cleanup(test_cmd, test_alias)
+
+    def test_alias_without_deprecated_params_has_empty_dict(self):
+        """Alias of a command with no deprecated_params also has an empty dict."""
+        test_cmd = "test no deprecated alias main"
+        test_alias = "test no deprecated alias alias"
+        self._make_cmd(test_cmd, alias=test_alias)
+        try:
+            assert NvmeofCLICommand.COMMANDS[test_alias]._deprecated_params == {}
+        finally:
+            self._cleanup(test_cmd, test_alias)
+
+    # ------------------------------------------------------------------ plain-format warning emission
+
+    def test_warning_emitted_when_deprecated_param_is_supplied(self):
+        """Warning line appended to plain output when deprecated param is used."""
+        test_cmd = "test deprecated warn supplied"
+        self._make_cmd(
+            test_cmd,
+            deprecated_params={"old_param": "--old-param is deprecated, please use --new-param"}
+        )
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_cmd].call(
+                MagicMock(),
+                {"new_param": "foo", "old_param": "bar"}
+            )
+            assert result.retval == 0
+            assert "\nWarning: --old-param is deprecated, please use --new-param" in result.stdout
+        finally:
+            self._cleanup(test_cmd)
+
+    def test_no_warning_when_deprecated_param_is_absent(self):
+        """No Warning line when the deprecated param is not supplied."""
+        test_cmd = "test deprecated warn absent"
+        self._make_cmd(
+            test_cmd,
+            deprecated_params={"old_param": "--old-param is deprecated, please use --new-param"}
+        )
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_cmd].call(
+                MagicMock(),
+                {"new_param": "foo"}
+            )
+            assert result.retval == 0
+            assert "Warning" not in result.stdout
+        finally:
+            self._cleanup(test_cmd)
+
+    def test_no_warning_when_deprecated_params_is_empty(self):
+        """No warning emitted on a command with no deprecated_params."""
+        test_cmd = "test no deprecated params"
+        self._make_cmd(test_cmd)
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_cmd].call(
+                MagicMock(),
+                {"new_param": "foo", "old_param": "bar"}
+            )
+            assert result.retval == 0
+            assert "Warning" not in result.stdout
+        finally:
+            self._cleanup(test_cmd)
+
+    def test_multiple_deprecated_params_each_emit_warning(self):
+        """Each deprecated param that is supplied emits its own Warning line."""
+        test_cmd = "test deprecated multi warn"
+
+        class Model(NamedTuple):
+            status: str
+
+        @NvmeofCLICommand(
+            test_cmd,
+            Model,
+            deprecated_params={
+                "old_a": "--old-a is deprecated, use --new-a",
+                "old_b": "--old-b is deprecated, use --new-b",
+            }
+        )
+        def fn(self, new_a: str, old_a: Optional[str] = None,  # pylint: disable=unused-variable
+               old_b: Optional[str] = None):
+            return {'status': 'ok'}
+
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_cmd].call(
+                MagicMock(),
+                {"new_a": "x", "old_a": "y", "old_b": "z"}
+            )
+            assert result.retval == 0
+            assert "\nWarning: --old-a is deprecated, use --new-a" in result.stdout
+            assert "\nWarning: --old-b is deprecated, use --new-b" in result.stdout
+        finally:
+            self._cleanup(test_cmd)
+
+    def test_only_supplied_deprecated_param_warns(self):
+        """When only one of two deprecated params is supplied, only that one warns."""
+        test_cmd = "test deprecated partial warn"
+
+        class Model(NamedTuple):
+            status: str
+
+        @NvmeofCLICommand(
+            test_cmd,
+            Model,
+            deprecated_params={
+                "old_a": "--old-a is deprecated, use --new-a",
+                "old_b": "--old-b is deprecated, use --new-b",
+            }
+        )
+        def fn(self, new_a: str, old_a: Optional[str] = None,  # pylint: disable=unused-variable
+               old_b: Optional[str] = None):
+            return {'status': 'ok'}
+
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_cmd].call(
+                MagicMock(),
+                {"new_a": "x", "old_a": "y"}
+            )
+            assert result.retval == 0
+            assert "\nWarning: --old-a is deprecated, use --new-a" in result.stdout
+            assert "--old-b" not in result.stdout
+        finally:
+            self._cleanup(test_cmd)
+
+    # ------------------------------------------------------------------ output format isolation
+
+    def test_warning_not_emitted_for_json_format(self):
+        """JSON output is unaffected by deprecated_params."""
+        test_cmd = "test deprecated json no warn"
+        self._make_cmd(
+            test_cmd,
+            deprecated_params={"old_param": "--old-param is deprecated, please use --new-param"}
+        )
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_cmd].call(
+                MagicMock(),
+                {"format": "json", "new_param": "foo", "old_param": "bar"}
+            )
+            assert result.retval == 0
+            assert "Warning" not in result.stdout
+            parsed = json.loads(result.stdout)
+            assert "Warning" not in str(parsed)
+        finally:
+            self._cleanup(test_cmd)
+
+    def test_warning_not_emitted_for_yaml_format(self):
+        """YAML output is unaffected by deprecated_params."""
+        test_cmd = "test deprecated yaml no warn"
+        self._make_cmd(
+            test_cmd,
+            deprecated_params={"old_param": "--old-param is deprecated, please use --new-param"}
+        )
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_cmd].call(
+                MagicMock(),
+                {"format": "yaml", "new_param": "foo", "old_param": "bar"}
+            )
+            assert result.retval == 0
+            assert "Warning" not in result.stdout
+        finally:
+            self._cleanup(test_cmd)
+
+    def test_warning_emitted_for_default_format(self):
+        """Default format (no 'format' key) also emits warnings."""
+        test_cmd = "test deprecated default format warn"
+        self._make_cmd(
+            test_cmd,
+            deprecated_params={"old_param": "--old-param is deprecated, please use --new-param"}
+        )
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_cmd].call(
+                MagicMock(),
+                {"new_param": "foo", "old_param": "bar"}
+            )
+            assert result.retval == 0
+            assert "\nWarning: --old-param is deprecated, please use --new-param" in result.stdout
+        finally:
+            self._cleanup(test_cmd)
+
+    def test_warning_emitted_for_explicit_plain_format(self):
+        """Explicit 'plain' format also emits warnings."""
+        test_cmd = "test deprecated plain format warn"
+        self._make_cmd(
+            test_cmd,
+            deprecated_params={"old_param": "--old-param is deprecated, please use --new-param"}
+        )
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_cmd].call(
+                MagicMock(),
+                {"format": "plain", "new_param": "foo", "old_param": "bar"}
+            )
+            assert result.retval == 0
+            assert "\nWarning: --old-param is deprecated, please use --new-param" in result.stdout
+        finally:
+            self._cleanup(test_cmd)
+
+    # ------------------------------------------------------------------ coexistence with error_message warning
+
+    def test_deprecated_warning_and_error_message_warning_both_appear(self):
+        """Both the gRPC error_message warning and deprecated param warnings are shown."""
+        test_cmd = "test deprecated coexist error message"
+
+        class Model(NamedTuple):
+            status: str
+            error_message: str
+
+        @NvmeofCLICommand(
+            test_cmd,
+            Model,
+            deprecated_params={"old_param": "--old-param is deprecated, please use --new-param"}
+        )
+        def fn(self, new_param: str, old_param: Optional[str] = None):  # pylint: disable=unused-variable
+            return {'status': 'ok', 'error_message': 'something to note from gRPC'}
+
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_cmd].call(
+                MagicMock(),
+                {"new_param": "foo", "old_param": "bar"}
+            )
+            assert result.retval == 0
+            assert "\nWarning: something to note from gRPC" in result.stdout
+            assert "\nWarning: --old-param is deprecated, please use --new-param" in result.stdout
+        finally:
+            self._cleanup(test_cmd)
+
+    def test_error_message_warning_without_deprecated_param(self):
+        """error_message warning still works when no deprecated param is supplied."""
+        test_cmd = "test error message no deprecated"
+
+        class Model(NamedTuple):
+            status: str
+            error_message: str
+
+        @NvmeofCLICommand(test_cmd, Model)
+        def fn(self, new_param: str):  # pylint: disable=unused-variable
+            return {'status': 'ok', 'error_message': 'note from gRPC'}
+
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_cmd].call(
+                MagicMock(),
+                {"new_param": "foo"}
+            )
+            assert result.retval == 0
+            assert "\nWarning: note from gRPC" in result.stdout
+        finally:
+            self._cleanup(test_cmd)
+
+    # ------------------------------------------------------------------ alias emits same warning
+
+    def test_alias_emits_same_warning_as_main_command(self):
+        """The alias command emits the same deprecation warning as the main command."""
+        test_cmd = "test deprecated alias warn main"
+        test_alias = "test deprecated alias warn alias"
+        self._make_cmd(
+            test_cmd,
+            deprecated_params={"old_param": "--old-param is deprecated, please use --new-param"},
+            alias=test_alias
+        )
+        try:
+            for cmd_key in (test_cmd, test_alias):
+                result = NvmeofCLICommand.COMMANDS[cmd_key].call(
+                    MagicMock(),
+                    {"new_param": "foo", "old_param": "bar"}
+                )
+                assert result.retval == 0, f"failed for {cmd_key}"
+                assert "\nWarning: --old-param is deprecated, please use --new-param" \
+                    in result.stdout, f"warning missing for {cmd_key}"
+        finally:
+            self._cleanup(test_cmd, test_alias)
+
+    def test_alias_also_suppresses_warning_when_param_absent(self):
+        """Alias also produces no warning when deprecated param is not passed."""
+        test_cmd = "test deprecated alias no warn main"
+        test_alias = "test deprecated alias no warn alias"
+        self._make_cmd(
+            test_cmd,
+            deprecated_params={"old_param": "--old-param is deprecated, please use --new-param"},
+            alias=test_alias
+        )
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_alias].call(
+                MagicMock(),
+                {"new_param": "foo"}
+            )
+            assert result.retval == 0
+            assert "Warning" not in result.stdout
+        finally:
+            self._cleanup(test_cmd, test_alias)
+
+    # ------------------------------------------------------------------ failure path
+
+    def test_warning_emitted_on_failure_when_deprecated_param_supplied(self):
+        """Warning appears in stderr when the command raises and deprecated param was used."""
+        test_cmd = "test deprecated warn on failure"
+
+        class Model(NamedTuple):
+            status: str
+
+        @NvmeofCLICommand(
+            test_cmd,
+            Model,
+            deprecated_params={"old_param": "--old-param is deprecated, please use --new-param"}
+        )
+        def fn(self, new_param: str, old_param: Optional[str] = None):  # pylint: disable=unused-variable
+            raise DashboardException(msg="something went wrong", component="nvmeof",
+                                     http_status_code=500)
+
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_cmd].call(
+                MagicMock(),
+                {"new_param": "foo", "old_param": "bar"}
+            )
+            assert result.retval == -errno.EINVAL
+            assert result.stdout == ''
+            assert "\nWarning: --old-param is deprecated, please use --new-param" in result.stderr
+        finally:
+            self._cleanup(test_cmd)
+
+    def test_no_warning_on_failure_when_deprecated_param_absent(self):
+        """No warning in stderr when the command raises but deprecated param was not used."""
+        test_cmd = "test deprecated no warn on failure absent"
+
+        class Model(NamedTuple):
+            status: str
+
+        @NvmeofCLICommand(
+            test_cmd,
+            Model,
+            deprecated_params={"old_param": "--old-param is deprecated, please use --new-param"}
+        )
+        def fn(self, new_param: str, old_param: Optional[str] = None):  # pylint: disable=unused-variable
+            raise DashboardException(msg="something went wrong", component="nvmeof",
+                                     http_status_code=500)
+
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_cmd].call(
+                MagicMock(),
+                {"new_param": "foo"}
+            )
+            assert result.retval == -errno.EINVAL
+            assert "Warning" not in result.stderr
+        finally:
+            self._cleanup(test_cmd)
+
+    def test_warning_in_stdout_on_success_and_stderr_on_failure(self):
+        """Warning lands in stdout on success and stderr on failure — same param, different path."""
+        test_cmd_ok = "test deprecated path ok"
+        test_cmd_fail = "test deprecated path fail"
+
+        class Model(NamedTuple):
+            status: str
+
+        @NvmeofCLICommand(
+            test_cmd_ok,
+            Model,
+            deprecated_params={"old_param": "--old-param is deprecated, please use --new-param"}
+        )
+        def fn_ok(self, new_param: str, old_param: Optional[str] = None):  # pylint: disable=unused-variable
+            return {'status': 'ok'}
+
+        @NvmeofCLICommand(
+            test_cmd_fail,
+            Model,
+            deprecated_params={"old_param": "--old-param is deprecated, please use --new-param"}
+        )
+        def fn_fail(self, new_param: str, old_param: Optional[str] = None):  # pylint: disable=unused-variable
+            raise DashboardException(msg="boom", component="nvmeof", http_status_code=500)
+
+        try:
+            ok_result = NvmeofCLICommand.COMMANDS[test_cmd_ok].call(
+                MagicMock(),
+                {"new_param": "foo", "old_param": "bar"}
+            )
+            assert ok_result.retval == 0
+            assert "\nWarning: --old-param is deprecated, please use --new-param" in ok_result.stdout
+            assert ok_result.stderr == ''
+
+            fail_result = NvmeofCLICommand.COMMANDS[test_cmd_fail].call(
+                MagicMock(),
+                {"new_param": "foo", "old_param": "bar"}
+            )
+            assert fail_result.retval == -errno.EINVAL
+            assert fail_result.stdout == ''
+            assert "\nWarning: --old-param is deprecated, please use --new-param" in fail_result.stderr
+        finally:
+            self._cleanup(test_cmd_ok, test_cmd_fail)
+
+    # ------------------------------------------------------------------ success message + warning coexistence
+
+    def test_deprecated_warning_appended_after_success_message(self):
+        """Warning is appended after a success_message_template, not instead of it."""
+        test_cmd = "test deprecated with success msg"
+
+        class Model(NamedTuple):
+            status: str
+
+        @NvmeofCLICommand(
+            test_cmd,
+            Model,
+            success_message_template="Done: {new_param}",
+            deprecated_params={"old_param": "--old-param is deprecated, please use --new-param"}
+        )
+        def fn(self, new_param: str, old_param: Optional[str] = None):  # pylint: disable=unused-variable
+            return {'status': 'ok'}
+
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_cmd].call(
+                MagicMock(),
+                {"new_param": "foo", "old_param": "bar"}
+            )
+            assert result.retval == 0
+            assert result.stdout.startswith("Done: foo")
+            assert "\nWarning: --old-param is deprecated, please use --new-param" in result.stdout
+        finally:
+            self._cleanup(test_cmd)
+
+    def test_no_warning_appended_to_success_message_when_param_absent(self):
+        """Success message is clean when deprecated param is not supplied."""
+        test_cmd = "test deprecated with success msg no warn"
+
+        class Model(NamedTuple):
+            status: str
+
+        @NvmeofCLICommand(
+            test_cmd,
+            Model,
+            success_message_template="Done: {new_param}",
+            deprecated_params={"old_param": "--old-param is deprecated, please use --new-param"}
+        )
+        def fn(self, new_param: str, old_param: Optional[str] = None):  # pylint: disable=unused-variable
+            return {'status': 'ok'}
+
+        try:
+            result = NvmeofCLICommand.COMMANDS[test_cmd].call(
+                MagicMock(),
+                {"new_param": "foo"}
+            )
+            assert result.retval == 0
+            assert result.stdout == "Done: foo"
+        finally:
+            self._cleanup(test_cmd)
+
+
 class TestNVMeoFConfCLI(unittest.TestCase, CLICommandTestMixin):
     def setUp(self):
         self.mock_kv_store()
