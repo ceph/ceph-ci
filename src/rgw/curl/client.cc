@@ -209,6 +209,7 @@ class Client::Impl :
     multi_setopt(multi.get(), CURLMOPT_TIMERDATA, this);
     multi_setopt(multi.get(), CURLMOPT_SOCKETFUNCTION, socket_callback);
     multi_setopt(multi.get(), CURLMOPT_SOCKETDATA, this);
+    multi_setopt(multi.get(), CURLMOPT_MAXCONNECTS, 256L);
 
     // register for service_shutdown() notifications
     svc.add(*this);
