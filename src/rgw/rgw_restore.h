@@ -56,6 +56,7 @@ struct RestoreEntry {
   uint32_t retry_count{0};
   ceph::real_time enqueue_time{ceph::real_time::min()};
   ceph::real_time next_retry_time{ceph::real_time::min()};
+  std::string fifo_marker; // runtime only; requeues get a new marker
 
   RestoreEntry() {}
 

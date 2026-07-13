@@ -429,6 +429,8 @@ int Restore::process_locked(int index, int max_secs, boost::asio::yield_context 
       std::max<int64_t>(1, cct->_conf->rgw_restore_max_concurrent_io));
   const int max_entries = std::max<int>(1,
       static_cast<int>(cct->_conf->rgw_restore_batch_size));
+  const size_t pending_limit =
+      std::max(io_limit, static_cast<size_t>(max_entries));
 
   std::string marker;
   std::string next_marker;
@@ -445,112 +447,164 @@ int Restore::process_locked(int index, int max_secs, boost::asio::yield_context 
          + k.ns + '\0' + k.name + '\0' + k.instance;
   };
 
-  do {
-    std::vector<RestoreEntry> entries;
+  struct op_state {
+    std::string prev_marker;
+    std::optional<RestoreEntry> retry;
+  };
+  // Completed entries are implicit between fixed-width pending markers.
+  std::map<std::string, op_state> pending;
+  std::unordered_set<std::string> busy;
+  std::string last_admitted;
+  std::string last_trimmed;
+  int hard_error = 0;
+  bool wrapped = false;
+  bool duplicate = false;
 
-    ret = sal_restore->list(this, yield, index, marker, &next_marker, max_entries, entries, &truncated);
-    ldpp_dout(this, 20) << __PRETTY_FUNCTION__ <<
-      ": list on shard:" << obj_names[index] << " returned:" << ret <<
-      ", entries.size=" << entries.size() << ", truncated=" << truncated <<
-      ", marker='" << marker << "'" << ", next_marker='" << next_marker << "'" << dendl;
-    if (ret < 0) {
-      ldpp_dout(this, -1) << __PRETTY_FUNCTION__ << ": ERROR: failed to list entries on "
-                          << obj_names[index] << " (ret=" << ret << ")" << dendl;
-      return ret;
+  auto trim_ready = [&] {
+    // only the contiguous prefix can requeue; pushing entries past the trim
+    // frontier would duplicate their still-queued originals
+    std::vector<RestoreEntry> retries;
+    for (auto& i : pending) {
+      if (!i.second.retry)
+        break;
+      retries.push_back(*i.second.retry);
     }
-    if (entries.size() == 0)
-      break;                       // caught up
 
-    std::vector<RestoreEntry> batch_inprog;   // shared, no lock (single-threaded io_context)
-    int batch_err = 0;                        // first hard (non-ENOENT) error in the batch
-    bool wrapped = false;
+    // Requeue before inclusive trim; failures leave originals queued.
+    if (!retries.empty()) {
+      int r = sal_restore->add_entries(this, yield, index, retries);
+      if (r < 0)
+        return r;                  // originals remain queued
+      for (auto& e : retries) {
+        const auto k = entry_key(e);
+        requeued.insert(k);
+        busy.erase(k);
+        pending.erase(e.fifo_marker);
+      }
+    }
 
-    {
-      ceph::async::spawn_throttle workpool{yield, io_limit};
-      std::unordered_set<std::string> seen_in_batch;
-      try {
-        for (auto iter = entries.begin(); iter != entries.end(); ++iter) {
-          const std::string k = entry_key(*iter);
-          if (requeued.count(k)) { wrapped = true; break; }
-          // coalesce dups: the FIFO can hold an object twice; running both would race it
-          if (!seen_in_batch.insert(k).second)
-            continue;
+    std::string frontier = pending.empty()
+        ? last_admitted : pending.begin()->second.prev_marker;
+    if (frontier.empty() || frontier <= last_trimmed)
+      return 0;
+    int r = sal_restore->trim_entries(this, yield, index, frontier);
+    if (r < 0)
+      return r;
+    last_trimmed = std::move(frontier);
+    return 0;
+  };
 
-          workpool.spawn(
-            [this, index, &batch_inprog, &batch_err, e = *iter]
-            (boost::asio::yield_context ey) mutable {
-              ey.throw_if_cancelled(true);
-              // spawn() reports completion by suspending one last time, so a
-              // pending cancellation would make throw_if_cancelled() throw past
-              // the coroutine frame and terminate the process. disarm it before
-              // the coroutine exits
-              auto disarm = make_scope_guard(
-                  [&ey] { ey.throw_if_cancelled(false); });
-              int r = process_restore_entry(e, ey);
-              if (!r && e.status == rgw::sal::RGWRestoreStatus::RestoreAlreadyInProgress) {
-                batch_inprog.push_back(e);
-                ldpp_dout(this, 20) << __PRETTY_FUNCTION__ << ": re-queueing entry: '"
-                                    << e << "' on shard:" << obj_names[index] << dendl;
-              } else if (r < 0 && r != -ENOENT && !batch_err) {
-                batch_err = r;     // tolerated -ENOENT (missing bucket/obj) is ignored
-              }
-            });
+  ceph::async::spawn_throttle workpool{yield, io_limit};
+  auto cancel_and_wait = [&] {
+    yield.throw_if_cancelled(false);
+    workpool.cancel();
+    try {
+      workpool.wait();
+    } catch (...) {}
+    yield.throw_if_cancelled(true);
+  };
+
+  try {
+    do {
+      if (pending.size() >= pending_limit) {
+        workpool.wait_for(io_limit - 1);   // free one slot, not a full drain
+        ret = trim_ready();
+        if (ret < 0) {
+          cancel_and_wait();
+          return ret;
         }
-        workpool.wait();           // join every child
-      } catch (...) {
-        // a cancelled child can still resume through the -ECANCELED return
-        // path and touch batch state; join every child before this frame
-        // unwinds
-        yield.throw_if_cancelled(false);
-        workpool.cancel();
-        try {
-          workpool.wait();
-        } catch (...) {}           // stragglers' aborts; the original error propagates
-        yield.throw_if_cancelled(true);
-        throw;
+        if (hard_error)
+          break;
       }
-    }
-
-    if (batch_err < 0)
-      return batch_err;            // hard error: do NOT trim
-    if (wrapped)
-      return ret;                  // wrapped batch: leave untrimmed for next cycle
-
-    /*
-     * Add-before-trim: re-queue in-progress entries before trimming, so a failure leaves
-     * the originals in the FIFO (no loss; at worst a benign dup). Re-queued markers sort
-     * beyond next_marker, so the inclusive trim won't remove them. The FIFO add/trim carry
-     * no cls lock; cross-RGW shard exclusivity rests on the advisory lease alone.
-     */
-    if (!batch_inprog.empty()) {
-      ret = sal_restore->add_entries(this, yield, index, batch_inprog);
+      const int list_max = std::min<int>(
+          max_entries, static_cast<int>(pending_limit - pending.size()));
+      std::vector<RestoreEntry> entries;
+      ret = sal_restore->list(this, yield, index, marker, &next_marker,
+                              list_max, entries, &truncated);
       if (ret < 0) {
-        ldpp_dout(this, -1) << __PRETTY_FUNCTION__ << ": ERROR: failed to re-queue "
-                            << batch_inprog.size() << " in-progress entries on "
-                            << obj_names[index] << dendl;
-        return ret;                // originals not trimmed -> no loss; surface error
+        cancel_and_wait();
+        return ret;
       }
-      for (auto& e : batch_inprog)
-        requeued.insert(entry_key(e));
-    }
+      if (entries.empty())
+        break;
 
-    marker = next_marker;
-    ret = sal_restore->trim_entries(this, yield, index, marker);
-    if (ret < 0) {
-      ldpp_dout(this, -1) << __PRETTY_FUNCTION__ << ": ERROR: failed to trim entries on "
-                          << obj_names[index] << dendl;
-      return ret;
-    }
-    ldpp_dout(this, 20) << __PRETTY_FUNCTION__ << ": trimmed till marker: '" << marker
-                        << "' on shard:" << obj_names[index] << dendl;
+      const ceph::real_time now = ceph::real_clock::now();
+      // fast path: a fresh single-page shard holding only sleeping retries is
+      // left in place; loading and rotating it would be pure churn
+      if (pending.empty() && requeued.empty() && !truncated) {
+        bool all_sleeping = true;
+        for (const auto& e : entries) {
+          if (e.next_retry_time <= now) {
+            all_sleeping = false;
+            break;
+          }
+        }
+        if (all_sleeping)
+          break;
+      }
 
-    // deadline checked only at the batch boundary, so a started batch always
-    // makes progress (worst-case overshoot: one batch of max_entries)
-    if (ceph_clock_now() >= end)
-      break;
-  } while (truncated);
+      for (auto& e : entries) {
+        const std::string k = entry_key(e);
+        if (hard_error)
+          break;
+        if (requeued.count(k)) {
+          wrapped = true;
+          break;
+        }
+        if (busy.contains(k)) {
+          duplicate = true;
+          break;
+        }
+        std::string prev_marker = std::exchange(last_admitted, e.fifo_marker);
+        const std::string fifo_marker = e.fifo_marker;
+        pending.emplace(e.fifo_marker,
+                        op_state{std::move(prev_marker), std::nullopt});
+        busy.insert(k);
+        if (e.next_retry_time > now) {
+          // sleeping: rotate to the tail without loading the object
+          pending.at(fifo_marker).retry = e;
+          continue;
+        }
+        workpool.spawn(
+          [this, index, &pending, &busy, &hard_error,
+           k, fifo_marker, e = std::move(e)]
+          (boost::asio::yield_context ey) mutable {
+            ey.throw_if_cancelled(true);
+            auto disarm = make_scope_guard(
+                [&ey] { ey.throw_if_cancelled(false); });
+            int r = process_restore_entry(e, ey);
+            if (!r && e.status == rgw::sal::RGWRestoreStatus::RestoreAlreadyInProgress) {
+              ldpp_dout(this, 20) << __PRETTY_FUNCTION__ << ": re-queueing entry: '"
+                                  << e << "' on shard:" << obj_names[index] << dendl;
+              pending.at(fifo_marker).retry = std::move(e);
+            } else if (r < 0 && r != -ENOENT) {
+              if (!hard_error)
+                hard_error = r;
+            } else {
+              pending.erase(fifo_marker);
+              busy.erase(k);
+            }
+          });
+      }
 
-  return ret;
+      ret = trim_ready();
+      if (ret < 0) {
+        cancel_and_wait();
+        return ret;
+      }
+      marker = next_marker;
+      if (hard_error || wrapped || duplicate || ceph_clock_now() >= end)
+        break;
+    } while (truncated);
+
+    workpool.wait();
+  } catch (...) {
+    cancel_and_wait();
+    throw;
+  }
+
+  ret = trim_ready();
+  return ret < 0 ? ret : hard_error;
 }
 
 int Restore::process_restore_entry(RestoreEntry& entry, optional_yield y)
@@ -581,6 +635,41 @@ int Restore::process_restore_entry(RestoreEntry& entry, optional_yield y)
     return r;
   };
 
+  auto handle_failure = [&] (int r, rgw::sal::Object* o) -> int {
+    const auto now = ceph::real_clock::now();
+    const std::chrono::seconds retry_window{cct->_conf->rgw_restore_retry_window};
+    const int period = cct->_conf->rgw_restore_processor_period;
+    const std::chrono::seconds retry_period{
+        period > 0 ? period : secs_in_a_day};
+    if (is_transient_restore_error(r) &&
+        entry.schedule_retry(now, retry_window, retry_period)) {
+      if (o) {
+        int sret = set_cloud_restore_status(this, o, y,
+            rgw::sal::RGWRestoreStatus::RestoreAlreadyInProgress);
+        if (sret < 0) {
+          return sret;   // keep the entry queued if we couldn't re-mark it
+        }
+      }
+      ldpp_dout(this, 5) << __PRETTY_FUNCTION__ << ": transient failure for "
+          << entry.obj_key << ", requeueing retry " << entry.retry_count
+          << ", ret=" << r << dendl;
+      return 0;
+    }
+    ldpp_dout(this, -1) << __PRETTY_FUNCTION__ << ": restore of " << entry.obj_key
+        << " failed, ret=" << r << dendl;
+    if (o) {
+      int sret = set_cloud_restore_status(this, o, y,
+          rgw::sal::RGWRestoreStatus::RestoreFailed);
+      if (sret < 0) {
+        return sret;   // keep the entry queued if we couldn't mark it failed
+      }
+    } else {
+      return r;        // no handle to mark failed; keep the entry queued
+    }
+    finish(r);
+    return 0;
+  };
+
   // Ensure its the same source zone processing temp entries as we do not
   // replicate temp restored copies
   if (days) { // temp copy
@@ -594,21 +683,26 @@ int Restore::process_restore_entry(RestoreEntry& entry, optional_yield y)
   // fill in the details from entry
   // bucket, obj, days, state=in_progress
   ret = driver->load_bucket(this, entry.bucket, &bucket, y);
+  if (ret == -ENOENT) {
+    return ret;
+  }
   if (ret < 0) {
     ldpp_dout(this, -1) << __PRETTY_FUNCTION__ << ": ERROR: get_bucket for "
 	   		<< bucket->get_name()	  
 		       << " failed" << dendl;
-    return ret;
+    return handle_failure(ret, nullptr);
   }
   obj = bucket->get_object(entry.obj_key);
 
   ret = obj->load_obj_state(this, y, true);
-
+  if (ret == -ENOENT) {
+    return ret;
+  }
   if (ret < 0) {
     ldpp_dout(this, -1) << __PRETTY_FUNCTION__ << ": ERROR: get_object for "
 	   	       << entry.obj_key	  
 		       << " failed" << dendl;
-    return ret;
+    return handle_failure(ret, obj.get());
   }
 
   ldpp_dout(this, 10) << "Restore:: Processing restore entry of object(" << obj->get_key() << ") entry: " << entry << dendl;
@@ -631,11 +725,6 @@ int Restore::process_restore_entry(RestoreEntry& entry, optional_yield y)
     return 0;
   }
 
-  if (entry.next_retry_time > ceph::real_clock::now()) {
-    entry.status = rgw::sal::RGWRestoreStatus::RestoreAlreadyInProgress;
-    return 0;
-  }
-
   attr_iter = attrs.find(RGW_ATTR_STORAGE_CLASS);
   if (attr_iter != attrs.end()) {
     target_placement.storage_class = attr_iter->second.to_str();
@@ -647,7 +736,7 @@ int Restore::process_restore_entry(RestoreEntry& entry, optional_yield y)
 
   if (ret < 0) {
     ldpp_dout(this, -1) << __PRETTY_FUNCTION__ << ": ERROR: failed to fetch tier placement handle, target_placement = " << target_placement << ", for zonegroup = " << driver->get_zone()->get_zonegroup().get_name() << ", ret = " << ret << dendl;
-    return finish(ret);
+    return handle_failure(ret, obj.get());
   } else {
     ldpp_dout(this, 20) << __PRETTY_FUNCTION__ << ": getting tier placement handle"
 	   		 << " cloud tier for " <<	  
@@ -670,37 +759,8 @@ int Restore::process_restore_entry(RestoreEntry& entry, optional_yield y)
     // HEAD left as-is, entry stays queued for retry
     return ret;
   }
-  if (is_transient_restore_error(ret)) {
-    const auto now = ceph::real_clock::now();
-    const std::chrono::seconds retry_window{
-        cct->_conf->rgw_restore_retry_window};
-    const int period = cct->_conf->rgw_restore_processor_period;
-    const std::chrono::seconds retry_period{
-        period > 0 ? period : secs_in_a_day};
-    if (entry.schedule_retry(now, retry_window, retry_period)) {
-      const int status_ret = set_cloud_restore_status(
-          this, obj.get(), y,
-          rgw::sal::RGWRestoreStatus::RestoreAlreadyInProgress);
-      if (status_ret < 0) {
-        return status_ret;
-      }
-      ldpp_dout(this, 5) << __PRETTY_FUNCTION__ << ": transient failure for object("
-                         << obj->get_key() << "), requeueing retry "
-                         << entry.retry_count << " at "
-                         << utime_t{entry.next_retry_time}
-                         << ", ret=" << ret << dendl;
-      return 0;
-    }
-  }
   if (ret < 0) {
-    ldpp_dout(this, -1) << __PRETTY_FUNCTION__ << ": Restore of object(" << obj->get_key() << ") failed" << ret << dendl;	  
-    auto reset_ret = set_cloud_restore_status(this, obj.get(), y, rgw::sal::RGWRestoreStatus::RestoreFailed);
-    if (reset_ret < 0) {
-      ldpp_dout(this, -1) << __PRETTY_FUNCTION__ << ": Setting restore status ad RestoreFailed failed for object(" << obj->get_key() << ") " << reset_ret << dendl;	    
-      return reset_ret;
-    }
-    finish(ret);
-    return 0;
+    return handle_failure(ret, obj.get());
   }
 
   if (in_progress) {

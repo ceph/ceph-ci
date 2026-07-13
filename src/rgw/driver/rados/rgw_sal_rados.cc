@@ -5098,33 +5098,6 @@ int RadosRestore::push(const DoutPrefixProvider *dpp, optional_yield y,
   return 0;
 }
 
-struct rgw_restore_fifo_entry {
-  std::string id;
-  ceph::real_time mtime;
-  rgw::restore::RestoreEntry entry;
-  rgw_restore_fifo_entry() {}
-
-  void encode(ceph::buffer::list& bl) const {
-    ENCODE_START(1, 1, bl);
-    encode(id, bl);
-    encode(mtime, bl);
-    encode(entry, bl);
-    ENCODE_FINISH(bl);
-  }
-
-  void decode(ceph::buffer::list::const_iterator& bl) {
-     DECODE_START(1, bl);
-     decode(id, bl);
-     decode(mtime, bl);
-     decode(entry, bl);
-     DECODE_FINISH(bl);
-  }
-
-  void dump(ceph::Formatter* f) const;
-  void decode_json(JSONObj* obj);
-};
-WRITE_CLASS_ENCODER(rgw_restore_fifo_entry)
-
 int RadosRestore::list(const DoutPrefixProvider *dpp, optional_yield y,
 	       	   int index, const std::string& marker, std::string* out_marker,
 		   uint32_t max_entries, std::vector<rgw::restore::RestoreEntry>& entries,
@@ -5147,13 +5120,10 @@ int RadosRestore::list(const DoutPrefixProvider *dpp, optional_yield y,
     entries.clear();
 
     for (const auto& entry : lentries) {
-      rgw_restore_fifo_entry r_entry;
-      r_entry.id = entry.marker;
-      r_entry.mtime = entry.mtime;
-
+      rgw::restore::RestoreEntry e;
       auto liter = entry.data.cbegin();
-      decode(r_entry.entry, liter);
-      rgw::restore::RestoreEntry& e = r_entry.entry;
+      decode(e, liter);
+      e.fifo_marker = entry.marker;
       entries.push_back(std::move(e));
       omark = entry.marker;
     }
