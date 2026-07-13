@@ -253,10 +253,11 @@ struct NqnState {
       std::pair<gw_exported_states_per_group_t, epoch_t> state_pair;
       switch (sm_state.at(state_itr.first)) {
         case gw_states_per_group_t::GW_ACTIVE_STATE:
-        case gw_states_per_group_t::GW_WAIT_BLOCKLIST_CMPL:
-        case gw_states_per_group_t::GW_WAIT_FAILOVER_CMPL:
           state_pair.first =  gw_exported_states_per_group_t::GW_EXPORTED_OPTIMIZED_STATE;
         break;
+
+        case gw_states_per_group_t::GW_WAIT_BLOCKLIST_CMPL:
+        case gw_states_per_group_t::GW_WAIT_FAILOVER_CMPL:
         case  gw_states_per_group_t::GW_ACCESSIBLE_STATE:
           state_pair.first =  gw_exported_states_per_group_t::GW_EXPORTED_ACCESSIBLE_STATE;
         break;
