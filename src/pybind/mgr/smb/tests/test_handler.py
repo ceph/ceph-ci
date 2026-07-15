@@ -856,6 +856,79 @@ def test_modify_cluster_only_touches_changed_cluster(thandler):
     assert 'join.0.json' in ekeys
 
 
+def test_modify_joinauth_only_touches_referencing_clusters(thandler):
+    # clustera and clusterb both reference the shared (unlinked) join auth
+    # "shared1". clusterc uses its own, separate join auth. A change to
+    # shared1 must regenerate clustera and clusterb but must not touch
+    # clusterc.
+    to_apply = [
+        smb.resources.JoinAuth(
+            auth_id='shared1',
+            auth=smb.resources.JoinAuthValues(
+                username='testadmin',
+                password='Passw0rd',
+            ),
+        ),
+        smb.resources.JoinAuth(
+            auth_id='join2',
+            auth=smb.resources.JoinAuthValues(
+                username='otheradmin',
+                password='Passw0rd2',
+            ),
+        ),
+    ]
+    for cluster_id, ref in (
+        ('clustera', 'shared1'),
+        ('clusterb', 'shared1'),
+        ('clusterc', 'join2'),
+    ):
+        to_apply.append(
+            _cluster(
+                cluster_id=cluster_id,
+                auth_mode=smb.enums.AuthMode.ACTIVE_DIRECTORY,
+                domain_settings=smb.resources.DomainSettings(
+                    realm='MYDOMAIN.EXAMPLE.ORG',
+                    join_sources=[
+                        smb.resources.JoinSource(
+                            source_type=smb.enums.JoinSourceType.RESOURCE,
+                            ref=ref,
+                        ),
+                    ],
+                ),
+            )
+        )
+
+    results = thandler.apply(to_apply)
+    assert results.success, results.to_simplified()
+
+    for cluster_id in ('clustera', 'clusterb', 'clusterc'):
+        assert 'cluster-info' in list(
+            thandler.public_store.contents(cluster_id)
+        )
+        thandler.public_store.remove((cluster_id, 'cluster-info'))
+
+    # only modify the join auth shared by clustera and clusterb
+    results = thandler.apply(
+        [
+            smb.resources.JoinAuth(
+                auth_id='shared1',
+                auth=smb.resources.JoinAuthValues(
+                    username='testadmin',
+                    password='NewPassw0rd!',
+                ),
+            ),
+        ]
+    )
+    assert results.success, results.to_simplified()
+
+    assert 'cluster-info' in list(thandler.public_store.contents('clustera'))
+    assert 'cluster-info' in list(thandler.public_store.contents('clusterb'))
+    # clusterc doesn't reference shared1, so it must be untouched
+    assert 'cluster-info' not in list(
+        thandler.public_store.contents('clusterc')
+    )
+
+
 def test_apply_remove_cluster(thandler):
     test_apply_full_cluster_create(thandler)
     assert ('clusters', 'mycluster1') in thandler.internal_store.data
