@@ -1904,7 +1904,7 @@ TEST_P(tm_random_block_device_test_t, scatter_allocation)
     epm->prefill_fragmented_devices();
     auto t = create_transaction();
     for (int i = 0; i < 1958; i++) {
-      logger.info("scatter_allocation: {}", i);
+      logger().info("scatter_allocation: {}", i);
       auto extents = alloc_extents(t, (ADDR + i * 16384).checked_to_laddr(), 16384, 'a');
     }
     alloc_extents_deemed_fail(t, (ADDR + 1958 * 16384).checked_to_laddr(), 16384, 'a');
