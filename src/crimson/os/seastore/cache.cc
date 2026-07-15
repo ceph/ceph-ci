@@ -1822,8 +1822,6 @@ record_t Cache::prepare_record(
       i->new_committer(t);
       assert(i->committer);
       i->get_prior_instance()->committer = i->committer;
-      auto &committer = *i->committer;
-      committer.block_trans(t);
     } else {
       // exist mutation pending extents must be in t.mutated_block_list
       add_extent(i);
@@ -2240,7 +2238,6 @@ void Cache::complete_commit(
       committer.commit_and_share_paddr();
       touch_extent_fully(prior, &t_src, t.get_cache_hint());
       committer.sync_version();
-      committer.unblock_trans(t);
       i->committer.reset();
       prior.committer.reset();
     }
