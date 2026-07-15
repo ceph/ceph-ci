@@ -1346,6 +1346,37 @@ class TestValidate(unittest.TestCase):
         for arg_type in (self.ARGS, self.KWARGS, self.KWARGS_EQ, self.MIXED):
             self._arg_kwarg_test(self.prefix, self.args, self.sig, arg_type)
 
+    def test_force_rejected_when_not_in_schema(self):
+        """--force passed to a command with no 'force' parameter must be
+        rejected as an unexpected argument, not silently absorbed as a
+        positional string value."""
+        sig = parse_funcsig([
+            {'name': 'nqn', 'type': 'CephString'},
+            {'name': 'nsid', 'type': 'CephString'},
+        ])
+        self.assertRaises(ArgumentValid, validate, ['nqn1', '--force'], sig)
+        self.assertRaises(ArgumentValid, validate, ['--force', 'nqn1'], sig)
+
+    def test_force_accepted_when_in_schema_as_bool(self):
+        """--force passed to a command that declares force: CephBool must
+        be accepted and stored as True."""
+        sig = parse_funcsig([
+            {'name': 'nqn', 'type': 'CephString'},
+            {'name': 'force', 'type': 'CephBool', 'req': False},
+        ])
+        result = validate(['nqn1', '--force'], sig)
+        self.assertEqual(result.get('force'), True)
+
+    def test_force_accepted_when_in_schema_as_string(self):
+        """--force passed to a command that declares force: CephString
+        (pre-Nautilus style) must be accepted as a positional string value."""
+        sig = parse_funcsig([
+            {'name': 'nqn', 'type': 'CephString'},
+            {'name': 'force', 'type': 'CephString', 'req': False},
+        ])
+        result = validate(['nqn1', '--force'], sig)
+        self.assertEqual(result.get('force'), '--force')
+
 
 if __name__ == '__main__':
     unittest.main()
