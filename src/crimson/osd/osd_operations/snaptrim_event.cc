@@ -436,8 +436,8 @@ SnapTrimObjSubEvent::start()
   auto throttle = co_await interruptor::make_interruptible(
     pg->get_shard_services().get_throttle(
       scheduler::params_t{
-        std::max<uint64_t>(
-          static_cast<uint64_t>(pg->get_average_object_size()) *
+        std::max<int>(
+          static_cast<unsigned>(pg->get_average_object_size()) *
           local_conf()->osd_pg_max_concurrent_snap_trims,
           uint64_t(1)),
         static_cast<unsigned>(local_conf()->osd_snap_trim_priority),
