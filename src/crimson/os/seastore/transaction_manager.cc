@@ -1107,7 +1107,6 @@ TransactionManager::rewrite_extent_ret TransactionManager::rewrite_extent(
            rewrite_gen_printer_t{target_generation},
            sea_time_point_printer_t{modify_time},
            *extent);
-    ceph_assert(!extent->is_pending_io());
   }
 
   assert(extent->is_valid() && !extent->is_initial_pending());
