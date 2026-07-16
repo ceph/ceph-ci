@@ -1446,10 +1446,15 @@ TransactionManager::promote_extents_from_disk(
     }
     auto cursor = co_await lba_manager->get_cursor(t, laddr
       ).handle_error_interruptible(
-        crimson::ct_error::enoent::assert_failure(),
+        crimson::ct_error::enoent::handle([](auto e) {
+          // Another no_conflict transaction should have removed
+          // the mapping between the backref retrieval and the
+          // lba search, ignore it.
+          return seastar::make_ready_future<LBACursorRef>();
+        }),
         crimson::ct_error::pass_further_all{}
       );
-    if (cursor->is_end() ||
+    if (!cursor || cursor->is_end() ||
         !cursor->get_paddr().is_absolute() ||
         !cache->is_on_cold_tier(cursor->get_paddr())) {
       // the mapping has been modified and the extent is
