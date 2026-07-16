@@ -14,7 +14,7 @@ overrides:
         debug ms: 20
         seastore cachepin size pershard: 64M
         seastore max concurrent transactions: 8
-        crimson test workload: true
+        seastore logical bucket cache test stress: true
       client:
         debug_objecter: 20
     crimson_compat: true
