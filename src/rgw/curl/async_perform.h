@@ -84,7 +84,7 @@ template <boost::asio::execution::executor Executor,
 auto async_perform(const Executor& ex, void* easy, CompletionToken&& token)
 {
   return boost::asio::async_compose<CompletionToken, void(error_code)>(
-      detail::async_perform_impl{easy, detail::get_shared_client(ex)},
+      detail::async_perform_impl{easy, get_shared_client(ex)},
       token, ex);
 }
 

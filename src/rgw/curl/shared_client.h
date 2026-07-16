@@ -9,7 +9,8 @@
 #include <boost/asio/query.hpp>
 #include <boost/asio/strand.hpp>
 
-namespace rgw::curl::detail {
+namespace rgw::curl {
+namespace detail {
 
 // a service that owns the shared Client instance over the lifetime of its
 // execution context
@@ -38,12 +39,14 @@ class shared_client_service : public boost::asio::execution_context::service {
   }
 };
 
+} // namespace detail
+
 // get or create a shared Client instance from the underlying execution context
 Client& get_shared_client(const boost::asio::execution::executor auto& ex)
 {
   auto& ctx = boost::asio::query(ex, boost::asio::execution::context);
-  auto& svc = boost::asio::use_service<shared_client_service>(ctx);
+  auto& svc = boost::asio::use_service<detail::shared_client_service>(ctx);
   return svc.get_client(ex);
 }
 
-} // namespace rgw::curl::detail
+} // namespace rgw::curl
