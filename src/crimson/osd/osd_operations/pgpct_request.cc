@@ -74,7 +74,7 @@ PGPCTRequest::interruptible_future<> PGPCTRequest::with_pg_interruptible(
         1,
         static_cast<unsigned>(req->get_priority()),
         0,
-        SchedulerClass::immediate}));
+        SchedulerClass::repop}));
   // This *must* be a replicated backend, ec doesn't have pct messages
   static_cast<ReplicatedBackend&>(*(pg.backend)).do_pct(*req);
   // throttle destructs here
