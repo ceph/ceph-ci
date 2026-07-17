@@ -113,6 +113,13 @@ class spawn_throttle {
     impl->wait_for(0);
   }
 
+  /// Wait until the number of outstanding coroutines drops to `count`,
+  /// rethrowing the first child exception like wait().
+  void wait_for(size_t count)
+  {
+    impl->wait_for(count);
+  }
+
   /// Cancel all outstanding coroutines.
   void cancel()
   {
