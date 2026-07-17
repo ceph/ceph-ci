@@ -1776,11 +1776,12 @@ static int do_cloud_tier_transfer_object(RGWLCCloudTierCtx& tier_ctx, std::set<s
   }
 
   if (size < multipart_sync_threshold) {
-    ret = cloud_tier_plain_transfer(tier_ctx);
+    ret = retry_on_transient_error(tier_ctx.y, tier_ctx.dpp, tier_ctx.cct, __func__,
+        [&]() { return cloud_tier_plain_transfer(tier_ctx); });
   } else {
     tier_ctx.is_multipart_upload = true;
     ret = cloud_tier_multipart_transfer(tier_ctx);
-  } 
+  }
 
   if (ret < 0) {
     ldpp_dout(tier_ctx.dpp, 0) << "ERROR: failed to transition object ret=" << ret << dendl;
@@ -1790,6 +1791,5 @@ static int do_cloud_tier_transfer_object(RGWLCCloudTierCtx& tier_ctx, std::set<s
 }
 
 int rgw_cloud_tier_transfer_object(RGWLCCloudTierCtx& tier_ctx, std::set<std::string>& cloud_targets) {
-  return retry_on_transient_error(tier_ctx.y, tier_ctx.dpp, tier_ctx.cct, __func__,
-      [&]() { return do_cloud_tier_transfer_object(tier_ctx, cloud_targets); });
+  return do_cloud_tier_transfer_object(tier_ctx, cloud_targets);
 }

@@ -563,7 +563,7 @@ options:
   desc: Cloud-tier retry attempt limit
   long_desc: Maximum number of retry attempts when a remote cloud-tier endpoint
     signals throttling.
-  default: 8
+  default: 3
   min: 1
   services:
   - rgw
