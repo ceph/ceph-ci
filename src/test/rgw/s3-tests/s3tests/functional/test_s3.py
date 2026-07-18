@@ -9848,7 +9848,7 @@ def test_lifecycle_cloud_multiple_transition():
     client = get_client()
     rules=[{'ID': 'rule1', 'Transitions': [{'Days': 1, 'StorageClass': sc1}], 'Prefix': 'expire1/', 'Status': 'Enabled'},
            {'ID': 'rule2', 'Transitions': [{'Days': 5, 'StorageClass': cloud_sc}], 'Prefix': 'expire1/', 'Status': 'Enabled'},
-           {'ID': 'rule3', 'Expiration': {'Days': 9}, 'Prefix': 'expire1/', 'Status': 'Enabled'}]
+           {'ID': 'rule3', 'Expiration': {'Days': 15}, 'Prefix': 'expire1/', 'Status': 'Enabled'}]
     lifecycle = {'Rules': rules}
     client.put_bucket_lifecycle_configuration(Bucket=bucket_name, LifecycleConfiguration=lifecycle)
 
