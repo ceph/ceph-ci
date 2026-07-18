@@ -1611,6 +1611,7 @@ ObjectDataHandler::read_ret ObjectDataHandler::read(
       assert(pin.unaligned_start_offset == 0);
       ret.append(std::move(aligned_bl));
     }
+    DEBUGT("got extent: {}", ctx.t, *maybe_indirect_extent.extent);
     auto paddr = maybe_indirect_extent.extent->get_paddr();
     all_cold &= ctx.tm.is_cold_device(paddr.get_device_id());
 
