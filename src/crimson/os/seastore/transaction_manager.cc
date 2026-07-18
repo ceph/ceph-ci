@@ -971,6 +971,7 @@ TransactionManager::rewrite_logical_extent(
         co_await trans_intr::make_interruptible(epm->wait_background());
       }
     }
+    assert(nextent->get_write_policy() != write_policy_t::WRITE_THROUGH);
     nextent->rewrite(t, *extent, 0);
 
     DEBUGT("rewriting meta -- {} to {}", t, *extent, *nextent);
@@ -1043,6 +1044,7 @@ TransactionManager::rewrite_logical_extent(
     t.force_rewrite_conflict = (extents.size() > 1);
     for (auto &_nextent : extents) {
       auto nextent = _nextent->template cast<LogicalChildNode>();
+      assert(nextent->get_write_policy() != write_policy_t::WRITE_THROUGH);
       bool first_extent = (off == 0);
       ceph_assert(left >= nextent->get_length());
       nextent->rewrite(t, *extent, off);
