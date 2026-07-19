@@ -222,6 +222,24 @@ void Cache::register_metrics(store_index_t store_index)
         sm::description("total number of refreshed cursors with viewable but modified parents"),
         {sm::label_instance("shard_store_index", std::to_string(store_index))}
       ),
+      sm::make_counter(
+        "lazy_read_stale_retries",
+        stats.lazy_read_stale_retries,
+        sm::description("total number of lazy-read retries (eagain) due to stale extents"),
+        {sm::label_instance("shard_store_index", std::to_string(store_index))}
+      ),
+      sm::make_counter(
+        "lazy_read_skipped_registrations",
+        stats.lazy_read_skipped_registrations,
+        sm::description("total number of read-set registrations avoided by lazy reads"),
+        {sm::label_instance("shard_store_index", std::to_string(store_index))}
+      ),
+      sm::make_counter(
+        "lazy_read_cursor_refreshes",
+        stats.lazy_read_cursor_refreshes,
+        sm::description("total number of cursor refreshes performed by lazy reads"),
+        {sm::label_instance("shard_store_index", std::to_string(store_index))}
+      ),
     }
   );
 
@@ -1014,6 +1032,23 @@ void Cache::invalidate_extent(
     trans->views.clear();
   }
   extent.set_invalid(t);
+}
+
+void Cache::throw_lazy_read_stale(Transaction &t, CachedExtent &stale)
+{
+  LOG_PREFIX(Cache::throw_lazy_read_stale);
+  ceph_assert(t.is_lazy_read());
+  assert(!stale.is_valid());
+  SUBDEBUGT(seastore_t, "lazy read hit stale extent -- {}", t, stale);
+  ++stats.lazy_read_stale_retries;
+  if (!t.is_conflicted()) {
+    // feeds invalidated_efforts_by_src[READ] so existing dashboards
+    // stay comparable
+    mark_transaction_conflicted(t, stale);
+  }
+  // The exact exception may_interrupt() injects: both the conflicted flag
+  // and the throw independently guarantee unwinding to repeat_eagain.
+  throw TransactionConflictCondition::transaction_conflict();
 }
 
 void Cache::mark_transaction_conflicted(
