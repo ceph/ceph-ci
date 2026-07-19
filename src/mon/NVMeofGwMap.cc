@@ -55,11 +55,31 @@ void NVMeofGwMap::to_gmap(
       auto gw_state = NvmeGwClientState(
 	gw_created.ana_grp_id, epoch, availability, gw_created.beacon_sequence,
 	gw_created.beacon_sequence_ooo, published_features);
+      SmState sm_state = gw_created.sm_state;
+      if (active_active_enabled) {
+        bool need_to_substitute = false;
+        for (auto& sm_state_it: sm_state) {
+          auto& state = sm_state_it.second;
+          if (state == gw_states_per_group_t::GW_WAIT_FAILOVER_START)
+          {
+            need_to_substitute = true; // need to send fully inaccessible "Black" map to all GWs
+                                       //during failover in ACTIVE-ACTIVE configuration
+            break;
+          }
+        }
+        if (need_to_substitute) {
+          for (auto& sm_state_it: sm_state) {
+            sm_state_it.second = gw_states_per_group_t::GW_STANDBY_STATE;
+            dout(10) << "substitute state by Inaccessible upon send for GW " << gw_id
+                     << " anagrp " << sm_state_it.first
+                     << " state " << sm_state_it.second << dendl;
+          }
+        }
+      }
       for (const auto& sub: gw_created.subsystems) {
-	gw_state.subsystems.insert({
-	    sub.nqn,
-	    NqnState(sub.nqn, gw_created.sm_state, gw_created)
-	  });
+        gw_state.subsystems.insert({
+        sub.nqn, NqnState(sub.nqn, sm_state, gw_created)
+             });
       }
       Gmap[group_key][gw_id] = gw_state;
       dout (20) << gw_id << " Gw-Client: " << gw_state << dendl;
@@ -657,6 +677,65 @@ void NVMeofGwMap::skip_failovers_for_group(const NvmeGroupKey& group_key,
   }
 }
 
+void NVMeofGwMap::add_to_failover_list(
+                          const NvmeGwId& gw_id,
+                          const NvmeGroupKey& group_key,
+                          NvmeAnaGrpId grp_id,
+                          std::chrono::system_clock::time_point end_time)
+{
+    for (auto& entry : failover_wait_list) {
+        if (entry.gw_id == gw_id && entry.group_key == group_key &&
+            entry.grpid == grp_id) {
+            entry.end_time = end_time; // update the time for the entry
+            return;
+        }
+    }
+    // If not found - just add new entry
+    dout(10) << " added entry to failover-list: gw_id " << gw_id << " grp key "
+             << group_key << " ana grpid " << grp_id << dendl;
+    failover_wait_list.push_back({gw_id, group_key,grp_id, end_time});
+}
+
+bool NVMeofGwMap::remove_from_failover_list(const NvmeGwId& gw_id,
+                                            const NvmeGroupKey& group_key,
+                                            NvmeAnaGrpId grp_id)
+{
+    size_t initial_size = failover_wait_list.size();
+    // lambda function
+    failover_wait_list.remove_if([&gw_id, &group_key, &grp_id](const WaitingList& entry) {
+      return entry.gw_id == gw_id && entry.group_key == group_key && entry.grpid == grp_id;
+    });
+
+    // return true if entry was found and removed
+    if (failover_wait_list.size() < initial_size) {
+      dout(10) << " removed entry from failover-list: gw_id " << gw_id
+               << " grp key " << group_key << " ana grpid " << grp_id << dendl;
+      return true;
+    }
+    dout(10) << "not removed entry from failover-list: gw_id " << gw_id
+             << " grp key " << group_key << " ana grpid " << grp_id << dendl;
+    return false;
+}
+
+void NVMeofGwMap::process_failover_list(bool & propose_pending) {
+  auto now = std::chrono::system_clock::now();
+
+  for (const auto& entry : failover_wait_list) {
+    if ( now >= entry.end_time ) {
+      auto& gws_states = created_gws[entry.group_key];
+      auto  gw_state = gws_states.find(entry.gw_id);
+      if (gw_state != gws_states.end()) {
+        dout(10) << "process entry from failover-list: gw_id " << entry.gw_id
+                 << " grp key " << entry.group_key << " ana grpid " << entry.grpid << dendl;
+          find_failover_candidate(entry.gw_id, entry.group_key,
+              entry.grpid, propose_pending);
+      } else {
+        remove_from_failover_list(entry.gw_id, entry.group_key, entry.grpid);
+      }
+    }
+  }
+}
+
 int NVMeofGwMap::process_gw_map_gw_no_subsys_no_listeners(
   const NvmeGwId &gw_id, const NvmeGroupKey& group_key, bool &propose_pending)
 {
@@ -954,6 +1033,7 @@ void NVMeofGwMap::set_failover_gw_for_ana_group(
 {
   //NvmeGwMonState& gw_state = created_gws[group_key][gw_id];
   NvmeGwMonState& failed_gw_state = created_gws[group_key][failed_gw_id];
+  remove_from_failover_list(gw_id, group_key, ANA_groupid);
   epoch_t epoch = 0;
   dout(10) << "Found failover GW " << gw_id
 	   << " for ANA group " << (int)ANA_groupid << dendl;
@@ -1221,6 +1301,8 @@ void  NVMeofGwMap::find_failover_candidate(
   // of them need to found the candidate GW
   if ((gw_state->second.sm_state[grpid] ==
        gw_states_per_group_t::GW_ACTIVE_STATE) ||
+      (gw_state->second.sm_state[grpid] ==
+       gw_states_per_group_t::GW_WAIT_FAILOVER_START) ||
       gw_state->second.ana_grp_id == grpid) {
 
     // for all the gateways of the subsystem
@@ -1470,7 +1552,18 @@ void NVMeofGwMap::fsm_handle_gw_down(
 
   case gw_states_per_group_t::GW_ACTIVE_STATE:
   {
-    find_failover_candidate(gw_id, group_key, grpid, map_modified);
+    auto& gw_id_st = created_gws[group_key][gw_id];
+    if (active_active_enabled) {
+      gw_id_st.wait_failover_start_state(grpid);
+      map_modified = true;
+      auto end_time = std::chrono::system_clock::now() + std::chrono::seconds(1);
+      add_to_failover_list(gw_id, group_key, grpid, end_time);
+    }
+    else {
+      gw_id_st.standby_state(grpid);
+      find_failover_candidate(gw_id, group_key, grpid, map_modified);
+    }
+    // TODO schedule fast handler to choose failover candidate asynchronously
   }
   break;
 

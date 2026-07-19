@@ -87,6 +87,7 @@ public:
    * disaster_locations map should be updated when last location is removed
    * */
   std::map<NvmeGroupKey, LocationStates> disaster_locations;
+  std::list<WaitingList> failover_wait_list;
 
   void to_gmap(std::map<NvmeGroupKey, NvmeGwMonClientStates>& Gmap) const;
   void track_deleting_gws(const NvmeGroupKey& group_key,
@@ -211,7 +212,15 @@ private:
    const NvmeGroupKey& group_key, NvmeAnaGrpId grpid,
    NvmeLocation& location, bool &propose);
 
+  // Functions that handle failover waiting list
+  void add_to_failover_list( const NvmeGwId& gw_id,
+              const NvmeGroupKey& group_key, NvmeAnaGrpId grpid,
+              std::chrono::system_clock::time_point end_time);
+  bool remove_from_failover_list(const NvmeGwId& gw_id,
+                                 const NvmeGroupKey& group_key,
+                                 NvmeAnaGrpId grpid);
 public:
+  void process_failover_list(bool &propose);
   int blocklist_gw(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
     NvmeAnaGrpId ANA_groupid, epoch_t &epoch, bool failover);
