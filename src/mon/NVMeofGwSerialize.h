@@ -60,6 +60,9 @@ inline std::ostream& operator<<(
   case gw_states_per_group_t::GW_WAIT_FAILBACK_PREPARED:
     os << "WAIT_FAILBACK_PREPARED ";
     break;
+  case gw_states_per_group_t::GW_WAIT_FAILOVER_START:
+    os <<  "GW_WAIT_FAILOVER_START";
+    break;
   case gw_states_per_group_t::GW_WAIT_BLOCKLIST_CMPL:
     os <<   "WAIT_BLOCKLIST_CMPL ";
     break;

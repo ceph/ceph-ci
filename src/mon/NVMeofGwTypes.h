@@ -40,6 +40,7 @@ enum class gw_states_per_group_t {
   GW_ACCESSIBLE_STATE, // exported as ACCESSIBLE_STATE
   GW_OWNER_WAIT_FAILBACK_PREPARED,
   GW_WAIT_FAILBACK_PREPARED,
+  GW_WAIT_FAILOVER_START,
   GW_WAIT_BLOCKLIST_CMPL,
   // temp state set for all GWs that were not chosen Failover candidates of the ANA grp
   GW_WAIT_FAILOVER_CMPL
@@ -219,6 +220,10 @@ struct NvmeGwMonState {
     sm_state[grpid]       = gw_states_per_group_t::GW_ACTIVE_STATE;
     blocklist_data[grpid].osd_epoch = 0;
   }
+  void wait_failover_start_state(NvmeAnaGrpId grpid) {
+    sm_state[grpid]       = gw_states_per_group_t::GW_WAIT_FAILOVER_START;
+    blocklist_data[grpid].osd_epoch = 0;
+  }
   void set_last_gw_down_ts(){
     last_gw_down_ts = std::chrono::system_clock::now();
   }
@@ -252,11 +257,11 @@ struct NqnState {
       }
       std::pair<gw_exported_states_per_group_t, epoch_t> state_pair;
       switch (sm_state.at(state_itr.first)) {
+        case gw_states_per_group_t::GW_WAIT_BLOCKLIST_CMPL:
         case gw_states_per_group_t::GW_ACTIVE_STATE:
           state_pair.first =  gw_exported_states_per_group_t::GW_EXPORTED_OPTIMIZED_STATE;
         break;
 
-        case gw_states_per_group_t::GW_WAIT_BLOCKLIST_CMPL:
         case gw_states_per_group_t::GW_WAIT_FAILOVER_CMPL:
         case  gw_states_per_group_t::GW_ACCESSIBLE_STATE:
           state_pair.first =  gw_exported_states_per_group_t::GW_EXPORTED_ACCESSIBLE_STATE;
@@ -318,6 +323,13 @@ struct LocationState {
   LocationState() {
     failbacks_in_process = 0;
   }
+};
+
+struct WaitingList {
+  NvmeGwId gw_id;
+  NvmeGroupKey group_key;
+  NvmeAnaGrpId grpid;
+  std::chrono::system_clock::time_point end_time;
 };
 
 using NvmeGwMonClientStates = std::map<NvmeGwId, NvmeGwClientState>;

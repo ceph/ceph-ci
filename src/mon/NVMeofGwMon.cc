@@ -203,6 +203,8 @@ version_t NVMeofGwMon::get_trim_to() const
  */
 void NVMeofGwMon::restore_pending_map_info(NVMeofGwMap & tmp_map) {
   std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+  pending_map.failover_wait_list = tmp_map.failover_wait_list;
+
   for (auto& created_map_pair: tmp_map.created_gws) {
     auto group_key = created_map_pair.first;
     NvmeGwMonStates& gw_created_map = created_map_pair.second;
@@ -1095,6 +1097,7 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op)
   bool send_ack =  false;
 
   check_beacon_timeout(now, gw_propose);
+  pending_map.process_failover_list(gw_propose);
   if (avail == gw_availability_t::GW_CREATED) {
     if (!gw_exists) {
       gw_created = false;
