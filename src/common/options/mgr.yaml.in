@@ -22,6 +22,20 @@ options:
   - mgr
   flags:
   - startup
+- name: mgr_pool_device_class
+  type: str
+  level: advanced
+  desc: Device class to use for .mgr pool CRUSH rule
+  long_desc: Specifies the device class (e.g., ssd, hdd, nvme) to use when creating
+    the CRUSH rule for the .mgr pool. If empty, the device class is automatically
+    selected based on available device classes with OSDs. The heuristic prefers
+    the device class used by the majority of bulk pools, or falls back to the
+    class with the most OSDs if no bulk pools exist.
+  services:
+  - mgr
+  - mon
+  flags:
+  - startup
 - name: mgr_stats_period
   type: int
   level: basic

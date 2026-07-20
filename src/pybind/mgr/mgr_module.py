@@ -1225,6 +1225,27 @@ class MgrModule(ceph_module.BaseMgrModule, MgrModuleLoggingMixin):
             'yes_i_really_mean_it': True
         }
         self.check_mon_command(c)
+    
+    @API.perm('w')
+    @API.expose
+    def set_crush(self, pool: str) -> None:
+        device_class = self.get_ceph_option("mgr_pool_device_class")
+        c: Dict[str, Any] = {
+            'prefix': 'osd crush rule create-mgr',
+            'format': 'json',
+        }
+        if device_class:
+            c['device_class'] = device_class
+        self.check_mon_command(c)
+        c = {
+            'prefix': 'osd pool set',
+            'format': 'json',
+            'pool': pool,
+            'var': 'crush_rule',
+            'val': pool
+        }
+        self.check_mon_command(c)
+        
 
     @API.perm('w')
     @API.expose
@@ -1252,6 +1273,7 @@ class MgrModule(ceph_module.BaseMgrModule, MgrModuleLoggingMixin):
         else:
             self.log.debug("creating new mgr pool")
             self.create_pool(self.MGR_POOL_NAME)
+            self.set_crush(self.MGR_POOL_NAME)
             self.appify_pool(self.MGR_POOL_NAME, 'mgr')
 
     def create_skeleton_schema(self, db: sqlite3.Connection) -> None:
@@ -1385,6 +1407,9 @@ class MgrModule(ceph_module.BaseMgrModule, MgrModuleLoggingMixin):
             try:
                 return self.db is not None
             except MgrDBNotReady:
+                return False
+            except Exception as e:
+                self.log.warning(f"db_ready: error attempting to open db: {e}")
                 return False
 
     @property
