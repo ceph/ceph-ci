@@ -20,7 +20,7 @@ if(WITH_RADOSGW_AMQP_ENDPOINT)
   add_library(amqp_mock STATIC ${amqp_mock_src})
 endif()
 
-if(WITH_RADOSGW_KAFKA_ENDPOINT)
+if(WITH_RADOSGW_KAFKA_ENDPOINT AND WITH_SYSTEM_RDKAFKA)
   # kafka stub library
   set(kafka_stub_src
     kafka_stub.cc)
