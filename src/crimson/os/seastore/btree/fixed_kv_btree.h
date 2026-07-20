@@ -589,8 +589,16 @@ public:
      */
     using check_split_iertr = ensure_internal_iertr;
     using check_split_ret = check_split_iertr::template future<depth_t>;
-    check_split_ret check_split(op_context_t c) {
-      if (!leaf.node->at_max_capacity()) {
+    // leaf_split_at == 0 keeps the default gate (split only when the leaf
+    // is at max capacity); a non-zero value lowers the leaf gate so a
+    // proactive split can relieve a near-full leaf (see split_if_near_full).
+    // Ancestors are always gated on at_max_capacity() -- internal nodes
+    // only split when actually full.
+    check_split_ret check_split(op_context_t c, uint16_t leaf_split_at = 0) {
+      const bool leaf_needs_split = leaf_split_at
+	? leaf.node->get_size() >= leaf_split_at
+	: leaf.node->at_max_capacity();
+      if (!leaf_needs_split) {
 	return check_split_iertr::template make_ready_future<depth_t>(0);
       }
       return seastar::do_with(
@@ -1553,6 +1561,46 @@ public:
           }
         });
       });
+  }
+
+  /**
+   * split_if_near_full
+   *
+   * Proactive structural op: if the leaf owning `key` holds at least
+   * `leaf_split_at` entries, split it (reusing the handle_split cascade,
+   * including parent splits and root growth) WITHOUT inserting anything.
+   * Intended for background use (seastore_proactive_lba_split) so user
+   * inserts rarely pay the split latency synchronously.
+   *
+   * Returns true iff a split was performed.  Note: values of leaf_split_at
+   * below 2 * min_capacity produce below-min halves -- legal (min
+   * occupancy is only enforced lazily by handle_merge on remove) but
+   * merge-prone on remove-heavy workloads.
+   *
+   * Invalidates all outstanding iterators for this tree on this
+   * transaction (same contract as insert).
+   */
+  using split_if_near_full_iertr = base_iertr;
+  using split_if_near_full_ret = split_if_near_full_iertr::future<bool>;
+  split_if_near_full_ret split_if_near_full(
+    op_context_t c,
+    node_key_t key,
+    uint16_t leaf_split_at)
+  {
+    LOG_PREFIX(FixedKVBtree::split_if_near_full);
+    ceph_assert(leaf_split_at > 0);
+    auto iter = co_await lower_bound(c, key);
+    if (iter.leaf.node->get_size() < leaf_split_at) {
+      SUBTRACET(seastore_fixedkv_tree,
+        "leaf owning {} no longer near-full ({} < {}), skipping",
+        c.trans, key, iter.leaf.node->get_size(), leaf_split_at);
+      co_return false;
+    }
+    SUBDEBUGT(seastore_fixedkv_tree,
+      "proactively splitting leaf owning {} at size {}",
+      c.trans, key, iter.leaf.node->get_size());
+    co_await handle_split(c, iter, leaf_split_at);
+    co_return true;
   }
 
   /**
@@ -2631,13 +2679,16 @@ private:
    */
   using handle_split_iertr = base_iertr;
   using handle_split_ret = handle_split_iertr::future<>;
+  // leaf_split_at: see iterator::check_split -- 0 = split only at max
+  // capacity (the insert path), non-zero = proactive near-full split.
   handle_split_ret handle_split(
     op_context_t c,
-    iterator &iter)
+    iterator &iter,
+    uint16_t leaf_split_at = 0)
   {
     LOG_PREFIX(FixedKVBtree::handle_split);
 
-    return iter.check_split(c
+    return iter.check_split(c, leaf_split_at
     ).si_then([FNAME, this, c, &iter](auto split_from) {
       SUBTRACET(seastore_fixedkv_tree,
         "split_from {}, depth {}", c.trans, split_from, iter.get_depth());

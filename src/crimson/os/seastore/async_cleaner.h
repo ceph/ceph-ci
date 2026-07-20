@@ -426,6 +426,27 @@ struct BackgroundListener {
 };
 
 /**
+ * BackgroundSplitter
+ *
+ * Interface of the background proactive-LBA-split worker
+ * (seastore_proactive_lba_split): drains the LBAManager's memory-only
+ * near-full leaf hints with small structural transactions, so user
+ * inserts rarely pay the split latency synchronously.  Registered into
+ * ExtentPlacementManager::BackgroundProcess next to the trimmer and
+ * cleaners; the concrete implementation lives in transaction_manager.cc
+ * (it needs the LBAManager).
+ */
+class BackgroundSplitter {
+public:
+  virtual ~BackgroundSplitter() = default;
+  virtual bool should_split() const = 0;
+  virtual seastar::future<> split() = 0;
+  virtual void set_extent_callback(ExtentCallbackInterface *cb) = 0;
+  virtual void set_background_callback(BackgroundListener *cb) = 0;
+};
+using BackgroundSplitterRef = std::unique_ptr<BackgroundSplitter>;
+
+/**
  * Callback interface for Journal
  */
 class JournalTrimmer {

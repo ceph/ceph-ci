@@ -192,7 +192,8 @@ SegmentedOolWriter::alloc_write_ool_extents(
 void ExtentPlacementManager::init(
     JournalTrimmerImplRef &&trimmer,
     AsyncCleanerRef &&cleaner,
-    AsyncCleanerRef &&cold_cleaner)
+    AsyncCleanerRef &&cold_cleaner,
+    BackgroundSplitterRef &&splitter)
 {
   LOG_PREFIX(ExtentPlacementManager::init);
   writer_refs.clear();
@@ -279,6 +280,7 @@ void ExtentPlacementManager::init(
   background_process.init(std::move(trimmer),
                           std::move(cleaner),
                           std::move(cold_cleaner),
+                          std::move(splitter),
                           hot_tier_generations);
   if (cold_segment_cleaner) {
     ceph_assert(get_main_backend_type() == backend_type_t::SEGMENTED);
@@ -1016,6 +1018,18 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
     }
 
     if (!proceed_clean_main && !proceed_clean_cold) {
+      // Proactive LBA splitting is the lowest-priority background work: it
+      // runs only when neither trimming nor cleaning WANTS to run (not
+      // merely failed to reserve -- a split allocates fresh extents
+      // without reservation, so it must not run under space pressure).
+      if (splitter && splitter->should_split() &&
+          !should_trim && !should_clean_main) {
+        DEBUG("started proactive lba split...");
+        return splitter->split(
+        ).finally([FNAME] {
+          DEBUG("finished proactive lba split");
+        });
+      }
       ceph_abort_msg("no background process will start");
     }
     return seastar::when_all(

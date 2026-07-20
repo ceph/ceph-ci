@@ -366,6 +366,7 @@ BtreeLBAManager::reserve_region(
   );
   ceph_assert(p.second);
   iter = p.first;
+  maybe_flag_near_full(iter);
   co_return iter.get_cursor(c);
 }
 
@@ -408,6 +409,7 @@ BtreeLBAManager::alloc_extents(
     TRACET("inserted {}", c.trans, *ext);
     ret.emplace(ret.begin(), it.get_cursor(c));
     iter = it;
+    maybe_flag_near_full(iter);
 #ifndef NDEBUG
     if (eiter != extents.rend()) {
       auto key = iter.get_key();
@@ -462,6 +464,7 @@ BtreeLBAManager::clone_mapping(
       mapping->get_extent_type()},
     get_reserved_ptr<LBALeafNode, laddr_t>());
   auto &[iter, inserted] = p;
+  maybe_flag_near_full(iter);
   co_await mapping->refresh();
   co_return clone_mapping_ret_t{
     iter.get_cursor(c),
@@ -716,13 +719,13 @@ BtreeLBAManager::insert_mappings(
 {
   return seastar::do_with(
     std::move(iter), std::list<LBACursorRef>(),
-    [c, &btree, &alloc_infos]
+    [this, c, &btree, &alloc_infos]
     (LBABtree::iterator &iter, std::list<LBACursorRef> &ret)
   {
     return trans_intr::do_for_each(
       alloc_infos.begin(),
       alloc_infos.end(),
-      [c, &btree, &iter](auto &info)
+      [this, c, &btree, &iter](auto &info)
     {
       assert(info.key != L_ADDR_NULL);
       bool need_reserved_ptr =
@@ -732,9 +735,10 @@ BtreeLBAManager::insert_mappings(
         need_reserved_ptr
           ? get_reserved_ptr<LBALeafNode, laddr_t>()
           : static_cast<BaseChildNode<LBALeafNode, laddr_t>*>(info.extent)
-      ).si_then([c, &iter, &info](auto p) {
+      ).si_then([this, c, &iter, &info](auto p) {
 	ceph_assert(p.second);
 	iter = std::move(p.first);
+	maybe_flag_near_full(iter);
 	if (is_valid_child_ptr(info.extent)) {
 	  ceph_assert(info.value.pladdr.is_paddr());
 	  assert(info.value.pladdr == iter.get_val().pladdr);
@@ -1112,8 +1116,73 @@ void BtreeLBAManager::register_metrics(store_index_t store_index)
         sm::description("total number of iterator next operations during extent allocation"),
         {sm::label_instance("shard_store_index", std::to_string(store_index))}
       ),
+      sm::make_counter(
+        "proactive_split_flags",
+        stats.num_proactive_split_flags,
+        sm::description("total number of leaves flagged near-full for "
+                        "proactive splitting"),
+        {sm::label_instance("shard_store_index", std::to_string(store_index))}
+      ),
+      sm::make_counter(
+        "proactive_splits",
+        stats.num_proactive_splits,
+        sm::description("total number of proactive leaf splits performed"),
+        {sm::label_instance("shard_store_index", std::to_string(store_index))}
+      ),
     }
   );
+}
+
+void BtreeLBAManager::maybe_flag_near_full(LBABtree::iterator &iter)
+{
+  LOG_PREFIX(BtreeLBAManager::maybe_flag_near_full);
+  // conf is read per call so tests can flip it via local_conf().set_val
+  if (!crimson::common::get_conf<bool>("seastore_proactive_lba_split")) {
+    return;
+  }
+  auto threshold = crimson::common::get_conf<uint64_t>(
+    "seastore_proactive_lba_split_threshold");
+  auto leaf = iter.get_leaf_node();
+  if (leaf->get_size() < threshold) {
+    return;
+  }
+  auto [it, inserted] = near_full_leaves.insert(leaf->get_begin());
+  if (inserted) {
+    ++stats.num_proactive_split_flags;
+    SUBDEBUG(seastore_lba, "flagged leaf {} at size {}",
+             leaf->get_begin(), leaf->get_size());
+    if (near_full_notify) {
+      near_full_notify();
+    }
+  }
+}
+
+BtreeLBAManager::do_proactive_split_iertr::future<bool>
+BtreeLBAManager::do_one_proactive_split(Transaction &t)
+{
+  LOG_PREFIX(BtreeLBAManager::do_one_proactive_split);
+  if (near_full_leaves.empty()) {
+    co_return false;
+  }
+  // The hint is erased at pick time: the erase is a plain memory op and
+  // is not rolled back if this transaction conflicts.  Acceptable -- the
+  // next insert into a still-near-full leaf re-flags it, and a lost hint
+  // only means the split happens reactively.
+  auto laddr = *near_full_leaves.begin();
+  near_full_leaves.erase(near_full_leaves.begin());
+  auto threshold = crimson::common::get_conf<uint64_t>(
+    "seastore_proactive_lba_split_threshold");
+  auto c = get_context(t);
+  auto btree = co_await get_btree<LBABtree>(cache, c);
+  auto did_split = co_await btree.split_if_near_full(
+    c, laddr, static_cast<uint16_t>(threshold));
+  if (did_split) {
+    ++stats.num_proactive_splits;
+    DEBUGT("split leaf owning {}", t, laddr);
+  } else {
+    DEBUGT("stale hint for {}, dropped", t, laddr);
+  }
+  co_return did_split;
 }
 
 /**
@@ -1346,6 +1415,7 @@ BtreeLBAManager::remap_mappings(
           : remap.extent);
       auto &[it, inserted] = p;
       ceph_assert(inserted);
+      maybe_flag_near_full(it);
       ret.push_back(it.get_cursor(c));
       last_iter = it;
       iter = co_await it.next(c);

@@ -212,6 +212,22 @@ options:
         prior are conflicted eagerly at commit staging. Most effective
         combined with seastore_lazy_read_conflict_detection
   default: false
+- name: seastore_proactive_lba_split
+  type: bool
+  level: dev
+  desc: split near-full LBA btree leaf nodes in the background, off the
+        user-transaction critical path, so user inserts rarely pay the
+        split latency synchronously. The near-full set is memory-only and
+        rebuilt lazily by traffic after a restart
+  default: false
+- name: seastore_proactive_lba_split_threshold
+  type: uint
+  level: dev
+  desc: leaf occupancy (number of entries) at or above which a leaf is
+        flagged for proactive splitting; values below twice the leaf min
+        capacity produce below-min halves and may cause merge churn on
+        remove-heavy workloads
+  default: 104
 # TODO: seastore_max_data_allocation_size should be dropped once the sub-extent
 #       read/checksum is implemented.
 - name: seastore_max_data_allocation_size

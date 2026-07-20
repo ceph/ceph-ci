@@ -330,6 +330,28 @@ public:
     Transaction &t,
     scan_mapped_space_func_t &&f) = 0;
 
+  /**
+   * Proactive LBA leaf splitting (seastore_proactive_lba_split).
+   *
+   * The manager keeps a memory-only set of leaves observed near-full at
+   * insert time; the background splitter drains it one leaf per
+   * transaction via do_one_proactive_split.  The set is a hint: entries
+   * lost to restarts or transaction conflicts merely mean the split
+   * happens reactively (inside the next user insert), as without the
+   * feature.
+   */
+  virtual bool has_pending_proactive_splits() const = 0;
+
+  /// Invoked synchronously whenever the pending set gains its first
+  /// entry; used to wake the background process.
+  virtual void set_near_full_notify(std::function<void()> &&f) = 0;
+
+  /// Attempt one proactive split within t; returns true iff a split was
+  /// performed (false: no pending hint, or the hint went stale).
+  using do_proactive_split_iertr = base_iertr;
+  virtual do_proactive_split_iertr::future<bool>
+  do_one_proactive_split(Transaction &t) = 0;
+
   virtual ~LBAManager() {}
 };
 using LBAManagerRef = std::unique_ptr<LBAManager>;

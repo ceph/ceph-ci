@@ -1127,6 +1127,85 @@ TransactionManager::get_extents_if_live(
 
 TransactionManager::~TransactionManager() {}
 
+namespace {
+
+/**
+ * LBASplitterImpl
+ *
+ * Background worker draining the LBAManager's memory-only near-full leaf
+ * hints (seastore_proactive_lba_split), one small LBA_SPLIT transaction
+ * per leaf.  Modeled on JournalTrimmerImpl::trim_alloc().
+ */
+class LBASplitterImpl final : public BackgroundSplitter {
+public:
+  explicit LBASplitterImpl(LBAManager &lba_manager)
+    : lba_manager(lba_manager) {}
+
+  bool should_split() const final {
+    return lba_manager.has_pending_proactive_splits();
+  }
+
+  seastar::future<> split() final {
+    LOG_PREFIX(LBASplitterImpl::split);
+    assert(background_callback->is_ready());
+
+    auto &shard_stats = extent_callback->get_shard_stats();
+    ++(shard_stats.lba_split_num);
+    ++(shard_stats.pending_bg_num);
+
+    return repeat_eagain([this, FNAME, &shard_stats] {
+      ++(shard_stats.repeat_lba_split_num);
+
+      return extent_callback->with_transaction_intr(
+	Transaction::src_t::LBA_SPLIT,
+	"lba_split",
+	CACHE_HINT_NOCACHE,
+	[this, FNAME](auto &t)
+      {
+	return lba_manager.do_one_proactive_split(t
+	).si_then([this, FNAME, &t](bool did_split)
+	  -> ExtentCallbackInterface::submit_transaction_direct_iertr::future<>
+	{
+	  if (did_split) {
+	    DEBUGT("split performed, submitting", t);
+	    return extent_callback->submit_transaction_direct(t);
+	  }
+	  DEBUGT("no split performed (stale or no hint)", t);
+	  return seastar::now();
+	});
+      });
+    }).handle_error(
+      crimson::ct_error::assert_all("unexpected error in proactive lba split")
+    ).finally([&shard_stats] {
+      assert(shard_stats.pending_bg_num);
+      --(shard_stats.pending_bg_num);
+    });
+  }
+
+  void set_extent_callback(ExtentCallbackInterface *cb) final {
+    extent_callback = cb;
+  }
+
+  void set_background_callback(BackgroundListener *cb) final {
+    background_callback = cb;
+  }
+
+  // called (synchronously) from the LBAManager whenever the near-full set
+  // gains its first entry
+  void maybe_wake() {
+    if (background_callback && background_callback->is_ready()) {
+      background_callback->maybe_wake_background();
+    }
+  }
+
+private:
+  LBAManager &lba_manager;
+  ExtentCallbackInterface *extent_callback = nullptr;
+  BackgroundListener *background_callback = nullptr;
+};
+
+} // anonymous namespace
+
 TransactionManagerRef make_transaction_manager(
     Device *primary_device,
     const std::vector<Device*> &secondary_devices,
@@ -1279,9 +1358,20 @@ TransactionManagerRef make_transaction_manager(
 
   cache->set_segment_providers(std::move(segment_providers_by_id));
 
+  // The splitter is owned by the EPM's background process; the notify
+  // closure held by the lba_manager keeps a raw pointer -- safe because
+  // both are members of the same TransactionManager and inserts only run
+  // within transactions, which cease before teardown.
+  auto lba_splitter = std::make_unique<LBASplitterImpl>(*lba_manager);
+  auto *p_lba_splitter = lba_splitter.get();
+  lba_manager->set_near_full_notify([p_lba_splitter] {
+    p_lba_splitter->maybe_wake();
+  });
+
   epm->init(std::move(journal_trimmer),
 	    std::move(cleaner),
-	    std::move(cold_segment_cleaner));
+	    std::move(cold_segment_cleaner),
+	    std::move(lba_splitter));
   epm->set_primary_device(primary_device);
 
   INFO("main backend type: {}, cold tier: {}",

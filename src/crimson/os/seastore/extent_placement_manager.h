@@ -288,7 +288,8 @@ public:
       cold_tier_generations, hot_tier_generations);
   }
 
-  void init(JournalTrimmerImplRef &&, AsyncCleanerRef &&, AsyncCleanerRef &&);
+  void init(JournalTrimmerImplRef &&, AsyncCleanerRef &&, AsyncCleanerRef &&,
+            BackgroundSplitterRef &&);
 
   SegmentSeqAllocator &get_ool_segment_seq_allocator() const {
     return *ool_segment_seq_allocator;
@@ -729,11 +730,16 @@ private:
     void init(JournalTrimmerImplRef &&_trimmer,
               AsyncCleanerRef &&_cleaner,
               AsyncCleanerRef &&_cold_cleaner,
+              BackgroundSplitterRef &&_splitter,
               rewrite_gen_t hot_tier_generations) {
       trimmer = std::move(_trimmer);
       trimmer->set_background_callback(this);
       main_cleaner = std::move(_cleaner);
       main_cleaner->set_background_callback(this);
+      if (_splitter) {
+        splitter = std::move(_splitter);
+        splitter->set_background_callback(this);
+      }
       if (_cold_cleaner) {
         cold_cleaner = std::move(_cold_cleaner);
         cold_cleaner->set_background_callback(this);
@@ -775,6 +781,9 @@ private:
       main_cleaner->set_extent_callback(cb);
       if (has_cold_tier()) {
         cold_cleaner->set_extent_callback(cb);
+      }
+      if (splitter) {
+        splitter->set_extent_callback(cb);
       }
     }
 
@@ -946,7 +955,8 @@ private:
       maybe_update_eviction_mode();
       return main_cleaner_should_run()
         || cold_cleaner_should_run()
-        || trimmer->should_trim();
+        || trimmer->should_trim()
+        || (splitter && splitter->should_split());
     }
 
     bool main_cleaner_should_fast_evict() const {
@@ -1114,6 +1124,9 @@ private:
 
     JournalTrimmerImplRef trimmer;
     AsyncCleanerRef main_cleaner;
+    // background proactive LBA splitter (seastore_proactive_lba_split);
+    // best-effort: never blocks io, runs when trim/clean are idle
+    BackgroundSplitterRef splitter;
 
     /*
      * cold tier (optional, see has_cold_tier())

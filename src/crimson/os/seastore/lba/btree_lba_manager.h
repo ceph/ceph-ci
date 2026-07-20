@@ -28,7 +28,9 @@
 
 #pragma once
 
+#include <functional>
 #include <iostream>
+#include <set>
 
 #include <boost/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
@@ -455,8 +457,38 @@ public:
     Transaction &t,
     scan_mapped_space_func_t &&f) final;
 
+  // -------------------------------------------------------------------------
+  // Proactive leaf splitting (seastore_proactive_lba_split); memory-only.
+  // -------------------------------------------------------------------------
+
+  bool has_pending_proactive_splits() const final {
+    return !near_full_leaves.empty();
+  }
+
+  void set_near_full_notify(std::function<void()> &&f) final {
+    near_full_notify = std::move(f);
+  }
+
+  do_proactive_split_iertr::future<bool>
+  do_one_proactive_split(Transaction &t) final;
+
 private:
   Cache &cache;
+
+  /**
+   * Memory-only set of begin-keys of leaves observed near-full at insert
+   * time (see maybe_flag_near_full).  A hint only: entries are dropped at
+   * pick time and on restart; lost hints mean the split happens
+   * reactively inside a later user insert, exactly as without the
+   * feature.
+   */
+  std::set<laddr_t> near_full_leaves;
+  std::function<void()> near_full_notify;
+
+  /// Flag the leaf under iter if the feature is on and the leaf occupancy
+  /// reached seastore_proactive_lba_split_threshold.  Called after every
+  /// btree.insert.
+  void maybe_flag_near_full(LBABtree::iterator &iter);
 
   /**
    * Performance counters registered as Seastar metrics under the "LBA" group.
@@ -468,6 +500,8 @@ private:
   struct {
     uint64_t num_alloc_extents = 0;
     uint64_t num_alloc_extents_iter_nexts = 0;
+    uint64_t num_proactive_split_flags = 0;
+    uint64_t num_proactive_splits = 0;
   } stats;
 
   /**
