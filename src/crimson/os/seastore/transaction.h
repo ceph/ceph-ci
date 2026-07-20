@@ -485,6 +485,18 @@ public:
     return lazy_read && is_lba_backref_node(type);
   }
 
+  /**
+   * is_user_lba_publish
+   *
+   * True for MUTATE transactions running with
+   * seastore_user_lba_no_conflict_publish: value-only LBA btree node
+   * deltas take the no-conflict publish path (see should_publish_extent),
+   * keeping the prior instance canonical through the journal window.
+   */
+  bool is_user_lba_publish() const {
+    return user_lba_publish;
+  }
+
   void test_set_conflict() {
     conflicted = true;
   }
@@ -523,9 +535,11 @@ public:
     on_destruct_func_t&& f,
     transaction_id_t trans_id,
     cache_hint_t cache_hint,
-    bool lazy_read = false
+    bool lazy_read = false,
+    bool user_lba_publish = false
   ) : weak(weak),
       lazy_read(lazy_read),
+      user_lba_publish(user_lba_publish),
       handle(std::move(handle)),
       on_destruct(std::move(f)),
       src(src),
@@ -533,6 +547,7 @@ public:
       cache_hint(cache_hint)
   {
     assert(!lazy_read || (src == src_t::READ && !weak));
+    assert(!user_lba_publish || src == src_t::MUTATE);
   }
 
   void invalidate_clear_write_set() {
@@ -872,6 +887,15 @@ private:
    */
   const bool lazy_read;
 
+  /**
+   * If set (MUTATE transactions only, gated by
+   * seastore_user_lba_no_conflict_publish), value-only LBA btree node
+   * deltas are published into the prior instance at commit instead of
+   * invalidating it; registered readers of the prior are conflicted
+   * eagerly at prepare_record.
+   */
+  const bool user_lba_publish;
+
   RootBlockRef root;        ///< ref to root if read or written by transaction
 
   device_off_t offset = 0; ///< relative offset of next block
@@ -997,8 +1021,12 @@ inline TransactionRef make_test_transaction() {
  * Currently true for:
  *  - rewrite (background) transactions, for any non-root extent
  *
+ * This is only the type-based rewrite arm; the full extent-granular
+ * decision (which additionally admits value-only LBA node deltas of user
+ * MUTATE transactions under seastore_user_lba_no_conflict_publish) is
+ * should_publish_extent() in cached_extent.h.
+ *
  *  To be expanded to:
- *  - user (txn_manager) transactions that mutate LBA nodes
  *  - Onode/Omap nodes
  */
 constexpr bool should_use_no_conflict_publish(const Transaction &t,

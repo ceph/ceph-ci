@@ -1393,6 +1393,9 @@ public:
     if constexpr (std::is_base_of_v<
         ParentNode<leaf_node_t, node_key_t>, leaf_node_t>) {
       if (child) {
+        // linking a child disqualifies the leaf from the user
+        // no-conflict publish path
+        iter.leaf.node->mark_structural_delta();
         iter.leaf.node->update_child_ptr(iter.leaf.pos, child);
       }
     }

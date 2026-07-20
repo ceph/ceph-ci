@@ -8,6 +8,12 @@
 
 namespace crimson::os::seastore {
 
+// NOTE: RootBlock never takes the no-conflict publish path (see
+// should_publish_extent).  If the LBA root node itself publishes under a
+// user transaction, its scratch NEXT never links into any RootBlock
+// (FixedKV{Internal,Leaf}Node::on_replace_prior skip root relinking for
+// published extents), so the "!lba_root_node" arm below correctly links
+// the prior's root node -- which stays canonical.
 void RootBlock::on_replace_prior(Transaction &t) {
   if (!lba_root_node ||
       // for rewrite transactions, we keep the prior extents instead of

@@ -170,6 +170,7 @@ struct LBALeafNode
       iter.get_offset(),
       iter.get_key(),
       pivot);
+    this->mark_structural_delta();
     this->on_modify();
     return this->journal_replace(
       iter,
@@ -185,6 +186,7 @@ struct LBALeafNode
       iter.get_offset(),
       iter.get_key());
     assert(iter != this->end());
+    this->mark_structural_delta();
     this->on_modify();
     this->remove_child_ptr(iter.get_offset());
     return this->journal_remove(

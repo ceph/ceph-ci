@@ -488,6 +488,19 @@ public:
     return true;
   }
 
+  /**
+   * is_value_only_delta
+   *
+   * True iff this pending instance's delta is known to leave keys,
+   * positions and child pointers untouched (pure value updates).  Such
+   * deltas qualify for the user no-conflict publish path (see
+   * should_publish_extent).  Conservative default: unknown extent types
+   * never qualify.
+   */
+  virtual bool is_value_only_delta() const {
+    return false;
+  }
+
   void rewrite(Transaction &t, CachedExtent &e, extent_len_t o) {
     assert(is_initial_pending());
     assert(e.is_valid());
@@ -657,6 +670,12 @@ public:
   /// Returns true iff extent is stable and not io-pending
   bool is_stable_ready() const {
     return is_stable() && (!is_pending_io() || io_wait->stable_view);
+  }
+
+  /// Returns true iff this extent is taking the no-conflict publish path
+  /// (a committer was attached by prepare_record; reset at complete_commit)
+  bool has_committer() const {
+    return committer != nullptr;
   }
 
   /// Returns true if extent can not be mutated,
@@ -1011,6 +1030,16 @@ private:
   extent_2q_state_t cache_state = extent_2q_state_t::Fresh;
 
   ExtentCommitterRef committer;
+
+  /**
+   * Sticky marker: set (and never cleared) by new_committer() when this
+   * extent takes the no-conflict publish path.  Commit stages running
+   * after the committer has been detached (e.g. the NEXT invalidation at
+   * the end of complete_commit) must key off this instead of re-evaluating
+   * should_publish_extent(), whose is_mutation_pending() input is destroyed
+   * by set_io_wait().
+   */
+  bool publish_handoff = false;
 
   void new_committer(Transaction &t);
 
@@ -1614,6 +1643,25 @@ using lextent_set_t = addr_extent_set_base_t<
 template <typename T>
 using lextent_list_t = addr_extent_list_base_t<
   laddr_t, TCachedExtentRef<T>>;
+
+/**
+ * should_publish_extent
+ *
+ * Extent-granular no-conflict-publish decision:
+ *  - rewrite (background) transactions publish any non-root extent
+ *    (see should_use_no_conflict_publish);
+ *  - user MUTATE transactions (gated by
+ *    seastore_user_lba_no_conflict_publish) publish LBA btree nodes whose
+ *    delta is value-only (no insert/remove/replace, no child-pointer
+ *    change); structural deltas fall back to the classic
+ *    invalidate-and-retry path.
+ *
+ * MUST only be evaluated while `e` is still MUTATION_PENDING (the first
+ * mutated pass of Cache::prepare_record, or the rewrite fresh paths);
+ * later commit stages must key off e.committer / e.publish_handoff
+ * because set_io_wait() has already transitioned the state.
+ */
+bool should_publish_extent(const Transaction &t, const CachedExtent &e);
 
 } // namespace crimson::os::seastore
 

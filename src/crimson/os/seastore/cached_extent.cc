@@ -354,6 +354,10 @@ ceph::bufferptr BufferSpace::to_full_ptr(extent_len_t length)
 void ExtentCommitter::sync_version() {
   assert(extent.prior_instance);
   auto &prior = *extent.prior_instance;
+  // user publish eagerly conflicts all registered readers of the prior at
+  // prepare_record, so no sibling pending versions can exist here
+  assert(is_rewrite_transaction(t.get_src()) ||
+         prior.mutation_pending_extents.empty());
   for (auto &mext : prior.mutation_pending_extents) {
     auto &mextent = static_cast<CachedExtent&>(mext);
     mextent.version = extent.version + 1;
@@ -363,6 +367,8 @@ void ExtentCommitter::sync_version() {
 void ExtentCommitter::sync_dirty_from() {
   assert(extent.prior_instance);
   auto &prior = *extent.prior_instance;
+  assert(is_rewrite_transaction(t.get_src()) ||
+         prior.mutation_pending_extents.empty());
   for (auto &mext : prior.mutation_pending_extents) {
     auto &mextent = static_cast<CachedExtent&>(mext);
     assert(mextent.dirty_from < extent.dirty_from ||
@@ -374,6 +380,8 @@ void ExtentCommitter::sync_dirty_from() {
 void ExtentCommitter::sync_checksum() {
   assert(extent.prior_instance);
   auto &prior = *extent.prior_instance;
+  assert(is_rewrite_transaction(t.get_src()) ||
+         prior.mutation_pending_extents.empty());
   for (auto &mext : prior.mutation_pending_extents) {
     auto &mextent = static_cast<CachedExtent&>(mext);
     mextent.set_last_committed_crc(extent.last_committed_crc);
@@ -384,6 +392,11 @@ void ExtentCommitter::commit_data() {
   assert(extent.prior_instance);
   // extent and its prior are sharing the same bptr content
   auto &prior = *extent.prior_instance;
+  // For user publish this is the point where the prior's content flips to
+  // the committed (divergent) values.  prior->modifications is deliberately
+  // NOT bumped: value-only deltas preserve keys/positions and cursors
+  // re-read values live via iter.get_val(), while the stable-node invariant
+  // requires modifications == 0 (see FixedKVLeafNode::on_state_commit).
   prior.set_bptr(extent.get_bptr());
   prior.on_data_commit();
   _share_prior_data_to_mutations();
@@ -448,6 +461,10 @@ void ExtentCommitter::_share_prior_data_to_mutations() {
   LOG_PREFIX(ExtentCommitter::_share_prior_data_to_mutations);
   ceph_assert(is_lba_backref_node(extent.get_type()));
   auto &prior = *extent.prior_instance;
+  // the paddr-only merge below is unsafe for user-divergent content; user
+  // publish guarantees an empty set via the eager conflict pass
+  assert(is_rewrite_transaction(t.get_src()) ||
+         prior.mutation_pending_extents.empty());
   for (auto &mext : prior.mutation_pending_extents) {
     if (extent.get_type() == extent_types_t::LADDR_LEAF) {
       // LBA leaf mappings contains other fields than just pladdr, which
@@ -492,6 +509,8 @@ void ExtentCommitter::_share_prior_data_to_pending_versions()
 {
   ceph_assert(is_lba_backref_node(extent.get_type()));
   auto &prior = *extent.prior_instance;
+  assert(is_rewrite_transaction(t.get_src()) ||
+         prior.mutation_pending_extents.empty());
   switch (extent.get_type()) {
   case extent_types_t::LADDR_LEAF:
     static_cast<lba::LBALeafNode&>(
@@ -510,9 +529,22 @@ void ExtentCommitter::_share_prior_data_to_pending_versions()
   }
 }
 
+bool should_publish_extent(const Transaction &t, const CachedExtent &e)
+{
+  // rewrite (background) arm -- unchanged behavior
+  if (should_use_no_conflict_publish(t, e.get_type())) {
+    return true;
+  }
+  return t.is_user_lba_publish() &&
+         is_lba_node(e.get_type()) &&
+         e.is_mutation_pending() &&
+         e.is_value_only_delta();
+}
+
 void CachedExtent::new_committer(Transaction &t) {
-  ceph_assert(should_use_no_conflict_publish(t, this->get_type()));
+  ceph_assert(should_publish_extent(t, *this));
   ceph_assert(!committer);
+  publish_handoff = true;
   committer = new ExtentCommitter(*this, t);
   assert(prior_instance);
   assert(!prior_instance->committer);

@@ -41,9 +41,26 @@ struct FixedKVNode : CachedExtent {
   // Must be identical with FixedKVNode(ptr) after on_fully_loaded()
   explicit FixedKVNode(extent_len_t length)
     : CachedExtent(length) {}
+  // NOTE: deliberately does NOT copy structural_delta -- every
+  // duplicate_for_write() copy starts as value-only until it records a
+  // structural mutation of its own.
   FixedKVNode(const FixedKVNode &rhs)
     : CachedExtent(rhs),
       range(rhs.range) {}
+
+  /**
+   * Set whenever this pending instance records a journal
+   * insert/remove/replace or any child-pointer change; only meaningful
+   * while MUTATION_PENDING.  Nodes with a structural delta are excluded
+   * from the user no-conflict publish path (see should_publish_extent).
+   */
+  bool structural_delta = false;
+  void mark_structural_delta() {
+    structural_delta = true;
+  }
+  bool is_value_only_delta() const final {
+    return !structural_delta;
+  }
 
   virtual fixed_kv_node_meta_t<node_key_t> get_node_meta() const = 0;
   virtual ~FixedKVNode() = default;
@@ -186,7 +203,10 @@ struct FixedKVInternalNode
   }
 
   void prepare_commit(Transaction &t) final {
-    if (!is_rewrite_transaction(t.get_src())) {
+    // !committer: skip for extents on the no-conflict publish path, whose
+    // prior stays canonical (defensive here -- internal nodes always carry
+    // a structural delta and never user-publish)
+    if (!is_rewrite_transaction(t.get_src()) && !this->has_committer()) {
       parent_node_t::prepare_commit();
     }
   }
@@ -249,7 +269,8 @@ struct FixedKVInternalNode
   }
 
   void on_replace_prior(Transaction &t) final {
-    if (!is_rewrite_transaction(t.get_src())) {
+    // see prepare_commit(): published extents must not reparent
+    if (!is_rewrite_transaction(t.get_src()) && !this->has_committer()) {
       this->parent_node_t::on_replace_prior();
       if (this->is_btree_root()) {
         this->root_node_t::on_replace_prior();
@@ -268,6 +289,9 @@ struct FixedKVInternalNode
       this->pending_for_transaction,
       iter.get_offset(),
       (void*)nextent);
+    // rewires a child pointer even for a same-key paddr change -- internal
+    // nodes never qualify for user no-conflict publish
+    this->mark_structural_delta();
     this->update_child_ptr(iter.get_offset(), nextent);
     return this->journal_update(
       iter,
@@ -286,6 +310,7 @@ struct FixedKVInternalNode
       iter.get_offset(),
       pivot,
       (void*)nextent);
+    this->mark_structural_delta();
     this->insert_child_ptr(iter.get_offset(), nextent);
     return this->journal_insert(
       iter,
@@ -300,6 +325,7 @@ struct FixedKVInternalNode
       this->pending_for_transaction,
       iter.get_offset(),
       iter.get_key());
+    this->mark_structural_delta();
     this->remove_child_ptr(iter.get_offset());
     return this->journal_remove(
       iter,
@@ -318,6 +344,7 @@ struct FixedKVInternalNode
       iter.get_key(),
       pivot,
       (void*)nextent);
+    this->mark_structural_delta();
     this->update_child_ptr(iter.get_offset(), nextent);
     return this->journal_replace(
       iter,
@@ -677,7 +704,11 @@ struct FixedKVLeafNode
 
   virtual void do_prepare_commit() = 0;
   void prepare_commit(Transaction &t) final {
-    if (!is_rewrite_transaction(t.get_src())) {
+    // Skip when this extent takes the no-conflict publish path (rewrite,
+    // or user publish -- detected via the committer created earlier in the
+    // same prepare_record pass): the prior stays canonical and must keep
+    // its parent/child links.
+    if (!is_rewrite_transaction(t.get_src()) && !this->has_committer()) {
       do_prepare_commit();
     }
     modifications = 0;
@@ -686,7 +717,9 @@ struct FixedKVLeafNode
   virtual void do_on_replace_prior() = 0;
   void on_replace_prior(Transaction &t) final {
     ceph_assert(!this->is_rewrite());
-    if (!is_rewrite_transaction(t.get_src())) {
+    // see prepare_commit() above: published extents must not reparent --
+    // routing keeps going through the prior via the parent's children[]
+    if (!is_rewrite_transaction(t.get_src()) && !this->has_committer()) {
       do_on_replace_prior();
       if (this->is_btree_root()) {
         this->root_node_t::on_replace_prior();

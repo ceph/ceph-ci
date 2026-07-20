@@ -1296,7 +1296,7 @@ BtreeLBAManager::remap_mappings(
   auto c = get_context(t);
   auto btree = co_await get_btree<LBABtree>(cache, c);
   auto iter = btree.make_partial_iter(c, *cursor);
-  auto orig_val = iter.get_val();
+  [[maybe_unused]] auto orig_val = iter.get_val();
   std::vector<LBACursorRef> ret;
   assert(orig_val.refcount == EXTENT_DEFAULT_REF_COUNT);
   assert(orig_indirect ||

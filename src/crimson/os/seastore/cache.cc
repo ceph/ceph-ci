@@ -240,6 +240,35 @@ void Cache::register_metrics(store_index_t store_index)
         sm::description("total number of cursor refreshes performed by lazy reads"),
         {sm::label_instance("shard_store_index", std::to_string(store_index))}
       ),
+      sm::make_counter(
+        "lazy_read_publish_no_waits",
+        stats.lazy_read_publish_no_waits,
+        sm::description("total number of io-waits skipped by lazy reads on "
+                        "stable_view (publish-window) extents"),
+        {sm::label_instance("shard_store_index", std::to_string(store_index))}
+      ),
+      sm::make_counter(
+        "user_publish_commits",
+        stats.user_publish_commits,
+        sm::description("total number of LBA nodes published without conflict "
+                        "by user transactions"),
+        {sm::label_instance("shard_store_index", std::to_string(store_index))}
+      ),
+      sm::make_counter(
+        "user_publish_eager_conflicts",
+        stats.user_publish_eager_conflicts,
+        sm::description("total number of reader transactions conflicted "
+                        "eagerly at user-publish staging"),
+        {sm::label_instance("shard_store_index", std::to_string(store_index))}
+      ),
+      sm::make_counter(
+        "user_publish_structural_fallbacks",
+        stats.user_publish_structural_fallbacks,
+        sm::description("total number of user-publish-eligible LBA nodes "
+                        "falling back to the classic path due to a "
+                        "structural delta"),
+        {sm::label_instance("shard_store_index", std::to_string(store_index))}
+      ),
     }
   );
 
@@ -947,7 +976,17 @@ void Cache::stage_visibility_handoff(
   assert(next->get_paddr().is_absolute() || next->get_paddr().is_root());
   assert(next->version == prev->version + 1);
   const auto t_src = t.get_src();
-  ceph_assert(should_use_no_conflict_publish(t, next->get_type()));
+  // NOTE: cannot re-evaluate should_publish_extent() here -- next is no
+  // longer MUTATION_PENDING after set_io_wait(); the sticky marker set by
+  // new_committer() carries the decision forward.
+  ceph_assert(next->publish_handoff);
+  if (!is_rewrite_transaction(t_src)) {
+    // user publish: the eager conflict pass at prepare_record must have
+    // emptied the prior's reader registrations and sibling pending copies
+    // (next itself already unlinked at the end of the first mutated pass)
+    assert(prev->read_transactions.empty());
+    assert(prev->mutation_pending_extents.empty());
+  }
 
   bool was_stable_dirty = prev->is_stable_dirty();
   if (!was_stable_dirty) {
@@ -1000,17 +1039,11 @@ void Cache::commit_replace_extent(
 
 }
 
-void Cache::invalidate_extent(
+std::size_t Cache::conflict_readers(
     Transaction& t,
     CachedExtent& extent)
 {
-  if (!extent.may_conflict()) {
-    assert(extent.read_transactions.empty());
-    extent.set_invalid(t);
-    return;
-  }
-
-  LOG_PREFIX(Cache::invalidate_extent);
+  LOG_PREFIX(Cache::conflict_readers);
   bool do_conflict_log = true;
   std::vector<Transaction*> invalidated_trans;
   for (auto &&i: extent.read_transactions) {
@@ -1031,6 +1064,20 @@ void Cache::invalidate_extent(
     trans->retired_set.clear();
     trans->views.clear();
   }
+  return invalidated_trans.size();
+}
+
+void Cache::invalidate_extent(
+    Transaction& t,
+    CachedExtent& extent)
+{
+  if (!extent.may_conflict()) {
+    assert(extent.read_transactions.empty());
+    extent.set_invalid(t);
+    return;
+  }
+
+  conflict_readers(t, extent);
   extent.set_invalid(t);
 }
 
@@ -1354,6 +1401,9 @@ CachedExtentRef Cache::duplicate_for_write(
   }
 
   auto ret = i->duplicate_for_write(t);
+  // fresh duplicates must start as value-only (FixedKVNode's copy ctor
+  // deliberately drops structural_delta)
+  assert(!is_lba_backref_node(ret->get_type()) || ret->is_value_only_delta());
   ret->pending_for_transaction = t.get_trans_id();
   ret->set_prior_instance(i);
   if (!is_root_type(ret->get_type())) {
@@ -1424,9 +1474,25 @@ record_t Cache::prepare_record(
       DEBUGT("invalid mutated extent -- {}", t, *i);
       continue;
     }
-    if (should_use_no_conflict_publish(t, i->get_type())) {
+    if (should_publish_extent(t, *i)) {
+      if (!is_rewrite_transaction(trans_src)) {
+        // User publish: the prior stays canonical while its content will
+        // diverge at complete_commit.  Conflict every registered reader of
+        // the prior NOW (classic OCC semantics; lazy readers are not
+        // registered and keep going), which also empties
+        // prior.mutation_pending_extents so the committer's share/merge
+        // machinery has nothing to touch.  Must run before block_trans so
+        // no conflicted reader is ever fenced.
+        stats.user_publish_eager_conflicts +=
+          conflict_readers(t, *i->prior_instance);
+      }
       i->new_committer(t);
       i->committer->block_trans(t);
+    } else if (t.is_user_lba_publish() &&
+               is_lba_node(i->get_type()) &&
+               i->is_mutation_pending()) {
+      // eligible node excluded by a structural delta -> classic path
+      ++stats.user_publish_structural_fallbacks;
     }
     assert(i->is_exist_mutation_pending() ||
 	   i->prior_instance);
@@ -1451,6 +1517,8 @@ record_t Cache::prepare_record(
       // However, this leads to version mismatch below, thus we reset the
       // version to i->prior_instance->1 in this case.
       if (i->version != i->prior_instance->version + 1) {
+        // user MUTATE always has version == prior->version + 1
+        assert(is_rewrite_transaction(trans_src));
         assert(i->prior_instance->is_stable());
         i->version = i->prior_instance->version + 1;
       }
@@ -1545,8 +1613,9 @@ record_t Cache::prepare_record(
     }
 
     if (i->is_mutation_pending()) {
-      const bool use_no_conflict =
-        should_use_no_conflict_publish(t, i->get_type());
+      // committer exists iff the publish decision was taken in the first
+      // mutated pass (exact per-extent equivalent of the old type check)
+      const bool use_no_conflict = (bool)i->committer;
       // Block the new extent readers until the journal commit completes.
       i->set_io_wait(CachedExtent::extent_state_t::DIRTY, use_no_conflict);
 
@@ -1575,10 +1644,12 @@ record_t Cache::prepare_record(
     retire_stat.increment(extent->get_length());
     DEBUGT("retired and remove extent {}~0x{:x} -- {}",
 	   t, extent->get_paddr(), extent->get_length(), *extent);
-    if (should_use_no_conflict_publish(t, extent->get_type())) {
+    if (should_publish_extent(t, *extent)) {
       // avoid extent invalidation on retirement
       // only adjust dirty bookkeeping
       // we would invalidate them in complete_commit final stage
+      // (retired extents are stable -> never user-published)
+      assert(is_rewrite_transaction(trans_src));
       assert(extent->is_stable());
       if (extent->is_stable_dirty()) {
         remove_from_dirty(extent, &trans_src);
@@ -1698,10 +1769,10 @@ record_t Cache::prepare_record(
 	  i->get_type()));
     }
     i->set_io_wait(CachedExtent::extent_state_t::CLEAN,
-                   should_use_no_conflict_publish(t, i->get_type()));
+                   should_publish_extent(t, *i));
     // Note, paddr is known until complete_commit(),
     // so add_extent() later.
-    if (should_use_no_conflict_publish(t, i->get_type())) {
+    if (should_publish_extent(t, *i)) {
       assert(i->get_prior_instance());
       assert(!i->committer);
       assert(!i->get_prior_instance()->committer);
@@ -1710,8 +1781,7 @@ record_t Cache::prepare_record(
       auto &committer = *i->committer;
       committer.block_trans(t);
       i->get_prior_instance()->set_io_wait(
-        CachedExtent::extent_state_t::CLEAN,
-        should_use_no_conflict_publish(t, i->get_type()));
+        CachedExtent::extent_state_t::CLEAN, true);
     }
   }
 
@@ -1736,7 +1806,7 @@ record_t Cache::prepare_record(
 	  i->get_length(),
 	  i->get_type()));
     }
-    if (should_use_no_conflict_publish(t, i->get_type())) {
+    if (should_publish_extent(t, *i)) {
       assert(i->get_prior_instance());
       assert(!i->committer);
       assert(!i->get_prior_instance()->committer);
@@ -1749,7 +1819,7 @@ record_t Cache::prepare_record(
         CachedExtent::extent_state_t::CLEAN, true);
     }
     i->set_io_wait(CachedExtent::extent_state_t::CLEAN,
-                   should_use_no_conflict_publish(t, i->get_type()));
+                   (bool)i->committer);
     // Note, paddr is (can be) known until complete_commit(),
     // so add_extent() later.
   }
@@ -1798,7 +1868,7 @@ record_t Cache::prepare_record(
     } else {
       assert(i->is_exist_mutation_pending());
       i->set_io_wait(CachedExtent::extent_state_t::DIRTY,
-                     should_use_no_conflict_publish(t, i->get_type()));
+                     should_publish_extent(t, *i));
     }
 
     // exist mutation pending extents must be in t.mutated_block_list
@@ -2032,7 +2102,7 @@ void Cache::complete_commit(
             t, final_block_start, start_seq);
   for (auto &i: t.retired_set) {
     auto &extent = i.extent;
-    if (should_use_no_conflict_publish(t, extent->get_type())) {
+    if (should_publish_extent(t, *extent)) {
      // retired extents should remain valid through complete_commit().
      // We only free space post-commit *AFTER* handoff.
       assert(extent->is_valid());
@@ -2062,8 +2132,9 @@ void Cache::complete_commit(
     i->pending_for_transaction = TRANS_ID_NULL;
     i->on_initial_write();
     const auto t_src = t.get_src();
-    if (should_use_no_conflict_publish(t, i->get_type())) {
-      ceph_assert(i->committer);
+    // committer presence carries the publish decision from prepare_record
+    // (the extent's state has changed since, see should_publish_extent)
+    if (i->committer) {
       auto &committer = *i->committer;
       auto &prior = *i->get_prior_instance();
       ceph_assert(prior.is_valid());
@@ -2145,10 +2216,9 @@ void Cache::complete_commit(
     if (i->version == 1 || is_root_type(i->get_type())) {
       i->dirty_from = start_seq;
       DEBUGT("commit extent done, become dirty -- {}", t, *i);
-      if (should_use_no_conflict_publish(t, i->get_type())) {
+      if (i->committer) {
         auto &prior = *i->get_prior_instance();
         prior.dirty_from = start_seq;
-        ceph_assert(i->committer);
         auto &committer = *i->committer;
         committer.sync_dirty_from();
       }
@@ -2156,10 +2226,12 @@ void Cache::complete_commit(
       DEBUGT("commit extent done -- {}", t, *i);
     }
     i->on_delta_write(final_block_start);
-    if (should_use_no_conflict_publish(t, i->get_type())) {
+    if (i->committer) {
       TRACET("committing paddr to prior for {}, prior={}",
         t, *i, *i->prior_instance);
-      assert(i->committer);
+      if (!is_rewrite_transaction(t.get_src())) {
+        ++stats.user_publish_commits;
+      }
       auto &committer = *i->committer;
       committer.commit_state();
       committer.sync_checksum();
@@ -2201,14 +2273,17 @@ void Cache::complete_commit(
     commit_backref_entries(std::move(backref_entries), start_seq);
   }
 
+  // the committers were reset above; publish_handoff is the sticky record
+  // of the publish decision -- the scratch NEXT instances die here while
+  // the priors stay canonical
   t.for_each_finalized_fresh_block([&t](const CachedExtentRef &i) {
-    if (should_use_no_conflict_publish(t, i->get_type())) {
+    if (i->publish_handoff) {
       i->set_invalid(t);
     }
   });
 
   for (auto &i: t.mutated_block_list) {
-    if (should_use_no_conflict_publish(t, i->get_type())) {
+    if (i->publish_handoff) {
         i->set_invalid(t);
     }
   }

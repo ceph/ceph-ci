@@ -75,6 +75,7 @@ LBALeafNode::internal_const_iterator_t LBALeafNode::insert(
     this->pending_for_transaction,
     iter.get_offset(),
     addr);
+  this->mark_structural_delta();
   this->on_modify();
   if (val.pladdr.is_paddr()) {
     val.pladdr = maybe_generate_relative(val.pladdr.get_paddr());

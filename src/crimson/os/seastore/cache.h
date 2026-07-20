@@ -129,6 +129,10 @@ public:
       src == Transaction::src_t::READ &&
       crimson::common::get_conf<bool>(
         "seastore_lazy_read_conflict_detection");
+    const bool user_lba_publish =
+      src == Transaction::src_t::MUTATE &&
+      crimson::common::get_conf<bool>(
+        "seastore_user_lba_no_conflict_publish");
 
     auto ret = boost::intrusive_ptr(new Transaction(
       get_dummy_ordering_handle(),
@@ -139,10 +143,13 @@ public:
       },
       ++next_id,
       cache_hint,
-      lazy_read)
+      lazy_read,
+      user_lba_publish)
     );
-    SUBDEBUGT(seastore_t, "created name={}, source={}, is_weak={}, lazy_read={}",
-              *ret, name, src, is_weak, lazy_read);
+    SUBDEBUGT(seastore_t,
+              "created name={}, source={}, is_weak={}, lazy_read={}, "
+              "user_lba_publish={}",
+              *ret, name, src, is_weak, lazy_read, user_lba_publish);
     assert(!is_weak || src == Transaction::src_t::READ);
     return ret;
   }
@@ -603,6 +610,19 @@ public:
       needs_step_2 = !ret.is_paddr_known;
       }
 
+      if (t.is_lazy_read() && !needs_step_2 && extent.is_stable_ready()) {
+	// No-conflict publish window (or no io pending at all): safe to
+	// proceed without waiting.  stable_view io-waits are staged only
+	// by the publish path -- never by disk loads -- and lazy readers
+	// detect staleness at access time.
+	if (extent.is_pending_io()) {
+	  ++stats.lazy_read_publish_no_waits;
+	}
+	if (needs_touch) {
+	  touch_extent_fully(extent, &t_src, t.get_cache_hint());
+	}
+	return get_extent_iertr::now();
+      }
       auto target_extent = CachedExtentRef(&extent);
       return trans_intr::make_interruptible(
 	extent.wait_io()
@@ -763,6 +783,21 @@ public:
     // also see read_extent_maybe_partial() and get_absent_extent()
     assert(is_logical_type(p_extent->get_type()) ||
            p_extent->is_fully_loaded());
+
+    if (t.is_lazy_read() && !needs_step_2 && p_extent->is_stable_ready()) {
+      // No-conflict publish window (or no io pending at all): safe to
+      // proceed without waiting.  stable_view io-waits are staged only by
+      // the publish path -- never by disk loads -- and lazy readers detect
+      // staleness at access time.
+      if (p_extent->is_pending_io()) {
+        ++stats.lazy_read_publish_no_waits;
+      }
+      if (needs_touch) {
+        touch_extent_fully(*p_extent, &t_src, t.get_cache_hint());
+      }
+      return get_extent_iertr::make_ready_future<CachedExtentRef>(
+        CachedExtentRef(p_extent));
+    }
 
     auto target_extent = CachedExtentRef(p_extent);
     return trans_intr::make_interruptible(
@@ -1951,6 +1986,12 @@ private:
     uint64_t lazy_read_stale_retries = 0;        // eagain thrown on stale access
     uint64_t lazy_read_skipped_registrations = 0; // read-set registrations avoided
     uint64_t lazy_read_cursor_refreshes = 0;      // cursor refreshes by lazy readers
+    uint64_t lazy_read_publish_no_waits = 0;      // io-waits skipped on stable_view
+
+    // user no-conflict publish (seastore_user_lba_no_conflict_publish)
+    uint64_t user_publish_commits = 0;            // LBA nodes published by user txns
+    uint64_t user_publish_eager_conflicts = 0;    // readers conflicted at staging
+    uint64_t user_publish_structural_fallbacks = 0; // classic path on structural delta
 
     rewrite_stats_t trim_rewrites;
     rewrite_stats_t reclaim_rewrites;
@@ -2061,7 +2102,8 @@ private:
    * stage_visibility_handoff()
    * pre-commit staging: publish state to prior (No conflict path).
    *
-   * Used for should_use_no_conflict_publish transactions.
+   * Used for extents taking the no-conflict publish path
+   * (see should_publish_extent).
    *
    * Sets up committer + readers of `prev` (the shared prior) so that publish (state/data + paddr share)
    * can be applied atomically later in complete_commit(). Avoiding readers invalidatation.
@@ -2069,6 +2111,12 @@ private:
 void stage_visibility_handoff(Transaction& t,
                               CachedExtentRef next,
                               CachedExtentRef prev);
+
+  /// Conflict every registered reader of `extent` WITHOUT invalidating it;
+  /// used by invalidate_extent() and by the user no-conflict publish path
+  /// (where the prior stays valid but its content will diverge at
+  /// complete_commit).  Returns the number of transactions conflicted.
+  std::size_t conflict_readers(Transaction& t, CachedExtent& extent);
 
   /// Invalidate extent and mark affected transactions
   void invalidate_extent(Transaction& t, CachedExtent& extent);
