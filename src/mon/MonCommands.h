@@ -779,6 +779,10 @@ COMMAND("osd crush rule create-replicated "
 	"name=class,type=CephString,goodchars=" CLASS_GOODCHARS ",req=false",
 	"create crush rule <name> for replicated pool to start from <root>, replicate across buckets of type <type>, use devices of type <class> (ssd or hdd)",
 	"osd", "rw")
+COMMAND("osd crush rule create-mgr "
+	"name=device_class,type=CephString,req=false",
+	"create crush rule .mgr for manager pool with optional device class override",
+	"osd", "rw")
 COMMAND("osd crush rule create-erasure "
 	"name=name,type=CephString,goodchars=[A-Za-z0-9-_.] "
 	"name=profile,type=CephString,req=false,goodchars=[A-Za-z0-9-_.=]",

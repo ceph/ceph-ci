@@ -515,6 +515,11 @@ private:
 			      const std::string &rule_name,
 			      int *crush_rule,
 			      std::ostream *ss);
+  std::string select_mgr_device_class(
+    const CrushWrapper& crush,
+    const std::string& config_device_class,
+    std::ostream *ss);
+  int create_mgr_crush_rule(std::string device_class, std::ostream *ss);
   bool erasure_code_profile_in_use(
     const mempool::osdmap::map<int64_t, pg_pool_t> &pools,
     const std::string &profile,

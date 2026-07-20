@@ -3011,6 +3011,27 @@ int CrushWrapper::get_rules_by_osd(int osd, set<int> *rules)
   return 0;
 }
 
+string CrushWrapper::get_device_class_for_rule(int rule_id) const
+{
+  set<int> takes;
+  find_takes_by_rule(rule_id, &takes);
+  for(auto& take : takes) {
+    int original_item;
+    int class_id;
+    int res = split_id_class(take, &original_item, &class_id);
+    if (res < 0) {
+      return "";
+    }
+    if (class_id >= 0) {
+      auto it = class_name.find(class_id);
+      if (it != class_name.end()) {
+        return it->second;
+      }
+    }
+  }
+  return "";
+}
+
 bool CrushWrapper::_class_is_dead(int class_id)
 {
   for (auto &p: class_map) {

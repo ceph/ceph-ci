@@ -7804,6 +7804,127 @@ int OSDMonitor::get_erasure_code(const string &erasure_code_profile,
 			  profile, erasure_code, ss);
 }
 
+string OSDMonitor::select_mgr_device_class(
+    const CrushWrapper& crush,
+    const string& config_device_class,
+    ostream *ss)
+{
+  // Config override
+  if (!config_device_class.empty()) {
+    if (crush.class_exists(config_device_class)) {
+      set<int> devices;
+      crush.get_devices_by_class(config_device_class, &devices);
+      if (!devices.empty()) {
+        *ss << "Using configured device class: " << config_device_class;
+        return config_device_class;
+      } else {
+        *ss << "Configured device class " << config_device_class 
+            << " has no OSDs, falling back to auto-detection";
+      }
+    } else {
+      *ss << "Configured device class " << config_device_class 
+          << " does not exist, falling back to auto-detection";
+    }
+  }
+
+  map<string, int> class_osd_counts;
+  for (const auto& p : crush.class_name) {
+    set<int> devices;
+    crush.get_devices_by_class(p.second, &devices);
+    if (!devices.empty()) {
+      class_osd_counts[p.second] = devices.size();
+    }
+  }
+
+  // Single device class
+  if (class_osd_counts.size() == 1) {
+    const string& selected = class_osd_counts.begin()->first;
+    *ss << "Using device class " << selected << " (only existing class)";
+    return selected;
+  }
+
+  // Multiple classe: check bulk pools for majority class
+  map<string, int> bulk_pool_class_counts;
+  for (const auto& p : osdmap.get_pools()) {
+    const pg_pool_t pool = p.second;
+    if (pool.has_flag(pg_pool_t::FLAG_BULK)) {
+      int crush_rule = pool.get_crush_rule();
+      if (crush_rule >= 0) {
+        string device_class = crush.get_device_class_for_rule(crush_rule);
+        if (device_class.size()) {
+          bulk_pool_class_counts[device_class]++;
+        }
+      }
+    }
+  }
+
+  if (!bulk_pool_class_counts.empty()) {
+    auto max_it = std::max_element(
+      bulk_pool_class_counts.begin(),
+      bulk_pool_class_counts.end(),
+      [](const pair<string, int>& a, const pair<string, int>& b) {
+        return a.second < b.second;
+      }
+    );
+    *ss << "Using device class " << max_it->first << " (most used in bulk pools)";
+    return max_it->first;
+  }
+
+  // Fall back to class with most OSDs
+  if (!class_osd_counts.empty()) {
+    auto max_it = std::max_element(
+      class_osd_counts.begin(),
+      class_osd_counts.end(),
+      [](const pair<string, int>& a, const pair<string, int>& b) {
+        return a.second < b.second;
+      }
+    );
+    *ss << "Using device class " << max_it->first << " (most OSDs = " << max_it->second << " )";
+    return max_it->first;
+  }
+
+  *ss << "No device classes with OSDs found, creating rule without device class";
+  return "";
+}
+
+int OSDMonitor::create_mgr_crush_rule(string config_device_class, ostream *ss)
+{
+  CrushWrapper newcrush = _get_pending_crush();
+  
+  if (newcrush.rule_exists(".mgr")) {
+    *ss << "CRUSH rule .mgr already exists";
+    return 0;
+  }
+
+  dout(10) << __func__ << " config_device_class=" << config_device_class << dendl;
+  ostringstream device_ss;
+  string device_class = select_mgr_device_class(newcrush, config_device_class, &device_ss);
+  string failure_domain = newcrush.get_type_name(cct->_conf->osd_crush_chooseleaf_type);
+
+  int r = newcrush.add_simple_rule(
+    ".mgr",
+    "default",
+    failure_domain,
+    device_class,
+    "firstn",                    
+    pg_pool_t::TYPE_REPLICATED,
+    ss
+  );
+  
+  if (r < 0) {
+    return r;
+  }
+
+  pending_inc.crush.clear();
+  newcrush.encode(pending_inc.crush, mon.get_quorum_con_features());
+  
+  *ss << "Created CRUSH rule .mgr";
+  if (!device_class.empty()) {
+    *ss << " with device class " << device_class;
+  }
+  return 0;
+}
+
 int OSDMonitor::check_cluster_features(uint64_t features,
 				       stringstream &ss)
 {
@@ -11940,6 +12061,19 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       pending_inc.crush.clear();
       newcrush.encode(pending_inc.crush, mon.get_quorum_con_features());
     }
+    getline(ss, rs);
+    wait_for_commit(op, new Monitor::C_Command(mon, op, 0, rs,
+					      get_last_committed() + 1));
+    return true;
+
+  } else if (prefix == "osd crush rule create-mgr") {
+    string device_class;
+    cmd_getval(cmdmap, "device_class", device_class);
+    int r = create_mgr_crush_rule(device_class, &ss);
+    if (r < 0) {
+      return r;
+    }
+
     getline(ss, rs);
     wait_for_commit(op, new Monitor::C_Command(mon, op, 0, rs,
 					      get_last_committed() + 1));

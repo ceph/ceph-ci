@@ -1406,6 +1406,7 @@ public:
     const std::map<int32_t, std::map<int32_t, int32_t>>& old_class_bucket);
   int get_rules_by_class(const std::string &class_name, std::set<int> *rules);
   int get_rules_by_osd(int osd, std::set<int> *rules);
+  std::string get_device_class_for_rule(int rule_id) const;
   bool _class_is_dead(int class_id);
   void cleanup_dead_classes();
   int rebuild_roots_with_classes(CephContext *cct);
