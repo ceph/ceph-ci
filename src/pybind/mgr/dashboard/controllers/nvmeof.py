@@ -1897,11 +1897,11 @@ else:
                     namespace_count=count
                 ))
 
-            return model.NamespaceLocationsList(
+            return namedtuple_to_dict(model.NamespaceLocationsList(
                 status=ns_list.status,
                 error_message=ns_list.error_message,
                 locations=location_infos
-            )
+            ))
 
         @ReadPermission
         @Endpoint('PUT', '{nsid}/set_auto_resize')
