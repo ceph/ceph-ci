@@ -11,8 +11,32 @@
 
 #pragma once
 
+#include <algorithm>
+#include <iterator>
+#include <map>
+#include <memory>
+#include <optional>
 #include <ostream>
-#include <ranges>
+#include <utility>
+#include <vector>
+
+ #include <boost/system/error_code.hpp>
+
+#include "include/buffer_fwd.h"
+#include "include/ceph_assert.h"
+#include "include/interval_set.h"
+#include "include/types.h"
+
+#include "common/ceph_context.h"
+#include "common/ceph_mutex.h"
+#include "common/error_code.h"
+#include "common/mini_flat_map.h"
+#include "common/shunique_lock.h"
+
+#include "osd/ECTypes.h"
+#include "osd/osd_types.h"
+
+#include "Objecter.h"
 
 /**
  * @class SplitOp
@@ -288,7 +312,7 @@ class SplitOp {
   Objecter &objecter;
   mini_flat_map<int, SubRead> sub_reads;
   CephContext *cct;
-  
+
   /**
    * Abort flag pattern for split operation creation:
    *
@@ -329,9 +353,9 @@ class SplitOp {
   * @param count Number of sub-operations to create
   */
  SplitOp(Objecter::Op *op, Objecter &objecter, CephContext *cct, int count) : orig_op(op), objecter(objecter), sub_reads(count), cct(cct) {}
- 
+
  virtual ~SplitOp() = default;
- 
+
  /**
   * @brief Complete the split operation by assembling results.
   *
@@ -340,7 +364,7 @@ class SplitOp {
   * the original operation's completion handlers.
   */
  void complete();
- 
+
  /**
   * @brief Prepare a single-chunk operation for direct execution.
   *
@@ -353,7 +377,7 @@ class SplitOp {
   * @param cct CephContext for logging
   */
  static void prepare_single_op(Objecter::Op *op, Objecter &objecter, CephContext *cct);
- 
+
  /**
   * @brief Add version tracking to sub-operations for consistency.
   *
@@ -361,7 +385,7 @@ class SplitOp {
   * internal version queries. If versions mismatch, the operation is retried.
   */
  void protect_torn_reads();
- 
+
  /**
   * @brief Create and initialize a split operation.
   *
@@ -405,7 +429,7 @@ class SplitOp {
 class ECSplitOp : public SplitOp{
  public:
   using SplitOp::SplitOp;
-  
+
   /**
    * @brief Initialize reference_sub_read to primary shard.
    *
@@ -413,7 +437,7 @@ class ECSplitOp : public SplitOp{
    * primary shard. Must be called after _calc_target() populates the acting set.
    */
   void init_reference_sub_read();
-  
+
   /**
    * @brief Assemble sparse read results from EC shards.
    *
@@ -424,7 +448,7 @@ class ECSplitOp : public SplitOp{
    * @return Pair of extent set and assembled buffer
    */
   std::pair<extent_set, bufferlist> assemble_buffer_sparse_read(int ops_index) const override;
-  
+
   /**
    * @brief Assemble dense read results from EC shards.
    *
@@ -435,7 +459,7 @@ class ECSplitOp : public SplitOp{
    * @param ops_index Index of the operation in the operation list
    */
   void assemble_buffer_read(bufferlist &bl_out, int ops_index) const override;
-  
+
   /**
    * @brief Initialize read sub-operations for EC pool.
    *
@@ -448,7 +472,7 @@ class ECSplitOp : public SplitOp{
    * @param ops_index Index of the operation in the operation list
    */
   void init_read(OSDOp &op, bool sparse, int ops_index) override;
-  
+
   /**
    * @brief Check for version mismatches across EC shards.
    *
@@ -459,7 +483,7 @@ class ECSplitOp : public SplitOp{
    * @return true if versions mismatch, false if consistent
    */
   bool version_mismatch() const override;
-  
+
   ~ECSplitOp() {
     complete();
   }
@@ -485,7 +509,7 @@ class ECSplitOp : public SplitOp{
 class ReplicaSplitOp : public SplitOp {
  public:
   using SplitOp::SplitOp;
-  
+
   /**
    * @brief Assemble sparse read results from replicas.
    *
@@ -496,7 +520,7 @@ class ReplicaSplitOp : public SplitOp {
    * @return Pair of extent set and assembled buffer
    */
   std::pair<extent_set, bufferlist> assemble_buffer_sparse_read(int ops_index) const override;
-  
+
   /**
    * @brief Assemble dense read results from replicas.
    *
@@ -507,7 +531,7 @@ class ReplicaSplitOp : public SplitOp {
    * @param ops_index Index of the operation in the operation list
    */
   void assemble_buffer_read(bufferlist &bl_out, int ops_index) const override;
-  
+
   /**
    * @brief Initialize read sub-operations for replicated pool.
    *
@@ -520,7 +544,7 @@ class ReplicaSplitOp : public SplitOp {
    * @param ops_index Index of the operation in the operation list
    */
   void init_read(OSDOp &op, bool sparse, int ops_index) override;
-  
+
   /**
    * @brief Check for version mismatches across replicas.
    *
@@ -531,7 +555,7 @@ class ReplicaSplitOp : public SplitOp {
    * @return true if versions mismatch, false if consistent
    */
   bool version_mismatch() const override;
-  
+
   void init_reference_sub_read() override;
 
   /**
@@ -551,9 +575,8 @@ class ReplicaSplitOp : public SplitOp {
    */
   ReplicaSplitOp(Objecter::Op *op, Objecter &objecter, CephContext *cct, int pool_size) :
     SplitOp(op, objecter, cct, pool_size) {}
-  
+
   ~ReplicaSplitOp() {
     complete();
   }
 };
-

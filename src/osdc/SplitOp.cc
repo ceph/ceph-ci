@@ -13,7 +13,6 @@
 
 #include "osdc/SplitOp.h"
 #include "osdc/Objecter.h"
-#include "osdc/SplitOp.h"
 #include "osd/osd_types.h"
 
 using namespace std::literals;
