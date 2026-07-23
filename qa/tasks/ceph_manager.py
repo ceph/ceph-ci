@@ -2232,6 +2232,8 @@ class CephManager:
     def create_pool(self, pool_name, pg_num=16,
                     erasure_code_profile_name=None,
                     erasure_code_crush_rule_name=None,
+                    erasure=False,
+                    num_zones=1,
                     min_size=None,
                     erasure_code_use_overwrites=False):
         """
@@ -2253,14 +2255,22 @@ class CephManager:
                 cmd_args = ['osd', 'pool', 'create', 
                             pool_name, str(pg_num), 
                             str(pg_num), 'erasure', 
-                            erasure_code_profile_name]
+                            erasure_code_profile_name,
+                            '--num_zones', str(num_zones)]
 
                 if erasure_code_crush_rule_name:
                     cmd_args.extend([erasure_code_crush_rule_name])
                 self.raw_cluster_cmd(*cmd_args)
+            elif erasure:
+                cmd_args = ['osd', 'pool', 'create',
+                            pool_name, str(pg_num),
+                            str(pg_num), 'erasure',
+                            '--num_zones', str(num_zones)]
+                self.raw_cluster_cmd(*cmd_args)
             else:
                 self.raw_cluster_cmd('osd', 'pool', 'create',
-                                     pool_name, str(pg_num))
+                                     pool_name, str(pg_num),
+                                     '--num_zones', str(num_zones))
             if min_size is not None:
                 self.raw_cluster_cmd(
                     'osd', 'pool', 'set', pool_name,

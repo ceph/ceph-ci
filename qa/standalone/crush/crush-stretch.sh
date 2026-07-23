@@ -182,10 +182,6 @@ function TEST_pool_create_stretch_ec() {
     ceph osd crush move dc1 root=default
     ceph osd crush move dc2 root=default
 
-    ceph mon set_location a datacenter=dc1
-    ceph mon set_location b datacenter=dc2
-    ceph mon set_location c datacenter=dc3
-
     ceph osd erasure-code-profile set stretch_ec_profile plugin=jerasure k=2 m=1 crush-num-osd-failure-domains=2
     ceph osd pool create data0 erasure stretch_ec_profile --num-zones 2 2>&1 | grep "Error EINVAL: zone dc1 has only 0 items of type host" || return 1
 
@@ -596,12 +592,8 @@ function TEST_stretch_replica_device_class_pools() {
 
     ceph osd pool create data0 replicated --rule stretch_ssd --num-zones 2 || return 1
 
-<<<<<<< HEAD
-    ceph osd pool create pool_hdd replicated --rule stretch_hdd --num-zones 2 || return 1
-=======
     ceph osd pool create pool_hdd
     ceph osd pool stretch set pool_hdd 2 2 datacenter stretch_hdd 4 2 || return 1
->>>>>>> ec660022bed (qa/standalone: Add osd stretch set tests)
 
     ceph osd pool get pool_ssd crush_rule | grep "stretch_ssd" || return 1
     ceph osd pool get pool_hdd crush_rule | grep "stretch_hdd" || return 1
@@ -756,27 +748,11 @@ function TEST_stretch_diff_bucket_barrier() {
     # Wait for stretch mode to be fully committed before testing validation
     ceph mon dump | grep "stretch_mode_enabled 1" || return 1
 
-<<<<<<< HEAD
     # Try to create pool with datacenter failure domain when only zones exist in CRUSH
-    ceph osd pool create pool_dc replicated --zone-failure-domain=datacenter --num-zones 2 --class=ssd 2>&1 | grep "Error EINVAL: number of zones 0 for type datacenter is less than num_failure_domains 2" || return 1
-=======
-<<<<<<< HEAD
-    ceph osd pool create pool_dc replicated --zone-failure-domain=datacenter --num-zones 2 --class=ssd 2>&1 | grep "Error EINVAL: CRUSH rule 2 is stretched across datacenter instead of zone" || return 1
+    ceph osd pool create pool_dc replicated --zone-failure-domain=datacenter --num-zones 2 --class=ssd 2>&1 | grep "Error EINVAL: number of zones 0 for type datacenter is not equal to num_failure_domains 2" || return 1
 
     ceph osd pool create pool_dc || return 1
     ceph osd pool stretch set pool_dc 2 2 datacenter pool_dc 4 2 --yes-i-really-mean-it 2>&1 | grep "Error EINVAL: CRUSH rule 2 is stretched across datacenter instead of zone" || return 1
-=======
-<<<<<<< HEAD
-    # Try to create pool with datacenter failure domain when only zones exist in CRUSH
-    ceph osd pool create pool_dc replicated --zone-failure-domain=datacenter --num-zones 2 --class=ssd 2>&1 | grep "Error EINVAL: number of zones 0 for type datacenter is less than num_failure_domains 2" || return 1
-=======
-    ceph osd pool create pool_dc replicated --zone-failure-domain=datacenter --zones=2 --class=ssd 2>&1 | grep "Error EINVAL: CRUSH rule 2 is stretched across datacenter instead of zone" || return 1
-
-    ceph osd pool create pool_dc || return 1
-    ceph osd pool stretch set pool_dc 4 2 datacenter pool_dc 3 1 2>&1 | grep "Error EINVAL: CRUSH rule 2 is stretched across datacenter instead of zone" || return 1
->>>>>>> e3b0f83aca4 (qa/standalone: Add osd stretch set tests)
->>>>>>> 1c2f1e7f66b (qa/standalone: Add osd stretch set tests)
->>>>>>> ec660022bed (qa/standalone: Add osd stretch set tests)
 }
 
 main crush-stretch "$@"
