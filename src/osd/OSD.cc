@@ -3917,6 +3917,14 @@ int OSD::init()
 
   monc->set_want_keys(CEPH_ENTITY_TYPE_MON | CEPH_ENTITY_TYPE_OSD
                       | CEPH_ENTITY_TYPE_MGR);
+  {
+    // Report orch service membership for central config service: masks.
+    string osdspec_affinity;
+    int ar = store->read_meta("osdspec_affinity", &osdspec_affinity);
+    if (ar >= 0 && !osdspec_affinity.empty()) {
+      monc->set_service_name(string("osd.") + osdspec_affinity);
+    }
+  }
   r = monc->init();
   if (r < 0)
     goto out;

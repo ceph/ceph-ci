@@ -62,7 +62,10 @@ Where
 
 * `type` is a daemon type (`osd`, `mon`, `mds`, `mgr`, `client`)
 * `id` is a daemon id (e.g., `0`, `foo`), such that `$type.$id` is something like `osd.123` or `mds.foo`)
-* `mask` restricts who the option applies to, and can take two forms:
+* `mask` restricts who the option applies to, and can take three forms:
 
   #. `$crush_type:$crush_value`.  For example, `rack:foorack`
   #. `class:$classname`, in reference to CRUSH device classes (e.g., `ssd`)
+  #. `service:$service_id_or_name`, in reference to an orchestrator service
+     (e.g., `osd_node4_16384` or `osd.osd_node4_16384`).  For OSDs, membership
+     is based on `osdspec_affinity`.
