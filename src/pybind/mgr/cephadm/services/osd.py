@@ -95,7 +95,8 @@ class OSDService(CephService):
                                  host: str, cmds: List[str], replace_osd_ids: List[str],
                                  env_vars: Optional[List[str]] = None) -> str:
         for cmd in cmds:
-            out, err, code = await self._run_ceph_volume_command(host, cmd, env_vars=env_vars)
+            out, err, code = await self._run_ceph_volume_command(
+                host, cmd, env_vars=env_vars, osd_config=drive_group.config)
             if code == 1 and ', it is already prepared' in '\n'.join(err):
                 # HACK: when we create against an existing LV, ceph-volume
                 # returns an error and the above message.  To make this
@@ -384,7 +385,8 @@ class OSDService(CephService):
         return matching_specs
 
     async def _run_ceph_volume_command(self, host: str,
-                                       cmd: str, env_vars: Optional[List[str]] = None
+                                       cmd: str, env_vars: Optional[List[str]] = None,
+                                       osd_config: Optional[Dict[str, str]] = None
                                        ) -> Tuple[List[str], List[str], int]:
         self.mgr.inventory.assert_host(host)
 
@@ -394,8 +396,18 @@ class OSDService(CephService):
             'entity': 'client.bootstrap-osd',
         })
 
+        # Include DriveGroup config in the conf mounted for ceph-volume so
+        # create-time options (e.g. bluestore_min_alloc_size) are visible to
+        # ceph-osd --mkfs. Runtime options are also listed; mon service: mask
+        # still applies them after the OSD starts.
+        config = self.mgr.get_minimal_ceph_conf()
+        if osd_config:
+            config += '\n[osd]\n'
+            for k, v in osd_config.items():
+                config += f'{k} = {v}\n'
+
         j = json.dumps({
-            'config': self.mgr.get_minimal_ceph_conf(),
+            'config': config,
             'keyring': keyring,
         })
 

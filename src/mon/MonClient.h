@@ -445,6 +445,7 @@ public:
 private:
   // mon subscriptions
   MonSub sub;
+  std::string service_name;  ///< optional orch service name sent with subscribe
   void _renew_subs();
   void handle_subscribe_ack(MMonSubscribeAck* m);
 
@@ -491,6 +492,16 @@ public:
   }
   LogClient *get_log_client() {
     return log_client;
+  }
+
+  /// orch service name reported on subscribe (e.g. osd.foo from osdspec_affinity)
+  void set_service_name(const std::string& name) {
+    std::lock_guard l(monc_lock);
+    service_name = name;
+  }
+  std::string get_service_name() const {
+    std::lock_guard l(monc_lock);
+    return service_name;
   }
 
   int build_initial_monmap();

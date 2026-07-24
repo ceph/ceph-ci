@@ -323,7 +323,7 @@ bool ConfigMonitor::preprocess_command(MonOpRequestRef op)
       crush_location,
       mon.osdmon()->osdmap.crush.get(),
       device_class,
-      &src);
+      &src); // service_name unknown for offline config get
 
     if (cmd_getval(cmdmap, "key", name)) {
       name = ConfFile::normalize_key_name(name);
@@ -896,12 +896,15 @@ bool ConfigMonitor::refresh_config(MonSession *s)
   }
 
   dout(20) << __func__ << " " << s->entity_name << " crush " << crush_location
-	   << " device_class " << device_class << dendl;
+	   << " device_class " << device_class
+	   << " service_name " << s->service_name << dendl;
   auto out = config_map.generate_entity_map(
     s->entity_name,
     crush_location,
     osdmap.crush.get(),
-    device_class);
+    device_class,
+    nullptr,
+    s->service_name);
 
   if (out == s->last_config && s->any_config) {
     dout(20) << __func__ << " no change, " << out << dendl;
