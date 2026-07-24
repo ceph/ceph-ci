@@ -23,7 +23,7 @@ function run() {
 
     export CEPH_MON="127.0.0.1:7102" # git grep '\<7102\>' : there must be only one
     export CEPH_ARGS
-    CEPH_ARGS+="--fsid=$(uuidgen) --auth-supported=none "
+    CEPH_ARGS+="--fsid=$(uuidgen) --auth_cluster_required=none --auth_service_required=none --auth_client_required=none "
     CEPH_ARGS+="--mon-host=$CEPH_MON "
 
     local funcs=${@:-$(set | sed -n -e 's/^\(TEST_[0-9a-z_]*\) .*/\1/p')}
@@ -108,7 +108,7 @@ function TEST_mon_add_to_single_mon() {
     MONA=127.0.0.1:7117 # git grep '\<7117\>' : there must be only one
     MONB=127.0.0.1:7118 # git grep '\<7118\>' : there must be only one
     CEPH_ARGS_orig=$CEPH_ARGS
-    CEPH_ARGS="--fsid=$fsid --auth-supported=none "
+    CEPH_ARGS="--fsid=$fsid --auth_cluster_required=none --auth_service_required=none --auth_client_required=none "
     CEPH_ARGS+="--mon-initial-members=a "
     CEPH_ARGS+="--mon-host=$MONA "
 
@@ -168,7 +168,7 @@ function TEST_mon_features() {
     MONB=127.0.0.1:7128 # git grep '\<7128\>' ; there must be only one
     MONC=127.0.0.1:7129 # git grep '\<7129\>' ; there must be only one
     CEPH_ARGS_orig=$CEPH_ARGS
-    CEPH_ARGS="--fsid=$fsid --auth-supported=none "
+    CEPH_ARGS="--fsid=$fsid --auth_cluster_required=none --auth_service_required=none --auth_client_required=none "
     CEPH_ARGS+="--mon-host=$MONA,$MONB,$MONC "
     CEPH_ARGS+="--mon-debug-no-initial-persistent-features "
     CEPH_ARGS+="--mon-debug-no-require-umbrella"
