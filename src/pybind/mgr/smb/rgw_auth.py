@@ -33,9 +33,9 @@ class RGWAuthorizer:
         if not caps:
             caps = [
                 'mon',
-                'allow *',  # Required for pool creation on first write to empty RGW buckets
+                'profile rgw',  # covers pool creation on first write to empty RGW buckets
                 'osd',
-                'allow rwx tag rgw *=*',
+                'profile rgw',
             ]
 
         cmd = {
