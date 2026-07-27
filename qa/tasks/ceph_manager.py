@@ -2236,6 +2236,8 @@ class CephManager:
     def create_pool(self, pool_name, pg_num=16,
                     erasure_code_profile_name=None,
                     erasure_code_crush_rule_name=None,
+                    pool_type='replicated',
+                    num_zones=1,
                     min_size=None,
                     erasure_code_use_overwrites=False,
                     num_zones=None,
@@ -2260,11 +2262,11 @@ class CephManager:
             assert pool_name not in self.pools
             self.log("creating pool_name %s" % (pool_name,))
             if erasure_code_profile_name:
-                cmd_args = ['osd', 'pool', 'create',
-                            pool_name, str(pg_num),
-                            str(pg_num), 'erasure',
-                            erasure_code_profile_name]
-
+                cmd_args = ['osd', 'pool', 'create', 
+                            pool_name, str(pg_num), 
+                            str(pg_num), 'erasure', 
+                            erasure_code_profile_name,
+                            '--num_zones', str(num_zones)]
                 if erasure_code_crush_rule_name:
                     cmd_args.extend([erasure_code_crush_rule_name])
 
@@ -2272,6 +2274,12 @@ class CephManager:
                     cmd_args.extend(['--num_zones', str(num_zones)])
                     if osd_failure_domain is not None:
                         cmd_args.extend(['--osd_failure_domain', osd_failure_domain])
+                self.raw_cluster_cmd(*cmd_args)
+            elif pool_type == 'erasure':
+                cmd_args = ['osd', 'pool', 'create',
+                            pool_name, str(pg_num),
+                            str(pg_num), 'erasure',
+                            '--num_zones', str(num_zones)]
                 self.raw_cluster_cmd(*cmd_args)
             else:
                 cmd_args = ['osd', 'pool', 'create',

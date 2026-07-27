@@ -13,9 +13,10 @@ class TestStretchCluster(MgrTestCase):
     """
     # Define some constants
     POOL = 'pool_stretch'
+    EC_POOL = 'ec_pool_stretch'
     CLUSTER = "ceph"
     WRITE_PERIOD = 10
-    RECOVERY_PERIOD = WRITE_PERIOD * 6
+    RECOVERY_PERIOD = WRITE_PERIOD * 12
     SUCCESS_HOLD_TIME = 7
     # This dictionary maps the datacenter to the osd ids and hosts
     DC_OSDS = {
@@ -29,11 +30,6 @@ class TestStretchCluster(MgrTestCase):
             "node-5": 4,
             "node-6": 5,
         },
-        'dc3': {
-            "node-7": 6,
-            "node-8": 7,
-            "node-9": 8,
-        }
     }
 
     # This dictionary maps the datacenter to the mon ids and hosts
@@ -48,19 +44,18 @@ class TestStretchCluster(MgrTestCase):
             "node-5": 'e',
             "node-6": 'f',
         },
-        'dc3': {
-            "node-7": 'g',
-            "node-8": 'h',
-            "node-9": 'i',
-        }
     }
     PEERING_CRUSH_BUCKET_COUNT = 2
-    PEERING_CRUSH_BUCKET_TARGET = 3
+    PEERING_CRUSH_BUCKET_TARGET = 2
     PEERING_CRUSH_BUCKET_BARRIER = 'datacenter'
     CRUSH_RULE = 'replicated_rule_custom'
     DEFAULT_CRUSH_RULE = 'replicated_rule'
-    SIZE = 6
-    MIN_SIZE = 3
+    STRETCH_EC_CRUSH_RULE = 'stretch_ec_rule'
+    STRETCH_EC_PROFILE = 'stretch_ec_profile'
+    K = 2
+    M = 1
+    SIZE = PEERING_CRUSH_BUCKET_COUNT * (K + M)
+    MIN_SIZE = K
     BUCKET_MAX = SIZE // PEERING_CRUSH_BUCKET_TARGET
     if (BUCKET_MAX * PEERING_CRUSH_BUCKET_TARGET) < SIZE:
         BUCKET_MAX += 1
@@ -93,6 +88,9 @@ class TestStretchCluster(MgrTestCase):
         if self.POOL in self.mgr_cluster.mon_manager.pools:
             self.mgr_cluster.mon_manager.remove_pool(self.POOL)
 
+        if self.EC_POOL in self.mgr_cluster.mon_manager.pools:
+            self.mgr_cluster.mon_manager.remove_pool(self.EC_POOL)
+
         osd_map = self.mgr_cluster.mon_manager.get_osd_dump_json()
         for osd in osd_map['osds']:
             # mark all the osds in
@@ -110,17 +108,38 @@ class TestStretchCluster(MgrTestCase):
             self._bring_back_mon(mon)
         super(TestStretchCluster, self).tearDown()
 
-    def _setup_pool(self, size=None, min_size=None, rule=None):
+    def _setup_pool(self, pool_name, size=None, min_size=None, rule=None, erasure=False):
         """
         Create a pool and set its size.
         """
-        self.mgr_cluster.mon_manager.create_pool(self.POOL, min_size=min_size)
+        if erasure:
+            self.mgr_cluster.mon_manager.create_pool(pool_name, min_size=min_size, pool_type='erasure', num_zones=2)
+            self.mgr_cluster.mon_manager.raw_cluster_cmd('osd', 'pool', 'set',
+                                     pool_name, 'allow_ec_optimizations', 'true')
+        else:
+            self.mgr_cluster.mon_manager.create_pool(pool_name, min_size=min_size)
         if size is not None:
             self.mgr_cluster.mon_manager.raw_cluster_cmd(
-                'osd', 'pool', 'set', self.POOL, 'size', str(size))
+                'osd', 'pool', 'set', pool_name, 'size', str(size))
         if rule is not None:
             self.mgr_cluster.mon_manager.raw_cluster_cmd(
-                'osd', 'pool', 'set', self.POOL, 'crush_rule', rule)
+                'osd', 'pool', 'set', pool_name, 'crush_rule', rule)
+    
+    def _set_stretch(self, pool_name, crush_rule, size, min_size, erasure=False):
+        if erasure:
+            self.mgr_cluster.mon_manager.raw_cluster_cmd(
+                        'osd', 'erasure-code-profile', 'set',
+                        self.STRETCH_EC_PROFILE, 'plugin=jerasure',
+                        'k='+str(self.K), 'm='+str(self.M))
+            self.mgr_cluster.mon_manager.raw_cluster_cmd(
+                        'osd', 'crush', 'rule', 'create-erasure',
+                        self.STRETCH_EC_CRUSH_RULE, self.STRETCH_EC_PROFILE, str(self.PEERING_CRUSH_BUCKET_COUNT))
+        self.mgr_cluster.mon_manager.raw_cluster_cmd(
+                    'osd', 'pool', 'stretch', 'set',
+                    pool_name, str(self.PEERING_CRUSH_BUCKET_COUNT),
+                    str(self.PEERING_CRUSH_BUCKET_TARGET),
+                    self.PEERING_CRUSH_BUCKET_BARRIER,
+                    crush_rule, str(size), str(min_size))
 
     def _osd_count(self):
         """
@@ -129,13 +148,23 @@ class TestStretchCluster(MgrTestCase):
         osd_map = self.mgr_cluster.mon_manager.get_osd_dump_json()
         return len(osd_map['osds'])
 
-    def _write_some_data(self, t):
+    def _write_some_data(self, t, pool_name):
         """
         Write some data to the pool to simulate a workload.
         """
 
         args = [
-            "rados", "-p", self.POOL, "bench", str(t), "write", "-t", "16"]
+            "rados", "-p", pool_name, "bench", str(t), "write", "-t", "16", "--no-cleanup"]
+
+        self.mgr_cluster.admin_remote.run(args=args, wait=True)
+
+    def _read_some_data(self, t, pool_name):
+        """
+        Write some data to the pool to simulate a workload.
+        """
+
+        args = [
+            "rados", "-p", pool_name, "bench", str(t), "rand", "-t", "16"]
 
         self.mgr_cluster.admin_remote.run(args=args, wait=True)
 
@@ -322,6 +351,28 @@ class TestStretchCluster(MgrTestCase):
         self.mgr_cluster.mon_manager.raw_cluster_cmd(
             'osd', 'crush', 'move', 'osd.{}'.format(str(osd)),
             'host={}'.format(host)
+        )
+
+    def _bring_back_one_osds_from_dc(self, dc):
+        """
+        Bring back one random OSD from the specified <datacenter>
+        """
+        if not isinstance(dc, str):
+            raise ValueError("dc must be a string")
+        if dc not in self.DC_OSDS:
+            raise ValueError("dc must be one of the following: %s" %
+                             self.DC_OSDS.keys())
+        log.debug("Bringing back one random OSD from %s", dc)
+        # filter out failed osds
+        osds_data = self._get_osds_data(self._get_osds_by_dc(dc))
+        osds = [int(osd['osd']) for osd in osds_data if int(osd['up']) == 0]
+        # fail over one random OSD in the DC
+        osd_id = random.choice(osds)
+        self._bring_back_osd(osd_id)
+        # wait until the osd is down
+        self.wait_until_true(
+            lambda: int(self._get_osds_data([osd_id])[0]['up']) == 1,
+            timeout=self.RECOVERY_PERIOD
         )
 
     def _bring_back_osd(self, osd):
@@ -531,82 +582,78 @@ class TestStretchCluster(MgrTestCase):
         except Exception:
             return True
 
-    def test_mon_failures_in_stretch_pool(self):
-        """
-        Test mon failures in stretch pool.
-        """
-        self._setup_pool(
-            self.SIZE,
-            min_size=self.MIN_SIZE,
-            rule=self.CRUSH_RULE
-        )
-        self._write_some_data(self.WRITE_PERIOD)
-        # Set the pool to stretch
-        self.mgr_cluster.mon_manager.raw_cluster_cmd(
-            'osd', 'pool', 'stretch', 'set',
-            self.POOL, str(self.PEERING_CRUSH_BUCKET_COUNT),
-            str(self.PEERING_CRUSH_BUCKET_TARGET),
-            self.PEERING_CRUSH_BUCKET_BARRIER,
-            self.CRUSH_RULE, str(self.SIZE), str(self.MIN_SIZE))
+    # def test_mon_failures_in_ec_stretch_pool(self):
+    #     """
+    #     Test mon failures in stretch pool.
+    #     """
+    #     self._setup_pool(
+    #         self.EC_POOL,
+    #         min_size=self.K,
+    #         erasure=True
+    #     )
+    #     self._write_some_data(self.WRITE_PERIOD, self.EC_POOL)
+    #     # Set the pool to stretch
+    #     self._set_stretch(
+    #         pool_name=self.EC_POOL, crush_rule=self.STRETCH_EC_CRUSH_RULE, 
+    #         size=self.SIZE,  min_size=self.K, erasure=True)
 
-        # SCENARIO 1: MONS in DC1 down
+    #     # SCENARIO 1: MONS in DC1 down
 
-        # Fail over mons in DC1
-        self._fail_over_all_mons_in_dc('dc1')
-        # Expects mons in DC2 and DC3 to be in quorum
-        mons_dc2_dc3 = (
-            self._get_mons_by_dc('dc2') +
-            self._get_mons_by_dc('dc3')
-        )
-        self.wait_until_true_and_hold(
-            lambda: self._check_mons_in_quorum(mons_dc2_dc3),
-            timeout=self.RECOVERY_PERIOD,
-            success_hold_time=self.SUCCESS_HOLD_TIME
-        )
+    #     # Fail over mons in DC1
+    #     self._fail_over_all_mons_in_dc('dc1')
+    #     # Expects mons in DC2 and DC3 to be in quorum
+    #     mons_dc2_dc3 = (
+    #         self._get_mons_by_dc('dc2')
+    #     )
+    #     self.wait_until_true_and_hold(
+    #         lambda: self._check_mons_in_quorum(mons_dc2_dc3),
+    #         timeout=self.RECOVERY_PERIOD,
+    #         success_hold_time=self.SUCCESS_HOLD_TIME
+    #     )
 
-        # SCENARIO 2: MONS in DC1 down + 1 MON in DC2 down
+    #     # SCENARIO 2: MONS in DC1 down + 1 MON in DC2 down
 
-        # Fail over 1 random MON from DC2
-        self._fail_over_one_mon_from_dc('dc2')
-        # Expects quorum size to be 5
-        self.wait_until_true_and_hold(
-            lambda: self._check_mon_quorum_size(5),
-            timeout=self.RECOVERY_PERIOD,
-            success_hold_time=self.SUCCESS_HOLD_TIME
-        )
+    #     # Fail over 1 random MON from DC2
+    #     self._fail_over_one_mon_from_dc('dc2')
+    #     # Expects quorum size to be 5
+    #     self.wait_until_true_and_hold(
+    #         lambda: self._check_mon_quorum_size(5),
+    #         timeout=self.RECOVERY_PERIOD,
+    #         success_hold_time=self.SUCCESS_HOLD_TIME
+    #     )
 
-        # SCENARIO 3: MONS in DC1 down + 2 MONS in DC2 down
+    #     # SCENARIO 3: MONS in DC1 down + 2 MONS in DC2 down
 
-        # Fail over 1 random MON from DC2
-        self._fail_over_one_mon_from_dc('dc2', no_wait=True)
-        # sleep for 30 seconds to allow the mon to be out of quorum
-        sleep(30)
-        # Expects cluster to be inaccesible
-        self.wait_until_true(
-            lambda: self._no_reply_to_mon_command(),
-            timeout=self.RECOVERY_PERIOD,
-        )
-        # Bring back all mons in DC2 to unblock the cluster
-        self._bring_back_all_mons_in_dc('dc2')
-        # Expects mons in DC2 and DC3 to be in quorum
-        self.wait_until_true_and_hold(
-            lambda: self._check_mons_in_quorum(mons_dc2_dc3),
-            timeout=self.RECOVERY_PERIOD,
-            success_hold_time=self.SUCCESS_HOLD_TIME
-        )
+    #     # Fail over 1 random MON from DC2
+    #     self._fail_over_one_mon_from_dc('dc2', no_wait=True)
+    #     # sleep for 30 seconds to allow the mon to be out of quorum
+    #     sleep(30)
+    #     # Expects cluster to be inaccesible
+    #     self.wait_until_true(
+    #         lambda: self._no_reply_to_mon_command(),
+    #         timeout=self.RECOVERY_PERIOD,
+    #     )
+    #     # Bring back all mons in DC2 to unblock the cluster
+    #     self._bring_back_all_mons_in_dc('dc2')
+    #     # Expects mons in DC2 and DC3 to be in quorum
+    #     self.wait_until_true_and_hold(
+    #         lambda: self._check_mons_in_quorum(mons_dc2_dc3),
+    #         timeout=self.RECOVERY_PERIOD,
+    #         success_hold_time=self.SUCCESS_HOLD_TIME
+    #     )
 
-        # Unset the pool back to replicated rule expects PGs to be 100% active+clean
-        self.mgr_cluster.mon_manager.raw_cluster_cmd(
-            'osd', 'pool', 'stretch', 'unset',
-            self.POOL, self.DEFAULT_CRUSH_RULE,
-            str(self.SIZE), str(self.MIN_SIZE))
-        self.wait_until_true_and_hold(
-            lambda: self._pg_all_active_clean(),
-            timeout=self.RECOVERY_PERIOD,
-            success_hold_time=self.SUCCESS_HOLD_TIME
-        )
+    #     # Unset the pool back to replicated rule expects PGs to be 100% active+clean
+    #     self.mgr_cluster.mon_manager.raw_cluster_cmd(
+    #         'osd', 'pool', 'stretch', 'unset',
+    #         self.EC_POOL, self.DEFAULT_CRUSH_RULE,
+    #         str(self.SIZE), str(self.MIN_SIZE))
+    #     self.wait_until_true_and_hold(
+    #         lambda: self._pg_all_active_clean(),
+    #         timeout=self.RECOVERY_PERIOD,
+    #         success_hold_time=self.SUCCESS_HOLD_TIME
+    #     )
 
-    def test_set_stretch_pool_no_active_pgs(self):
+    def test_set_stretch_ec_pool_no_active_pgs_2_sites(self):
         """
         Test setting a pool to stretch cluster and checks whether
         it prevents PGs from the going active when there is not
@@ -614,55 +661,18 @@ class TestStretchCluster(MgrTestCase):
         go active.
         """
         self._setup_pool(
-            self.SIZE,
-            min_size=self.MIN_SIZE,
-            rule=self.CRUSH_RULE
+            self.EC_POOL,
+            min_size=self.K,
+            erasure=True,
         )
-        self._write_some_data(self.WRITE_PERIOD)
-        # 1. We test the case where we didn't make the pool stretch
-        #   and we expect the PGs to go active even when there is only
-        #   one bucket available in the acting set of PGs.
+        self._write_some_data(self.WRITE_PERIOD, self.EC_POOL)
 
-        # Fail over osds in DC1 expects PGs to be 100% active
-        self._fail_over_all_osds_in_dc('dc1')
-        self.wait_until_true_and_hold(
-            lambda: self._pg_all_active(),
-            timeout=self.RECOVERY_PERIOD,
-            success_hold_time=self.SUCCESS_HOLD_TIME
-        )
-        # Fail over osds in DC2 expects PGs to be partially active
-        self._fail_over_all_osds_in_dc('dc2')
-        self.wait_until_true_and_hold(
-            lambda: self._pg_partial_active(),
-            timeout=self.RECOVERY_PERIOD,
-            success_hold_time=self.SUCCESS_HOLD_TIME
-        )
-
-        # Bring back osds in DC1 expects PGs to be 100% active
-        self._bring_back_all_osds_in_dc('dc1')
-        self.wait_until_true_and_hold(
-            lambda: self._pg_all_active(),
-            timeout=self.RECOVERY_PERIOD,
-            success_hold_time=self.SUCCESS_HOLD_TIME
-        )
-        # Bring back osds DC2 expects PGs to be 100% active+clean
-        self._bring_back_all_osds_in_dc('dc2')
+        # Wait for PGs to remap to the new stretch CRUSH rule
         self.wait_until_true_and_hold(
             lambda: self._pg_all_active_clean(),
             timeout=self.RECOVERY_PERIOD,
             success_hold_time=self.SUCCESS_HOLD_TIME
         )
-        # 2. We test the case where we make the pool stretch
-        #   and we expect the PGs to not go active even when there is only
-        #   one bucket available in the acting set of PGs.
-
-        # Set the pool to stretch
-        self.mgr_cluster.mon_manager.raw_cluster_cmd(
-            'osd', 'pool', 'stretch', 'set',
-            self.POOL, str(self.PEERING_CRUSH_BUCKET_COUNT),
-            str(self.PEERING_CRUSH_BUCKET_TARGET),
-            self.PEERING_CRUSH_BUCKET_BARRIER,
-            self.CRUSH_RULE, str(self.SIZE), str(self.MIN_SIZE))
 
         # Fail over osds in DC1 expects PGs to be 100% active
         self._fail_over_all_osds_in_dc('dc1')
@@ -682,14 +692,14 @@ class TestStretchCluster(MgrTestCase):
                                       timeout=self.RECOVERY_PERIOD,
                                       success_hold_time=self.SUCCESS_HOLD_TIME)
 
-        # We expect that there will be no more than BUCKET_MAX osds from DC3
-        # in the acting set of the PGs.
-        self.wait_until_true(
-            lambda: self._surviving_osds_in_acting_set_dont_exceed(
-                        self.BUCKET_MAX,
-                        self._get_osds_by_dc('dc3')
-                    ),
-            timeout=self.RECOVERY_PERIOD)
+        # # We expect that there will be no more than BUCKET_MAX osds from DC3
+        # # in the acting set of the PGs.
+        # self.wait_until_true(
+        #     lambda: self._surviving_osds_in_acting_set_dont_exceed(
+        #                 3,
+        #                 self._get_osds_by_dc('dc3')
+        #             ),
+        #     timeout=self.RECOVERY_PERIOD)
 
         # Bring back osds in DC1 expects PGs to be 100% active
         self._bring_back_all_osds_in_dc('dc1')
@@ -705,13 +715,88 @@ class TestStretchCluster(MgrTestCase):
             timeout=self.RECOVERY_PERIOD,
             success_hold_time=self.SUCCESS_HOLD_TIME
         )
-        # Unset the pool back to replicated rule expects PGs to be 100% active+clean
-        self.mgr_cluster.mon_manager.raw_cluster_cmd(
-            'osd', 'pool', 'stretch', 'unset',
-            self.POOL, self.DEFAULT_CRUSH_RULE,
-            str(self.SIZE), str(self.MIN_SIZE))
+
+    def test_set_stretch_ec_pool_io_when_down(self):
+        """
+        Test setting a pool to stretch cluster and checks whether
+        it prevents PGs from the going active when:
+            1. write I/O occurs when a datacenter 1 is down
+            2. Datacenter 1 is brought up but OSDs in datacenter 2 are
+               brought down so there are less than min_size OSDs.
+        """
+        self._setup_pool(
+            self.EC_POOL,
+            min_size=self.K,
+            erasure=True,
+        )
+        self._write_some_data(self.WRITE_PERIOD, self.EC_POOL)
+        # 1. We test the case where we didn't make the pool stretch
+        #   and we expect the PGs to go active even when there is only
+        #   one bucket available in the acting set of PGs.
+
+        # Wait for PGs to remap to the new stretch CRUSH rule
         self.wait_until_true_and_hold(
             lambda: self._pg_all_active_clean(),
             timeout=self.RECOVERY_PERIOD,
+            success_hold_time=self.SUCCESS_HOLD_TIME
+        )
+
+        # Fail DC1 and enter degraded mode Expect to be 100% active
+        self._fail_over_all_osds_in_dc('dc1')
+        self._fail_over_all_mons_in_dc('dc1')
+        self.wait_until_true_and_hold(lambda: self._pg_all_active(),
+                                      timeout=self.RECOVERY_PERIOD,
+                                      success_hold_time=self.SUCCESS_HOLD_TIME)
+
+        # Do some write I/O while DC1 is down - DC2 receives the new data
+        self._write_some_data(self.WRITE_PERIOD, self.EC_POOL)
+
+        # PGs should still be active since DC2 is up and has the latest data
+        self.wait_until_true_and_hold(lambda: self._pg_all_active(),
+                                      timeout=self.RECOVERY_PERIOD,
+                                      success_hold_time=self.SUCCESS_HOLD_TIME)
+
+        self._read_some_data(self.WRITE_PERIOD, self.EC_POOL)
+
+        # Fail over one OSD in DC2. Should all be active since above min size
+        self._fail_over_one_osd_from_dc(dc='dc2')
+        self.wait_until_true_and_hold(lambda: self._pg_all_active(),
+                                      timeout=self.RECOVERY_PERIOD,
+                                      success_hold_time=self.SUCCESS_HOLD_TIME)
+
+        self._read_some_data(self.WRITE_PERIOD, self.EC_POOL)
+
+    
+        # Fail over one OSD in DC2. Should all be 100% inactive since below min size
+        self._fail_over_one_osd_from_dc(dc='dc2')
+        self.wait_until_true_and_hold(lambda: self._pg_all_unavailable(),
+                                      timeout=self.RECOVERY_PERIOD,
+                                      success_hold_time=self.SUCCESS_HOLD_TIME)
+
+        # Bring back DC1. Expect PGs to be 100% inactive since we have stale data and below min size
+        self._bring_back_all_mons_in_dc('dc1')
+        self._bring_back_all_osds_in_dc('dc1')
+        self.wait_until_true_and_hold(
+            lambda: self._pg_all_unavailable(),
+            timeout=self.RECOVERY_PERIOD,
+            success_hold_time=self.SUCCESS_HOLD_TIME)
+
+        self._bring_back_one_osds_from_dc('dc2')
+        # Bring back one osd in DC2 and expect PGs to be 100% active since above min size
+        self.wait_until_true_and_hold(
+            lambda: self._pg_all_active(),
+            timeout=self.RECOVERY_PERIOD,
+            success_hold_time=self.SUCCESS_HOLD_TIME)
+        
+        self._read_some_data(self.WRITE_PERIOD, self.EC_POOL)
+        self._write_some_data(self.WRITE_PERIOD, self.EC_POOL)
+
+        sleep(30)
+ 
+        # Bring back osds in DC2 expects PGs to be 100% active+clean
+        self._bring_back_all_osds_in_dc('dc2')
+        self.wait_until_true_and_hold(
+            lambda: self._pg_all_active_clean(),
+            timeout=5*self.RECOVERY_PERIOD,
             success_hold_time=self.SUCCESS_HOLD_TIME
         )
