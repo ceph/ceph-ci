@@ -203,6 +203,74 @@ def test_remove_then_recreate_keeps_mirror():
     assert store.get_object(key)['auth']['password'] == 'new'
 
 
+def test_set_object_in_transaction_commits():
+    store, mirror_target = _mirroring_store()
+    key = ('join_auths', 'auth1')
+    store.set_object(key, {'auth': {'username': 'foo', 'password': 'old'}})
+
+    with store.transaction():
+        store.set_object(
+            key, {'auth': {'username': 'foo', 'password': 'new'}}
+        )
+        assert mirror_target[key].get()['auth']['password'] == 'old'
+
+    assert mirror_target[key].get()['auth']['password'] == 'new'
+
+
+def test_get_object_sees_pending_write():
+    store, _ = _mirroring_store()
+    key = ('join_auths', 'auth1')
+    store.set_object(
+        key, {'auth': {'username': 'foo', 'password': 'old'}, 'extra': 'old'}
+    )
+
+    with store.transaction():
+        store.set_object(
+            key,
+            {'auth': {'username': 'foo', 'password': 'new'}, 'extra': 'new'},
+        )
+        # not flushed to the mirror yet, but a read in the same
+        # transaction must see the pending write, not the stale mirror
+        seen = store.get_object(key)
+        assert seen['auth']['password'] == 'new'
+        assert seen['extra'] == 'new'
+
+    assert store.get_object(key)['auth']['password'] == 'new'
+
+
+def test_set_object_in_transaction_rollback_keeps_old_mirror():
+    store, mirror_target = _mirroring_store()
+    key = ('join_auths', 'auth1')
+    store.set_object(key, {'auth': {'username': 'foo', 'password': 'old'}})
+
+    with pytest.raises(RuntimeError):
+        with store.transaction():
+            store.set_object(
+                key, {'auth': {'username': 'foo', 'password': 'new'}}
+            )
+            raise RuntimeError('later step in the same batch failed')
+
+    assert mirror_target[key].get()['auth']['password'] == 'old'
+    assert store.get_object(key)['auth']['password'] == 'old'
+
+
+def test_remove_then_recreate_rollback_keeps_old_mirror():
+    store, mirror_target = _mirroring_store()
+    key = ('join_auths', 'auth1')
+    store.set_object(key, {'auth': {'username': 'foo', 'password': 'old'}})
+
+    with pytest.raises(RuntimeError):
+        with store.transaction():
+            assert store.remove(key) is True
+            store.set_object(
+                key, {'auth': {'username': 'foo', 'password': 'new'}}
+            )
+            raise RuntimeError('later step in the same batch failed')
+
+    assert mirror_target[key].get()['auth']['password'] == 'old'
+    assert store.get_object(key)['auth']['password'] == 'old'
+
+
 def test_reconcile_fixes_drift():
     store, mirror_target = _mirroring_store()
     good_key = ('join_auths', 'auth1')
