@@ -77,6 +77,7 @@ struct MonSession : public RefCountedObject {
   uint64_t proxy_tid = 0;
 
   std::string remote_host;                ///< remote host name
+  std::string service_name;               ///< orch service name (e.g. osd.foo), if reported
   std::map<std::string,std::string,std::less<>> last_config;    ///< most recently shared config
   bool any_config = false;
 

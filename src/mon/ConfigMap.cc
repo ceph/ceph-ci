@@ -54,7 +54,7 @@ int MaskedOption::get_precision(const CrushWrapper *crush)
     // bad type name, ignore it
   }
   int num_types = crush->get_num_type_names();
-  if (mask.device_class.size()) {
+  if (mask.device_class.size() || mask.service.size()) {
     return num_types;
   }
   return num_types + 1;
@@ -68,6 +68,9 @@ void OptionMask::dump(Formatter *f) const
   }
   if (device_class.size()) {
     f->dump_string("device_class", device_class);
+  }
+  if (service.size()) {
+    f->dump_string("service", service);
   }
 }
 
@@ -89,6 +92,9 @@ ostream& operator<<(ostream& out, const MaskedOption& o)
   }
   if (o.mask.device_class.size()) {
     out << "@class=" << o.mask.device_class;
+  }
+  if (o.mask.service.size()) {
+    out << "@service=" << o.mask.service;
   }
   return out;
 }
@@ -143,7 +149,8 @@ ConfigMap::generate_entity_map(
   const map<std::string,std::string>& crush_location,
   const CrushWrapper *crush,
   const std::string& device_class,
-  std::unordered_map<std::string, ValueSource> *src)
+  std::unordered_map<std::string, ValueSource> *src,
+  const std::string& service_name)
 {
   // global, then by type, then by name prefix component(s), then name.
   // name prefix components are .-separated,
@@ -171,9 +178,13 @@ ConfigMap::generate_entity_map(
   for (auto s : sections) {
     for (auto& i : s.second->options) {
       auto& o = i.second;
-      // match against crush location, class
+      // match against crush location, class, orch service
       if (o.mask.device_class.size() &&
 	  o.mask.device_class != device_class) {
+	continue;
+      }
+      if (o.mask.service.size() &&
+	  o.mask.service != service_name) {
 	continue;
       }
       if (o.mask.location_type.size()) {
@@ -219,6 +230,8 @@ bool ConfigMap::parse_mask(
       string k = i.substr(0, delim);
       if (k == "class") {
 	mask->device_class = i.substr(delim + 1);
+      } else if (k == "service") {
+	mask->service = i.substr(delim + 1);
       } else {
 	mask->location_type = k;
 	mask->location_value = i.substr(delim + 1);
@@ -237,6 +250,18 @@ bool ConfigMap::parse_mask(
       return false;
     }
     *section = i;
+  }
+  // Normalize service_id-only values (e.g. osd/service:foo -> service:osd.foo).
+  // Full orch names that already contain '.' (e.g. service:osd.foo) are left as-is.
+  if (mask->service.size() &&
+      mask->service.find('.') == std::string::npos &&
+      section->size() &&
+      *section != "global") {
+    auto dotpos = section->find('.');
+    string type = (dotpos == std::string::npos)
+      ? *section
+      : section->substr(0, dotpos);
+    mask->service = type + "." + mask->service;
   }
   return true;
 }

@@ -1073,6 +1073,7 @@ void MonClient::_renew_subs()
     auto m = ceph::make_message<MMonSubscribe>();
     m->what = sub.get_subs();
     m->hostname = ceph_get_short_hostname();
+    m->service_name = service_name;
     _send_mon_message(std::move(m));
     sub.renewed();
   }

@@ -31,10 +31,11 @@ WRITE_RAW_ENCODER(ceph_mon_subscribe_item_old)
 
 class MMonSubscribe final : public Message {
 public:
-  static constexpr int HEAD_VERSION = 3;
+  static constexpr int HEAD_VERSION = 4;
   static constexpr int COMPAT_VERSION = 1;
 
   std::string hostname;
+  std::string service_name;  ///< orch service name (e.g. osd.foo), optional
   std::map<std::string, ceph_mon_subscribe_item> what;
 
   MMonSubscribe() : Message{CEPH_MSG_MON_SUBSCRIBE, HEAD_VERSION, COMPAT_VERSION} { }
@@ -49,7 +50,11 @@ public:
 
   std::string_view get_type_name() const override { return "mon_subscribe"; }
   void print(std::ostream& o) const override {
-    o << "mon_subscribe(" << what << ")";
+    o << "mon_subscribe(" << what;
+    if (service_name.size()) {
+      o << " service=" << service_name;
+    }
+    o << ")";
   }
 
   void decode_payload() override {
@@ -74,6 +79,9 @@ public:
     if (header.version >= 3) {
       decode(hostname, p);
     }
+    if (header.version >= 4) {
+      decode(service_name, p);
+    }
   }
   void encode_payload(uint64_t features) override {
     using ceph::encode;
@@ -94,6 +102,7 @@ public:
     header.version = HEAD_VERSION;
     encode(what, payload);
     encode(hostname, payload);
+    encode(service_name, payload);
   }
 private:
   template<class T, typename... Args>
