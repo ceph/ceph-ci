@@ -464,7 +464,7 @@ no different than options set in a node-local configuration file, subject to the
 source precedence.
 
 In addition, options may have a *mask* associated with them to further restrict to
-which daemons or clients the option's value applies.. Masks take two forms:
+which daemons or clients the option's value applies. Masks take three forms:
 
 #. ``type:location`` where ``type`` is a CRUSH bucket type, for example ``rack`` or
    ``host``, and ``location`` is a value for that property. For example,
@@ -479,6 +479,15 @@ which daemons or clients the option's value applies.. Masks take two forms:
    device class (for example, ``hdd`` or ``ssd``). For example,
    ``class:ssd`` would limit the option only to OSDs built solely on
    SAS, SATA, and NVMe SSDs. This mask has no effect on non-OSD daemons or clients
+
+#. ``service:service-id`` (or the full orchestrator service name) where the value
+   identifies a cephadm/orchestrator service. For example,
+   ``osd/service:osd_node4_16384`` (service id) and
+   ``osd/service:osd.osd_node4_16384`` (full service name) both limit the option
+   to OSDs that belong to the ``osd.osd_node4_16384`` service. Membership is
+   determined from the OSD's ``osdspec_affinity`` (reported to the monitors on
+   subscribe). Cephadm applies an OSD DriveGroup's ``config:`` section using this
+   mask (``osd/service:<service_id>``) so values reach member ``osd.<id>`` daemons.
 
 In commands that specify a configuration option, the argument of the option (in
 the following examples, this is the ``who`` string) may be a section name, a

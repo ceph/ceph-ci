@@ -5348,6 +5348,9 @@ void Monitor::handle_subscribe(MonOpRequestRef op)
   if (m->hostname.size()) {
     s->remote_host = m->hostname;
   }
+  if (m->service_name.size()) {
+    s->service_name = m->service_name;
+  }
 
   for (map<string,ceph_mon_subscribe_item>::iterator p = m->what.begin();
        p != m->what.end();
