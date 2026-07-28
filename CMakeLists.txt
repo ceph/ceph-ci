@@ -670,8 +670,16 @@ if(WITH_RADOSGW)
       endif()
     endif()
     if(NOT CARGO_EXECUTABLE)
-      set(ENV{CARGO_HOME} "${CMAKE_BINARY_DIR}/.cargo")
-      set(ENV{RUSTUP_HOME} "${CMAKE_BINARY_DIR}/.rustup")
+      # the cargo code should not be added to the debuginfo of the rpm build
+      # so, moving it to a different directory
+      if(DEFINED ENV{RPM_BUILD_DIR})
+        set(RGW_CARGO_HOME "$ENV{RPM_BUILD_DIR}/.cargo")
+      else()
+        set(RGW_CARGO_HOME "${CMAKE_BINARY_DIR}/.cargo")
+      endif()
+      set(RGW_RUSTUP_HOME "${CMAKE_BINARY_DIR}/.rustup")
+      set(ENV{CARGO_HOME} "${RGW_CARGO_HOME}")
+      set(ENV{RUSTUP_HOME} "${RGW_RUSTUP_HOME}")
       set(ENV{RUSTUP_INIT_SKIP_PATH_CHECK} "yes")
       execute_process(
         COMMAND sh -c "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable"
@@ -679,7 +687,7 @@ if(WITH_RADOSGW)
       if(NOT RUSTUP_RESULT EQUAL 0)
         message(FATAL_ERROR "Failed to install Rust via rustup. Install cargo >= 1.94 manually or set -DWITH_RADOSGW_LANCEDB=OFF")
       endif()
-      find_program(CARGO_EXECUTABLE cargo PATHS "${CMAKE_BINARY_DIR}/.cargo/bin" NO_DEFAULT_PATH)
+      find_program(CARGO_EXECUTABLE cargo PATHS "${RGW_CARGO_HOME}/bin" NO_DEFAULT_PATH)
       if(NOT CARGO_EXECUTABLE)
         message(FATAL_ERROR "rustup installed but cargo still not found")
       endif()
@@ -688,7 +696,12 @@ if(WITH_RADOSGW)
         OUTPUT_VARIABLE CARGO_VERSION_OUTPUT
         OUTPUT_STRIP_TRAILING_WHITESPACE)
       message(STATUS "Using rustup-installed cargo: ${CARGO_EXECUTABLE} (${CARGO_VERSION_OUTPUT})")
-      set(ENV{PATH} "${CMAKE_BINARY_DIR}/.cargo/bin:$ENV{PATH}")
+      set(RGW_LANCEDB_CARGO_ENV
+        "CARGO_HOME=${RGW_CARGO_HOME}"
+        "RUSTUP_HOME=${RGW_RUSTUP_HOME}"
+        CACHE INTERNAL "extra environment for the rustup-installed cargo")
+    else()
+      set(RGW_LANCEDB_CARGO_ENV "" CACHE INTERNAL "extra environment for the system cargo")
     endif()
   endif(WITH_RADOSGW_LANCEDB)
 endif (WITH_RADOSGW)
