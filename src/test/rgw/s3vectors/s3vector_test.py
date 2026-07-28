@@ -2591,8 +2591,8 @@ def test_sal_error_propagation():
 def test_cross_owner_vector_bucket():
     """When the S3 bucket owner differs from the vector bucket owner,
     operations should fail without a bucket policy and succeed with one."""
-    if get_s3vector_backend() != 's3':
-        pytest.skip("cross-owner test only applies to the S3 backend")
+    if not is_s3_backend():
+        pytest.skip("cross-owner test only applies to S3/SAL backends")
 
     # user A (config user) creates the S3 bucket
     s3conn = connection('s3')
