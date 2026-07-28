@@ -1,5 +1,6 @@
 import logging
 
+from io import BytesIO
 from teuthology import misc as teuthology
 from teuthology.task import Task
 
