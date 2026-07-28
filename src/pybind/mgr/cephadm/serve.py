@@ -645,14 +645,22 @@ class CephadmServe:
 
     def _apply_service_config(self, spec: ServiceSpec) -> None:
         if spec.config:
-            section = utils.name_to_config_section(spec.service_name())
+            # OSDs need service: mask; osd.<service_id> does not match osd.<id>.
+            if spec.service_type == 'osd' and spec.service_id:
+                who = f'osd/service:{spec.service_id}'
+                option_entity: str = 'osd'
+                compare_current = False
+            else:
+                who = str(utils.name_to_config_section(spec.service_name()))
+                option_entity = who
+                compare_current = True
             for name in ['CEPHADM_INVALID_CONFIG_OPTION', 'CEPHADM_FAILED_SET_OPTION']:
                 self.mgr.remove_health_warning(name)
             invalid_config_options = []
             options_failed_to_set = []
             for k, v in spec.config.items():
                 try:
-                    current = self.mgr.get_foreign_ceph_option(section, k)
+                    current = self.mgr.get_foreign_ceph_option(option_entity, k)
                 except KeyError:
                     msg = f'Ignoring invalid {spec.service_name()} config option {k}'
                     self.log.warning(msg)
@@ -661,14 +669,14 @@ class CephadmServe:
                     )
                     invalid_config_options.append(msg)
                     continue
-                if current != v:
-                    self.log.debug(f'setting [{section}] {k} = {v}')
+                if (not compare_current) or current != v:
+                    self.log.debug(f'setting [{who}] {k} = {v}')
                     try:
                         self.mgr.check_mon_command({
                             'prefix': 'config set',
                             'name': k,
                             'value': str(v),
-                            'who': section,
+                            'who': who,
                         })
                     except MonCommandFailed as e:
                         msg = f'Failed to set {spec.service_name()} option {k}: {e}'

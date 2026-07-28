@@ -9,6 +9,7 @@
 #include <optional>
 #include <ostream>
 #include <string>
+#include <unordered_map>
 
 #include "include/types.h" // for version_t
 #include "include/utime.h"
@@ -23,6 +24,7 @@ class CrushWrapper;
 //   crush location (coarse to fine, ordered by type id)
 //  daemon type (e.g., osd)
 //   device class (osd only)
+//   orch service (e.g., service:osd.foo; currently reported by OSDs)
 //   crush location (coarse to fine, ordered by type id)
 //  daemon name (e.g., mds.foo)
 //
@@ -34,15 +36,20 @@ class CrushWrapper;
 // then we get a = 2.  The osd-level config wins, even though rack
 // is less precise than host, because the crush limiters are only
 // resolved within a section (global, per-daemon, per-instance).
+//
+// Orch service masks (service:) further restrict within a section; OSDs
+// report membership from osdspec_affinity as service_name osd.<affinity>.
 
 struct OptionMask {
   std::string location_type, location_value; ///< matches crush_location
   std::string device_class;                  ///< matches device class
+  std::string service;                       ///< matches orch service name (e.g. osd.foo)
 
   bool empty() const {
     return location_type.size() == 0
       && location_value.size() == 0
-      && device_class.size() == 0;
+      && device_class.size() == 0
+      && service.size() == 0;
   }
 
   std::string to_str() const {
@@ -55,6 +62,12 @@ struct OptionMask {
 	r += "/";
       }
       r += "class:" + device_class;
+    }
+    if (service.size()) {
+      if (r.size()) {
+	r += "/";
+      }
+      r += "service:" + service;
     }
     return r;
   }
@@ -142,7 +155,8 @@ struct ConfigMap {
     const std::map<std::string,std::string>& crush_location,
     const CrushWrapper *crush,
     const std::string& device_class,
-    std::unordered_map<std::string,ValueSource> *src = nullptr);
+    std::unordered_map<std::string,ValueSource> *src = nullptr,
+    const std::string& service_name = {});
 
   void parse_key(
     const std::string& key,
