@@ -8,23 +8,23 @@ overrides:
         debug rgw: 20
         rgw filter: d4n
         rgw d4n cache cleaning interval: 5
-        rgw local cache address: "127.0.0.1:8000"
-        rgw remote cache address: "127.0.0.1:8001"
-        rgw d4n backend address: "127.0.0.1:8000"
+        rgw d4n local rgw address: "http://127.0.0.1:8000"
+        rgw d4n remote cache address: "http://127.0.0.1:8001"
         d4n writecache enabled: true
       c2.client.0:
         setuser: ceph
         setgroup: ceph
         debug rgw: 20
         rgw filter: d4n
-        rgw local cache address: "127.0.0.1:8001" 
+        rgw d4n local rgw address: "http://127.0.0.1:8001" 
+        rgw d4n remote cache address: "http://127.0.0.1:8000"
         d4n writecache enabled: true
 tasks:
 - install:
     # extra packages added for the rgw-d4ntests task
     extra_system_packages:
-      deb: ['s3cmd', 'redis']
-      rpm: ['s3cmd', 'redis']
+      deb: ['s3cmd'] # valkey not available by default
+      rpm: ['s3cmd', 'valkey']
 - ceph: {cluster: c1}
 - ceph: {cluster: c2}
 - redis:

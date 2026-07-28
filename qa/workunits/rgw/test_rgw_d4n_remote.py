@@ -7,7 +7,7 @@ This workunits tests the functionality of the D4N read workflow on a small objec
 import logging as log
 from configobj import ConfigObj
 import boto3
-import redis
+import valkey as redis
 import subprocess
 import json
 import os
