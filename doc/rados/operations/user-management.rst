@@ -254,6 +254,15 @@ The following entries describe valid capability profiles:
               monitors.
 
 
+``profile rgw`` (Manager, Monitor, and OSD)
+
+:Description: Gives a user permissions to connect as a Ceph Object Gateway.
+              Conferred on RGWs in order to enable them to create and tune
+              their pools, read maps and pool stats, and read ``config-key``
+              keys under the ``rgw/`` prefix. OSD access is limited to pools
+              tagged with the ``rgw`` application.
+
+
 ``profile bootstrap-osd`` (Monitor only)
 
 :Description: Gives a user permissions to bootstrap an OSD. Conferred on
@@ -268,6 +277,13 @@ The following entries describe valid capability profiles:
               Conferred on deployment tools such as ``cephadm``
               so that they have permissions to add keys when bootstrapping
               a metadata server.
+
+``profile bootstrap-rgw`` (Monitor only)
+
+:Description: Gives a user permissions to bootstrap a Ceph Object Gateway.
+              Conferred on deployment tools such as ``cephadm``
+              so that they have permissions to add keys when bootstrapping
+              an RGW.
 
 ``profile bootstrap-rbd`` (Monitor only)
 
