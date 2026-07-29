@@ -716,13 +716,13 @@ BtreeLBAManager::insert_mappings(
 {
   return seastar::do_with(
     std::move(iter), std::list<LBACursorRef>(),
-    [c, &btree, &alloc_infos]
+    [c, &btree, &alloc_infos, this]
     (LBABtree::iterator &iter, std::list<LBACursorRef> &ret)
   {
     return trans_intr::do_for_each(
       alloc_infos.begin(),
       alloc_infos.end(),
-      [c, &btree, &iter](auto &info)
+      [c, &btree, &iter, this](auto &info)
     {
       assert(info.key != L_ADDR_NULL);
       bool need_reserved_ptr =
@@ -732,7 +732,7 @@ BtreeLBAManager::insert_mappings(
         need_reserved_ptr
           ? get_reserved_ptr<LBALeafNode, laddr_t>()
           : static_cast<BaseChildNode<LBALeafNode, laddr_t>*>(info.extent)
-      ).si_then([c, &iter, &info](auto p) {
+      ).si_then([c, &iter, &info, this](auto p) {
 	ceph_assert(p.second);
 	iter = std::move(p.first);
 	if (is_valid_child_ptr(info.extent)) {
@@ -749,6 +749,11 @@ BtreeLBAManager::insert_mappings(
 	    //     TM::alloc_data_extents()
 	    info.extent->set_laddr(iter.get_key());
 	  }
+	}
+	auto leaf = iter.get_leaf_node();
+	if (cache.is_rebalance_enabled() &&
+	    leaf->get_size() >= LBALeafNode::PROACTIVE_SPLIT_SIZE) {
+	  rebalance_queue.push_back(leaf->get_node_meta().begin);
 	}
 	return iter.next(c).si_then([&iter](auto p) {
 	  iter = std::move(p);
@@ -767,6 +772,36 @@ BtreeLBAManager::insert_mappings(
     }).si_then([&ret] {
       return alloc_mappings_iertr::make_ready_future<
 	std::list<LBACursorRef>>(std::move(ret));
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Background rebalance - proactive split/merge of LBA leaves
+// ---------------------------------------------------------------------------
+
+BtreeLBAManager::rebalance_ret
+BtreeLBAManager::do_rebalance(
+  Transaction &t,
+  laddr_t hint)
+{
+  auto c = get_context(t);
+  return with_btree<LBABtree>(
+    cache,
+    c,
+    [c, hint](auto &btree) {
+    return btree.lower_bound(
+      c, hint
+    ).si_then([c, &btree](auto iter) {
+      auto leaf = iter.get_leaf_node();
+      auto size = leaf->get_size();
+      if (size >= LBALeafNode::PROACTIVE_SPLIT_SIZE) {
+        return btree.proactive_split(c, iter);
+      } else if (size < LBALeafNode::BACKGROUND_MERGE_SIZE
+                 && size > 0) {
+        return btree.proactive_merge(c, iter);
+      }
+      return base_iertr::now();
     });
   });
 }
@@ -1138,10 +1173,16 @@ BtreeLBAManager::_update_mapping(
   auto iter = btree.make_partial_iter(c, cursor);
   auto ret = f(iter.get_val());
   if (ret.refcount == 0) {
+    auto pre_remove_begin = iter.get_leaf_node()->get_node_meta().begin;
+    auto pre_remove_size = iter.get_leaf_node()->get_size();
     iter = co_await btree.remove(
       c,
       iter
     );
+    if (cache.is_rebalance_enabled() &&
+        pre_remove_size <= LBALeafNode::BACKGROUND_MERGE_SIZE) {
+      rebalance_queue.push_back(pre_remove_begin);
+    }
     co_return iter.get_cursor(c);
   } else {
     iter = btree.update(

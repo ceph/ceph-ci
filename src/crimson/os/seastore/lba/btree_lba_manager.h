@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include <deque>
 #include <iostream>
 
 #include <boost/intrusive_ptr.hpp>
@@ -455,8 +456,50 @@ public:
     Transaction &t,
     scan_mapped_space_func_t &&f) final;
 
+  // ---------------------------------------------------------------------------
+  // Background rebalance interface - proactive splits/merges of LBA leaves.
+  // ---------------------------------------------------------------------------
+
+  // Returns true if the rebalance_queue has pending hints for the
+  // background loop to process.
+  bool has_rebalance_work() const final {
+    return !rebalance_queue.empty();
+  }
+
+  /**
+   * Dequeue and return the next laddr hint.  The hint identifies a
+   * leaf region that was above PROACTIVE_SPLIT_SIZE after an insert or
+   * below BACKGROUND_MERGE_SIZE after a remove.  Stale hints are
+   * harmless — do_rebalance re-checks the actual leaf size.
+   */
+  laddr_t pop_rebalance_hint() final {
+    assert(!rebalance_queue.empty());
+    auto hint = rebalance_queue.front();
+    rebalance_queue.pop_front();
+    return hint;
+  }
+
+  /**
+   * Look up the leaf at hint, then proactively split or merge it
+   * depending on its current size vs. the thresholds.  Called from
+   * TransactionManager::run_rebalance_loop inside a REBALANCE
+   * transaction.
+   */
+  rebalance_ret do_rebalance(
+    Transaction &t,
+    laddr_t hint) final;
+
 private:
   Cache &cache;
+
+  /**
+   * Hint queue for the background rebalancer.  The insert path pushes
+   * a leaf's begin-laddr when its post-insert size reaches
+   * PROACTIVE_SPLIT_SIZE; the remove path pushes when post-remove size
+   * drops below BACKGROUND_MERGE_SIZE.  Entries are best-effort hints:
+   * the background loop re-verifies the actual leaf size before acting.
+   */
+  std::deque<laddr_t> rebalance_queue;
 
   /**
    * Performance counters registered as Seastar metrics under the "LBA" group.

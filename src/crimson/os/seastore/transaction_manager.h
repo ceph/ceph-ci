@@ -1315,6 +1315,16 @@ private:
 
   bool full_extent_integrity_check = true;
 
+  /**
+   * Background LBA rebalancer.  Polls lba_manager->has_rebalance_work()
+   * every 100 ms and processes queued split/merge hints inside REBALANCE
+   * transactions.  Started by mount(), stopped via rebalance_abort in
+   * close().
+   */
+  seastar::abort_source rebalance_abort;
+  seastar::future<> rebalance_fut = seastar::now();
+  seastar::future<> run_rebalance_loop();
+
   shard_stats_t& shard_stats;
 
   bool can_drop_backref() const {

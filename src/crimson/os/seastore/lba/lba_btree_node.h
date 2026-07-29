@@ -85,10 +85,51 @@ struct LBAInternalNode
 
   static constexpr extent_types_t TYPE = extent_types_t::LADDR_INTERNAL;
 
+  // ~24% of INTERNAL_NODE_CAPACITY.  Lowered from the textbook 50% to
+  // reduce foreground merge frequency; the background rebalancer keeps
+  // nodes well above this floor.
+  constexpr static size_t get_min_capacity_for_type() {
+    return 40;
+  }
+
+  // ~85% of INTERNAL_NODE_CAPACITY.  A midpoint split at this size
+  // produces halves of ~71, which is 15 entries above
+  // BACKGROUND_MERGE_SIZE — enough hysteresis that a small number of
+  // removes won't immediately trigger a merge.
+  static constexpr size_t PROACTIVE_SPLIT_SIZE = 143;
+
+  // ~33% of INTERNAL_NODE_CAPACITY.  Below this the background
+  // rebalancer merges or rebalances with a sibling.
+  // Post-merge/rebalance occupancy lands well below
+  // PROACTIVE_SPLIT_SIZE, avoiding oscillation.
+  static constexpr size_t BACKGROUND_MERGE_SIZE = 56;
+
   extent_types_t get_type() const final {
     return TYPE;
   }
 };
+
+// Threshold ordering invariants for LBAInternalNode:
+//   0 < min_capacity < BACKGROUND_MERGE_SIZE < PROACTIVE_SPLIT_SIZE/2 < PROACTIVE_SPLIT_SIZE < CAPACITY
+//
+// min_capacity < BACKGROUND_MERGE_SIZE:
+//   background merger triggers before the hard-floor reactive merge.
+// BACKGROUND_MERGE_SIZE < PROACTIVE_SPLIT_SIZE / 2:
+//   a midpoint split produces halves above the merge threshold (hysteresis).
+// PROACTIVE_SPLIT_SIZE < CAPACITY:
+//   proactive splits fire before the node is completely full.
+// 2 * min_capacity < CAPACITY:
+//   make_full_merge of two at-min nodes always fits in one node.
+static_assert(LBAInternalNode::get_min_capacity_for_type() > 0);
+static_assert(LBAInternalNode::get_min_capacity_for_type()
+              < LBAInternalNode::BACKGROUND_MERGE_SIZE);
+static_assert(LBAInternalNode::BACKGROUND_MERGE_SIZE
+              < LBAInternalNode::PROACTIVE_SPLIT_SIZE / 2);
+static_assert(LBAInternalNode::PROACTIVE_SPLIT_SIZE
+              < INTERNAL_NODE_CAPACITY);
+static_assert(2 * LBAInternalNode::get_min_capacity_for_type()
+              < INTERNAL_NODE_CAPACITY);
+
 using LBAInternalNodeRef = LBAInternalNode::Ref;
 
 /**
@@ -149,6 +190,25 @@ struct LBALeafNode
       parent_node_t(rhs) {}
 
   static constexpr extent_types_t TYPE = extent_types_t::LADDR_LEAF;
+
+  // ~24% of LEAF_NODE_CAPACITY.  Lowered from the textbook 50% to
+  // reduce foreground merge frequency; the background rebalancer keeps
+  // nodes well above this floor.
+  constexpr static size_t get_min_capacity_for_type() {
+    return 25;
+  }
+
+  // ~85% of LEAF_NODE_CAPACITY.  A midpoint split at this size
+  // produces halves of ~45, which is 10 entries above
+  // BACKGROUND_MERGE_SIZE — enough hysteresis that a small number of
+  // removes won't immediately trigger a merge.
+  static constexpr size_t PROACTIVE_SPLIT_SIZE = 90;
+
+  // ~33% of LEAF_NODE_CAPACITY.  Below this the background rebalancer
+  // merges or rebalances with a sibling.  Post-merge/rebalance
+  // occupancy lands well below PROACTIVE_SPLIT_SIZE, avoiding
+  // oscillation.
+  static constexpr size_t BACKGROUND_MERGE_SIZE = 35;
 
   void update(
     internal_const_iterator_t iter,
@@ -429,6 +489,18 @@ struct LBALeafNode
     this->delta_buffer.for_each(std::forward<Func>(f));
   }
 };
+
+// Same threshold ordering invariants as LBAInternalNode (see above).
+static_assert(LBALeafNode::get_min_capacity_for_type() > 0);
+static_assert(LBALeafNode::get_min_capacity_for_type()
+              < LBALeafNode::BACKGROUND_MERGE_SIZE);
+static_assert(LBALeafNode::BACKGROUND_MERGE_SIZE
+              < LBALeafNode::PROACTIVE_SPLIT_SIZE / 2);
+static_assert(LBALeafNode::PROACTIVE_SPLIT_SIZE
+              < LEAF_NODE_CAPACITY);
+static_assert(2 * LBALeafNode::get_min_capacity_for_type()
+              < LEAF_NODE_CAPACITY);
+
 using LBALeafNodeRef = TCachedExtentRef<LBALeafNode>;
 
 struct LBACursor : BtreeCursor<laddr_t, lba::lba_map_val_t, LBALeafNode> {

@@ -110,6 +110,8 @@ public:
   Cache(ExtentPlacementManager &epm, store_index_t store_index);
   ~Cache();
 
+  bool is_rebalance_enabled() const { return rebalance_enabled; }
+
   cache_stats_t get_stats(bool report_detail, double seconds) const;
 
   /// Creates empty transaction by source
@@ -1805,10 +1807,12 @@ private:
   // mutated in place, leaving their LBA-leaf crc stale; see _read_extent().
   const bool delta_based_overwrite_enabled;
   bool lazy_read_enabled;
+  bool rebalance_enabled;
 
   // md_config_obs_t
   std::vector<std::string> get_tracked_keys() const noexcept final {
-    return {"seastore_lazy_read_conflict_detection"};
+    return {"seastore_lazy_read_conflict_detection",
+            "seastore_lba_background_rebalance"};
   }
   void handle_conf_change(
     const ConfigProxy& conf,
@@ -1816,6 +1820,10 @@ private:
     if (changed.count("seastore_lazy_read_conflict_detection")) {
       lazy_read_enabled =
         conf.get_val<bool>("seastore_lazy_read_conflict_detection");
+    }
+    if (changed.count("seastore_lba_background_rebalance")) {
+      rebalance_enabled =
+        conf.get_val<bool>("seastore_lba_background_rebalance");
     }
   }
   RootBlockRef root;               ///< ref to current root
@@ -1908,11 +1916,15 @@ private:
     uint64_t num_inserts = 0;
     uint64_t num_erases = 0;
     uint64_t num_updates = 0;
+    uint64_t num_splits = 0;
+    uint64_t num_merges = 0;
 
     void increment(const Transaction::tree_stats_t& incremental) {
       num_inserts += incremental.num_inserts;
       num_erases += incremental.num_erases;
       num_updates += incremental.num_updates;
+      num_splits += incremental.num_splits;
+      num_merges += incremental.num_merges;
     }
   };
 
@@ -1996,6 +2008,8 @@ private:
 	     src2 == Transaction::src_t::CLEANER_COLD));
     assert(!(src1 == Transaction::src_t::TRIM_ALLOC &&
              src2 == Transaction::src_t::TRIM_ALLOC));
+    assert(!(src1 == Transaction::src_t::REBALANCE &&
+             src2 == Transaction::src_t::REBALANCE));
 
     auto src1_value = static_cast<std::size_t>(src1);
     auto src2_value = static_cast<std::size_t>(src2);

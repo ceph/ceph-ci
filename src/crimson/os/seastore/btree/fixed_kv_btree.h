@@ -591,8 +591,15 @@ public:
      */
     using check_split_iertr = ensure_internal_iertr;
     using check_split_ret = check_split_iertr::template future<depth_t>;
-    check_split_ret check_split(op_context_t c) {
-      if (!leaf.node->at_max_capacity()) {
+    /**
+     * Parameterized split check.  leaf_threshold controls when the leaf
+     * is considered "needs splitting" (CAPACITY for reactive inserts,
+     * PROACTIVE_SPLIT_SIZE for background rebalancing).  Internal nodes
+     * are always checked against at_max_capacity (must have room for the
+     * new child entry produced by the split below).
+     */
+    check_split_ret check_split(op_context_t c, size_t leaf_threshold) {
+      if (leaf.node->get_size() < leaf_threshold) {
 	return check_split_iertr::template make_ready_future<depth_t>(0);
       }
       return seastar::do_with(
@@ -613,6 +620,10 @@ public:
           }
         });
       });
+    }
+
+    check_split_ret check_split(op_context_t c) {
+      return check_split(c, leaf_node_t::node_layout_t::get_capacity());
     }
   };
 
@@ -2632,135 +2643,210 @@ private:
    */
   using handle_split_iertr = base_iertr;
   using handle_split_ret = handle_split_iertr::future<>;
+  using handle_merge_iertr = base_iertr;
+  using handle_merge_ret = handle_merge_iertr::future<>;
+
+  /**
+   * do_split - execute splits from split_from down to the leaf.
+   *
+   * If split_from == iter.get_depth(), a new root is created first.
+   * Then each level from split_from down to 1 is split via CoW.
+   * On return, iter points at the correct position in the newly
+   * split nodes.
+   */
+  void do_split(
+    op_context_t c,
+    iterator &iter,
+    depth_t split_from)
+  {
+    LOG_PREFIX(FixedKVBtree::do_split);
+    SUBTRACET(seastore_fixedkv_tree,
+      "split_from {}, depth {}", c.trans, split_from, iter.get_depth());
+
+    if (split_from == iter.get_depth()) {
+      assert(iter.is_full());
+      auto nroot = c.cache.template alloc_new_non_data_extent<internal_node_t>(
+        c.trans, node_size, placement_hint_t::HOT, INIT_GENERATION);
+      fixed_kv_node_meta_t<node_key_t> meta{
+        min_max_t<node_key_t>::min, min_max_t<node_key_t>::max, iter.get_depth() + 1};
+      nroot->set_meta(meta);
+      nroot->range = meta;
+      nroot->journal_insert(
+        nroot->begin(),
+        min_max_t<node_key_t>::min,
+        get_root().get_location(),
+        nullptr);
+      iter.internal.push_back({nroot, 0});
+
+      get_tree_stats<self_type>(c.trans).depth = iter.get_depth();
+      get_tree_stats<self_type>(c.trans).extents_num_delta++;
+
+      root_block = c.cache.duplicate_for_write(
+        c.trans, root_block)->template cast<RootBlock>();
+      get_root().set_location(nroot->get_paddr());
+      get_root().set_depth(iter.get_depth());
+      ceph_assert(get_root().get_depth() <= MAX_DEPTH);
+      set_root_node(nroot);
+    }
+
+    /* pos may be either node_position_t<leaf_node_t> or
+     * node_position_t<internal_node_t> */
+    auto split_level = [&, c, FNAME](auto &parent_pos, auto &pos) {
+      auto [left, right, pivot] = pos.node->make_split_children(c);
+
+      auto parent_node = parent_pos.node;
+      auto parent_iter = parent_pos.get_iter();
+
+      parent_node->update(
+        parent_iter,
+        left->get_paddr(),
+        left.get());
+      parent_node->insert(
+        parent_iter + 1,
+        pivot,
+        right->get_paddr(),
+        right.get());
+
+      SUBTRACET(
+        seastore_fixedkv_tree,
+        "splitted {} into left: {}, right: {}",
+        c.trans,
+        *pos.node,
+        *left,
+        *right);
+      c.cache.retire_extent(c.trans, pos.node);
+
+      get_tree_stats<self_type>(c.trans).extents_num_delta++;
+      get_tree_stats<self_type>(c.trans).num_splits++;
+      return std::make_pair(left, right);
+    };
+
+    for (; split_from > 0; --split_from) {
+      auto &parent_pos = iter.get_internal(split_from + 1);
+      if (!parent_pos.node->is_mutable()) {
+        parent_pos.node = c.cache.duplicate_for_write(
+          c.trans, parent_pos.node
+        )->template cast<internal_node_t>();
+      }
+
+      if (split_from > 1) {
+        auto &pos = iter.get_internal(split_from);
+        SUBTRACET(
+          seastore_fixedkv_tree,
+          "splitting internal {} at depth {}, parent: {} at pos: {}",
+          c.trans,
+          *pos.node,
+          split_from,
+          *parent_pos.node,
+          parent_pos.pos);
+        auto [left, right] = split_level(parent_pos, pos);
+
+        if (pos.pos < left->get_size()) {
+          pos.node = left;
+        } else {
+          pos.node = right;
+          pos.pos -= left->get_size();
+
+          parent_pos.pos += 1;
+        }
+      } else {
+        auto &pos = iter.leaf;
+        SUBTRACET(
+          seastore_fixedkv_tree,
+          "splitting leaf {}, parent: {} at pos: {}",
+          c.trans,
+          *pos.node,
+          *parent_pos.node,
+          parent_pos.pos);
+        auto [left, right] = split_level(parent_pos, pos);
+
+        /* right->get_node_meta().begin == pivot == right->begin()->get_key()
+         * Thus, if pos.pos == left->get_size(), we want iter to point to
+         * left with pos.pos at the end rather than right with pos.pos = 0
+         * since the insertion would be to the left of the first element
+         * of right and thus necessarily less than right->get_node_meta().begin.
+         */
+        if (pos.pos <= left->get_size()) {
+          pos.node = left;
+        } else {
+          pos.node = right;
+          pos.pos -= left->get_size();
+
+          parent_pos.pos += 1;
+        }
+      }
+    }
+  }
+
   handle_split_ret handle_split(
     op_context_t c,
     iterator &iter)
   {
-    LOG_PREFIX(FixedKVBtree::handle_split);
-
     return iter.check_split(c
-    ).si_then([FNAME, this, c, &iter](auto split_from) {
-      SUBTRACET(seastore_fixedkv_tree,
-        "split_from {}, depth {}", c.trans, split_from, iter.get_depth());
-
-      if (split_from == iter.get_depth()) {
-        assert(iter.is_full());
-        auto nroot = c.cache.template alloc_new_non_data_extent<internal_node_t>(
-          c.trans, node_size, placement_hint_t::HOT, INIT_GENERATION);
-        fixed_kv_node_meta_t<node_key_t> meta{
-          min_max_t<node_key_t>::min, min_max_t<node_key_t>::max, iter.get_depth() + 1};
-        nroot->set_meta(meta);
-        nroot->range = meta;
-        nroot->journal_insert(
-          nroot->begin(),
-          min_max_t<node_key_t>::min,
-          get_root().get_location(),
-          nullptr);
-        iter.internal.push_back({nroot, 0});
-
-        get_tree_stats<self_type>(c.trans).depth = iter.get_depth();
-        get_tree_stats<self_type>(c.trans).extents_num_delta++;
-
-        root_block = c.cache.duplicate_for_write(
-          c.trans, root_block)->template cast<RootBlock>();
-        get_root().set_location(nroot->get_paddr());
-        get_root().set_depth(iter.get_depth());
-        ceph_assert(get_root().get_depth() <= MAX_DEPTH);
-        set_root_node(nroot);
+    ).si_then([this, c, &iter](auto split_from) {
+      if (split_from > 0) {
+        do_split(c, iter, split_from);
       }
+      return seastar::now();
+    });
+  }
 
-      /* pos may be either node_position_t<leaf_node_t> or
-       * node_position_t<internal_node_t> */
-      auto split_level = [&, c, FNAME](auto &parent_pos, auto &pos) {
-        auto [left, right, pivot] = pos.node->make_split_children(c);
-
-        auto parent_node = parent_pos.node;
-        auto parent_iter = parent_pos.get_iter();
-
-        parent_node->update(
-          parent_iter,
-          left->get_paddr(),
-          left.get());
-        parent_node->insert(
-          parent_iter + 1,
-          pivot,
-          right->get_paddr(),
-          right.get());
-
-        SUBTRACET(
-          seastore_fixedkv_tree,
-          "splitted {} into left: {}, right: {}",
-          c.trans,
-          *pos.node,
-          *left,
-          *right);
-        c.cache.retire_extent(c.trans, pos.node);
-
-        get_tree_stats<self_type>(c.trans).extents_num_delta++;
-        return std::make_pair(left, right);
-      };
-
-      for (; split_from > 0; --split_from) {
-        auto &parent_pos = iter.get_internal(split_from + 1);
-        if (!parent_pos.node->is_mutable()) {
-          parent_pos.node = c.cache.duplicate_for_write(
-            c.trans, parent_pos.node
-          )->template cast<internal_node_t>();
-        }
-
-        if (split_from > 1) {
-          auto &pos = iter.get_internal(split_from);
-          SUBTRACET(
-            seastore_fixedkv_tree,
-            "splitting internal {} at depth {}, parent: {} at pos: {}",
-            c.trans,
-            *pos.node,
-            split_from,
-            *parent_pos.node,
-            parent_pos.pos);
-          auto [left, right] = split_level(parent_pos, pos);
-
-          if (pos.pos < left->get_size()) {
-            pos.node = left;
-          } else {
-            pos.node = right;
-            pos.pos -= left->get_size();
-
-            parent_pos.pos += 1;
-          }
-        } else {
-          auto &pos = iter.leaf;
-          SUBTRACET(
-            seastore_fixedkv_tree,
-            "splitting leaf {}, parent: {} at pos: {}",
-            c.trans,
-            *pos.node,
-            *parent_pos.node,
-            parent_pos.pos);
-          auto [left, right] = split_level(parent_pos, pos);
-
-          /* right->get_node_meta().begin == pivot == right->begin()->get_key()
-           * Thus, if pos.pos == left->get_size(), we want iter to point to
-           * left with pos.pos at the end rather than right with pos.pos = 0
-           * since the insertion would be to the left of the first element
-           * of right and thus necessarily less than right->get_node_meta().begin.
-           */
-          if (pos.pos <= left->get_size()) {
-            pos.node = left;
-          } else {
-            pos.node = right;
-            pos.pos -= left->get_size();
-
-            parent_pos.pos += 1;
-          }
-        }
+public:
+  /**
+   * proactive_split - split an over-threshold leaf from a background
+   * transaction.  Uses the same split cascade as handle_split but
+   * triggers at PROACTIVE_SPLIT_SIZE instead of CAPACITY.
+   */
+  handle_split_ret proactive_split(
+    op_context_t c,
+    iterator &iter)
+  {
+    return iter.check_split(c, leaf_node_t::PROACTIVE_SPLIT_SIZE
+    ).si_then([this, c, &iter](auto split_from) {
+      if (split_from > 0) {
+        do_split(c, iter, split_from);
       }
-
       return seastar::now();
     });
   }
 
 
+  /**
+   * proactive_merge - merge or rebalance an under-threshold leaf from a
+   * background transaction.  Triggers at BACKGROUND_MERGE_SIZE instead of
+   * get_min_capacity().  Only handles the leaf level; parent underflow
+   * is left for subsequent background cycles.
+   */
+  handle_merge_ret proactive_merge(
+    op_context_t c,
+    iterator &iter)
+  {
+    LOG_PREFIX(FixedKVBtree::proactive_merge);
+    if (iter.get_depth() == 1 ||
+        iter.leaf.node->get_size() >= leaf_node_t::BACKGROUND_MERGE_SIZE) {
+      SUBTRACET(
+        seastore_fixedkv_tree,
+        "no proactive merge needed, leaf size {}, depth {}",
+        c.trans,
+        iter.leaf.node->get_size(),
+        iter.get_depth());
+      return seastar::now();
+    }
+
+    SUBTRACET(
+      seastore_fixedkv_tree,
+      "proactive merge, leaf size {} < threshold {}",
+      c.trans,
+      iter.leaf.node->get_size(),
+      leaf_node_t::BACKGROUND_MERGE_SIZE);
+    return iter.ensure_internal(c, 2
+    ).si_then([this, c, &iter] {
+      auto &parent_pos = iter.get_internal(2);
+      return merge_level(c, depth_t{1}, parent_pos, iter.leaf);
+    });
+  }
+
+private:
   /**
    * handle_merge - rebalance or merge underflowing nodes after a remove.
    *
@@ -2775,15 +2861,13 @@ private:
    *
    * All merges/rebalances are CoW: new nodes replace old ones.
    */
-  using handle_merge_iertr = base_iertr;
-  using handle_merge_ret = handle_merge_iertr::future<>;
   handle_merge_ret handle_merge(
     op_context_t c,
     iterator &iter)
   {
     LOG_PREFIX(FixedKVBtree::handle_merge);
     if (iter.get_depth() == 1 ||
-        !iter.leaf.node->below_min_capacity()) {
+        !iter.leaf.node->below_min_capacity(c.cache.is_rebalance_enabled())) {
       SUBTRACET(
         seastore_fixedkv_tree,
         "no need to merge leaf, leaf size {}, depth {}",
@@ -2845,7 +2929,8 @@ private:
                 SUBTRACET(seastore_fixedkv_tree, "no need to collapse root", c.trans);
               }
               return seastar::stop_iteration::yes;
-            } else if (pos.node->below_min_capacity()) {
+            } else if (pos.node->below_min_capacity(
+                         c.cache.is_rebalance_enabled())) {
               SUBTRACET(
                 seastore_fixedkv_tree,
                 "continuing, next node {} depth {} at min",
@@ -2941,7 +3026,7 @@ private:
       auto [liter, riter] = donor_is_left ?
         std::make_pair(donor_iter, iter) : std::make_pair(iter, donor_iter);
 
-      if (donor->at_min_capacity()) {
+      if (donor->at_min_capacity(c.cache.is_rebalance_enabled())) {
         auto replacement = l->make_full_merge(c, r);
 
         parent_pos.node->update(
@@ -3004,6 +3089,7 @@ private:
         c.cache.retire_extent(c.trans, r);
       }
 
+      get_tree_stats<self_type>(c.trans).num_merges++;
       return seastar::now();
     };
 
