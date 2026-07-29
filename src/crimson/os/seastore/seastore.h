@@ -451,18 +451,19 @@ public:
 
     static constexpr auto LAT_MAX = static_cast<std::size_t>(op_type_t::MAX);
 
-    // Histogram bucket upper bounds in milliseconds (1ms–100ms).
-    // Ops above 100ms land in the last bucket as overflow. The smallest
-    // bucket is 1ms: sub-ms latencies are below lowres_clock resolution
-    // (~task_quota) and cannot be resolved, so no finer buckets are kept.
-    static constexpr std::array<double, 12> lat_hist_bounds_ms = {
-      1,
-      1.5, 2, 3,
+    // Histogram bucket upper bounds in milliseconds.
+    // lowres_clock updates once per task_quota (~0.5ms), so the sub-ms
+    // buckets distinguish "completed within the same tick" (<=0.1ms)
+    // from "one tick" (<=0.5ms) from "crossed a tick boundary" (<=1ms).
+    static constexpr std::array<double, 17> lat_hist_bounds_ms = {
+      0.1, 0.25, 0.5,
+      1, 1.5, 2, 3,
       5,
       7.5, 10,
       15, 20,
       30, 50,
-      100
+      75, 100,
+      200
     };
 
     // Buckets for the per-transaction conflict/replay distribution.
