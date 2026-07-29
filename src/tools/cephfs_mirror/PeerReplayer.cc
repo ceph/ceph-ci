@@ -122,6 +122,58 @@ bool get_json_value(const json_spirit::mObject& obj,
   return false;
 }
 
+bool get_json_string(const json_spirit::mObject& obj,
+                     const std::string& key,
+                     std::string *val) {
+  json_spirit::mValue v;
+  if (!get_json_value(obj, key, &v)) {
+    return false;
+  }
+  if (v.type() != json_spirit::str_type) {
+    generic_derr << "cephfs::mirror: persisted sync stat key '" << key
+                 << "' has type " << v.type()
+                 << " (expected string); ignoring" << dendl;
+    return false;
+  }
+  *val = v.get_str();
+  return true;
+}
+
+bool get_json_uint64(const json_spirit::mObject& obj,
+                     const std::string& key,
+                     uint64_t *val) {
+  json_spirit::mValue v;
+  if (!get_json_value(obj, key, &v)) {
+    return false;
+  }
+  if (v.type() != json_spirit::int_type) {
+    generic_derr << "cephfs::mirror: persisted sync stat key '" << key
+                 << "' has type " << v.type()
+                 << " (expected int); ignoring" << dendl;
+    return false;
+  }
+  *val = v.get_uint64();
+  return true;
+}
+
+bool get_json_real(const json_spirit::mObject& obj,
+                   const std::string& key,
+                   double *val) {
+  json_spirit::mValue v;
+  if (!get_json_value(obj, key, &v)) {
+    return false;
+  }
+  if (v.type() != json_spirit::int_type &&
+      v.type() != json_spirit::real_type) {
+    generic_derr << "cephfs::mirror: persisted sync stat key '" << key
+                 << "' has type " << v.type()
+                 << " (expected int or real); ignoring" << dendl;
+    return false;
+  }
+  *val = v.get_real();
+  return true;
+}
+
 double monotime_to_double(monotime t) {
   return sec_duration(t.time_since_epoch()).count();
 }
@@ -822,29 +874,30 @@ void PeerReplayer::apply_persisted_dir_sync_stat(SnapSyncStat &sync_stat,
 
   if (get_json_value(obj, "last_synced_snap", &v) && v.type() == json_spirit::obj_type) {
     auto &last_synced_snap = v.get_obj();
-    if (get_json_value(last_synced_snap, "id", &v)) {
-      uint64_t snap_id = v.get_uint64();
-      if (get_json_value(last_synced_snap, "name", &v)) {
-        sync_stat.last_synced_snap = std::make_pair(snap_id, v.get_str());
-      }
+    uint64_t snap_id;
+    std::string snap_name;
+    if (get_json_uint64(last_synced_snap, "id", &snap_id) &&
+        get_json_string(last_synced_snap, "name", &snap_name)) {
+      sync_stat.last_synced_snap = std::make_pair(snap_id, snap_name);
     }
-    if (get_json_value(last_synced_snap, "crawl_duration", &v)) {
-      sync_stat.last_sync_crawl_duration = v.get_real();
+    double value;
+    if (get_json_real(last_synced_snap, "crawl_duration", &value)) {
+      sync_stat.last_sync_crawl_duration = value;
     }
-    if (get_json_value(last_synced_snap, "datasync_queue_wait_duration", &v)) {
-      sync_stat.last_sync_datasync_queue_wait_duration = v.get_real();
+    if (get_json_real(last_synced_snap, "datasync_queue_wait_duration", &value)) {
+      sync_stat.last_sync_datasync_queue_wait_duration = value;
     }
-    if (get_json_value(last_synced_snap, "sync_duration", &v)) {
-      sync_stat.last_sync_duration = v.get_real();
+    if (get_json_real(last_synced_snap, "sync_duration", &value)) {
+      sync_stat.last_sync_duration = value;
     }
-    if (get_json_value(last_synced_snap, "sync_time_stamp", &v)) {
-      sync_stat.last_synced = monotime_from_double(v.get_real());
+    if (get_json_real(last_synced_snap, "sync_time_stamp", &value)) {
+      sync_stat.last_synced = monotime_from_double(value);
     }
-    if (get_json_value(last_synced_snap, "sync_bytes", &v)) {
-      sync_stat.last_sync_bytes = v.get_uint64();
+    if (get_json_uint64(last_synced_snap, "sync_bytes", &snap_id)) {
+      sync_stat.last_sync_bytes = snap_id;
     }
-    if (get_json_value(last_synced_snap, "sync_files", &v)) {
-      sync_stat.last_sync_files = v.get_uint64();
+    if (get_json_uint64(last_synced_snap, "sync_files", &snap_id)) {
+      sync_stat.last_sync_files = snap_id;
     }
   }
 }
