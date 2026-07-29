@@ -34,7 +34,8 @@ const DASHBOARD_USERNAME_PATTERN = /^(?!\.+$)[a-zA-Z0-9._@+-]+$/;
 @Component({
   selector: 'cd-user-form',
   templateUrl: './user-form.component.html',
-  styleUrls: ['./user-form.component.scss']
+  styleUrls: ['./user-form.component.scss'],
+  standalone: false
 })
 export class UserFormComponent extends CdForm implements OnInit {
   @ViewChild('removeSelfUserReadUpdatePermissionTpl', { static: true })
