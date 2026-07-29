@@ -516,6 +516,10 @@ class NvmeofCLICommand(DBCLICommand):
             out_format = cmd_dict.get('format')
             args_map = self._args_map_from_argspec(cmd_dict, inbuf)
 
+            missing = self._check_required_params(cmd_dict)
+            if missing:
+                return HandleCommandResult(-errno.EINVAL, '', missing)
+
             if out_format == 'plain' or not out_format:
                 for param, msg in self._deprecated_params.items():
                     if args_map.get(param) is not None:
