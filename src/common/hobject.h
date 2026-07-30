@@ -237,7 +237,14 @@ public:
   }
 
   bool is_max() const {
-    ceph_assert(!max || (*this == hobject_t(hobject_t::get_max())));
+    // DEBUG: put the culprit's fields into the assert MESSAGE, which prints in
+    // the structured log (unlike stderr). Message args are evaluated only on
+    // failure; size() is a safe read (no pointer deref on a corrupt string,
+    // whose data ptr may be garbage -- that's what we're chasing). Revert.
+    ceph_assertf(!max || (*this == hobject_t(hobject_t::get_max())),
+      "BADMAXHOBJ pool=%lld snap=%llu hash=%#x nspace_sz=%zu key_sz=%zu oid_sz=%zu",
+      (long long)pool, (unsigned long long)snap.val, hash,
+      nspace.size(), key.size(), oid.name.size());
     return max;
   }
   bool is_min() const {
