@@ -1,8 +1,11 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:nil -*-
 // vim: ts=8 sw=2 sts=2 expandtab
 
+#include <unistd.h>
+
 #include "common/admin_socket.h"
 #include "common/ceph_argparse.h"
+#include "common/Clock.h"
 #include "common/ceph_context.h"
 #include "common/common_init.h"
 #include "common/debug.h"
@@ -77,10 +80,25 @@ public:
 
     // mirror status format is name@fscid
     cmd = "fs mirror status " + stringify(filesystem.fs_name) + "@" + stringify(filesystem.fscid);
-    r = admin_socket->register_command(
-      cmd, this, "get filesystem mirror status");
-    if (r == 0) {
-      commands[cmd] = new StatusCommand(fs_mirror);
+    utime_t start = ceph_clock_now();
+    while (true) {
+      r = admin_socket->register_command(
+        cmd, this, "get filesystem mirror status");
+      if (r == 0) {
+        commands[cmd] = new StatusCommand(fs_mirror);
+        break;
+      }
+      if (r != -EEXIST) {
+        derr << ": failed to register admin socket command '" << cmd
+             << "': " << cpp_strerror(r) << dendl;
+        break;
+      }
+      if (ceph_clock_now() - start > utime_t(60, 0)) {
+        derr << ": timed out registering admin socket command '" << cmd
+             << "'" << dendl;
+        break;
+      }
+      usleep(100000);
     }
   }
 
