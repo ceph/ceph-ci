@@ -5,6 +5,12 @@ overrides:
       - Degraded data redundancy
       - objects misplaced
       - Synthetic exception in serve
+      - Synthetic exception in shutdown
+      - Synthetic exception in handle_command
+      - Synthetic exception in notify
+      - Synthetic exception in config_notify
+      - shutdown\(\) timed out
+      - _qa_broken_module
       - influxdb python module not found
       - No InfluxDB server configured
       - Failed to list/create InfluxDB database \(MGR_INFLUX_DB_LIST_FAILED\)

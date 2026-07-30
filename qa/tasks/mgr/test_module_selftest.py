@@ -262,3 +262,227 @@ class TestModuleSelftest(MgrTestCase):
                 "mgr", "self-test", "cluster-log", "xyz",
                 "ERR", "The channel does not exist")
         self.assertEqual(exc_raised.exception.exitstatus, errno.EOPNOTSUPP)
+
+    def test_serve_failure(self):
+        """
+        That an exception thrown from a module's serve() loop marks the
+        module failed and raises a health check, with a test dedicated to
+        just this failure point  (tracker #78786).
+        """
+        self._load_module("selftest")
+        self.mgr_cluster.mon_manager.raw_cluster_cmd(
+            "mgr", "self-test", "background", "start", "throw_exception")
+
+        self.wait_for_health(
+            "Module 'selftest' has failed: Synthetic exception in serve",
+            timeout=30)
+
+        self.mgr_cluster.mon_manager.raw_cluster_cmd("crash", "prune", "0")
+
+    def test_command_handler_failure(self):
+        """
+        That an exception thrown from a module's command handler marks the
+        module failed and raises a health check.
+        """
+        self._load_module("selftest")
+
+        with self.assertRaises(CommandFailedError) as exc_raised:
+            self.mgr_cluster.mon_manager.raw_cluster_cmd(
+                "mgr", "self-test", "command", "throw")
+        self.assertEqual(exc_raised.exception.exitstatus, errno.EINVAL)
+
+        self.wait_for_health(
+            "Module 'selftest' has failed: Synthetic exception in "
+            "handle_command",
+            timeout=30)
+
+    def test_notify_failure(self):
+        """
+        That an exception thrown from a module's notify() marks the module
+        failed and raises a health check.
+        """
+        self._load_module("selftest")
+        self.mgr_cluster.set_module_conf("selftest", "notify_throw", "true")
+
+        # set_module_conf only returns once the mon has the new value --
+        # it still needs to propagate mon->mgr before the running module
+        # will see it (see test_selftest_config_update above), which is
+        # a separate race from the notify() we're about to trigger below.
+        def notify_throw_armed():
+            val = self.mgr_cluster.mon_manager.raw_cluster_cmd(
+                "mgr", "self-test", "config", "get", "notify_throw").strip()
+            return val == "True"
+        self.wait_until_true(notify_throw_armed, timeout=30)
+
+        # Any notification the module is registered for will do -- an OSD
+        # map change is one the suite already causes elsewhere. Always
+        # unset it again: it's cluster-wide state that outlives this test
+        # and will fail wait_for_health_clear() in unrelated later tests
+        # otherwise (setup_mgrs() between tests restarts daemons, but
+        # doesn't touch OSD flags).
+        self.mgr_cluster.mon_manager.raw_cluster_cmd("osd", "set", "noout")
+        try:
+            self.wait_for_health(
+                "Module 'selftest' has failed: Synthetic exception in notify",
+                timeout=30)
+        finally:
+            self.mgr_cluster.mon_manager.raw_cluster_cmd(
+                "osd", "unset", "noout")
+
+        self.mgr_cluster.mon_manager.raw_cluster_cmd("crash", "prune", "0")
+
+    def test_config_notify_failure(self):
+        """
+        That an exception thrown from a module's config_notify() marks the
+        module failed and raises a health check.
+        """
+        self._load_module("selftest")
+
+        # The config-set itself triggers config_notify() on the running
+        # module, no separate trigger step needed.
+        self.mgr_cluster.set_module_conf(
+            "selftest", "config_notify_throw", "true")
+
+        self.wait_for_health(
+            "Module 'selftest' has failed: Synthetic exception in "
+            "config_notify",
+            timeout=30)
+
+        self.mgr_cluster.mon_manager.raw_cluster_cmd("crash", "prune", "0")
+
+
+class TestModuleSelftestStandby(MgrTestCase):
+    """
+    Failure points that only manifest on a standby module: import/load
+    failures at daemon startup, and shutdown() failures during
+    standby->active promotion (tracker #78786).
+    """
+    MGRS_REQUIRED = 2
+
+    def setUp(self):
+        super(TestModuleSelftestStandby, self).setUp()
+        self.setup_mgrs()
+
+    def test_module_load_failure(self):
+        """
+        That a module which fails to import on disk is recorded as
+        unusable in a standby's available_modules, without disturbing the
+        rest of the cluster.
+        """
+        module_name = "_qa_broken_module"
+
+        standby_id = self.mgr_cluster.get_standby_ids()[0]
+        original_active = self.mgr_cluster.get_active_id()
+
+        module_path = self.mgr_cluster.get_config(
+            "mgr_module_path", service_type="mgr")
+        remote = self.mgr_cluster.mgr_daemons[standby_id].remote
+
+        module_dir = "{0}/{1}".format(module_path, module_name)
+        remote.sudo_write_file(
+            "{0}/module.py".format(module_dir), "", mode="0644",
+            mkdir=True)
+        remote.sudo_write_file(
+            "{0}/__init__.py".format(module_dir),
+            "raise ImportError(\"qa synthetic module load failure\")\n",
+            mode="0644", mkdir=True)
+
+        try:
+            self.mgr_cluster.mgr_restart(standby_id)
+
+            def get_standby_entry():
+                mgr_map = self.mgr_cluster.get_mgr_map()
+                for standby in mgr_map["standbys"]:
+                    if standby["name"] == standby_id:
+                        return standby
+                return None
+
+            self.wait_until_true(
+                lambda: get_standby_entry() is not None, timeout=30)
+
+            standby_entry = get_standby_entry()
+            module_entry = None
+            for m in standby_entry["available_modules"]:
+                if m["name"] == module_name:
+                    module_entry = m
+                    break
+
+            self.assertIsNotNone(module_entry)
+            self.assertFalse(module_entry["can_run"])
+            self.assertTrue(module_entry["error_string"])
+
+            self.assertEqual(
+                self.mgr_cluster.get_active_id(), original_active)
+            self.wait_for_health_clear(timeout=30)
+        finally:
+            remote.run(args=["sudo", "rm", "-rf", module_dir])
+            self.mgr_cluster.mgr_restart(standby_id)
+            self.wait_until_true(
+                lambda: standby_id in self.mgr_cluster.get_standby_ids(),
+                timeout=30)
+
+    def test_standby_shutdown_throw_marks_failed(self):
+        """
+        That a standby module whose shutdown() throws is marked failed
+        (visible via the freshly-promoted active module), rather than
+        silently ignored.
+        """
+        self.mgr_cluster.set_module_conf(
+            "selftest", "shutdown_throw", "true")
+
+        original_active = self.mgr_cluster.get_active_id()
+        original_standbys = self.mgr_cluster.get_standby_ids()
+
+        self._load_module("selftest")
+        self.wait_until_true(
+            lambda: set(self.mgr_cluster.get_standby_ids())
+            == set(original_standbys),
+            timeout=30)
+
+        self.mgr_cluster.mgr_fail(original_active)
+        self.wait_until_true(
+            lambda: self.mgr_cluster.get_active_id() in original_standbys,
+            timeout=30)
+
+        self.wait_for_health(
+            "Module 'selftest' has failed: Synthetic exception in shutdown",
+            timeout=30)
+
+        self.mgr_cluster.mon_manager.raw_cluster_cmd("crash", "prune", "0")
+
+    def test_standby_shutdown_hang_does_not_block_promotion(self):
+        """
+        Regression test for the daemon-availability bug motivating this
+        work: a standby module whose shutdown() hangs must not block the
+        standby->active promotion that calls it (tracker #78786).
+        """
+        self.config_set("mgr", "mgr_module_shutdown_timeout", 3)
+        self.mgr_cluster.set_module_conf(
+            "selftest", "standby_shutdown_hang", "true")
+
+        original_active = self.mgr_cluster.get_active_id()
+        original_standbys = self.mgr_cluster.get_standby_ids()
+
+        self._load_module("selftest")
+
+        # _load_module only confirms the active daemon's respawn --
+        # standbys respawn independently and briefly drop off the standby
+        # list, so wait for both to be back before triggering promotion.
+        self.wait_until_true(
+            lambda: set(self.mgr_cluster.get_standby_ids())
+            == set(original_standbys),
+            timeout=30)
+
+        self.mgr_cluster.mgr_fail(original_active)
+
+        # Deliberately tight: well under the 30s *default*
+        # mgr_module_shutdown_timeout. This bound only holds because the
+        # call and the join of the hung serve() thread are bounded
+        # together -- a fix that only bounded the python call would still
+        # hang here, blocked on thread.join().
+        self.wait_until_true(
+            lambda: self.mgr_cluster.get_active_id() in original_standbys,
+            timeout=15)
+
+        self.wait_for_health(
+            "Module 'selftest' has failed", timeout=15)
