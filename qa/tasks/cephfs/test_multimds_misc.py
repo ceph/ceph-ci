@@ -1,10 +1,96 @@
 import logging
 import errno
+
+from time import sleep
+
 from tasks.cephfs.cephfs_test_case import CephFSTestCase
+from tasks.cephfs.io_workload_manager import IoWorkloadManager, WriterThreadConf
+
 from teuthology.contextutil import safe_while
 from teuthology.exceptions import CommandFailedError
 
+
 log = logging.getLogger(__name__)
+
+
+class TestReducingMaxMds(CephFSTestCase):
+    '''
+    Contains tests for verifying that MDSs successfully transition from
+    up:active to up:standby when max_mds is reduced from 3 to 1 while
+    metadata-heavy IO workload is on.
+
+    NOTE: IO workload with plenty MD ops is preferred so that MDS is busy while
+    its state transitions.
+    '''
+    MDSS_REQUIRED = 3
+    CLIENTS_REQUIRED = 3
+
+    def setUp(self):
+        super(TestReducingMaxMds, self).setUp()
+
+        self.wr_th_conf = WriterThreadConf(depth=4, br_factor=3, wr_th_lim=12,
+                                           wr_th_file_size=4096,
+                                           wr_th_file_lim=20000, wr_th_sleep=0)
+
+        self.iow_man = IoWorkloadManager(
+            mounts=(self.mount_a, self.mount_b, self.mount_c),
+            wr_th_conf=self.wr_th_conf)
+
+    def tearDown(self):
+        self.iow_man.teardown()
+        super(TestReducingMaxMds, self).tearDown()
+
+    def wait_till_MDSs_are(self, active, standby, sleep, tries):
+        logmsg = 'waiting for cluster to have 1 active and 2 standby MDSs...'
+        with safe_while(sleep=sleep, tries=tries, action=logmsg) as proceed:
+            while proceed():
+                cs = self.get_ceph_status()
+                active = cs['fsmap']['in']
+                standby = cs['fsmap']['up:standby']
+                log.info(f'MDSs: {active} active, {standby} standby')
+                if active == 1 and standby == 2:
+                    return
+
+    def test_with_manually_pinned_dirs(self):
+        '''
+        Test that 2 MDS ranks successfully transition from up:active to
+        up:standby when max_mds is reduced from 3 to 1 while metadata-heavy IO
+        is going on on all three manually pinned directories; each pinned to a
+        different rank.
+        '''
+        def setup_for_this_test():
+            self.run_ceph_cmd(f'fs set {self.fs.name} max_mds 3')
+
+            self.mount_a.run_shell('mkdir dir1 dir2 dir3')
+            self.mount_a.run_shell('setfattr -n ceph.dir.pin -v 0 dir1')
+            self.mount_a.run_shell('setfattr -n ceph.dir.pin -v 1 dir2')
+            self.mount_a.run_shell('setfattr -n ceph.dir.pin -v 2 dir3')
+
+            self.mount_a.remount(cephfs_mntpt='/dir1')
+            self.mount_b.remount(cephfs_mntpt='/dir2')
+            self.mount_c.remount(cephfs_mntpt='/dir3')
+
+            cs = self.get_ceph_status()
+            self.assertEqual(cs['fsmap']['up'], 3)
+            self.assertEqual(cs['fsmap']['in'], 3)
+            self.assertEqual(cs['fsmap']['up:standby'], 0)
+
+        setup_for_this_test()
+
+        self.iow_man.start_io_workload()
+        log.info('letting IO workload run undisturbed...')
+        for i in range(60):
+            sleep(30)
+            assert self.iow_man.are_all_io_procs_alive()
+            log.info('IO workload is on... ')
+
+        # NOTE: pass confirmation option to avoid failure due to health
+        # warnings.
+        self.run_ceph_cmd(f'fs set {self.fs.name} max_mds 1 '
+                           '--yes-i-really-mean-it')
+        assert self.iow_man.are_all_io_procs_alive()
+        self.wait_till_MDSs_are(active=1, standby=2, sleep=30, tries=120)
+
 
 class TestScrub2(CephFSTestCase):
     MDSS_REQUIRED = 3

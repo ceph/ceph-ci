@@ -2,6 +2,8 @@ from typing import Optional, TYPE_CHECKING
 import unittest
 import time
 import logging
+
+from json import loads as json_loads
 from io import StringIO
 
 from teuthology.exceptions import CommandFailedError
@@ -113,6 +115,13 @@ class RunCephCmd:
         proc = self.run_ceph_cmd(**kwargs)
         self._verify(proc, retval, errmsgs)
         return proc
+
+    def get_ceph_status(self, json=True):
+        if json:
+            return json_loads(self.get_ceph_cmd_stdout('status --format '
+                                                       'json-pretty'))
+        else:
+            return self.get_ceph_cmd_stdout('status')
 
 
 class CephTestCase(unittest.TestCase, RunCephCmd):
