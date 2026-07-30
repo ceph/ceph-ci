@@ -15,11 +15,11 @@ tasks:
       max_in_flight: 64
       objects: 1024
       balance_reads: true
+      no_omap: true
       op_weights:
         read: 100
         write: 100
         delete: 50
-        rollback: 50
         copy_from: 50
         setattr: 25
         rmattr: 25
