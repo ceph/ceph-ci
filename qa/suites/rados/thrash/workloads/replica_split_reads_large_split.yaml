@@ -11,11 +11,11 @@ tasks:
       objects: 1024
       balance_reads: true
       osd_min_split_replica_read_size: 1048576
+      no_omap: true
       op_weights:
         read: 100
         write: 100
         delete: 50
-        rollback: 50
         copy_from: 50
         setattr: 25
         rmattr: 25
