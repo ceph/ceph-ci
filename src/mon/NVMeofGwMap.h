@@ -195,9 +195,6 @@ private:
   void set_active_states_for_ana_group(
       const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
       NvmeAnaGrpId anagrpid);
-  void set_inaccessible_states_for_ana_group(
-      const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
-      NvmeAnaGrpId anagrpid);
   void set_accessible_states_after_startup(
        const NvmeGwId &gw_id, const NvmeGroupKey& group_key);
 

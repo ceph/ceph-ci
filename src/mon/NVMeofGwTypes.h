@@ -42,6 +42,12 @@ struct WaitingList {
 };
 using FailoverList  = std::list<WaitingList>;
 
+typedef enum {
+ ACTIVE_PASSIVE = 0,
+ ACTIVE_NON_ACTIVE,
+ ACTIVE_ACTIVE
+}Active_mode_t;
+
 enum class gw_states_per_group_t {
   GW_IDLE_STATE = 0, //invalid state
   GW_STANDBY_STATE, // exported as INACCESSIBLE_STATE
@@ -222,8 +228,9 @@ struct NvmeGwMonState {
   void standby_state(NvmeAnaGrpId grpid) {
     sm_state[grpid]       = gw_states_per_group_t::GW_STANDBY_STATE;
   }
-  void accessible_state(NvmeAnaGrpId grpid) {
-    sm_state[grpid]       = gw_states_per_group_t::GW_ACCESSIBLE_STATE;
+  void accessible_state(NvmeAnaGrpId grpid, Active_mode_t mode) {
+    sm_state[grpid] = (mode == ACTIVE_NON_ACTIVE) ? gw_states_per_group_t::GW_ACCESSIBLE_STATE
+                       : gw_states_per_group_t::GW_ACTIVE_STATE;
     blocklist_data[grpid].osd_epoch = 0;
   }
   void active_state(NvmeAnaGrpId grpid) {
