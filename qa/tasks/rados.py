@@ -190,6 +190,8 @@ def task(ctx, config):
         args.extend(['--no-omap'])
         if not config.get('erasure_code_use_overwrites', False):
             args.extend(['--ec-pool'])
+    if config.get('no_omap', False):
+        args.extend(['--no-omap'])
     if config.get('write_fadvise_dontneed', False):
         args.extend(['--write-fadvise-dontneed'])
     if config.get('set_redirect', False):
