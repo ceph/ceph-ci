@@ -59,12 +59,13 @@ void NVMeofGwMap::to_gmap(
       if (g_active_mode != ACTIVE_PASSIVE) {
         auto grp_it = fully_inaccessible.find(group_key);
         if ( (grp_it != fully_inaccessible.end())  && grp_it->second == 1) {
-          for (auto& sm_state_it: sm_state) {
+          gw_state.hold_ios = true;
+          dout(4) << " gw_id " << gw_id << "send transient hold ios state" << dendl;
+          /*for (auto& sm_state_it: sm_state) {
             sm_state_it.second = gw_states_per_group_t::GW_STANDBY_STATE;
             dout(10) << "substitute state by Inaccessible upon send for GW " << gw_id
                      << " anagrp " << sm_state_it.first
-                     << " state " << sm_state_it.second << dendl;
-          }
+                     << " state " << sm_state_it.second << dendl; }*/
         }
       }
       for (const auto& sub: gw_created.subsystems) {
@@ -416,7 +417,7 @@ bool NVMeofGwMap::get_location_in_disaster_cleanup(const NvmeGroupKey& group_key
   return false;
 }
 
-void NVMeofGwMap::disaster_map_remove_location(const NvmeGroupKey& group_key,
+bool NVMeofGwMap::disaster_map_remove_location(const NvmeGroupKey& group_key,
            NvmeLocation& location) {
   // this function called when GW with last location removed from the group
   //or when removed location from the disaster_location map
@@ -427,7 +428,9 @@ void NVMeofGwMap::disaster_map_remove_location(const NvmeGroupKey& group_key,
     if (locs.empty()) {
       disaster_locations.erase(grp_it);
     }
+    return true;
   }
+  return false;
 }
 
 int NVMeofGwMap::cfg_location_disaster_set(
@@ -759,6 +762,10 @@ void NVMeofGwMap::process_failover_list(bool & propose_pending) {
       dout(10) << "no failover entries remaining for grp key " << group_key
                << ", clearing fully_inaccessible flag" << dendl;
       fully_inaccessible[group_key] = 0;
+      propose_pending = true;
+      increment_gw_epoch(group_key); // GWs must wait for last osd epoch for all clusters,
+                                     // disable transient hold ios
+                                     // and afterwards set Optimised states to ana groups from the map
     }
   }
   // 3. Remove map entries with empty lists to keep the map clean
@@ -985,12 +992,14 @@ void NVMeofGwMap::check_relocate_ana_groups(const NvmeGroupKey& group_key,
         }
       }
       if (num_gw_in_location == num_active_ana_in_location) {// All ana groups of disaster location are in Active
-        disaster_map_remove_location(group_key, location);
-        dout(4) <<  "the location entry is erased "<< location
-            << " from disaster-locations num_ana_groups in location "
-            << num_gw_in_location
-            << " from the failbacks-in-progress of group " << group_key <<dendl;
-        propose = true;
+        bool res = disaster_map_remove_location(group_key, location);
+        if (res) {
+          dout(4) <<  "the location entry is erased "<< location
+                  << " from disaster-locations num_ana_groups in location "
+                  << num_gw_in_location
+                  << " from the failbacks-in-progress of group " << group_key <<dendl;
+          propose = true;
+        }
         return;
       }
     // for all ana groups in the list do relocate

@@ -159,6 +159,7 @@ inline std::ostream& operator<<(
      << " sequence " << value.last_beacon_seq_number
      << " sequence-ooo " << value.last_beacon_seq_ooo
      << " map_features " << value.map_features
+     << " hold_ios " << value.hold_ios
      << " GwSubsystems: [ ";
   for (const auto& sub: value.subsystems) {
     os << sub.second << " ";
@@ -376,6 +377,7 @@ inline void encode(const NvmeGwClientState& state,  ceph::bufferlist &bl, uint64
   encode((uint64_t)state.last_beacon_seq_number, bl);
   encode((uint8_t)state.last_beacon_seq_ooo, bl);
   encode((uint64_t)state.map_features, bl);
+  encode((uint8_t)state.hold_ios, bl);
   ENCODE_FINISH(bl);
 }
 
@@ -396,6 +398,9 @@ inline  void decode(
     decode(last_beacon_seq_ooo, bl);
     state.last_beacon_seq_ooo = (bool)last_beacon_seq_ooo;
     decode(state.map_features, bl);
+    uint8_t hold_ios;
+    decode(hold_ios, bl);
+    state.hold_ios = (bool)hold_ios;
   }
   DECODE_FINISH(bl);
 }

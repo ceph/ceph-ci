@@ -468,6 +468,10 @@ bool NVMeofGwMon::nvme_gw_show_command(ceph::Formatter* f, bufferlist &rdata, co
       f->dump_unsigned("rebalance_ana_group", it->second.ana_grp_id + 1);
     }
   }
+  auto hold_ios_it = map.fully_inaccessible.find(group_key);
+  if ( (hold_ios_it != map.fully_inaccessible.end())  && hold_ios_it->second == 1) {
+   f->dump_bool("transient hold all IOs", true);
+  }
   f->dump_unsigned("num gws", map.created_gws[group_key].size());
   if (map.gw_epoch.find(group_key) != map.gw_epoch.end())
     f->dump_unsigned("GW-epoch", map.gw_epoch[group_key]);

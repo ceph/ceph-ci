@@ -546,9 +546,12 @@ void NVMeofGwMonitorClient::handle_nvmeof_gw_map(ceph::ref_t<MNVMeofGwMap> nmap)
     }
     if (nas.states_size()) ai.mutable_states()->Add(std::move(nas));
   }
-
+   if (new_gw_state.hold_ios) {
+    ai.set_hold_ios(true);
+    dout(4) <<  "set flag hold_ios" << dendl;
+   }
   // if there is state change, notify the gateway
-  if (ai.states_size()) {
+  if (ai.states_size() || new_gw_state.hold_ios) {
     bool set_ana_state = false;
     while (!set_ana_state) {
       NVMeofGwClient gw_client(
