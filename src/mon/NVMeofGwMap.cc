@@ -59,12 +59,13 @@ void NVMeofGwMap::to_gmap(
       if (g_active_mode != ACTIVE_PASSIVE) {
         auto grp_it = fully_inaccessible.find(group_key);
         if ( (grp_it != fully_inaccessible.end())  && grp_it->second == 1) {
-          for (auto& sm_state_it: sm_state) {
+          gw_state.hold_ios = true;
+          dout(4) << " gw_id " << gw_id << "send transient hold ios state" << dendl;
+          /*for (auto& sm_state_it: sm_state) {
             sm_state_it.second = gw_states_per_group_t::GW_STANDBY_STATE;
             dout(10) << "substitute state by Inaccessible upon send for GW " << gw_id
                      << " anagrp " << sm_state_it.first
-                     << " state " << sm_state_it.second << dendl;
-          }
+                     << " state " << sm_state_it.second << dendl; }*/
         }
       }
       for (const auto& sub: gw_created.subsystems) {

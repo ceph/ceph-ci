@@ -307,6 +307,7 @@ struct NvmeGwClientState {
   uint64_t last_beacon_seq_number;
   bool last_beacon_seq_ooo; //out of order sequence
   uint64_t map_features; // last map features
+  bool hold_ios = false;
   NvmeGwClientState(NvmeAnaGrpId id, epoch_t epoch, gw_availability_t available,
      uint64_t sequence, bool sequence_ooo, uint64_t last_published_features)
     : group_id(id), gw_map_epoch(epoch), availability(available),
