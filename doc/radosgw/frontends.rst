@@ -171,6 +171,55 @@ Options
 :Default: ``0``
 
 
+
+
+RGW-SMB Frontend
+================
+
+The ``rgw-smb`` frontend provides direct SMB protocol access to RGW buckets,
+similar to how ``rgw-nfs`` provides NFS access. This is a specialized daemon
+type distinct from the standard HTTP frontends.
+
+.. note::
+   The ``rgw-smb`` frontend is different from the SMB manager module. The SMB
+   manager module provides SMB access to CephFS volumes via Samba containers,
+   while the ``rgw-smb`` frontend provides direct SMB protocol access to RGW
+   object storage. See :doc:`/mgr/smb` for information about the SMB manager module.
+
+Configuration
+-------------
+
+The ``rgw-smb`` frontend is configured through the daemon type specification
+rather than the ``rgw_frontends`` configuration option used by HTTP frontends.
+
+Daemon Type Configuration:
+
+- **Daemon type**: ``rgw-smb``
+- **Config prefix**: ``rgw_smb_`` (underscore format for configuration keys)
+- **Service name**: ``rgw-smb`` (hyphen format for daemon names)
+
+Options
+-------
+
+``rgw smb frontends``
+
+:Description: Additional frontends to enable alongside the SMB frontend.
+              Syntax is identical to ``rgw frontends``. This allows running
+              both SMB and HTTP frontends from the same daemon instance.
+:Type: String
+:Default: None
+
+``rgw_frontend_type``
+
+:Description: Set to ``smb`` to enable the RGW-SMB frontend daemon type.
+              When set, the daemon will start as an ``rgw-smb`` type instead
+              of the default HTTP-based ``rgw`` type.
+:Type: String
+:Default: ``http``
+
+See :doc:`smb` for detailed configuration and deployment information.
+
+
 Generic Options
 ===============
 
