@@ -448,6 +448,16 @@ class TestMirroring(CephFSTestCase):
             raise AssertionError(
                 f'expected add_directory={expected}, got {actual}')
 
+    @retry_assert(timeout=60, interval=1)
+    def wait_for_sync_failures(self, min_count=1):
+        """Wait until peer sync_failures reaches min_count.
+
+        remove_directory() returns when dir_count drops; sync_failures is
+        incremented only after the worker finishes sync_snaps() with error.
+        """
+        counters = self.get_peer_perf_counters()
+        self.assertGreaterEqual(counters.get('sync_failures', 0), min_count)
+
     def assert_directory_perf_labels(self, labels, dir_path, peer_uuid):
         self.assertEqual(labels['source_fscid'], str(self.primary_fs_id))
         self.assertEqual(labels['source_filesystem'], self.primary_fs_name)
@@ -1804,10 +1814,7 @@ class TestMirroring(CephFSTestCase):
         snap_list = self.mount_b.ls(path='d0/.snap')
         self.assertTrue('snap0' not in snap_list)
 
-        # check sync_failures
-        res = self.mirror_daemon_command(f'counter dump for fs: {self.primary_fs_name}', 'counter', 'dump')
-        vmirror_peers = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR_PEER][0]
-        self.assertGreater(vmirror_peers["counters"]["sync_failures"], 0)
+        self.wait_for_sync_failures()
 
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
