@@ -144,8 +144,19 @@ class TestMirroring(CephFSTestCase):
         asok_stat = self.peer_dir_status(asok_res, dir_path, peer_uuid)
         if expected_state is not None:
             self.assertEqual(asok_stat['state'], expected_state)
+            # omap can lag the asok; require mgr to show the same state before
+            # the multi-call scope walk so we do not compare syncing asok to
+            # default-idle omap metrics.
+            mgr_stat = self.dir_status_from_mgr(fs_name, dir_path, peer_uuid)
+            self.assertEqual(mgr_stat['state'], expected_state,
+                             msg=f'mgr not yet {expected_state}: {mgr_stat}')
         self.assert_mgr_mirror_status_scopes(
             fs_name, dir_path, peer_uuid, expected_dirs, asok_res)
+        if expected_state is not None:
+            # Sync may finish during the scope walk; retry while still active.
+            asok_after = self.dir_status_from_asok(
+                fs_name, fs_id, dir_path, peer_uuid)
+            self.assertEqual(asok_after['state'], expected_state)
 
     def tearDown(self):
         self.disable_mirroring_module()
@@ -3442,9 +3453,11 @@ class TestMirroring(CephFSTestCase):
 
             sync_dir = 'mgr_nc_sync'
             self.mount_a.run_shell(['mkdir', sync_dir])
-            self.mount_a.create_n_files(f'{sync_dir}/file', 10000, sync=True)
-            for i in range(20):
-                self.mount_a.write_n_mb(os.path.join(sync_dir, f'large_file.{i}'), 100)
+            # Keep sync active across the multi-call mgr/asok scope walk.
+            # Smaller payloads finish between asok syncing and omap update.
+            for i in range(8):
+                self.mount_a.write_n_mb(
+                    os.path.join(sync_dir, f'large_file.{i}'), 1024)
             self.add_directory(self.primary_fs_name, self.primary_fs_id,
                                f'/{sync_dir}')
             snap_name = 'snap0'
