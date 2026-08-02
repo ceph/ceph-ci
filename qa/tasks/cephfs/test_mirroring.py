@@ -618,6 +618,18 @@ class TestMirroring(CephFSTestCase):
         res = json.loads(res_json)
         self.assertEqual(res['state'], expected_state)
 
+    @retry_assert(timeout=45, interval=1)
+    def wait_for_directory_untracked(self, fs_name, dir_path):
+        """Wait until mgr policy finishes DISASSOCIATING (dirmap ENOENT)."""
+        try:
+            self.run_ceph_cmd("fs", "snapshot", "mirror", "dirmap",
+                              fs_name, dir_path)
+        except CommandFailedError as ce:
+            self.assertEqual(ce.exitstatus, errno.ENOENT)
+            return
+        raise AssertionError(
+            f'{dir_path} still tracked after remove; waiting for unmap')
+
     @retry_assert(timeout=60, interval=2)
     def wait_for_mirror_status_ready(self, fs_name, fs_id):
         self.assertTrue(self.get_mirror_rados_addr(fs_name, fs_id))
@@ -2141,15 +2153,9 @@ class TestMirroring(CephFSTestCase):
         self.assertTrue(res['state'], 'stalled')
 
         self.run_ceph_cmd("fs", "snapshot", "mirror", "remove", self.primary_fs_name, dir_path)
-
-        time.sleep(10)
-        try:
-            self.run_ceph_cmd("fs", "snapshot", "mirror", "dirmap", self.primary_fs_name, dir_path)
-        except CommandFailedError as ce:
-            if ce.exitstatus != errno.ENOENT:
-                raise RuntimeError('invalid errno when checking dirmap status for non-existent directory')
-        else:
-            raise RuntimeError('incorrect errno when checking dirmap state for non-existent directory')
+        # Wait for DISASSOCIATING to finish; parent add fails with EINVAL while
+        # the child is still purging.
+        self.wait_for_directory_untracked(self.primary_fs_name, dir_path)
 
         # adding a parent directory should be allowed
         self.run_ceph_cmd("fs", "snapshot", "mirror", "add", self.primary_fs_name, dir_path_p)
@@ -3295,6 +3301,10 @@ class TestMirroring(CephFSTestCase):
         self.mount_a.run_shell(['mkdir', dir_name])
         self.add_directory(self.primary_fs_name, self.primary_fs_id, f'/{dir_name}')
         self.remove_directory(self.primary_fs_name, self.primary_fs_id, f'/{dir_name}')
+        # remove_directory() only waits for the daemon to drop the dir.
+        # Mgr policy stays in DISASSOCIATING until MAP_REMOVE; status checks
+        # policy.lookup() and succeeds until then (metrics cache is unrelated).
+        self.wait_for_directory_untracked(self.primary_fs_name, f'/{dir_name}')
 
         try:
             self.mgr_mirror_status(self.primary_fs_name, f'/{dir_name}')
