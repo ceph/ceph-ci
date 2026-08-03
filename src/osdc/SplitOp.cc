@@ -1190,7 +1190,7 @@ bool SplitOp::create(Objecter::Op *op, Objecter &objecter,
     }
     st.osd = st.acting[(int)sub_read.abs_shard];
 
-    target.used_replica = (st.acting_primary != st.osd);
+    st.used_replica = (st.acting_primary != st.osd);
 
     objecter._op_submit(sub_op, sul, &tids[i++]);
 
