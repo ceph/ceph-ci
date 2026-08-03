@@ -560,9 +560,10 @@ class CephadmServe:
         metadata = self.mgr.get_metadata(service_type, daemon_id, {})
         assert metadata is not None
         try:
-            if service_type == 'rgw-nfs':
+            if service_type in ['rgw-nfs', 'rgw-smb']:
                 # https://tracker.ceph.com/issues/49573
                 name = metadata['id'][:-4]
+                self.log.info("SHWETA2 nfs name is %s" % (name))
             else:
                 name = '%s.%s' % (service_type, metadata['id'])
         except (KeyError, TypeError):
