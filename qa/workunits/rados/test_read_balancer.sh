@@ -40,6 +40,13 @@ function shut_down_cluster {
     fi
 }
 
+function cleanup {
+    echo "Delete pools that were created or that we intend to create fresh..."
+    "$ceph" osd pool rm foo foo --yes-i-really-really-mean-it || return 1
+    "$ceph" osd pool rm foo_2 foo_2 --yes-i-really-really-mean-it || return 1
+    "$ceph" osd pool rm foo_3 foo_3 --yes-i-really-really-mean-it || return 1
+}
+
 function TEST_read_balancer_bulk_flag {
     # Tests bug from https://tracker.ceph.com/issues/76731
     echo "TEST 1: Read balancer interaction with pg_autoscaler 'bulk' flag"
@@ -315,10 +322,16 @@ main() {
         start_vstart_cluster
     fi
 
+    # Clean up any preexisting pools we intend to create from scratch
+    cleanup
+
     # ---- RUN TESTS ----
     TEST_read_balancer_bulk_flag
     TEST_read_balancer_cli
     # -------------------
+
+    # Clean up any pools we created and no longer need
+    cleanup
 
     if $vstart; then
         shut_down_cluster
