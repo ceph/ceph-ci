@@ -278,6 +278,7 @@ def run_keystone(ctx, config):
         public_host, public_port = ctx.keystone.public_endpoints[client]
         run_cmd = get_keystone_venved_cmd(ctx, 'uwsgi',
             [
+                '--master', # needs to address RemoteDisconnected
                 '--http', f"{public_host}:{public_port}",
                 '--module', 'keystone.wsgi.api:application',
                 # Let's put the Keystone in background, wait for EOF
