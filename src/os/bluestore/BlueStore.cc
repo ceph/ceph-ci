@@ -1928,7 +1928,6 @@ void BlueStore::BufferSpace::read(
   uint64_t miss_bytes = want_bytes - hit_bytes;
   cache->logger->inc(l_bluestore_buffer_hit_bytes, hit_bytes);
   cache->logger->inc(l_bluestore_buffer_miss_bytes, miss_bytes);
-  cache->logger->inc(l_bluestore_buffer_read_reqs, 1);
 }
 
 void BlueStore::BufferSpace::_finish_write(BufferCacheShard* cache,
@@ -6562,8 +6561,6 @@ void BlueStore::_init_logger()
       "Small writes into existing or sparse small blobs skipped due to zero detection (bytes)");
 
   b.add_time_avg(l_bluestore_buffer_miss_lat, "buffer_miss_lat", "Avg data cache miss disk latency"); //bluestore data buffer
-  b.add_u64_counter(l_bluestore_buffer_read_reqs, "buffer_read_reqs", "Total data cache read requests"); //i think subrtacting the number of requests from the number of misses above will give number of complete hits where the entire read was in cache
-  //after read is called it will always increment l_bluestore_buffer_read_reqs, and if there was any part that wasnt in cache it will eventually log it in l_bluestore_buffer_miss_lat, so the difference should be ones that were fully in cache
 
   
 
@@ -6639,10 +6636,13 @@ void BlueStore::_init_logger()
 	    PerfCountersBuilder::PRIO_DEBUGONLY,
 	    unit_t(UNIT_BYTES));
   b.add_u64_counter(l_bluestore_buffer_miss_bytes, "buffer_miss_bytes",
-	    "Sum for bytes of read missed in the cache",
-	    NULL,
-	    PerfCountersBuilder::PRIO_DEBUGONLY,
-	    unit_t(UNIT_BYTES));
+     "Sum for bytes of read missed in the cache",
+     NULL,
+     PerfCountersBuilder::PRIO_DEBUGONLY,
+     unit_t(UNIT_BYTES));
+  b.add_u64_counter(l_bluestore_buffer_hits, "buffer_hits",
+     "Count of buffer cache lookup hits",
+     "b_ht", PerfCountersBuilder::PRIO_CRITICAL);
   //****************************************
 
   // internal stats
@@ -13444,6 +13444,8 @@ int BlueStore::_do_read(
     if (is_miss) {
       auto miss_end_time = ceph::mono_clock::now();
       logger->tinc(l_bluestore_buffer_miss_lat, miss_end_time - miss_start_time);
+    } else {
+      logger->inc(l_bluestore_buffer_hits);
     }
 
     r = ioc.get_return_value();
@@ -13869,6 +13871,8 @@ int BlueStore::_do_readv(
       ceph_assert(r == -EIO); // no other errors allowed
       return -EIO;
     }
+  } else {
+    logger->inc(l_bluestore_buffer_hits);
   }
   if (op_flags & CEPH_OSD_OP_FLAG_SCRUB) {
     log_latency_fn_scrub(__func__,
