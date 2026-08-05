@@ -275,6 +275,29 @@ timeout = 1.0\n"""
             assert len(cephadm_module.spec_store.get_by_service_type('nvmeof')) == 1
 
     @patch("cephadm.serve.CephadmServe._run_cephadm", _run_cephadm('{}'))
+    @patch("cephadm.module.NvmeofMetadataPoolHelper.create_pool_if_needed")
+    def test_apply_with_dotted_pool_accepted_over_existing_trimmed_service_id(
+            self, _create_pool, cephadm_module: CephadmOrchestrator):
+        """Backward-compat: a service stored with the old trimmed service_id ('nvmeof.gw_group1',
+        produced by the lstrip('.') bug) must not block a subsequent apply that uses the correct
+        dotted service_id ('.nvmeof.gw_group1'), since both refer to the same pool+group."""
+        old_spec = NvmeofServiceSpec(
+            service_id='nvmeof.gw_group1',   # old trimmed form (bug)
+            group='gw_group1',
+            pool='.nvmeof'
+        )
+        new_spec = NvmeofServiceSpec(
+            service_id='.nvmeof.gw_group1',  # correct dotted form (fixed)
+            group='gw_group1',
+            pool='.nvmeof'
+        )
+        with with_host(cephadm_module, 'test'):
+            cephadm_module._apply_service_spec(old_spec)
+            assert len(cephadm_module.spec_store.get_by_service_type('nvmeof')) == 1
+            # Must NOT raise — same pool+group, just a different service_id string
+            cephadm_module._apply_service_spec(new_spec)
+
+    @patch("cephadm.serve.CephadmServe._run_cephadm", _run_cephadm('{}'))
     def test_validate_service_id_matches_group_on_apply(self, cephadm_module: CephadmOrchestrator):
         matching_nvmeof_spec_group_service_id = NvmeofServiceSpec(
             service_id='pool1.right_group',

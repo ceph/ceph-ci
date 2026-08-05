@@ -2228,8 +2228,20 @@ Usage:
             nvmeof_pool_helper = NvmeofMetadataPoolHelper(self)
             nvmeof_pool_helper.create_pool_if_needed()
 
+        # If a service already exists for this (pool, group) pair — potentially stored
+        # with the old lstrip('.') service_id form — reuse its service_id so we update
+        # the existing service rather than creating a duplicate.
+        service_id = f'{pool}.{group}' if group else pool
+        existing = raise_if_exception(self.describe_service(service_type='nvmeof'))
+        for svc in existing:
+            esvc = cast(NvmeofServiceSpec, svc.spec)
+            if (esvc.group == group
+                    and esvc.pool.lstrip('.') == pool.lstrip('.')):
+                service_id = esvc.service_id
+                break
+
         spec = NvmeofServiceSpec(
-            service_id=f'{pool}.{group}' if group else pool,
+            service_id=service_id,
             pool=pool,
             group=group,
             placement=PlacementSpec.from_string(placement),
