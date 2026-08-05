@@ -7,3 +7,6 @@ openstack:
     size: 20 # GB
 - machine:
     disk: 200 # GB
+log-rotate:
+  ceph-mds: 5G
+  ceph-osd: 5G
