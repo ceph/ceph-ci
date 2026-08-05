@@ -393,7 +393,7 @@ class TestApplyNvmeof:
         """Backward-compat: if a service already exists with the old trimmed service_id
         ('nvmeof.mygroup1', produced by the lstrip('.') bug), a subsequent CLI apply must
         reuse that service_id rather than generating a new '.nvmeof.mygroup1', which would
-        create a second duplicate service alongside the existing one."""
+        create a second duplicate service alongside the existing one. blabla"""
         existing_spec = NvmeofServiceSpec(
             service_id='nvmeof.mygroup1',   # old trimmed form stored on disk
             group='mygroup1',
