@@ -4581,7 +4581,15 @@ Then run the following:
                     )
             for sspec in [s.spec for s in self.spec_store.get_by_service_type('nvmeof')]:
                 nspec = cast(NvmeofServiceSpec, sspec)
-                if nvmeof_spec.group == nspec.group and nvmeof_spec.service_id != nspec.service_id:
+                same_group = nvmeof_spec.group == nspec.group
+                # Consider two specs the same service if their (pool, group) pair matches,
+                # regardless of whether the pool name has a leading dot.  This handles
+                # clusters that were created before the lstrip('.') bug was fixed, where
+                # the default pool ".nvmeof" was stored as "nvmeof" in the service_id.
+                same_service = (nvmeof_spec.service_id == nspec.service_id
+                                or (nvmeof_spec.pool.lstrip('.') == nspec.pool.lstrip('.')
+                                    and nvmeof_spec.group == nspec.group))
+                if same_group and not same_service:
                     raise OrchestratorError(f"Cannot create nvmeof service with group {nvmeof_spec.group}. That group is already "
                                             f"being used by the service {nspec.service_name()}")
 
