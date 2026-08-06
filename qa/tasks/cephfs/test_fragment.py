@@ -409,6 +409,63 @@ class TestFragmentation(CephFSTestCase):
         self.assertEqual(self.get_merges(), 0)
         self.assertEqual(len(self.get_dir_ino("/splitdir")["dirfrags"]), 2)
 
+    def test_finish_old_fragment_auth_pin_race(self):
+        """
+        Reproduce the race condition between directory fragmentation (split/merge)
+        and concurrent client metadata operations generating auth_pins.
+        """
+        log.info("Testing auth_pin race condition during fragment split/merge...")
+
+        # Configure the MDS balancer for ultra-aggressive fragmentation
+        self._configure(
+            mds_bal_split_size=20,
+            mds_bal_merge_size=5,
+            mds_bal_interval=1,
+            mds_bal_fragment_interval=1
+        )
+
+        time.sleep(5)
+
+        test_dir = "frag_race_dir"
+        self.mount_a.run_shell(['mkdir', '-p', test_dir])
+
+        # Define the background workloads for the client
+        spawner_script = f"""
+        while true; do
+            touch {test_dir}/file_{{1..50}} > /dev/null 2>&1 || true
+            sleep 0.2
+            rm -f {test_dir}/file_{{1..50}} > /dev/null 2>&1 || true
+            sleep 0.2
+        done
+        """
+
+        pinner_script = f"""
+        while true; do
+            stat {test_dir}/file_* > /dev/null 2>&1 || true
+            chmod 777 {test_dir}/file_* > /dev/null 2>&1 || true
+        done
+        """
+
+        # Write and execute the workloads
+        self.mount_a.client_remote.run(args=['cat', '>', '/tmp/spawner.sh'], stdin=spawner_script)
+        self.mount_a.client_remote.run(args=['cat', '>', '/tmp/pinner.sh'], stdin=pinner_script)
+        self.mount_a.client_remote.run(args=['chmod', '+x', '/tmp/spawner.sh', '/tmp/pinner.sh'])
+
+        spawner_proc = self.mount_a.run_shell(['bash', '/tmp/spawner.sh'], wait=False)
+        pinner_proc = self.mount_a.run_shell(['bash', '/tmp/pinner.sh'], wait=False)
+
+        run_time = 120
+        try:
+            for i in range(run_time // 5):
+                self.assert_mds_healthy()
+                time.sleep(5)
+        finally:
+            spawner_proc.kill()
+            pinner_proc.kill()
+            self.mount_a.client_remote.run(args=['rm', '-f', '/tmp/spawner.sh', '/tmp/pinner.sh'])
+            self.mount_a.run_shell(['rm', '-rf', test_dir])
+        self.assert_mds_healthy()
+
     def _run_dir_frag(self, killpoint):
         self._test_oversize(killpoint=killpoint)
 
