@@ -1,8 +1,12 @@
 import errno
 import logging
 import signal
+
+from time import sleep
 from textwrap import dedent
+
 from tasks.cephfs.cephfs_test_case import CephFSTestCase
+
 from teuthology.orchestra.run import Raw
 from teuthology.exceptions import CommandFailedError
 
@@ -576,6 +580,268 @@ class TestSnapshots(CephFSTestCase):
             # after reducing limit we expect the new snapshot creation to fail
             pass
         self.delete_dir_and_snaps("accounts", new_limit + 1)
+
+
+class TestMultiMdsSnapMdOp(CephFSTestCase):
+    MDSS_REQUIRED = 3
+
+    def setUp(self):
+        super(TestMultiMdsSnapMdOp, self).setUp()
+
+        dir_name = 'dir1'
+        self.mount_a.run_shell(f'mkdir {dir_name}')
+        self.mount_a.write_files(filepath=dir_name, num_of_files=5)
+
+        self.run_ceph_cmd(f'fs set {self.fs.name} max_mds 2')
+        #self.mount_a.run_shell(f'setfattr -n ceph.dir.pin -v 1 {dir_name}')
+        #self.run_ceph_cmd('config set client client_use_random_mds true')
+        #self.run_ceph_cmd('config set mds mds_bal_replicate_threshold 0')
+        sleep(5)
+
+        # after test, before "rm -rf dir/"
+        #self.mount_a.run_shell(f'setfattr -n ceph.dir.pin -v 1 {dir_name}')
+
+    def tearDown(self):
+        self.mount_a.run_shell('rm -rf dir1/')
+        super(TestMultiMdsSnapMdOp, self).tearDown()
+
+    def test_snap_md_op_create_allows_adding(self):
+        '''
+        In a multimds setup, test that snap MD op create allows adding a new k-v
+        pair.
+        '''
+        self.mount_a.run_libcephfs_pybind_custom_test(dedent('''
+            def test_snap_md_op_create_allows_adding():
+                dir_name = 'dir1'
+                snap_name = 'snap1'
+                snap_path = f'{dir_name}/.snap/{snap_name}'
+                cephfs.mksnap(dir_name, 'snap1', 0o755)
+
+                for i in range(1, 1001):
+                    cephfs.do_snap_md_op(snap_path, 'abc', f'123-{i}',
+                                         libcephfs.CEPH_SNAP_MD_OP_CREATE)
+
+                snap1_info = cephfs.snap_info(snap_path)
+                print(f'snap1_info = {snap1_info}')
+                # ensure that the loop ran fully.
+                assert snap1_info['metadata']['abc'] == '123-1000'
+
+                cephfs.rmsnap(dir_name, snap_name)
+
+            test_func = test_snap_md_op_create_allows_adding
+       '''))
+
+    def test_snap_md_op_create_allows_updating(self):
+        '''
+        In a multimds setup, test that snap MD op create allows updating an
+        already existing k-v pairs.
+        '''
+        self.mount_a.run_libcephfs_pybind_custom_test(dedent('''
+            def test_snap_md_op_create_allows_updating():
+                dir_name = 'dir1'
+                snap_name = 'snap1'
+                snap_path = f'{dir_name}/.snap/{snap_name}'
+                cephfs.mksnap(dir_name, 'snap1', 0o755,
+                              metadata={'abc': '123', 'def': '456',
+                                        'ghi': '789'})
+
+                for i in range(1, 1001):
+                    cephfs.do_snap_md_op(snap_path, 'abc', f'123-{i}',
+                                         libcephfs.CEPH_SNAP_MD_OP_CREATE)
+
+                snap1_info = cephfs.snap_info(snap_path)
+                print(f'snap1_info = {snap1_info}')
+                # ensure that the loop ran fully.
+                assert snap1_info['metadata']['abc'] == '123-1000'
+
+                cephfs.rmsnap(dir_name, snap_name)
+
+            test_func = test_snap_md_op_create_allows_updating
+       '''))
+
+    def test_snap_md_op_excl_allows_adding(self):
+        '''
+        In a multimds setup, test that snap MD op excl allows adding a new k-v
+        pairs.
+        '''
+        self.mount_a.run_libcephfs_pybind_custom_test(dedent('''
+            def test_snap_md_op_excl_allows_adding():
+                dir_name = 'dir1'
+                snap_name = 'snap1'
+                snap_path = f'{dir_name}/.snap/{snap_name}'
+                cephfs.mksnap(dir_name, 'snap1', 0o755)
+
+                for i in range(1, 1001):
+                    cephfs.do_snap_md_op(snap_path, f'abc-{i}', f'123-{i}',
+                                         libcephfs.CEPH_SNAP_MD_OP_CREATE | \
+                                         libcephfs.CEPH_SNAP_MD_OP_EXCL)
+
+                snap1_info = cephfs.snap_info(snap_path)
+                print(f'snap1_info = {snap1_info}')
+                # ensure that the loop ran fully.
+                assert snap1_info['metadata']['abc-1000'] == '123-1000'
+
+                cephfs.rmsnap(dir_name, snap_name)
+
+            test_func = test_snap_md_op_excl_allows_adding
+       '''))
+
+    def test_snap_md_op_excl_disallows_updating(self):
+        '''
+        In a multimds setup, test that snap MD op excl disallows updating
+        an alreadu existing k-v pair.
+        '''
+        self.mount_a.run_libcephfs_pybind_custom_test(dedent('''
+            def test_snap_md_op_excl_disallows_updating():
+                dir_name = 'dir1'
+                snap_name = 'snap1'
+                snap_path = f'{dir_name}/.snap/{snap_name}'
+                cephfs.mksnap(dir_name, 'snap1', 0o755,
+                              metadata={'abc': '123', 'def': '456',
+                                        'ghi': '789'})
+
+                try:
+                    cephfs.do_snap_md_op(snap_path, 'abc', '1234',
+                                         libcephfs.CEPH_SNAP_MD_OP_CREATE | \
+                                         libcephfs.CEPH_SNAP_MD_OP_EXCL)
+                except libcephfs.InvalidValue:
+                    pass    # test passed!
+                else:
+                    assert False, "error was expected but it didn't occur"
+
+                snap1_info = cephfs.snap_info(snap_path)
+                print(f'snap1_info = {snap1_info}')
+                assert snap1_info['metadata']['abc'] == '123'
+                assert snap1_info['metadata']['def'] == '456'
+                assert snap1_info['metadata']['ghi'] == '789'
+
+                cephfs.rmsnap(dir_name, snap_name)
+
+            test_func = test_snap_md_op_excl_disallows_updating
+       '''))
+
+    def test_snap_md_op_remove(self):
+        '''
+        In a multimds setup, test that snap MD op remove removes given k-v pair.
+        '''
+        self.mount_a.run_libcephfs_pybind_custom_test(dedent('''
+            def test_snap_md_op_remove():
+                dir_name = 'dir1'
+                snap_name = 'snap1'
+                snap_path = f'{dir_name}/.snap/{snap_name}'
+                cephfs.mksnap(dir_name, 'snap1', 0o755)
+
+                for i in range(1, 1001):
+                    cephfs.do_snap_md_op(snap_path, 'abc', '123',
+                                         libcephfs.CEPH_SNAP_MD_OP_CREATE)
+                    cephfs.do_snap_md_op(snap_path, 'abc', '123',
+                                         libcephfs.CEPH_SNAP_MD_OP_REMOVE)
+
+                snap1_info = cephfs.snap_info(snap_path)
+                print(f'snap1_info = {snap1_info}')
+
+                cephfs.rmsnap(dir_name, snap_name)
+
+            test_func = test_snap_md_op_remove
+       '''))
+
+    def test_snap_md_op_with_empty_string(self):
+        '''
+        In a multimds setup, test that snap MD ops handle empty strings in k-v
+        pair properly.
+        '''
+        self.mount_a.run_libcephfs_pybind_custom_test(dedent('''
+            def test_snap_md_op_with_empty_string():
+                dir_name = 'dir1'
+                snap_name = 'snap1'
+                snap_path = f'{dir_name}/.snap/{snap_name}'
+                cephfs.mksnap(dir_name, 'snap1', 0o755)
+
+                for i in range(1, 1001):
+                    cephfs.do_snap_md_op(snap_path, '', '',
+                                         libcephfs.CEPH_SNAP_MD_OP_CREATE)
+                    cephfs.do_snap_md_op(snap_path, str(i), '',
+                                         libcephfs.CEPH_SNAP_MD_OP_CREATE)
+                    cephfs.do_snap_md_op(snap_path, '', str(i),
+                                         libcephfs.CEPH_SNAP_MD_OP_CREATE)
+
+                    cephfs.do_snap_md_op(snap_path, '', str(i),
+                                         libcephfs.CEPH_SNAP_MD_OP_REMOVE)
+                    cephfs.do_snap_md_op(snap_path, str(i), '',
+                                         libcephfs.CEPH_SNAP_MD_OP_REMOVE)
+
+                    cephfs.do_snap_md_op(snap_path, '', '',
+                                         libcephfs.CEPH_SNAP_MD_OP_CREATE | \
+                                         libcephfs.CEPH_SNAP_MD_OP_EXCL)
+                    cephfs.do_snap_md_op(snap_path, str(i), '',
+                                         libcephfs.CEPH_SNAP_MD_OP_CREATE | \
+                                         libcephfs.CEPH_SNAP_MD_OP_EXCL)
+                    try:
+                        cephfs.do_snap_md_op(snap_path, '', str(i),
+                                             libcephfs.CEPH_SNAP_MD_OP_CREATE | \
+                                             libcephfs.CEPH_SNAP_MD_OP_EXCL)
+                    except libcephfs.InvalidValue:
+                        pass    # test passed!
+                    else:
+                        assert False, "error was expected but it didn't occur"
+
+                    cephfs.do_snap_md_op(snap_path, '', '',
+                                         libcephfs.CEPH_SNAP_MD_OP_REMOVE)
+                    cephfs.do_snap_md_op(snap_path, str(i), '',
+                                         libcephfs.CEPH_SNAP_MD_OP_REMOVE)
+
+                cephfs.rmsnap(dir_name, snap_name)
+
+            test_func = test_snap_md_op_with_empty_string
+       '''))
+
+    def test_snap_md_op_negtest(self):
+        '''
+        In a multimds setup, test that snap MD ops errors out in case of
+        incorrect usage.
+        '''
+        self.mount_a.run_libcephfs_pybind_custom_test(dedent('''
+            def test_snap_md_op_negtest():
+                dir_name = 'dir1'
+                snap_name = 'snap1'
+                snap_path = f'{dir_name}/.snap/{snap_name}'
+                cephfs.mksnap(dir_name, 'snap1', 0o755)
+
+                for i in range(1, 1001):
+                    cephfs.do_snap_md_op(snap_path, '', '',
+                                         libcephfs.CEPH_SNAP_MD_OP_CREATE)
+                    cephfs.do_snap_md_op(snap_path, str(i), '',
+                                         libcephfs.CEPH_SNAP_MD_OP_CREATE)
+                    cephfs.do_snap_md_op(snap_path, '', str(i),
+                                         libcephfs.CEPH_SNAP_MD_OP_CREATE)
+
+                    cephfs.do_snap_md_op(snap_path, '', str(i),
+                                         libcephfs.CEPH_SNAP_MD_OP_REMOVE)
+                    cephfs.do_snap_md_op(snap_path, str(i), '',
+                                         libcephfs.CEPH_SNAP_MD_OP_REMOVE)
+
+                    cephfs.do_snap_md_op(snap_path, '', '',
+                                         libcephfs.CEPH_SNAP_MD_OP_CREATE | \
+                                         libcephfs.CEPH_SNAP_MD_OP_EXCL)
+                    cephfs.do_snap_md_op(snap_path, str(i), '',
+                                         libcephfs.CEPH_SNAP_MD_OP_CREATE | \
+                                         libcephfs.CEPH_SNAP_MD_OP_EXCL)
+                    try:
+                        cephfs.do_snap_md_op(snap_path, '', str(i),
+                                             libcephfs.CEPH_SNAP_MD_OP_CREATE | \
+                                             libcephfs.CEPH_SNAP_MD_OP_EXCL)
+                    except libcephfs.InvalidValue:
+                        pass    # test passed!
+                    else:
+                        assert False, "error was expected but it didn't occur"
+
+                snap1_info = cephfs.snap_info(snap_path)
+                print(f'snap1_info = {snap1_info}')
+
+                cephfs.rmsnap(dir_name, snap_name)
+
+            test_func = test_snap_md_op_negtest
+       '''))
 
 
 class TestMonSnapsAndFsPools(CephFSTestCase):
