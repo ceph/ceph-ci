@@ -874,6 +874,35 @@ class CephFSMountBase(object):
         kwargs['user'] = 'root'
         return self.run_as_user(**kwargs)
 
+    def run_libcephfs_pybind_custom_test(self, test_func, wait=True, timeout=90):
+        '''
+        Helper method for running custom test for libcephfs Python bindings.
+
+        To use this, simply define your test inside a string under a function
+        named test_func(). Call this method while pass this string to it..
+        '''
+        pyscript=dedent('''
+            import cephfs as libcephfs
+
+            def init_libcephfs():
+                global cephfs
+                cephfs = None
+                cephfs = libcephfs.LibCephFS(conffile='')
+                cephfs.mount()
+
+            def del_libcephfs():
+                global cephfs
+                cephfs.shutdown()
+            ''')
+
+        pyscript += dedent(test_func) + dedent('''
+            init_libcephfs()
+            test_func()
+            del_libcephfs()
+        ''')
+
+        return self.run_python(pyscript, timeout=timeout)
+
     def assert_retval(self, proc_retval, exp_retval):
         msg = (f'expected return value: {exp_retval}\n'
                f'received return value: {proc_retval}\n')
