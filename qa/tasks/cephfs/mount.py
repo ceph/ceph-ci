@@ -743,7 +743,14 @@ class CephFSMountBase(object):
 
         self.client_remote.write_file(path, data, **kwargs)
 
-    def write_file(self, path, data, perms=None, **kwargs):
+    def write_files(self, filepath, num_of_files=1, file_name_pfx='file'):
+        assert self.is_mounted()
+
+        for i in range(1, num_of_files + 1):
+            self.write_n_mb(filename=file_name_pfx + str(i),
+                            filepath=filepath)
+
+    def write_file_on_remote(self, path, data, perms=None, **kwargs):
         """
         Write the given data at the given path and set the given perms to the
         file on the path.
@@ -1262,13 +1269,16 @@ class CephFSMountBase(object):
         self.background_procs.append(rproc)
         return rproc
 
-    def write_n_mb(self, filename, n_mb, seek=0, wait=True):
+    def write_n_mb(self, filename, filepath='', n_mb=1, seek=0, wait=True):
         """
         Write the requested number of megabytes to a file
         """
         assert(self.is_mounted())
 
-        return self.run_shell(["dd", "if=/dev/urandom", "of={0}".format(filename),
+        filepath = filename if filepath == '' else os.path.join(filepath,
+                                                                filename)
+
+        return self.run_shell(["dd", "if=/dev/urandom", f"of={filepath}",
                                "bs=1M", "conv=fdatasync",
                                "count={0}".format(int(n_mb)),
                                "seek={0}".format(int(seek))
