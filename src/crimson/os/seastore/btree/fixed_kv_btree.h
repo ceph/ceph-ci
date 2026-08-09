@@ -3026,6 +3026,14 @@ private:
       auto [liter, riter] = donor_is_left ?
         std::make_pair(donor_iter, iter) : std::make_pair(iter, donor_iter);
 
+      if (std::max(l->get_size(), r->get_size()) -
+          std::min(l->get_size(), r->get_size()) <= 1) {
+        // Already balanced (differ by at most 1) — rebalancing would
+        // be a no-op or move a single entry, and get_balance_pivot_idx
+        // requires pivot_idx to lie strictly between min and max size.
+        return seastar::now();
+      }
+
       if (donor->at_min_capacity(c.cache.is_rebalance_enabled())) {
         auto replacement = l->make_full_merge(c, r);
 
