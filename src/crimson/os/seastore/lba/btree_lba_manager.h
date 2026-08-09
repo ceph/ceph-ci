@@ -489,6 +489,15 @@ public:
     Transaction &t,
     laddr_t hint) final;
 
+  /**
+   * Process multiple rebalance hints within a single btree scope
+   * (and thus a single transaction commit).  Amortizes journal-write
+   * cost across the batch.
+   */
+  rebalance_ret do_rebalance_batch(
+    Transaction &t,
+    const rebalance_hints_t &hints) final;
+
 private:
   Cache &cache;
 

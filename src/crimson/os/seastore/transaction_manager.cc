@@ -229,21 +229,27 @@ TransactionManager::run_rebalance_loop()
     } catch (const seastar::sleep_aborted&) {
       break;
     }
+    constexpr size_t REBALANCE_BATCH_SIZE = 4;
     while (lba_manager->has_rebalance_work()) {
       if (rebalance_abort.abort_requested()) {
         break;
       }
-      auto hint = lba_manager->pop_rebalance_hint();
+      LBAManager::rebalance_hints_t batch;
+      batch.reserve(REBALANCE_BATCH_SIZE);
+      while (batch.size() < REBALANCE_BATCH_SIZE &&
+             lba_manager->has_rebalance_work()) {
+        batch.push_back(lba_manager->pop_rebalance_hint());
+      }
       ++(shard_stats.rebalance_num);
-      co_await repeat_eagain([this, hint] {
+      co_await repeat_eagain([this, &batch] {
         ++(shard_stats.repeat_rebalance_num);
         return with_transaction_intr(
           Transaction::src_t::REBALANCE,
           "rebalance_lba",
           CACHE_HINT_TOUCH,
-          [this, hint](auto &t) {
-          return lba_manager->do_rebalance(
-            t, hint
+          [this, &batch](auto &t) {
+          return lba_manager->do_rebalance_batch(
+            t, batch
           ).si_then([this, &t] {
             return submit_transaction_direct(t);
           });

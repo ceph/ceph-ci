@@ -344,6 +344,12 @@ public:
     return base_iertr::now();
   }
 
+  using rebalance_hints_t = std::vector<laddr_t>;
+  virtual rebalance_ret do_rebalance_batch(
+    Transaction &t, const rebalance_hints_t &hints) {
+    return base_iertr::now();
+  }
+
   virtual ~LBAManager() {}
 };
 using LBAManagerRef = std::unique_ptr<LBAManager>;

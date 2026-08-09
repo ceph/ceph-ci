@@ -198,11 +198,12 @@ struct LBALeafNode
     return 25;
   }
 
-  // ~85% of LEAF_NODE_CAPACITY.  A midpoint split at this size
-  // produces halves of ~45, which is 10 entries above
+  // ~75% of LEAF_NODE_CAPACITY.  A midpoint split at this size
+  // produces halves of ~40, which is 5 entries above
   // BACKGROUND_MERGE_SIZE — enough hysteresis that a small number of
   // removes won't immediately trigger a merge.
-  static constexpr size_t PROACTIVE_SPLIT_SIZE = 90;
+  // TODO: restore to 90 after tuning; temporarily lowered for testing.
+  static constexpr size_t PROACTIVE_SPLIT_SIZE = 80;
 
   // ~33% of LEAF_NODE_CAPACITY.  Below this the background rebalancer
   // merges or rebalances with a sibling.  Post-merge/rebalance
