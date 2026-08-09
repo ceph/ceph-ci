@@ -811,6 +811,9 @@ BtreeLBAManager::do_rebalance_batch(
   Transaction &t,
   const rebalance_hints_t &hints)
 {
+  // Only perform proactive splits in a batch — merges reference
+  // sibling nodes that earlier operations in the same batch may
+  // have retired, so they are unsafe to batch.
   auto c = get_context(t);
   return with_btree<LBABtree>(
     cache,
@@ -824,12 +827,8 @@ BtreeLBAManager::do_rebalance_batch(
         c, hint
       ).si_then([c, &btree](auto iter) {
         auto leaf = iter.get_leaf_node();
-        auto size = leaf->get_size();
-        if (size >= LBALeafNode::PROACTIVE_SPLIT_SIZE) {
+        if (leaf->get_size() >= LBALeafNode::PROACTIVE_SPLIT_SIZE) {
           return btree.proactive_split(c, iter);
-        } else if (size < LBALeafNode::BACKGROUND_MERGE_SIZE
-                   && size > 0) {
-          return btree.proactive_merge(c, iter);
         }
         return base_iertr::now();
       });
