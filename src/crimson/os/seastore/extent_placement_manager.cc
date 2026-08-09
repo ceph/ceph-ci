@@ -540,7 +540,7 @@ ExtentPlacementManager::write_delayed_ool_extents(
 ExtentPlacementManager::alloc_paddr_iertr::future<>
 ExtentPlacementManager::write_preallocated_ool_extents(
     Transaction &t,
-    std::list<CachedExtentRef> &extents)
+    std::vector<CachedExtentRef> &extents)
 {
   LOG_PREFIX(ExtentPlacementManager::write_preallocated_ool_extents);
   DEBUGT("start with {} allocated extents",
@@ -1104,7 +1104,8 @@ RandomBlockOolWriter::alloc_write_ool_extents(
   return seastar::with_gate(write_guard, [this, &t, &extents] {
     seastar::lw_shared_ptr<rbm_pending_ool_t> ptr =
       seastar::make_lw_shared<rbm_pending_ool_t>();
-    ptr->pending_extents = t.get_pre_alloc_list();
+    auto &pal = t.get_pre_alloc_list();
+    ptr->pending_extents.assign(pal.begin(), pal.end());
     assert(!t.is_conflicted());
     t.set_pending_ool(ptr);
     return do_write(t, extents

@@ -487,7 +487,7 @@ public:
     std::map<ExtentOolWriter*, std::list<CachedExtentRef>>;
   struct dispatch_result_t {
     extents_by_writer_t alloc_map;
-    std::list<CachedExtentRef> delayed_extents;
+    std::vector<CachedExtentRef> delayed_extents;
     io_usage_t usage;
   };
 
@@ -516,7 +516,7 @@ public:
    */
   alloc_paddr_iertr::future<> write_preallocated_ool_extents(
     Transaction &t,
-    std::list<CachedExtentRef> &extents);
+    std::vector<CachedExtentRef> &extents);
 
   seastar::future<> stop_background() {
     return background_process.stop_background();
