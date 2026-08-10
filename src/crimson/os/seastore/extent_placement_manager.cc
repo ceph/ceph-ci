@@ -225,10 +225,10 @@ void ExtentPlacementManager::init(
         cold_tier_generations);
   ceph_assert(dynamic_max_rewrite_generation > MIN_REWRITE_GENERATION);
 
-  auto primary_bw_limit = crimson::common::get_conf<
-    Option::size_t>("seastore_primary_bw_throttle");
+  auto main_bw_limit = crimson::common::get_conf<
+    Option::size_t>("seastore_cache_device_bw_throttle");
   auto secondary_bw_limit = crimson::common::get_conf<
-    Option::size_t>("seastore_secondary_bw_throttle");
+    Option::size_t>("seastore_data_device_bw_throttle");
 
   token_buckets.emplace_back(std::make_unique<TokenBucket>(primary_bw_limit));
   token_buckets.back()->start();
