@@ -22,7 +22,9 @@
 #include "d4n_directory.h"
 #include "d4n_connection.h"
 #include "d4n_directory_redis.h"
+#if WITH_RADOSGW_FDB
 #include "d4n_directory_fdb.h"
+#endif
 #include "rgw_ssd_driver.h"
 
 namespace rgw { namespace sal {
@@ -124,14 +126,19 @@ int D4NFilterDriver::initialize(CephContext *cct, const DoutPrefixProvider *dpp)
 	}
 
   }
-  else if (directory_type == "fdb") {
-    auto fdb_db = lfdb::create_database();
-
-    dir = std::make_unique<rgw::d4n::FDBDirectory>(fdb_db); 
-    objDir = std::make_unique<rgw::d4n::FDBObjectDirectory>(fdb_db);
-    blockDir = std::make_unique<rgw::d4n::FDBBlockDirectory>(fdb_db);
-    bucketDir = std::make_unique<rgw::d4n::FDBBucketDirectory>(fdb_db);
+#if WITH_RADOSGW_FDB
+  else if (directory_type == "fdb"){
+    conn = std::make_shared<rgw::d4n::FDBConnection>(lfdb::create_database());
+	auto fdb_conn = std::dynamic_pointer_cast<rgw::d4n::FDBConnection>(conn);
+	if (!fdb_conn) {
+      ldpp_dout(dpp, 1) << "Wrong directory type: FDB " << dendl;
+	  return -1;
+	}
+    objDir = std::make_unique<rgw::d4n::FDBObjectDirectory>(fdb_conn);
+    blockDir = std::make_unique<rgw::d4n::FDBBlockDirectory>(fdb_conn);
+    bucketDir = std::make_unique<rgw::d4n::FDBBucketDirectory>(fdb_conn);
   }
+#endif
 
   //since we are using references here, it is important to initialize policyDriver after the directories.
   policyDriver = std::make_unique<rgw::d4n::PolicyDriver>(*dir, *blockDir, *objDir, *bucketDir, directory_type, cacheDriver.get(), "lfuda", this->y);
@@ -1537,7 +1544,8 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
           return ret;
         }
         p.execute(dpp, y);
-	  }
+      }
+#if WITH_RADOSGW_FDB
       else if (directory_type == "fdb"){
         auto ret = blockDir->set(dpp, &block, y, nullptr);
         if (ret < 0) {
@@ -1593,6 +1601,7 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
             return ret;
           }
       }
+#endif
     } else { //for clean/non-dirty objects
       rgw::d4n::CacheBlock latest = block;
       auto ret = blockDir->get(dpp, &latest, y);
@@ -1619,6 +1628,7 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
             }
             p.execute(dpp, y);
           }
+#if WITH_RADOSGW_FDB
 	  else if (directory_type == "fdb"){
             ret = blockDir->set(dpp, &block, y, nullptr);
             if (ret < 0) {
@@ -1634,6 +1644,7 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
             }
 
 	  }
+#endif
 	}
       } else if (ret < 0) {
         ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory get method failed for head object with ret: " << ret << dendl;
@@ -1670,6 +1681,7 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
             }
             p.execute(dpp, y);
 	  }
+#if WITH_RADOSGW_FDB
 	  else if (directory_type == "fdb"){
             ret = blockDir->set(dpp, &block, y, nullptr);
             if (ret < 0) {
@@ -1684,6 +1696,7 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
               return ret;
             }
 	  }
+#endif
         }//end-if !(this->get_bucket()->versioned())
       } //end-if ret = 0
     } //end-else
@@ -1785,6 +1798,7 @@ int D4NFilterObject::update_head_block_hostslist(const DoutPrefixProvider* dpp, 
           }
           p.execute(dpp, y);
 	}
+#if WITH_RADOSGW_FDB
         else if (directory_type == "fdb"){
           ret = blockDir->set(dpp, &block, y, nullptr);
           if (ret < 0) {
@@ -1799,6 +1813,7 @@ int D4NFilterObject::update_head_block_hostslist(const DoutPrefixProvider* dpp, 
           }
 
 	}
+#endif
       }
     }
   } else if (ret < 0) {
@@ -1853,6 +1868,7 @@ int D4NFilterObject::update_head_block_hostslist(const DoutPrefixProvider* dpp, 
             }
             p.execute(dpp, y);
 	  }
+#if WITH_RADOSGW_FDB
 	  else if (directory_type == "fdb"){
 	     ret = blockDir->set(dpp, &versioned_block, y, nullptr);
             if (ret < 0) {
@@ -1865,6 +1881,7 @@ int D4NFilterObject::update_head_block_hostslist(const DoutPrefixProvider* dpp, 
               return ret;
             }
 	  }
+#endif
         } else {
           //case when latest block version does not match with existing version, update only version block
           ret = blockDir->set(dpp, &versioned_block, y);
@@ -2203,9 +2220,11 @@ void D4NFilterDriver::shutdown()
     auto redis_conn = std::dynamic_pointer_cast<rgw::d4n::RedisConnection>(conn);
     boost::asio::dispatch(redis_conn->get_redis_conn()->get_executor(), [c = redis_conn->get_redis_conn()] { c->cancel(); });
   }
+#if WITH_RADOSGW_FDB
   else if (directory_type == "fdb"){
   	ceph::libfdb::shutdown_libfdb(); 
   }
+#endif
 
   cacheDriver.reset();
   objDir.reset();

@@ -86,10 +86,14 @@ inline std::optional<rgw::d4n::CacheBlock> parse_block_from_cache(const std::str
   return block; 
 }
 
+#if WITH_RADOSGW_FDB
 namespace lfdb = ceph::libfdb;
+#endif
 
 using boost::redis::connection;
+#if WITH_RADOSGW_FDB
 using fdbase= lfdb::database;
+#endif
 
 class RGWRemoteD4NGetCB : public RGWHTTPStreamRWRequest::ReceiveCB {
 public:
