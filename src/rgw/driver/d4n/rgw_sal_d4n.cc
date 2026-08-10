@@ -22,7 +22,9 @@
 #include "d4n_directory.h"
 #include "d4n_connection.h"
 #include "d4n_directory_redis.h"
+#if WITH_RADOSGW_FDB
 #include "d4n_directory_fdb.h"
+#endif
 #include "rgw_ssd_driver.h"
 
 namespace rgw { namespace sal {
@@ -129,6 +131,7 @@ int D4NFilterDriver::initialize(CephContext *cct, const DoutPrefixProvider *dpp)
     }
 
   }
+#if WITH_RADOSGW_FDB
   else if (directory_type == "fdb") {
     auto fdb_db = lfdb::create_database();
 
@@ -141,6 +144,7 @@ int D4NFilterDriver::initialize(CephContext *cct, const DoutPrefixProvider *dpp)
     // Initialize FDB Lease
     lease = std::make_unique<rgw::d4n::FDBLease>(fdb_db);
   }
+#endif
 
   //since we are using references here, it is important to initialize policyDriver after the directories.
   policyDriver = std::make_unique<rgw::d4n::PolicyDriver>(*dir, *blockDir, *objDir, *bucketDir, lease.get(), directory_type, cacheDriver.get(), "lfuda", this->y);
@@ -437,9 +441,11 @@ int D4NFilterBucket::populate_cache_results(const DoutPrefixProvider* dpp, std::
   }
 
   auto directory_type = this->filter->get_directory_type();
+#if WITH_RADOSGW_FDB
   if (directory_type == "fdb") {
     return 0;
   }
+#endif
 
   auto blockDir = this->filter->get_block_dir();
   size_t batch_size = 100;  // Process blocks in batches
@@ -1639,6 +1645,7 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
 
       // FDB stores per-version user metadata in the version directory; Redis uses nullopt.
       std::optional<rgw::d4n::CacheObjectVersion> ver_params;
+#if WITH_RADOSGW_FDB
       if (directory_type == "fdb") {
         ver_params = rgw::d4n::CacheObjectVersion{
           .objName = objName,
@@ -1652,6 +1659,7 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
           .creationTime = std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(this->get_mtime().time_since_epoch()).count())
         };
       }
+#endif
       rgw::d4n::ObjectDirectory* objDir = this->driver->get_obj_dir();
       if (int r = objDir->add_version(dpp, y, this->get_bucket()->get_bucket_id(), objName, object_version, mtime, ver_params, std::nullopt); r < 0) {
         ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): Failed to add version to ordered set with error: " << r << dendl;
@@ -1660,6 +1668,7 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
 
       // FDB stores full object info in the bucket directory; Redis uses nullopt.
       std::optional<rgw::d4n::CacheObject> bucket_params;
+#if WITH_RADOSGW_FDB
       if (directory_type == "fdb") {
         bucket_params = rgw::d4n::CacheObject{
           .objName = this->get_name(),
@@ -1670,6 +1679,7 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
           .deleteMarker = this->delete_marker
         };
       }
+#endif
       rgw::d4n::BucketDirectory* bucketDir = this->driver->get_bucket_dir();
       if (int r = bucketDir->add_object(dpp, y, this->get_bucket()->get_bucket_id(), this->get_name(), bucket_params, std::nullopt); r < 0) {
         ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): Failed to add object to ordered set with error: " << r << dendl;
@@ -1763,7 +1773,6 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
 
   return 0;
 }
-
 
 /*
  This method updates the hostslist, version and dirty flag for data block directory entries
@@ -2142,9 +2151,11 @@ void D4NFilterDriver::shutdown()
     auto redis_conn = std::dynamic_pointer_cast<rgw::d4n::RedisConnection>(conn);
     boost::asio::dispatch(redis_conn->get_redis_conn()->get_executor(), [c = redis_conn->get_redis_conn()] { c->cancel(); });
   }
+#if WITH_RADOSGW_FDB
   else if (directory_type == "fdb"){
   	ceph::libfdb::shutdown_libfdb(); 
   }
+#endif
 
   cacheDriver.reset();
   objDir.reset();
@@ -3180,6 +3191,7 @@ int D4NFilterObject::D4NFilterDeleteOp::update_directory_entries(const DoutPrefi
           }
 
           // Update bucket directory for promoted version (FDB only)
+#if WITH_RADOSGW_FDB
           if (source->driver->get_directory_type() == "fdb") {
             std::optional<rgw::d4n::CacheObject> promoted_params = rgw::d4n::CacheObject{
               .objName = source->get_name(),
@@ -3195,6 +3207,7 @@ int D4NFilterObject::D4NFilterDeleteOp::update_directory_entries(const DoutPrefi
               return ret;
             }
           }
+#endif
         } else {
           // No more versions - delete latest block and remove from bucket
           ret = delete_or_tombstone(&latest_block, "latest entry");

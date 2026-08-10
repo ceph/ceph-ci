@@ -12,13 +12,16 @@
 
 #pragma once
 
+#ifdef WITH_RADOSGW_FDB
 #include "rgw/ceph_fdb.h"
+#endif
 #include <boost/redis/connection.hpp>
 
+#ifdef WITH_RADOSGW_FDB
 namespace lfdb = ceph::libfdb;
+#endif
 
 using boost::redis::connection;
-//using fdbase= lfdb::database;
 
 namespace rgw::d4n {
 
@@ -44,5 +47,28 @@ public:
         return conn;
     }
 };
+
+#ifdef WITH_RADOSGW_FDB
+class FDBConnection : public DirectoryConnection {
+private:
+    lfdb::database_handle conn;
+
+public:
+    explicit FDBConnection(lfdb::database_handle c)
+      : conn(c)
+    {
+    }
+
+    std::shared_ptr<void> get_conn() override
+    {
+        return conn;
+    }
+
+    const lfdb::database_handle& get_fdb_conn() const
+    {
+        return conn;
+    }
+};
+#endif
 
 } //namespace rgw::d4n
