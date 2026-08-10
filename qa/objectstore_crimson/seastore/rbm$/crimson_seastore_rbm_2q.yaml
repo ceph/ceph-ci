@@ -5,10 +5,10 @@ overrides:
         # crimson's osd objectstore option
         osd objectstore: seastore
         seastore cachepin type: 2Q
-        seastore primary device type: SSD
-        seastore primary backend type: RANDOM_BLOCK
-        seastore secondary device type: HDD
-        seastore secondary backend type: RANDOM_BLOCK
+        seastore cache device type: SSD
+        seastore cache backend type: RANDOM_BLOCK
+        seastore data device type: HDD
+        seastore data backend type: RANDOM_BLOCK
         debug seastore: 20
         debug seastore onode: 20
         debug seastore odata: 20
