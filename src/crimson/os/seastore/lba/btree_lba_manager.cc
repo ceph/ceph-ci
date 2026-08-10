@@ -1203,16 +1203,10 @@ BtreeLBAManager::_update_mapping(
   auto iter = btree.make_partial_iter(c, cursor);
   auto ret = f(iter.get_val());
   if (ret.refcount == 0) {
-    auto pre_remove_begin = iter.get_leaf_node()->get_node_meta().begin;
-    auto pre_remove_size = iter.get_leaf_node()->get_size();
     iter = co_await btree.remove(
       c,
       iter
     );
-    if (cache.is_rebalance_enabled() &&
-        pre_remove_size <= LBALeafNode::BACKGROUND_MERGE_SIZE) {
-      rebalance_queue.push_back(pre_remove_begin);
-    }
     co_return iter.get_cursor(c);
   } else {
     iter = btree.update(

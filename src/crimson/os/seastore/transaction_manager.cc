@@ -247,8 +247,9 @@ TransactionManager::run_rebalance_loop()
                        && shard_stats.pending_io_num > 0; ++i) {
         co_await seastar::yield();
       }
-      // Batch all splits into one transaction (safe — splits don't
-      // reference siblings).
+      // Batch splits into one transaction.  Merges are skipped in the
+      // batch path (they reference siblings that earlier operations
+      // could retire) and handled by the reactive merge at min_capacity.
       ++(shard_stats.rebalance_num);
       co_await repeat_eagain([this, &batch] {
         ++(shard_stats.repeat_rebalance_num);
@@ -267,32 +268,6 @@ TransactionManager::run_rebalance_loop()
         crimson::ct_error::assert_all(
           "unexpected error in rebalance loop")
       );
-      // Process merges one at a time (merges reference siblings that
-      // earlier operations could have retired).
-      for (auto hint : batch) {
-        for (int i = 0; i < MAX_PRIORITY_YIELDS
-                         && shard_stats.pending_io_num > 0; ++i) {
-          co_await seastar::yield();
-        }
-        ++(shard_stats.rebalance_num);
-        co_await repeat_eagain([this, hint] {
-          ++(shard_stats.repeat_rebalance_num);
-          return with_transaction_intr(
-            Transaction::src_t::REBALANCE,
-            "rebalance_lba",
-            CACHE_HINT_TOUCH,
-            [this, hint](auto &t) {
-            return lba_manager->do_rebalance(
-              t, hint
-            ).si_then([this, &t] {
-              return submit_transaction_direct(t);
-            });
-          });
-        }).handle_error(
-          crimson::ct_error::assert_all(
-            "unexpected error in rebalance loop")
-        );
-      }
       co_await seastar::yield();
     }
   }
