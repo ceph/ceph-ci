@@ -11,7 +11,9 @@
 #include "rgw_sal_d4n.h"
 #include "rgw_cache_driver.h"
 #include "d4n_directory_redis.h"
+#ifdef WITH_RADOSGW_FDB
 #include "d4n_directory_fdb.h"
+#endif
 
 namespace rgw::sal {
   class CoroutinePool;

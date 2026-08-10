@@ -22,7 +22,9 @@
 #include "d4n_directory.h"
 #include "d4n_connection.h"
 #include "d4n_directory_redis.h"
+#if WITH_RADOSGW_FDB
 #include "d4n_directory_fdb.h"
+#endif
 #include "rgw_ssd_driver.h"
 
 namespace rgw { namespace sal {
@@ -129,6 +131,7 @@ int D4NFilterDriver::initialize(CephContext *cct, const DoutPrefixProvider *dpp)
     }
 
   }
+#if WITH_RADOSGW_FDB
   else if (directory_type == "fdb") {
     auto fdb_db = lfdb::create_database();
 
@@ -141,6 +144,7 @@ int D4NFilterDriver::initialize(CephContext *cct, const DoutPrefixProvider *dpp)
     // Initialize FDB Lease
     lease = std::make_unique<rgw::d4n::FDBLease>(fdb_db);
   }
+#endif
 
   //since we are using references here, it is important to initialize policyDriver after the directories.
   policyDriver = std::make_unique<rgw::d4n::PolicyDriver>(*dir, *blockDir, *objDir, *bucketDir, lease.get(), directory_type, cacheDriver.get(), "lfuda", this->y);
@@ -1631,6 +1635,7 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
       std::optional<rgw::d4n::Pipeline> pipeline_opt;
       rgw::d4n::Pipeline* p = make_pipeline(pipeline_opt);
 
+<<<<<<< HEAD
       if (int r = set_head_blocks(p); r < 0) return r;
 
       std::string object_version = (!this->get_bucket()->versioned() || !this->get_bucket()->versioning_enabled())
@@ -1676,16 +1681,152 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
         return r;
       }
       if (p) p->execute(dpp, y);
+=======
+        /* bucket is non versioned, set a null instance
+           even when the bucket is non versioned, a get with "null" version-id returns the latest version, similarly
+           delete-obj with "null" as version-id deletes the latest version */
+        if (!(this->get_bucket()->versioned())) {
+          block.cacheObj.objName = "_:null_" + this->get_name();
+          ret = blockDir->set(dpp, &block, y, &p);
+          if (ret < 0) {
+            ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for null head object with ret: " << ret << dendl;
+	        return ret;
+    	  }
+        }
+        std::string object_version;
+        //add an entry to ordered set for both versioned and non versioned bucket
+        if (!this->get_bucket()->versioned() || !this->get_bucket()->versioning_enabled()) {
+          object_version = "null";
+        } else {
+          object_version = this->get_object_version();
+        }
+        auto mtime = this->get_mtime();
+        rgw::d4n::ObjectDirectory* objDir = this->driver->get_obj_dir();
+        ret = objDir->add_version(dpp, this->get_bucket()->get_bucket_id(), objName, object_version, mtime, std::nullopt, y, &p);
+        if (ret < 0) {
+          ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): Failed to add version to ordered set with error: " << ret << dendl;
+          return ret;
+        }
+        //Redis - add an entry to ordered set containing objects for bucket listing, set score to 0 always to lexicographically order the objects
+        rgw::d4n::BucketDirectory* bucketDir = this->driver->get_bucket_dir();
+        ret = bucketDir->add_object(dpp, this->get_bucket()->get_bucket_id(), this->get_name(), std::nullopt, y, &p);
+        if (ret < 0) {
+          ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): Failed to add object to ordered set with error: " << ret << dendl;
+          return ret;
+        }
+        p.execute(dpp, y);
+      }
+#if WITH_RADOSGW_FDB
+      else if (directory_type == "fdb"){
+        auto ret = blockDir->set(dpp, &block, y, nullptr);
+        if (ret < 0) {
+          ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for head object with ret: " << ret << dendl;
+          return ret;
+        }
+        
+	/* bucket is non versioned, set a null instance
+        even when the bucket is non versioned, a get with "null" version-id returns the latest version, similarly
+        delete-obj with "null" as version-id deletes the latest version */
+        if (!(this->get_bucket()->versioned())) {
+          block.cacheObj.objName = "_:null_" + this->get_name();
+          ret = blockDir->set(dpp, &block, y, nullptr);
+          if (ret < 0) {
+            ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for null head object with ret: " << ret << dendl;
+	    return ret;
+    	    }
+          }
+          std::string object_version;
+          //add an entry to ordered set for both versioned and non versioned bucket
+          if (!this->get_bucket()->versioned() || !this->get_bucket()->versioning_enabled()) {
+            object_version = "null";
+          } else {
+            object_version = this->get_object_version();
+          }
+          auto mtime = this->get_mtime();
+          rgw::d4n::CacheObjectVersion obj_version_info {
+            .objName = objName,
+            .bucketId = this->get_bucket()->get_bucket_id(),
+            .version = object_version,
+            .user_id = user_id,
+            .display_name = display_name
+          };
+          rgw::d4n::ObjectDirectory* objDir = this->driver->get_obj_dir();
+          ret = objDir->add_version(dpp, this->get_bucket()->get_bucket_id(), objName, object_version, mtime, obj_version_info, y, nullptr);
+          if (ret < 0) {
+            ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): Failed to add version to ordered set with error: " << ret << dendl;
+            return ret;
+          }
+          //FDB - add the entry with values, the entry is naturally sorted lexicographically
+          rgw::d4n::BucketDirectory* bucketDir = this->driver->get_bucket_dir();
+          rgw::d4n::CacheObject  obj_info {
+            .objName = this->get_name(),
+            .bucketId = this->get_bucket()->get_bucket_id(),
+            .etag = etag,
+            .size = this->get_accounted_size(),
+            .creationTime = std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(this->get_mtime().time_since_epoch()).count()),
+            .deleteMarker = this->delete_marker
+          };
+          ret = bucketDir->add_object(dpp, this->get_bucket()->get_bucket_id(), this->get_name(), obj_info, y);
+          if (ret < 0) {
+            ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): Failed to add object to ordered set with error: " << ret << dendl;
+            return ret;
+          }
+      }
+#endif
+>>>>>>> 03f8bfee15d (rgw/d4n: Ensure D4N can compile without FDB option)
     } else { //for clean/non-dirty objects
       rgw::d4n::CacheBlock latest = block;
       auto ret = blockDir->get(dpp, y, &latest, std::nullopt);
       if (ret == -ENOENT) {
+<<<<<<< HEAD
         if (!this->get_bucket()->versioned()) {
           std::optional<rgw::d4n::Pipeline> pipeline_opt;
           rgw::d4n::Pipeline* p = make_pipeline(pipeline_opt);
           if (int r = set_head_blocks(p); r < 0) return r;
           if (p) p->execute(dpp, y);
         }
+=======
+        if (!(this->get_bucket()->versioned())) {
+      	  auto d4n_conn = this->driver->get_conn();
+	  if (directory_type == "redis"){
+	    auto redis_conn = std::static_pointer_cast<connection>(d4n_conn->get_conn());
+            auto redis_pool = this->driver->get_redis_pool();
+            rgw::d4n::Pipeline p = rgw::d4n::Pipeline(redis_conn, redis_pool);
+            p.start();
+            //we can explore pipelining to send the two 'HSET' commands together
+            ret = blockDir->set(dpp, &block, y, &p);
+            if (ret < 0) {
+                ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for head object with ret: " << ret << dendl;
+              return ret;
+            }
+            //bucket is non versioned, set a null instance
+            block.cacheObj.objName = "_:null_" + this->get_name();
+            ret = blockDir->set(dpp, &block, y, &p);
+            if (ret < 0) {
+              ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for null head object with ret: " << ret << dendl;
+              return ret;
+            }
+            p.execute(dpp, y);
+          }
+#if WITH_RADOSGW_FDB
+	  else if (directory_type == "fdb"){
+            ret = blockDir->set(dpp, &block, y, nullptr);
+            if (ret < 0) {
+                ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for head object with ret: " << ret << dendl;
+              return ret;
+            }
+            //bucket is non versioned, set a null instance
+            block.cacheObj.objName = "_:null_" + this->get_name();
+            ret = blockDir->set(dpp, &block, y, nullptr);
+            if (ret < 0) {
+              ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for null head object with ret: " << ret << dendl;
+              return ret;
+            }
+
+	  }
+#endif
+	}
+>>>>>>> 03f8bfee15d (rgw/d4n: Ensure D4N can compile without FDB option)
       } else if (ret < 0) {
         ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory get method failed for head object with ret: " << ret << dendl;
       } else { //head block is found
@@ -1698,6 +1839,7 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
             ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory del method failed for head object with ret: " << ret << dendl;
           }
         }
+<<<<<<< HEAD
         /* even if the head block is found, overwrite existing values with new version in case of non-versioned bucket */
         if (!this->get_bucket()->versioned()) {
           std::optional<rgw::d4n::Pipeline> pipeline_opt;
@@ -1705,6 +1847,48 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
           if (int r = set_head_blocks(p); r < 0) return r;
           if (p) p->execute(dpp, y);
         }
+=======
+        /* even if the head block is found, overwrite existing values with new version in case of non-versioned bucket, clean objects
+           and versioned and non-versioned buckets dirty objects */
+        if (!(this->get_bucket()->versioned())) {
+          auto d4n_conn = this->driver->get_conn();
+	  if (directory_type == "redis"){
+	    auto redis_conn = std::static_pointer_cast<connection>(d4n_conn->get_conn());
+            auto redis_pool = this->driver->get_redis_pool();
+            rgw::d4n::Pipeline p = rgw::d4n::Pipeline(redis_conn, redis_pool);
+            p.start();
+            ret = blockDir->set(dpp, &block, y, &p);
+            if (ret < 0) {
+              ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for head object with ret: " << ret << dendl;
+              return ret;
+            }
+            //bucket is non versioned, set a null instance
+            block.cacheObj.objName = "_:null_" + this->get_name();
+            ret = blockDir->set(dpp, &block, y, &p);
+            if (ret < 0) {
+              ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for null head object with ret: " << ret << dendl;
+              return ret;
+            }
+            p.execute(dpp, y);
+	  }
+#if WITH_RADOSGW_FDB
+	  else if (directory_type == "fdb"){
+            ret = blockDir->set(dpp, &block, y, nullptr);
+            if (ret < 0) {
+              ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for head object with ret: " << ret << dendl;
+              return ret;
+            }
+            //bucket is non versioned, set a null instance
+            block.cacheObj.objName = "_:null_" + this->get_name();
+            ret = blockDir->set(dpp, &block, y, nullptr);
+            if (ret < 0) {
+              ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for null head object with ret: " << ret << dendl;
+              return ret;
+            }
+	  }
+#endif
+        }//end-if !(this->get_bucket()->versioned())
+>>>>>>> 03f8bfee15d (rgw/d4n: Ensure D4N can compile without FDB option)
       } //end-if ret = 0
     } //end-else
   }//end-if latest-version
@@ -1764,6 +1948,170 @@ int D4NFilterObject::set_head_block_dir_entry(const DoutPrefixProvider* dpp, opt
   return 0;
 }
 
+<<<<<<< HEAD
+=======
+int D4NFilterObject::update_head_block_hostslist(const DoutPrefixProvider* dpp, optional_yield y)
+{
+  rgw::d4n::BlockDirectory* blockDir = driver->get_block_dir();
+  auto redis_conn = this->driver->get_conn();
+  auto redis_pool = this->driver->get_redis_pool();
+
+  std::string objName = this->get_name();
+  // special handling for name starting with '_'
+  if (objName[0] == '_') {
+    objName = "_" + this->get_name();
+  }
+  ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): objName after special Handling: " << objName << dendl;
+
+  rgw::d4n::CacheBlock block {
+    .cacheObj = {
+      .objName    = objName,
+      .bucketName = this->get_bucket()->get_bucket_id(),
+    },
+    .blockID = 0,
+    .size    = 0,
+  };
+
+  //get block that contains latest version
+  auto ret = blockDir->get(dpp, &block, y);
+  if (ret == 0) {
+    //if found, check if version matches with block's existing version
+    if(this->version == block.version) {
+      //only then update hostsList to contain local cache address
+      block.cacheObj.hostsList.insert(dpp->get_cct()->_conf->rgw_d4n_local_rgw_address);
+      if (!(this->get_bucket()->versioned())) {
+        auto d4n_conn = this->driver->get_conn();
+        std::string directory_type = this->driver->get_directory_type();
+        if (directory_type == "redis"){
+	  auto redis_conn = std::static_pointer_cast<connection>(d4n_conn->get_conn());
+	  auto redis_pool = this->driver->get_redis_pool();
+          //for non-versioned bucket, update latest version block and null version block
+          rgw::d4n::Pipeline p = rgw::d4n::Pipeline(redis_conn, redis_pool);
+          p.start();
+          ret = blockDir->set(dpp, &block, y, &p);
+          if (ret < 0) {
+            ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for head object with ret: " << ret << dendl;
+            return ret;
+          }
+          block.cacheObj.objName = "_:null_" + this->get_name();
+          ret = blockDir->set(dpp, &block, y, &p);
+          if (ret < 0) {
+            ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for null head object with ret: " << ret << dendl;
+            return ret;
+          }
+          p.execute(dpp, y);
+	}
+#if WITH_RADOSGW_FDB
+        else if (directory_type == "fdb"){
+          ret = blockDir->set(dpp, &block, y, nullptr);
+          if (ret < 0) {
+            ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for head object with ret: " << ret << dendl;
+            return ret;
+          }
+          block.cacheObj.objName = "_:null_" + this->get_name();
+          ret = blockDir->set(dpp, &block, y, nullptr);
+          if (ret < 0) {
+            ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for null head object with ret: " << ret << dendl;
+            return ret;
+          }
+
+	}
+#endif
+      }
+    }
+  } else if (ret < 0) {
+    ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory get method failed for head block with ret: " << ret << dendl;
+    if (ret != -ENOENT) {
+      return ret;
+    }
+  }
+
+  //save latest block get result to be used later in a pipeline if needed
+  auto latest_block_ret = ret;
+  //check if bucket is versioned
+  if (this->get_bucket()->versioned()) {
+    std::string objName = this->get_oid();
+    if (this->get_instance() == "null" || !this->get_bucket()->versioning_enabled()) {
+      objName = "_:null_" + this->get_name();
+    }
+    rgw::d4n::CacheObj versioned_object;
+    versioned_object.objName = objName;
+    versioned_object.bucketName = this->get_bucket()->get_bucket_id();
+
+    rgw::d4n::CacheBlock versioned_block;
+    versioned_block.cacheObj = versioned_object;
+    versioned_block.blockID = 0;
+    versioned_block.size = 0;
+    //get versioned block
+    ret = blockDir->get(dpp, &versioned_block, y);
+    if (ret == 0) {
+      //verify versions match for the versioned block
+      if(this->version == versioned_block.version) {
+        versioned_block.cacheObj.hostsList.insert(dpp->get_cct()->_conf->rgw_d4n_local_rgw_address);
+        //verify versions match for the latest block
+        if (latest_block_ret == 0 && block.version == version) {
+          block.cacheObj.hostsList.insert(dpp->get_cct()->_conf->rgw_d4n_local_rgw_address);
+	  auto d4n_conn = this->driver->get_conn();
+          std::string directory_type = this->driver->get_directory_type();
+          if (directory_type == "redis"){
+  	    auto redis_conn = std::static_pointer_cast<connection>(d4n_conn->get_conn());
+	    auto redis_pool = this->driver->get_redis_pool();
+
+            rgw::d4n::Pipeline p = rgw::d4n::Pipeline(redis_conn, redis_pool);
+            p.start();
+            ret = blockDir->set(dpp, &versioned_block, y, &p);
+            if (ret < 0) {
+              ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for head block with ret: " << ret << dendl;
+              return ret;
+            }
+            ret = blockDir->set(dpp, &block, y, &p);
+            if (ret < 0) {
+              ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for null head block with ret: " << ret << dendl;
+              return ret;
+            }
+            p.execute(dpp, y);
+	  }
+#if WITH_RADOSGW_FDB
+	  else if (directory_type == "fdb"){
+	     ret = blockDir->set(dpp, &versioned_block, y, nullptr);
+            if (ret < 0) {
+              ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for head block with ret: " << ret << dendl;
+              return ret;
+            }
+            ret = blockDir->set(dpp, &block, y, nullptr);
+            if (ret < 0) {
+              ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for null head block with ret: " << ret << dendl;
+              return ret;
+            }
+	  }
+#endif
+        } else {
+          //case when latest block version does not match with existing version, update only version block
+          ret = blockDir->set(dpp, &versioned_block, y);
+          if (ret < 0) {
+            ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for head block with ret: " << ret << dendl;
+            return ret;
+          }
+        }
+      } else {
+        //case when only latest block version matches existing version
+        if (latest_block_ret == 0 && block.version == version) {
+          block.cacheObj.hostsList.insert(dpp->get_cct()->_conf->rgw_d4n_local_rgw_address);
+          ret = blockDir->set(dpp, &block, y);
+          if (ret < 0) {
+            ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for head block with ret: " << ret << dendl;
+            return ret;
+          }
+        }
+      }
+    } else if (ret < 0) {//ret ==0 for versioned block
+      ldpp_dout(dpp, 10) << "D4NFilterObject::" << __func__ << "(): BlockDirectory set method failed for head object with ret: " << ret << dendl;
+      return ret;
+    }
+  }
+  return 0;
+}
+>>>>>>> 03f8bfee15d (rgw/d4n: Ensure D4N can compile without FDB option)
 
 /*
  This method updates the hostslist, version and dirty flag for data block directory entries
@@ -2142,9 +2490,11 @@ void D4NFilterDriver::shutdown()
     auto redis_conn = std::dynamic_pointer_cast<rgw::d4n::RedisConnection>(conn);
     boost::asio::dispatch(redis_conn->get_redis_conn()->get_executor(), [c = redis_conn->get_redis_conn()] { c->cancel(); });
   }
+#if WITH_RADOSGW_FDB
   else if (directory_type == "fdb"){
   	ceph::libfdb::shutdown_libfdb(); 
   }
+#endif
 
   cacheDriver.reset();
   objDir.reset();
