@@ -270,11 +270,6 @@ options:
   level: advanced
   desc: Size in bytes per second written to the cache device, 0 indicates no limit
   default: 0
-- name: seastore_secondary_devices_count
-  type: uint
-  level: dev
-  desc: Number of secondary devices to create during mkfs. Secondary devices form the cold tier.
-  default: 0
 - name: seastore_data_device_type
   type: str
   level: dev
