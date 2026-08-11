@@ -5,4 +5,4 @@ overrides:
 tasks:
   - cephfs_test_runner:
       modules:
-        - tasks.cephfs.test_fragment
+        - tasks.cephfs.test_fragment.TestFragmentation.test_finish_old_fragment_auth_pin_race
