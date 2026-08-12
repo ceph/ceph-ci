@@ -49,5 +49,7 @@ tasks:
     c2.client.0:
 - workunit:
     clients:
+      c2.client.0:
+        - rgw/create-d4n-user.sh
       c1.client.0:
         - rgw/run-d4n-remote.sh
