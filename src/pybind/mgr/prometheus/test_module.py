@@ -1,7 +1,8 @@
 from typing import Dict
 from unittest import TestCase, mock
+import errno
 
-from prometheus.module import Metric, LabelValues, Number, HealthHistory, ThreadSafeLRUCacheDict
+from prometheus.module import Metric, LabelValues, Number, HealthHistory, ThreadSafeLRUCacheDict, Module
 import threading
 
 
@@ -471,3 +472,79 @@ class HardwareMetricsTest(TestCase):
         self.module._process_processors(self.status, self.hostname)
         for labels in self.module.metrics['hardware_cpu_cores'].value:
             self.assertEqual(len(labels), 5)
+
+
+class TestSSLCertificateCLI(TestCase):
+    def setUp(self):
+        self.module = mock.MagicMock()
+        self.module.set_store = mock.MagicMock()
+
+    def test_set_ssl_certificate_no_inbuf(self):
+        ret, out, err = Module.set_ssl_certificate(self.module, inbuf=None)
+        self.assertEqual(ret, -errno.EINVAL)
+        self.assertIn('certificate', err)
+
+    def test_set_ssl_certificate_key_no_inbuf(self):
+        ret, out, err = Module.set_ssl_certificate_key(self.module, inbuf=None)
+        self.assertEqual(ret, -errno.EINVAL)
+        self.assertIn('certificate key', err)
+
+    def test_set_ssl_certificate_global(self):
+        ret, out, err = Module.set_ssl_certificate(self.module, inbuf='cert-data')
+        self.assertEqual(ret, 0)
+        self.module.set_store.assert_called_once_with('crt', 'cert-data')
+
+    def test_set_ssl_certificate_key_global(self):
+        ret, out, err = Module.set_ssl_certificate_key(self.module, inbuf='key-data')
+        self.assertEqual(ret, 0)
+        self.module.set_store.assert_called_once_with('key', 'key-data')
+
+    def test_set_ssl_certificate_per_mgr(self):
+        ret, out, err = Module.set_ssl_certificate(self.module, mgr_id='mgr.a', inbuf='cert-data')
+        self.assertEqual(ret, 0)
+        self.module.set_store.assert_called_once_with('mgr.a/crt', 'cert-data')
+
+    def test_set_ssl_certificate_key_per_mgr(self):
+        ret, out, err = Module.set_ssl_certificate_key(self.module, mgr_id='mgr.a', inbuf='key-data')
+        self.assertEqual(ret, 0)
+        self.module.set_store.assert_called_once_with('mgr.a/key', 'key-data')
+
+
+class TestConfigureSSL(TestCase):
+    def setUp(self):
+        self.module = mock.MagicMock(spec=Module)
+
+    def test_configure_calls_direct_tls_when_ssl_enabled(self):
+        self.module.mon_command = mock.MagicMock(return_value=(-22, None, ''))
+        self.module.get_localized_module_option = mock.MagicMock(return_value=True)
+        self.module.setup_direct_tls_config = mock.MagicMock(
+            return_value=({}, {'cert': '/tmp/c', 'key': '/tmp/k'}, 'https'))
+        Module.configure(self.module)
+        self.module.setup_direct_tls_config.assert_called_once()
+
+    def test_configure_prefers_orchestrator_over_direct_ssl(self):
+        self.module.mon_command = mock.MagicMock(
+            return_value=(0, '{"security_enabled": true}', ''))
+        self.module.get_localized_module_option = mock.MagicMock(return_value=True)
+        self.module.setup_tls_config = mock.MagicMock(
+            return_value=({}, {'cert': '/tmp/c', 'key': '/tmp/k'}, 'https'))
+        Module.configure(self.module)
+        self.module.setup_tls_config.assert_called_once()
+        self.module.setup_direct_tls_config.assert_not_called()
+
+    def test_configure_uses_direct_ssl_when_orchestrator_security_disabled(self):
+        self.module.mon_command = mock.MagicMock(
+            return_value=(0, '{"security_enabled": false}', ''))
+        self.module.get_localized_module_option = mock.MagicMock(return_value=True)
+        self.module.setup_direct_tls_config = mock.MagicMock(
+            return_value=({}, {'cert': '/tmp/c', 'key': '/tmp/k', 'context': mock.MagicMock()}, 'https'))
+        Module.configure(self.module)
+        self.module.setup_direct_tls_config.assert_called_once()
+        self.module.setup_tls_config.assert_not_called()
+
+    def test_configure_skips_direct_tls_when_ssl_disabled(self):
+        self.module.mon_command = mock.MagicMock(return_value=(0, None, ''))
+        self.module.get_localized_module_option = mock.MagicMock(return_value=False)
+        self.module.setup_default_config = mock.MagicMock(return_value=({}, None, 'http'))
+        Module.configure(self.module)
+        self.module.setup_direct_tls_config.assert_not_called()
