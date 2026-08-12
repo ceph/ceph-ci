@@ -8,6 +8,8 @@ class CliFlags(Flag):
     EXCLUSIVE_RESULT = auto()
     SIZE = auto()
     PROMOTE_INTERNAL_FIELDS = auto()
+    COMPACT_ONLY = auto()
+    TRUNCATE = auto()
 
 
 class CliHeader:
@@ -62,7 +64,7 @@ class GatewayInfo(NamedTuple):
     gateway_initialization_over: Annotated[bool, CliFlags.DROP]
     io_stats_enabled: Annotated[bool, CliFlags.DROP]
     location: Annotated[str, CliFlags.DROP]
-    spdk_version: Optional[str] = ""
+    spdk_version: Annotated[Optional[str], CliFlags.COMPACT_ONLY] = ""
 
 
 class GatewayVersion(NamedTuple):
@@ -91,18 +93,18 @@ class SpdkNvmfLogFlagsAndLevelInfo(NamedTuple):
 
 
 class Subsystem(NamedTuple):
-    nqn: str
+    nqn: Annotated[str, CliFlags.TRUNCATE]
     enable_ha: Annotated[bool, CliFlags.DROP]
     serial_number: str
-    model_number: str
+    model_number: Annotated[str, CliFlags.COMPACT_ONLY]
     min_cntlid: Annotated[int, CliFlags.DROP]
     max_cntlid: Annotated[int, CliFlags.DROP]
     namespace_count: int
-    subtype: str
+    subtype: Annotated[str, CliFlags.COMPACT_ONLY]
     max_namespaces: int
     has_dhchap_key: bool
     allow_any_host: bool
-    created_without_key: bool = False
+    created_without_key: Annotated[bool, CliFlags.COMPACT_ONLY] = False
     network_mask: Annotated[List[str], CliFieldTransformer(lambda v: "\n".join(v))] = []
 
 
@@ -133,25 +135,25 @@ class SubsystemListKMIPEndpoints(NamedTuple):
 
 
 class Connection(NamedTuple):
-    nqn: str
+    nqn: Annotated[str, CliFlags.TRUNCATE]
     traddr: str
     trsvcid: int
-    trtype: str
-    adrfam: int
+    trtype: Annotated[str, CliFlags.COMPACT_ONLY]
+    adrfam: Annotated[int, CliFlags.COMPACT_ONLY]
     connected: bool
     qpairs_count: int
     controller_id: int
-    use_psk: Optional[bool]
-    use_dhchap: Optional[bool]
-    dhchap_controller_origin: Optional[str]
-    subsystem: Optional[str]
+    use_psk: Annotated[Optional[bool], CliFlags.COMPACT_ONLY]
+    use_dhchap: Annotated[Optional[bool], CliFlags.COMPACT_ONLY]
+    dhchap_controller_origin: Annotated[Optional[str], CliFlags.COMPACT_ONLY]
+    subsystem: Annotated[Optional[str], CliFlags.COMPACT_ONLY]
     disconnected_due_to_keepalive_timeout: Optional[bool]
 
 
 class ConnectionList(NamedTuple):
     status: int
     error_message: str
-    subsystem_nqn: str
+    subsystem_nqn: Annotated[str, CliFlags.TRUNCATE]
     connections: Annotated[List[Connection], CliFlags.EXCLUSIVE_LIST,
                            CliEmptyMessage("No connections for {subsystem_nqn}")]
 
@@ -197,27 +199,27 @@ class EncryptionEntry(NamedTuple):
 
 
 class Namespace(NamedTuple):
-    bdev_name: str
+    bdev_name: Annotated[str, CliFlags.COMPACT_ONLY, CliFlags.TRUNCATE]
     rbd_image_name: Annotated[str, CliHeader("RBD Image")]
     rados_namespace_name: Annotated[Optional[str], CliHeader("RADOS Namespace")]
     rbd_pool_name: Annotated[str, CliHeader("RBD Pool")]
     load_balancing_group: Annotated[int, CliHeader('LB Group')]
     rbd_image_size: Annotated[int, CliFlags.SIZE]
-    block_size: Annotated[int, CliFlags.SIZE]
-    rw_ios_per_second: Annotated[int, CliHeader('R/W IOs/sec')]
-    rw_mbytes_per_second: Annotated[int, CliHeader('R/W MBs/sec')]
-    r_mbytes_per_second: Annotated[int, CliHeader('Read MBs/sec')]
-    w_mbytes_per_second: Annotated[int, CliHeader('Write MBs/sec')]
+    block_size: Annotated[int, CliFlags.SIZE, CliFlags.COMPACT_ONLY]
+    rw_ios_per_second: Annotated[int, CliHeader('R/W IOs/sec'), CliFlags.COMPACT_ONLY]
+    rw_mbytes_per_second: Annotated[int, CliHeader('R/W MBs/sec'), CliFlags.COMPACT_ONLY]
+    r_mbytes_per_second: Annotated[int, CliHeader('Read MBs/sec'), CliFlags.COMPACT_ONLY]
+    w_mbytes_per_second: Annotated[int, CliHeader('Write MBs/sec'), CliFlags.COMPACT_ONLY]
     auto_visible: bool
     hosts: List[str]
     nsid: Optional[int]
-    uuid: Optional[str]
-    ns_subsystem_nqn: Optional[str]
-    trash_image: Optional[bool]
-    disable_auto_resize: Optional[bool]
+    uuid: Annotated[Optional[str], CliFlags.COMPACT_ONLY, CliFlags.TRUNCATE]
+    ns_subsystem_nqn: Annotated[Optional[str], CliFlags.COMPACT_ONLY, CliFlags.TRUNCATE]
+    trash_image: Annotated[Optional[bool], CliFlags.COMPACT_ONLY]
+    disable_auto_resize: Annotated[Optional[bool], CliFlags.COMPACT_ONLY]
     read_only: Optional[bool]
-    location: Optional[str]
-    encryption_algorithm: Optional[str]
+    location: Annotated[Optional[str], CliFlags.COMPACT_ONLY]
+    encryption_algorithm: Annotated[Optional[str], CliFlags.COMPACT_ONLY]
     encryption_entries: Annotated[List[EncryptionEntry], CliFlags.EXCLUSIVE_LIST]
 
 
@@ -289,12 +291,12 @@ class NamespaceIOStats(NamedTuple):
 class Listener(NamedTuple):
     host_name: Annotated[str, CliHeader("Host")]
     trtype: Annotated[str, CliHeader("Transport")]
-    adrfam: Annotated[int, CliHeader("Address Family")]  # 0: IPv4, 1: IPv6
+    adrfam: Annotated[int, CliHeader("Address Family"), CliFlags.COMPACT_ONLY]  # 0: IPv4, 1: IPv6
     traddr: Annotated[str, CliHeader("Address")]
     trsvcid: Annotated[int, CliHeader("Port")]
     secure: Optional[bool]
     active: Optional[bool]
-    manual: Optional[bool]
+    manual: Annotated[Optional[bool], CliFlags.COMPACT_ONLY]
 
 
 class ListenerList(NamedTuple):
@@ -306,10 +308,10 @@ class ListenerList(NamedTuple):
 
 
 class Host(NamedTuple):
-    nqn: str
-    use_psk: Optional[bool]
-    use_dhchap: Optional[bool]
-    dhchap_controller_origin: Optional[str]
+    nqn: Annotated[str, CliFlags.TRUNCATE]
+    use_psk: Annotated[Optional[bool], CliFlags.COMPACT_ONLY]
+    use_dhchap: Annotated[Optional[bool], CliFlags.COMPACT_ONLY]
+    dhchap_controller_origin: Annotated[Optional[str], CliFlags.COMPACT_ONLY]
     disconnected_due_to_keepalive_timeout: Annotated[Optional[bool], CliFlags.DROP]
 
 
@@ -317,7 +319,7 @@ class HostsInfo(NamedTuple):
     status: int
     error_message: str
     allow_any_host: bool
-    subsystem_nqn: str
+    subsystem_nqn: Annotated[str, CliFlags.TRUNCATE]
     hosts: Annotated[List[Host], CliFlags.EXCLUSIVE_LIST,
                      CliEmptyMessage("No hosts are allowed to access {subsystem_nqn}")]
 

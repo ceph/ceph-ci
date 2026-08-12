@@ -61,6 +61,13 @@ def remove_nvmeof_gateway(_, name: str, daemon_name: str = ''):
         return -errno.EINVAL, '', str(ex)
 
 
+CLI_TRUNCATE_LEN = 40
+# Head/tail split for middle truncation: keep the date prefix and the unique suffix.
+# NQNs look like: nqn.YYYY-MM.<authority>:<unique-id>
+# The first 12 chars ("nqn.YYYY-MM.") show the date; the last 27 show the unique part.
+_TRUNC_HEAD = 12
+_TRUNC_TAIL = CLI_TRUNCATE_LEN - _TRUNC_HEAD - 1  # -1 for the ellipsis char
+
 MULTIPLES = ['', "K", "M", "G", "T", "P"]
 UNITS = {
     f"{prefix}{suffix}": 1024 ** mult
@@ -171,7 +178,8 @@ def resolve_nvmeof_server_address(
 
 class OutputFormatter(ABC):
     @abstractmethod
-    def format_output(self, data, model, template_context: Optional[Dict] = None):
+    def format_output(self, data, model, template_context: Optional[Dict] = None,
+                      full: bool = False):
         """Format the given data for output."""
         raise NotImplementedError()
 
@@ -185,13 +193,13 @@ class AnnotatedDataTextOutputFormatter(OutputFormatter):
         titles = [self._snake_case_to_title(field) for field in field_names]
         table.field_names = titles
         table.align = 'l'
-        table.padding_width = 0
+        table.padding_width = 1
         return table
 
     def _get_text_output(self, data):
         if isinstance(data, list):
             return self._get_list_text_output(data)
-        return self._get_object_text_output(data)
+        return self._get_key_value_text_output(data)
 
     def _get_row(self, columns, data_obj):
         row = []
@@ -211,12 +219,20 @@ class AnnotatedDataTextOutputFormatter(OutputFormatter):
             table.add_row(self._get_row(columns, d))
         return table.get_string()
 
-    def _get_object_text_output(self, data):
-        columns = [k for k in data.keys() if k not in ["status", "error_message"]]
-        if not columns:
+    def _get_key_value_text_output(self, data):
+        """Render a single object as a two-column Field | Value table."""
+        rows = [(k, v) for k, v in data.items() if k not in ("status", "error_message")]
+        if not rows:
             return ''
-        table = self._create_table(columns)
-        table.add_row(self._get_row(columns, data))
+        table = PrettyTable(border=True)
+        table.field_names = ["Field", "Value"]
+        table.align = 'l'
+        table.padding_width = 1
+        table.max_width = 80
+        for field_name, value in rows:
+            display_key = self._snake_case_to_title(field_name)
+            display_val = str(value) if value is not None else ''
+            table.add_row([display_key, display_val])
         return table.get_string()
 
     def _is_list_of_complex_type(self, value):
@@ -250,7 +266,8 @@ class AnnotatedDataTextOutputFormatter(OutputFormatter):
     def process_dict(self, input_dict: dict,
                      nt_class: Type[NamedTuple],
                      is_top_level: bool,
-                     template_context: Optional[Dict] = None) -> Union[Dict, str, List]:
+                     template_context: Optional[Dict] = None,
+                     full: bool = False) -> Union[Dict, str, List]:
         result: Dict = {}
         if not input_dict:
             return result
@@ -273,6 +290,9 @@ class AnnotatedDataTextOutputFormatter(OutputFormatter):
                 actual_type, *annotations = get_args(type_hint)
                 for annotation in annotations:
                     if annotation == CliFlags.DROP:
+                        skip = True
+                        break
+                    if not full and annotation == CliFlags.COMPACT_ONLY:
                         skip = True
                         break
                     if isinstance(annotation, CliHeader):
@@ -300,7 +320,7 @@ class AnnotatedDataTextOutputFormatter(OutputFormatter):
                                 # Fall back to returning the template as-is if formatting fails
                                 return empty_message_template
                         return [self.process_dict(item, get_args(actual_type)[0],
-                                                  False, template_context) for item in value]
+                                                  False, template_context, full) for item in value]
                     if is_top_level and annotation == CliFlags.EXCLUSIVE_RESULT:
                         return f"Failure: {input_dict.get('error_message')}" if bool(
                             input_dict[field]) else "Success"
@@ -308,18 +328,22 @@ class AnnotatedDataTextOutputFormatter(OutputFormatter):
                         value = convert_from_bytes(int(input_dict[field]))
                     elif annotation == CliFlags.PROMOTE_INTERNAL_FIELDS:
                         object_to_promote = self.process_dict(
-                            value, actual_type, False, template_context)
+                            value, actual_type, False, template_context, full)
                         if isinstance(object_to_promote, dict):
                             for field_name, value in object_to_promote.items():
                                 result[field_name] = value
                             skip = True
+                    elif not full and annotation == CliFlags.TRUNCATE:
+                        if isinstance(value, str) and len(value) > CLI_TRUNCATE_LEN:
+                            value = (value[:_TRUNC_HEAD] + '\u2026' + value[-_TRUNC_TAIL:])
 
             if skip:
                 continue
 
             # If it's a nested namedtuple and value is a dict, recurse
             if self.is_namedtuple_type(actual_type) and isinstance(value, dict):
-                result[output_name] = self.process_dict(value, actual_type, False)
+                result[output_name] = self.process_dict(value, actual_type, False,
+                                                        template_context, full)
             # If it's an enum type or enum instance, take its name
             elif (enum_cls := self.get_enum_class(actual_type)):
                 result[output_name] = enum_cls(value).name
@@ -328,14 +352,16 @@ class AnnotatedDataTextOutputFormatter(OutputFormatter):
 
         return result
 
-    def _convert_to_text_output(self, data, model, template_context: Optional[Dict] = None):
-        data = self.process_dict(data, model, True, template_context)
+    def _convert_to_text_output(self, data, model, template_context: Optional[Dict] = None,
+                                full: bool = False):
+        data = self.process_dict(data, model, True, template_context, full)
         if isinstance(data, str):
             return data
         return self._get_text_output(data)
 
-    def format_output(self, data, model, template_context: Optional[Dict] = None):
-        return self._convert_to_text_output(data, model, template_context)
+    def format_output(self, data, model, template_context: Optional[Dict] = None,
+                      full: bool = False):
+        return self._convert_to_text_output(data, model, template_context, full)
 
 
 class NvmeofCLICommand(DBCLICommand):
@@ -516,7 +542,10 @@ class NvmeofCLICommand(DBCLICommand):
             out_format = cmd_dict.get('format')
             args_map = self._args_map_from_argspec(cmd_dict, inbuf)
 
-            if out_format == 'plain' or not out_format:
+            is_plain = out_format in ('plain', 'plain-full', None)
+            is_full = out_format == 'plain-full'
+
+            if is_plain:
                 for param, msg in self._deprecated_params.items():
                     if args_map.get(param) is not None:
                         deprecated_warnings += f"\nWarning: {msg}"
@@ -525,7 +554,7 @@ class NvmeofCLICommand(DBCLICommand):
             if ret is None:
                 ret = {}
 
-            if out_format == 'plain' or not out_format:
+            if is_plain:
                 message: Optional[str] = None
                 try:
                     message = self.get_success_msg(args_map, ret)
@@ -537,7 +566,7 @@ class NvmeofCLICommand(DBCLICommand):
                 # Pass args_map as template_context for variable substitution in empty messages
                 # This ensures parameters like 'nqn' are available without polluting the data
                 out = message if message else self._output_formatter.format_output(
-                    ret, self._model, template_context=args_map
+                    ret, self._model, template_context=args_map, full=is_full
                 )
                 wrn_msg = ret.get('error_message', '') if isinstance(ret, dict) else ''
                 if wrn_msg:
