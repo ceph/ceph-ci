@@ -1136,7 +1136,15 @@ void CDir::split(int bits, std::vector<CDir*>* subs, MDSContext::vec& waiters, b
     }
   }
 
-  finish_old_fragment(waiters, replay);
+  int expected_auth_pins = (!replay && is_auth()) ? 1 : 0;
+  if (auth_pins > expected_auth_pins || dir_auth_pins > 0) {
+    dout(10) << __func__ << " deferring old fragment cleanup, auth_pins=" << auth_pins
+             << " dir_auth_pins=" << dir_auth_pins << dendl;
+    mdcache->queue_delayed_fragment_delete(this, replay);
+  } else {
+    finish_old_fragment(waiters, replay);
+  }
+
 }
 
 void CDir::merge(const std::vector<CDir*>& subs, MDSContext::vec& waiters, bool replay)
@@ -1195,7 +1203,14 @@ void CDir::merge(const std::vector<CDir*>& subs, MDSContext::vec& waiters, bool 
     // merge state
     state_set(dir->get_state() & MASK_STATE_FRAGMENT_KEPT);
 
-    dir->finish_old_fragment(waiters, replay);
+    int expected_auth_pins = (!replay && dir->is_auth()) ? 1 : 0;
+    if (dir->get_auth_pins() > expected_auth_pins || dir->get_dir_auth_pins() > 0) {
+      dout(10) << __func__ << " deferring old fragment cleanup, auth_pins=" << dir->get_auth_pins()
+               << " dir_auth_pins=" << dir->get_dir_auth_pins() << dendl;
+      mdcache->queue_delayed_fragment_delete(dir, replay);
+    } else {
+      dir->finish_old_fragment(waiters, replay);
+    }
     inode->close_dirfrag(dir->get_frag());
   }
 
