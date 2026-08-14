@@ -4212,12 +4212,17 @@ TEST_P(StoreTest, SimpleCloneRangeTest) {
 }
 
 #if defined(WITH_BLUESTORE)
-TEST_P(StoreTest, BlueStoreReconstructAllocationsTest)
+TEST_P(StoreTestSpecificAUSize, BlueStoreReconstructAllocationsTest)
 {
   if (string(GetParam()) != "bluestore")
     return;
+  // As we rely on allocmap recovery which doesn't apply for hdd-only drive
+  // setup let's enforce SSD settings.
   SetVal(g_conf(), "bluestore_debug_inject_allocation_from_file_failure", "1.0");
+  SetVal(g_conf(), "bluestore_debug_enforce_settings", "ssd");
   g_conf().apply_changes(nullptr);
+
+  StartDeferred(0x1000);
 
   int r;
   coll_t cid;
@@ -4311,7 +4316,6 @@ TEST_P(StoreTest, BlueStoreReconstructAllocationsTest)
     {
       ch.reset();
       // this trims hoid one out of onode cache
-      // ASSERT_EQ(store->umount(), 0);
       EXPECT_EQ(store->mount(), 0);
       ch = store->open_collection(cid);
     }
