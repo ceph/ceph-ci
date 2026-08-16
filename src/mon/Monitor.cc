@@ -3835,7 +3835,7 @@ void Monitor::handle_command(MonOpRequestRef op)
     mgrmon()->dispatch(op);
     return;
   }
-  if (module == "nvme-gw"){
+  if (module == "nvme-gw" || module == "nvmeof"){
       nvmegwmon()->dispatch(op);
       return;
   }

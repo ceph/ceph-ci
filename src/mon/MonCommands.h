@@ -1631,6 +1631,78 @@ COMMAND("nvme-gw set"
     "config nvme-gw",
     "mgr", "rw")
 
+COMMAND("nvmeof create"
+    " name=id,type=CephString"
+    " name=group,type=CephString"
+    " name=pool,type=CephString,req=false",
+    "create nvmeof gateway id for (pool, group)",
+    "mgr", "rw")
+
+COMMAND("nvmeof delete"
+    " name=id,type=CephString"
+    " name=group,type=CephString"
+    " name=pool,type=CephString,req=false",
+    "delete nvmeof gateway id for (pool, group)",
+    "mgr", "rw")
+
+COMMAND("nvmeof show"
+   " name=group,type=CephString"
+   " name=pool,type=CephString,req=false",
+   " show nvmeof gateways within (pool, group)",
+   "mon", "r")
+
+COMMAND("nvmeof show-all",
+  " Dump nvmeof gateways for all pools and groups",
+  "mon", "r")
+
+COMMAND("nvmeof listeners"
+   " name=group,type=CephString"
+   " name=pool,type=CephString,req=false",
+   " show all nvmeof gateways listeners within (pool, group)",
+   "mon", "r")
+
+COMMAND("nvmeof enable"
+   " name=id,type=CephString"
+   " name=group,type=CephString"
+   " name=pool,type=CephString,req=false",
+   "administratively enables nvmeof gateway id for (pool, group)",
+   "mgr", "rw")
+
+COMMAND("nvmeof disable"
+   " name=id,type=CephString"
+   " name=group,type=CephString"
+   " name=pool,type=CephString,req=false",
+   "administratively disables nvmeof gateway id for (pool, group)",
+   "mgr", "rw")
+
+COMMAND("nvmeof set-location"
+   " name=id,type=CephString"
+   " name=group,type=CephString"
+   " name=location,type=CephString"
+   " name=pool,type=CephString,req=false",
+   "set location for nvmeof gateway id for (pool, group)",
+   "mgr", "rw")
+
+COMMAND("nvmeof disaster-set"
+     " name=group,type=CephString"
+     " name=location,type=CephString"
+     " name=pool,type=CephString,req=false",
+     " set location to Disaster state",
+     "mgr", "rw")
+
+COMMAND("nvmeof disaster-clear"
+    " name=group,type=CephString"
+    " name=location,type=CephString"
+    " name=pool,type=CephString,req=false",
+    " set location to clear Disaster state - failbacks allowed for recovered location",
+    "mgr", "rw")
+
+COMMAND("nvmeof set"
+    " name=var,type=CephChoices,strings=beacon-diff"
+    " name=val,type=CephString ",
+    "config nvmeof",
+    "mgr", "rw")
+
 // these are tell commands that were implemented as CLI commands in
 // the broken pre-octopus way that we want to allow to work when a
 // monitor has upgraded to octopus+ but the monmap min_mon_release is

@@ -31,7 +31,7 @@ using NvmeLocation = std::string;
 using NvmeGroupKey = std::pair<std::string, std::string>;
 using NvmeNqnId = std::string;
 using NvmeAnaGrpId = uint32_t;
-
+inline constexpr const char* DEFAULT_POOL_NAME = ".nvmeof";
 
 enum class gw_states_per_group_t {
   GW_IDLE_STATE = 0, //invalid state

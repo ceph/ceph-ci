@@ -574,7 +574,7 @@ bool NVMeofGwMon::preprocess_command(MonOpRequestRef op)
   if (!f) {
     f.reset(Formatter::create(format, "json-pretty", "json-pretty"));
   }
-  if (prefix == "nvme-gw show-all") {
+  if (prefix == "nvme-gw show-all" || prefix == "nvmeof show-all") {
     f->open_array_section("gateways");
     for (auto &[group_key, gws_states]:map.created_gws) {
       nvme_gw_show_command(f.get(), rdata, group_key.first, group_key.second);
@@ -586,9 +586,13 @@ bool NVMeofGwMon::preprocess_command(MonOpRequestRef op)
     getline(sstrm, rs);
     mon.reply_command(op, err, rs, rdata, get_last_committed());
     return true;
-  } else if (prefix == "nvme-gw show") {
+  } else if (prefix == "nvme-gw show" || prefix == "nvmeof show") {
     std::string  pool, group;
-    cmd_getval(cmdmap, "pool", pool);
+    if (prefix == "nvmeof show" && !cmd_getval(cmdmap, "pool", pool)) {
+      pool = DEFAULT_POOL_NAME;
+    } else {
+      cmd_getval(cmdmap, "pool", pool);
+    }
     cmd_getval(cmdmap, "group", group);
     nvme_gw_show_command(f.get(), rdata, pool, group);
     f->flush(rdata);
@@ -596,9 +600,13 @@ bool NVMeofGwMon::preprocess_command(MonOpRequestRef op)
     getline(sstrm, rs);
     mon.reply_command(op, err, rs, rdata, get_last_committed());
     return true;
-  } else if (prefix == "nvme-gw listeners") {
+  } else if (prefix == "nvme-gw listeners" || prefix == "nvmeof listeners") {
     std::string  pool, group;
-    cmd_getval(cmdmap, "pool", pool);
+    if (prefix == "nvmeof listeners" && !cmd_getval(cmdmap, "pool", pool)) {
+      pool = DEFAULT_POOL_NAME;
+    } else {
+      cmd_getval(cmdmap, "pool", pool);
+    }
     cmd_getval(cmdmap, "group", group);
     auto group_key = std::make_pair(pool, group);
     dout(10) << "nvme-gw listeners pool " << pool << " group " << group << dendl;
@@ -685,15 +693,21 @@ bool NVMeofGwMon::prepare_command(MonOpRequestRef op)
   const auto prefix = cmd_getval_or<string>(cmdmap, "prefix", string{});
 
   dout(10) << "MonCommand : "<< prefix <<  dendl;
-  if (prefix == "nvme-gw create" || prefix == "nvme-gw delete") {
+  if (prefix == "nvme-gw create" || prefix == "nvme-gw delete" ||
+      prefix == "nvmeof create" || prefix == "nvmeof delete") {
     std::string id, pool, group;
 
     cmd_getval(cmdmap, "id", id);
-    cmd_getval(cmdmap, "pool", pool);
+    if ((prefix == "nvmeof create" || prefix == "nvmeof delete") &&
+         !cmd_getval(cmdmap, "pool", pool)) {
+      pool = DEFAULT_POOL_NAME;
+    } else {
+      cmd_getval(cmdmap, "pool", pool);
+    }
     cmd_getval(cmdmap, "group", group);
     auto group_key = std::make_pair(pool, group);
     dout(10) << " id "<< id <<" pool "<< pool << " group "<< group << dendl;
-    if (prefix == "nvme-gw create") {
+    if (prefix == "nvme-gw create" || prefix == "nvmeof create") {
       rc = pending_map.cfg_add_gw(id, group_key,
 		   mon.get_quorum_con_features());
       if (rc == -EINVAL) {
@@ -721,11 +735,17 @@ bool NVMeofGwMon::prepare_command(MonOpRequestRef op)
       response = true;
     }
   }
-  else if (prefix == "nvme-gw enable" || prefix == "nvme-gw disable") {
+  else if (prefix == "nvme-gw enable" || prefix == "nvme-gw disable" ||
+           prefix == "nvmeof enable"  || prefix == "nvmeof disable") {
 
     std::string id, pool, group;
     cmd_getval(cmdmap, "id", id);
-    cmd_getval(cmdmap, "pool", pool);
+    if ((prefix == "nvmeof enable" || prefix == "nvmeof disable") &&
+         !cmd_getval(cmdmap, "pool", pool)) {
+      pool = DEFAULT_POOL_NAME;
+    } else {
+      cmd_getval(cmdmap, "pool", pool);
+    }
     cmd_getval(cmdmap, "group", group);
     auto group_key = std::make_pair(pool, group);
     dout(10) << " id "<< id <<" pool "<< pool << " group "<< group
@@ -745,11 +765,15 @@ bool NVMeofGwMon::prepare_command(MonOpRequestRef op)
     if (rc == 0 && propose == true) {
       response = true;
     }
-  } else if (prefix == "nvme-gw set-location") {
+  } else if (prefix == "nvme-gw set-location" || prefix == "nvmeof set-location") {
 
     std::string id, pool, group, location;
     cmd_getval(cmdmap, "id", id);
-    cmd_getval(cmdmap, "pool", pool);
+    if (prefix == "nvmeof set-location" && !cmd_getval(cmdmap, "pool", pool)) {
+      pool = DEFAULT_POOL_NAME;
+    } else {
+      cmd_getval(cmdmap, "pool", pool);
+    }
     cmd_getval(cmdmap, "group", group);
     cmd_getval(cmdmap, "location", location);
     auto group_key = std::make_pair(pool, group);
@@ -770,10 +794,14 @@ bool NVMeofGwMon::prepare_command(MonOpRequestRef op)
     if (rc == 0 && propose == true) {
       response = true;
     }
-  } else if (prefix == "nvme-gw disaster-set") {
+  } else if (prefix == "nvme-gw disaster-set" || prefix == "nvmeof disaster-set") {
     std::string id, pool, group, location;
     bool propose = false;
-    cmd_getval(cmdmap, "pool", pool);
+    if (prefix == "nvmeof disaster-set" && !cmd_getval(cmdmap, "pool", pool)) {
+      pool = DEFAULT_POOL_NAME;
+    } else {
+      cmd_getval(cmdmap, "pool", pool);
+    }
     cmd_getval(cmdmap, "group", group);
     cmd_getval(cmdmap, "location", location);
     auto group_key = std::make_pair(pool, group);
@@ -795,10 +823,14 @@ bool NVMeofGwMon::prepare_command(MonOpRequestRef op)
     if (rc == 0 && propose == true) {
       response = true;
     }
-  } else if (prefix == "nvme-gw disaster-clear") {
+  } else if (prefix == "nvme-gw disaster-clear"|| prefix == "nvmeof disaster-clear") {
       std::string pool, group, location;
       bool propose = false;
-      cmd_getval(cmdmap, "pool", pool);
+      if (prefix == "nvmeof disaster-clear" && !cmd_getval(cmdmap, "pool", pool)) {
+        pool = DEFAULT_POOL_NAME;
+      } else {
+        cmd_getval(cmdmap, "pool", pool);
+      }
       cmd_getval(cmdmap, "group", group);
       cmd_getval(cmdmap, "location", location);
       auto group_key = std::make_pair(pool, group);
@@ -820,7 +852,7 @@ bool NVMeofGwMon::prepare_command(MonOpRequestRef op)
       if (rc == 0 && propose == true) {
         response = true;
       }
-    } else if (prefix == "nvme-gw set") {
+    } else if (prefix == "nvme-gw set" || prefix == "nvmeof set") {
       std::string choice, value;
       cmd_getval(cmdmap, "var", choice);
       cmd_getval(cmdmap, "val", value);
