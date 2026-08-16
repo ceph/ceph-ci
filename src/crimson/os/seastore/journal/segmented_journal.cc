@@ -411,14 +411,23 @@ SegmentedJournal::do_submit_record(
           "FULL" : "NOT_FULL");
     auto submit_ret = record_submitter.submit(std::move(record));
     // submit_ret.record_base_regardless_md is wrong for journaling
+    auto tp0 = std::chrono::steady_clock::now();
     return handle.enter(write_pipeline->device_submission
-    ).then([submit_fut=std::move(submit_ret.future)]() mutable {
-      return std::move(submit_fut);
+    ).then([submit_fut=std::move(submit_ret.future), tp0, &handle]() mutable {
+      auto tp1 = std::chrono::steady_clock::now();
+      handle.journal_pipeline_wait += tp1 - tp0;
+      return std::move(submit_fut
+      ).safe_then([tp1, &handle](record_locator_t result) {
+        handle.journal_device_io += std::chrono::steady_clock::now() - tp1;
+        return result;
+      });
     }).safe_then([FNAME, this, &handle, on_submission=std::move(on_submission)
 		 ](record_locator_t result) mutable {
+      auto tp2 = std::chrono::steady_clock::now();
       return handle.enter(write_pipeline->finalize
-      ).then([FNAME, this, result, &handle,
+      ).then([FNAME, this, result, &handle, tp2,
 	      on_submission=std::move(on_submission)] {
+        handle.journal_pipeline_wait += std::chrono::steady_clock::now() - tp2;
         DEBUG("H{} finish with {}", (void*)&handle, result);
         auto new_committed_to = result.write_result.get_end_seq();
         record_submitter.update_committed_to(new_committed_to);

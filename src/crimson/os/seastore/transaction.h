@@ -529,12 +529,15 @@ public:
 
   // Time spent in each sub-phase of submit_transaction, accumulated across retries
   struct phase_durations_t {
-    std::chrono::steady_clock::duration reserve{0};         // enter reserve + epm reserve
-    std::chrono::steady_clock::duration ool_write{0};       // delayed + preallocated OOL writes
-    std::chrono::steady_clock::duration lba_update{0};      // update_lba_mappings
-    std::chrono::steady_clock::duration prepare_enter{0};   // enter(prepare) pipeline stage
-    std::chrono::steady_clock::duration prepare_record{0};  // prepare_record
-    std::chrono::steady_clock::duration journal{0};         // journal->submit_record (post-lock)
+    std::chrono::steady_clock::duration reserve{0};              // enter reserve + epm reserve
+    std::chrono::steady_clock::duration ool_write{0};            // delayed + preallocated OOL writes
+    std::chrono::steady_clock::duration lba_update{0};           // update_lba_mappings
+    std::chrono::steady_clock::duration prepare_enter{0};        // enter(prepare) pipeline stage
+    std::chrono::steady_clock::duration prepare_record{0};       // prepare_record
+    std::chrono::steady_clock::duration journal{0};              // journal->submit_record total
+    std::chrono::steady_clock::duration journal_pipeline_wait{0}; // wait for DeviceSubmission stage
+    std::chrono::steady_clock::duration journal_device_io{0};     // actual device write completion
+    std::chrono::steady_clock::duration journal_finalize_wait{0}; // wait for Finalize stage
   };
   phase_durations_t &get_phase_durations() {
     return phase_durations;

@@ -124,11 +124,20 @@ struct OrderingHandle {
   // supposed to have exactly the same size.
   std::unique_ptr<OperationProxy> op;
 
+  // Sub-phase durations within journal->submit_record(), filled by
+  // the journal implementation so do_submit_transaction can report them.
+  std::chrono::steady_clock::duration journal_pipeline_wait{0};
+  std::chrono::steady_clock::duration journal_device_io{0};
+  std::chrono::steady_clock::duration journal_finalize_wait{0};
+
   // in the future we might add further constructors / template to type
   // erasure while extracting the location of tracking events.
   OrderingHandle(std::unique_ptr<OperationProxy> op) : op(std::move(op)) {}
   OrderingHandle(OrderingHandle &&other)
-    : op(std::move(other.op)) {}
+    : op(std::move(other.op)),
+      journal_pipeline_wait(other.journal_pipeline_wait),
+      journal_device_io(other.journal_device_io),
+      journal_finalize_wait(other.journal_finalize_wait) {}
 
   template <typename T>
   seastar::future<> enter(T &t) {

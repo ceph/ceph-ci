@@ -120,11 +120,18 @@ CircularBoundedJournal::submit_record(
 	"FULL" : "NOT_FULL");
   auto submit_ret = record_submitter.submit(std::move(record));
   // submit_ret.record_base_regardless_md is wrong for journaling
+  auto tp0 = std::chrono::steady_clock::now();
   co_await handle.enter(write_pipeline->device_submission);
+  auto tp1 = std::chrono::steady_clock::now();
 
   record_locator_t result = co_await std::move(submit_ret.future);
+  auto tp2 = std::chrono::steady_clock::now();
 
   co_await handle.enter(write_pipeline->finalize);
+  auto tp3 = std::chrono::steady_clock::now();
+
+  handle.journal_pipeline_wait += (tp1 - tp0) + (tp3 - tp2);
+  handle.journal_device_io += tp2 - tp1;
 
   DEBUG("H{} finish with {}", (void*)&handle, result);
   auto new_committed_to = result.write_result.get_end_seq();

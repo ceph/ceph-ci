@@ -224,7 +224,9 @@ void SeaStore::Shard::register_metrics(store_index_t store_index)
     {txn_stage_t::SUBMIT_LBA_UPDATE,     sm::label_instance("stage", "submit_lba_update")},
     {txn_stage_t::SUBMIT_PREPARE_ENTER,  sm::label_instance("stage", "submit_prepare_enter")},
     {txn_stage_t::SUBMIT_PREPARE_RECORD, sm::label_instance("stage", "submit_prepare_record")},
-    {txn_stage_t::SUBMIT_JOURNAL,        sm::label_instance("stage", "submit_journal")},
+    {txn_stage_t::SUBMIT_JOURNAL,            sm::label_instance("stage", "submit_journal")},
+    {txn_stage_t::SUBMIT_JOURNAL_PIPELINE,   sm::label_instance("stage", "submit_journal_pipeline")},
+    {txn_stage_t::SUBMIT_JOURNAL_DEVICE_IO,  sm::label_instance("stage", "submit_journal_device_io")},
   };
   // Three tiers of the same per-stage histograms
   std::pair<std::array<seastar::metrics::histogram, STAGE_MAX>*, const char*>
@@ -1964,7 +1966,9 @@ seastar::future<> SeaStore::Shard::run_one_batch(
         {txn_stage_t::SUBMIT_LBA_UPDATE,     pd.lba_update},
         {txn_stage_t::SUBMIT_PREPARE_ENTER,  pd.prepare_enter},
         {txn_stage_t::SUBMIT_PREPARE_RECORD, pd.prepare_record},
-        {txn_stage_t::SUBMIT_JOURNAL,        pd.journal},
+        {txn_stage_t::SUBMIT_JOURNAL,            pd.journal},
+        {txn_stage_t::SUBMIT_JOURNAL_PIPELINE,   pd.journal_pipeline_wait},
+        {txn_stage_t::SUBMIT_JOURNAL_DEVICE_IO,  pd.journal_device_io},
       }};
 
     for (auto& [stage, dur] : stage_samples) {

@@ -899,6 +899,10 @@ TransactionManager::do_submit_transaction(
     );
   tref.get_phase_durations().journal +=
     std::chrono::steady_clock::now() - journal_start;
+  tref.get_phase_durations().journal_pipeline_wait +=
+    tref.get_handle().journal_pipeline_wait;
+  tref.get_phase_durations().journal_device_io +=
+    tref.get_handle().journal_device_io;
 
   co_await trans_intr::make_interruptible(
     tref.get_handle().complete()
