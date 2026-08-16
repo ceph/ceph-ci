@@ -393,6 +393,111 @@ int rgw_get_object( CRgwDriver* driver_ptr, const CRgwDoutPrefix* dpp_ptr,
   return 0;
 }
 
+int rgw_get_object_conditional( CRgwDriver* driver_ptr, const CRgwDoutPrefix* dpp_ptr,
+      CRgwYieldContext* yield_ctx, const CRgwBucket* bucket_id, const CRgwObject* obj_id,
+      uint64_t offset, uint64_t length,
+      const char* if_match, const char* if_nomatch,
+      const int64_t* if_modified_since, const int64_t* if_unmodified_since,
+      CRgwBuffer* buffer) {
+  auto* driver = get_driver(driver_ptr);
+  auto* dpp = get_dpp(dpp_ptr);
+  auto y = get_yield(yield_ctx);
+
+  if (!driver || !bucket_id || !obj_id || !obj_id->key || !buffer) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: rgw_get_object_conditional: invalid args" << dendl;
+    return -EINVAL;
+  }
+
+  buffer->data = nullptr;
+  buffer->len = 0;
+
+  std::unique_ptr<rgw::sal::Bucket> bucket;
+  int ret = load_bucket(driver, dpp, bucket_id, bucket, y);
+  if (ret < 0) {
+    return ret;
+  }
+
+  std::unique_ptr<rgw::sal::Object> obj = bucket->get_object(make_obj_key(obj_id));
+  if (!obj) {
+    return -ENOMEM;
+  }
+
+  ret = obj->load_obj_state(dpp, y);
+  if (ret < 0) {
+    return ret;
+  }
+
+  if (!obj->exists()) {
+    return -ENOENT;
+  }
+
+  uint64_t obj_size = obj->get_size();
+
+  if (offset >= obj_size) {
+    return 0;
+  }
+
+  uint64_t read_len = length;
+  if (length == UINT64_MAX || length > obj_size - offset) {
+    read_len = obj_size - offset;
+  }
+
+  if (read_len == 0) {
+    return 0;
+  }
+
+  buffer->data = static_cast<uint8_t*>(malloc(read_len));
+  if (!buffer->data) {
+    return -ENOMEM;
+  }
+
+  std::unique_ptr<rgw::sal::Object::ReadOp> read_op = obj->get_read_op();
+
+  // Set conditional parameters
+  ceph::real_time mod_time, unmod_time;
+  if (if_match) {
+    read_op->params.if_match = if_match;
+  }
+  if (if_nomatch) {
+    read_op->params.if_nomatch = if_nomatch;
+  }
+  if (if_modified_since) {
+    mod_time = ceph::real_clock::from_time_t(static_cast<time_t>(*if_modified_since));
+    read_op->params.mod_ptr = &mod_time;
+  }
+  if (if_unmodified_since) {
+    unmod_time = ceph::real_clock::from_time_t(static_cast<time_t>(*if_unmodified_since));
+    read_op->params.unmod_ptr = &unmod_time;
+  }
+
+  ret = read_op->prepare(y, dpp);
+  if (ret < 0) {
+    free(buffer->data);
+    buffer->data = nullptr;
+    return ret;
+  }
+
+  bufferlist bl;
+  int64_t end_ofs = offset + read_len - 1;
+  ret = read_op->read(offset, end_ofs, bl, y, dpp);
+  if (ret < 0) {
+    free(buffer->data);
+    buffer->data = nullptr;
+    return ret;
+  }
+
+  size_t actual_len = bl.length();
+  if (actual_len > read_len) {
+    actual_len = read_len;
+  }
+  if (actual_len > 0) {
+    memcpy(buffer->data, bl.c_str(), actual_len);
+  }
+  buffer->len = actual_len;
+
+  return 0;
+}
+
 int rgw_delete_object( CRgwDriver* driver_ptr, const CRgwDoutPrefix* dpp_ptr,
     CRgwYieldContext* yield_ctx, const CRgwBucket* bucket_id, const CRgwObject* obj_id) {
   auto* driver = get_driver(driver_ptr);
@@ -631,6 +736,10 @@ int rgw_copy_object( CRgwDriver* driver_ptr, const CRgwDoutPrefix* dpp_ptr,
     return -ENOMEM;
   }
 
+  ret = src_obj->load_obj_state(dpp, y);
+  if (ret < 0) return ret;
+  if (!src_obj->exists()) return -ENOENT;
+
   std::unique_ptr<rgw::sal::Object> dst_obj =
     dst_bucket->get_object(make_obj_key(dst_obj_id));
   if (!dst_obj) {
@@ -691,9 +800,31 @@ int rgw_copy_object_conditional( CRgwDriver* driver_ptr, const CRgwDoutPrefix* d
     return -EINVAL;
   }
 
+  // Check source exists before checking destination conditions
+  std::unique_ptr<rgw::sal::Bucket> src_bucket;
+  int ret = load_bucket(driver, dpp, src_bucket_id, src_bucket, y);
+  if (ret < 0) return ret;
+
+  std::unique_ptr<rgw::sal::Object> src_obj =
+    src_bucket->get_object(make_obj_key(src_obj_id));
+  if (!src_obj) {
+    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: rgw_copy_object_conditional: allocation failed" << dendl;
+    return -ENOMEM;
+  }
+
+  ret = src_obj->load_obj_state(dpp, y);
+  if (ret < 0) return ret;
+  if (!src_obj->exists()) return -ENOENT;
+
+  // XXX: this check-then-copy is not atomic. Another writer could
+  // create the destination between our existence check and the copy_object
+  // call below. RGW's copy_object API only supports source-side preconditions
+  // (if_match/if_nomatch check the source etag), not destination-side
+  // preconditions, so we cannot make this atomic without changes to the
+  // SAL copy_object interface.
   if (if_nomatch && std::string(if_nomatch) == "*") {
     std::unique_ptr<rgw::sal::Bucket> check_bucket;
-    int ret = load_bucket(driver, dpp, dst_bucket_id, check_bucket, y);
+    ret = load_bucket(driver, dpp, dst_bucket_id, check_bucket, y);
     if (ret < 0) return ret;
 
     std::unique_ptr<rgw::sal::Object> check_obj =
@@ -706,20 +837,9 @@ int rgw_copy_object_conditional( CRgwDriver* driver_ptr, const CRgwDoutPrefix* d
     }
   }
 
-  std::unique_ptr<rgw::sal::Bucket> src_bucket;
-  int ret = load_bucket(driver, dpp, src_bucket_id, src_bucket, y);
-  if (ret < 0) return ret;
-
   std::unique_ptr<rgw::sal::Bucket> dst_bucket;
   ret = load_bucket(driver, dpp, dst_bucket_id, dst_bucket, y);
   if (ret < 0) return ret;
-
-  std::unique_ptr<rgw::sal::Object> src_obj =
-    src_bucket->get_object(make_obj_key(src_obj_id));
-  if (!src_obj) {
-    ldpp_dout(dpp, 1) << "ERROR: sal_wrapper: rgw_copy_object_conditional: allocation failed" << dendl;
-    return -ENOMEM;
-  }
 
   std::unique_ptr<rgw::sal::Object> dst_obj =
     dst_bucket->get_object(make_obj_key(dst_obj_id));

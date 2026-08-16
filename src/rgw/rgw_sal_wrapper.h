@@ -152,6 +152,24 @@ int rgw_get_object( CRgwDriver* driver, const CRgwDoutPrefix* dpp, CRgwYieldCont
   CRgwBuffer* buffer);
 
 /**
+ * Read an object (or byte range) with conditional checks.
+ *
+ * Like rgw_get_object but supports If-Match, If-None-Match,
+ * If-Modified-Since, and If-Unmodified-Since preconditions.
+ * Pass NULL for any condition to skip it.
+ *
+ * @param buffer   [out] Receives allocated data; caller must free with rgw_free_buffer()
+ *
+ * @return 0 on success, -ERR_PRECONDITION_FAILED if if_match/if_unmodified_since fails,
+ *         -ERR_NOT_MODIFIED if if_nomatch/if_modified_since fails,
+ *         -ENOENT if object not found, negative errno on failure
+ */
+int rgw_get_object_conditional( CRgwDriver* driver, const CRgwDoutPrefix* dpp,
+  CRgwYieldContext* yield_ctx, const CRgwBucket* bucket, const CRgwObject* obj,
+  uint64_t offset, uint64_t length, const char* if_match, const char* if_nomatch,
+  const int64_t* if_modified_since, const int64_t* if_unmodified_since, CRgwBuffer* buffer);
+
+/**
  * Delete a single object from storage.
  *
  * Deleting a non-existent object is treated as success (returns 0).

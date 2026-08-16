@@ -123,6 +123,15 @@ TEST(NullSafety, NullBucketAndKeyReturnsError) {
              &b, &o, "id", 1, nullptr, 0, nullptr), 0);
 }
 
+
+
+TEST(NullSafety, FreeNullPointers) {
+  // free functions should handle null gracefully
+  rgw_free_buffer(nullptr);
+  rgw_free_object_meta(nullptr);
+  rgw_free_list_result(nullptr);
+}
+
 TEST(Utility, WrapperVersion) {
   const char* ver = rgw_sal_wrapper_version();
   ASSERT_NE(ver, nullptr);
@@ -204,6 +213,29 @@ protected:
                        data.size());
   }
 };
+
+// --------------- Null buffer ---------------
+
+TEST_F(SALWrapperTest, OutputBufferUntouchedOnFailure) {
+  CRgwBuffer buf{nullptr, 0};
+  CRgwObject obj{"test/no-such-key-ever", nullptr};
+  EXPECT_EQ(-ENOENT, rgw_get_object(driver(), dpp(), nullptr,
+             &bucket_, &obj, 0, 0, &buf));
+  EXPECT_EQ(buf.data, nullptr);
+  EXPECT_EQ(buf.len, 0u);
+}
+
+TEST_F(SALWrapperTest, NullBufferPut) {
+  CRgwObject obj{"test/null-buf", nullptr};
+
+  // null buffer pointer is treated as a zero-byte put (valid)
+  EXPECT_EQ(0, rgw_put_object(driver(), dpp(), nullptr, &bucket_, &obj, nullptr));
+  created_keys_.emplace_back("test/null-buf");
+
+  // buffer with null data but non-zero length is invalid
+  CRgwBuffer bad_buf{nullptr, 100};
+  EXPECT_LT(rgw_put_object(driver(), dpp(), nullptr, &bucket_, &obj, &bad_buf), 0);
+}
 
 // --------------- Put / Get ---------------
 
@@ -324,6 +356,124 @@ TEST_F(SALWrapperTest, RangeReadToEnd) {
   ASSERT_EQ(data.size() - 5, buf.len);
   EXPECT_EQ(0, memcmp(data.data() + 5, buf.data, buf.len));
   rgw_free_buffer(&buf);
+}
+
+// --------------- Conditional get ---------------
+
+TEST_F(SALWrapperTest, ConditionalGetIfMatch) {
+  std::string data = "conditional get data";
+  ASSERT_EQ(0, put_str_tracked("test/cond-get", data));
+
+  CRgwObjectMeta meta{};
+  ASSERT_EQ(0, head("test/cond-get", &meta));
+  ASSERT_NE(meta.etag, nullptr);
+  std::string etag = meta.etag;
+  rgw_free_object_meta(&meta);
+
+  // if_match with correct etag — should succeed
+  CRgwBuffer buf{};
+  CRgwObject obj{"test/cond-get", nullptr};
+  ASSERT_EQ(0, rgw_get_object_conditional(driver(), dpp(), nullptr,
+             &bucket_, &obj, 0, UINT64_MAX,
+             etag.c_str(), nullptr, nullptr, nullptr, &buf));
+  ASSERT_EQ(data.size(), buf.len);
+  EXPECT_EQ(0, memcmp(data.data(), buf.data, buf.len));
+  rgw_free_buffer(&buf);
+
+  // if_match with wrong etag — should fail with precondition
+  CRgwBuffer buf2{};
+  EXPECT_EQ(-ERR_PRECONDITION_FAILED,
+            rgw_get_object_conditional(driver(), dpp(), nullptr,
+             &bucket_, &obj, 0, UINT64_MAX,
+             "wrong-etag", nullptr, nullptr, nullptr, &buf2));
+}
+
+TEST_F(SALWrapperTest, ConditionalGetIfNoneMatch) {
+  std::string data = "none-match data";
+  ASSERT_EQ(0, put_str_tracked("test/cond-get-nm", data));
+
+  CRgwObjectMeta meta{};
+  ASSERT_EQ(0, head("test/cond-get-nm", &meta));
+  ASSERT_NE(meta.etag, nullptr);
+  std::string etag = meta.etag;
+  rgw_free_object_meta(&meta);
+
+  CRgwObject obj{"test/cond-get-nm", nullptr};
+
+  // if_nomatch with matching etag — should fail with not modified
+  CRgwBuffer buf{};
+  EXPECT_EQ(-ERR_NOT_MODIFIED,
+            rgw_get_object_conditional(driver(), dpp(), nullptr,
+             &bucket_, &obj, 0, UINT64_MAX,
+             nullptr, etag.c_str(), nullptr, nullptr, &buf));
+
+  // if_nomatch with different etag — should succeed
+  CRgwBuffer buf2{};
+  ASSERT_EQ(0, rgw_get_object_conditional(driver(), dpp(), nullptr,
+             &bucket_, &obj, 0, UINT64_MAX,
+             nullptr, "different-etag", nullptr, nullptr, &buf2));
+  ASSERT_EQ(data.size(), buf2.len);
+  rgw_free_buffer(&buf2);
+}
+
+TEST_F(SALWrapperTest, ConditionalGetIfModifiedSince) {
+  std::string data = "modified since data";
+  ASSERT_EQ(0, put_str_tracked("test/cond-get-mod", data));
+
+  CRgwObjectMeta meta{};
+  ASSERT_EQ(0, head("test/cond-get-mod", &meta));
+  int64_t mtime = meta.last_modified;
+  rgw_free_object_meta(&meta);
+  ASSERT_GT(mtime, 0);
+
+  CRgwObject obj{"test/cond-get-mod", nullptr};
+
+  // if_modified_since far in the past — object is newer, should succeed
+  int64_t past = mtime - 3600;
+  CRgwBuffer buf{};
+  ASSERT_EQ(0, rgw_get_object_conditional(driver(), dpp(), nullptr,
+             &bucket_, &obj, 0, UINT64_MAX,
+             nullptr, nullptr, &past, nullptr, &buf));
+  ASSERT_EQ(data.size(), buf.len);
+  rgw_free_buffer(&buf);
+
+  // if_modified_since in the future — object is older, should fail
+  int64_t future = mtime + 3600;
+  CRgwBuffer buf2{};
+  EXPECT_EQ(-ERR_NOT_MODIFIED,
+            rgw_get_object_conditional(driver(), dpp(), nullptr,
+             &bucket_, &obj, 0, UINT64_MAX,
+             nullptr, nullptr, &future, nullptr, &buf2));
+}
+
+TEST_F(SALWrapperTest, ConditionalGetIfUnmodifiedSince) {
+  std::string data = "unmodified since data";
+  ASSERT_EQ(0, put_str_tracked("test/cond-get-unmod", data));
+
+  CRgwObjectMeta meta{};
+  ASSERT_EQ(0, head("test/cond-get-unmod", &meta));
+  int64_t mtime = meta.last_modified;
+  rgw_free_object_meta(&meta);
+  ASSERT_GT(mtime, 0);
+
+  CRgwObject obj{"test/cond-get-unmod", nullptr};
+
+  // if_unmodified_since in the future — object is older, should succeed
+  int64_t future = mtime + 3600;
+  CRgwBuffer buf{};
+  ASSERT_EQ(0, rgw_get_object_conditional(driver(), dpp(), nullptr,
+             &bucket_, &obj, 0, UINT64_MAX,
+             nullptr, nullptr, nullptr, &future, &buf));
+  ASSERT_EQ(data.size(), buf.len);
+  rgw_free_buffer(&buf);
+
+  // if_unmodified_since far in the past — object is newer, should fail
+  int64_t past = mtime - 3600;
+  CRgwBuffer buf2{};
+  EXPECT_EQ(-ERR_PRECONDITION_FAILED,
+            rgw_get_object_conditional(driver(), dpp(), nullptr,
+             &bucket_, &obj, 0, UINT64_MAX,
+             nullptr, nullptr, nullptr, &past, &buf2));
 }
 
 // --------------- Head / Metadata ---------------
@@ -969,11 +1119,13 @@ int main(int argc, char** argv) {
       r = bucket->create(env.dpp, params, null_yield);
       if (r < 0 && r != -EEXIST) {
         std::cerr << "ERROR: failed to create test bucket (r=" << r << ")" << std::endl;
+        env.driver->shutdown();
         DriverManager::close_storage(env.driver);
         return 1;
       }
     } else {
       std::cerr << "ERROR: load_bucket returned no bucket object" << std::endl;
+      env.driver->shutdown();
       DriverManager::close_storage(env.driver);
       return 1;
     }
@@ -984,6 +1136,7 @@ int main(int argc, char** argv) {
 
   // cleanup
   if (env.driver) {
+    env.driver->shutdown();
     DriverManager::close_storage(env.driver);
     env.driver = nullptr;
   }

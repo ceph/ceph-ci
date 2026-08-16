@@ -210,6 +210,24 @@ extern "C" {
         buffer: *mut CRgwBuffer,
     ) -> c_int;
 
+    /// Read an object with conditional checks (if-match, if-modified-since, etc.).
+    /// This is not used by Lance as it reads immutable files, but is added only
+    /// for object-store conformance tests.
+    pub fn rgw_get_object_conditional(
+        driver: *mut CRgwDriver,
+        dpp: *const CRgwDoutPrefix,
+        yield_ctx: *mut CRgwYieldContext,
+        bucket: *const CRgwBucket,
+        obj: *const CRgwObject,
+        offset: u64,
+        length: u64,
+        if_match: *const c_char,
+        if_nomatch: *const c_char,
+        if_modified_since: *const i64,
+        if_unmodified_since: *const i64,
+        buffer: *mut CRgwBuffer,
+    ) -> c_int;
+
     /// Delete an object from RGW storage
     pub fn rgw_delete_object(
         driver: *mut CRgwDriver,
