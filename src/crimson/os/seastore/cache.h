@@ -108,6 +108,8 @@ public:
   Cache(ExtentPlacementManager &epm, store_index_t store_index);
   ~Cache();
 
+  bool is_rebalance_enabled() const { return rebalance_enabled; }
+
   cache_stats_t get_stats(bool report_detail, double seconds) const;
 
   /// Creates empty transaction by source
@@ -1777,6 +1779,7 @@ private:
   transaction_id_t next_id = 0;
 
   const bool force_backref = false;
+  bool rebalance_enabled;
 
   /**
    * dirty
@@ -1860,11 +1863,15 @@ private:
     uint64_t num_inserts = 0;
     uint64_t num_erases = 0;
     uint64_t num_updates = 0;
+    uint64_t num_splits = 0;
+    uint64_t num_merges = 0;
 
     void increment(const Transaction::tree_stats_t& incremental) {
       num_inserts += incremental.num_inserts;
       num_erases += incremental.num_erases;
       num_updates += incremental.num_updates;
+      num_splits += incremental.num_splits;
+      num_merges += incremental.num_merges;
     }
   };
 
@@ -1956,6 +1963,8 @@ private:
 	     src2 == Transaction::src_t::DEMOTE));
     assert(!(src1 == Transaction::src_t::TRIM_ALLOC &&
              src2 == Transaction::src_t::TRIM_ALLOC));
+    assert(!(src1 == Transaction::src_t::REBALANCE &&
+             src2 == Transaction::src_t::REBALANCE));
 
     auto src1_value = static_cast<std::size_t>(src1);
     auto src2_value = static_cast<std::size_t>(src2);

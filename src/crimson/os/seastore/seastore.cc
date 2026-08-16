@@ -3117,8 +3117,8 @@ shard_stats_t SeaStore::Shard::get_io_stats(
     auto calc_conflicts = [](uint64_t ios, uint64_t repeats) {
       return (double)(repeats-ios)/ios;
     };
-    INFO("iops={:.2f},{:.2f},{:.2f}({:.2f},{:.2f},{:.2f},{:.2f}),{:.2f} "
-         "conflicts={:.2f},{:.2f},{:.2f}({:.2f},{:.2f},{:.2f},{:.2f}) "
+    INFO("iops={:.2f},{:.2f},{:.2f}({:.2f},{:.2f},{:.2f},{:.2f},{:.2f}),{:.2f} "
+         "conflicts={:.2f},{:.2f},{:.2f}({:.2f},{:.2f},{:.2f},{:.2f},{:.2f}) "
          "outstanding={}({},{},{},{}),{},{},{}",
          // iops
          ret.io_num/seconds,
@@ -3128,6 +3128,7 @@ shard_stats_t SeaStore::Shard::get_io_stats(
          ret.trim_dirty_num/seconds,
          ret.cleaner_main_num/seconds,
          ret.cleaner_cold_num/seconds,
+         ret.rebalance_num/seconds,
          ret.flush_num/seconds,
          // conflicts
          calc_conflicts(ret.io_num, ret.repeat_io_num),
@@ -3137,6 +3138,7 @@ shard_stats_t SeaStore::Shard::get_io_stats(
          calc_conflicts(ret.trim_dirty_num, ret.repeat_trim_dirty_num),
          calc_conflicts(ret.cleaner_main_num, ret.repeat_cleaner_main_num),
          calc_conflicts(ret.cleaner_cold_num, ret.repeat_cleaner_cold_num),
+         calc_conflicts(ret.rebalance_num, ret.repeat_rebalance_num),
          // outstanding
          ret.pending_io_num,
          ret.starting_io_num,

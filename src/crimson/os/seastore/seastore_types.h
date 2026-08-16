@@ -2731,6 +2731,7 @@ enum class transaction_type_t : uint8_t {
   CLEANER_COLD,
   PROMOTE,
   DEMOTE,
+  REBALANCE, ///< background proactive split/merge of LBA btree nodes
   MAX
 };
 
@@ -3317,7 +3318,7 @@ struct shard_stats_t {
   uint64_t repeat_read_num = 0;
   uint64_t pending_read_num = 0;
 
-  // transaction_type_t::TRIM_DIRTY~CLEANER_COLD
+  // transaction_type_t::TRIM_DIRTY~CLEANER_COLD, REBALANCE
   uint64_t pending_bg_num = 0;
   uint64_t trim_alloc_num = 0;
   uint64_t repeat_trim_alloc_num = 0;
@@ -3327,6 +3328,8 @@ struct shard_stats_t {
   uint64_t repeat_cleaner_main_num = 0;
   uint64_t cleaner_cold_num = 0;
   uint64_t repeat_cleaner_cold_num = 0;
+  uint64_t rebalance_num = 0;
+  uint64_t repeat_rebalance_num = 0;
 
   uint64_t flush_num = 0;
   uint64_t pending_flush_num = 0;
@@ -3335,14 +3338,16 @@ struct shard_stats_t {
     return trim_alloc_num +
            trim_dirty_num +
            cleaner_main_num +
-           cleaner_cold_num;
+           cleaner_cold_num +
+           rebalance_num;
   }
 
   uint64_t get_repeat_bg_num() const {
     return repeat_trim_alloc_num +
            repeat_trim_dirty_num +
            repeat_cleaner_main_num +
-           repeat_cleaner_cold_num;
+           repeat_cleaner_cold_num +
+           repeat_rebalance_num;
   }
 
   void add(const shard_stats_t &o) {
@@ -3367,6 +3372,8 @@ struct shard_stats_t {
     repeat_cleaner_main_num += o.repeat_cleaner_main_num;
     cleaner_cold_num += o.cleaner_cold_num;
     repeat_cleaner_cold_num += o.repeat_cleaner_cold_num;
+    rebalance_num += o.rebalance_num;
+    repeat_rebalance_num += o.repeat_rebalance_num;
 
     flush_num += o.flush_num;
     pending_flush_num += o.pending_flush_num;
@@ -3386,6 +3393,8 @@ struct shard_stats_t {
     repeat_cleaner_main_num -= o.repeat_cleaner_main_num;
     cleaner_cold_num -= o.cleaner_cold_num;
     repeat_cleaner_cold_num -= o.repeat_cleaner_cold_num;
+    rebalance_num -= o.rebalance_num;
+    repeat_rebalance_num -= o.repeat_rebalance_num;
     flush_num -= o.flush_num;
   }
 };

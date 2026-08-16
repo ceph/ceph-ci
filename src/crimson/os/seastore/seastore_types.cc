@@ -820,6 +820,8 @@ std::ostream &operator<<(std::ostream &os, transaction_type_t type)
     return os << "PROMOTE";
   case transaction_type_t::DEMOTE:
     return os << "DEMOTE";
+  case transaction_type_t::REBALANCE:
+    return os << "REBALANCE";
   case transaction_type_t::MAX:
     return os << "TRANS_TYPE_NULL";
   default:

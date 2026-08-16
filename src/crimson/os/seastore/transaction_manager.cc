@@ -4,6 +4,8 @@
 #include "include/denc.h"
 #include "include/intarith.h"
 
+#include <seastar/core/sleep.hh>
+
 #include "crimson/common/coroutine.h"
 #include "crimson/os/seastore/logging.h"
 #include "crimson/os/seastore/transaction_manager.h"
@@ -205,6 +207,7 @@ TransactionManager::mount()
     return epm->open_for_write();
   }).safe_then([FNAME, this] {
     epm->start_background();
+    rebalance_fut = run_rebalance_loop();
     cache->boot_done();
     INFO("done");
   }).handle_error(
@@ -213,12 +216,85 @@ TransactionManager::mount()
   );
 }
 
+seastar::future<>
+TransactionManager::run_rebalance_loop()
+{
+  LOG_PREFIX(TransactionManager::run_rebalance_loop);
+  using namespace std::chrono_literals;
+  INFO("started");
+  while (true) {
+    if (!cache->is_rebalance_enabled()) {
+      // Feature disabled — drain stale hints and sleep longer
+      // to avoid busy-polling while waiting for re-enable.
+      while (lba_manager->has_rebalance_work()) {
+        lba_manager->pop_rebalance_hint();
+      }
+      try {
+        co_await seastar::sleep_abortable(1s, rebalance_abort);
+      } catch (const seastar::sleep_aborted&) {
+        break;
+      }
+      continue;
+    }
+
+    try {
+      co_await seastar::sleep_abortable(25ms, rebalance_abort);
+    } catch (const seastar::sleep_aborted&) {
+      break;
+    }
+    constexpr size_t REBALANCE_BATCH_SIZE = 8;
+    constexpr int MAX_PRIORITY_YIELDS = 3;
+    while (lba_manager->has_rebalance_work()) {
+      if (rebalance_abort.abort_requested()) {
+        break;
+      }
+      // Collect a batch of hints from the queue.
+      LBAManager::rebalance_hints_t batch;
+      batch.reserve(REBALANCE_BATCH_SIZE);
+      while (batch.size() < REBALANCE_BATCH_SIZE &&
+             lba_manager->has_rebalance_work()) {
+        batch.push_back(lba_manager->pop_rebalance_hint());
+      }
+      // Yield to pending foreground transactions.
+      for (int i = 0; i < MAX_PRIORITY_YIELDS
+                       && shard_stats.pending_io_num > 0; ++i) {
+        co_await seastar::yield();
+      }
+      // Batch splits into one transaction.  Merges are skipped in the
+      // batch path (they reference siblings that earlier operations
+      // could retire) and handled by the reactive merge at min_capacity.
+      ++(shard_stats.rebalance_num);
+      co_await repeat_eagain([this, &batch] {
+        ++(shard_stats.repeat_rebalance_num);
+        return with_transaction_intr(
+          Transaction::src_t::REBALANCE,
+          "rebalance_lba",
+          CACHE_HINT_TOUCH,
+          [this, &batch](auto &t) {
+          return lba_manager->do_rebalance_batch(
+            t, batch
+          ).si_then([this, &t] {
+            return submit_transaction_direct(t);
+          });
+        });
+      }).handle_error(
+        crimson::ct_error::assert_all(
+          "unexpected error in rebalance loop")
+      );
+      co_await seastar::yield();
+    }
+  }
+  INFO("stopped");
+}
+
 TransactionManager::close_ertr::future<>
 TransactionManager::close() {
   LOG_PREFIX(TransactionManager::close);
   INFO("...");
-  return epm->stop_background(
-  ).then([this] {
+  rebalance_abort.request_abort();
+  return rebalance_fut.then([this] {
+    return epm->stop_background();
+  }).then([this] {
     return cache->close();
   }).safe_then([this] {
     cache->dump_contents();

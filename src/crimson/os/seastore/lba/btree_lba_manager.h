@@ -29,6 +29,7 @@
 #pragma once
 
 #include <iostream>
+#include <unordered_set>
 
 #include <boost/intrusive_ptr.hpp>
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
@@ -470,8 +471,50 @@ public:
     Transaction &t,
     scan_mapped_space_func_t &&f) final;
 
+  // ---------------------------------------------------------------------------
+  // Background rebalance interface - proactive splits/merges of LBA leaves.
+  // ---------------------------------------------------------------------------
+
+  // Returns true if the hint set has pending entries for the
+  // background loop to process.
+  bool has_rebalance_work() const final {
+    return !rebalance_hints.empty();
+  }
+
+  /**
+   * Remove and return an arbitrary laddr hint.  The hint identifies a
+   * leaf that was at or above PROACTIVE_SPLIT_SIZE
+   * after an insert.  Stale hints are harmless — do_rebalance_batch
+   * re-checks the actual leaf size.
+   */
+  laddr_t pop_rebalance_hint() final {
+    assert(!rebalance_hints.empty());
+    auto it = rebalance_hints.begin();
+    auto hint = *it;
+    rebalance_hints.erase(it);
+    return hint;
+  }
+
+  /**
+   * Process multiple rebalance hints within a single btree scope
+   * (and thus a single transaction commit).  Amortizes journal-write
+   * cost across the batch.
+   */
+  rebalance_ret do_rebalance_batch(
+    Transaction &t,
+    const rebalance_hints_t &hints) final;
+
 private:
   Cache &cache;
+
+  /**
+   * Hint set for the background rebalancer.  The insert path adds a
+   * leaf's begin-laddr when its post-insert size is between
+   * at or above PROACTIVE_SPLIT_SIZE after an insert.  Stored as
+   * an unordered_set to deduplicate — order doesn't matter since each
+   * hint is re-verified before acting.
+   */
+  std::unordered_set<laddr_t> rebalance_hints;
 
   /**
    * Performance counters registered as Seastar metrics under the "LBA" group.

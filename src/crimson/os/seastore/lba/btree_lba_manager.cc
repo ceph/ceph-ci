@@ -816,13 +816,13 @@ BtreeLBAManager::insert_mappings(
 {
   return seastar::do_with(
     std::move(iter), std::list<LBACursorRef>(),
-    [c, &btree, &alloc_infos]
+    [c, &btree, &alloc_infos, this]
     (LBABtree::iterator &iter, std::list<LBACursorRef> &ret)
   {
     return trans_intr::do_for_each(
       alloc_infos.begin(),
       alloc_infos.end(),
-      [c, &btree, &iter](auto &info)
+      [c, &btree, &iter, this](auto &info)
     {
       assert(info.key != L_ADDR_NULL);
       bool need_reserved_ptr =
@@ -832,7 +832,7 @@ BtreeLBAManager::insert_mappings(
         need_reserved_ptr
           ? get_reserved_ptr<LBALeafNode, laddr_t>()
           : static_cast<BaseChildNode<LBALeafNode, laddr_t>*>(info.extent)
-      ).si_then([c, &iter, &info](auto p) {
+      ).si_then([c, &iter, &info, this](auto p) {
 	ceph_assert(p.second);
 	iter = std::move(p.first);
 	if (is_valid_child_ptr(info.extent)) {
@@ -849,6 +849,11 @@ BtreeLBAManager::insert_mappings(
 	    //     TM::alloc_data_extents()
 	    info.extent->set_laddr(iter.get_key());
 	  }
+	}
+	auto leaf = iter.get_leaf_node();
+	if (cache.is_rebalance_enabled() &&
+	    leaf->get_size() >= LBALeafNode::PROACTIVE_SPLIT_SIZE) {
+	  rebalance_hints.insert(leaf->get_node_meta().begin);
 	}
 	return iter.next(c).si_then([&iter](auto p) {
 	  iter = std::move(p);
@@ -867,6 +872,40 @@ BtreeLBAManager::insert_mappings(
     }).si_then([&ret] {
       return alloc_mappings_iertr::make_ready_future<
 	std::list<LBACursorRef>>(std::move(ret));
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Background rebalance - proactive split/merge of LBA leaves
+// ---------------------------------------------------------------------------
+
+BtreeLBAManager::rebalance_ret
+BtreeLBAManager::do_rebalance_batch(
+  Transaction &t,
+  const rebalance_hints_t &hints)
+{
+  // Only splits are safe to batch: a split touches the target node
+  // and its parent, never a sibling.  Merges reach into a sibling
+  // that an earlier split in the same batch may have already retired.
+  auto c = get_context(t);
+  return with_btree<LBABtree>(
+    cache,
+    c,
+    [c, &hints](auto &btree) {
+    return trans_intr::do_for_each(
+      hints.begin(),
+      hints.end(),
+      [c, &btree](laddr_t hint) {
+      return btree.lower_bound(
+        c, hint
+      ).si_then([c, &btree](auto iter) {
+        auto leaf = iter.get_leaf_node();
+        if (leaf->get_size() >= LBALeafNode::PROACTIVE_SPLIT_SIZE) {
+          return btree.proactive_split(c, iter);
+        }
+        return base_iertr::now();
+      });
     });
   });
 }

@@ -38,6 +38,9 @@ Cache::Cache(
         "seastore_data_delta_based_overwrite") > 0),
     force_backref(crimson::common::get_conf<bool>(
         "seastore_logical_bucket_cache_test_stress")),
+    rebalance_enabled(
+      crimson::common::get_conf<bool>(
+        "seastore_lba_background_rebalance")),
     pinboard(create_extent_pinboard(
       crimson::common::get_conf<Option::size_t>(
        "seastore_cachepin_size_pershard"),
@@ -140,6 +143,7 @@ void Cache::register_metrics(store_index_t store_index)
     {src_t::CLEANER_COLD, {sm::label_instance("src", "CLEANER_COLD")}},
     {src_t::PROMOTE, {sm::label_instance("src", "PROMOTE")}},
     {src_t::DEMOTE, {sm::label_instance("src", "DEMOTE")}},
+    {src_t::REBALANCE, {sm::label_instance("src", "REBALANCE")}},
   };
   assert(labels_by_src.size() == (std::size_t)src_t::MAX);
 
@@ -652,6 +656,30 @@ void Cache::register_metrics(store_index_t store_index)
             sm::description("total number of invalidated update operations"),
             merged_labels
           ),
+          sm::make_counter(
+            "tree_splits_committed",
+            committed_efforts.num_splits,
+            sm::description("total number of committed node split operations"),
+            merged_labels
+          ),
+          sm::make_counter(
+            "tree_merges_committed",
+            committed_efforts.num_merges,
+            sm::description("total number of committed node merge/rebalance operations"),
+            merged_labels
+          ),
+          sm::make_counter(
+            "tree_splits_invalidated",
+            invalidated_efforts.num_splits,
+            sm::description("total number of invalidated node split operations"),
+            merged_labels
+          ),
+          sm::make_counter(
+            "tree_merges_invalidated",
+            invalidated_efforts.num_merges,
+            sm::description("total number of invalidated node merge/rebalance operations"),
+            merged_labels
+          ),
         }
       );
     }
@@ -707,7 +735,9 @@ void Cache::register_metrics(store_index_t store_index)
           (src1 == Transaction::src_t::DEMOTE &&
            src2 == Transaction::src_t::DEMOTE) ||
           (src1 == Transaction::src_t::TRIM_ALLOC &&
-           src2 == Transaction::src_t::TRIM_ALLOC)) {
+           src2 == Transaction::src_t::TRIM_ALLOC) ||
+          (src1 == Transaction::src_t::REBALANCE &&
+           src2 == Transaction::src_t::REBALANCE)) {
         continue;
       }
       std::ostringstream oss;

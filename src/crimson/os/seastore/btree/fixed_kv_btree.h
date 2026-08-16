@@ -636,8 +636,15 @@ public:
      */
     using check_split_iertr = ensure_internal_iertr;
     using check_split_ret = check_split_iertr::template future<depth_t>;
-    check_split_ret check_split(op_context_t c) {
-      if (!leaf.node->at_max_capacity()) {
+    /**
+     * Parameterized split check.  leaf_threshold controls when the leaf
+     * is considered "needs splitting" (CAPACITY for reactive inserts,
+     * PROACTIVE_SPLIT_SIZE for background rebalancing).  Internal nodes
+     * are always checked against at_max_capacity (must have room for the
+     * new child entry produced by the split below).
+     */
+    check_split_ret check_split(op_context_t c, size_t leaf_threshold) {
+      if (leaf.node->get_size() < leaf_threshold) {
 	return check_split_iertr::template make_ready_future<depth_t>(0);
       }
       return seastar::do_with(
@@ -658,6 +665,10 @@ public:
           }
         });
       });
+    }
+
+    check_split_ret check_split(op_context_t c) {
+      return check_split(c, leaf_node_t::node_layout_t::get_capacity());
     }
   };
 
@@ -2679,30 +2690,30 @@ private:
    */
   using handle_split_iertr = base_iertr;
   using handle_split_ret = handle_split_iertr::future<>;
-  handle_split_ret handle_split(
-    op_context_t c,
-    iterator &iter)
-  {
-    LOG_PREFIX(FixedKVBtree::handle_split);
+  using handle_merge_iertr = base_iertr;
+  using handle_merge_ret = handle_merge_iertr::future<>;
 
-    auto split_from = co_await iter.check_split(c);
+  /**
+   * do_split - execute splits from split_from down to the leaf.
+   *
+   * If split_from == iter.get_depth(), a new root is created first.
+   * Then each level from split_from down to 1 is split via CoW.
+   * On return, iter points at the correct position in the newly
+   * split nodes.
+   */
+  void do_split(
+    op_context_t c,
+    iterator &iter,
+    depth_t split_from)
+  {
+    LOG_PREFIX(FixedKVBtree::do_split);
     SUBTRACET(seastore_fixedkv_tree,
       "split_from {}, depth {}", c.trans, split_from, iter.get_depth());
 
     if (split_from == iter.get_depth()) {
       assert(iter.is_full());
-      InternalNodeRef nroot;
-      while (!nroot) {
-        try {
-          nroot = c.cache.template alloc_new_non_data_extent<internal_node_t>(
-            c.trans, node_size, {placement_hint_t::HOT, INIT_GENERATION});
-        } catch (crimson::ct_error::eagain&) {}
-        if (!nroot) {
-          c.cache.get_epm().maybe_wake_background();
-          co_await trans_intr::make_interruptible(
-            c.cache.get_epm().wait_background());
-        }
-      }
+      auto nroot = c.cache.template alloc_new_non_data_extent<internal_node_t>(
+        c.trans, node_size, {placement_hint_t::HOT, INIT_GENERATION});
       fixed_kv_node_meta_t<node_key_t> meta{
         min_max_t<node_key_t>::min, min_max_t<node_key_t>::max, iter.get_depth() + 1};
       nroot->set_meta(meta);
@@ -2727,26 +2738,8 @@ private:
 
     /* pos may be either node_position_t<leaf_node_t> or
      * node_position_t<internal_node_t> */
-    auto split_level = [&, c, FNAME](auto &parent_pos, auto &pos)
-                        -> handle_split_iertr::future<std::pair<
-                          decltype(pos.node), decltype(pos.node)>> {
-      decltype(pos.node) left, right;
-      node_key_t pivot = min_max_t<node_key_t>::null;
-      while (!left) {
-        assert(!right);
-        assert(pivot == min_max_t<node_key_t>::null);
-        try {
-          auto t = pos.node->make_split_children(c);
-          left = std::get<0>(t);
-          right = std::get<1>(t);
-          pivot = std::get<2>(t);
-        } catch (crimson::ct_error::eagain&) {}
-        if (!left) {
-          c.cache.get_epm().maybe_wake_background();
-          co_await trans_intr::make_interruptible(
-            c.cache.get_epm().wait_background());
-        }
-      }
+    auto split_level = [&, c, FNAME](auto &parent_pos, auto &pos) {
+      auto [left, right, pivot] = pos.node->make_split_children(c);
 
       auto parent_node = parent_pos.node;
       auto parent_iter = parent_pos.get_iter();
@@ -2771,7 +2764,8 @@ private:
       c.cache.retire_extent(c.trans, pos.node);
 
       get_tree_stats<self_type>(c.trans).extents_num_delta++;
-      co_return std::make_pair(left, right);
+      get_tree_stats<self_type>(c.trans).num_splits++;
+      return std::make_pair(left, right);
     };
 
     for (; split_from > 0; --split_from) {
@@ -2792,7 +2786,7 @@ private:
           split_from,
           *parent_pos.node,
           parent_pos.pos);
-        auto [left, right] = co_await split_level(parent_pos, pos);
+        auto [left, right] = split_level(parent_pos, pos);
 
         if (pos.pos < left->get_size()) {
           pos.node = left;
@@ -2811,7 +2805,7 @@ private:
           *pos.node,
           *parent_pos.node,
           parent_pos.pos);
-        auto [left, right] = co_await split_level(parent_pos, pos);
+        auto [left, right] = split_level(parent_pos, pos);
 
         /* right->get_node_meta().begin == pivot == right->begin()->get_key()
          * Thus, if pos.pos == left->get_size(), we want iter to point to
@@ -2831,7 +2825,40 @@ private:
     }
   }
 
+  handle_split_ret handle_split(
+    op_context_t c,
+    iterator &iter)
+  {
+    return iter.check_split(c
+    ).si_then([this, c, &iter](auto split_from) {
+      if (split_from > 0) {
+        do_split(c, iter, split_from);
+      }
+      return seastar::now();
+    });
+  }
 
+public:
+  /**
+   * proactive_split - split an over-threshold leaf from a background
+   * transaction.  Uses the same split cascade as handle_split but
+   * triggers at PROACTIVE_SPLIT_SIZE instead of CAPACITY.
+   */
+  handle_split_ret proactive_split(
+    op_context_t c,
+    iterator &iter)
+  {
+    return iter.check_split(c, leaf_node_t::PROACTIVE_SPLIT_SIZE
+    ).si_then([this, c, &iter](auto split_from) {
+      if (split_from > 0) {
+        do_split(c, iter, split_from);
+      }
+      return seastar::now();
+    });
+  }
+
+
+private:
   /**
    * handle_merge - rebalance or merge underflowing nodes after a remove.
    *
@@ -2846,15 +2873,13 @@ private:
    *
    * All merges/rebalances are CoW: new nodes replace old ones.
    */
-  using handle_merge_iertr = base_iertr;
-  using handle_merge_ret = handle_merge_iertr::future<>;
   handle_merge_ret handle_merge(
     op_context_t c,
     iterator &iter)
   {
     LOG_PREFIX(FixedKVBtree::handle_merge);
     if (iter.get_depth() == 1 ||
-        !iter.leaf.node->below_min_capacity()) {
+        !iter.leaf.node->below_min_capacity(c.cache.is_rebalance_enabled())) {
       SUBTRACET(
         seastore_fixedkv_tree,
         "no need to merge leaf, leaf size {}, depth {}",
@@ -2916,7 +2941,8 @@ private:
                 SUBTRACET(seastore_fixedkv_tree, "no need to collapse root", c.trans);
               }
               return seastar::stop_iteration::yes;
-            } else if (pos.node->below_min_capacity()) {
+            } else if (pos.node->below_min_capacity(
+                         c.cache.is_rebalance_enabled())) {
               SUBTRACET(
                 seastore_fixedkv_tree,
                 "continuing, next node {} depth {} at min",
@@ -3012,7 +3038,13 @@ private:
       auto [liter, riter] = donor_is_left ?
         std::make_pair(donor_iter, iter) : std::make_pair(iter, donor_iter);
 
-      if (donor->at_min_capacity()) {
+      if (std::max(l->get_size(), r->get_size()) -
+          std::min(l->get_size(), r->get_size()) <= 1) {
+        co_return;
+      }
+
+      if (l->get_size() + r->get_size() <=
+          NodeType::node_layout_t::get_capacity()) {
         typename NodeType::Ref replacement;
         while (!replacement) {
           try {
@@ -3096,6 +3128,8 @@ private:
         c.cache.retire_extent(c.trans, l);
         c.cache.retire_extent(c.trans, r);
       }
+
+      get_tree_stats<self_type>(c.trans).num_merges++;
     };
 
     auto v = parent_pos.node->template get_child<NodeType>(

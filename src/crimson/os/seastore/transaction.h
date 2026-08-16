@@ -637,6 +637,8 @@ public:
     uint64_t num_erases = 0;
     uint64_t num_updates = 0;
     int64_t extents_num_delta = 0;
+    uint64_t num_splits = 0;   ///< node split operations (reactive + proactive)
+    uint64_t num_merges = 0;   ///< node merge/rebalance operations
     uint64_t lookup_count = 0;
     uint64_t nodes_visited = 0;
     uint64_t string_cmp_count = 0;
@@ -647,6 +649,8 @@ public:
               num_erases == 0 &&
               num_updates == 0 &&
 	      extents_num_delta == 0 &&
+	      num_splits == 0 &&
+	      num_merges == 0 &&
               lookup_count == 0 &&
               nodes_visited == 0 &&
               string_cmp_count == 0);
