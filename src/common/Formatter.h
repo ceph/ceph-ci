@@ -12,6 +12,7 @@
 #include <memory>
 #include <vector>
 #include <stdarg.h>
+#include <cstdint>
 #include <sstream>
 #include <map>
 #include <vector>
