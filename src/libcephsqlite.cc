@@ -450,7 +450,12 @@ static int FileSize(sqlite3_file *file, sqlite_int64 *osize)
     if (rc == -EBLOCKLISTED) {
       getdata(f->vfs).maybe_reconnect(f->io.cluster);
     }
-    return SQLITE_NOTFOUND;
+    /* SQLITE_NOTFOUND means "unknown opcode in sqlite3_file_control()" and
+     * has no defined meaning as an xFileSize return; sqlite passes it
+     * through verbatim, which the Python bindings then surface as an
+     * unmappable, unhandled sqlite3.InternalError. Report it the same way
+     * every other I/O method in this file reports a failed RADOS op. */
+    return SQLITE_IOERR_FSTAT;
   }
 
   *osize = (sqlite_int64)size;

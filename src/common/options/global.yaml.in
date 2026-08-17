@@ -6985,6 +6985,14 @@ options:
   default: true
   tags:
   - client
+- name: cephsqlite_inject_stat_error_probability
+  type: float
+  level: dev
+  desc: Probability that SimpleRADOSStriper::stat() fails as though blocklisted,
+    for testing
+  default: 0
+  tags:
+  - client
 - name: bdev_type
   type: str
   level: advanced

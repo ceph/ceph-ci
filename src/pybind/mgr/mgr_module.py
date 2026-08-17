@@ -1426,6 +1426,9 @@ class MgrModule(ceph_module.BaseMgrModule, MgrModuleLoggingMixin):
                 return self.db is not None
             except MgrDBNotReady:
                 return False
+            except sqlite3.DatabaseError as e:
+                self.log.warning(f"db not ready: {e}")
+                return False
 
     @property
     def db(self) -> sqlite3.Connection:

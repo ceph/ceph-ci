@@ -208,7 +208,9 @@ int SimpleRADOSStriper::stat(uint64_t* s)
 {
   d(5) << dendl;
 
-  if (blocklisted.load()) {
+  auto p = ((CephContext*)ioctx.cct())->_conf.get_val<double>(
+    "cephsqlite_inject_stat_error_probability");
+  if (blocklisted.load() || rand() % 10000 < p * 10000.0) {
     return -EBLOCKLISTED;
   }
 

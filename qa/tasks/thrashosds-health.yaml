@@ -4,7 +4,12 @@ overrides:
       osd:
         osd max markdown count: 1000
         osd blocked scrub grace period: 3600
+      mgr:
+        cephsqlite inject stat error probability: 0.05
     log-ignorelist:
+      - Caught fatal database error
+      - Unhandled exception from module
+      - db not ready
       - overall HEALTH_
       - \(OSDMAP_FLAGS\)
       - \(OSD_
