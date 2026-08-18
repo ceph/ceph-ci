@@ -622,6 +622,51 @@ class TestMisc(CephFSTestCase):
             "The client stripped CEPH_SETATTR_ATIME from the mask, "
             "causing the MDS to skip advancing ctime during value-equality matches.")
 
+    def test_write_updates_futuristic_mtime(self):
+        """
+        Two-mount check: a write under CEPH_CAP_FILE_WR (EXCL revoked) must
+        replace an explicitly set futuristic mtime with the writer's time.
+        The post-write value is read from the MDS inode, not a client cache.
+        """
+        test_file = "test_futuristic_mtime.bin"
+
+        self.mount_a.touch(test_file)
+        self.mount_a.run_shell(["touch", "-m", "-d", "+25 hours", test_file])
+
+        future_mtime = int(self.mount_a.run_shell(
+            ["stat", "-c", "%Y", test_file]).stdout.getvalue().strip())
+        current_time = int(self.mount_a.run_shell(
+            ["date", "+%s"]).stdout.getvalue().strip())
+        self.assertGreater(future_mtime, current_time,
+                           "Setup error: File mtime is not in the future.")
+
+        ino = self.mount_a.path_to_ino(test_file)
+
+        # Opening on mount_b revokes EXCL on mount_a, so its write runs under WR.
+        proc_b = self.mount_b.open_background(test_file, write=False)
+        time.sleep(2)
+
+        self.mount_a.run_shell(["sh", "-c", f"echo 'payload' >> {test_file}"])
+        self.mount_a.run_shell(["sync"])
+        self.mount_b.kill_background(proc_b)
+
+        # Read the MDS's copy of the inode. This is the value the fix changes.
+        info = self.fs.mds_asok(['dump', 'inode', hex(ino)])
+        # dump inode prints mtime as ISO 8601 with microseconds and an offset,
+        # e.g. "2026-11-12T18:11:19.926350+0530"; date -d parses it.
+        post_mtime = int(self.mount_a.run_shell(
+            ["date", "-d", info['mtime'], "+%s"]).stdout.getvalue().strip())
+
+        final_now = int(self.mount_a.run_shell(
+            ["date", "+%s"]).stdout.getvalue().strip())
+
+        self.mount_a.run_shell(["rm", "-f", test_file])
+
+        self.assertLessEqual(
+            post_mtime, final_now + 10,
+            f"REGRESSION: mtime stuck in the future after a write under shared "
+            f"caps (future={future_mtime}, post={post_mtime}, now={final_now}).")
+
 @classhook('_add_session_client_evictions')
 class TestSessionClientEvict(CephFSTestCase):
     CLIENTS_REQUIRED = 3
