@@ -535,7 +535,6 @@ PG::do_delete_work(ceph::os::Transaction &t, ghobject_t _next)
       if (obj.is_pgmeta()) {
 	WARNDPP("pg {} found stray pgmeta-like {} during PG removal", *this, pgid, obj);
       }
-      TRACEDPP("pg {}, removing obj {}", *this, pgid, obj);
       t.remove(coll_ref->get_cid(), obj);
     }
     t.register_on_commit(
