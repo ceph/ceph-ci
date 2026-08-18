@@ -12768,6 +12768,17 @@ int64_t Client::_write(Fh *f, int64_t offset, uint64_t size, bufferlist bl,
     return r;
 
   put_cap_ref(in, CEPH_CAP_AUTH_SHARED);
+
+  /* Force client to advance mtime/ctime to current time and dirty CEPH_CAP_FILE_WR
+   * even under shared write caps if the existing mtime is stuck in the future.
+   */
+  utime_t now = ceph_clock_now();
+  if (in->mtime > now || (in->caps_issued() & CEPH_CAP_FILE_EXCL)) {
+    in->mtime = now;
+    in->ctime = now;
+    in->mark_caps_dirty(CEPH_CAP_FILE_WR);
+  }
+
   if (size > 0) {
     r = clear_suid_sgid(in, f->actor_perms);
     if (r < 0) {
