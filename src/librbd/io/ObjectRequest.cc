@@ -250,9 +250,11 @@ void ObjectReadRequest<I>::read_object() {
   image_ctx->rados_api.execute(
     {data_object_name(this->m_ictx, this->m_object_no)},
     *this->m_io_context, std::move(read_op), nullptr,
-    librbd::asio::util::get_callback_adapter(
-      [this](int r) { handle_read_object(r); }), m_version,
-      (this->m_trace.valid() ? this->m_trace.get_info() : nullptr));
+    librbd::asio::util::get_completion_token(
+      *image_ctx->asio_engine,
+      [this](int r) { handle_read_object(r); }),
+    m_version,
+    (this->m_trace.valid() ? this->m_trace.get_info() : nullptr));
 }
 
 template <typename I>
@@ -513,9 +515,11 @@ void AbstractObjectWriteRequest<I>::write_object() {
   image_ctx->rados_api.execute(
     {data_object_name(this->m_ictx, this->m_object_no)},
     *this->m_io_context, std::move(write_op),
-    librbd::asio::util::get_callback_adapter(
-      [this](int r) { handle_write_object(r); }), nullptr,
-      (this->m_trace.valid() ? this->m_trace.get_info() : nullptr));
+    librbd::asio::util::get_completion_token(
+      *image_ctx->asio_engine,
+      [this](int r) { handle_write_object(r); }),
+    nullptr,
+    (this->m_trace.valid() ? this->m_trace.get_info() : nullptr));
 }
 
 template <typename I>
@@ -769,9 +773,11 @@ void ObjectListSnapsRequest<I>::list_snaps() {
   image_ctx->rados_api.execute(
     {data_object_name(this->m_ictx, this->m_object_no)},
     *this->m_io_context, std::move(read_op), nullptr,
-    librbd::asio::util::get_callback_adapter(
-      [this](int r) { handle_list_snaps(r); }), nullptr,
-      (this->m_trace.valid() ? this->m_trace.get_info() : nullptr));
+    librbd::asio::util::get_completion_token(
+      *image_ctx->asio_engine,
+      [this](int r) { handle_list_snaps(r); }),
+    nullptr,
+    (this->m_trace.valid() ? this->m_trace.get_info() : nullptr));
 }
 
 template <typename I>

@@ -17,8 +17,9 @@
 #define CEPH_LIBRBD_ASIO_CONTEXT_WQ_HPP
 
 #include <atomic>
-#include <functional>
 #include <memory>
+
+#include "UniqueFunction.hpp"
 
 #if defined(__GNUC__) && !defined(__MINGW32__)
 #define LIBRBD_ASIO_CONTEXT_WQ_API __attribute__((visibility("default")))
@@ -49,7 +50,7 @@ namespace asio {
  */
 class LIBRBD_ASIO_CONTEXT_WQ_API ContextWQ {
 public:
-  using Work = std::function<void()>;
+  using Work = UniqueFunction<>;
 
   virtual ~ContextWQ() = default;
 

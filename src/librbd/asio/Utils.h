@@ -6,6 +6,9 @@
 
 #include "include/Context.h"
 #include "include/rados/librados_fwd.hpp"
+#include "librbd/AsioEngine.h"
+#include "librbd/asio/ContextWQExecutor.h"
+#include <boost/asio/bind_executor.hpp>
 #include <boost/system/error_code.hpp>
 
 namespace librbd {
@@ -24,6 +27,16 @@ auto get_callback_adapter(T&& t) {
   return [t = std::move(t)](boost::system::error_code ec, auto&& ... args) {
       t(-ec.value(), std::forward<decltype(args)>(args)...);
     };
+}
+
+/**
+ * Neorados completion token that delivers onto the image ContextWQ.
+ */
+template <typename Callback>
+auto get_completion_token(AsioEngine& asio_engine, Callback&& cb) {
+  return boost::asio::bind_executor(
+    ContextWQExecutor{asio_engine.get_work_queue()},
+    get_callback_adapter(std::forward<Callback>(cb)));
 }
 
 } // namespace util
