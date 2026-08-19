@@ -10,6 +10,7 @@ from typing import (
 )
 
 import contextlib
+import enum
 import logging
 import operator
 
@@ -35,6 +36,14 @@ CephDaemonInfo = TypedDict(
 
 RankMap = Dict[int, Dict[int, Optional[str]]]
 DaemonMap = Dict[str, CephDaemonInfo]
+
+
+class NodeState(str, enum.Enum):
+    NEW = 'new'
+    CHANGED = 'changed'
+    READY = 'ready'
+    REPLACED = 'replaced'
+    GONE = 'gone'
 
 
 class _GenerationInfo(NamedTuple):
@@ -86,15 +95,20 @@ class ClusterMeta:
             # "reconcile" existing rank-pnn values
             try:
                 ceph_entry = self._to_entry(
-                    rank, _current_generation(rankval).name, daemon_map
+                    rank,
+                    _current_generation(rankval).name,
+                    daemon_map,
+                    NodeState.CHANGED,
                 )
             except KeyError as err:
                 log.warning(
                     'daemon not available: %s not in %r', err, daemon_map
                 )
                 continue
-            if ceph_entry != curr_entry:
-                # TODO do proper state value transitions
+            if (ceph_entry['identity'], ceph_entry['node']) != (
+                curr_entry['identity'],
+                curr_entry['node'],
+            ):
                 log.debug("updating entry %r", ceph_entry)
                 self._replace_entry(ceph_entry)
         if missing:
@@ -107,6 +121,7 @@ class ClusterMeta:
                             rank,
                             _current_generation(rank_map[rank]).name,
                             daemon_map,
+                            NodeState.NEW,
                         )
                     )
                 except KeyError as err:
@@ -122,7 +137,7 @@ class ClusterMeta:
             for pnn in range(rank_max + 1, pnn_max + 1):
                 entry = self._get_pnn(pnn)
                 assert entry
-                entry['state'] = 'gone'
+                entry['state'] = NodeState.GONE
                 self._replace_entry(entry)
         log.debug('synced data: %r; modified=%s', self._data, self.modified())
 
@@ -159,7 +174,11 @@ class ClusterMeta:
         log.debug('_append_entries updated data=%r', self._data)
 
     def _to_entry(
-        self, rank: int, name: Optional[str], daemon_map: DaemonMap
+        self,
+        rank: int,
+        name: Optional[str],
+        daemon_map: DaemonMap,
+        state: NodeState,
     ) -> ClusterNodeEntry:
         assert name
         name = f'smb.{name}'
@@ -168,7 +187,7 @@ class ClusterMeta:
             'pnn': rank,
             'identity': name,
             'node': di['host_ip'],
-            'state': 'ready',
+            'state': state,
         }
 
 
