@@ -1001,6 +1001,9 @@ $CCLIENTDEBUG
         ; needed for passing lc time based s3-tests (can be verbose)
         ; rgw lc debug interval = 10
         $(format_conf "${extra_conf}")
+        rgw_bucket_reshard_counters_cache = true
+        rgw_lc_counters_cache = true
+        rgw_reshard_thread_interval = 10
 EOF
     if [ "$rgw_store" == "dbstore" ] ; then
         if [ $CEPH_NUM_RGW -gt 1 ]; then
