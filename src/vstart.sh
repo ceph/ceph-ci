@@ -1364,14 +1364,18 @@ EOF
             echo "{\"cephx_secret\": \"$OSD_SECRET\"}" > $CEPH_DEV_DIR/osd$osd/new.json
             ceph_adm osd new $uuid -i $CEPH_DEV_DIR/osd$osd/new.json
             rm $CEPH_DEV_DIR/osd$osd/new.json
-            # ceph-osd --mkfs authenticates to the monitor as the just-created
-            # osd.$osd entity, which the monitor can briefly reject with EACCES
-            # right after "osd new" (handle_auth_bad_method / failed to fetch
-            # mon config). Transient; retry past it.
-            retry 10 2 "ceph-osd --mkfs for osd.$osd" \
-                prun $SUDO $CEPH_BIN/$ceph_osd $extra_osd_args -i $osd $ARGS \
-                --mkfs --key $OSD_SECRET --osd-uuid $uuid $extra_seastar_args \
+            # --no-mon-config: vstart already wrote ceph.conf + key + uuid.
+            # Skip get_monmap_and_config() so mkfs cannot lose the osd-new/cephx
+            # race (KeyServer not yet serving osd.N).  A retry loop only hid
+            # the window; do not start a half-formatted OSD if type is missing.
+            prun $SUDO $CEPH_BIN/$ceph_osd $extra_osd_args -i $osd $ARGS \
+                --mkfs --no-mon-config --key $OSD_SECRET --osd-uuid $uuid \
+                $extra_seastar_args \
                 > $CEPH_OUT_DIR/osd-mkfs.$osd.log 2>&1 || exit $?
+            if [ ! -f "$CEPH_DEV_DIR/osd$osd/type" ]; then
+                echo "ERROR: osd.$osd mkfs did not write $CEPH_DEV_DIR/osd$osd/type" >&2
+                exit 1
+            fi
 
             local key_fn=$CEPH_DEV_DIR/osd$osd/keyring
             cat > $key_fn<<EOF
