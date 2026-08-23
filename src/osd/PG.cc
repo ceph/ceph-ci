@@ -809,9 +809,16 @@ void PG::publish_stats_to_osd()
   std::lock_guard l{pg_stats_publish_lock};
   auto stats =
     recovery_state.prepare_stats_for_publish(pg_stats_publish, unstable_stats);
+  pg_rebuild_latch_t latch;
+  latch.start_time = recovery_state.get_rebuild_start_time();
+  latch.base_recovered = recovery_state.get_rebuild_base_recovered();
+  latch.had_redundancy_loss = recovery_state.get_rebuild_had_redundancy_loss();
   if (stats) {
     pg_stats_publish = std::move(stats);
   }
+  // Snapshot even when stats did not change: latch is RAM-only on PeeringState
+  // and collect_pg_stats does not hold the PG lock.
+  pg_rebuild_latch_publish = latch;
 }
 
 unsigned PG::get_target_pg_log_entries() const
@@ -824,6 +831,7 @@ void PG::clear_publish_stats()
   dout(15) << "clear_stats" << dendl;
   std::lock_guard l{pg_stats_publish_lock};
   pg_stats_publish.reset();
+  pg_rebuild_latch_publish = pg_rebuild_latch_t();
 }
 
 /**
@@ -2443,7 +2451,8 @@ void PG::dump_missing(Formatter *f)
 }
 
 void PG::with_pg_stats(ceph::coarse_real_clock::time_point now_is,
-		       std::function<void(const pg_stat_t&, epoch_t lec)>&& f)
+		       std::function<void(const pg_stat_t&, epoch_t lec,
+					  const pg_rebuild_latch_t&)>&& f)
 {
   dout(30) << __func__ << dendl;
   // possibly update the scrub state & timers
@@ -2456,7 +2465,8 @@ void PG::with_pg_stats(ceph::coarse_real_clock::time_point now_is,
   // now - the actual publishing
   std::lock_guard l{pg_stats_publish_lock};
   if (pg_stats_publish) {
-    f(*pg_stats_publish, pg_stats_publish->get_effective_last_epoch_clean());
+    f(*pg_stats_publish, pg_stats_publish->get_effective_last_epoch_clean(),
+      pg_rebuild_latch_publish);
   }
 }
 

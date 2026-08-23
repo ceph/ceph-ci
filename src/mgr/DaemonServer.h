@@ -248,6 +248,7 @@ private:
   Context *tick_event;
   void tick();
   void maybe_adjust_stats_period();
+  void maybe_flush_pg_rebuild_stats();
   void schedule_tick_locked(double delay_sec);
   std::atomic<bool> shutting_down = false;
 

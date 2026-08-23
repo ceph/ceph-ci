@@ -478,11 +478,15 @@ public:
   int64_t get_rule_avail(const OSDMap& osdmap, int ruleno) const;
   void get_rules_avail(const OSDMap& osdmap,
 		       std::map<int,int64_t> *avail_map) const;
-  void dump(ceph::Formatter *f, bool with_net = false) const;
-  void dump_basic(ceph::Formatter *f) const;
-  void dump_pg_stats(ceph::Formatter *f, bool brief) const;
+  void dump(ceph::Formatter *f, bool with_net = false,
+	    const pg_rebuild_dump_overlay *rebuild = nullptr) const;
+  void dump_basic(ceph::Formatter *f,
+		  const pg_rebuild_dump_overlay *rebuild = nullptr) const;
+  void dump_pg_stats(ceph::Formatter *f, bool brief,
+		     const pg_rebuild_dump_overlay *rebuild = nullptr) const;
   void dump_pg_progress(ceph::Formatter *f) const;
-  void dump_pool_stats(ceph::Formatter *f) const;
+  void dump_pool_stats(ceph::Formatter *f,
+		       const pg_rebuild_dump_overlay *rebuild = nullptr) const;
   void dump_osd_stats(ceph::Formatter *f, bool with_net = false) const;
   void dump_osd_ping_times(ceph::Formatter *f) const;
   void dump_delta(ceph::Formatter *f) const;
@@ -503,7 +507,8 @@ public:
   static void dump_pg_stats_plain(
     std::ostream& ss,
     const mempool::pgmap::unordered_map<pg_t, pg_stat_t>& pg_stats,
-    bool brief);
+    bool brief,
+    const pg_rebuild_dump_overlay *rebuild = nullptr);
   void get_stuck_stats(
     int types, const utime_t cutoff,
     mempool::pgmap::unordered_map<pg_t, pg_stat_t>& stuck_pgs) const;
@@ -513,11 +518,15 @@ public:
 			  ceph::Formatter *f,
 			  int threshold,
 			  std::vector<std::string>& args) const;
-  void dump(std::ostream& ss) const;
+  void dump(std::ostream& ss,
+	    const pg_rebuild_dump_overlay *rebuild = nullptr) const;
   void dump_basic(std::ostream& ss) const;
-  void dump_pg_stats(std::ostream& ss, bool brief) const;
-  void dump_pg_sum_stats(std::ostream& ss, bool header) const;
-  void dump_pool_stats(std::ostream& ss, bool header) const;
+  void dump_pg_stats(std::ostream& ss, bool brief,
+		     const pg_rebuild_dump_overlay *rebuild = nullptr) const;
+  void dump_pg_sum_stats(std::ostream& ss, bool header,
+			 const pg_rebuild_dump_overlay *rebuild = nullptr) const;
+  void dump_pool_stats(std::ostream& ss, bool header,
+		       const pg_rebuild_dump_overlay *rebuild = nullptr) const;
   void dump_osd_stats(std::ostream& ss) const;
   void dump_osd_sum_stats(std::ostream& ss) const;
   void dump_filtered_pg_stats(std::ostream& ss, std::set<pg_t>& pgs) const;
@@ -554,7 +563,8 @@ int process_pg_map_command(
   const OSDMap& osdmap,
   ceph::Formatter *f,
   std::stringstream *ss,
-  ceph::buffer::list *odata);
+  ceph::buffer::list *odata,
+  const pg_rebuild_dump_overlay *rebuild = nullptr);
 
 class PGMapUpdater
 {

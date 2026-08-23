@@ -117,6 +117,28 @@ TEST_F(ClusterStateTest, IngestPGStats_Valid)
   ASSERT_TRUE(p_inc.pg_stat_updates.contains(pgid));
 }
 
+TEST_F(ClusterStateTest, IngestPGStats_CopiesOsdRebuildLatch)
+{
+  pg_t pgid(0, 1);
+  pgstat.state = PG_STATE_ACTIVE | PG_STATE_DEGRADED;
+  pgstat.last_change = utime_t(200, 0);
+  pgstat.last_clean = utime_t(1, 0);
+  pgstat.stats.sum.num_objects_degraded = 3;
+  stats->pg_stat[pgid] = pgstat;
+
+  pg_rebuild_latch_t latch;
+  latch.start_time = utime_t(50, 0);
+  latch.base_recovered = 4;
+  latch.had_redundancy_loss = true;
+  stats->pg_rebuild_latch[pgid] = latch;
+
+  cs->ingest_pgstats(stats);
+  const auto& e = cs->get_pg_rebuild_stats().get_entries().at(pgid);
+  ASSERT_EQ(e.start_time, utime_t(50, 0));
+  ASSERT_EQ(e.base_recovered, 4);
+  ASSERT_TRUE(e.had_redundancy_loss);
+}
+
 TEST_F(ClusterStateTest, IngestPGStats_PoolDNE)
 {
   //Test 2: OSD is in the map, PG pool does not exist

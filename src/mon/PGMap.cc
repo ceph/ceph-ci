@@ -1600,15 +1600,17 @@ void PGMap::decode(bufferlist::const_iterator &bl)
   calc_stats();
 }
 
-void PGMap::dump(ceph::Formatter *f, bool with_net) const
+void PGMap::dump(ceph::Formatter *f, bool with_net,
+		 const pg_rebuild_dump_overlay *rebuild) const
 {
-  dump_basic(f);
-  dump_pg_stats(f, false);
-  dump_pool_stats(f);
+  dump_basic(f, rebuild);
+  dump_pg_stats(f, false, rebuild);
+  dump_pool_stats(f, rebuild);
   dump_osd_stats(f, with_net);
 }
 
-void PGMap::dump_basic(ceph::Formatter *f) const
+void PGMap::dump_basic(ceph::Formatter *f,
+		       const pg_rebuild_dump_overlay *rebuild) const
 {
   f->dump_unsigned("version", version);
   f->dump_stream("stamp") << stamp;
@@ -1617,6 +1619,10 @@ void PGMap::dump_basic(ceph::Formatter *f) const
 
   f->open_object_section("pg_stats_sum");
   pg_sum.dump(f);
+  if (rebuild) {
+    f->dump_unsigned("rebuilds", rebuild->cluster.rebuilds);
+    f->dump_float("avg_rebuild_time", rebuild->cluster.avg_rebuild_time);
+  }
   f->close_section();
 
   f->open_object_section("osd_stats_sum");
@@ -1634,7 +1640,8 @@ void PGMap::dump_delta(ceph::Formatter *f) const
   f->close_section();
 }
 
-void PGMap::dump_pg_stats(ceph::Formatter *f, bool brief) const
+void PGMap::dump_pg_stats(ceph::Formatter *f, bool brief,
+			  const pg_rebuild_dump_overlay *rebuild) const
 {
   f->open_array_section("pg_stats");
   for (auto i = pg_stat.begin();
@@ -1646,6 +1653,11 @@ void PGMap::dump_pg_stats(ceph::Formatter *f, bool brief) const
       i->second.dump_brief(f);
     else
       i->second.dump(f);
+    if (rebuild && !brief) {
+      auto d = rebuild->lookup_pg(i->first);
+      f->dump_unsigned("rebuilds", d.rebuilds);
+      f->dump_float("avg_rebuild_time", d.avg_rebuild_time);
+    }
     f->close_section();
   }
   f->close_section();
@@ -1666,7 +1678,8 @@ void PGMap::dump_pg_progress(ceph::Formatter *f) const
   f->close_section();
 }
 
-void PGMap::dump_pool_stats(ceph::Formatter *f) const
+void PGMap::dump_pool_stats(ceph::Formatter *f,
+			    const pg_rebuild_dump_overlay *rebuild) const
 {
   f->open_array_section("pool_stats");
   for (auto p = pg_pool_sum.begin();
@@ -1678,6 +1691,11 @@ void PGMap::dump_pool_stats(ceph::Formatter *f) const
     if (q != num_pg_by_pool.end())
       f->dump_unsigned("num_pg", q->second);
     p->second.dump(f);
+    if (rebuild) {
+      auto d = rebuild->lookup_pool(p->first);
+      f->dump_unsigned("rebuilds", d.rebuilds);
+      f->dump_float("avg_rebuild_time", d.avg_rebuild_time);
+    }
     f->close_section();
   }
   f->close_section();
@@ -1723,7 +1741,8 @@ void PGMap::dump_osd_ping_times(ceph::Formatter *f) const
 void PGMap::dump_pg_stats_plain(
   ostream& ss,
   const mempool::pgmap::unordered_map<pg_t, pg_stat_t>& pg_stats,
-  bool brief)
+  bool brief,
+  const pg_rebuild_dump_overlay *rebuild)
 {
   TextTable tab;
 
@@ -1740,6 +1759,8 @@ void PGMap::dump_pg_stats_plain(
     tab.define_column("OBJECTS", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("MISSING_ON_PRIMARY", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("DEGRADED", TextTable::LEFT, TextTable::RIGHT);
+    tab.define_column("REBUILDS", TextTable::LEFT, TextTable::RIGHT);
+    tab.define_column("AVG_REBUILD_TIME", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("MISPLACED", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("UNFOUND", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("BYTES", TextTable::LEFT, TextTable::RIGHT);
@@ -1779,11 +1800,14 @@ void PGMap::dump_pg_stats_plain(
     } else {
       ostringstream reported;
       reported << st.reported_epoch << ":" << st.reported_seq;
+      const auto rd = rebuild ? rebuild->lookup_pg(pg) : pg_rebuild_dump_t{};
 
       tab << pg
           << st.stats.sum.num_objects
           << st.stats.sum.num_objects_missing_on_primary
           << st.stats.sum.num_objects_degraded
+          << rd.rebuilds
+          << rd.avg_rebuild_time
           << st.stats.sum.num_objects_misplaced
           << st.stats.sum.num_objects_unfound
           << st.stats.sum.num_bytes
@@ -1816,12 +1840,12 @@ void PGMap::dump_pg_stats_plain(
   ss << tab;
 }
 
-void PGMap::dump(ostream& ss) const
+void PGMap::dump(ostream& ss, const pg_rebuild_dump_overlay *rebuild) const
 {
   dump_basic(ss);
-  dump_pg_stats(ss, false);
-  dump_pool_stats(ss, false);
-  dump_pg_sum_stats(ss, false);
+  dump_pg_stats(ss, false, rebuild);
+  dump_pool_stats(ss, false, rebuild);
+  dump_pg_sum_stats(ss, false, rebuild);
   dump_osd_stats(ss);
 }
 
@@ -1833,12 +1857,14 @@ void PGMap::dump_basic(ostream& ss) const
   ss << "last_pg_scan " << last_pg_scan << std::endl;
 }
 
-void PGMap::dump_pg_stats(ostream& ss, bool brief) const
+void PGMap::dump_pg_stats(ostream& ss, bool brief,
+			  const pg_rebuild_dump_overlay *rebuild) const
 {
-  dump_pg_stats_plain(ss, pg_stat, brief);
+  dump_pg_stats_plain(ss, pg_stat, brief, rebuild);
 }
 
-void PGMap::dump_pool_stats(ostream& ss, bool header) const
+void PGMap::dump_pool_stats(ostream& ss, bool header,
+			    const pg_rebuild_dump_overlay *rebuild) const
 {
   TextTable tab;
 
@@ -1847,6 +1873,8 @@ void PGMap::dump_pool_stats(ostream& ss, bool header) const
     tab.define_column("OBJECTS", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("MISSING_ON_PRIMARY", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("DEGRADED", TextTable::LEFT, TextTable::RIGHT);
+    tab.define_column("REBUILDS", TextTable::LEFT, TextTable::RIGHT);
+    tab.define_column("AVG_REBUILD_TIME", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("MISPLACED", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("UNFOUND", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("BYTES", TextTable::LEFT, TextTable::RIGHT);
@@ -1856,6 +1884,8 @@ void PGMap::dump_pool_stats(ostream& ss, bool header) const
     tab.define_column("DISK_LOG", TextTable::LEFT, TextTable::RIGHT);
   } else {
     tab.define_column("", TextTable::LEFT, TextTable::LEFT);
+    tab.define_column("", TextTable::LEFT, TextTable::RIGHT);
+    tab.define_column("", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("", TextTable::LEFT, TextTable::RIGHT);
@@ -1871,10 +1901,14 @@ void PGMap::dump_pool_stats(ostream& ss, bool header) const
   for (auto p = pg_pool_sum.begin();
        p != pg_pool_sum.end();
        ++p) {
+    const auto rd = rebuild ? rebuild->lookup_pool(p->first)
+			    : pg_rebuild_dump_t{};
     tab << p->first
         << p->second.stats.sum.num_objects
         << p->second.stats.sum.num_objects_missing_on_primary
         << p->second.stats.sum.num_objects_degraded
+        << rd.rebuilds
+        << rd.avg_rebuild_time
         << p->second.stats.sum.num_objects_misplaced
         << p->second.stats.sum.num_objects_unfound
         << p->second.stats.sum.num_bytes
@@ -1888,7 +1922,8 @@ void PGMap::dump_pool_stats(ostream& ss, bool header) const
   ss << tab;
 }
 
-void PGMap::dump_pg_sum_stats(ostream& ss, bool header) const
+void PGMap::dump_pg_sum_stats(ostream& ss, bool header,
+			      const pg_rebuild_dump_overlay *rebuild) const
 {
   TextTable tab;
 
@@ -1897,6 +1932,8 @@ void PGMap::dump_pg_sum_stats(ostream& ss, bool header) const
     tab.define_column("OBJECTS", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("MISSING_ON_PRIMARY", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("DEGRADED", TextTable::LEFT, TextTable::RIGHT);
+    tab.define_column("REBUILDS", TextTable::LEFT, TextTable::RIGHT);
+    tab.define_column("AVG_REBUILD_TIME", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("MISPLACED", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("UNFOUND", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("BYTES", TextTable::LEFT, TextTable::RIGHT);
@@ -1916,12 +1953,17 @@ void PGMap::dump_pg_sum_stats(ostream& ss, bool header) const
     tab.define_column("", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("", TextTable::LEFT, TextTable::RIGHT);
     tab.define_column("", TextTable::LEFT, TextTable::RIGHT);
+    tab.define_column("", TextTable::LEFT, TextTable::RIGHT);
+    tab.define_column("", TextTable::LEFT, TextTable::RIGHT);
   };
 
+  const auto rd = rebuild ? rebuild->cluster : pg_rebuild_dump_t{};
   tab << "sum"
       << pg_sum.stats.sum.num_objects
       << pg_sum.stats.sum.num_objects_missing_on_primary
       << pg_sum.stats.sum.num_objects_degraded
+      << rd.rebuilds
+      << rd.avg_rebuild_time
       << pg_sum.stats.sum.num_objects_misplaced
       << pg_sum.stats.sum.num_objects_unfound
       << pg_sum.stats.sum.num_bytes
@@ -3555,7 +3597,8 @@ int process_pg_map_command(
   const OSDMap& osdmap,
   ceph::Formatter *f,
   stringstream *ss,
-  bufferlist *odata)
+  bufferlist *odata,
+  const pg_rebuild_dump_overlay *rebuild)
 {
   string prefix = orig_prefix;
   auto cmdmap = orig_cmdmap;
@@ -3629,21 +3672,21 @@ int process_pg_map_command(
     if (f) {
       if (what.count("all")) {
 	f->open_object_section("pg_map");
-	pg_map.dump(f);
+	pg_map.dump(f, false, rebuild);
 	f->close_section();
       } else if (what.count("summary") || what.count("sum")) {
 	f->open_object_section("pg_map");
-	pg_map.dump_basic(f);
+	pg_map.dump_basic(f, rebuild);
 	f->close_section();
       } else {
 	if (what.count("pools")) {
-	  pg_map.dump_pool_stats(f);
+	  pg_map.dump_pool_stats(f, rebuild);
 	}
 	if (what.count("osds")) {
 	  pg_map.dump_osd_stats(f);
 	}
 	if (what.count("pgs")) {
-	  pg_map.dump_pg_stats(f, false);
+	  pg_map.dump_pg_stats(f, false, rebuild);
 	}
 	if (what.count("pgs_brief")) {
 	  pg_map.dump_pg_stats(f, true);
@@ -3657,11 +3700,11 @@ int process_pg_map_command(
       f->flush(*odata);
     } else {
       if (what.count("all")) {
-	pg_map.dump(ds);
+	pg_map.dump(ds, rebuild);
         omap_stats_note_required = true;
       } else if (what.count("summary") || what.count("sum")) {
 	pg_map.dump_basic(ds);
-	pg_map.dump_pg_sum_stats(ds, true);
+	pg_map.dump_pg_sum_stats(ds, true, rebuild);
 	pg_map.dump_osd_sum_stats(ds);
         omap_stats_note_required = true;
       } else {
@@ -3670,12 +3713,12 @@ int process_pg_map_command(
 	}
 	bool header = true;
 	if (what.count("pgs")) {
-	  pg_map.dump_pg_stats(ds, false);
+	  pg_map.dump_pg_stats(ds, false, rebuild);
 	  header = false;
           omap_stats_note_required = true;
 	}
 	if (what.count("pools")) {
-	  pg_map.dump_pool_stats(ds, header);
+	  pg_map.dump_pool_stats(ds, header, rebuild);
           omap_stats_note_required = true;
 	}
 	if (what.count("osds")) {

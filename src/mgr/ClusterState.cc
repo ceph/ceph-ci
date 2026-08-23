@@ -14,6 +14,7 @@
 
 #include "mgr/ClusterState.h"
 #include "common/JSONFormatter.h"
+#include "mgr/PgRebuildStats.h"
 #include "messages/MMgrDigest.h"
 #include "messages/MMonMgrReport.h"
 #include "messages/MPGStats.h"
@@ -130,6 +131,12 @@ void ClusterState::ingest_pgstats(ref_t<MPGStats> stats)
     }
 
     pending_inc.pg_stat_updates.insert_or_assign(pgid, pg_stats);
+    const pg_rebuild_latch_t *osd_latch = nullptr;
+    auto li = stats->pg_rebuild_latch.find(pgid);
+    if (li != stats->pg_rebuild_latch.end()) {
+      osd_latch = &li->second;
+    }
+    pg_rebuild_stats.update(pgid, pg_stats, osd_latch);
   }
   for (auto p : stats->pool_stat) {
     pending_inc.pool_statfs_updates.insert_or_assign(std::make_pair(p.first, from), p.second);
@@ -186,10 +193,39 @@ void ClusterState::notify_osdmap(const OSDMap &osd_map)
   }
 
   pg_map.apply_incremental(g_ceph_context, pending_inc);
+  pg_rebuild_stats.prune_removed(pending_inc.pg_remove);
+  pg_rebuild_stats.prune_absent_pools(existing_pools);
   pending_inc = PGMap::Incremental();
   // TODO: Complete the separation of PG state handling so
   // that a cut-down set of functionality remains in PGMonitor
   // while the full-blown PGMap lives only here.
+}
+
+void ClusterState::load_pg_rebuild_stats(const bufferlist& bl)
+{
+  std::lock_guard l(lock);
+  if (bl.length() == 0) {
+    return;
+  }
+  auto p = bl.cbegin();
+  try {
+    pg_rebuild_stats.decode_completed(p);
+  } catch (const ceph::buffer::error& e) {
+    dout(0) << "failed to decode " << PgRebuildStats::STORE_KEY
+	    << ": " << e.what() << dendl;
+  }
+}
+
+bool ClusterState::consume_dirty_pg_rebuild_stats(bufferlist *bl)
+{
+  std::lock_guard l(lock);
+  return pg_rebuild_stats.consume_dirty(bl);
+}
+
+pg_rebuild_dump_overlay ClusterState::get_pg_rebuild_dump_overlay() const
+{
+  ceph_assert(ceph_mutex_is_locked(lock));
+  return pg_rebuild_stats.dump_overlay();
 }
 
 class ClusterSocketHook : public AdminSocketHook {

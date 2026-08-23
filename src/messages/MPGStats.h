@@ -23,7 +23,7 @@
 #include "messages/PaxosServiceMessage.h"
 
 class MPGStats final : public PaxosServiceMessage {
-  static constexpr int HEAD_VERSION = 2;
+  static constexpr int HEAD_VERSION = 3;
   static constexpr int COMPAT_VERSION = 1;
 
 public:
@@ -31,6 +31,8 @@ public:
   std::map<pg_t, pg_stat_t> pg_stat;
   osd_stat_t osd_stat;
   std::map<int64_t, store_statfs_t> pool_stat;
+  /// Non-empty in-progress rebuild latches, keyed by pgid. Added in v3.
+  std::map<pg_t, pg_rebuild_latch_t> pg_rebuild_latch;
   epoch_t epoch = 0;
 
   MPGStats() : PaxosServiceMessage{MSG_PGSTATS, 0, HEAD_VERSION, COMPAT_VERSION} {}
@@ -83,6 +85,7 @@ public:
     encode(epoch, payload);
     encode(utime_t{}, payload);
     encode(pool_stat, payload, features);
+    encode(pg_rebuild_latch, payload);
   }
   void decode_payload() override {
     using ceph::decode;
@@ -100,6 +103,8 @@ public:
     decode(dummy, p);
     if (header.version >= 2)
       decode(pool_stat, p);
+    if (header.version >= 3)
+      decode(pg_rebuild_latch, p);
   }
 };
 

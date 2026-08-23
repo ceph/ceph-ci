@@ -1,7 +1,18 @@
+# unittest_mgr_pg_rebuild_stats
+add_executable(unittest_mgr_pg_rebuild_stats
+  test_pg_rebuild_stats.cc
+  ${CMAKE_SOURCE_DIR}/src/mgr/PgRebuildStats.cc
+)
+add_ceph_unittest(unittest_mgr_pg_rebuild_stats)
+target_link_libraries(unittest_mgr_pg_rebuild_stats
+  ceph-common
+)
+
 # unittest_mgr_clusterstate
 add_executable(unittest_mgr_clusterstate
   test_clusterstate.cc
   ${CMAKE_SOURCE_DIR}/src/mgr/ClusterState.cc
+  ${CMAKE_SOURCE_DIR}/src/mgr/PgRebuildStats.cc
 )
 add_ceph_unittest(unittest_mgr_clusterstate)
 target_link_libraries(unittest_mgr_clusterstate

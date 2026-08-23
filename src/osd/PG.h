@@ -693,7 +693,8 @@ public:
   void dump_missing(ceph::Formatter *f);
 
   void with_pg_stats(ceph::coarse_real_clock::time_point now_is,
-		     std::function<void(const pg_stat_t&, epoch_t lec)>&& f);
+		     std::function<void(const pg_stat_t&, epoch_t lec,
+					const pg_rebuild_latch_t&)>&& f);
   void with_heartbeat_peers(std::function<void(int)>&& f);
 
   void shutdown();
@@ -1109,6 +1110,7 @@ protected:
   ceph::mutex pg_stats_publish_lock =
     ceph::make_mutex("PG::pg_stats_publish_lock");
   std::optional<pg_stat_t> pg_stats_publish;
+  pg_rebuild_latch_t pg_rebuild_latch_publish;
 
   friend class TestOpsSocketHook;
   void publish_stats_to_osd() override;
