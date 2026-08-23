@@ -7951,8 +7951,12 @@ MPGStats* OSD::collect_pg_stats()
     if (!pg->is_primary()) {
       continue;
     }
-    pg->with_pg_stats(now_is, [&](const pg_stat_t& s, epoch_t lec) {
+    pg->with_pg_stats(now_is, [&](const pg_stat_t& s, epoch_t lec,
+				  const pg_rebuild_latch_t& latch) {
 	m->pg_stat[pg->pg_id.pgid] = s;
+	if (!latch.empty()) {
+	  m->pg_rebuild_latch[pg->pg_id.pgid] = latch;
+	}
 	min_last_epoch_clean = std::min(min_last_epoch_clean, lec);
 	min_last_epoch_clean_pgs.push_back(pg->pg_id.pgid);
       });

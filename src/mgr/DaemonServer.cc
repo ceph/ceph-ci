@@ -457,6 +457,7 @@ void DaemonServer::tick()
   }
   send_report();
   adjust_pgs();
+  maybe_flush_pg_rebuild_stats();
 
   schedule_tick_locked(
     g_conf().get_val<std::chrono::seconds>("mgr_tick_period").count());
@@ -483,6 +484,18 @@ void DaemonServer::maybe_adjust_stats_period() {
     stats_autotuner->record_our_change(result.new_period);  // Track that we made this change
     cct->_conf.apply_changes(nullptr);
   }
+}
+
+void DaemonServer::maybe_flush_pg_rebuild_stats()
+{
+  bufferlist bl;
+  if (!cluster_state.consume_dirty_pg_rebuild_stats(&bl)) {
+    return;
+  }
+  const std::string cmd =
+    std::string("{\"prefix\": \"config-key set\", \"key\": \"") +
+    std::string(PgRebuildStats::STORE_KEY) + "\"}";
+  monc->start_mon_command({cmd}, std::move(bl), nullptr, nullptr, nullptr);
 }
 
 // Currently modules do not set health checks in response to events delivered to
@@ -3065,8 +3078,10 @@ bool DaemonServer::_handle_command(
 
     // fall back to feeding command to PGMap
     r = cluster_state.with_osdmap_and_pgmap([&](const OSDMap& osdmap, const PGMap& pg_map) {
+	pg_rebuild_dump_overlay overlay =
+	  cluster_state.get_pg_rebuild_dump_overlay();
 	return process_pg_map_command(prefix, cmdctx->cmdmap, pg_map, osdmap,
-				      f.get(), &ss, &cmdctx->odata);
+				      f.get(), &ss, &cmdctx->odata, &overlay);
       });
 
     if (f) {

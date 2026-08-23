@@ -23,6 +23,7 @@
 #include "mon/MonClient.h"
 #include "mon/PGMap.h"
 #include "mgr/ServiceMap.h"
+#include "mgr/PgRebuildStats.h"
 
 class MMgrDigest;
 class MMonMgrReport;
@@ -47,6 +48,7 @@ protected:
   std::map<int64_t,unsigned> existing_pools; ///< pools that exist, and pg_num, as of PGMap epoch
   PGMap pg_map;
   PGMap::Incremental pending_inc;
+  PgRebuildStats pg_rebuild_stats;
 
   bufferlist health_json;
   bufferlist mon_status_json;
@@ -57,6 +59,13 @@ public:
 
   void load_digest(MMgrDigest *m);
   void ingest_pgstats(ceph::ref_t<MPGStats> stats);
+
+  void load_pg_rebuild_stats(const ceph::buffer::list& bl);
+  /// Encode dirty completed rebuild stats into bl. Returns false if clean.
+  bool consume_dirty_pg_rebuild_stats(ceph::buffer::list *bl);
+  /// Caller must hold ClusterState lock.
+  pg_rebuild_dump_overlay get_pg_rebuild_dump_overlay() const;
+  const PgRebuildStats& get_pg_rebuild_stats() const { return pg_rebuild_stats; }
 
   void update_delta_stats();
 

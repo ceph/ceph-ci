@@ -2328,6 +2328,61 @@ struct pg_scrubbing_status_t {
 
 bool operator==(const pg_scrubbing_status_t& l, const pg_scrubbing_status_t& r);
 
+/**
+ * In-progress PG rebuild latch published by the primary OSD on MPGStats.
+ * Not part of pg_stat_t: completed rebuild counters live on mgr, and this
+ * snapshot exists so a new active mgr can copy the frozen start after
+ * failover/restart.
+ */
+struct pg_rebuild_latch_t {
+  utime_t start_time;
+  int64_t base_recovered = 0;
+  bool had_redundancy_loss = false;
+
+  bool empty() const {
+    return start_time == utime_t();
+  }
+
+  void encode(ceph::buffer::list& bl) const {
+    using ceph::encode;
+    ENCODE_START(1, 1, bl);
+    encode(start_time, bl);
+    encode(base_recovered, bl);
+    encode(had_redundancy_loss, bl);
+    ENCODE_FINISH(bl);
+  }
+  void decode(ceph::buffer::list::const_iterator& p) {
+    using ceph::decode;
+    DECODE_START(1, p);
+    decode(start_time, p);
+    decode(base_recovered, p);
+    decode(had_redundancy_loss, p);
+    DECODE_FINISH(p);
+  }
+};
+WRITE_CLASS_ENCODER(pg_rebuild_latch_t)
+
+/** Completed rebuild counters overlaid onto ceph pg dump (not in pg_stat_t). */
+struct pg_rebuild_dump_t {
+  uint64_t rebuilds = 0;
+  double avg_rebuild_time = 0.0;
+};
+
+struct pg_rebuild_dump_overlay {
+  std::map<pg_t, pg_rebuild_dump_t> by_pg;
+  std::map<int64_t, pg_rebuild_dump_t> by_pool;
+  pg_rebuild_dump_t cluster;
+
+  pg_rebuild_dump_t lookup_pg(pg_t pgid) const {
+    auto it = by_pg.find(pgid);
+    return it == by_pg.end() ? pg_rebuild_dump_t{} : it->second;
+  }
+  pg_rebuild_dump_t lookup_pool(int64_t pool) const {
+    auto it = by_pool.find(pool);
+    return it == by_pool.end() ? pg_rebuild_dump_t{} : it->second;
+  }
+};
+
 /** pg_stat
  * aggregate stats for a single PG.
  */

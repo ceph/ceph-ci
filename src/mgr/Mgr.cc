@@ -418,6 +418,17 @@ void Mgr::init()
 	       });
     }
   }
+
+  {
+    auto p = pre_init_store.find(std::string(PgRebuildStats::STORE_KEY));
+    if (p != pre_init_store.end()) {
+      bufferlist bl;
+      bl.append(p->second);
+      dout(4) << "loading persisted PG rebuild stats (" << bl.length()
+	      << " bytes)" << dendl;
+      cluster_state.load_pg_rebuild_stats(bl);
+    }
+  }
   
   // assume finisher already initialized in background_init
   dout(4) << "starting python modules..." << dendl;
