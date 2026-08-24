@@ -19,6 +19,7 @@ overrides:
         rgw d4n local rgw address: "http://127.0.0.1:8001" 
         rgw d4n remote cache address: "http://127.0.0.1:8000"
         d4n writecache enabled: true
+        rgw d4n l1 datacache persistent path: "/tmp/rgw_d4n_datacache_c2/"
 tasks:
 - install:
     # extra packages added for the rgw-d4ntests task
