@@ -364,7 +364,7 @@ int SSDDriver::initialize(const DoutPrefixProvider* dpp)
       try {
 	  if (efs::exists(partition_info.location)) {
 	      if (dpp->get_cct()->_conf->rgw_d4n_l1_evict_cache_on_start) {
-		  ldpp_dout(dpp, 5) << "initialize: evicting the persistent storage directory on start" << dendl;
+		  ldpp_dout(dpp, 5) << "initialize: evicting the persistent storage directory, " << partition_info.location.c_str() << ", on start" << dendl;
 
 		  uid_t uid = dpp->get_cct()->get_set_uid();
 		  gid_t gid = dpp->get_cct()->get_set_gid();

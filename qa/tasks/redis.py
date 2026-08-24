@@ -123,6 +123,7 @@ class Redis(Task):
     
 
         except FileNotFoundError:
+            log.debug('Redis Task: Installing valkey through alternative method.')
             self.valkey_install_for_debian()
 
         except Exception as err:
