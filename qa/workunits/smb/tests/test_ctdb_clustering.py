@@ -91,3 +91,23 @@ def test_ctdb_deleted_node_after_shrink(smb_cfg):
         attempts=18,
         sleep_s=10,
     )
+
+
+@pytest.mark.ctdb_rescheduled
+def test_ctdb_healthy_after_host_powered_off(smb_cfg):
+    """After a host running an smb daemon is powered off, cephadm
+    reschedules that rank onto a spare host and CTDB reports two
+    healthy nodes again.
+    """
+    cluster_id = _cluster_id(smb_cfg)
+    _wait_for_ctdb_status(
+        smb_cfg,
+        cluster_id,
+        [
+            re.compile(r'pnn:0 .*OK'),
+            re.compile(r'pnn:1 .*OK'),
+            re.compile(r'Number of nodes:2'),
+        ],
+        attempts=24,
+        sleep_s=15,
+    )
