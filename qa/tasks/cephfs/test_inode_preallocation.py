@@ -22,7 +22,9 @@ class TestInodePreallocationKillpoints(CephFSTestCase):
     CLIENTS_REQUIRED = 1
     MDSS_REQUIRED = 3
 
-    def _run_workload(self, killpoint_val, killpoint_name):
+    def _run_workload(self, killpoint_name):
+        killpoint_val = INO_PREALLOC_KILLPOINTS.index(killpoint_name)
+
         self.fs.set_max_mds(1)
         status = self.fs.wait_for_daemons()
 
@@ -113,10 +115,10 @@ class TestInodePreallocationKillpoints(CephFSTestCase):
         self.mount_a.run_shell_payload("rm -f top/recovery_check_file")
 
     @staticmethod
-    def make_test_killpoint(killpoint_val, killpoint_name):
+    def make_test_killpoint(killpoint_name):
         def test(self):
-            log.info(f"=== Starting test for {killpoint_name} ({killpoint_val}) ===")
-            self._run_workload(killpoint_val, killpoint_name)
+            log.info(f"=== Starting test for {killpoint_name} ===")
+            self._run_workload(killpoint_name)
             log.info(f"=== Completed test for {killpoint_name} ===")
         return test
 
@@ -124,5 +126,5 @@ class TestInodePreallocationKillpoints(CephFSTestCase):
 for val, name in enumerate(INO_PREALLOC_KILLPOINTS):
     if val == 0:  # Skip NONE
         continue
-    test_func = TestInodePreallocationKillpoints.make_test_killpoint(val, name)
+    test_func = TestInodePreallocationKillpoints.make_test_killpoint(name)
     setattr(TestInodePreallocationKillpoints, f"test_ino_prealloc_killpoint_{name}", test_func)
