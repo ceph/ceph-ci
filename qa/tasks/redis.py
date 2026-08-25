@@ -1,8 +1,9 @@
 import logging
 
+from packaging.version import Version
+
 from teuthology import misc as teuthology
 from teuthology.task import Task
-from teuthology.packaging import remove_package
 
 log = logging.getLogger(__name__)
 
@@ -42,65 +43,104 @@ class Redis(Task):
 
         self.redis_shutdown()
 
-        for client in self.all_clients:
-            self.remove_redis_package(client)
+    def valkey_install_percona(self, client):
+        # Older Debian-based releases (e.g. Ubuntu jammy/22.04) don't ship
+        # valkey-server natively, so pull it from Percona's repo.
+        self.ctx.cluster.only(client).run(
+            args=[
+                'curl',
+                '-O',
+                'https://repo.percona.com/apt/percona-release_latest.generic_all.deb'
+            ],
+        )
+        self.ctx.cluster.only(client).run(
+            args=[
+                'sudo',
+                'apt',
+                'install',
+                'gnupg2',
+                'lsb-release',
+                './percona-release_latest.generic_all.deb',
+                '-y'
+            ],
+        )
+        self.ctx.cluster.only(client).run(
+            args=[
+                'sudo',
+                'percona-release',
+                'enable',
+                'valkey',
+                'testing'
+            ],
+        )
+        self.ctx.cluster.only(client).run(
+            args=[
+                'sudo',
+                'apt',
+                'update'
+            ],
+        )
+        self.ctx.cluster.only(client).run(
+            args=[
+                'sudo',
+                'apt',
+                'install',
+                'valkey',
+                '-y'
+            ],
+        )
 
-    def valkey_install_for_debian(self):
-        try:
-            for client in self.all_clients:
-                # Taken from https://www.percona.com/blog/new-valkey-packages-by-percona/
-                self.ctx.cluster.only(client).run(
-                    args=[
-                        'curl',
-                        '-O',
-                        'https://repo.percona.com/apt/percona-release_latest.generic_all.deb'
-                    ],
-                )
-                self.ctx.cluster.only(client).run(
-                    args=[
-                        'sudo',
-                        'apt',
-                        'install',
-                        'gnupg2',
-                        'lsb-release',
-                        './percona-release_latest.generic_all.deb',
-                        '-y'
-                    ],
-                )
-                self.ctx.cluster.only(client).run(
-                    args=[
-                        'sudo',
-                        'percona-release',
-                        'enable',
-                        'valkey',
-                        'testing'
-                    ],
-                )
-                self.ctx.cluster.only(client).run(
-                    args=[
-                        'sudo',
-                        'apt',
-                        'update'
-                    ],
-                )
-                self.ctx.cluster.only(client).run(
-                    args=[
-                        'sudo',
-                        'apt',
-                        'install',
-                        'valkey',
-                        '-y'
-                    ],
-                )
-    
-        except Exception as err:
-            log.debug('Redis Task: Error installing valkey package')
-            log.debug(err)
-            raise
+    def valkey_install_native(self, client):
+        # Ubuntu noble (24.04+) ships a working valkey-server package.
+        # Percona's build breaks on noble: its systemd units conflict
+        # with the merged /usr/lib layout.
+        self.ctx.cluster.only(client).run(
+            args=[
+                'sudo',
+                'apt',
+                'update'
+            ],
+        )
+        self.ctx.cluster.only(client).run(
+            args=[
+                'sudo',
+                'apt',
+                'install',
+                'valkey-server',
+                '-y'
+            ],
+        )
+
+    def valkey_installed(self, remote):
+        # missing valkey-server shows as a failed remote command
+        # ('command not found'), not a local FileNotFoundError,
+        # so check for the binary
+        return remote.run(args=['which', 'valkey-server'], check_status=False).exitstatus == 0
 
     def redis_startup(self):
         try:
             for client in self.all_clients:
+                (remote,) = self.ctx.cluster.only(client).remotes.keys()
+
+                if remote.os.package_type == 'deb' and not self.valkey_installed(remote):
+                    if remote.os.name == 'ubuntu' and Version(remote.os.version) < Version('24.04'):
+                        self.valkey_install_percona(client)
+                    else:
+                        self.valkey_install_native(client)
+
+                # the pkg's post-installation may have started the service.
+                # stop it and let this task own the service
+                for service in ('valkey-server', 'valkey-sentinel', 'valkey'):
+                    self.ctx.cluster.only(client).run(
+                        args=[
+                            'sudo',
+                            'systemctl',
+                            'stop',
+                            service
+                            ],
+                        check_status=False,
+                        )
+
                 self.ctx.cluster.only(client).run(
                     args=[
                         'sudo',
@@ -109,10 +149,6 @@ class Redis(Task):
                         'yes'
                         ],
                     )
-    
-
-        except FileNotFoundError:
-            self.valkey_install_for_debian()
 
         except Exception as err:
             log.debug('Redis Task: Error starting up a Redis server')
@@ -129,13 +165,9 @@ class Redis(Task):
                         'shutdown',
                         ],
                     )
-    
+
         except Exception as err:
             log.debug('Redis Task: Error shutting down a Redis server')
             log.debug(err)
-
-    def remove_redis_package(self, client):
-        (remote,) = self.ctx.cluster.only(client).remotes.keys()
-        remove_package('valkey', remote)
 
 task = Redis
