@@ -1,4 +1,5 @@
 import re
+import subprocess
 import time
 
 import pytest
@@ -34,10 +35,15 @@ def _wait_for_ctdb_status(
     last_status = ''
     last_nodes = ''
     for i in range(1, attempts + 1):
-        last_status = _ctdb_cmd(smb_cfg, cluster_id, ['ctdb', 'status'])
-        last_nodes = _ctdb_cmd(smb_cfg, cluster_id, ['ctdb', 'listnodes'])
-        if all(m.search(last_status) for m in matchers):
-            return last_status
+        try:
+            last_status = _ctdb_cmd(smb_cfg, cluster_id, ['ctdb', 'status'])
+            last_nodes = _ctdb_cmd(smb_cfg, cluster_id, ['ctdb', 'listnodes'])
+        except subprocess.CalledProcessError as exc:
+            stderr = exc.stderr.decode() if exc.stderr else ''
+            last_status = f'ctdb command failed: {exc}\n{stderr}'
+        else:
+            if all(m.search(last_status) for m in matchers):
+                return last_status
         if i < attempts:
             time.sleep(sleep_s)
     raise AssertionError(
