@@ -5,7 +5,7 @@ overrides:
       - telemetry module includes new collections
 tasks:
 - install:
-    branch: tentacle
+    tag: v20.2.3
     exclude_packages:
       - ceph-osd-classic
       - ceph-volume
@@ -13,7 +13,7 @@ tasks:
 - print: "**** done install task..."
 - print: "**** done start installing tentacle cephadm ..."
 - cephadm:
-    image: quay.ceph.io/ceph-ci/ceph:tentacle
+    image: quay.io/ceph/ceph:v20.2.3
     compiled_cephadm_branch: tentacle
     conf:
       osd:

@@ -5,7 +5,7 @@ workload:
   full_sequential:
     - print: "**** done start rbd_import_export.yaml"
     - workunit:
-        branch: tentacle
+        tag: v20.2.3
         clients:
           client.1:
               - rbd/import_export.sh
