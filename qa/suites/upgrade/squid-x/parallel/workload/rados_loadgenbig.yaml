@@ -5,7 +5,7 @@ workload:
   full_sequential:
     - print: "**** done start rados_loadgenbig.yaml"
     - workunit:
-        branch: squid
+        tag: v19.2.5
         clients:
           client.0:
             - rados/load-gen-big.sh

@@ -10,7 +10,7 @@ overrides:
       - pool.*full
 stress-tasks:
 - workunit:
-     branch: squid
+     tag: v19.2.5
      clients:
         client.0:
            - rbd/test_librbd.sh

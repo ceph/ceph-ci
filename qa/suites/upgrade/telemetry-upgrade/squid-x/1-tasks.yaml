@@ -28,7 +28,7 @@ overrides:
       - OSD_HOST_DOWN
 tasks:
 - install:
-    branch: squid
+    tag: v19.2.5
     exclude_packages:
       - ceph-volume
       - ceph-osd-classic
@@ -36,7 +36,7 @@ tasks:
 - print: "**** done install task..."
 - print: "**** done start installing squid cephadm ..."
 - cephadm:
-    image: quay.ceph.io/ceph-ci/ceph:squid
+    image: quay.io/ceph/ceph:v19.2.5
     compiled_cephadm_branch: squid
     conf:
       osd:
