@@ -3,7 +3,7 @@ meta:
    install ceph/squid latest
 tasks:
 - install:
-    branch: squid
+    tag: v19.2.5
     exclude_packages:
       - librados3
       - ceph-mgr-dashboard

@@ -4,14 +4,14 @@ meta:
 
 tasks:
 - install:
-    branch: squid
+    tag: v19.2.5
     exclude_packages:
       - ceph-volume
       - ceph-osd-classic
       - ceph-osd-crimson
 - print: "**** done install task..."
 - cephadm:
-    image: quay.ceph.io/ceph-ci/ceph:squid
+    image: quay.io/ceph/ceph:v19.2.5
     skip_dashboard: true
     roleless: true
     compiled_cephadm_branch: squid

@@ -3,7 +3,7 @@ meta:
    install ceph/tentacle latest
 tasks:
 - install:
-    branch: tentacle
+    tag: v20.2.3
     exclude_packages:
       - librados3
       - ceph-mgr-dashboard

@@ -4,14 +4,14 @@ meta:
 
 tasks:
 - install:
-    branch: tentacle
+    tag: v20.2.3
     exclude_packages:
       - ceph-volume
       - ceph-osd-classic
       - ceph-osd-crimson
 - print: "**** done install task..."
 - cephadm:
-    image: quay.ceph.io/ceph-ci/ceph:tentacle
+    image: quay.io/ceph/ceph:v20.2.3
     skip_dashboard: true
     roleless: true
     compiled_cephadm_branch: tentacle
