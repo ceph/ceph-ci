@@ -167,6 +167,12 @@ void mClockScheduler::enqueue_front(OpSchedulerItem&& item)
   unsigned priority = item.get_priority();
   auto id = get_scheduler_id(item);
 
+  dout(1) << "TIER2-DELAY-TRACE enqueue_front item=" << item
+          << " class_id=" << static_cast<int>(id.class_id)
+          << " priority=" << priority
+          << " cutoff_priority=" << cutoff_priority
+          << dendl;
+
   if (SchedulerClass::immediate == id.class_id) {
     enqueue_high(immediate_class_priority, std::move(item), true);
   } else if (priority >= cutoff_priority) {
@@ -218,6 +224,9 @@ WorkItem mClockScheduler::dequeue()
     }
     *_dout << "), forcing a dequeue attempt" << dendl;
 
+    dout(1) << "TIER2-DELAY-TRACE mclock_queue_is_starved fired, high_priority "
+            << "size=" << high_priority.size() << dendl;
+
     mclock_queue_t::PullReq result = scheduler.pull_request();
     if (result.is_retn()) {
       auto &retn = result.get_retn();
@@ -230,6 +239,12 @@ WorkItem mClockScheduler::dequeue()
       }
       mclock_conf.put_mclock_counter(retn.client, op_type, time_queued);
       last_mclock_service_time = crimson::dmclock::get_time();
+
+      // TIER2-DELAY-TRACE (TEMPORARY, testing only, do not ship): tracker
+      // 69078 out-of-order-abort investigation -- confirms dequeue() order
+      // for items returned via the forced starvation-bound yield.
+      dout(1) << "TIER2-DELAY-TRACE dequeue(mclock,FORCED) item="
+              << *retn.request << dendl;
 
       return std::move(*retn.request);
     }
@@ -257,6 +272,8 @@ WorkItem mClockScheduler::dequeue()
     };
     scheduler_op_type_t op_type = get_scheduler_op_type(*item_ptr);
     mclock_conf.put_mclock_counter(id, op_type, item_ptr->get_time_queued());
+    dout(1) << "TIER2-DELAY-TRACE dequeue(high_priority) item="
+            << *item_ptr << dendl;
     return ret;
   } else {
     mclock_queue_t::PullReq result = scheduler.pull_request();
@@ -280,6 +297,13 @@ WorkItem mClockScheduler::dequeue()
       }
       mclock_conf.put_mclock_counter(retn.client, op_type, time_queued);
       last_mclock_service_time = crimson::dmclock::get_time();
+
+      // TIER2-DELAY-TRACE (TEMPORARY, testing only, do not ship): tracker
+      // 69078 out-of-order-abort investigation -- confirms dequeue() order
+      // for items returned from the normal (high_priority-empty) mclock
+      // queue pop.
+      dout(1) << "TIER2-DELAY-TRACE dequeue(mclock) item="
+              << *retn.request << dendl;
 
       return std::move(*retn.request);
     }
