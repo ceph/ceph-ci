@@ -7759,7 +7759,9 @@ void OSD::ms_fast_dispatch(Message *m)
   op->min_epoch = static_cast<MOSDFastDispatchOp*>(m)->get_min_epoch();
   ceph_assert(op->min_epoch <= op->sent_epoch); // sanity check!
 
+  dout(1) << "TIER2-DELAY-TRACE pre-fast-dispatch-delay op=" << *m << dendl;
   service.maybe_inject_dispatch_delay();
+  dout(1) << "TIER2-DELAY-TRACE post-fast-dispatch-delay op=" << *m << dendl;
 
   // Pre-tentacle clients sending requests to EC shards other than 0 may
   // set the shard incorrectly because of how pg_temp encodes primary
@@ -11251,10 +11253,24 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, uint32_t shard_index, hea
     uint64_t requeue_seq = slot->requeue_seq;
     ++slot->num_running;
 
+    std::ostringstream tier2_delay_trace_oss;
+    tier2_delay_trace_oss << slot->to_process.back();
+    std::string tier2_delay_trace_desc = tier2_delay_trace_oss.str();
+    dout(1) << "TIER2-DELAY-TRACE pre-shard-unlock item="
+            << tier2_delay_trace_desc << dendl;
+
     sdata->shard_lock.unlock();
+    dout(1) << "TIER2-DELAY-TRACE pre-pg-lock-delay item="
+            << tier2_delay_trace_desc << dendl;
     osd->service.maybe_inject_dispatch_delay();
+    dout(1) << "TIER2-DELAY-TRACE pre-pg-lock item="
+            << tier2_delay_trace_desc << dendl;
     pg->lock();
+    dout(1) << "TIER2-DELAY-TRACE post-pg-lock item="
+            << tier2_delay_trace_desc << dendl;
     osd->service.maybe_inject_dispatch_delay();
+    dout(1) << "TIER2-DELAY-TRACE post-pg-lock-delay item="
+            << tier2_delay_trace_desc << dendl;
     sdata->shard_lock.lock();
 
     auto q = sdata->pg_slots.find(token);
