@@ -82,7 +82,9 @@
 #endif
 #include "rgw_lua_background.h"
 #include "services/svc_zone.h"
+#ifdef WITH_RADOSGW_LANCEDB
 #include "rgw_s3vector_background.h"
+#endif
 
 #ifdef HAVE_SYS_PRCTL_H
 #include <sys/prctl.h>
@@ -649,9 +651,11 @@ int rgw::AppMain::init_frontends2(RGWLib* rgwlib)
     if (dedup_background) {
       rgw_pauser->add_pauser(dedup_background.get());
     }
+#ifdef WITH_RADOSGW_LANCEDB
     if (s3vector_pauser) {
       rgw_pauser->add_pauser(s3vector_pauser.get());
     }
+#endif
       reloader = std::make_unique<RGWRealmReloader>(
           env, *implicit_tenant_context, service_map_meta, rgw_pauser.get(), *context_pool);
       realm_watcher->add_watcher(RGWRealmNotify::Reload, *reloader);
@@ -748,11 +752,13 @@ void rgw::AppMain::init_kms_cache()
       dpp->get_cct(), Keyring::get_best());
 }
 
+#ifdef WITH_RADOSGW_LANCEDB
 void rgw::AppMain::init_s3vector()
 {
   s3vector::init(dpp, env.driver);
   s3vector_pauser = std::make_unique<S3VectorPauser>(dpp);
 }
+#endif
 
 void rgw::AppMain::shutdown(std::function<void(void)> finalize_async_signals)
 {
@@ -794,8 +800,10 @@ void rgw::AppMain::shutdown(std::function<void(void)> finalize_async_signals)
     lua_background->shutdown();
   }
 
+#ifdef WITH_RADOSGW_LANCEDB
   s3vector::shutdown();
   s3vector_pauser.reset();
+#endif
 
   env.driver->shutdown();
   // Do this before closing storage so requests don't try to call into
