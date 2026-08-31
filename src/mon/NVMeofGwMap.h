@@ -27,6 +27,7 @@
 #include "msg/Message.h"
 #include "common/ceph_time.h"
 #include "NVMeofGwTypes.h"
+//#include "NVMeofGwHaStrategy.h"
 
 using ceph::coarse_mono_clock;
 #define dout_context g_ceph_context
@@ -44,11 +45,35 @@ inline void decode_gws_beacon_diff_additions(
   std::map<NvmeGroupKey, NvmeGwMonStates>& created_gws,
   ceph::buffer::list::const_iterator &bl);
 
+
+class NVMeofHaStrategy;
+
 class Monitor;
 /*-------------------*/
 class NVMeofGwMap
 {
+private:
+  // Mutable allows strategy() to lazily instantiate even if map context is const
+  mutable std::shared_ptr<NVMeofHaStrategy> ha_strategy;
+  // Helper method that returns the strategy instance
+  HaMode ha_mode{HaMode::ACTIVE_PASSIVE};
+  NVMeofHaStrategy* strategy() const;
+
 public:
+   void set_ha_mode(HaMode new_mode);
+  // HA event methods invoked by NVMeofGwMon
+   void handle_gw_down(const NvmeGwId& gw_id, const NvmeGroupKey& group_key, bool &propose_pending);
+   void handle_gw_alive(const NvmeGwId& gw_id, const NvmeGroupKey& group_key,
+           epoch_t& last_osd_epoch, bool &propose_pending );
+   //void update_ana_states();
+   int handle_gw_creation(const NvmeGwId& gw_id, const NvmeGroupKey& group_key, uint64_t features);
+   int handle_gw_deletion(const NvmeGwId& gw_id, const NvmeGroupKey& group_key);
+   int handle_location_update(const NvmeGwId& gw_id,  const NvmeGroupKey& group_key,
+                                std::string& location, bool& propose_pending);
+   int handle_disaster_clear(const NvmeGroupKey& group_key, std::string& location,
+                              bool& propose_pending);
+   void handle_periodic_ha(bool &propose_pending);
+
   Monitor *mon = NULL;
 
   // epoch is for Paxos synchronization  mechanizm
@@ -189,15 +214,6 @@ private:
   void set_failover_gw_for_ana_group(
     const NvmeGwId &failed_gw_id, const NvmeGroupKey& group_key,
     const NvmeGwId &gw_id, NvmeAnaGrpId groupid);
-  void set_failover_states_for_ana_group(
-      const NvmeGwId &failover_gw_id, const NvmeGroupKey& group_key,
-      NvmeAnaGrpId anagrpid, epoch_t osd_epoch);
-  void set_active_states_for_ana_group(
-      const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
-      NvmeAnaGrpId anagrpid);
-  void set_accessible_states_after_startup(
-       const NvmeGwId &gw_id, const NvmeGroupKey& group_key);
-
   int get_num_namespaces(const NvmeGwId &gw_id,
     const NvmeGroupKey& group_key, const BeaconSubsystems&  subs );
   int get_timer(
@@ -214,7 +230,7 @@ private:
     NvmeGwId& min_loaded_gw_id, bool ignore_locations);
   bool get_location_in_disaster_cleanup(const NvmeGroupKey& group_key,
              NvmeLocation& returned_location);
-  bool disaster_map_remove_location(const NvmeGroupKey& group_key,
+  void disaster_map_remove_location(const NvmeGroupKey& group_key,
              NvmeLocation& location);
   bool validate_number_locations(int num_gws, int num_locations);
   void check_relocate_ana_groups(const NvmeGroupKey& group_key,
@@ -225,11 +241,13 @@ private:
 
   // Functions that handle failover waiting list
   void add_to_failover_list( const NvmeGwId& gw_id,
-              const NvmeGroupKey& group_key, NvmeAnaGrpId grpid,
+              const NvmeGroupKey& group_key,
               std::chrono::system_clock::time_point end_time);
   /*bool remove_from_failover_list(const NvmeGwId& gw_id,
                                  const NvmeGroupKey& group_key,
                                  NvmeAnaGrpId grpid);*/
+  void update_ana_states_location_modified(const NvmeGroupKey& group_key);
+  void update_gw_ana_states(const NvmeGwId &gw_id, const NvmeGroupKey& group_key);
 public:
   void process_failover_list(bool &propose);
   int blocklist_gw(
