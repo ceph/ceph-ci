@@ -60,16 +60,9 @@ inline std::ostream& operator<<(
   case gw_states_per_group_t::GW_WAIT_FAILBACK_PREPARED:
     os << "WAIT_FAILBACK_PREPARED ";
     break;
- /* case gw_states_per_group_t::GW_WAIT_FAILOVER_START:
-    os <<  "GW_WAIT_FAILOVER_START";
-    break;*/
   case gw_states_per_group_t::GW_WAIT_BLOCKLIST_CMPL:
     os <<   "WAIT_BLOCKLIST_CMPL ";
     break;
-  case gw_states_per_group_t::GW_WAIT_FAILOVER_CMPL:
-    os <<   "GW_WAIT_FAILOVER_CMPL ";
-    break;
-
   default:
     os << "Invalid " << (int)value << " ";
   }
@@ -1016,7 +1009,7 @@ inline void encode(const WaitingList &waitlist, ceph::bufferlist &bl) {
   ENCODE_START(1, 1, bl);
   encode(waitlist.gw_id, bl);
   encode(waitlist.group_key,bl);
-  encode(waitlist.grpid, bl);
+  //encode(waitlist.grpid, bl);
   encode((uint16_t)waitlist.hold_io_map_accepted, bl);
 
   auto endtime  = waitlist.end_time;
@@ -1034,7 +1027,7 @@ inline void decode(WaitingList &waitlist, ceph::buffer::list::const_iterator &bl
   waitlist = WaitingList();
   decode(waitlist.gw_id, bl);
   decode(waitlist.group_key,bl);
-  decode(waitlist.grpid, bl);
+  //decode(waitlist.grpid, bl);
   uint16_t hold_io_map_accepted;
   decode(hold_io_map_accepted, bl);
   waitlist.hold_io_map_accepted = (bool)hold_io_map_accepted;

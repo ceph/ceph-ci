@@ -35,16 +35,20 @@ using NvmeAnaGrpId = uint32_t;
 struct WaitingList {
   NvmeGwId gw_id = "";
   NvmeGroupKey group_key;
-  NvmeAnaGrpId grpid = 0;
+  //NvmeAnaGrpId grpid = 0;
   std::chrono::system_clock::time_point end_time;
   bool hold_io_map_accepted = false;
   bool to_remove = false;
 };
 using FailoverList  = std::list<WaitingList>;
 
+enum class HaMode : uint8_t {
+    ACTIVE_PASSIVE = 0,
+    ACTIVE_ACTIVE  = 1
+};
+
 typedef enum {
  ACTIVE_PASSIVE = 0,
- ACTIVE_NON_ACTIVE,
  ACTIVE_ACTIVE
 }Active_mode_t;
 
@@ -55,10 +59,7 @@ enum class gw_states_per_group_t {
   GW_ACCESSIBLE_STATE, // exported as ACCESSIBLE_STATE
   GW_OWNER_WAIT_FAILBACK_PREPARED,
   GW_WAIT_FAILBACK_PREPARED,
-//  GW_WAIT_FAILOVER_START,
-  GW_WAIT_BLOCKLIST_CMPL,
-  // temp state set for all GWs that were not chosen Failover candidates of the ANA grp
-  GW_WAIT_FAILOVER_CMPL
+  GW_WAIT_BLOCKLIST_CMPL
 };
 
 enum class gw_exported_states_per_group_t {
@@ -168,12 +169,6 @@ struct NvmeGwMonState {
 
   // state machine states per ANA group
   SmState sm_state;
-  /* the failover state map used for active-active configuration
-     it reflects the real  state of ANA groups during Failover
-     since each Failover in the active-active
-     configuration has impact on all ana groups of all GWs
- */
-  SmState failover_state;
   BlocklistData blocklist_data;
   //ceph entity address allocated for the GW-client that represents this GW-id
   entity_addrvec_t addr_vect;
@@ -228,19 +223,14 @@ struct NvmeGwMonState {
   void standby_state(NvmeAnaGrpId grpid) {
     sm_state[grpid]       = gw_states_per_group_t::GW_STANDBY_STATE;
   }
-  void accessible_state(NvmeAnaGrpId grpid, Active_mode_t mode) {
-    sm_state[grpid] = (mode == ACTIVE_NON_ACTIVE) ? gw_states_per_group_t::GW_ACCESSIBLE_STATE
-                       : gw_states_per_group_t::GW_ACTIVE_STATE;
+  void accessible_state(NvmeAnaGrpId grpid) {
+    sm_state[grpid] = gw_states_per_group_t::GW_ACCESSIBLE_STATE;
     blocklist_data[grpid].osd_epoch = 0;
   }
   void active_state(NvmeAnaGrpId grpid) {
     sm_state[grpid]       = gw_states_per_group_t::GW_ACTIVE_STATE;
     blocklist_data[grpid].osd_epoch = 0;
   }
-  /*void wait_failover_start_state(NvmeAnaGrpId grpid) {
-    sm_state[grpid]       = gw_states_per_group_t::GW_WAIT_FAILOVER_START;
-    blocklist_data[grpid].osd_epoch = 0;
-  }*/
   void set_last_gw_down_ts(){
     last_gw_down_ts = std::chrono::system_clock::now();
   }
@@ -279,7 +269,6 @@ struct NqnState {
           state_pair.first =  gw_exported_states_per_group_t::GW_EXPORTED_OPTIMIZED_STATE;
         break;
 
-        case gw_states_per_group_t::GW_WAIT_FAILOVER_CMPL:
         case  gw_states_per_group_t::GW_ACCESSIBLE_STATE:
           state_pair.first =  gw_exported_states_per_group_t::GW_EXPORTED_ACCESSIBLE_STATE;
         break;
