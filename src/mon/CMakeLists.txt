@@ -23,6 +23,7 @@ set(lib_mon_srcs
   KVMonitor.cc
   NVMeofGwMon.cc
   NVMeofGwMap.cc
+  NVMeofGwHaStrategy.cc
   ../mds/MDSAuthCaps.cc
   ../mgr/mgr_commands.cc
   ../osd/OSDCap.cc

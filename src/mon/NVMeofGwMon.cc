@@ -97,7 +97,8 @@ void NVMeofGwMon::check_beacon_timeout(ceph::coarse_mono_clock::time_point now,
       int seconds = std::chrono::duration_cast<std::chrono::seconds>(diff).count();
           dout(1) << "beacon timeout for GW " << lb.gw_id << " for "
                   << seconds <<" sec" << dendl;
-      pending_map.process_gw_map_gw_down(lb.gw_id, lb.group_key, propose_pending);
+      //pending_map.process_gw_map_gw_down(lb.gw_id, lb.group_key, propose_pending);
+      pending_map.handle_gw_down(lb.gw_id, lb.group_key, propose_pending);
       last_beacon.erase(lb);
     } else {
       dout(20) << "beacon live for GW " << lb.group_key <<" "<< lb.gw_id << dendl;
@@ -174,7 +175,7 @@ void NVMeofGwMon::tick()
   }
 
   // Periodically: take care of not handled ANA groups
-  pending_map.handle_abandoned_ana_groups(propose);
+  pending_map.handle_periodic_ha(propose);
   _propose_pending |= propose;
 
   if (_propose_pending) {
@@ -203,8 +204,6 @@ version_t NVMeofGwMon::get_trim_to() const
  */
 void NVMeofGwMon::restore_pending_map_info(NVMeofGwMap & tmp_map) {
   std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
-  //pending_map.failover_wait_list = tmp_map.failover_wait_list;
-
   for (auto& created_map_pair: tmp_map.created_gws) {
     auto group_key = created_map_pair.first;
     NvmeGwMonStates& gw_created_map = created_map_pair.second;
@@ -701,7 +700,7 @@ bool NVMeofGwMon::prepare_command(MonOpRequestRef op)
     auto group_key = std::make_pair(pool, group);
     dout(10) << " id "<< id <<" pool "<< pool << " group "<< group << dendl;
     if (prefix == "nvme-gw create") {
-      rc = pending_map.cfg_add_gw(id, group_key,
+      rc = pending_map.handle_gw_creation(id, group_key,
 		   mon.get_quorum_con_features());
       if (rc == -EINVAL) {
 	err = rc;
@@ -710,7 +709,7 @@ bool NVMeofGwMon::prepare_command(MonOpRequestRef op)
 	sstrm.str("");
       }
     } else {
-      rc = pending_map.cfg_delete_gw(id, group_key);
+      rc = pending_map.handle_gw_deletion(id, group_key);
       if (rc == 0) {
         bool propose = false;
         // Simulate  immediate Failover of this GW
@@ -763,7 +762,7 @@ bool NVMeofGwMon::prepare_command(MonOpRequestRef op)
     dout(10) << " id "<< id <<" pool "<< pool << " group "<< group
              <<" location "<< location << dendl;
     bool propose = false;
-    rc = pending_map.cfg_set_location(id, group_key, location, propose);
+    rc = pending_map.handle_location_update(id, group_key, location, propose);
     if (rc == -EINVAL || rc == -EEXIST) {
       err = rc;
       dout (4) << "Error: GW cannot  set location " << id
@@ -811,7 +810,7 @@ bool NVMeofGwMon::prepare_command(MonOpRequestRef op)
       auto group_key = std::make_pair(pool, group);
       dout(10) << " pool "<< pool << " group "<< group
                <<" location "<< location << dendl;
-      rc = pending_map.cfg_location_disaster_clear(group_key,
+      rc = pending_map.handle_disaster_clear(group_key,
                        location, propose);
       if (rc == -EINVAL || rc == -EEXIST || rc == -EOPNOTSUPP) {
         err = rc;
@@ -880,7 +879,8 @@ void NVMeofGwMon::process_gw_down(const NvmeGwId &gw_id,
   if (it != last_beacon.end()) {
     last_beacon.erase(it);
   }
-  pending_map.process_gw_map_gw_down(gw_id, group_key, propose_pending);
+  //pending_map.process_gw_map_gw_down(gw_id, group_key, propose_pending);
+  pending_map.handle_gw_down(gw_id, group_key, propose_pending);
 }
 
 bool NVMeofGwMon::preprocess_beacon(MonOpRequestRef op)
@@ -1239,7 +1239,7 @@ check_availability:
     LastBeacon lb = {gw_id, group_key};
     last_beacon[lb] = now;
     epoch_t last_osd_epoch = m->get_last_osd_epoch();
-    pending_map.process_gw_map_ka(gw_id, group_key, last_osd_epoch, gw_propose);
+    pending_map.handle_gw_alive(gw_id, group_key, last_osd_epoch, gw_propose);
   // state set by GW client application
   } else if (avail == gw_availability_t::GW_UNAVAILABLE) {
     process_gw_down(gw_id, group_key, gw_propose);
