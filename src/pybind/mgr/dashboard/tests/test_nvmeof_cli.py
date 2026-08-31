@@ -684,17 +684,17 @@ class TestNvmeofCLICommandSuccessMessage:
             "Adding nqn.none.test listener at 127.0.0.1:4420 gw=None: Successful"
         )
 
-    def test_listener_del_without_trsvcid_returns_clear_error(self):
+    def test_listener_del_without_trsvcid_returns_clear_error_with_return_annotation(self):
         class Model(NamedTuple):
             status: str
 
         def delete(mgr, nqn: str, host_name: str, traddr: str,
                    trsvcid: int, adrfam: int = 0,
-                   force: bool = False, gw_group: Optional[str] = None):
+                   force: bool = False, gw_group: Optional[str] = None) -> dict:
             return dict(status=1)
 
         cmd = NvmeofCLICommand(
-            "nvmeof listener del test",
+            "nvmeof listener del test annotated",
             model=Model,
             success_message_template=(
                 "Deleting listener {traddr}:{trsvcid} from {nqn}: Successful"
@@ -714,7 +714,7 @@ class TestNvmeofCLICommandSuccessMessage:
             assert "trsvcid" in result.stderr
             assert result.stdout == ""
         finally:
-            del NvmeofCLICommand.COMMANDS["nvmeof listener del test"]
+            del NvmeofCLICommand.COMMANDS["nvmeof listener del test annotated"]
 
     def test_template_can_use_response_fields(self):
         test_cmd = "nvmeof show op status"
