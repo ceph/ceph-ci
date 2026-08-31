@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-lines
 import logging
+import uuid as uuid_mod
 from functools import partial
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -22,6 +23,24 @@ from . import APIDoc, APIRouter, BaseController, CreatePermission, \
     RESTController, UIRouter, UpdatePermission
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_uuid(value: Optional[str]) -> None:
+    if value is None:
+        return
+    try:
+        parsed = uuid_mod.UUID(value)
+    except ValueError:
+        parsed = None
+    if parsed is None or value.lower() != str(parsed):
+        raise DashboardException(
+            msg=f"Invalid UUID value '{value}': must be a valid UUID in "
+                "canonical form (e.g. '12345678-1234-5678-1234-567812345678')",
+            code="invalid_uuid",
+            http_status_code=400,
+            component="nvmeof",
+        )
+
 
 NVME_SCHEMA = {
     "available": (bool, "Is NVMe/TCP available?"),
@@ -1085,6 +1104,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
+            _validate_uuid(uuid)
             return NVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
@@ -1232,6 +1252,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
+            _validate_uuid(uuid)
             encryption_format = encryption_format or []
             key_id = key_id or []
             if len(encryption_format) != len(key_id):
@@ -1357,6 +1378,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
+            _validate_uuid(uuid)
             if size and rbd_image_size:
                 raise DashboardException(
                     msg="Can use size or rbd_image_size but not both",
@@ -1831,6 +1853,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
+            _validate_uuid(uuid)
             ns_list = NVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
@@ -1884,6 +1907,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
+            _validate_uuid(uuid)
             ns_list = NVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
