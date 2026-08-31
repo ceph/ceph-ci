@@ -70,7 +70,7 @@ class NvmeofService(CephService):
         # that reason we make no attempt to catch the OrchestratorError
         # this may raise
         self.mgr._check_pool_exists(spec.pool, spec.service_name())
-        self.mgr._check_pool_not_erasure_coded(spec.pool, spec.service_name())
+        self.mgr._check_pool_supports_omap(spec.pool, spec.service_name())
 
     @classmethod
     def _get_service_dependencies(
