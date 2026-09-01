@@ -31,6 +31,20 @@
 
 using namespace std;
 
+static int sleep_for(optional_yield y, std::chrono::milliseconds dur)
+{
+  if (!y) {
+    std::this_thread::sleep_for(dur);
+    return 0;
+  }
+  auto& yc = y.get_yield_context();
+  boost::asio::steady_timer t(yc.get_executor());
+  t.expires_after(dur);
+  boost::system::error_code ec;
+  t.async_wait(yc[ec]);
+  return -ec.value();
+}
+
 int retry_on_transient_error(optional_yield y, const DoutPrefixProvider *dpp,
                   CephContext *cct, const char *op_name,
                   std::function<int()> op)
@@ -57,16 +71,7 @@ int retry_on_transient_error(optional_yield y, const DoutPrefixProvider *dpp,
                       << (i + 1) << "/" << max_attempts << "; retrying after "
                       << delay_ms << "ms" << dendl;
 
-    if (y) {
-      auto& yc = y.get_yield_context();
-      boost::asio::steady_timer t(yc.get_executor());
-      t.expires_after(std::chrono::milliseconds(delay_ms));
-      boost::system::error_code ec;
-      t.async_wait(yc[ec]);
-      if (ec) return ret;
-    } else {
-      std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
-    }
+    if (sleep_for(y, std::chrono::milliseconds(delay_ms)) < 0) return ret;
   }
   return ret;
 }
