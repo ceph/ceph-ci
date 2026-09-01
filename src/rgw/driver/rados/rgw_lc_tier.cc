@@ -710,6 +710,7 @@ class RGWLCCloudStreamPut
     dpp(_dpp), obj_properties(_obj_properties), conn(_conn), dest_obj(_dest_obj),
     y(_y) {
     }
+  ~RGWLCCloudStreamPut();
   int init();
   static bool keep_attr(const std::string& h);
   static void init_send_attrs(const DoutPrefixProvider *dpp, const rgw_rest_obj& rest_obj,
@@ -1032,6 +1033,15 @@ void RGWLCCloudStreamPut::set_multipart(const string& upload_id, int part_num, u
   multipart.part_size = part_size;
 }
 
+RGWLCCloudStreamPut::~RGWLCCloudStreamPut() {
+  if (out_req) {
+    // complete_request() never ran; cancel and wait before freeing
+    out_req->cancel();
+    out_req->wait(dpp, y);
+    delete out_req;
+  }
+}
+
 int RGWLCCloudStreamPut::send() {
   int ret = RGWHTTP::send(out_req);
   return ret;
@@ -1042,7 +1052,8 @@ RGWGetDataCB *RGWLCCloudStreamPut::get_cb() {
 }
 
 int RGWLCCloudStreamPut::complete_request() {
-  return conn.complete_request(dpp, out_req, etag, &obj_properties.mtime, y);
+  return conn.complete_request(dpp, std::exchange(out_req, nullptr), etag,
+                               &obj_properties.mtime, y);
 }
 
 /* Read local copy and write to Cloud endpoint */
