@@ -722,6 +722,8 @@ class RGWLCCloudStreamPut
   bool get_etag(std::string *petag);
   void set_multipart(const std::string& upload_id, int part_num, uint64_t part_size);
   int send();
+  // cap the data buffered ahead of the curl thread
+  int wait_for_send_window();
   RGWGetDataCB *get_cb();
   int complete_request();
 };
@@ -1048,6 +1050,21 @@ int RGWLCCloudStreamPut::send() {
   return ret;
 }
 
+int RGWLCCloudStreamPut::wait_for_send_window() {
+  static constexpr uint64_t pending_writes_window = 1 * 1024 * 1024;
+  static constexpr auto poll_interval = std::chrono::milliseconds(20);
+
+  while (out_req->get_pending_send_size() >= pending_writes_window) {
+    if (out_req->is_done()) {
+      // the request finished early so the buffered data will never drain
+      int r = out_req->get_req_retcode();
+      return r < 0 ? r : -EIO;
+    }
+    if (int r = sleep_for(y, poll_interval); r < 0) return r;
+  }
+  return 0;
+}
+
 RGWGetDataCB *RGWLCCloudStreamPut::get_cb() {
   return out_req->get_out_cb();
 }
@@ -1083,12 +1100,20 @@ static int cloud_tier_transfer_object(const DoutPrefixProvider* dpp,
     return ret;
   }
 
-  ret = readf->read(ofs, end, writef->get_cb());
-
-  if (ret < 0) {
-    ldpp_dout(dpp, 0) << "ERROR: fail to read from in_crf, ret = " << ret << dendl;
-    return ret;
-  }
+  // read a piece at a time so the send buffer can drain between reads
+  const off_t max_read = dpp->get_cct()->_conf->rgw_get_obj_max_req_size;
+  off_t cur = ofs;
+  do {
+    ret = writef->wait_for_send_window();
+    if (ret < 0) return ret;
+    ret = readf->read(cur, std::min<off_t>(cur + max_read - 1, end),
+                      writef->get_cb());
+    if (ret < 0) {
+      ldpp_dout(dpp, 0) << "ERROR: fail to read from in_crf, ret = " << ret << dendl;
+      return ret;
+    }
+    cur += max_read;
+  } while (cur <= end);
 
   ret = writef->complete_request();
   if (ret < 0) {
