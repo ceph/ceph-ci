@@ -659,8 +659,6 @@ class RGWLCStreamRead
   off_t end{0};
   rgw_rest_obj rest_obj;
 
-  int retcode{0};
-
   optional_yield y;
 
   public:
@@ -696,8 +694,6 @@ class RGWLCCloudStreamPut
     int part_num{0};
     uint64_t part_size;
   } multipart;
-
-  int retcode;
 
   optional_yield y;
 
@@ -1059,9 +1055,6 @@ int RGWLCCloudStreamPut::complete_request() {
 /* Read local copy and write to Cloud endpoint */
 static int cloud_tier_transfer_object(const DoutPrefixProvider* dpp,
                             RGWLCStreamRead* readf, RGWLCCloudStreamPut* writef) {
-  std::string url;
-  bufferlist bl;
-  bool sent_attrs{false};
   int ret{0};
   off_t ofs;
   off_t end;
@@ -1073,19 +1066,16 @@ static int cloud_tier_transfer_object(const DoutPrefixProvider* dpp,
   }
   readf->get_range(ofs, end);
   rgw_rest_obj& rest_obj = readf->get_rest_obj();
-  if (!sent_attrs) {
-    ret = writef->init();
-    if (ret < 0) {
-      ldpp_dout(dpp, 0) << "ERROR: fail to initialize out_crf, ret = " << ret << dendl;
-      return ret;
-    }
+  ret = writef->init();
+  if (ret < 0) {
+    ldpp_dout(dpp, 0) << "ERROR: fail to initialize out_crf, ret = " << ret << dendl;
+    return ret;
+  }
 
-    writef->send_ready(dpp, rest_obj);
-    ret = writef->send();
-    if (ret < 0) {
-      return ret;
-    }
-    sent_attrs = true;
+  writef->send_ready(dpp, rest_obj);
+  ret = writef->send();
+  if (ret < 0) {
+    return ret;
   }
 
   ret = readf->read(ofs, end, writef->get_cb());
