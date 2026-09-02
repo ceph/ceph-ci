@@ -13,6 +13,8 @@
 #include "librbd/Utils.h"
 #include "librbd/asio/ContextWQ.h"
 #include "librbd/image/CloseRequest.h"
+#include "librbd/io/ImageDispatcherInterface.h"
+#include "librbd/io/ObjectDispatcherInterface.h"
 #include "librbd/image/OpenRequest.h"
 #include "librbd/image/RefreshRequest.h"
 #include "librbd/image/SetSnapRequest.h"
@@ -517,6 +519,38 @@ void ImageState<I>::close(Context *on_finish) {
 }
 
 template <typename I>
+int ImageState<I>::reopen(librados::IoCtx& io_ctx,
+                          const std::string &image_name,
+                          const std::string &image_id, const char *snap_name) {
+  C_SaferCond ctx;
+  reopen(io_ctx, image_name, image_id, snap_name, &ctx);
+
+  int r = ctx.wait();
+  return r;
+}
+
+template <typename I>
+void ImageState<I>::reopen(librados::IoCtx& io_ctx,
+                           const std::string &image_name,
+                           const std::string &image_id, const char *snap_name,
+                           Context *on_finish) {
+  CephContext *cct = m_image_ctx->cct;
+  ldout(cct, 20) << __func__ << ": image_name=" << image_name << ", "
+                 << "image_id=" << image_id << dendl;
+
+  m_lock.lock();
+  ceph_assert(!is_closed());
+
+  Action action(ACTION_TYPE_REOPEN);
+  action.io_ctx = io_ctx;
+  action.image_name = image_name;
+  action.image_id = image_id;
+  action.snap_name = (snap_name != nullptr ? snap_name : "");
+
+  execute_action_unlock(action, on_finish);
+}
+
+template <typename I>
 void ImageState<I>::handle_update_notification() {
   std::lock_guard locker{m_lock};
   ++m_refresh_seq;
@@ -710,6 +744,7 @@ bool ImageState<I>::is_transition_state() const {
   case STATE_REFRESHING:
   case STATE_SETTING_SNAP:
   case STATE_PREPARING_LOCK:
+  case STATE_REOPENING:
     break;
   }
   return true;
@@ -766,6 +801,9 @@ void ImageState<I>::execute_next_action_unlock() {
   case ACTION_TYPE_LOCK:
     send_prepare_lock_unlock();
     return;
+  case ACTION_TYPE_REOPEN:
+    send_reopen_unlock();
+    return;
   }
   ceph_abort();
 }
@@ -794,8 +832,11 @@ void ImageState<I>::complete_action_unlock(State next_state, int r) {
   m_state = next_state;
   m_lock.unlock();
 
-  if (next_state == STATE_CLOSED ||
-      (next_state == STATE_UNINITIALIZED && r < 0)) {
+  // a reopen that failed leaves the image context closed but alive: the caller
+  // still holds a handle to it and has to close it itself
+  if (action_contexts.first.action_type != ACTION_TYPE_REOPEN &&
+      (next_state == STATE_CLOSED ||
+       (next_state == STATE_UNINITIALIZED && r < 0))) {
     // the ImageCtx must be deleted outside the scope of its callback threads
     auto ctx = new LambdaContext(
       [image_ctx=m_image_ctx, contexts=std::move(action_contexts.second)]
@@ -884,6 +925,86 @@ void ImageState<I>::handle_close(int r) {
 
   m_lock.lock();
   complete_action_unlock(STATE_CLOSED, r);
+}
+
+template <typename I>
+void ImageState<I>::send_reopen_unlock() {
+  ceph_assert(ceph_mutex_is_locked(m_lock));
+  CephContext *cct = m_image_ctx->cct;
+  ldout(cct, 10) << this << " " << __func__ << dendl;
+
+  // the state stays STATE_REOPENING for both halves, so that nothing can
+  // observe the image context in the torn down window in between
+  m_state = STATE_REOPENING;
+
+  Context *ctx = create_context_callback<
+    ImageState<I>, &ImageState<I>::handle_reopen_close>(this);
+  auto req = image::CloseRequest<I>::create_for_reopen(m_image_ctx, ctx);
+
+  m_lock.unlock();
+  req->send();
+}
+
+template <typename I>
+void ImageState<I>::handle_reopen_close(int r) {
+  CephContext *cct = m_image_ctx->cct;
+  ldout(cct, 10) << this << " " << __func__ << ": r=" << r << dendl;
+
+  if (r < 0) {
+    // the close tears the image context down whatever it reports, and there is
+    // nothing left to fall back to, so re-target it anyway
+    lderr(cct) << "error occurred while closing image for reopen: "
+               << cpp_strerror(r) << dendl;
+  }
+
+  librados::IoCtx io_ctx;
+  std::string image_name;
+  std::string image_id;
+  std::string snap_name;
+  {
+    std::lock_guard locker{m_lock};
+    ceph_assert(m_state == STATE_REOPENING);
+    ceph_assert(!m_actions_contexts.empty());
+
+    auto &action = m_actions_contexts.front().first;
+    ceph_assert(action.action_type == ACTION_TYPE_REOPEN);
+    io_ctx = action.io_ctx;
+    image_name = action.image_name;
+    image_id = action.image_id;
+    snap_name = action.snap_name;
+
+    // the refresh bookkeeping described the image we just closed
+    m_last_refresh = 0;
+    m_refresh_seq = 0;
+  }
+
+  m_image_ctx->reinit(io_ctx, image_name, image_id,
+                      snap_name.empty() ? nullptr : snap_name.c_str());
+
+  Context *ctx = create_context_callback<
+    ImageState<I>, &ImageState<I>::handle_reopen_open>(this);
+  auto req = image::OpenRequest<I>::create(m_image_ctx, m_open_flags, ctx);
+  req->send();
+}
+
+template <typename I>
+void ImageState<I>::handle_reopen_open(int r) {
+  CephContext *cct = m_image_ctx->cct;
+  ldout(cct, 10) << this << " " << __func__ << ": r=" << r << dendl;
+
+  if (r < 0) {
+    lderr(cct) << "failed to reopen image: " << cpp_strerror(r) << dendl;
+
+    // the failed open tore the image context back down, but the caller still
+    // holds a handle and has to close it. image::CloseRequest flushes through
+    // the IO dispatchers, so it needs them populated -- put the context back
+    // into the shape a freshly constructed one has
+    m_image_ctx->io_image_dispatcher->register_default_dispatches();
+    m_image_ctx->io_object_dispatcher->register_default_dispatches();
+  }
+
+  m_lock.lock();
+  complete_action_unlock(r < 0 ? STATE_UNINITIALIZED : STATE_OPEN, r);
 }
 
 template <typename I>

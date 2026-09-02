@@ -5,6 +5,7 @@
 #define CEPH_LIBRBD_IMAGE_STATE_H
 
 #include "include/int_types.h"
+#include "include/rados/librados.hpp"
 #include "common/ceph_mutex.h"
 #include <list>
 #include <string>
@@ -33,6 +34,27 @@ public:
 
   int close();
   void close(Context *on_finish);
+
+  /**
+   * Re-target the image context at a different image without the caller's
+   * handle to it ever changing -- the close and open halves run as a single
+   * action, so nothing else can slip in between them and the image context is
+   * never deleted.
+   *
+   * The image is opened with the flags it was originally opened with. State
+   * the caller owns rather than the image survives: the update and quiesce
+   * watchers registered here keep their handles, and ImageCtx::reinit()
+   * preserves the read-only mode, the lock and journal policies, and the event
+   * socket. The new image has to live in the same cluster.
+   *
+   * If the open half fails the image context is left closed but alive, since
+   * the caller still holds a handle to it and has to close it itself.
+   */
+  int reopen(librados::IoCtx& io_ctx, const std::string &image_name,
+             const std::string &image_id, const char *snap_name);
+  void reopen(librados::IoCtx& io_ctx, const std::string &image_name,
+              const std::string &image_id, const char *snap_name,
+              Context *on_finish);
 
   void handle_update_notification();
 
@@ -68,7 +90,8 @@ private:
     STATE_CLOSING,
     STATE_REFRESHING,
     STATE_SETTING_SNAP,
-    STATE_PREPARING_LOCK
+    STATE_PREPARING_LOCK,
+    STATE_REOPENING
   };
 
   enum ActionType {
@@ -76,7 +99,8 @@ private:
     ACTION_TYPE_CLOSE,
     ACTION_TYPE_REFRESH,
     ACTION_TYPE_SET_SNAP,
-    ACTION_TYPE_LOCK
+    ACTION_TYPE_LOCK,
+    ACTION_TYPE_REOPEN
   };
 
   struct Action {
@@ -84,6 +108,13 @@ private:
     uint64_t refresh_seq = 0;
     uint64_t snap_id = CEPH_NOSNAP;
     Context *on_ready = nullptr;
+
+    // ACTION_TYPE_REOPEN: the image to re-target at. Carried on the action so
+    // that queued re-targets cannot clobber each other's spec.
+    librados::IoCtx io_ctx;
+    std::string image_name;
+    std::string image_id;
+    std::string snap_name;
 
     Action(ActionType action_type) : action_type(action_type) {
     }
@@ -97,6 +128,7 @@ private:
       case ACTION_TYPE_SET_SNAP:
         return (snap_id == action.snap_id);
       case ACTION_TYPE_LOCK:
+      case ACTION_TYPE_REOPEN:
         return false;
       default:
         return true;
@@ -137,6 +169,10 @@ private:
 
   void send_close_unlock();
   void handle_close(int r);
+
+  void send_reopen_unlock();
+  void handle_reopen_close(int r);
+  void handle_reopen_open(int r);
 
   void send_refresh_unlock();
   void handle_refresh(int r);
