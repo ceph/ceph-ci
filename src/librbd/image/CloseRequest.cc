@@ -30,9 +30,9 @@ using util::create_async_context_callback;
 using util::create_context_callback;
 
 template <typename I>
-CloseRequest<I>::CloseRequest(I *image_ctx, Context *on_finish)
-  : m_image_ctx(image_ctx), m_on_finish(on_finish), m_error_result(0),
-    m_exclusive_lock(nullptr) {
+CloseRequest<I>::CloseRequest(I *image_ctx, bool reopen, Context *on_finish)
+  : m_image_ctx(image_ctx), m_reopen(reopen), m_on_finish(on_finish),
+    m_error_result(0), m_exclusive_lock(nullptr) {
   ceph_assert(image_ctx != nullptr);
 }
 
@@ -74,11 +74,21 @@ void CloseRequest<I>::handle_block_image_watcher(int r) {
 template <typename I>
 void CloseRequest<I>::send_shut_down_update_watchers() {
   CephContext *cct = m_image_ctx->cct;
-  ldout(cct, 10) << this << " " << __func__ << dendl;
+  ldout(cct, 10) << this << " " << __func__ << ": reopen=" << m_reopen << dendl;
 
-  m_image_ctx->state->shut_down_update_watchers(create_async_context_callback(
+  auto ctx = create_async_context_callback(
     *m_image_ctx, create_context_callback<
-      CloseRequest<I>, &CloseRequest<I>::handle_shut_down_update_watchers>(this)));
+      CloseRequest<I>, &CloseRequest<I>::handle_shut_down_update_watchers>(this));
+
+  if (m_reopen) {
+    // the watchers belong to the caller rather than to the image being closed,
+    // so keep them registered -- just let the in-flight notifications drain so
+    // that none of them straddles the re-target
+    m_image_ctx->state->flush_update_watchers(ctx);
+    return;
+  }
+
+  m_image_ctx->state->shut_down_update_watchers(ctx);
 }
 
 template <typename I>

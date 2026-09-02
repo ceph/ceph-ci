@@ -14,11 +14,28 @@ class ImageCtx;
 
 namespace image {
 
+/**
+ * Tears an open image context down. The IO dispatchers have to be populated
+ * when this runs -- the FLUSH step below dispatches through them, and with no
+ * layers registered nothing would ever complete it -- so this cannot be run
+ * twice over the same image context without re-registering them in between.
+ */
 template <typename ImageCtxT = ImageCtx>
 class CloseRequest {
 public:
   static CloseRequest *create(ImageCtxT *image_ctx, Context *on_finish) {
-    return new CloseRequest(image_ctx, on_finish);
+    return new CloseRequest(image_ctx, false, on_finish);
+  }
+
+  /**
+   * The close half of a reopen. State the caller owns rather than the image --
+   * the update watchers registered through ImageState -- is flushed instead of
+   * shut down, so that the handles the caller holds stay valid once the image
+   * context has been re-targeted.
+   */
+  static CloseRequest *create_for_reopen(ImageCtxT *image_ctx,
+                                         Context *on_finish) {
+    return new CloseRequest(image_ctx, true, on_finish);
   }
 
   void send();
@@ -33,7 +50,8 @@ private:
    * BLOCK_IMAGE_WATCHER (skip if R/O)
    *    |
    *    v
-   * SHUT_DOWN_UPDATE_WATCHERS
+   * SHUT_DOWN_UPDATE_WATCHERS (flush only if
+   *    |                       reopening)
    *    |
    *    v
    * FLUSH
@@ -68,9 +86,10 @@ private:
    * @endverbatim
    */
 
-  CloseRequest(ImageCtxT *image_ctx, Context *on_finish);
+  CloseRequest(ImageCtxT *image_ctx, bool reopen, Context *on_finish);
 
   ImageCtxT *m_image_ctx;
+  bool m_reopen;
   Context *m_on_finish;
 
   int m_error_result;
