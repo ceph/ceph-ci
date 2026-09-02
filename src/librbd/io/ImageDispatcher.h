@@ -30,6 +30,8 @@ class ImageDispatcher : public Dispatcher<ImageCtxT, ImageDispatcherInterface> {
 public:
   ImageDispatcher(ImageCtxT* image_ctx);
 
+  void register_default_dispatches() override;
+
   void invalidate_cache(Context* on_finish) override;
 
   void shut_down(Context* on_finish) override;

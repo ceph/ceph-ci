@@ -128,9 +128,18 @@ struct ObjectDispatcher<I>::SendVisitor {
 template <typename I>
 ObjectDispatcher<I>::ObjectDispatcher(I* image_ctx)
   : Dispatcher<I, ObjectDispatcherInterface>(image_ctx) {
-  // configure the core object dispatch handler on startup
-  auto object_dispatch = new ObjectDispatch(image_ctx);
-  this->register_dispatch(object_dispatch);
+  register_default_dispatches();
+}
+
+template <typename I>
+void ObjectDispatcher<I>::register_default_dispatches() {
+  // configure the core object dispatch handler on startup -- and again
+  // whenever the image context it belongs to is re-targeted at a different
+  // image, since the dispatcher itself outlives the layers it owns
+  if (!this->exists(OBJECT_DISPATCH_LAYER_CORE)) {
+    auto object_dispatch = new ObjectDispatch(this->m_image_ctx);
+    this->register_dispatch(object_dispatch);
+  }
 }
 
 template <typename I>
