@@ -28,7 +28,21 @@ log = logging.getLogger(__name__)
 class SubvolumeBase(object):
     LEGACY_CONF_DIR = "_legacy"
 
+    @staticmethod
+    def validate_subvolume_name(subvolname):
+        """
+        Reject names that would make <group>/<subvolname> resolve to the
+        group directory itself or to anything outside of it: empty names,
+        '.', '..' and names containing a path separator
+        (e.g. 'sub/vol', '/sub', 'sub/').
+        """
+        if not subvolname or subvolname in ('.', '..') or '/' in subvolname:
+            raise VolumeException(-errno.EINVAL,
+                                  f"invalid subvolume name {subvolname!r}")
+
     def __init__(self, mgr, fs, vol_spec, group, subvolname, legacy=False):
+        self.validate_subvolume_name(subvolname)
+
         self.mgr = mgr
         self.fs = fs
         self.auth_mdata_mgr = AuthMetadataManager(fs)
@@ -39,7 +53,25 @@ class SubvolumeBase(object):
         self.group = group
         self.subvolname = subvolname
         self.legacy_mode = legacy
+
         self.load_config()
+
+    def _validate_path_within_group(self, path):
+        """
+        Ensure 'path' is a strict descendant of this subvolume's group
+        directory. Used as a last line of defense before marking a
+        directory as a subvolume (ceph.dir.subvolume xattr).
+        """
+        group_path = os.path.normpath(self.group.path)
+        path = os.path.normpath(path)
+        try:
+            contained = os.path.commonpath([group_path, path]) == group_path
+        except ValueError:
+            contained = False
+        if not contained or path == group_path:
+            raise VolumeException(
+                -errno.EINVAL,
+                f"invalid subvolume path resolution for '{self.subvolname}'")
 
     @property
     def uid(self):
