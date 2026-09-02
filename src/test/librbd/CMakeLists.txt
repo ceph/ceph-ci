@@ -8,6 +8,7 @@ target_link_libraries(rbd_test_support PRIVATE
 set(librbd_test
   test_fixture.cc
   test_librbd.cc
+  test_ImageCtx.cc
   test_ImageWatcher.cc
   test_internal.cc
   test_mirroring.cc
