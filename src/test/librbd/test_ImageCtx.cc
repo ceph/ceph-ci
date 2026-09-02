@@ -12,8 +12,11 @@
 #include "librbd/api/Image.h"
 #include "librbd/api/Io.h"
 #include "librbd/api/Namespace.h"
+#include "librbd/io/AioCompletion.h"
+#include "librbd/io/ImageDispatcherInterface.h"
 #include "librbd/io/ReadResult.h"
 #include <boost/scope_exit.hpp>
+#include <thread>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
@@ -25,6 +28,11 @@ void register_test_image_ctx() {
 namespace librbd {
 
 namespace {
+
+struct DummyContext : public Context {
+  void finish(int r) override {
+  }
+};
 
 struct QuiesceWatcher : public librbd::QuiesceWatchCtx {
   ImageCtx *image_ctx;
@@ -444,6 +452,123 @@ TEST_F(TestImageCtx, ReopenPreservesUpdateWatchers) {
   ASSERT_TRUE(watcher.wait_for_notify(1));
 
   ASSERT_EQ(0, ictx->state->unregister_update_watcher(handle));
+}
+
+TEST_F(TestImageCtx, BlockIoParksRequests) {
+  ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+  ASSERT_FALSE(ictx->io_image_dispatcher->io_blocked());
+
+  C_SaferCond on_blocked;
+  ictx->io_image_dispatcher->block_io(&on_blocked);
+  ASSERT_EQ(0, on_blocked.wait());
+  ASSERT_TRUE(ictx->io_image_dispatcher->io_blocked());
+
+  bufferlist read_bl;
+  read_bl.push_back(bufferptr(4096));
+  Context *read_ctx = new DummyContext();
+  auto read_comp = io::AioCompletion::create(read_ctx);
+  read_comp->get();
+  api::Io<>::aio_read(*ictx, read_comp, 0, 4096, io::ReadResult{&read_bl}, 0,
+                      true);
+
+  bufferlist bl;
+  bl.append(std::string(4096, '1'));
+  Context *write_ctx = new DummyContext();
+  auto write_comp = io::AioCompletion::create(write_ctx);
+  write_comp->get();
+  api::Io<>::aio_write(*ictx, write_comp, 0, bl.length(), bufferlist{bl}, 0,
+                       true);
+
+  // neither may make progress while IO is parked
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  ASSERT_FALSE(read_comp->is_complete());
+  ASSERT_FALSE(write_comp->is_complete());
+
+  ictx->io_image_dispatcher->unblock_io(0);
+  ASSERT_FALSE(ictx->io_image_dispatcher->io_blocked());
+
+  ASSERT_EQ(0, read_comp->wait_for_complete());
+  ASSERT_EQ(4096, read_comp->get_return_value());
+  read_comp->put();
+
+  ASSERT_EQ(0, write_comp->wait_for_complete());
+  ASSERT_EQ(0, write_comp->get_return_value());
+  write_comp->put();
+}
+
+TEST_F(TestImageCtx, BlockIoFailsParkedRequests) {
+  ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+
+  C_SaferCond on_blocked;
+  ictx->io_image_dispatcher->block_io(&on_blocked);
+  ASSERT_EQ(0, on_blocked.wait());
+
+  bufferlist bl;
+  bl.append(std::string(4096, '1'));
+  Context *write_ctx = new DummyContext();
+  auto write_comp = io::AioCompletion::create(write_ctx);
+  write_comp->get();
+  api::Io<>::aio_write(*ictx, write_comp, 0, bl.length(), bufferlist{bl}, 0,
+                       true);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  ASSERT_FALSE(write_comp->is_complete());
+
+  // a re-target that could not open its image has nowhere to dispatch the
+  // requests it parked
+  ictx->io_image_dispatcher->unblock_io(-ENOENT);
+
+  ASSERT_EQ(0, write_comp->wait_for_complete());
+  ASSERT_EQ(-ENOENT, write_comp->get_return_value());
+  write_comp->put();
+}
+
+TEST_F(TestImageCtx, ReopenWithConcurrentIo) {
+  auto dst_image_name = create_image(m_ioctx, m_image_size);
+
+  ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+
+  std::atomic<bool> done = false;
+  std::atomic<int> failed = 0;
+  std::atomic<uint64_t> completed = 0;
+
+  // hammer the image while it is re-targeted underneath: every request has to
+  // land on whichever image the context points at when it is dispatched, and
+  // none may be lost
+  std::thread io_thread([&]() {
+    bufferlist bl;
+    bl.append(std::string(4096, 'x'));
+    while (!done) {
+      ssize_t r = api::Io<>::write(*ictx, 0, bl.length(), bufferlist{bl}, 0);
+      if (r != 4096) {
+        ++failed;
+        break;
+      }
+
+      bufferlist read_bl;
+      read_bl.push_back(bufferptr(4096));
+      r = api::Io<>::read(*ictx, 0, 4096, io::ReadResult{&read_bl}, 0);
+      if (r != 4096) {
+        ++failed;
+        break;
+      }
+      ++completed;
+    }
+  });
+
+  for (int i = 0; i < 5; i++) {
+    ASSERT_EQ(0, reopen(ictx, m_ioctx, dst_image_name));
+    ASSERT_EQ(0, reopen(ictx, m_ioctx, m_image_name));
+  }
+
+  done = true;
+  io_thread.join();
+
+  ASSERT_EQ(0, failed);
+  ASSERT_GT(completed, 0U);
 }
 
 } // namespace librbd
