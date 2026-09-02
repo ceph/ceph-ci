@@ -21,6 +21,7 @@ struct MockImageDispatcher : public ImageDispatcherInterface {
 public:
   MOCK_METHOD1(shut_down, void(Context*));
 
+  MOCK_METHOD0(register_default_dispatches, void());
   MOCK_METHOD1(register_dispatch, void(ImageDispatchInterface*));
   MOCK_METHOD1(exists, bool(ImageDispatchLayer));
   MOCK_METHOD2(shut_down_dispatch, void(ImageDispatchLayer, Context*));

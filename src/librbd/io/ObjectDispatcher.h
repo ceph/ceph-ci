@@ -27,6 +27,8 @@ class ObjectDispatcher
 public:
   ObjectDispatcher(ImageCtxT* image_ctx);
 
+  void register_default_dispatches() override;
+
   void invalidate_cache(Context* on_finish) override;
   void reset_existence_cache(Context* on_finish) override;
 

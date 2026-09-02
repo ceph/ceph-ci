@@ -178,21 +178,40 @@ struct ImageDispatcher<I>::PreprocessVisitor
 template <typename I>
 ImageDispatcher<I>::ImageDispatcher(I* image_ctx)
   : Dispatcher<I, ImageDispatcherInterface>(image_ctx) {
-  // configure the core image dispatch handler on startup
-  auto image_dispatch = new ImageDispatch(image_ctx);
-  this->register_dispatch(image_dispatch);
+  register_default_dispatches();
+}
 
-  auto queue_image_dispatch = new QueueImageDispatch(image_ctx);
-  this->register_dispatch(queue_image_dispatch);
+template <typename I>
+void ImageDispatcher<I>::register_default_dispatches() {
+  // configure the core image dispatch handlers on startup -- and again
+  // whenever the image context they belong to is re-targeted at a different
+  // image, since the dispatcher itself outlives the layers it owns
+  auto image_ctx = this->m_image_ctx;
 
-  m_qos_image_dispatch = new QosImageDispatch<I>(image_ctx);
-  this->register_dispatch(m_qos_image_dispatch);
+  if (!this->exists(IMAGE_DISPATCH_LAYER_CORE)) {
+    auto image_dispatch = new ImageDispatch(image_ctx);
+    this->register_dispatch(image_dispatch);
+  }
 
-  auto refresh_image_dispatch = new RefreshImageDispatch(image_ctx);
-  this->register_dispatch(refresh_image_dispatch);
+  if (!this->exists(IMAGE_DISPATCH_LAYER_QUEUE)) {
+    auto queue_image_dispatch = new QueueImageDispatch(image_ctx);
+    this->register_dispatch(queue_image_dispatch);
+  }
 
-  m_write_block_dispatch = new WriteBlockImageDispatch<I>(image_ctx);
-  this->register_dispatch(m_write_block_dispatch);
+  if (!this->exists(IMAGE_DISPATCH_LAYER_QOS)) {
+    m_qos_image_dispatch = new QosImageDispatch<I>(image_ctx);
+    this->register_dispatch(m_qos_image_dispatch);
+  }
+
+  if (!this->exists(IMAGE_DISPATCH_LAYER_REFRESH)) {
+    auto refresh_image_dispatch = new RefreshImageDispatch(image_ctx);
+    this->register_dispatch(refresh_image_dispatch);
+  }
+
+  if (!this->exists(IMAGE_DISPATCH_LAYER_WRITE_BLOCK)) {
+    m_write_block_dispatch = new WriteBlockImageDispatch<I>(image_ctx);
+    this->register_dispatch(m_write_block_dispatch);
+  }
 }
 
 template <typename I>

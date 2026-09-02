@@ -23,6 +23,12 @@ public:
 
   virtual void shut_down(Context* on_finish) = 0;
 
+  /// (re-)register the dispatch layers that are always present, skipping any
+  /// that are still registered -- also used to repopulate a dispatcher that
+  /// outlived a shut down, e.g. when an image context is re-targeted at a
+  /// different image
+  virtual void register_default_dispatches() = 0;
+
   virtual void register_dispatch(Dispatch* dispatch) = 0;
   virtual bool exists(DispatchLayer dispatch_layer) = 0;
   virtual void shut_down_dispatch(DispatchLayer dispatch_layer,
