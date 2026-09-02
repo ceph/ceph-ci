@@ -200,7 +200,6 @@ class ServiceAction(enum.Enum):
     restart = 'restart'
     redeploy = 'redeploy'
     reconfig = 'reconfig'
-    rotate_key = 'rotate-key'
 
 
 class DaemonAction(enum.Enum):
@@ -208,7 +207,6 @@ class DaemonAction(enum.Enum):
     stop = 'stop'
     restart = 'restart'
     reconfig = 'reconfig'
-    rotate_key = 'rotate-key'
 
 
 class IngressType(enum.Enum):
@@ -1566,7 +1564,7 @@ Usage:
     @_cli_write_command('orch daemon add nvmeof')
     def _nvmeof_add(self,
                     pool: str,
-                    group: str,
+                    group: str = '',
                     placement: Optional[str] = None,
                     inbuf: Optional[str] = None) -> HandleCommandResult:
         """Start nvmeof daemon(s)"""
@@ -1574,7 +1572,7 @@ Usage:
             raise OrchestratorValidationError('unrecognized command -i; -h or --help for usage')
 
         spec = NvmeofServiceSpec(
-            service_id='nvmeof',
+            service_id=f'{pool}.{group}' if group else pool,
             pool=pool,
             group=group,
             placement=PlacementSpec.from_string(placement),
@@ -1590,7 +1588,7 @@ Usage:
 
     @_cli_write_command('orch daemon')
     def _daemon_action(self, action: DaemonAction, name: str) -> HandleCommandResult:
-        """Start, stop, restart, redeploy, reconfig, or rotate-key for a specific daemon"""
+        """Start, stop, restart, redeploy or reconfig for a specific daemon"""
         if '.' not in name:
             raise OrchestratorError('%s is not a valid daemon name' % name)
         completion = self.daemon_action(action.value, name)
@@ -1880,7 +1878,7 @@ Usage:
     @_cli_write_command('orch apply nvmeof')
     def _apply_nvmeof(self,
                       pool: str,
-                      group: str,
+                      group: str = '',
                       placement: Optional[str] = None,
                       unmanaged: bool = False,
                       dry_run: bool = False,
@@ -1892,7 +1890,7 @@ Usage:
             raise OrchestratorValidationError('unrecognized command -i; -h or --help for usage')
 
         spec = NvmeofServiceSpec(
-            service_id=f'{pool}.{group}',
+            service_id=f'{pool}.{group}' if group else pool,
             pool=pool,
             group=group,
             placement=PlacementSpec.from_string(placement),

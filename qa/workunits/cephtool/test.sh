@@ -888,7 +888,7 @@ function test_tell_output_file()
   # only one line of json
   expect_true sed '2q1' < /tmp/foo > /dev/null
   expect_true jq -e '.version | length > 0' < /tmp/foo
-  rm -f /tmp/foo
+  sudo rm -f /tmp/foo
 
   J=$(ceph tell --format=json-pretty --daemon-output-file=/tmp/foo "$name" version)
   expect_true jq -e '.path == "/tmp/foo"' <<<"$J"
@@ -896,24 +896,24 @@ function test_tell_output_file()
   # more than one line of json
   expect_false sed '2q1' < /tmp/foo > /dev/null
   expect_true jq -e '.version | length > 0' < /tmp/foo
-  rm -f /tmp/foo
+  sudo rm -f /tmp/foo
 
   # Test --daemon-output-file=:tmp:
   J=$(ceph tell --format=json --daemon-output-file=":tmp:" "$name" version)
   path=$(jq -r .path <<<"$J")
   expect_true test -e "$path"
   # only one line of json
-  expect_true sed '2q1' < "$path" > /dev/null
-  expect_true jq -e '.version | length > 0' < "$path"
-  rm -f "$path"
+  expect_true sudo sh -c "sed '2q1' < \"$path\" > /dev/null"
+  expect_true sudo sudo sh -c "jq -e '.version | length > 0' < \"$path\""
+  sudo rm -f "$path"
 
   J=$(ceph tell --format=json-pretty --daemon-output-file=":tmp:" "$name" version)
   path=$(jq -r .path <<<"$J")
   expect_true test -e "$path"
   # only one line of json
-  expect_false sed '2q1' < "$path" > /dev/null
-  expect_true jq -e '.version | length > 0' < "$path"
-  rm -f "$path"
+  expect_false sudo sh -c "sed '2q1' < \"$path\" > /dev/null"
+  expect_true sudo sh -c "jq -e '.version | length > 0' < \"$path\""
+  sudo rm -f "$path"
 }
 
 function test_mds_tell()
@@ -2901,6 +2901,51 @@ function test_per_pool_scrub_status()
   ceph osd pool rm noscrub_pool2 noscrub_pool2 --yes-i-really-really-mean-it
 }
 
+function do_messenger_dump_basics_test()
+{
+  local target="$1"
+  ceph tell "$target" messenger dump | expect_true jq --exit-status '.messengers | length > 0'
+  ceph tell "$target" messenger dump | jq -r '.messengers[]' | while read messenger; do
+    dump="$(ceph tell "$target" messenger dump "$messenger" all)"
+    expect_true jq --exit-status 'has("messenger")' <<< "$dump"
+    expect_true jq --exit-status 'has("name")' <<< "$dump"
+    expect_true jq --arg expected_messenger "$messenger" --exit-status '
+	 .name == $expected_messenger' <<< "$dump"
+    expect_true jq --exit-status '.messenger | type == "object"' <<< "$dump"
+    expect_true jq --exit-status '.messenger |
+        all([.connections,
+             .listen_sockets,
+	     .anon_conns,
+	     .accepting_conns,
+	     .deleted_conns][];
+            type == "array")' \
+		<<< "$dump"
+  done
+}
+
+function test_osd_messenger_dump()
+{
+  do_messenger_dump_basics_test osd.0
+}
+function test_mon_messenger_dump()
+{
+  do_messenger_dump_basics_test mon.a
+  # Testing the tcp_info feature requires at lease one messenger TCP
+  # conneciton. Test only the mon as it is very unlikely that it
+  # doesn't have an active connection. Also only test for one
+  # connection, as disconnected connections don't set tcp_info
+  expect_true ceph tell "$target" messenger dump mon --tcp-info \
+    | jq 'any(.messenger.connections[].async_connection.tcp_info; has("tcpi_state"))'
+}
+function test_mgr_messenger_dump()
+{
+  do_messenger_dump_basics_test mgr
+}
+function test_mds_messenger_dump()
+{
+  do_messenger_dump_basics_test mds.a
+}
+
 #
 # New tests should be added to the TESTS array below
 #
@@ -2945,6 +2990,7 @@ MON_TESTS+=" mon_caps"
 MON_TESTS+=" mon_cephdf_commands"
 MON_TESTS+=" mon_tell_help_command"
 MON_TESTS+=" mon_stdin_stdout"
+MON_TESTS+=" mon_messenger_dump"
 
 OSD_TESTS+=" osd_bench"
 OSD_TESTS+=" osd_negative_filestore_merge_threshold"
@@ -2953,14 +2999,17 @@ OSD_TESTS+=" admin_heap_profiler"
 OSD_TESTS+=" osd_tell_help_command"
 OSD_TESTS+=" osd_compact"
 OSD_TESTS+=" per_pool_scrub_status"
+OSD_TESTS+=" osd_messenger_dump"
 
 MDS_TESTS+=" mds_tell"
 MDS_TESTS+=" mon_mds"
 MDS_TESTS+=" mon_mds_metadata"
 MDS_TESTS+=" mds_tell_help_command"
+MDS_TESTS+=" mds_messenger_dump"
 
 MGR_TESTS+=" mgr_tell"
 MGR_TESTS+=" mgr_devices"
+MGR_TESTS+=" mgr_messenger_dump"
 
 TESTS+=$MON_TESTS
 TESTS+=$OSD_TESTS

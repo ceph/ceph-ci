@@ -435,6 +435,8 @@ static int read_obj_policy(const DoutPrefixProvider *dpp,
       return -ENOENT;
     }
 
+    s->env.emplace("s3:prefix", object->get_name());
+
     if (verify_bucket_permission(dpp, s, bucket->get_key(), s->user_acl,
                                  bucket_policy, policy, s->iam_identity_policies,
                                  s->session_policies, rgw::IAM::s3ListBucket)) {
@@ -3900,9 +3902,9 @@ int RGWPutObj::init_processing(optional_yield y) {
 
   // reject public canned acls
   if (s->bucket_access_conf && s->bucket_access_conf->block_public_acls() &&
-      (s->canned_acl.compare("public-read") ||
-       s->canned_acl.compare("public-read-write") ||
-       s->canned_acl.compare("authenticated-read"))) {
+      (s->canned_acl == "public-read" ||
+       s->canned_acl == "public-read-write" ||
+       s->canned_acl == "authenticated-read")) {
     return -EACCES;
   }
 
@@ -5341,6 +5343,9 @@ bool RGWCopyObj::parse_copy_location(const std::string_view& url_src,
     params_str = url_src.substr(pos + 1);
   }
 
+  if (name_str.empty()) {
+    return false;
+  }
   if (name_str[0] == '/') // trim leading slash
     name_str.remove_prefix(1);
 
@@ -6319,6 +6324,9 @@ void RGWInitMultipart::execute(optional_yield y)
     return;
   }
 
+  encode_obj_tags_attr(obj_tags, attrs);
+  rgw_cond_decode_objtags(s, attrs);
+
   std::unique_ptr<rgw::sal::MultipartUpload> upload;
   upload = s->bucket->get_multipart_upload(s->object->get_name(),
 				       upload_id);
@@ -6567,7 +6575,10 @@ bool RGWCompleteMultipart::check_previously_completed(const RGWMultiCompleteUplo
                                   << oetag << ", re-calculated etag:" << final_etag_str << dendl;
     return false;
   }
-  ldpp_dout(this, 5) << __func__ << "() object etag and re-calculated etag match, etag: " << oetag << dendl;
+  ldpp_dout(this, 5) << __func__
+                     << "() object etag and re-calculated etag match, etag: "
+                     << oetag << dendl;
+  etag = oetag;
   return true;
 }
 
@@ -6868,9 +6879,9 @@ void RGWDeleteMultiObj::handle_individual_object(const rgw_obj_key& o, optional_
                           rgw::notify::ObjectRemovedDelete;
   std::unique_ptr<rgw::sal::Notification> res
           = driver->get_notification(obj.get(), s->src_object.get(), s, event_type, y);
-  op_ret = res->publish_reserve(this);
-  if (op_ret < 0) {
-    send_partial_response(o, false, "", op_ret, formatter_flush_cond);
+  int r = res->publish_reserve(this);
+  if (r < 0) {
+    send_partial_response(o, false, "", r, formatter_flush_cond);
     return;
   }
 
@@ -6883,13 +6894,13 @@ void RGWDeleteMultiObj::handle_individual_object(const rgw_obj_key& o, optional_
   del_op->params.bucket_owner = s->bucket_owner.id;
   del_op->params.marker_version_id = version_id;
 
-  op_ret = del_op->delete_obj(this, y,
-                              rgw::sal::FLAG_LOG_OP | (skip_olh_obj_update ? rgw::sal::FLAG_SKIP_UPDATE_OLH : 0));
-  if (op_ret == -ENOENT) {
-    op_ret = 0;
+  r = del_op->delete_obj(this, y,
+                         rgw::sal::FLAG_LOG_OP | (skip_olh_obj_update ? rgw::sal::FLAG_SKIP_UPDATE_OLH : 0));
+  if (r == -ENOENT) {
+    r = 0;
   }
 
-  if (op_ret == 0) {
+  if (r == 0) {
     // send request to notification manager
     int ret = res->publish_commit(this, obj_size, ceph::real_clock::now(), etag, version_id);
     if (ret < 0) {
@@ -6898,7 +6909,7 @@ void RGWDeleteMultiObj::handle_individual_object(const rgw_obj_key& o, optional_
     }
   }
   
-  send_partial_response(o, del_op->result.delete_marker, del_op->result.version_id, op_ret, formatter_flush_cond);
+  send_partial_response(o, del_op->result.delete_marker, del_op->result.version_id, r, formatter_flush_cond);
 }
 
 void RGWDeleteMultiObj::handle_versioned_objects(const std::vector<rgw_obj_key>& objects,

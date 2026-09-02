@@ -109,6 +109,7 @@ MIRROR_IMAGE_STATUS_STATE_STOPPED = _MIRROR_IMAGE_STATUS_STATE_STOPPED
 
 RBD_LOCK_MODE_EXCLUSIVE = _RBD_LOCK_MODE_EXCLUSIVE
 RBD_LOCK_MODE_SHARED = _RBD_LOCK_MODE_SHARED
+RBD_LOCK_MODE_EXCLUSIVE_TRANSIENT = _RBD_LOCK_MODE_EXCLUSIVE_TRANSIENT
 
 RBD_IMAGE_OPTION_FORMAT = _RBD_IMAGE_OPTION_FORMAT
 RBD_IMAGE_OPTION_FEATURES = _RBD_IMAGE_OPTION_FEATURES
@@ -939,7 +940,8 @@ class RBD(object):
         if ret != 0:
             raise make_ex(ret, 'error retrieving image from trash')
 
-        __source_string = ['USER', 'MIRRORING', 'MIGRATION', 'REMOVING']
+        __source_string = ['USER', 'MIRRORING', 'MIGRATION', 'REMOVING',
+                           'USER_PARENT']
         info = {
             'id'          : decode_cstr(c_info.id),
             'name'        : decode_cstr(c_info.name),
@@ -5446,9 +5448,8 @@ cdef class ImageIterator(object):
                 ret = rbd_list2(self.ioctx, self.images, &self.num_images)
             if ret >= 0:
                 break
-            elif ret == -errno.ERANGE:
-                self.num_images *= 2
-            else:
+            elif ret != -errno.ERANGE:
+                self.num_images = 0
                 raise make_ex(ret, 'error listing images.')
 
     def __iter__(self):
@@ -5503,6 +5504,7 @@ cdef class LockOwnerIterator(object):
                 self.num_lock_owners = 0
                 break
             elif ret != -errno.ERANGE:
+                self.num_lock_owners = 0
                 raise make_ex(ret, 'error listing lock owners for image %s' % image.name)
 
     def __iter__(self):
@@ -5704,12 +5706,13 @@ cdef class TrashIterator(object):
             with nogil:
                 ret = rbd_trash_list(self.ioctx, self.entries, &self.num_entries)
             if ret >= 0:
-                self.num_entries = ret
                 break
             elif ret != -errno.ERANGE:
+                self.num_entries = 0
                 raise make_ex(ret, 'error listing trash entries')
 
-    __source_string = ['USER', 'MIRRORING']
+    __source_string = ['USER', 'MIRRORING', 'MIGRATION', 'REMOVING',
+                       'USER_PARENT']
 
     def __iter__(self):
         for i in range(self.num_entries):
@@ -5722,8 +5725,8 @@ cdef class TrashIterator(object):
                 }
 
     def __dealloc__(self):
-        rbd_trash_list_cleanup(self.entries, self.num_entries)
         if self.entries:
+            rbd_trash_list_cleanup(self.entries, self.num_entries)
             free(self.entries)
 
 cdef class ChildIterator(object):
@@ -5769,6 +5772,7 @@ cdef class ChildIterator(object):
             if ret >= 0:
                 break
             elif ret != -errno.ERANGE:
+                self.num_children = 0
                 raise make_ex(ret, 'error listing children.')
 
     def __iter__(self):
@@ -5820,6 +5824,7 @@ cdef class WatcherIterator(object):
             if ret >= 0:
                 break
             elif ret != -errno.ERANGE:
+                self.num_watchers = 0
                 raise make_ex(ret, 'error listing watchers.')
 
     def __iter__(self):
@@ -5921,6 +5926,7 @@ cdef class GroupImageIterator(object):
             if ret >= 0:
                 break
             elif ret != -errno.ERANGE:
+                self.num_images = 0
                 raise make_ex(ret, 'error listing images for group %s' % group.name, group_errno_to_exception)
 
     def __iter__(self):

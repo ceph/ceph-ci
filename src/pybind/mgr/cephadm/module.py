@@ -134,7 +134,7 @@ DEFAULT_NVMEOF_IMAGE = 'quay.io/ceph/nvmeof:1.2.5'
 DEFAULT_LOKI_IMAGE = 'quay.io/ceph/loki:3.0.0'
 DEFAULT_PROMTAIL_IMAGE = 'quay.io/ceph/promtail:3.0.0'
 DEFAULT_ALERT_MANAGER_IMAGE = 'quay.io/prometheus/alertmanager:v0.25.0'
-DEFAULT_GRAFANA_IMAGE = 'quay.io/ceph/grafana:10.4.0'
+DEFAULT_GRAFANA_IMAGE = 'quay.io/ceph/grafana:12.3.1'
 DEFAULT_HAPROXY_IMAGE = 'quay.io/ceph/haproxy:2.3'
 DEFAULT_KEEPALIVED_IMAGE = 'quay.io/ceph/keepalived:2.2.4'
 DEFAULT_SNMP_GATEWAY_IMAGE = 'quay.io/ceph/snmp-notifier:v1.2.1'
@@ -207,7 +207,7 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule,
         Option(
             'facts_cache_timeout',
             type='secs',
-            default=1 * 60,
+            default=10 * 60,
             desc='seconds to cache host facts data',
         ),
         Option(
@@ -2470,6 +2470,19 @@ Then run the following:
             for dd in dds
         ]
 
+    def key_rotate(self, daemon_spec: CephadmDaemonDeploySpec) -> None:
+        rc, out, err = self.mon_command({
+            'prefix': 'auth rotate',
+            'entity': daemon_spec.entity_name(),
+            'format': 'json',
+            'key_type': utils.ROTATION_CIPHER
+        })
+        if rc:
+            raise OrchestratorError(
+                f'Failed to rotate daemon key for {daemon_spec.entity_name()}.\n'
+                f'Rc: {rc}\nOut: {out}\nErr: {err}'
+            )
+
     def _rotate_daemon_key(self, daemon_spec: CephadmDaemonDeploySpec) -> str:
         self.log.info(f'Rotating authentication key for {daemon_spec.name()}')
         rc, out, err = self.mon_command({
@@ -2530,7 +2543,7 @@ Then run the following:
             return ''  # unreachable
 
         if action == 'rotate-key':
-            return self._rotate_daemon_key(daemon_spec)
+            raise OrchestratorError('rotate-key is not supported in this release')
 
         if action == 'redeploy' or action == 'reconfig':
             if daemon_spec.daemon_type != 'osd':
@@ -2593,11 +2606,13 @@ Then run the following:
                 f'Unable to schedule redeploy for {daemon_name}: No standby MGRs')
 
         if action == 'rotate-key':
-            if d.daemon_type not in ['mgr', 'osd', 'mds',
-                                     'rgw', 'crash', 'nfs', 'rbd-mirror', 'iscsi']:
-                raise OrchestratorError(
-                    f'key rotation not supported for {d.daemon_type}'
-                )
+            # TODO: add this commented section back once this command is fixed
+            # if d.daemon_type not in ['mgr', 'osd', 'mds',
+            #                          'rgw', 'crash', 'nfs', 'rbd-mirror', 'iscsi']:
+            #     raise OrchestratorError(
+            #         f'key rotation not supported for {d.daemon_type}'
+            #     )
+            raise OrchestratorError(f'key rotation by orchestrator not supported in this release (for {d.name()})')
 
         self._daemon_action_set_image(action, image, d.daemon_type, d.daemon_id)
 
