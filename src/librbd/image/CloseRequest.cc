@@ -239,9 +239,17 @@ void CloseRequest<I>::send_shut_down_image_dispatcher() {
   CephContext *cct = m_image_ctx->cct;
   ldout(cct, 10) << this << " " << __func__ << dendl;
 
-  m_image_ctx->io_image_dispatcher->shut_down(create_context_callback<
+  auto ctx = create_context_callback<
     CloseRequest<I>,
-    &CloseRequest<I>::handle_shut_down_image_dispatcher>(this));
+    &CloseRequest<I>::handle_shut_down_image_dispatcher>(this);
+
+  if (m_reopen) {
+    // keep the layer that has IO parked for the re-target
+    m_image_ctx->io_image_dispatcher->shut_down_for_reopen(ctx);
+    return;
+  }
+
+  m_image_ctx->io_image_dispatcher->shut_down(ctx);
 }
 
 template <typename I>

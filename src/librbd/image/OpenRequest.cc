@@ -31,11 +31,11 @@ using util::create_context_callback;
 using util::create_rados_callback;
 
 template <typename I>
-OpenRequest<I>::OpenRequest(I *image_ctx, uint64_t flags,
+OpenRequest<I>::OpenRequest(I *image_ctx, uint64_t flags, bool reopen,
                             Context *on_finish)
   : m_image_ctx(image_ctx),
     m_skip_open_parent_image(flags & OPEN_FLAG_SKIP_OPEN_PARENT),
-    m_on_finish(on_finish), m_error_result(0) {
+    m_reopen(reopen), m_on_finish(on_finish), m_error_result(0) {
   if ((flags & OPEN_FLAG_OLD_FORMAT) != 0) {
     m_image_ctx->old_format = true;
   }
@@ -705,7 +705,9 @@ void OpenRequest<I>::send_close_image(int error_result) {
   using klass = OpenRequest<I>;
   Context *ctx = create_context_callback<klass, &klass::handle_close_image>(
     this);
-  CloseRequest<I> *req = CloseRequest<I>::create(m_image_ctx, ctx);
+  CloseRequest<I> *req = (m_reopen ?
+    CloseRequest<I>::create_for_reopen(m_image_ctx, ctx) :
+    CloseRequest<I>::create(m_image_ctx, ctx));
   req->send();
 }
 

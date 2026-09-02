@@ -21,7 +21,18 @@ class OpenRequest {
 public:
   static OpenRequest *create(ImageCtxT *image_ctx, uint64_t flags,
                              Context *on_finish) {
-    return new OpenRequest(image_ctx, flags, on_finish);
+    return new OpenRequest(image_ctx, flags, false, on_finish);
+  }
+
+  /**
+   * The open half of a reopen. Should it fail, the image context is torn back
+   * down the way image::CloseRequest::create_for_reopen() does it, so that the
+   * caller's registrations and the IO parked for the re-target survive to be
+   * dealt with by whoever asked for the reopen.
+   */
+  static OpenRequest *create_for_reopen(ImageCtxT *image_ctx, uint64_t flags,
+                                        Context *on_finish) {
+    return new OpenRequest(image_ctx, flags, true, on_finish);
   }
 
   void send();
@@ -81,10 +92,12 @@ private:
    * @endverbatim
    */
 
-  OpenRequest(ImageCtxT *image_ctx, uint64_t flags, Context *on_finish);
+  OpenRequest(ImageCtxT *image_ctx, uint64_t flags, bool reopen,
+              Context *on_finish);
 
   ImageCtxT *m_image_ctx;
   bool m_skip_open_parent_image;
+  bool m_reopen;
   Context *m_on_finish;
 
   bufferlist m_out_bl;
