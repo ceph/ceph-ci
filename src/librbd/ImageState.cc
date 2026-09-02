@@ -538,16 +538,28 @@ void ImageState<I>::reopen(librados::IoCtx& io_ctx,
   ldout(cct, 20) << __func__ << ": image_name=" << image_name << ", "
                  << "image_id=" << image_id << dendl;
 
-  m_lock.lock();
-  ceph_assert(!is_closed());
+  // park incoming IO and let what is already in flight drain before the
+  // re-target is queued, rather than from inside it. IO that is still in
+  // flight may need this state machine to make progress -- to refresh, or to
+  // release the exclusive lock -- and anything it asked for while a re-target
+  // was in flight would queue behind the very action waiting for it to drain
+  auto ctx = new LambdaContext(
+    [this, io_ctx, image_name, image_id,
+     snap_name = std::string(snap_name != nullptr ? snap_name : ""),
+     on_finish](int r) mutable {
+      m_lock.lock();
+      ceph_assert(!is_closed());
 
-  Action action(ACTION_TYPE_REOPEN);
-  action.io_ctx = io_ctx;
-  action.image_name = image_name;
-  action.image_id = image_id;
-  action.snap_name = (snap_name != nullptr ? snap_name : "");
+      Action action(ACTION_TYPE_REOPEN);
+      action.io_ctx = io_ctx;
+      action.image_name = image_name;
+      action.image_id = image_id;
+      action.snap_name = snap_name;
 
-  execute_action_unlock(action, on_finish);
+      execute_action_unlock(action, on_finish);
+    });
+
+  m_image_ctx->io_image_dispatcher->block_io(ctx);
 }
 
 template <typename I>
@@ -983,7 +995,8 @@ void ImageState<I>::handle_reopen_close(int r) {
 
   Context *ctx = create_context_callback<
     ImageState<I>, &ImageState<I>::handle_reopen_open>(this);
-  auto req = image::OpenRequest<I>::create(m_image_ctx, m_open_flags, ctx);
+  auto req = image::OpenRequest<I>::create_for_reopen(m_image_ctx,
+                                                     m_open_flags, ctx);
   req->send();
 }
 
@@ -1002,6 +1015,10 @@ void ImageState<I>::handle_reopen_open(int r) {
     m_image_ctx->io_image_dispatcher->register_default_dispatches();
     m_image_ctx->io_object_dispatcher->register_default_dispatches();
   }
+
+  // let the parked IO through against the image that is now open, or fail it
+  // if there is no longer an image to dispatch it at
+  m_image_ctx->io_image_dispatcher->unblock_io(r);
 
   m_lock.lock();
   complete_action_unlock(r < 0 ? STATE_UNINITIALIZED : STATE_OPEN, r);
