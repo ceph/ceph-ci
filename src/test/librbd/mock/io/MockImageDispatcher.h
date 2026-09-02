@@ -20,6 +20,11 @@ struct ImageDispatchInterface;
 struct MockImageDispatcher : public ImageDispatcherInterface {
 public:
   MOCK_METHOD1(shut_down, void(Context*));
+  MOCK_METHOD1(shut_down_for_reopen, void(Context*));
+
+  MOCK_METHOD1(block_io, void(Context*));
+  MOCK_METHOD1(unblock_io, void(int));
+  MOCK_CONST_METHOD0(io_blocked, bool());
 
   MOCK_METHOD0(register_default_dispatches, void());
   MOCK_METHOD1(register_dispatch, void(ImageDispatchInterface*));

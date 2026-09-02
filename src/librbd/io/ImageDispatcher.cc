@@ -12,6 +12,7 @@
 #include "librbd/io/QueueImageDispatch.h"
 #include "librbd/io/QosImageDispatch.h"
 #include "librbd/io/RefreshImageDispatch.h"
+#include "librbd/io/ReopenBlockImageDispatch.h"
 #include "librbd/io/Utils.h"
 #include "librbd/io/WriteBlockImageDispatch.h"
 
@@ -188,6 +189,11 @@ void ImageDispatcher<I>::register_default_dispatches() {
   // image, since the dispatcher itself outlives the layers it owns
   auto image_ctx = this->m_image_ctx;
 
+  if (!this->exists(IMAGE_DISPATCH_LAYER_REOPEN_BLOCK)) {
+    m_reopen_block_dispatch = new ReopenBlockImageDispatch<I>(image_ctx);
+    this->register_dispatch(m_reopen_block_dispatch);
+  }
+
   if (!this->exists(IMAGE_DISPATCH_LAYER_CORE)) {
     auto image_dispatch = new ImageDispatch(image_ctx);
     this->register_dispatch(image_dispatch);
@@ -212,6 +218,57 @@ void ImageDispatcher<I>::register_default_dispatches() {
     m_write_block_dispatch = new WriteBlockImageDispatch<I>(image_ctx);
     this->register_dispatch(m_write_block_dispatch);
   }
+}
+
+template <typename I>
+void ImageDispatcher<I>::shut_down_for_reopen(Context* on_finish) {
+  // as shut_down(), but the reopen block layer stays registered: the requests
+  // it has parked have to outlive the re-target. They are parked above the
+  // core dispatch layer, so they never reached ImageCtx::async_ops and the
+  // drain below cannot wait on them
+  auto async_op = new AsyncOperation();
+
+  on_finish = new LambdaContext([async_op, on_finish](int r) {
+      async_op->finish_op();
+      delete async_op;
+      on_finish->complete(0);
+    });
+  on_finish = new LambdaContext([this, on_finish](int r) {
+      Dispatcher<I, ImageDispatcherInterface>::shut_down_all_except(
+        IMAGE_DISPATCH_LAYER_REOPEN_BLOCK, on_finish);
+    });
+  async_op->start_op(*this->m_image_ctx);
+  async_op->flush(on_finish);
+}
+
+template <typename I>
+void ImageDispatcher<I>::send(ImageDispatchSpec* image_dispatch_spec) {
+  if ((image_dispatch_spec->image_dispatch_flags &
+       IMAGE_DISPATCH_FLAG_REOPENED) != 0) {
+    // parked while the image context was re-targeted: the IO context this
+    // request was stamped with still names the pool, namespace and snapshot
+    // of the image it was issued against
+    image_dispatch_spec->image_dispatch_flags &= ~IMAGE_DISPATCH_FLAG_REOPENED;
+    image_dispatch_spec->io_context =
+      this->m_image_ctx->get_data_io_context();
+  }
+
+  Dispatcher<I, ImageDispatcherInterface>::send(image_dispatch_spec);
+}
+
+template <typename I>
+void ImageDispatcher<I>::block_io(Context* on_blocked) {
+  m_reopen_block_dispatch->block_io(on_blocked);
+}
+
+template <typename I>
+void ImageDispatcher<I>::unblock_io(int r) {
+  m_reopen_block_dispatch->unblock_io(r);
+}
+
+template <typename I>
+bool ImageDispatcher<I>::io_blocked() const {
+  return m_reopen_block_dispatch->io_blocked();
 }
 
 template <typename I>

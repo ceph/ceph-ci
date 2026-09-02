@@ -113,6 +113,7 @@ set(librbd_internal_srcs
   io/QueueImageDispatch.cc
   io/ReadResult.cc
   io/RefreshImageDispatch.cc
+  io/ReopenBlockImageDispatch.cc
   io/SimpleSchedulerObjectDispatch.cc
   io/Types.cc
   io/Utils.cc
