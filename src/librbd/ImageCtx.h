@@ -262,6 +262,32 @@ namespace librbd {
     ImageCtx(const std::string &image_name, const std::string &image_id,
 	     librados::snap_t snap_id, IoCtx& p, bool read_only);
     ~ImageCtx();
+
+    /**
+     * Re-target a closed image context at a different image, so that a client
+     * holding nothing but the opaque handle the librbd API handed it can be
+     * moved to another image -- e.g. the destination of a live migration --
+     * without that handle ever changing.
+     *
+     * Call ImageState::reopen() rather than this directly: it owns the state
+     * machine and runs the close and open halves around this as one action.
+     * The image context must be fully torn down when this is invoked -- the
+     * same invariants the destructor checks apply here.
+     *
+     * Everything derived from the image is reset, so that the open which
+     * follows starts from scratch. Everything the opener configured on the
+     * context is preserved, since it describes this handle rather than the
+     * image behind it: the read-only mode and mask, the exclusive lock and
+     * journal policies, and the event socket. ImageState is left alone, so the
+     * update and quiesce watchers registered through it keep their handles.
+     * The asio engine is preserved as well -- rados_api is a reference bound at
+     * construction -- so the new image has to live in the same cluster.
+     */
+    void reinit(IoCtx& p, const std::string &image_name,
+                const std::string &image_id, const char *snap);
+    void reinit(IoCtx& p, const std::string &image_name,
+                const std::string &image_id, librados::snap_t snap_id);
+
     void init();
     void shutdown();
     void init_layout(int64_t pool_id);

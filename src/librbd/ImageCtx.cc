@@ -165,6 +165,133 @@ librados::IoCtx duplicate_io_ctx(librados::IoCtx& io_ctx) {
     open_snap_id = snap_id;
   }
 
+  void ImageCtx::reinit(IoCtx& p, const string &image_name,
+                        const string &image_id, const char *snap) {
+    ldout(cct, 10) << this << " " << __func__ << ": "
+                   << "image_name=" << image_name << ", "
+                   << "image_id=" << image_id << dendl;
+
+    // the image context must be fully torn down -- the same invariants the
+    // destructor checks
+    ceph_assert(parent == nullptr);
+    ceph_assert(parent_rados == nullptr);
+    ceph_assert(child == nullptr);
+    ceph_assert(config_watcher == nullptr);
+    ceph_assert(image_watcher == nullptr);
+    ceph_assert(exclusive_lock == nullptr);
+    ceph_assert(object_map == nullptr);
+    ceph_assert(journal == nullptr);
+    ceph_assert(asok_hook == nullptr);
+    {
+      std::lock_guard async_ops_locker{async_ops_lock};
+      ceph_assert(async_ops.empty());
+      ceph_assert(async_requests.empty());
+      ceph_assert(async_requests_waiters.empty());
+    }
+    {
+      std::lock_guard copyup_list_locker{copyup_list_lock};
+      ceph_assert(copyup_list.empty());
+    }
+
+    // the asio engine -- and with it the neorados handle that rados_api is
+    // bound to and the op work queue -- cannot be rebuilt, so the image being
+    // re-targeted has to live in the same cluster
+    ceph_assert(static_cast<CephContext*>(p.cct()) == cct);
+
+    if (perfcounter != nullptr) {
+      perf_stop();
+    }
+    trace_endpoint.copy_name("librbd");
+
+    md_ctx = duplicate_io_ctx(p);
+    data_ctx = duplicate_io_ctx(p);
+
+    {
+      std::unique_lock image_locker{image_lock};
+
+      name = image_name;
+      id = image_id;
+      snap_name = (snap != nullptr ? snap : "");
+      snap_namespace = {};
+      snap_id = CEPH_NOSNAP;
+      open_snap_id = CEPH_NOSNAP;
+      snap_exists = true;
+      snapc = ::SnapContext();
+      snaps.clear();
+      snap_info.clear();
+      snap_ids.clear();
+
+      // keep the read-only mode the context was opened with -- every other
+      // reason to be read-only is re-derived by the refresh
+      read_only_flags &= IMAGE_READ_ONLY_FLAG_USER;
+      read_only = (read_only_flags != 0U);
+
+      lockers.clear();
+      exclusive_locked = false;
+      lock_tag.clear();
+
+      // FIPS zeroization audit 20191117: this memset is not security related.
+      memset(&header, 0, sizeof(header));
+
+      old_format = false;
+      order = 0;
+      size = 0;
+      features = 0;
+      op_features = 0;
+      operations_disabled = false;
+      object_prefix.clear();
+      delete[] format_string;
+      format_string = nullptr;
+      header_oid.clear();
+      parent_md = {};
+      migration_info = {};
+      group_spec = {};
+      stripe_unit = 0;
+      stripe_count = 0;
+      flags = 0;
+      layout = file_layout_t();
+      encryption_format.reset();
+
+      extra_read_flags = 0;
+      read_flags = 0;
+      total_bytes_read = 0;
+
+      ignore_migrating = false;
+      disable_zero_copy = false;
+      enable_sparse_copyup = false;
+
+      // drop the config overrides the previous image carried in its metadata;
+      // the new image's are applied by the refresh that follows
+      config_overrides.clear();
+      config.set_config_values(cct->_conf.get_config_values());
+    }
+
+    {
+      std::unique_lock timestamp_locker{timestamp_lock};
+      create_timestamp = utime_t();
+      access_timestamp = utime_t();
+      modify_timestamp = utime_t();
+      diff_iterate_lock_timestamp = utime_t();
+    }
+
+    // the dispatchers outlive the layers that the close shut down
+    io_image_dispatcher->register_default_dispatches();
+    io_object_dispatcher->register_default_dispatches();
+
+    // the registry accumulates hook points as plugins are loaded, so it has
+    // to start over rather than be initialized a second time
+    delete plugin_registry;
+    plugin_registry = new PluginRegistry<ImageCtx>(this);
+
+    rebuild_data_io_context();
+  }
+
+  void ImageCtx::reinit(IoCtx& p, const string &image_name,
+                        const string &image_id, librados::snap_t snap_id) {
+    reinit(p, image_name, image_id, "");
+    open_snap_id = snap_id;
+  }
+
   ImageCtx::~ImageCtx() {
     ldout(cct, 10) << this << " " << __func__ << dendl;
 
@@ -317,6 +444,7 @@ librados::IoCtx duplicate_io_ctx(librados::IoCtx& io_ctx) {
     ceph_assert(perfcounter);
     cct->get_perfcounters_collection()->remove(perfcounter);
     delete perfcounter;
+    perfcounter = nullptr;
   }
 
   void ImageCtx::set_read_flag(unsigned flag) {
