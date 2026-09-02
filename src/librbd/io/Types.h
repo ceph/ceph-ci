@@ -57,6 +57,7 @@ enum DispatchResult {
 enum ImageDispatchLayer {
   IMAGE_DISPATCH_LAYER_NONE = 0,
   IMAGE_DISPATCH_LAYER_API_START = IMAGE_DISPATCH_LAYER_NONE,
+  IMAGE_DISPATCH_LAYER_REOPEN_BLOCK,
   IMAGE_DISPATCH_LAYER_QUEUE,
   IMAGE_DISPATCH_LAYER_QOS,
   IMAGE_DISPATCH_LAYER_EXCLUSIVE_LOCK,
@@ -97,7 +98,11 @@ enum {
 
   // TODO: pass area through ImageDispatchInterface and remove
   // this flag
-  IMAGE_DISPATCH_FLAG_CRYPTO_HEADER           = 1 << 6
+  IMAGE_DISPATCH_FLAG_CRYPTO_HEADER           = 1 << 6,
+
+  // the request was parked while the image context was re-targeted at another
+  // image, so its IO context has to be restamped before it is dispatched
+  IMAGE_DISPATCH_FLAG_REOPENED                = 1 << 7
 };
 
 enum {

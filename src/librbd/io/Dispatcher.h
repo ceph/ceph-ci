@@ -56,6 +56,32 @@ public:
     on_finish->complete(0);
   }
 
+  /// tear every layer down except one, which stays registered along with
+  /// whatever it is holding
+  void shut_down_all_except(DispatchLayer keep_dispatch_layer,
+                            Context* on_finish) {
+    auto cct = m_image_ctx->cct;
+    ldout(cct, 5) << "keep_dispatch_layer=" << keep_dispatch_layer << dendl;
+
+    std::map<DispatchLayer, DispatchMeta> dispatches;
+    {
+      std::unique_lock locker{m_lock};
+      for (auto it = m_dispatches.begin(); it != m_dispatches.end(); ) {
+        if (it->first == keep_dispatch_layer) {
+          ++it;
+          continue;
+        }
+        dispatches.insert(*it);
+        it = m_dispatches.erase(it);
+      }
+    }
+
+    for (auto it : dispatches) {
+      shut_down_dispatch(it.second, &on_finish);
+    }
+    on_finish->complete(0);
+  }
+
   void register_dispatch(Dispatch* dispatch) override {
     auto cct = m_image_ctx->cct;
     auto type = dispatch->get_dispatch_layer();

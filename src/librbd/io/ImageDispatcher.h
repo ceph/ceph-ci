@@ -23,6 +23,7 @@ struct ImageCtx;
 namespace io {
 
 template <typename> struct QosImageDispatch;
+template <typename> class ReopenBlockImageDispatch;
 template <typename> struct WriteBlockImageDispatch;
 
 template <typename ImageCtxT = ImageCtx>
@@ -35,6 +36,13 @@ public:
   void invalidate_cache(Context* on_finish) override;
 
   void shut_down(Context* on_finish) override;
+  void shut_down_for_reopen(Context* on_finish) override;
+
+  void send(ImageDispatchSpec* image_dispatch_spec) override;
+
+  void block_io(Context* on_blocked) override;
+  void unblock_io(int r) override;
+  bool io_blocked() const override;
 
   void apply_qos_schedule_tick_min(uint64_t tick) override;
   void apply_qos_limit(uint64_t flag, uint64_t limit, uint64_t burst,
@@ -61,6 +69,7 @@ private:
 
   std::atomic<uint64_t> m_next_tid{0};
 
+  ReopenBlockImageDispatch<ImageCtxT>* m_reopen_block_dispatch = nullptr;
   QosImageDispatch<ImageCtxT>* m_qos_image_dispatch = nullptr;
   WriteBlockImageDispatch<ImageCtxT>* m_write_block_dispatch = nullptr;
 

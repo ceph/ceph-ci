@@ -22,6 +22,14 @@ public:
                                uint64_t burst, uint64_t burst_seconds) = 0;
   virtual void apply_qos_exclude_ops(uint64_t exclude_ops) = 0;
 
+  /// tear the image down for a reopen, keeping the layer that parks IO while
+  /// the image context is re-targeted
+  virtual void shut_down_for_reopen(Context* on_finish) = 0;
+
+  virtual void block_io(Context* on_blocked) = 0;
+  virtual void unblock_io(int r) = 0;
+  virtual bool io_blocked() const = 0;
+
   virtual bool writes_blocked() const = 0;
   virtual int block_writes() = 0;
   virtual void block_writes(Context *on_blocked) = 0;
