@@ -177,9 +177,19 @@ void mClockScheduler::enqueue_front(OpSchedulerItem&& item)
     enqueue_high(immediate_class_priority, std::move(item), true);
   } else if (priority >= cutoff_priority) {
     enqueue_high(priority, std::move(item), true);
+  } else if (SchedulerClass::client == id.class_id) {
+    // mClock does not support enqueue at front, so we redirect into the
+    // reserved requeued_class_priority bucket instead. dequeue() must
+    // never pull from the mclock-managed queue via the starvation-bound
+    // forced yield while this bucket is non-empty.
+    enqueue_high(requeued_class_priority, std::move(item), true);
   } else {
-    // mClock does not support enqueue at front, so we use
-    // the high queue with priority 0
+    // Non-client, non-immediate, lower than cutoff items redirected via
+    // enqueue_front() (background_recovery/background_best_effort) --
+    // no per-client tid-ordering invariant applies, so this keeps the
+    // original behavior: still ahead of the mclock-managed queue, same
+    // as always, but not exempted from the starvation-bound forced
+    // yield the way requeued_class_priority is.
     enqueue_high(0, std::move(item), true);
   }
 }
@@ -206,14 +216,29 @@ void mClockScheduler::enqueue_high(unsigned priority,
 
 WorkItem mClockScheduler::dequeue()
 {
-  if (!high_priority.empty() && mclock_queue_is_starved()) {
+  // True iff a client-class item that was pulled out of its normal queue
+  // position via enqueue_front() is currently waiting in high_priority.
+  // mClock has no insert-at-front, so the starvation-bound forced
+  // yield below must not pull anything from mClock managd queue while one
+  // of these is pending
+  const bool requeued_item_pending =
+    high_priority.count(requeued_class_priority) > 0;
+
+  if (!high_priority.empty() && !requeued_item_pending &&
+      mclock_queue_is_starved()) {
     // The mclock-managed queue has pending work that has gone unserviced
     // for at least high_priority_max_starve_time because high_priority
     // keeps being refilled. Give it one guaranteed try so classes like
     // background_best_effort (e.g. scrub, backfill etc.) make forward
     // progress instead of being starved indefinitely -- see tracker 69078.
     auto fmt_prio = [this](priority_t p) -> std::string {
-      return (p == immediate_class_priority) ? "MAX" : std::to_string(p);
+      if (p == immediate_class_priority) {
+        return "MAX";
+      } else if (p == requeued_class_priority) {
+        return std::to_string(p) + "(requeued)";
+      } else {
+        return std::to_string(p);
+      }
     };
     dout(10) << __func__ << " mclock queue starved for at least "
              << mclock_conf.get_scheduler_max_starve_time()
