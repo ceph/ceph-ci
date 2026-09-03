@@ -50,15 +50,18 @@ public:
   void shut_down(Context* on_finish) override;
 
   /// park further IO and complete on_blocked once everything already in
-  /// flight below this layer has drained
+  /// flight below this layer has drained. Blockers nest: a migration holds
+  /// one across the whole prepare, and the re-target it ends with takes
+  /// another of its own
   void block_io(Context* on_blocked);
-  /// release the parked requests; a negative r fails them instead of
-  /// letting them through, for a re-target that did not complete
+  /// drop a blocker, releasing the parked requests once the last one goes. A
+  /// negative r fails them instead of letting them through, for a re-target
+  /// that did not complete
   void unblock_io(int r);
 
   inline bool io_blocked() const {
     std::shared_lock locker{m_lock};
-    return m_blocked;
+    return (m_blockers > 0);
   }
 
   bool read(
@@ -118,7 +121,8 @@ private:
   ImageCtxT* m_image_ctx;
 
   mutable ceph::shared_mutex m_lock;
-  bool m_blocked = false;
+  uint32_t m_blockers = 0;
+  int m_unblock_result = 0;
   Contexts m_on_dispatches;
 
   uint64_t m_in_flight_ios = 0;
