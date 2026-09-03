@@ -74,6 +74,8 @@ enum NotifyOp {
   NOTIFY_OP_QUIESCE            = 18,
   NOTIFY_OP_UNQUIESCE          = 19,
   NOTIFY_OP_METADATA_UPDATE    = 20,
+  NOTIFY_OP_MIGRATION_PREPARE_START    = 21,
+  NOTIFY_OP_MIGRATION_PREPARE_COMPLETE = 22,
 };
 
 struct Payload {
@@ -472,6 +474,49 @@ struct MetadataUpdatePayload : public AsyncRequestPayloadBase {
   void encode(bufferlist &bl) const;
   void decode(__u8 version, bufferlist::const_iterator &iter);
   void dump(Formatter *f) const;
+};
+
+/**
+ * Asks the watchers whether they can follow the image through a live
+ * migration, and tells them to hold their IO until it has been prepared.
+ *
+ * Unlike every other notify here, silence is not consent: a peer that does not
+ * know this op acks with nothing at all, which is indistinguishable from
+ * success under the usual aggregation. Only an explicit ResponseMessage(0)
+ * counts, and the sender matches the acks it got against the watch list.
+ */
+struct MigrationPrepareStartPayload : public AsyncRequestPayloadBase {
+  MigrationPrepareStartPayload() {}
+  MigrationPrepareStartPayload(const AsyncRequestId &id)
+    : AsyncRequestPayloadBase(id) {}
+
+  NotifyOp get_notify_op() const override {
+    return NOTIFY_OP_MIGRATION_PREPARE_START;
+  }
+  bool check_for_refresh() const override {
+    // refreshing is the very thing the watchers are being told to stop doing:
+    // the source header is about to start reporting the image as migrating
+    return false;
+  }
+};
+
+/**
+ * Tells the watchers that the source header now names the destination, so
+ * they can re-target themselves at it and resume. The spec is deliberately not
+ * carried here -- the watcher reads it from the source header it is already
+ * watching, which is the record the migration itself goes by.
+ */
+struct MigrationPrepareCompletePayload : public AsyncRequestPayloadBase {
+  MigrationPrepareCompletePayload() {}
+  MigrationPrepareCompletePayload(const AsyncRequestId &id)
+    : AsyncRequestPayloadBase(id) {}
+
+  NotifyOp get_notify_op() const override {
+    return NOTIFY_OP_MIGRATION_PREPARE_COMPLETE;
+  }
+  bool check_for_refresh() const override {
+    return false;
+  }
 };
 
 struct UnknownPayload : public Payload {
