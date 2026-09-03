@@ -17,11 +17,14 @@
 #include "librbd/image/AttachChildRequest.h"
 #include "librbd/image/AttachParentRequest.h"
 #include "librbd/internal.h"
+#include "librbd/io/ImageDispatcherInterface.h"
 #include "librbd/io/ReadResult.h"
 #include "common/Cond.h"
 #include <boost/scope_exit.hpp>
 
 #include <shared_mutex> // for std::shared_lock
+#include <chrono>
+#include <thread>
 
 void register_test_migration() {
 }
@@ -70,6 +73,20 @@ struct TestMigration : public TestFixture {
     _other_pool_ioctx.close();
 
     TestFixture::TearDown();
+  }
+
+  // a watcher acks a prepare complete before it re-targets itself, so the move
+  // is not done when prepare() returns. The parked IO is released only once
+  // the re-target has finished, so that is what says it is over -- the image
+  // name is set on the way in, before the open behind it has run
+  bool wait_for_reopen(librbd::ImageCtx *ictx) {
+    for (int i = 0; i < 300; i++) {
+      if (!ictx->io_image_dispatcher->io_blocked()) {
+        return true;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    return false;
   }
 
   void compare(const std::string &description = "") {
@@ -1392,6 +1409,53 @@ TEST_F(TestMigration, Stress2)
 TEST_F(TestMigration, StressLive)
 {
   test_stress2(true);
+}
+
+
+TEST_F(TestMigration, PrepareWithLiveClient) {
+  SKIP_IF_CRIMSON();
+  REQUIRE_FORMAT_V2();
+
+  // every other test here closes the image before preparing, which is the
+  // downtime the notify handshake exists to remove -- this one keeps it open
+  auto src_image_id = m_ictx->id;
+
+  bufferlist bl;
+  bl.append(std::string(4096, '1'));
+  ASSERT_EQ(4096, librbd::api::Io<>::write(*m_ictx, 0, bl.length(),
+                                           bufferlist{bl}, 0));
+
+  auto dst_image_name = get_temp_image_name();
+  ASSERT_EQ(0, librbd::api::Migration<>::prepare(m_ioctx, m_image_name,
+                                                 m_ioctx, dst_image_name,
+                                                 m_opts));
+
+  // the client followed the image to the destination, and the handle it was
+  // given never changed
+  ASSERT_TRUE(wait_for_reopen(m_ictx));
+  ASSERT_EQ(dst_image_name, m_ictx->name);
+  ASSERT_NE(src_image_id, m_ictx->id);
+
+  // it reads back what it wrote to the source, through the destination
+  bufferlist read_bl;
+  read_bl.push_back(bufferptr(4096));
+  ASSERT_EQ(4096, librbd::api::Io<>::read(*m_ictx, 0, 4096,
+                                          librbd::io::ReadResult{&read_bl},
+                                          0));
+  ASSERT_TRUE(bl.contents_equal(read_bl));
+
+  // and it can still write
+  bufferlist bl2;
+  bl2.append(std::string(4096, '2'));
+  ASSERT_EQ(4096, librbd::api::Io<>::write(*m_ictx, 0, bl2.length(),
+                                           bufferlist{bl2}, 0));
+
+  read_bl.clear();
+  read_bl.push_back(bufferptr(4096));
+  ASSERT_EQ(4096, librbd::api::Io<>::read(*m_ictx, 0, 4096,
+                                          librbd::io::ReadResult{&read_bl},
+                                          0));
+  ASSERT_TRUE(bl2.contents_equal(read_bl));
 }
 
 } // namespace librbd
