@@ -38,8 +38,12 @@ void AvlAllocator::_remove_from_tree(rbm_abs_addr start, rbm_abs_addr size)
   ceph_assert(size <= available_size);
 
   auto rs = extent_tree.find(extent_range_t{start, end}, extent_tree.key_comp());
+  if (rs == extent_tree.end()) {
+    ERROR("range {}~0x{:x} not found in free extent tree", start, size);
+    ceph_abort("_remove_from_tree: range not found -- likely double-alloc "
+               "or lost free of the same physical range");
+  }
   DEBUG("rs start: {}, rs end: {}", rs->start, rs->end);
-  ceph_assert(rs != extent_tree.end());
   ceph_assert(rs->start <= start);
   ceph_assert(rs->end >= end);
 
