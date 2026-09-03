@@ -5,6 +5,8 @@
 #include "librbd/ExclusiveLock.h"
 #include "librbd/ImageCtx.h"
 #include "librbd/ImageState.h"
+#include "librbd/image/MigrationReopenRequest.h"
+#include "librbd/io/ImageDispatcherInterface.h"
 #include "librbd/internal.h"
 #include "librbd/TaskFinisher.h"
 #include "librbd/Types.h"
@@ -461,6 +463,78 @@ void ImageWatcher<I>::notify_quiesce(const AsyncRequestId &async_request_id,
   bufferlist bl;
   encode(NotifyMessage(new QuiescePayload(async_request_id)), bl);
   Watcher::send_notify(bl, notify_response, on_notify);
+}
+
+template <typename I>
+void ImageWatcher<I>::notify_migration(watch_notify::Payload *payload,
+                                       Context *on_finish) {
+  auto notify_response = new watcher::NotifyResponse();
+  auto on_notify = new LambdaContext(
+    [notify_response=std::unique_ptr<watcher::NotifyResponse>(notify_response),
+     this, on_finish](int r) {
+      if (r == 0 && !notify_response->timeouts.empty()) {
+        // a peer that did not answer cannot be assumed to be following along
+        lderr(m_image_ctx.cct) << this << " " << notify_response->timeouts.size()
+                               << " peer(s) did not respond" << dendl;
+        r = -ETIMEDOUT;
+      }
+
+      for (auto &[client_id, bl] : notify_response->acks) {
+        if (r < 0) {
+          break;
+        }
+
+        // an empty ack is what a peer that does not know this op sends, and
+        // is not the same as agreeing to it
+        if (bl.length() == 0) {
+          ldout(m_image_ctx.cct, 5) << this << " peer " << client_id
+                                    << " does not support migrating a live "
+                                    << "image" << dendl;
+          r = -EOPNOTSUPP;
+          break;
+        }
+
+        try {
+          auto iter = bl.cbegin();
+          ResponseMessage response_message;
+          using ceph::decode;
+          decode(response_message, iter);
+          r = response_message.result;
+        } catch (const buffer::error &err) {
+          r = -EINVAL;
+        }
+      }
+
+      on_finish->complete(r);
+    });
+
+  bufferlist bl;
+  encode(NotifyMessage(payload), bl);
+  Watcher::send_notify(bl, notify_response, on_notify);
+}
+
+template <typename I>
+void ImageWatcher<I>::notify_migration_prepare_start(uint64_t *request_id,
+                                                     Context *on_finish) {
+  *request_id = util::reserve_async_request_id();
+
+  ldout(m_image_ctx.cct, 10) << this << " " << __func__ << ": request_id="
+                             << *request_id << dendl;
+
+  AsyncRequestId async_request_id(get_client_id(), *request_id);
+  notify_migration(new MigrationPrepareStartPayload(async_request_id),
+                   on_finish);
+}
+
+template <typename I>
+void ImageWatcher<I>::notify_migration_prepare_complete(uint64_t request_id,
+                                                        Context *on_finish) {
+  ldout(m_image_ctx.cct, 10) << this << " " << __func__ << ": request_id="
+                             << request_id << dendl;
+
+  AsyncRequestId async_request_id(get_client_id(), request_id);
+  notify_migration(new MigrationPrepareCompletePayload(async_request_id),
+                   on_finish);
 }
 
 template <typename I>
@@ -1365,6 +1439,107 @@ bool ImageWatcher<I>::handle_payload(const UnquiescePayload &payload,
 }
 
 template <typename I>
+int ImageWatcher<I>::prepare_migration_reopen() const {
+  auto cct = m_image_ctx.cct;
+
+  // a re-target rebuilds the image context from scratch, so anything the
+  // opener layered on top of it by hand cannot be carried across
+  std::shared_lock image_locker{m_image_ctx.image_lock};
+
+  if (m_image_ctx.encryption_format != nullptr) {
+    ldout(cct, 5) << "cannot follow a migration: image is encrypted" << dendl;
+    return -EOPNOTSUPP;
+  }
+
+  if (m_image_ctx.snap_id != CEPH_NOSNAP &&
+      !std::holds_alternative<cls::rbd::UserSnapshotNamespace>(
+        m_image_ctx.snap_namespace)) {
+    // the destination's snapshots have ids of their own, so a pinned image
+    // context can only be re-resolved by name, and only a user snapshot is
+    // looked up that way
+    ldout(cct, 5) << "cannot follow a migration: image is pinned to a "
+                  << "non-user snapshot" << dendl;
+    return -EOPNOTSUPP;
+  }
+
+  if (m_image_ctx.child != nullptr) {
+    // an image context opened as the source of a migration already in flight
+    ldout(cct, 5) << "cannot follow a migration: image is a migration source"
+                  << dendl;
+    return -EOPNOTSUPP;
+  }
+
+  return 0;
+}
+
+template <typename I>
+bool ImageWatcher<I>::handle_payload(const MigrationPrepareStartPayload &payload,
+                                     C_NotifyAck *ack_ctx) {
+  if (payload.async_request_id.client_id == get_client_id()) {
+    // our own notify: this is the image context driving the migration, and it
+    // still has to ack explicitly -- an empty ack is how a peer that does not
+    // know this op answers, and the sender counts those against it
+    encode(ResponseMessage(0), ack_ctx->out);
+    return true;
+  }
+
+  ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
+
+  int r = prepare_migration_reopen();
+  if (r < 0) {
+    encode(ResponseMessage(r), ack_ctx->out);
+    return true;
+  }
+
+  // hold the IO until the prepare completes. The source header is about to
+  // start reporting the image as migrating, and a refresh that saw that would
+  // fail every write behind it
+  m_image_ctx.io_image_dispatcher->block_io(new LambdaContext(
+    [ack_ctx](int r) {
+      encode(ResponseMessage(r), ack_ctx->out);
+      ack_ctx->complete(0);
+    }));
+  return false;
+}
+
+template <typename I>
+bool ImageWatcher<I>::handle_payload(
+    const MigrationPrepareCompletePayload &payload, C_NotifyAck *ack_ctx) {
+  if (payload.async_request_id.client_id == get_client_id()) {
+    encode(ResponseMessage(0), ack_ctx->out);
+    return true;
+  }
+
+  ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
+
+  // ack before re-targeting rather than after it: the close half of a reopen
+  // blocks notifies, and this is one, so driving it from here would have it
+  // wait on itself. By this point the prepare has already been written to the
+  // source header anyway, so there is nothing the sender could do with a
+  // failure that it cannot do with the header
+  // the re-target runs against the image context rather than this watcher:
+  // closing the image destroys the watcher, and its op tracker is what
+  // unregister_watch() waits on, so anything held there would deadlock the
+  // close. The image context itself is never deleted by a reopen
+  auto image_ctx = &m_image_ctx;
+  image_ctx->op_work_queue->queue(new LambdaContext(
+    [image_ctx](int r) {
+      auto ctx = new LambdaContext(
+        [image_ctx](int r) {
+          // drop the blocker taken at prepare start, releasing the parked IO
+          // at whichever image the context now points at
+          image_ctx->io_image_dispatcher->unblock_io(r);
+        });
+
+      auto req = image::MigrationReopenRequest<I>::create(image_ctx, ctx);
+      req->send();
+    }), 0);
+
+  encode(ResponseMessage(0), ack_ctx->out);
+  return true;
+}
+
+template <typename I>
 bool ImageWatcher<I>::handle_payload(const UnknownPayload &payload,
 			             C_NotifyAck *ack_ctx) {
   std::shared_lock l{m_image_ctx.owner_lock};
@@ -1460,6 +1635,14 @@ void ImageWatcher<I>::process_payload(uint64_t notify_id, uint64_t handle,
     break;
   case NOTIFY_OP_METADATA_UPDATE:
     complete = handle_payload(*(static_cast<MetadataUpdatePayload *>(payload)), ctx);
+    break;
+  case NOTIFY_OP_MIGRATION_PREPARE_START:
+    complete = handle_payload(
+      *(static_cast<MigrationPrepareStartPayload *>(payload)), ctx);
+    break;
+  case NOTIFY_OP_MIGRATION_PREPARE_COMPLETE:
+    complete = handle_payload(
+      *(static_cast<MigrationPrepareCompletePayload *>(payload)), ctx);
     break;
   default:
     ceph_assert(payload->get_notify_op() == static_cast<NotifyOp>(-1));
