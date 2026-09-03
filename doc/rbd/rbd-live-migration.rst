@@ -23,15 +23,20 @@ in another Ceph cluster or to an external data source such as a backing file,
 HTTP(s) file, S3 object, or NBD export.
 
 The live-migration copy process can safely run in the background while the new
-target image is in use. There is currently a requirement to temporarily stop
-using the source image before preparing a migration when not using the
-import-only mode of operation. This helps to ensure that the client using the
-image is updated to point to the new target image.
+target image is in use. Clients using the source image do not need to be
+stopped: when the migration is prepared, each of them holds its I/O, follows
+the image to the new target, and resumes against it, without the application
+on top seeing anything but a pause. Clients too old to follow the image, or
+using it in a way that cannot be carried over to the target, will instead
+cause the prepare step to fail -- see `Prepare Migration`_.
 
 .. note::
    Image live-migration requires the Ceph Nautilus release or later. Support for
-   external data sources requires the Ceph Pacific release of later. The
-   ``krbd`` kernel module does not support live-migration at this time.
+   external data sources requires the Ceph Pacific release of later. Preparing a
+   migration without stopping the clients using the source image requires the
+   Ceph Umbrella release or later, both for the clients and for whoever
+   prepares the migration. The ``krbd`` kernel module does not support
+   live-migration at this time.
 
 
 .. ditaa::
@@ -85,11 +90,31 @@ The `rbd migration prepare` command accepts all the same layout optionals as the
 layout. The `migration_target` can be skipped if the goal is only to change the
 on-disk layout, keeping the original image name.
 
-All clients using the source image must be stopped prior to preparing a
-live-migration. The prepare step will fail if it finds any running clients with
-the image open in read/write mode. Once the prepare step is complete, the
-clients can be restarted using the new target image name. Attempting to restart
-the clients using the source image name will result in failure.
+Clients using the source image do not need to be stopped prior to preparing a
+live-migration. The prepare step asks each of them to hold its I/O and follow
+the image to the new target, and they resume against the target once the
+prepare step is complete. The image handle the application holds does not
+change, so nothing above librbd needs to reconnect or be reconfigured.
+
+The prepare step will fail with ``EOPNOTSUPP`` if any client with the image
+open in read/write mode cannot follow it, and the image is left untouched. A
+client cannot follow the image when:
+
+* it is running a release older than Ceph Umbrella, and so does not know how
+  to;
+* the image is encrypted;
+* the image is open at a snapshot that is not a user snapshot, which cannot be
+  matched up by name on the target.
+
+Such clients have to be stopped before the migration can be prepared. Once the
+prepare step is complete they can be restarted using the new target image
+name; attempting to restart them using the source image name will result in
+failure.
+
+.. note::
+   Clients that only have the image open read-only are not tracked and are not
+   asked to follow the image. They keep reading the source image, and will fail
+   once the migration is committed and the source image is removed.
 
 The `rbd status` command will show the current state of the live-migration::
 
@@ -410,6 +435,10 @@ to the original source image being restored::
 
         $ rbd ls
         migration_source
+
+Unlike preparing a migration, aborting one does require that all clients using
+the target image are stopped first; the abort will fail with ``EBUSY``
+otherwise. The clients can then be restarted using the source image name.
 
 
 .. _layered images: ../rbd-snapshot/#layering

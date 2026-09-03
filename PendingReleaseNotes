@@ -1166,3 +1166,13 @@ Relevant tracker: https://tracker.ceph.com/issues/71677
   seconds, which matches the previously hardcoded behaviour.
 
   Relevant tracker: https://tracker.ceph.com/issues/78727
+
+* RBD: Preparing a live-migration no longer requires that the clients using the
+  source image are stopped first. Each client now holds its I/O, follows the
+  image to the migration target and resumes against it, without the image
+  handle the application holds ever changing. ``rbd migration prepare`` fails
+  with ``EOPNOTSUPP``, leaving the image untouched, if a client with the image
+  open in read/write mode cannot follow it: one running an older release, one
+  using an encrypted image, or one holding the image open at a snapshot that is
+  not a user snapshot. Such clients still have to be stopped beforehand, as do
+  clients using the target image when aborting a migration.
