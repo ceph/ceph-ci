@@ -1,6 +1,7 @@
 import contextlib
 import logging
 import json
+import uuid
 
 from io import StringIO
 from teuthology import misc as teuthology
@@ -15,7 +16,6 @@ log = logging.getLogger(__name__)
 @contextlib.contextmanager
 def task(ctx, config):
     log.info('Setting up nvme_loop on scratch devices...')
-    host = 'hostnqn'
     port = '1'
     devs_by_remote = {}
     old_scratch_by_remote = {}
@@ -24,7 +24,11 @@ def task(ctx, config):
             continue
         devs = teuthology.get_scratch_devices(remote)
         devs_by_remote[remote] = devs
-        expected_nqns = {dev.split('/')[-1] for dev in devs}
+        host = make_nqn(remote.shortname)
+        expected_nqns = {
+            make_nqn(f'{remote.shortname}:{dev}')
+            for dev in devs
+        }
         existing_nvme_devs = set(discover_devs_via_sysfs(remote))
         base = '/sys/kernel/config/nvmet'
         remote.run(
@@ -43,25 +47,26 @@ def task(ctx, config):
         provide_hostname = True
         for dev in devs:
             short = dev.split('/')[-1]
+            subsysnqn = make_nqn(f'{remote.shortname}:{dev}')
             log.info(f'Connecting nvme_loop {remote.shortname}:{dev}...')
             nvme_connect_args=[
-                'sudo', 'mkdir', '-p', f'{base}/subsystems/{short}',
+                'sudo', 'mkdir', '-p', f'{base}/subsystems/{subsysnqn}',
                 run.Raw('&&'),
                 'echo', '1', run.Raw('|'),
-                'sudo', 'tee', f'{base}/subsystems/{short}/attr_allow_any_host',
+                'sudo', 'tee', f'{base}/subsystems/{subsysnqn}/attr_allow_any_host',
                 run.Raw('&&'),
-                'sudo', 'mkdir', '-p', f'{base}/subsystems/{short}/namespaces/1',
+                'sudo', 'mkdir', '-p', f'{base}/subsystems/{subsysnqn}/namespaces/1',
                 run.Raw('&&'),
                 'echo', '-n', dev, run.Raw('|'),
-                'sudo', 'tee', f'{base}/subsystems/{short}/namespaces/1/device_path',
+                'sudo', 'tee', f'{base}/subsystems/{subsysnqn}/namespaces/1/device_path',
                 run.Raw('&&'),
                 'echo', '1', run.Raw('|'),
-                'sudo', 'tee', f'{base}/subsystems/{short}/namespaces/1/enable',
+                'sudo', 'tee', f'{base}/subsystems/{subsysnqn}/namespaces/1/enable',
                 run.Raw('&&'),
-                'sudo', 'ln', '-s', f'{base}/subsystems/{short}',
-                f'{base}/ports/{port}/subsystems/{short}',
+                'sudo', 'ln', '-s', f'{base}/subsystems/{subsysnqn}',
+                f'{base}/ports/{port}/subsystems/{subsysnqn}',
                 run.Raw('&&'),
-                'sudo', 'nvme', 'connect', '-t', 'loop', '-n', short
+                'sudo', 'nvme', 'connect', '-t', 'loop', '-n', subsysnqn
             ]
             if provide_hostname:
                 nvme_connect_args.extend(['-q', host])
@@ -70,7 +75,7 @@ def task(ctx, config):
             except Exception:
                 if provide_hostname:
                     provide_hostname = False
-                    remote.run(args=['sudo', 'nvme', 'connect', '-t', 'loop', '-n', short])
+                    remote.run(args=['sudo', 'nvme', 'connect', '-t', 'loop', '-n', subsysnqn])
                 else:
                     raise
 
@@ -267,10 +272,11 @@ def task(ctx, config):
                 continue
             for dev in devs:
                 short = dev.split('/')[-1]
+                subsysnqn = make_nqn(f'{remote.shortname}:{dev}')
                 log.info(f'Disconnecting nvme_loop {remote.shortname}:{dev}...')
                 remote.run(
                     args=[
-                        'sudo', 'nvme', 'disconnect', '-n', short
+                        'sudo', 'nvme', 'disconnect', '-n', subsysnqn
                     ],
                     check_status=False,
                 )
@@ -279,6 +285,13 @@ def task(ctx, config):
                 data=old_scratch_by_remote[remote],
                 sudo=True
             )
+
+
+def make_nqn(name: str) -> str:
+    return (
+        'nqn.2014-08.org.nvmexpress:uuid:'
+        f'{uuid.uuid5(uuid.NAMESPACE_DNS, name)}'
+    )
 
 
 def discover_devs_via_sysfs(remote) -> list:
@@ -314,8 +327,8 @@ def discover_devs_via_sysfs_by_nqn(remote, expected_nqns) -> list:
     """
     Return visible NVMe namespace heads for the expected subsystems.
 
-    The nvme_loop task uses each scratch-device basename as the subsystem
-    NQN. Walk /sys/class/nvme-subsystem so discovery remains compatible
+    The nvme_loop task generates an NQN for each scratch device.
+    Walk /sys/class/nvme-subsystem so discovery remains compatible
     with native NVMe multipath while excluding unrelated NVMe devices.
     """
     out = StringIO()
