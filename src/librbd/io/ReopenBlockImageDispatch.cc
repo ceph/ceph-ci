@@ -36,8 +36,8 @@ void ReopenBlockImageDispatch<I>::block_io(Context* on_blocked) {
 
   {
     std::unique_lock locker{m_lock};
-    ceph_assert(!m_blocked);
-    m_blocked = true;
+    ++m_blockers;
+    ldout(cct, 5) << "num=" << m_blockers << dendl;
 
     // wait for everything that already made it past this layer to finish. It
     // is not enough to flush, nor to drain ImageCtx::async_ops: a request can
@@ -66,7 +66,7 @@ void ReopenBlockImageDispatch<I>::handle_finished(int r, uint64_t tid) {
     ceph_assert(m_in_flight_ios > 0);
     --m_in_flight_ios;
 
-    if (m_blocked && m_in_flight_ios == 0) {
+    if (m_blockers > 0 && m_in_flight_ios == 0) {
       std::swap(on_blocked_contexts, m_on_blocked_contexts);
     }
   }
@@ -83,8 +83,21 @@ void ReopenBlockImageDispatch<I>::unblock_io(int r) {
   Contexts dispatch_contexts;
   {
     std::unique_lock locker{m_lock};
-    ceph_assert(m_blocked);
-    m_blocked = false;
+    ceph_assert(m_blockers > 0);
+
+    // hold on to the first failure so that it is not lost behind an outer
+    // blocker that has nothing to report
+    if (r < 0 && m_unblock_result == 0) {
+      m_unblock_result = r;
+    }
+
+    if (--m_blockers > 0) {
+      ldout(cct, 5) << "num=" << m_blockers << dendl;
+      return;
+    }
+
+    r = m_unblock_result;
+    m_unblock_result = 0;
     std::swap(dispatch_contexts, m_on_dispatches);
   }
 
@@ -210,7 +223,7 @@ bool ReopenBlockImageDispatch<I>::process_io(
     DispatchResult* dispatch_result, Context** on_finish,
     Context* on_dispatched) {
   std::unique_lock locker{m_lock};
-  if (!m_blocked && m_on_dispatches.empty()) {
+  if (m_blockers == 0 && m_on_dispatches.empty()) {
     // track it so that a block can tell when everything below has drained
     ++m_in_flight_ios;
     *on_finish = new LambdaContext([this, tid, on_finish=*on_finish](int r) {
