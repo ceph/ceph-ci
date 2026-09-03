@@ -1,6 +1,7 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:nil -*-
 // vim: ts=8 sw=2 sts=2 expandtab
 
+#include "cls/rbd/cls_rbd_client.h"
 #include "test/librados/test_cxx.h"
 #include "test/librbd/test_fixture.h"
 #include "test/librbd/test_support.h"
@@ -8,6 +9,7 @@
 #include "include/neorados/RADOS.hpp"
 #include "librbd/ImageCtx.h"
 #include "librbd/ImageState.h"
+#include "librbd/ImageWatcher.h"
 #include "librbd/Operations.h"
 #include "librbd/api/Image.h"
 #include "librbd/api/Io.h"
@@ -569,6 +571,168 @@ TEST_F(TestImageCtx, ReopenWithConcurrentIo) {
 
   ASSERT_EQ(0, failed);
   ASSERT_GT(completed, 0U);
+}
+
+// Drive the notify protocol by hand, standing in for api::Migration until it
+// is wired up: prepare start, then a source migration header naming the
+// destination, then prepare complete.
+class TestImageCtxMigrationNotify : public TestImageCtx {
+public:
+  // a watcher acks a prepare complete before it re-targets itself, so that the
+  // close half of the reopen is not waiting on the notify it is handling
+  bool wait_for_unblocked(ImageCtx *ictx) {
+    for (int i = 0; i < 300; i++) {
+      if (!ictx->io_image_dispatcher->io_blocked()) {
+        return true;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    return false;
+  }
+
+  void set_src_migration(ImageCtx *ictx, librados::IoCtx& dst_io_ctx,
+                         const std::string &dst_image_name,
+                         const std::string &dst_image_id) {
+    cls::rbd::MigrationSpec spec{
+      cls::rbd::MIGRATION_HEADER_TYPE_SRC, dst_io_ctx.get_id(),
+      dst_io_ctx.get_namespace(), dst_image_name, dst_image_id, "", {}, 0,
+      false, cls::rbd::MIRROR_IMAGE_MODE_JOURNAL, false,
+      cls::rbd::MIGRATION_STATE_PREPARED, ""};
+    ASSERT_EQ(0, cls_client::migration_set(&ictx->md_ctx, ictx->header_oid,
+                                           spec));
+  }
+};
+
+TEST_F(TestImageCtxMigrationNotify, FollowsMigration) {
+  REQUIRE_FORMAT_V2();
+
+  auto dst_image_name = create_image(m_ioctx, m_image_size);
+  write_pattern(m_ioctx, m_image_name, '1');
+  write_pattern(m_ioctx, dst_image_name, '2');
+
+  std::string dst_image_id;
+  {
+    librbd::Image image;
+    ASSERT_EQ(0, m_rbd.open(m_ioctx, image, dst_image_name.c_str()));
+    ASSERT_EQ(0, get_image_id(image, &dst_image_id));
+  }
+
+  // the client following the image, and the context standing in for the one
+  // api::Migration drives the prepare from
+  ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+  ASSERT_NO_FATAL_FAILURE(assert_pattern(ictx, '1'));
+
+  ImageCtx *src_ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &src_ictx));
+
+  uint64_t request_id;
+  C_SaferCond on_start;
+  src_ictx->image_watcher->notify_migration_prepare_start(&request_id,
+                                                          &on_start);
+  ASSERT_EQ(0, on_start.wait());
+
+  // the client is holding its IO now, so the header can start reporting the
+  // image as migrating without failing anything behind it
+  ASSERT_TRUE(ictx->io_image_dispatcher->io_blocked());
+  ASSERT_NO_FATAL_FAILURE(set_src_migration(src_ictx, m_ioctx, dst_image_name,
+                                            dst_image_id));
+
+  C_SaferCond on_complete;
+  src_ictx->image_watcher->notify_migration_prepare_complete(request_id,
+                                                             &on_complete);
+  ASSERT_EQ(0, on_complete.wait());
+  ASSERT_TRUE(wait_for_unblocked(ictx));
+
+  // the client followed the image to the destination, and its handle never
+  // changed
+  ASSERT_EQ(dst_image_name, ictx->name);
+  ASSERT_EQ(dst_image_id, ictx->id);
+  ASSERT_FALSE(ictx->io_image_dispatcher->io_blocked());
+  ASSERT_NO_FATAL_FAILURE(assert_pattern(ictx, '2'));
+}
+
+TEST_F(TestImageCtxMigrationNotify, RolledBackPrepareReleasesIo) {
+  REQUIRE_FORMAT_V2();
+
+  ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+
+  ImageCtx *src_ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &src_ictx));
+
+  uint64_t request_id;
+  C_SaferCond on_start;
+  src_ictx->image_watcher->notify_migration_prepare_start(&request_id,
+                                                          &on_start);
+  ASSERT_EQ(0, on_start.wait());
+  ASSERT_TRUE(ictx->io_image_dispatcher->io_blocked());
+
+  // no migration header was ever written, i.e. the prepare failed and rolled
+  // back -- the client has to be let go rather than left holding its IO
+  C_SaferCond on_complete;
+  src_ictx->image_watcher->notify_migration_prepare_complete(request_id,
+                                                             &on_complete);
+  ASSERT_EQ(0, on_complete.wait());
+  ASSERT_TRUE(wait_for_unblocked(ictx));
+
+  ASSERT_EQ(m_image_name, ictx->name);
+  ASSERT_NO_FATAL_FAILURE(assert_pattern(ictx, '\0'));
+}
+
+TEST_F(TestImageCtxMigrationNotify, FollowsMigrationPinnedToSnapshot) {
+  REQUIRE_FORMAT_V2();
+
+  auto dst_image_name = create_image(m_ioctx, m_image_size);
+  write_pattern(m_ioctx, m_image_name, '1');
+  write_pattern(m_ioctx, dst_image_name, '2');
+
+  // a migration carries the snapshots over by name, so the destination has
+  // one of its own with the same name and a different id
+  std::string dst_image_id;
+  {
+    ImageCtx *dst_ictx;
+    ASSERT_EQ(0, open_image(dst_image_name, &dst_ictx));
+    ASSERT_EQ(0, snap_create(*dst_ictx, "snap1"));
+    dst_image_id = dst_ictx->id;
+  }
+  {
+    ImageCtx *src_ictx;
+    ASSERT_EQ(0, open_image(m_image_name, &src_ictx));
+    ASSERT_EQ(0, snap_create(*src_ictx, "snap1"));
+    close_image(src_ictx);
+  }
+
+  ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, "snap1", &ictx));
+  auto src_snap_id = ictx->snap_id;
+  ASSERT_NE(CEPH_NOSNAP, src_snap_id);
+  ASSERT_NO_FATAL_FAILURE(assert_pattern(ictx, '1'));
+
+  ImageCtx *src_ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &src_ictx));
+
+  uint64_t request_id;
+  C_SaferCond on_start;
+  src_ictx->image_watcher->notify_migration_prepare_start(&request_id,
+                                                          &on_start);
+  ASSERT_EQ(0, on_start.wait());
+
+  ASSERT_NO_FATAL_FAILURE(set_src_migration(src_ictx, m_ioctx, dst_image_name,
+                                            dst_image_id));
+
+  C_SaferCond on_complete;
+  src_ictx->image_watcher->notify_migration_prepare_complete(request_id,
+                                                             &on_complete);
+  ASSERT_EQ(0, on_complete.wait());
+  ASSERT_TRUE(wait_for_unblocked(ictx));
+
+  // the client is pinned to the destination's snapshot of the same name
+  ASSERT_EQ(dst_image_name, ictx->name);
+  ASSERT_EQ("snap1", ictx->snap_name);
+  ASSERT_NE(CEPH_NOSNAP, ictx->snap_id);
+  ASSERT_NE(src_snap_id, ictx->snap_id);
+  ASSERT_NO_FATAL_FAILURE(assert_pattern(ictx, '2'));
 }
 
 } // namespace librbd
