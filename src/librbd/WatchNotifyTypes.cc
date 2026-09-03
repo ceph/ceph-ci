@@ -410,6 +410,12 @@ void NotifyMessage::decode(bufferlist::const_iterator& iter) {
   case NOTIFY_OP_METADATA_UPDATE:
     payload.reset(new MetadataUpdatePayload());
     break;
+  case NOTIFY_OP_MIGRATION_PREPARE_START:
+    payload.reset(new MigrationPrepareStartPayload());
+    break;
+  case NOTIFY_OP_MIGRATION_PREPARE_COMPLETE:
+    payload.reset(new MigrationPrepareCompletePayload());
+    break;
   }
 
   payload->decode(struct_v, iter);
@@ -453,6 +459,10 @@ std::list<NotifyMessage> NotifyMessage::generate_test_instances() {
   o.push_back(NotifyMessage(new UnquiescePayload(AsyncRequestId(ClientId(0, 1), 2))));
   o.push_back(NotifyMessage(new MetadataUpdatePayload(AsyncRequestId(ClientId(0, 1), 2),
 						      "foo", std::optional<std::string>{"xyz"})));
+  o.push_back(NotifyMessage(new MigrationPrepareStartPayload(
+                              AsyncRequestId(ClientId(0, 1), 2))));
+  o.push_back(NotifyMessage(new MigrationPrepareCompletePayload(
+                              AsyncRequestId(ClientId(0, 1), 2))));
   return o;
 }
 
@@ -545,6 +555,12 @@ std::ostream &operator<<(std::ostream &out,
     break;
   case NOTIFY_OP_METADATA_UPDATE:
     out << "MetadataUpdate";
+    break;
+  case NOTIFY_OP_MIGRATION_PREPARE_START:
+    out << "MigrationPrepareStart";
+    break;
+  case NOTIFY_OP_MIGRATION_PREPARE_COMPLETE:
+    out << "MigrationPrepareComplete";
     break;
   default:
     out << "Unknown (" << static_cast<uint32_t>(op) << ")";
