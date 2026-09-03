@@ -859,15 +859,14 @@ int Migration<I>::prepare() {
   // behind would find the image it has open turned into a migration source
   uint64_t request_id;
   int r = notify_prepare_start(&request_id);
-  if (r < 0) {
-    return r;
+  if (r == 0) {
+    r = prepare_images();
   }
 
-  r = prepare_images();
-
-  // the watchers parked their IO whether that worked or not, and only this
-  // lets them go again. Over a source header that was never written it
-  // simply leaves them where they started
+  // the watchers parked their IO the moment they were asked, and only this
+  // lets them go again -- including the ones that had already acked when
+  // another refused, and so never got as far as being migrated anywhere. Over
+  // a source header that was never written it leaves them where they started
   notify_prepare_complete(request_id);
 
   return r;
