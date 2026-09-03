@@ -1229,6 +1229,8 @@ protected:
   /// objecter tids of in-flight migration copy-from ops. on_shutdown must
   /// be able to cancel these tids.
   std::map<hobject_t, ceph_tid_t> pool_migration_copy_tids;
+  /// clones for which copy has completed but source-pool deletion is deferred
+  std::map<hobject_t, std::set<hobject_t>> pool_migration_copied_clones;
   /// last pool migration operation started
   hobject_t last_pool_migration_started;
   /// set for 1st object migration after activate
@@ -1746,6 +1748,7 @@ public:
   void handle_pool_migration_quiesce_complete();
 
   void pool_migration_source_start_delete_head(hobject_t oid);
+  void pool_migration_source_start_delete_clones(hobject_t oid);
   void pool_migration_source_start_delete(hobject_t oid);
   bool pool_migration_source_delete(hobject_t oid);
   void pool_migration_source_delete_pending();
