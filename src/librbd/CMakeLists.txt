@@ -88,6 +88,7 @@ set(librbd_internal_srcs
   image/DetachParentRequest.cc
   image/GetMetadataRequest.cc
   image/ListWatchersRequest.cc
+  image/MigrationReopenRequest.cc
   image/OpenRequest.cc
   image/PreRemoveRequest.cc
   image/RefreshParentRequest.cc
