@@ -88,6 +88,20 @@ public:
                       Context *on_finish);
   void notify_unquiesce(uint64_t request_id, Context *on_finish);
 
+  /**
+   * Ask the peers watching this image to hold their IO and follow it through
+   * a live migration, and tell them once it has been prepared.
+   *
+   * Both complete with -EOPNOTSUPP unless every peer acked that it can follow
+   * the image: a peer that does not know these ops acks with nothing at all,
+   * and taking silence for consent would strand it on an image that is about
+   * to become a migration source.
+   */
+  void notify_migration_prepare_start(uint64_t *request_id,
+                                      Context *on_finish);
+  void notify_migration_prepare_complete(uint64_t request_id,
+                                         Context *on_finish);
+
   void notify_metadata_set(uint64_t request_id,
                            const std::string &key, const std::string &value,
                            Context *on_finish);
@@ -209,6 +223,9 @@ private:
 
   void notify_lock_owner(watch_notify::Payload *payload, Context *on_finish);
 
+  int prepare_migration_reopen() const;
+  void notify_migration(watch_notify::Payload *payload, Context *on_finish);
+
   bool is_new_request(const watch_notify::AsyncRequestId &id) const;
   bool mark_async_request_complete(const watch_notify::AsyncRequestId &id,
                                    int r);
@@ -291,6 +308,10 @@ private:
   bool handle_payload(const watch_notify::UnquiescePayload& payload,
                       C_NotifyAck *ctx);
   bool handle_payload(const watch_notify::MetadataUpdatePayload& payload,
+                      C_NotifyAck *ctx);
+  bool handle_payload(const watch_notify::MigrationPrepareStartPayload& payload,
+                      C_NotifyAck *ctx);
+  bool handle_payload(const watch_notify::MigrationPrepareCompletePayload& payload,
                       C_NotifyAck *ctx);
   bool handle_payload(const watch_notify::UnknownPayload& payload,
                       C_NotifyAck *ctx);
