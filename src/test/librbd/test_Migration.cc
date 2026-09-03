@@ -79,7 +79,7 @@ struct TestMigration : public TestFixture {
   // is not done when prepare() returns. The parked IO is released only once
   // the re-target has finished, so that is what says it is over -- the image
   // name is set on the way in, before the open behind it has run
-  bool wait_for_reopen(librbd::ImageCtx *ictx) {
+  bool wait_for_unblocked(librbd::ImageCtx *ictx) {
     for (int i = 0; i < 300; i++) {
       if (!ictx->io_image_dispatcher->io_blocked()) {
         return true;
@@ -191,17 +191,35 @@ struct TestMigration : public TestFixture {
                          const std::string &dst_name, int r = 0) {
     std::cout << __func__ << std::endl;
 
-    close_image(m_ictx);
-    m_ictx = nullptr;
+    // the image is left open across the prepare, so that every test here
+    // migrates an image that is actually in use. The client is expected to
+    // follow it to the destination on its own, without the image context it
+    // was handed ever being replaced
+    ASSERT_NE(nullptr, m_ictx);
+    auto src_image_id = m_ictx->id;
 
     EXPECT_EQ(r, librbd::api::Migration<>::prepare(m_ioctx, m_image_name,
                                                    dst_io_ctx, dst_name,
                                                    m_opts));
-    if (r == 0) {
-      open_image(dst_io_ctx, dst_name, &m_ictx);
-    } else {
-      open_image(m_ioctx, m_image_name, &m_ictx);
+
+    // whether it moved or not, the IO it parked has to have been released
+    ASSERT_TRUE(wait_for_unblocked(m_ictx));
+
+    {
+      std::shared_lock image_locker{m_ictx->image_lock};
+      if (r == 0) {
+        ASSERT_EQ(dst_name, m_ictx->name);
+        ASSERT_EQ(dst_io_ctx.get_id(), m_ictx->md_ctx.get_id());
+        ASSERT_EQ(dst_io_ctx.get_namespace(),
+                  m_ictx->md_ctx.get_namespace());
+        ASSERT_NE(src_image_id, m_ictx->id);
+      } else {
+        // a prepare that failed leaves the client on the source
+        ASSERT_EQ(m_image_name, m_ictx->name);
+        ASSERT_EQ(src_image_id, m_ictx->id);
+      }
     }
+
     compare("after prepare");
   }
 
@@ -1432,7 +1450,7 @@ TEST_F(TestMigration, PrepareWithLiveClient) {
 
   // the client followed the image to the destination, and the handle it was
   // given never changed
-  ASSERT_TRUE(wait_for_reopen(m_ictx));
+  ASSERT_TRUE(wait_for_unblocked(m_ictx));
   ASSERT_EQ(dst_image_name, m_ictx->name);
   ASSERT_NE(src_image_id, m_ictx->id);
 
