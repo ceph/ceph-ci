@@ -505,6 +505,14 @@ TransactionManager::relocate_logical_extent(
   assert(!mapping.is_zero_reserved());
   assert(mapping.is_viewable());
   auto v = get_extent_if_linked(t, *(mapping.direct_cursor));
+  // Defaults for the "not loaded" branch below, where mapping's cursor is
+  // the only available source. Overridden in the is_stable_clean() branch,
+  // where extent's forward-chased view is authoritative instead.
+  auto val = mapping.get_val();
+  std::optional<paddr_t> shadow_val;
+  if (mapping.has_shadow_val()) {
+    shadow_val = mapping.get_shadow_val();
+  }
   if (!v.has_child()) {
     auto &child_pos = v.get_child_pos();
     auto laddr = mapping.get_key();
@@ -543,6 +551,23 @@ TransactionManager::relocate_logical_extent(
     auto extent = co_await v.get_child_fut_as<LogicalChildNode>();
 
     if (extent->is_stable_clean()) {
+      // extent (forward-chased) can be newer than mapping's cursor after a
+      // concurrent no-conflict-publish rewrite (e.g. tiering promotion);
+      // trust extent's own paddr for the retire+realloc-same-paddr below.
+      if (extent->get_paddr() != val) {
+        SUBWARNT(seastore_tm,
+          "stale mapping: mapping.get_val()={} != extent->get_paddr()={} "
+          "for {}, mapping={}", t, val, extent->get_paddr(), *extent, mapping);
+        val = extent->get_paddr();
+      }
+      if (shadow_val && extent->get_shadow() &&
+          extent->get_shadow()->get_paddr() != *shadow_val) {
+        SUBWARNT(seastore_tm,
+          "stale shadow mapping: mapping.get_shadow_val()={} != "
+          "extent->get_shadow()->get_paddr()={} for {}, mapping={}",
+          t, *shadow_val, extent->get_shadow()->get_paddr(), *extent, mapping);
+        shadow_val = extent->get_shadow()->get_paddr();
+      }
       cache->retire_extent(t, extent);
     } else {
       // A stable-dirty extent may hold un-flushed deltas -- callers must
@@ -561,12 +586,12 @@ TransactionManager::relocate_logical_extent(
   }
   auto remapped_extent = cache->alloc_remapped_extent_by_type(
     t, mapping.get_extent_type(), new_laddr,
-    mapping.get_val(), 0, mapping.get_length(), std::nullopt
+    val, 0, mapping.get_length(), std::nullopt
   )->cast<LogicalChildNode>();
-  if (mapping.has_shadow_val()) {
+  if (shadow_val) {
     auto remapped_shadow = cache->alloc_remapped_extent_by_type(
       t, mapping.get_extent_type(), new_laddr,
-      mapping.get_shadow_val(), 0, mapping.get_length(), std::nullopt
+      *shadow_val, 0, mapping.get_length(), std::nullopt
     )->cast<LogicalChildNode>();
     remapped_shadow->set_shadow_extent(true);
     remapped_extent->set_shadow(remapped_shadow);
