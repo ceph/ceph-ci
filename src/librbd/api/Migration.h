@@ -60,6 +60,10 @@ private:
             ImageOptions& opts, ProgressContext *prog_ctx);
 
   int prepare();
+  int prepare_images();
+
+  int notify_prepare_start(uint64_t *request_id);
+  void notify_prepare_complete(uint64_t request_id);
   int prepare_import();
   int execute();
   int abort();

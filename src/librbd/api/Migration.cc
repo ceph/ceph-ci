@@ -12,6 +12,7 @@
 #include "librbd/ExclusiveLock.h"
 #include "librbd/ImageCtx.h"
 #include "librbd/ImageState.h"
+#include "librbd/ImageWatcher.h"
 #include "librbd/Operations.h"
 #include "librbd/Utils.h"
 #include "librbd/api/Config.h"
@@ -433,22 +434,8 @@ int Migration<I>::prepare(librados::IoCtx& io_ctx,
     src_image_ctx->state->close();
   } BOOST_SCOPE_EXIT_END;
 
-  std::list<obj_watch_t> watchers;
-  int flags = librbd::image::LIST_WATCHERS_FILTER_OUT_MY_INSTANCE |
-              librbd::image::LIST_WATCHERS_FILTER_OUT_MIRROR_INSTANCES;
-  C_SaferCond on_list_watchers;
-  auto list_watchers_request = librbd::image::ListWatchersRequest<I>::create(
-      *src_image_ctx, flags, &watchers, &on_list_watchers);
-  list_watchers_request->send();
-  r = on_list_watchers.wait();
-  if (r < 0) {
-    lderr(cct) << "failed listing watchers:" << cpp_strerror(r) << dendl;
-    return r;
-  }
-  if (!watchers.empty()) {
-    lderr(cct) << "image has watchers - not migrating" << dendl;
-    return -EBUSY;
-  }
+  // the image no longer has to be idle: whoever is watching it is asked
+  // to follow it to the destination as part of the prepare below
 
   uint64_t format = 2;
   if (opts.get(RBD_IMAGE_OPTION_FORMAT, &format) != 0) {
@@ -867,6 +854,66 @@ template <typename I>
 int Migration<I>::prepare() {
   ldout(m_cct, 10) << dendl;
 
+  // ask whoever has the source open to hold their IO and follow the image
+  // to the destination. Every one of them has to be able to: a watcher left
+  // behind would find the image it has open turned into a migration source
+  uint64_t request_id;
+  int r = notify_prepare_start(&request_id);
+  if (r < 0) {
+    return r;
+  }
+
+  r = prepare_images();
+
+  // the watchers parked their IO whether that worked or not, and only this
+  // lets them go again. Over a source header that was never written it
+  // simply leaves them where they started
+  notify_prepare_complete(request_id);
+
+  return r;
+}
+
+template <typename I>
+int Migration<I>::notify_prepare_start(uint64_t *request_id) {
+  ldout(m_cct, 10) << dendl;
+
+  C_SaferCond ctx;
+  m_src_image_ctx->image_watcher->notify_migration_prepare_start(
+    request_id, &ctx);
+  int r = ctx.wait();
+  if (r == -EOPNOTSUPP) {
+    lderr(m_cct) << "image is in use by a client that cannot follow it "
+                 << "through a migration - not migrating" << dendl;
+    return r;
+  } else if (r < 0) {
+    lderr(m_cct) << "failed to notify watchers: " << cpp_strerror(r)
+                 << dendl;
+    return r;
+  }
+
+  return 0;
+}
+
+template <typename I>
+void Migration<I>::notify_prepare_complete(uint64_t request_id) {
+  ldout(m_cct, 10) << dendl;
+
+  C_SaferCond ctx;
+  m_src_image_ctx->image_watcher->notify_migration_prepare_complete(
+    request_id, &ctx);
+  int r = ctx.wait();
+  if (r < 0) {
+    // the watchers are on their own now: the header says where the image
+    // went, and they each re-read it for themselves
+    lderr(m_cct) << "failed to notify watchers: " << cpp_strerror(r)
+                 << dendl;
+  }
+}
+
+template <typename I>
+int Migration<I>::prepare_images() {
+  ldout(m_cct, 10) << dendl;
+
   BOOST_SCOPE_EXIT_TPL(&m_dst_image_ctx) {
     if (m_dst_image_ctx != nullptr) {
       m_dst_image_ctx->state->close();
@@ -1028,7 +1075,14 @@ int Migration<I>::abort() {
       return r;
     }
     if (!watchers.empty()) {
-      lderr(m_cct) << "image has watchers - cannot abort migration" << dendl;
+      // unlike prepare, an abort does not move the clients along with the
+      // image. Aborting is a manual recovery step, so it is reasonable to ask
+      // whoever is running it to stop the clients first -- and moving them
+      // back would mean restoring the source before the destination they are
+      // still holding is taken apart, which is a good deal more to get wrong
+      // while unwinding a migration
+      lderr(m_cct) << "destination image has watchers - stop them before "
+                   << "aborting the migration" << dendl;
       return -EBUSY;
     }
 
