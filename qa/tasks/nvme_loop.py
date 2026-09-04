@@ -24,7 +24,8 @@ def task(ctx, config):
             continue
         devs = teuthology.get_scratch_devices(remote)
         devs_by_remote[remote] = devs
-        host = make_nqn(remote.shortname)
+        host_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, remote.shortname))
+        host = f'nqn.2014-08.org.nvmexpress:uuid:{host_id}'
         expected_nqns = {
             make_nqn(f'{remote.shortname}:{dev}')
             for dev in devs
@@ -69,7 +70,7 @@ def task(ctx, config):
                 'sudo', 'nvme', 'connect', '-t', 'loop', '-n', subsysnqn
             ]
             if provide_hostname:
-                nvme_connect_args.extend(['-q', host])
+                nvme_connect_args.extend(['-q', host, '-I', host_id])
             try:
                 remote.run(args=nvme_connect_args)
             except Exception:
