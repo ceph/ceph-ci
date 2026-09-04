@@ -1,6 +1,7 @@
 import contextlib
 import logging
 import json
+import uuid
 
 from io import StringIO
 from teuthology import misc as teuthology
@@ -15,7 +16,6 @@ log = logging.getLogger(__name__)
 @contextlib.contextmanager
 def task(ctx, config):
     log.info('Setting up nvme_loop on scratch devices...')
-    host = 'hostnqn'
     port = '1'
     devs_by_remote = {}
     old_scratch_by_remote = {}
@@ -24,6 +24,13 @@ def task(ctx, config):
             continue
         devs = teuthology.get_scratch_devices(remote)
         devs_by_remote[remote] = devs
+        host_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, remote.shortname))
+        host = f'nqn.2014-08.org.nvmexpress:uuid:{host_id}'
+        expected_nqns = {
+            make_nqn(f'{remote.shortname}:{dev}')
+            for dev in devs
+        }
+        existing_nvme_devs = set(discover_devs_via_sysfs(remote))
         base = '/sys/kernel/config/nvmet'
         remote.run(
             args=[
@@ -41,54 +48,83 @@ def task(ctx, config):
         provide_hostname = True
         for dev in devs:
             short = dev.split('/')[-1]
+            subsysnqn = make_nqn(f'{remote.shortname}:{dev}')
             log.info(f'Connecting nvme_loop {remote.shortname}:{dev}...')
             nvme_connect_args=[
-                'sudo', 'mkdir', '-p', f'{base}/subsystems/{short}',
+                'sudo', 'mkdir', '-p', f'{base}/subsystems/{subsysnqn}',
                 run.Raw('&&'),
                 'echo', '1', run.Raw('|'),
-                'sudo', 'tee', f'{base}/subsystems/{short}/attr_allow_any_host',
+                'sudo', 'tee', f'{base}/subsystems/{subsysnqn}/attr_allow_any_host',
                 run.Raw('&&'),
-                'sudo', 'mkdir', '-p', f'{base}/subsystems/{short}/namespaces/1',
+                'sudo', 'mkdir', '-p', f'{base}/subsystems/{subsysnqn}/namespaces/1',
                 run.Raw('&&'),
                 'echo', '-n', dev, run.Raw('|'),
-                'sudo', 'tee', f'{base}/subsystems/{short}/namespaces/1/device_path',
+                'sudo', 'tee', f'{base}/subsystems/{subsysnqn}/namespaces/1/device_path',
                 run.Raw('&&'),
                 'echo', '1', run.Raw('|'),
-                'sudo', 'tee', f'{base}/subsystems/{short}/namespaces/1/enable',
+                'sudo', 'tee', f'{base}/subsystems/{subsysnqn}/namespaces/1/enable',
                 run.Raw('&&'),
-                'sudo', 'ln', '-s', f'{base}/subsystems/{short}',
-                f'{base}/ports/{port}/subsystems/{short}',
+                'sudo', 'ln', '-s', f'{base}/subsystems/{subsysnqn}',
+                f'{base}/ports/{port}/subsystems/{subsysnqn}',
                 run.Raw('&&'),
-                'sudo', 'nvme', 'connect', '-t', 'loop', '-n', short
+                'sudo', 'nvme', 'connect', '-t', 'loop', '-n', subsysnqn
             ]
             if provide_hostname:
-                nvme_connect_args.extend(['-q', host])
+                nvme_connect_args.extend(['-q', host, '-I', host_id])
             try:
                 remote.run(args=nvme_connect_args)
             except Exception:
                 if provide_hostname:
                     provide_hostname = False
-                    remote.run(args=['sudo', 'nvme', 'connect', '-t', 'loop', '-n', short])
+                    remote.run(args=['sudo', 'nvme', 'connect', '-t', 'loop', '-n', subsysnqn])
                 else:
                     raise
 
         # identify nvme_loops devices
         old_scratch_by_remote[remote] = remote.read_file('/scratch_devs')
 
+        new_devs = []
+        json_failures = 0
+        # after this many consecutive `nvme list -o json` crashes, stop
+        # retrying the (apparently broken) command and fall back to
+        # discovering devices directly via sysfs instead.
+        max_json_failures = 5
+
         with contextutil.safe_while(sleep=1, tries=15) as proceed:
             while proceed():
                 remote.run(args=['lsblk'], stdout=StringIO())
+
+                if json_failures >= max_json_failures:
+                    log.warning(
+                        f'nvme list -o json crashed {json_failures} times '
+                        'in a row; falling back to sysfs-based discovery'
+                    )
+                    new_devs = sorted(
+                        set(discover_devs_via_sysfs_by_nqn(remote, expected_nqns))
+                        - existing_nvme_devs
+                    )
+                    for dev in new_devs:
+                        bluestore_zap(remote, dev)
+                    log.info(f'new_devs (sysfs fallback) {new_devs}')
+                    assert len(new_devs) <= len(devs)
+                    if len(new_devs) == len(devs):
+                        break
+                    continue
+
                 try:
                     p = remote.run(
                         args=['sudo', 'nvme', 'list', '-o', 'json'],
                         stdout=StringIO(),
                     )
                 except CommandCrashedError:
+                    json_failures += 1
                     log.warning(
-                        'nvme list -o json command failed, retrying...'
+                        f'nvme list -o json command failed '
+                        f'({json_failures}/{max_json_failures}), retrying...'
                     )
                     continue
 
+                json_failures = 0
                 new_devs = []
                 # `nvme list -o json` will return one of the following output:
                 '''{
@@ -237,10 +273,11 @@ def task(ctx, config):
                 continue
             for dev in devs:
                 short = dev.split('/')[-1]
+                subsysnqn = make_nqn(f'{remote.shortname}:{dev}')
                 log.info(f'Disconnecting nvme_loop {remote.shortname}:{dev}...')
                 remote.run(
                     args=[
-                        'sudo', 'nvme', 'disconnect', '-n', short
+                        'sudo', 'nvme', 'disconnect', '-n', subsysnqn
                     ],
                     check_status=False,
                 )
@@ -249,6 +286,80 @@ def task(ctx, config):
                 data=old_scratch_by_remote[remote],
                 sudo=True
             )
+
+
+def make_nqn(name: str) -> str:
+    return (
+        'nqn.2014-08.org.nvmexpress:uuid:'
+        f'{uuid.uuid5(uuid.NAMESPACE_DNS, name)}'
+    )
+
+
+def discover_devs_via_sysfs(remote) -> list:
+    """
+    Return visible NVMe namespace block devices from /sys/class/block.
+
+    Walking /sys/class/nvme/nvmeX/nvmeXnY is not reliable with native
+    NVMe multipath, where controller-path and namespace-head devices can
+    use different names. Only namespace-head devices (nvmeXnY) are
+    returned; partitions and controller-path devices are ignored.
+    """
+    out = StringIO()
+    remote.run(
+        args=[
+            'bash', '-c',
+            'for d in /sys/class/block/nvme*n*; do '
+            '[ -e "$d" ] || continue; '
+            'n=$(basename "$d"); '
+            '[[ "$n" =~ ^nvme[0-9]+n[0-9]+$ ]] && echo "/dev/$n"; '
+            'done'
+        ],
+        stdout=out,
+        check_status=False,
+    )
+    return [
+        line.strip()
+        for line in out.getvalue().splitlines()
+        if line.strip()
+    ]
+
+
+def discover_devs_via_sysfs_by_nqn(remote, expected_nqns) -> list:
+    """
+    Return visible NVMe namespace heads for the expected subsystems.
+
+    The nvme_loop task generates an NQN for each scratch device.
+    Walk /sys/class/nvme-subsystem so discovery remains compatible
+    with native NVMe multipath while excluding unrelated NVMe devices.
+    """
+    out = StringIO()
+    remote.run(
+        args=[
+            'bash', '-c',
+            'for s in /sys/class/nvme-subsystem/nvme-subsys*; do '
+            '[ -e "$s" ] || continue; '
+            'nqn=$(cat "$s/subsysnqn" 2>/dev/null) || continue; '
+            'for d in "$s"/nvme*n*; do '
+            '[ -e "$d" ] || continue; '
+            'n=$(basename "$d"); '
+            '[[ "$n" =~ ^nvme[0-9]+n[0-9]+$ ]] '
+            '&& printf "%s\\t/dev/%s\\n" "$nqn" "$n"; '
+            'done; '
+            'done'
+        ],
+        stdout=out,
+        check_status=False,
+    )
+    devices = []
+    for line in out.getvalue().splitlines():
+        try:
+            nqn, dev = line.split('\t', 1)
+        except ValueError:
+            continue
+        if nqn in expected_nqns:
+            devices.append(dev)
+    return devices
+
 
 def bluestore_zap(remote, device: str) -> None:
     for offset in [0, 1073741824, 10737418240]:
