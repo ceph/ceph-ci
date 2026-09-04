@@ -1895,20 +1895,21 @@ TEST_P(StoreTest, InterfacePerfCounters) {
   auto cnt    = [logger](int idx){ return logger->get_tavg_ns(idx).second; };  // # calls
   auto sum_ns = [logger](int idx){ return logger->get_tavg_ns(idx).first;  };  // total ns
 
-  coll_t cid;
-  // clone src/dst must share the same explicit hobject hash (123) or _clone -EINVALs.
-  ghobject_t oid (hobject_t(sobject_t("obj",  CEPH_NOSNAP), "key", 123, -1, ""));
-  ghobject_t coid(hobject_t(sobject_t("obj2", CEPH_NOSNAP), "key", 123, -1, ""));
-  ghobject_t roid(hobject_t(sobject_t("obj3", CEPH_NOSNAP), "key", 123, -1, ""));
-  ghobject_t miss(hobject_t(sobject_t("missing", CEPH_NOSNAP)));
+  // pg, not meta: split/merge_collection assert is_pg() on src and dest.
+  const int bits = 2;
+  coll_t cid(spg_t(pg_t(0, 4373), shard_id_t::NO_SHARD));
+  // hash 0 so get_onode's oid.match() passes; one shared hash keeps _clone valid.
+  ghobject_t oid (hobject_t(sobject_t("obj",  CEPH_NOSNAP), "key", 0, 4373, ""));
+  ghobject_t coid(hobject_t(sobject_t("obj2", CEPH_NOSNAP), "key", 0, 4373, ""));
+  ghobject_t roid(hobject_t(sobject_t("obj3", CEPH_NOSNAP), "key", 0, 4373, ""));
+  ghobject_t miss(hobject_t(sobject_t("missing", CEPH_NOSNAP), "key", 0, 4373, ""));
   auto ch = store->create_new_collection(cid);
 
-  // build+run a transaction
   auto submit = [&](auto&& fn) {
     ObjectStore::Transaction t; fn(t);
     ASSERT_EQ(0, queue_transaction(store, ch, std::move(t)));
   };
-  // baseline -> run fn -> assert counter advanced by `want` (prints avg latency for demo)
+  // run fn, assert the counter advanced by `want`, print avg latency
   auto check = [&](const char* name, int idx, uint64_t want, auto&& fn) {
     uint64_t before = cnt(idx);
     fn();
@@ -1921,7 +1922,7 @@ TEST_P(StoreTest, InterfacePerfCounters) {
 
   // setup: a populated object (data + attr + omap)
   submit([&](auto& t){
-    t.create_collection(cid, 0);
+    t.create_collection(cid, bits);
     t.touch(cid, oid);
     bufferlist bl; bl.append(string(4096, 'a'));
     t.write(cid, oid, 0, bl.length(), bl);
@@ -1960,8 +1961,8 @@ TEST_P(StoreTest, InterfacePerfCounters) {
     store->collection_exists(cid);
     store->collection_bits(ch); });
 
-  // regression guard: collection_empty delegates to collection_list (already measured
-  // as clist_lat), so it must NOT bump collection_lat.
+  // collection_empty delegates to collection_list (counted as clist_lat), so it
+  // must not bump collection_lat -- guards against double counting.
   check("collection_empty stays uncounted", l_bluestore_collection_lat, 0, [&]{
     bool empty; store->collection_empty(ch, &empty); });
 
@@ -1999,8 +2000,34 @@ TEST_P(StoreTest, InterfacePerfCounters) {
   check("rename_lat", l_bluestore_rename_lat, 1, [&]{
     submit([&](auto& t){ t.collection_move_rename(cid, coid, cid, roid); }); });
 
-  check("other_write_lat (set_alloc_hint)", l_bluestore_other_write_lat, 1, [&]{
+  check("other_ops_lat (set_alloc_hint)", l_bluestore_other_ops_lat, 1, [&]{
     submit([&](auto& t){ t.set_alloc_hint(cid, oid, 4096, 4096, 0); }); });
+
+  // ---- collection ops ----
+  // split dest must be fresh, empty, and created at bits+1.
+  coll_t pb(spg_t(pg_t(1 << bits, 4373), shard_id_t::NO_SHARD));
+  store->create_new_collection(pb);
+
+  check("split_collection_lat", l_bluestore_split_collection_lat, 1, [&]{
+    submit([&](auto& t){
+      t.create_collection(pb, bits + 1);
+      t.split_collection(cid, bits + 1, 1 << bits, pb); }); });
+
+  check("merge_collection_lat", l_bluestore_merge_collection_lat, 1, [&]{
+    submit([&](auto& t){ t.merge_collection(pb, cid, bits); }); });
+
+  // merge consumed pb; recreate it empty. _remove_collection calls
+  // flush_all_but_last() on pb's own sequencer, so queue on chb, not ch.
+  check("remove_collection_lat", l_bluestore_remove_collection_lat, 1, [&]{
+    auto chb = store->create_new_collection(pb);
+    {
+      ObjectStore::Transaction t; t.create_collection(pb, bits);
+      ASSERT_EQ(0, queue_transaction(store, chb, std::move(t)));
+    }
+    {
+      ObjectStore::Transaction t; t.remove_collection(pb);
+      ASSERT_EQ(0, queue_transaction(store, chb, std::move(t)));
+    } });
 }
 
 TEST_P(StoreTestSpecificAUSize, BluestoreStatFSTest) {
