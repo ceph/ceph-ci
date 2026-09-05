@@ -258,7 +258,7 @@ namespace rgw::dedup {
 
     uint32_t d_min_obj_size_for_dedup = (64ULL * 1024);
     bool     d_split_head             = true;
-    bool     d_pool_supports_truncate = true;
+    bool     d_pool_supports_truncate = false;
     uint32_t d_head_object_size       = (4ULL * 1024 * 1024);
     control_t d_ctl;
     dedup_filter_t d_filter;
