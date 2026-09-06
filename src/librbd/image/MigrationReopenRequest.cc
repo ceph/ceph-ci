@@ -87,6 +87,13 @@ void MigrationReopenRequest<I>::handle_get_migration_header(int r) {
   case cls::rbd::MIGRATION_STATE_EXECUTING:
   case cls::rbd::MIGRATION_STATE_EXECUTED:
     break;
+  case cls::rbd::MIGRATION_STATE_PREPARING:
+    // the prepare is still writing the header, so there is nothing to follow
+    // yet and nothing has gone wrong either -- look again, as the refresh
+    // does when it lands in the middle of a prepare
+    ldout(cct, 5) << "migration is still being prepared, retrying" << dendl;
+    send_get_migration_header();
+    return;
   case cls::rbd::MIGRATION_STATE_ABORTING:
     // the destination is on its way out
     ldout(cct, 5) << "migration is being aborted: staying put" << dendl;

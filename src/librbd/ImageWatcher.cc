@@ -466,51 +466,71 @@ void ImageWatcher<I>::notify_quiesce(const AsyncRequestId &async_request_id,
 }
 
 template <typename I>
-void ImageWatcher<I>::notify_migration(watch_notify::Payload *payload,
+void ImageWatcher<I>::notify_migration(const bufferlist &bl,
+                                       const AsyncRequestId &async_request_id,
+                                       size_t attempt, size_t total_attempts,
                                        Context *on_finish) {
+  ceph_assert(attempt <= total_attempts);
+  ldout(m_image_ctx.cct, 10) << this << " " << __func__ << ": "
+                             << "async_request_id=" << async_request_id
+                             << " attempts @ " << attempt << "/"
+                             << total_attempts << dendl;
+
   auto notify_response = new watcher::NotifyResponse();
   auto on_notify = new LambdaContext(
     [notify_response=std::unique_ptr<watcher::NotifyResponse>(notify_response),
-     this, on_finish](int r) {
-      if (r == 0 && !notify_response->timeouts.empty()) {
-        // a peer that did not answer cannot be assumed to be following along
-        lderr(m_image_ctx.cct) << this << " " << notify_response->timeouts.size()
-                               << " peer(s) did not respond" << dendl;
-        r = -ETIMEDOUT;
-      }
-
-      for (auto &[client_id, bl] : notify_response->acks) {
-        if (r < 0) {
-          break;
+     this, bl, async_request_id, attempt, total_attempts,
+     on_finish](int r) {
+      if (r == -ETIMEDOUT) {
+        // a peer that did not answer is still holding its IO for us, so keep
+        // asking rather than leaving it that way. The request id is unchanged,
+        // so a peer that did hear us treats the retry as a duplicate
+        if (attempt < total_attempts) {
+          notify_migration(bl, async_request_id, attempt + 1,
+                           total_attempts, on_finish);
+          return;
         }
 
-        // an empty ack is what a peer that does not know this op sends, and
-        // is not the same as agreeing to it
-        if (bl.length() == 0) {
-          ldout(m_image_ctx.cct, 5) << this << " peer " << client_id
-                                    << " does not support migrating a live "
-                                    << "image" << dendl;
-          r = -EOPNOTSUPP;
-          break;
+        lderr(m_image_ctx.cct) << this << " " << __func__
+                               << ": timed out after " << total_attempts
+                               << " attempts" << dendl;
+      } else if (r == 0) {
+        for (auto &[client_id, bl] : notify_response->acks) {
+          // an empty ack is what a peer that does not know this op sends, and
+          // is not the same as agreeing to it
+          if (bl.length() == 0) {
+            ldout(m_image_ctx.cct, 5) << this << " peer " << client_id
+                                      << " does not support migrating a live "
+                                      << "image" << dendl;
+            r = -EOPNOTSUPP;
+            break;
+          }
+
+          try {
+            auto iter = bl.cbegin();
+            ResponseMessage response_message;
+            using ceph::decode;
+            decode(response_message, iter);
+            r = response_message.result;
+          } catch (const buffer::error &err) {
+            r = -EINVAL;
+          }
+
+          if (r < 0) {
+            break;
+          }
         }
 
-        try {
-          auto iter = bl.cbegin();
-          ResponseMessage response_message;
-          using ceph::decode;
-          decode(response_message, iter);
-          r = response_message.result;
-        } catch (const buffer::error &err) {
-          r = -EINVAL;
+        if (r == 0 && !notify_response->timeouts.empty()) {
+          r = -ETIMEDOUT;
         }
       }
 
       on_finish->complete(r);
     });
 
-  bufferlist bl;
-  encode(NotifyMessage(payload), bl);
-  Watcher::send_notify(bl, notify_response, on_notify);
+  bufferlist notify_bl{bl};
+  Watcher::send_notify(notify_bl, notify_response, on_notify);
 }
 
 template <typename I>
@@ -521,9 +541,14 @@ void ImageWatcher<I>::notify_migration_prepare_start(uint64_t *request_id,
   ldout(m_image_ctx.cct, 10) << this << " " << __func__ << ": request_id="
                              << *request_id << dendl;
 
+  auto total_attempts = m_image_ctx.config.template get_val<uint64_t>(
+    "rbd_migration_notification_attempts");
+
   AsyncRequestId async_request_id(get_client_id(), *request_id);
-  notify_migration(new MigrationPrepareStartPayload(async_request_id),
-                   on_finish);
+
+  bufferlist bl;
+  encode(NotifyMessage(new MigrationPrepareStartPayload(async_request_id)), bl);
+  notify_migration(bl, async_request_id, 1, total_attempts, on_finish);
 }
 
 template <typename I>
@@ -532,9 +557,15 @@ void ImageWatcher<I>::notify_migration_prepare_complete(uint64_t request_id,
   ldout(m_image_ctx.cct, 10) << this << " " << __func__ << ": request_id="
                              << request_id << dendl;
 
+  auto total_attempts = m_image_ctx.config.template get_val<uint64_t>(
+    "rbd_migration_notification_attempts");
+
   AsyncRequestId async_request_id(get_client_id(), request_id);
-  notify_migration(new MigrationPrepareCompletePayload(async_request_id),
-                   on_finish);
+
+  bufferlist bl;
+  encode(NotifyMessage(new MigrationPrepareCompletePayload(async_request_id)),
+         bl);
+  notify_migration(bl, async_request_id, 1, total_attempts, on_finish);
 }
 
 template <typename I>
@@ -1491,6 +1522,30 @@ bool ImageWatcher<I>::handle_payload(const MigrationPrepareStartPayload &payload
     return true;
   }
 
+  {
+    std::lock_guard locker{m_migration_lock};
+    if (m_migration_prepare_id == payload.async_request_id) {
+      // a resent notify for a prepare we are already holding IO for.
+      // Push the watchdog out again: the sender is still there, so it
+      // is not our job to recover yet
+      schedule_migration_prepare_timeout(payload.async_request_id);
+      encode(ResponseMessage(0), ack_ctx->out);
+      return true;
+    } else if (m_migration_prepare_id) {
+      lderr(m_image_ctx.cct) << this << " " << __func__
+                             << ": already following another migration"
+                             << dendl;
+      encode(ResponseMessage(-EBUSY), ack_ctx->out);
+      return true;
+    }
+    m_migration_prepare_id = payload.async_request_id;
+  }
+
+  // if the prepare never tells us how it went -- it died, or the notify
+  // never arrived -- we have to work it out for ourselves rather than
+  // hold this IO forever
+  schedule_migration_prepare_timeout(payload.async_request_id);
+
   // hold the IO until the prepare completes. The source header is about to
   // start reporting the image as migrating, and a refresh that saw that would
   // fail every write behind it
@@ -1512,15 +1567,76 @@ bool ImageWatcher<I>::handle_payload(
 
   ldout(m_image_ctx.cct, 10) << this << " " << __func__ << dendl;
 
+  {
+    std::lock_guard locker{m_migration_lock};
+    if (m_migration_prepare_id != payload.async_request_id) {
+      // we never agreed to follow this migration, so we are holding no IO
+      // for it and have nothing to release. That is either because we
+      // refused it, or because we only opened the image after it started
+      ldout(m_image_ctx.cct, 5) << this << " " << __func__
+                                << ": not following this migration" << dendl;
+      encode(ResponseMessage(0), ack_ctx->out);
+      return true;
+    }
+    // the id stays set until the re-target is done with it, so that a retry of
+    // this notify is recognised as a duplicate rather than starting a second
+  }
+
   // ack before re-targeting rather than after it: the close half of a reopen
   // blocks notifies, and this is one, so driving it from here would have it
   // wait on itself. By this point the prepare has already been written to the
   // source header anyway, so there is nothing the sender could do with a
   // failure that it cannot do with the header
-  // the re-target runs against the image context rather than this watcher:
-  // closing the image destroys the watcher, and its op tracker is what
-  // unregister_watch() waits on, so anything held there would deadlock the
-  // close. The image context itself is never deleted by a reopen
+  m_task_finisher->cancel(
+    Task(TASK_CODE_MIGRATION_PREPARE, payload.async_request_id));
+  migration_reopen(payload.async_request_id);
+
+  encode(ResponseMessage(0), ack_ctx->out);
+  return true;
+}
+
+template <typename I>
+bool ImageWatcher<I>::is_migration_prepare_pending() const {
+  std::lock_guard locker{m_migration_lock};
+  return m_migration_prepare_id.has_value();
+}
+
+template <typename I>
+void ImageWatcher<I>::schedule_migration_prepare_timeout(
+    const AsyncRequestId &async_request_id) {
+  // the same lease the quiesce requests run on
+  auto timeout = 2 * watcher::Notifier::NOTIFY_TIMEOUT / 1000;
+
+  Task task(TASK_CODE_MIGRATION_PREPARE, async_request_id);
+  auto ctx = new LambdaContext(
+    [this, async_request_id](int r) {
+      ldout(m_image_ctx.cct, 5) << this << " migration prepare "
+                                << async_request_id << " timed out"
+                                << dendl;
+
+      migration_reopen(async_request_id);
+    });
+
+  m_task_finisher->cancel(task);
+  m_task_finisher->add_event_after(task, timeout, ctx);
+}
+
+template <typename I>
+void ImageWatcher<I>::migration_reopen(
+    const AsyncRequestId &async_request_id) {
+  {
+    std::lock_guard locker{m_migration_lock};
+    if (m_migration_prepare_id != async_request_id) {
+      // already handed over, by whichever of the notify and the timeout got
+      // here first
+      return;
+    }
+    m_migration_prepare_id.reset();
+  }
+
+  // everything this watcher owns has been settled above, because the close
+  // half of a re-target destroys it -- nothing below may touch it. The image
+  // context outlives the re-target, so the blocker is dropped through that
   auto image_ctx = &m_image_ctx;
   image_ctx->op_work_queue->queue(new LambdaContext(
     [image_ctx](int r) {
@@ -1534,9 +1650,6 @@ bool ImageWatcher<I>::handle_payload(
       auto req = image::MigrationReopenRequest<I>::create(image_ctx, ctx);
       req->send();
     }), 0);
-
-  encode(ResponseMessage(0), ack_ctx->out);
-  return true;
 }
 
 template <typename I>

@@ -15,6 +15,7 @@
 #include "librbd/exclusive_lock/Policy.h"
 #include "librbd/internal.h"
 #include <functional>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -102,6 +103,8 @@ public:
   void notify_migration_prepare_complete(uint64_t request_id,
                                          Context *on_finish);
 
+  bool is_migration_prepare_pending() const;
+
   void notify_metadata_set(uint64_t request_id,
                            const std::string &key, const std::string &value,
                            Context *on_finish);
@@ -116,6 +119,7 @@ private:
     TASK_CODE_ASYNC_REQUEST,
     TASK_CODE_ASYNC_PROGRESS,
     TASK_CODE_QUIESCE,
+    TASK_CODE_MIGRATION_PREPARE,
   };
 
   typedef std::pair<Context *, ProgressContext *> AsyncRequest;
@@ -131,7 +135,8 @@ private:
         return m_task_code < rhs.m_task_code;
       } else if ((m_task_code == TASK_CODE_ASYNC_REQUEST ||
                   m_task_code == TASK_CODE_ASYNC_PROGRESS ||
-                  m_task_code == TASK_CODE_QUIESCE) &&
+                  m_task_code == TASK_CODE_QUIESCE ||
+                  m_task_code == TASK_CODE_MIGRATION_PREPARE) &&
                  m_async_request_id != rhs.m_async_request_id) {
         return m_async_request_id < rhs.m_async_request_id;
       }
@@ -206,6 +211,14 @@ private:
   ceph::mutex m_owner_client_id_lock;
   watch_notify::ClientId m_owner_client_id;
 
+  // the prepare a migration asked us to hold our IO for, if we agreed to
+  // follow it. Only the complete that matches may release that IO: a peer
+  // that refused, or that opened the image between the two notifies, never
+  // parked anything and has nothing to let go of
+  mutable ceph::mutex m_migration_lock =
+    ceph::make_mutex("librbd::ImageWatcher::m_migration_lock");
+  std::optional<watch_notify::AsyncRequestId> m_migration_prepare_id;
+
   AsyncOpTracker m_async_op_tracker;
 
   NoOpProgressContext m_no_op_prog_ctx;
@@ -224,7 +237,14 @@ private:
   void notify_lock_owner(watch_notify::Payload *payload, Context *on_finish);
 
   int prepare_migration_reopen() const;
-  void notify_migration(watch_notify::Payload *payload, Context *on_finish);
+  void notify_migration(const bufferlist &bl,
+                        const watch_notify::AsyncRequestId &id,
+                        size_t attempt, size_t total_attempts,
+                        Context *on_finish);
+
+  void schedule_migration_prepare_timeout(
+    const watch_notify::AsyncRequestId &id);
+  void migration_reopen(const watch_notify::AsyncRequestId &id);
 
   bool is_new_request(const watch_notify::AsyncRequestId &id) const;
   bool mark_async_request_complete(const watch_notify::AsyncRequestId &id,

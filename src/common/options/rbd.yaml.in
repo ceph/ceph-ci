@@ -858,6 +858,14 @@ options:
   services:
   - rbd
   min: 1
+- name: rbd_migration_notification_attempts
+  type: uint
+  level: dev
+  desc: the number of live migration notification attempts
+  default: 10
+  services:
+  - rbd
+  min: 1
 - name: rbd_default_snapshot_quiesce_mode
   type: str
   level: advanced
