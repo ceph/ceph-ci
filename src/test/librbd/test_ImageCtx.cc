@@ -43,6 +43,11 @@ struct QuiesceWatcher : public librbd::QuiesceWatchCtx {
   std::mutex lock;
   std::condition_variable cond;
   size_t quiesce_count = 0;
+  size_t unquiesce_count = 0;
+  // a migration freezes before it parks the IO and thaws after it has
+  // released it, so neither hook should see the IO blocked
+  bool io_blocked_on_quiesce = false;
+  bool io_blocked_on_unquiesce = false;
 
   explicit QuiesceWatcher(ImageCtx *image_ctx) : image_ctx(image_ctx) {
   }
@@ -50,6 +55,7 @@ struct QuiesceWatcher : public librbd::QuiesceWatchCtx {
   void handle_quiesce() override {
     {
       std::lock_guard locker{lock};
+      io_blocked_on_quiesce = image_ctx->io_image_dispatcher->io_blocked();
       ++quiesce_count;
       cond.notify_all();
     }
@@ -57,12 +63,22 @@ struct QuiesceWatcher : public librbd::QuiesceWatchCtx {
   }
 
   void handle_unquiesce() override {
+    std::lock_guard locker{lock};
+    io_blocked_on_unquiesce = image_ctx->io_image_dispatcher->io_blocked();
+    ++unquiesce_count;
+    cond.notify_all();
   }
 
   bool wait_for_quiesce(size_t count) {
     std::unique_lock locker{lock};
     return cond.wait_for(locker, std::chrono::seconds(30),
                          [this, count] { return quiesce_count >= count; });
+  }
+
+  bool wait_for_unquiesce(size_t count) {
+    std::unique_lock locker{lock};
+    return cond.wait_for(locker, std::chrono::seconds(30),
+                         [this, count] { return unquiesce_count >= count; });
   }
 };
 
@@ -785,6 +801,67 @@ TEST_F(TestImageCtxMigrationNotify, FollowsMigrationPinnedToSnapshot) {
   ASSERT_NE(CEPH_NOSNAP, ictx->snap_id);
   ASSERT_NE(src_snap_id, ictx->snap_id);
   ASSERT_NO_FATAL_FAILURE(assert_pattern(ictx, '2'));
+}
+
+
+TEST_F(TestImageCtxMigrationNotify, QuiescesTheApplication) {
+  REQUIRE_FORMAT_V2();
+
+  auto dst_image_name = create_image(m_ioctx, m_image_size);
+  write_pattern(m_ioctx, m_image_name, '1');
+  write_pattern(m_ioctx, dst_image_name, '2');
+
+  std::string dst_image_id;
+  {
+    librbd::Image image;
+    ASSERT_EQ(0, m_rbd.open(m_ioctx, image, dst_image_name.c_str()));
+    ASSERT_EQ(0, get_image_id(image, &dst_image_id));
+  }
+
+  ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+
+  // whoever already freezes to take a snapshot is asked to freeze here too,
+  // through the very same hook
+  QuiesceWatcher watcher(ictx);
+  ASSERT_EQ(0, ictx->state->register_quiesce_watcher(&watcher,
+                                                     &watcher.handle));
+
+  ImageCtx *src_ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &src_ictx));
+
+  uint64_t request_id;
+  C_SaferCond on_start;
+  src_ictx->image_watcher->notify_migration_prepare_start(&request_id,
+                                                          &on_start);
+  ASSERT_EQ(0, on_start.wait());
+
+  ASSERT_TRUE(watcher.wait_for_quiesce(1));
+  ASSERT_TRUE(ictx->io_image_dispatcher->io_blocked());
+  ASSERT_EQ(0U, watcher.unquiesce_count);
+
+  ASSERT_NO_FATAL_FAILURE(set_src_migration(src_ictx, m_ioctx, dst_image_name,
+                                            dst_image_id));
+
+  C_SaferCond on_complete;
+  src_ictx->image_watcher->notify_migration_prepare_complete(request_id,
+                                                             &on_complete);
+  ASSERT_EQ(0, on_complete.wait());
+  ASSERT_TRUE(wait_for_unblocked(ictx));
+  ASSERT_TRUE(watcher.wait_for_unquiesce(1));
+
+  // the freeze came before the IO was parked, and the thaw after it was
+  // released, so the application never sees a stall it was not told about
+  {
+    std::lock_guard locker{watcher.lock};
+    ASSERT_FALSE(watcher.io_blocked_on_quiesce);
+    ASSERT_FALSE(watcher.io_blocked_on_unquiesce);
+  }
+
+  ASSERT_EQ(dst_image_name, ictx->name);
+  ASSERT_NO_FATAL_FAILURE(assert_pattern(ictx, '2'));
+
+  ASSERT_EQ(0, ictx->state->unregister_quiesce_watcher(watcher.handle));
 }
 
 } // namespace librbd
