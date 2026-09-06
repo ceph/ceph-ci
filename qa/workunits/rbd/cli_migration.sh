@@ -117,6 +117,35 @@ compare_images() {
     return ${ret}
 }
 
+# Migrating an image no longer requires that whoever is using it is stopped
+# first, so run one with a client attached for the whole thing. Its own image
+# is used, since committing removes the source.
+test_migration_in_use() {
+    local base_image=inuse$$
+    local dest_image=inuse$$_dest
+
+    rbd create --size 128M ${base_image}
+
+    # a client holding the image open across the migration. It is writing the
+    # whole time, so the IO also has to survive being parked and handed over
+    rbd bench --io-type write --io-pattern rand --io-size 4K \
+        --io-threads 1 --io-total 32M ${base_image} &
+    local bench_pid=$!
+
+    rbd migration prepare ${base_image} ${dest_image}
+    rbd status ${dest_image} | grep -q "Migration:"
+
+    rbd migration execute ${dest_image}
+    rbd migration commit ${dest_image}
+
+    # the client followed the image to the destination rather than failing on
+    # a source that was migrating out from under it
+    wait ${bench_pid}
+
+    rbd status ${dest_image} | expect_false grep -q "Migration:"
+    remove_image ${dest_image}
+}
+
 test_import_native_format() {
     local base_image_spec=$1
     local dest_image_spec=$2
@@ -667,6 +696,7 @@ trap 'cleanup $?' INT TERM EXIT
 create_base_image ${IMAGE1}
 export_base_image ${IMAGE1}
 
+test_migration_in_use
 test_import_native_format ${IMAGE1} ${IMAGE2}
 test_import_qcow_format ${IMAGE1} ${IMAGE2}
 
