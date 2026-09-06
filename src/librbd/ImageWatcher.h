@@ -15,6 +15,7 @@
 #include "librbd/exclusive_lock/Policy.h"
 #include "librbd/internal.h"
 #include <functional>
+#include <list>
 #include <optional>
 #include <set>
 #include <string>
@@ -218,6 +219,11 @@ private:
   mutable ceph::mutex m_migration_lock =
     ceph::make_mutex("librbd::ImageWatcher::m_migration_lock");
   std::optional<watch_notify::AsyncRequestId> m_migration_prepare_id;
+  // quiescing and parking the IO takes as long as the application needs
+  // to freeze, so a notify resent in the meantime is answered when that
+  // is done rather than told yes before it is
+  bool m_migration_prepare_ready = false;
+  std::list<C_NotifyAck *> m_migration_prepare_acks;
 
   AsyncOpTracker m_async_op_tracker;
 
@@ -244,6 +250,8 @@ private:
 
   void schedule_migration_prepare_timeout(
     const watch_notify::AsyncRequestId &id);
+  void complete_migration_prepare_acks(
+    const watch_notify::AsyncRequestId &id, int r);
   void migration_reopen(const watch_notify::AsyncRequestId &id);
 
   bool is_new_request(const watch_notify::AsyncRequestId &id) const;

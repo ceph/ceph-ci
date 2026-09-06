@@ -1525,9 +1525,16 @@ bool ImageWatcher<I>::handle_payload(const MigrationPrepareStartPayload &payload
   {
     std::lock_guard locker{m_migration_lock};
     if (m_migration_prepare_id == payload.async_request_id) {
-      // a resent notify for a prepare we are already holding IO for.
-      // Push the watchdog out again: the sender is still there, so it
-      // is not our job to recover yet
+      if (!m_migration_prepare_ready) {
+        // still quiescing and parking for the first notify. Answer this one
+        // when that is done rather than saying yes before it is
+        m_migration_prepare_acks.push_back(ack_ctx);
+        return false;
+      }
+
+      // a resent notify for a prepare we are already holding IO for. Push the
+      // watchdog out again: the sender is still there, so it is not our job
+      // to recover yet
       schedule_migration_prepare_timeout(payload.async_request_id);
       encode(ResponseMessage(0), ack_ctx->out);
       return true;
@@ -1538,23 +1545,63 @@ bool ImageWatcher<I>::handle_payload(const MigrationPrepareStartPayload &payload
       encode(ResponseMessage(-EBUSY), ack_ctx->out);
       return true;
     }
+
     m_migration_prepare_id = payload.async_request_id;
+    m_migration_prepare_ready = false;
+    m_migration_prepare_acks.push_back(ack_ctx);
   }
 
-  // if the prepare never tells us how it went -- it died, or the notify
-  // never arrived -- we have to work it out for ourselves rather than
-  // hold this IO forever
+  // if the prepare never tells us how it went -- it died, or the notify never
+  // arrived -- we have to work it out for ourselves rather than hold this IO
+  // forever
   schedule_migration_prepare_timeout(payload.async_request_id);
 
-  // hold the IO until the prepare completes. The source header is about to
-  // start reporting the image as migrating, and a refresh that saw that would
-  // fail every write behind it
-  m_image_ctx.io_image_dispatcher->block_io(new LambdaContext(
-    [ack_ctx](int r) {
-      encode(ResponseMessage(r), ack_ctx->out);
-      ack_ctx->complete(0);
-    }));
+  auto async_request_id = payload.async_request_id;
+  auto on_quiesce = new LambdaContext(
+    [this, async_request_id](int r) {
+      if (r < 0) {
+        // the image can still be migrated, it just will not have been frozen
+        // first, so carry on rather than failing the migration over it
+        lderr(m_image_ctx.cct) << this << " failed to quiesce for migration: "
+                               << cpp_strerror(r) << dendl;
+      }
+
+      // hold the IO until the prepare completes. The source header is about
+      // to start reporting the image as migrating, and a refresh that saw
+      // that would fail every write behind it
+      m_image_ctx.io_image_dispatcher->block_io(new LambdaContext(
+        [this, async_request_id](int r) {
+          complete_migration_prepare_acks(async_request_id, r);
+        }));
+    });
+
+  // let the application freeze first, through the same hook a snapshot uses:
+  // whoever already quiesces to take a snapshot does so here too, so that the
+  // pause is one it knows about rather than an unexplained stall
+  m_image_ctx.state->notify_quiesce(on_quiesce);
   return false;
+}
+
+template <typename I>
+void ImageWatcher<I>::complete_migration_prepare_acks(
+    const AsyncRequestId &async_request_id, int r) {
+  std::list<C_NotifyAck *> acks;
+  {
+    std::lock_guard locker{m_migration_lock};
+    if (m_migration_prepare_id != async_request_id) {
+      return;
+    }
+    m_migration_prepare_ready = true;
+    acks.swap(m_migration_prepare_acks);
+  }
+
+  ldout(m_image_ctx.cct, 10) << this << " " << __func__ << ": "
+                             << acks.size() << " ack(s), r=" << r << dendl;
+
+  for (auto ack_ctx : acks) {
+    encode(ResponseMessage(r), ack_ctx->out);
+    ack_ctx->complete(0);
+  }
 }
 
 template <typename I>
@@ -1624,6 +1671,7 @@ void ImageWatcher<I>::schedule_migration_prepare_timeout(
 template <typename I>
 void ImageWatcher<I>::migration_reopen(
     const AsyncRequestId &async_request_id) {
+  std::list<C_NotifyAck *> acks;
   {
     std::lock_guard locker{m_migration_lock};
     if (m_migration_prepare_id != async_request_id) {
@@ -1632,6 +1680,14 @@ void ImageWatcher<I>::migration_reopen(
       return;
     }
     m_migration_prepare_id.reset();
+    m_migration_prepare_ready = false;
+    // a start that never finished quiescing still owes an answer
+    acks.swap(m_migration_prepare_acks);
+  }
+
+  for (auto ack_ctx : acks) {
+    encode(ResponseMessage(0), ack_ctx->out);
+    ack_ctx->complete(0);
   }
 
   // everything this watcher owns has been settled above, because the close
@@ -1645,6 +1701,10 @@ void ImageWatcher<I>::migration_reopen(
           // drop the blocker taken at prepare start, releasing the parked IO
           // at whichever image the context now points at
           image_ctx->io_image_dispatcher->unblock_io(r);
+
+          // and only then let the application thaw. ImageState outlives the
+          // re-target, unlike the watcher that asked it to freeze
+          image_ctx->state->notify_unquiesce(new LambdaContext([](int r) {}));
         });
 
       auto req = image::MigrationReopenRequest<I>::create(image_ctx, ctx);
