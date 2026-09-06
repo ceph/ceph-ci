@@ -652,6 +652,58 @@ TEST_F(TestImageCtxMigrationNotify, FollowsMigration) {
   ASSERT_NO_FATAL_FAILURE(assert_pattern(ictx, '2'));
 }
 
+TEST_F(TestImageCtxMigrationNotify, FollowsMigrationHoldingExclusiveLock) {
+  REQUIRE_FORMAT_V2();
+  REQUIRE_FEATURE(RBD_FEATURE_EXCLUSIVE_LOCK);
+
+  auto dst_image_name = create_image(m_ioctx, m_image_size);
+  write_pattern(m_ioctx, m_image_name, '1');
+  write_pattern(m_ioctx, dst_image_name, '2');
+
+  std::string dst_image_id;
+  {
+    librbd::Image image;
+    ASSERT_EQ(0, m_rbd.open(m_ioctx, image, dst_image_name.c_str()));
+    ASSERT_EQ(0, get_image_id(image, &dst_image_id));
+  }
+
+  ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+
+  // the client has been writing, so it holds the exclusive lock across the
+  // prepare and the close half of the re-target has to take that down. Every
+  // other test here follows the image read only, where the lock is never
+  // acquired and none of that runs
+  ASSERT_EQ(0, acquire_exclusive_lock(*ictx));
+  ASSERT_NO_FATAL_FAILURE(assert_pattern(ictx, '1'));
+
+  ImageCtx *src_ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &src_ictx));
+
+  uint64_t request_id;
+  C_SaferCond on_start;
+  src_ictx->image_watcher->notify_migration_prepare_start(&request_id,
+                                                          &on_start);
+  ASSERT_EQ(0, on_start.wait());
+  ASSERT_TRUE(ictx->io_image_dispatcher->io_blocked());
+
+  ASSERT_NO_FATAL_FAILURE(set_src_migration(src_ictx, m_ioctx, dst_image_name,
+                                            dst_image_id));
+
+  C_SaferCond on_complete;
+  src_ictx->image_watcher->notify_migration_prepare_complete(request_id,
+                                                             &on_complete);
+  ASSERT_EQ(0, on_complete.wait());
+  ASSERT_TRUE(wait_for_unblocked(ictx));
+
+  // the client followed the image to the destination, and the lock it held on
+  // the source did not come with it
+  ASSERT_EQ(dst_image_name, ictx->name);
+  ASSERT_EQ(dst_image_id, ictx->id);
+  ASSERT_FALSE(ictx->io_image_dispatcher->io_blocked());
+  ASSERT_NO_FATAL_FAILURE(assert_pattern(ictx, '2'));
+}
+
 TEST_F(TestImageCtxMigrationNotify, RolledBackPrepareReleasesIo) {
   REQUIRE_FORMAT_V2();
 
