@@ -1429,4 +1429,76 @@ TEST_F(TestMigration, StressLive)
   test_stress2(true);
 }
 
+
+TEST_F(TestMigration, PrepareQuiescesTheApplication)
+{
+  SKIP_IF_CRIMSON();
+  REQUIRE_FORMAT_V2();
+
+  // whoever already freezes to take a snapshot is asked to freeze for a
+  // migration too, through the very same hook
+  struct Watcher : public librbd::QuiesceWatchCtx {
+    librbd::ImageCtx *image_ctx;
+    uint64_t handle = 0;
+
+    std::mutex lock;
+    std::condition_variable cond;
+    size_t quiesce_count = 0;
+    size_t unquiesce_count = 0;
+    // the freeze comes before the IO is parked and the thaw after it is
+    // released, so neither hook should ever see the IO blocked
+    bool io_blocked_on_quiesce = false;
+    bool io_blocked_on_unquiesce = false;
+
+    explicit Watcher(librbd::ImageCtx *image_ctx) : image_ctx(image_ctx) {
+    }
+
+    void handle_quiesce() override {
+      {
+        std::lock_guard locker{lock};
+        io_blocked_on_quiesce = image_ctx->io_image_dispatcher->io_blocked();
+        ++quiesce_count;
+        cond.notify_all();
+      }
+      image_ctx->state->quiesce_complete(handle, 0);
+    }
+
+    void handle_unquiesce() override {
+      std::lock_guard locker{lock};
+      io_blocked_on_unquiesce = image_ctx->io_image_dispatcher->io_blocked();
+      ++unquiesce_count;
+      cond.notify_all();
+    }
+
+    bool wait_for(size_t quiesces, size_t unquiesces) {
+      std::unique_lock locker{lock};
+      return cond.wait_for(locker, std::chrono::seconds(30),
+                           [this, quiesces, unquiesces] {
+                             return quiesce_count >= quiesces &&
+                                    unquiesce_count >= unquiesces;
+                           });
+    }
+  } watcher(m_ictx);
+
+  ASSERT_EQ(0, m_ictx->state->register_quiesce_watcher(&watcher,
+                                                       &watcher.handle));
+
+  auto dst_image_name = get_temp_image_name();
+  ASSERT_EQ(0, librbd::api::Migration<>::prepare(m_ioctx, m_image_name,
+                                                 m_ioctx, dst_image_name,
+                                                 m_opts));
+  ASSERT_TRUE(wait_for_unblocked(m_ictx));
+  ASSERT_TRUE(watcher.wait_for(1, 1));
+
+  {
+    std::lock_guard locker{watcher.lock};
+    ASSERT_FALSE(watcher.io_blocked_on_quiesce);
+    ASSERT_FALSE(watcher.io_blocked_on_unquiesce);
+  }
+
+  ASSERT_EQ(dst_image_name, m_ictx->name);
+
+  ASSERT_EQ(0, m_ictx->state->unregister_quiesce_watcher(watcher.handle));
+}
+
 } // namespace librbd
