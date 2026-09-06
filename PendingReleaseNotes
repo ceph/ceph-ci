@@ -1214,3 +1214,10 @@ Relevant tracker: https://tracker.ceph.com/issues/71677
   using an encrypted image, or one holding the image open at a snapshot that is
   not a user snapshot. Such clients still have to be stopped beforehand, as do
   clients using the target image when aborting a migration.
+
+  While the prepare step runs, each client holds its I/O. It is asked to
+  quiesce first and to unquiesce afterwards, through the same hooks it
+  already implements to freeze a filesystem for ``rbd snap create``, so that
+  the pause is one the application is told about rather than an unexplained
+  stall. A migration does not depend on that freeze the way a snapshot does,
+  so a client that fails to quiesce does not stop the migration.

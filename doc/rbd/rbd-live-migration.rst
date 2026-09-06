@@ -116,6 +116,20 @@ failure.
    asked to follow the image. They keep reading the source image, and will fail
    once the migration is committed and the source image is removed.
 
+A client holds its I/O for as long as the prepare step takes, which to the
+application on top is an unexplained pause. To make it one the application
+knows about, the prepare step asks each client to quiesce before holding its
+I/O, and to unquiesce once the I/O is flowing again, through the same hooks
+the application already implements to freeze a filesystem for a snapshot -- so
+a client that freezes for ``rbd snap create`` freezes here too, with nothing
+further to configure.
+
+Unlike a snapshot, a migration does not depend on that freeze. No point in
+time is being captured: the target image serves the same data the source did,
+and writes on either side of the pause land on the same image. A client that
+fails to quiesce is therefore logged and the migration goes ahead, rather than
+being refused over it.
+
 The `rbd status` command will show the current state of the live-migration::
 
     $ rbd status migration_target
