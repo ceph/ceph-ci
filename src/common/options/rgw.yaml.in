@@ -156,7 +156,7 @@ options:
     multi-part upload (MPU) for S3 and DLO and SLO for Swift.  Note that this
     value also limits the size of individual chunks uploaded for MPU and
     DLO/SLO objects, thus the largest composite object that can be uploaded is
-    of size ``rgw_max_put_size`` * ``rgw_multipart_part_upload_limit``
+    of size rgw_max_put_size * rgw_multipart_part_upload_limit
   default: 5_G
   services:
   - rgw
@@ -725,12 +725,12 @@ options:
   desc: Swift URL prefix
   long_desc: 'The URL prefix for the Swift API, to distinguish it from the S3 API endpoint.
     The default is swift, which makes the Swift API available at the URL http://host:port/swift/v1
-    (or http://host:port/swift/v1/AUTH_%(tenant_id)s if ``rgw_swift_account_in_url`` is
+    (or http://host:port/swift/v1/AUTH_%(tenant_id)s if rgw_swift_account_in_url is
     enabled). For compatibility, setting this configuration variable to the empty string
     causes the default swift to be used; if you do want an empty prefix, set this option
     to /. Warning: If you set this option to /, you must disable the S3 API by modifying
-    ``rgw_enable_apis`` to exclude ``s3``. It is not possible to operate radosgw with
-    ``rgw_swift_url_prefix`` = ``/`` and simultaneously support both the S3 and Swift
+    rgw_enable_apis to exclude s3. It is not possible to operate radosgw with
+    rgw_swift_url_prefix = / and simultaneously support both the S3 and Swift
     APIs. If you do
     need to support both APIs without prefixes, deploy multiple radosgw instances to
     listen on different hosts (or ports) instead, enabling some for S3 and some for
@@ -1790,8 +1790,10 @@ options:
 - name: rgw_usage_max_user_shards
   type: int
   level: advanced
-  desc: Number of shards for single user in usage log
-  long_desc: The number of shards that a single user will span over in the usage log.
+  desc: Maximum number of usage-log shards a single user's records span.
+  long_desc: The maximum number of usage-log shards over which a single user's records
+    are spread. A user's entries start at a hash of the user name and wrap within this
+    many shards, so it bounds the fan-out per user rather than the size of the log.
   default: 1
   services:
   - rgw
@@ -1951,9 +1953,12 @@ options:
   desc: The number of shards (RADOS objects) across which the garbage collector stores
     its data.
   long_desc: The number of shards (RADOS objects) across which the garbage collector
-    stores its data; read once at daemon startup. It may be increased after initial
-    deployment, but must not be decreased without first ensuring all GC data shards
-    are completely empty.
+    stores its data; read once at daemon startup. More shards spread the GC queue more
+    widely and let garbage collection proceed with more parallelism, so this bounds GC
+    throughput rather than the number of objects GC can ever reclaim. The effective
+    value is capped by the maximum shard count RGW supports. It may be increased after
+    initial deployment, but must not be decreased without first ensuring all GC data
+    shards are completely empty.
   default: 32
   services:
   - rgw
@@ -2080,11 +2085,11 @@ options:
   type: bool
   level: advanced
   desc: Resolve DNS CNAMEs to support vanity bucket domains.
-  long_desc: If set, when the request hostname differs from rgw dns name, RGW queries
-    DNS for a CNAME record on that hostname and, if present, follows it. This lets
+  long_desc: If set, when the request hostname differs from rgw_dns_name, RGW queries
+    DNS for a CNAME record on that hostname and, if present, uses it instead. This lets
     users point a domain of their own at data in their bucket (vanity domains).
-  fmt_desc: If set, when the request hostname differs from ``rgw dns name``, RGW queries
-    DNS for a CNAME record on that hostname and, if present, follows it. This lets
+  fmt_desc: If set, when the request hostname differs from ``rgw_dns_name``, RGW queries
+    DNS for a CNAME record on that hostname and, if present, uses it instead. This lets
     users point a domain of their own at data in their bucket (vanity domains).
   default: false
   services:
@@ -2197,8 +2202,9 @@ options:
 - name: rgw_relaxed_s3_bucket_names
   type: bool
   level: advanced
-  desc: RGW enable relaxed S3 bucket names
-  long_desc: RGW enable relaxed S3 bucket name rules for US region buckets.
+  desc: Enables relaxed S3 bucket naming rules for US-region buckets.
+  long_desc: Enables the relaxed S3 bucket naming rules that AWS permits for buckets
+    in the US region, which allow names that the standard rules reject.
   default: false
   services:
   - rgw
@@ -2216,7 +2222,7 @@ options:
 - name: rgw_list_buckets_max_chunk
   type: int
   level: advanced
-  desc: Maximum buckets fetched per operation when listing a user's buckets.
+  desc: Maximum number of buckets fetched per operation when listing a user's buckets.
   long_desc: When RGW lists a user's buckets from the backend, the maximum number of
     entries it retrieves in a single operation. The backend may return fewer entries.
   default: 1000
@@ -2287,8 +2293,8 @@ options:
 - name: rgw_copy_obj_progress
   type: bool
   level: advanced
-  desc: Send progress report through copy operation
-  long_desc: If true, RGW will send progress information when copy operation is executed.
+  desc: Send progress reports through a copy operation
+  long_desc: If true, RGW sends progress information while a copy operation runs.
   default: true
   services:
   - rgw
@@ -2347,9 +2353,9 @@ options:
 - name: rgw_data_log_changes_size
   type: int
   level: dev
-  desc: Max size of pending changes in data log
-  long_desc: RGW will trigger update to the data log if the number of pending entries
-    reached this number.
+  desc: Maximum number of pending data-log entries before an update is triggered
+  long_desc: RGW triggers an update to the data log once the number of pending entries
+    reaches this number.
   default: 1000
   services:
   - rgw
@@ -2357,10 +2363,10 @@ options:
 - name: rgw_data_log_num_shards
   type: int
   level: advanced
-  desc: Number of data log shards
-  long_desc: The number of shards the RGW data log entries will reside in. This affects
-    the data sync parallelism as a shard can only be processed by a single RGW at a
-    time.
+  desc: Number of data-log shards
+  long_desc: The number of shards (RADOS objects) across which the RGW data-log entries
+    are spread. This bounds data sync parallelism, as a shard can only be processed by
+    a single RGW at a time.
   default: 128
   services:
   - rgw
@@ -3448,11 +3454,11 @@ options:
   level: advanced
   desc: template for per-bucket SSE-S3 keys in Vault.
   long_desc: This is the template for per-bucket sse-s3 keys.
-    This string may include ``%bucket_id`` which will be expanded out to
+    This string may include %bucket_id which will be expanded out to
     the bucket marker, a unique uuid assigned to that bucket.
-    It could contain ``%owner_id``, which will expand out to the owner's id.
+    It could contain %owner_id, which will expand out to the owner's id.
     Any other use of % is reserved and should not be used.
-    If the template contains ``%bucket_id``, associated bucket keys
+    If the template contains %bucket_id, associated bucket keys
     will be automatically removed when the bucket is removed.
   services:
   - rgw
