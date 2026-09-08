@@ -1,0 +1,43 @@
+meta:
+  desc: |
+    Install Ceph v19.2.5 (Squid), then upgrade the cluster
+
+tasks:
+- install:
+    tag: v19.2.5
+    exclude_packages:
+      - ceph-osd-classic
+      - ceph-osd-crimson
+
+- ceph:
+
+- exec:
+    client.0:
+      - ceph versions
+      - ceph osd pool create test_pool
+      - ceph osd pool application enable test_pool rados
+      - rados bench -p test_pool 30 write -b 4096 --no-cleanup
+
+- install.upgrade:
+    mon.a:
+    mon.b:
+    mgr.x:
+    osd.0:
+    osd.1:
+    osd.2:
+    osd.3:
+    osd.4:
+    osd.5:
+    client.0:
+
+- ceph.restart:
+    daemons: [mgr.x, mon.a, mon.b, osd.0, osd.1, osd.2, osd.3, osd.4, osd.5]
+    mon-health-to-clog: false
+    wait-for-healthy: false
+
+- exec:
+    client.0:
+      - ceph versions
+
+- ceph.healthy:
+    expected_checks: [AUTH_INSECURE_KEYS_ALLOWED, AUTH_INSECURE_ROTATING_SERVICE_KEY_TYPE, AUTH_INSECURE_CLIENT_KEY_TYPE, AUTH_INSECURE_KEYS_CREATABLE]

@@ -1,0 +1,26 @@
+roles:
+- - mon.a
+  - mgr.x
+  - osd.0
+  - osd.1
+  - osd.2
+  - client.0
+- - mon.b
+  - mon.c
+  - mgr.y
+  - mgr.z
+  - osd.3
+  - osd.4
+  - osd.5
+
+overrides:
+  ceph:
+    log-ignorelist:
+      - AUTH_INSECURE_KEYS_ALLOWED
+      - AUTH_INSECURE_KEYS_CREATABLE
+      - AUTH_INSECURE_SERVICE_TICKETS
+      - AUTH_INSECURE_CLIENT_KEY_TYPE
+      - AUTH_INSECURE_SERVICE_KEY_TYPE
+      - AUTH_INSECURE_ROTATING_SERVICE_KEY_TYPE
+      - OSD_UPGRADE_FINISHED
+      - POOL_APP_NOT_ENABLED

@@ -1,0 +1,45 @@
+meta:
+  desc: |
+    Bootstrap Cephadm with Ceph v19.2.5, then upgrade to the current build.
+
+tasks:
+- install:
+    tag: v19.2.5
+    exclude_packages:
+      - ceph-osd-classic
+      - ceph-volume
+      - ceph-osd-crimson
+- print: "**** done install task..."
+
+- cephadm:
+    image: quay.ceph.io/ceph-ci/ceph:squid-19-2-5
+    compiled_cephadm_branch: squid
+    conf:
+      osd:
+        osd_class_load_list: "*"
+        osd_class_default_list: "*"
+- print: "**** done cephadm task..."
+
+- cephadm.shell:
+    client.0:
+      - ceph config set mgr mgr/cephadm/use_repo_digest true --force
+      - ceph config set global log_to_journald false --force
+    client.0:
+      - ceph osd pool create test_pool
+      - ceph osd pool application enable test_pool rados
+      - rados bench -p test_pool 30 write -b 4096 --no-cleanup
+- print: "**** done cephadm shell create test_pool and write to it"
+
+- cephadm.shell:
+    env: [sha1]
+    client.0:
+      - ceph orch upgrade start --image quay.ceph.io/ceph-ci/ceph:$sha1
+      - while ceph orch upgrade status | jq '.in_progress' | grep true && ! ceph orch upgrade status | jq '.message' | grep Error; do ceph orch ps; ceph versions; ceph orch upgrade status; sleep 30; done
+      - ceph orch upgrade status
+      - ceph versions
+      - ceph versions | jq -e '.overall | length == 1'
+      - ceph versions | jq -e '.overall | keys' | grep $sha1
+- print: "**** done cephadm upgrade task..."
+
+- ceph.healthy:
+    expected_checks: [AUTH_INSECURE_KEYS_ALLOWED, AUTH_INSECURE_ROTATING_SERVICE_KEY_TYPE, AUTH_INSECURE_CLIENT_KEY_TYPE, AUTH_INSECURE_KEYS_CREATABLE]
