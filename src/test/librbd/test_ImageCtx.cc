@@ -589,6 +589,35 @@ TEST_F(TestImageCtx, ReopenWithConcurrentIo) {
   ASSERT_GT(completed, 0U);
 }
 
+
+TEST_F(TestImageCtx, BlockIoFailsParkedRequestsOnClose) {
+  ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+
+  C_SaferCond on_blocked;
+  ictx->io_image_dispatcher->block_io(&on_blocked);
+  ASSERT_EQ(0, on_blocked.wait());
+
+  bufferlist bl;
+  bl.append(std::string(4096, '1'));
+  Context *write_ctx = new DummyContext();
+  auto write_comp = io::AioCompletion::create(write_ctx);
+  write_comp->get();
+  api::Io<>::aio_write(*ictx, write_comp, 0, bl.length(), bufferlist{bl}, 0,
+                       true);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  ASSERT_FALSE(write_comp->is_complete());
+
+  // closing the image takes the layer holding this request down with it, so
+  // the request has to be failed rather than left never completing
+  close_image(ictx);
+
+  ASSERT_EQ(0, write_comp->wait_for_complete());
+  ASSERT_EQ(-ESHUTDOWN, write_comp->get_return_value());
+  write_comp->put();
+}
+
 // Drive the notify protocol by hand, standing in for api::Migration until it
 // is wired up: prepare start, then a source migration header naming the
 // destination, then prepare complete.
@@ -608,14 +637,21 @@ public:
 
   void set_src_migration(ImageCtx *ictx, librados::IoCtx& dst_io_ctx,
                          const std::string &dst_image_name,
-                         const std::string &dst_image_id) {
+                         const std::string &dst_image_id,
+                         cls::rbd::MigrationState state =
+                           cls::rbd::MIGRATION_STATE_PREPARED) {
     cls::rbd::MigrationSpec spec{
       cls::rbd::MIGRATION_HEADER_TYPE_SRC, dst_io_ctx.get_id(),
       dst_io_ctx.get_namespace(), dst_image_name, dst_image_id, "", {}, 0,
-      false, cls::rbd::MIRROR_IMAGE_MODE_JOURNAL, false,
-      cls::rbd::MIGRATION_STATE_PREPARED, ""};
+      false, cls::rbd::MIRROR_IMAGE_MODE_JOURNAL, false, state, ""};
     ASSERT_EQ(0, cls_client::migration_set(&ictx->md_ctx, ictx->header_oid,
                                            spec));
+  }
+
+  void set_src_migration_state(ImageCtx *ictx,
+                               cls::rbd::MigrationState state) {
+    ASSERT_EQ(0, cls_client::migration_set_state(&ictx->md_ctx,
+                                                 ictx->header_oid, state, ""));
   }
 };
 
@@ -862,6 +898,83 @@ TEST_F(TestImageCtxMigrationNotify, QuiescesTheApplication) {
   ASSERT_NO_FATAL_FAILURE(assert_pattern(ictx, '2'));
 
   ASSERT_EQ(0, ictx->state->unregister_quiesce_watcher(watcher.handle));
+}
+
+
+TEST_F(TestImageCtxMigrationNotify, ClosedWhileHoldingIo) {
+  REQUIRE_FORMAT_V2();
+
+  ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+
+  ImageCtx *src_ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &src_ictx));
+
+  uint64_t request_id;
+  C_SaferCond on_start;
+  src_ictx->image_watcher->notify_migration_prepare_start(&request_id,
+                                                          &on_start);
+  ASSERT_EQ(0, on_start.wait());
+  ASSERT_TRUE(ictx->io_image_dispatcher->io_blocked());
+
+  // the prepare never says how it went -- it failed outright, or the caller
+  // gave up -- and the image is closed while its IO is still parked. Closing
+  // has to be able to take the image down anyway rather than waiting on a
+  // migration that is not coming back
+  close_image(ictx);
+}
+
+
+TEST_F(TestImageCtxMigrationNotify, WaitsWhilePrepareIsStillRunning) {
+  REQUIRE_FORMAT_V2();
+
+  auto dst_image_name = create_image(m_ioctx, m_image_size);
+  write_pattern(m_ioctx, m_image_name, '1');
+  write_pattern(m_ioctx, dst_image_name, '2');
+
+  std::string dst_image_id;
+  {
+    librbd::Image image;
+    ASSERT_EQ(0, m_rbd.open(m_ioctx, image, dst_image_name.c_str()));
+    ASSERT_EQ(0, get_image_id(image, &dst_image_id));
+  }
+
+  ImageCtx *ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &ictx));
+
+  ImageCtx *src_ictx;
+  ASSERT_EQ(0, open_image(m_image_name, &src_ictx));
+
+  uint64_t request_id;
+  C_SaferCond on_start;
+  src_ictx->image_watcher->notify_migration_prepare_start(&request_id,
+                                                          &on_start);
+  ASSERT_EQ(0, on_start.wait());
+  ASSERT_TRUE(ictx->io_image_dispatcher->io_blocked());
+
+  // a prepare that is taking its time: the header names the destination but
+  // is not done yet, and no complete is coming for a while
+  ASSERT_NO_FATAL_FAILURE(set_src_migration(src_ictx, m_ioctx, dst_image_name,
+                                            dst_image_id,
+                                            cls::rbd::MIGRATION_STATE_PREPARING));
+
+  // the client is left to work it out for itself, and has to keep waiting
+  // rather than either giving up on the migration or spinning on the header
+  std::this_thread::sleep_for(std::chrono::seconds(15));
+  ASSERT_TRUE(ictx->io_image_dispatcher->io_blocked());
+  {
+    std::shared_lock image_locker{ictx->image_lock};
+    ASSERT_EQ(m_image_name, ictx->name);
+  }
+
+  // once the prepare is done the client follows the image, with no complete
+  // notify ever having arrived
+  ASSERT_NO_FATAL_FAILURE(
+    set_src_migration_state(src_ictx, cls::rbd::MIGRATION_STATE_PREPARED));
+  ASSERT_TRUE(wait_for_unblocked(ictx));
+
+  ASSERT_EQ(dst_image_name, ictx->name);
+  ASSERT_NO_FATAL_FAILURE(assert_pattern(ictx, '2'));
 }
 
 } // namespace librbd
