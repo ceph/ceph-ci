@@ -1589,6 +1589,11 @@ def _save_pending_rgw_config(
     cluster_id = cluster_conf.resource.cluster_id
     rgw_shares = [s for s in cluster_conf.shares if s.resource.rgw]
     if not rgw_shares:
+        # keep any existing stub registered so rm_other_in_ns doesn't prune
+        # it, as removing it forces a unnecessary daemon redeploy
+        centry = store[external.rgw_config_key(cluster_id)]
+        if centry.exists():
+            cluster_conf.change_group.cache_updated_entry(centry)
         return
     cred_map = {
         c.rgw_credential_id: c
