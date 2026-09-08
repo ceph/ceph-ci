@@ -26,6 +26,28 @@ ReopenBlockImageDispatch<I>::ReopenBlockImageDispatch(I* image_ctx)
 
 template <typename I>
 void ReopenBlockImageDispatch<I>::shut_down(Context* on_finish) {
+  auto cct = m_image_ctx->cct;
+
+  Contexts dispatch_contexts;
+  {
+    std::unique_lock locker{m_lock};
+    m_blockers = 0;
+    m_unblock_result = 0;
+    std::swap(dispatch_contexts, m_on_dispatches);
+  }
+
+  // this layer is going away with the image, so whatever it parked is
+  // never going to be served -- fail it rather than leaving the caller
+  // holding a request that can no longer complete
+  if (!dispatch_contexts.empty()) {
+    ldout(cct, 5) << "failing " << dispatch_contexts.size()
+                  << " parked request(s)" << dendl;
+  }
+
+  for (auto ctx : dispatch_contexts) {
+    ctx->complete(-ESHUTDOWN);
+  }
+
   on_finish->complete(0);
 }
 
