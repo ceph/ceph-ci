@@ -31,11 +31,16 @@ auto get_callback_adapter(T&& t) {
 
 /**
  * Neorados completion token that delivers onto the image ContextWQ.
+ *
+ * The channel is captured here, on the thread submitting the op, so the
+ * completion returns to the same execution context it was submitted from.
+ * Queues that do not distinguish channels deliver onto the general executor.
  */
 template <typename Callback>
 auto get_completion_token(AsioEngine& asio_engine, Callback&& cb) {
+  auto* work_queue = asio_engine.get_work_queue();
   return boost::asio::bind_executor(
-    ContextWQExecutor{asio_engine.get_work_queue()},
+    ContextWQExecutor{work_queue, work_queue->current_channel()},
     get_callback_adapter(std::forward<Callback>(cb)));
 }
 

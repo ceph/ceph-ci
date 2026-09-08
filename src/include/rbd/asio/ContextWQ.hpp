@@ -18,6 +18,7 @@
 
 #include <atomic>
 #include <memory>
+#include <utility>
 
 #include "UniqueFunction.hpp"
 
@@ -45,12 +46,19 @@ namespace asio {
  * - post / dispatch: general parallel work
  * - post_serial / dispatch_serial: strictly ordered functor path
  * - queue(Context*, r): legacy Context::complete ordering + drain accounting
+ * - post_channel: general parallel work, pinned to one execution channel
  *
  * Exported from librbd.so for out-of-tree implementations
  */
 class LIBRBD_ASIO_CONTEXT_WQ_API ContextWQ {
 public:
   using Work = UniqueFunction<>;
+
+  /**
+   * Opaque handle for one execution channel of the work queue, e.g. a
+   * specific reactor thread. nullptr selects the default channel.
+   */
+  using Channel = void*;
 
   virtual ~ContextWQ() = default;
 
@@ -84,6 +92,22 @@ public:
    * Legacy Context completion
    */
   virtual void queue(Context* ctx, int r = 0);
+
+  /**
+   * Channel of the calling thread, or nullptr when the caller does not run
+   * on a channel of this work queue.
+   */
+  virtual Channel current_channel() const {
+    return nullptr;
+  }
+
+  /**
+   * Schedule work on a specific channel. Implementations that do not
+   * distinguish channels fall back to the general executor.
+   */
+  virtual void post_channel(Channel channel, Work fn) {
+    post(std::move(fn));
+  }
 
 protected:
   // Protected constructor for derived classes

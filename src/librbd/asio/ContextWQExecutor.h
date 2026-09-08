@@ -18,19 +18,29 @@ namespace asio {
  *
  * When bound onto neorados completion tokens (via bind_executor), Objecter's
  * Op::complete dispatches here instead of the default io_context.
+ *
+ * An optional channel pins the work to one execution context of the queue,
+ * e.g. the reactor thread that submitted the op.
  */
 class ContextWQExecutor {
 public:
   ContextWQExecutor() noexcept = default;
   explicit ContextWQExecutor(ContextWQ* wq) noexcept : m_wq(wq) {}
+  ContextWQExecutor(ContextWQ* wq, ContextWQ::Channel channel) noexcept
+    : m_wq(wq), m_channel(channel) {}
 
   ContextWQ* context_wq() const noexcept {
     return m_wq;
   }
 
+  ContextWQ::Channel channel() const noexcept {
+    return m_channel;
+  }
+
   template <typename Function>
   void execute(Function&& f) const {
-    m_wq->post(ContextWQ::Work(std::forward<Function>(f)));
+    m_wq->post_channel(m_channel,
+                       ContextWQ::Work(std::forward<Function>(f)));
   }
 
   // --- asio execution properties (work_guard / prefer / require) ---
@@ -97,16 +107,17 @@ public:
 
   friend bool operator==(const ContextWQExecutor& a,
                          const ContextWQExecutor& b) noexcept {
-    return a.m_wq == b.m_wq;
+    return a.m_wq == b.m_wq && a.m_channel == b.m_channel;
   }
 
   friend bool operator!=(const ContextWQExecutor& a,
                          const ContextWQExecutor& b) noexcept {
-    return a.m_wq != b.m_wq;
+    return !(a == b);
   }
 
 private:
   ContextWQ* m_wq = nullptr;
+  ContextWQ::Channel m_channel = nullptr;
 };
 
 } // namespace asio
