@@ -31,12 +31,23 @@ namespace image {
 template <typename ImageCtxT = ImageCtx>
 class MigrationReopenRequest {
 public:
+  /**
+   * reopened, if given, says whether the image context was actually
+   * re-targeted. It matters to the caller because a re-target destroys
+   * whatever was watching the image it moved away from, so a caller that
+   * may be that watcher can only touch itself again when this is false.
+   *
+   * Completes with -EAGAIN when the prepare is still writing its header,
+   * which is neither a failure nor anything to follow yet.
+   */
   static MigrationReopenRequest *create(ImageCtxT *image_ctx,
+                                        bool *reopened,
                                         Context *on_finish) {
-    return new MigrationReopenRequest(image_ctx, on_finish);
+    return new MigrationReopenRequest(image_ctx, reopened, on_finish);
   }
 
-  MigrationReopenRequest(ImageCtxT *image_ctx, Context *on_finish);
+  MigrationReopenRequest(ImageCtxT *image_ctx, bool *reopened,
+                         Context *on_finish);
 
   void send();
 
@@ -59,6 +70,7 @@ private:
    */
 
   ImageCtxT *m_image_ctx;
+  bool *m_reopened;
   Context *m_on_finish;
 
   bufferlist m_out_bl;

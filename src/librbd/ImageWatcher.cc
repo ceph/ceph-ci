@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 sts=2 expandtab
 
 #include "librbd/ImageWatcher.h"
+#include <memory>
 #include "librbd/ExclusiveLock.h"
 #include "librbd/ImageCtx.h"
 #include "librbd/ImageState.h"
@@ -522,6 +523,20 @@ void ImageWatcher<I>::notify_migration(const bufferlist &bl,
         }
 
         if (r == 0 && !notify_response->timeouts.empty()) {
+          // a peer that did not answer in time is still holding its IO
+          // for us, so ask it again rather than giving up on the first
+          // slow answer -- the same as when the notify itself times out
+          if (attempt < total_attempts) {
+            notify_migration(bl, async_request_id, attempt + 1,
+                             total_attempts, on_finish);
+            return;
+          }
+
+          lderr(m_image_ctx.cct) << this << " " << __func__ << ": "
+                                 << notify_response->timeouts.size()
+                                 << " peer(s) did not answer after "
+                                 << total_attempts << " attempts"
+                                 << dendl;
           r = -ETIMEDOUT;
         }
       }
@@ -1657,6 +1672,13 @@ void ImageWatcher<I>::schedule_migration_prepare_timeout(
   Task task(TASK_CODE_MIGRATION_PREPARE, async_request_id);
   auto ctx = new LambdaContext(
     [this, async_request_id](int r) {
+      if (r < 0) {
+        // cancelled rather than fired: either the prepare said how it
+        // went, or the image is being closed and the task finisher is
+        // emptying out. Either way there is nothing left to recover
+        return;
+      }
+
       ldout(m_image_ctx.cct, 5) << this << " migration prepare "
                                 << async_request_id << " timed out"
                                 << dendl;
@@ -1671,43 +1693,55 @@ void ImageWatcher<I>::schedule_migration_prepare_timeout(
 template <typename I>
 void ImageWatcher<I>::migration_reopen(
     const AsyncRequestId &async_request_id) {
-  std::list<C_NotifyAck *> acks;
   {
     std::lock_guard locker{m_migration_lock};
-    if (m_migration_prepare_id != async_request_id) {
+    if (m_migration_prepare_id != async_request_id ||
+        m_migration_reopen_in_flight) {
       // already handed over, by whichever of the notify and the timeout got
       // here first
       return;
     }
-    m_migration_prepare_id.reset();
-    m_migration_prepare_ready = false;
-    // a start that never finished quiescing still owes an answer
-    acks.swap(m_migration_prepare_acks);
+    m_migration_reopen_in_flight = true;
   }
 
-  for (auto ack_ctx : acks) {
-    encode(ResponseMessage(0), ack_ctx->out);
-    ack_ctx->complete(0);
-  }
+  // whether the image context was re-targeted decides what may be touched
+  // afterwards: a re-target destroys this watcher, so only when it did not
+  // happen is our own state still ours
+  auto reopened = std::make_shared<bool>(false);
 
-  // everything this watcher owns has been settled above, because the close
-  // half of a re-target destroys it -- nothing below may touch it. The image
-  // context outlives the re-target, so the blocker is dropped through that
   auto image_ctx = &m_image_ctx;
   image_ctx->op_work_queue->queue(new LambdaContext(
-    [image_ctx](int r) {
+    [this, image_ctx, async_request_id, reopened](int r) {
       auto ctx = new LambdaContext(
-        [image_ctx](int r) {
-          // drop the blocker taken at prepare start, releasing the parked IO
-          // at whichever image the context now points at
+        [this, image_ctx, async_request_id, reopened](int r) {
+          if (!*reopened) {
+            bool wait_for_prepare = (r == -EAGAIN);
+            {
+              std::lock_guard locker{m_migration_lock};
+              m_migration_reopen_in_flight = false;
+              if (!wait_for_prepare) {
+                m_migration_prepare_id.reset();
+              }
+            }
+
+            if (wait_for_prepare) {
+              // the prepare is still writing its header, so it has not gone
+              // anywhere -- keep holding the IO and look again later
+              schedule_migration_prepare_timeout(async_request_id);
+              return;
+            }
+          }
+
+          // past here the re-target may have destroyed this watcher, so only
+          // the image context, which outlives it, may be touched
           image_ctx->io_image_dispatcher->unblock_io(r);
 
-          // and only then let the application thaw. ImageState outlives the
-          // re-target, unlike the watcher that asked it to freeze
+          // and only then let the application thaw
           image_ctx->state->notify_unquiesce(new LambdaContext([](int r) {}));
         });
 
-      auto req = image::MigrationReopenRequest<I>::create(image_ctx, ctx);
+      auto req = image::MigrationReopenRequest<I>::create(image_ctx,
+                                                          reopened.get(), ctx);
       req->send();
     }), 0);
 }

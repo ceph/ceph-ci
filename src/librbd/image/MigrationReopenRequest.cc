@@ -23,8 +23,9 @@ using util::create_rados_callback;
 
 template <typename I>
 MigrationReopenRequest<I>::MigrationReopenRequest(I *image_ctx,
+                                                  bool *reopened,
                                                   Context *on_finish)
-  : m_image_ctx(image_ctx), m_on_finish(on_finish) {
+  : m_image_ctx(image_ctx), m_reopened(reopened), m_on_finish(on_finish) {
 }
 
 template <typename I>
@@ -88,11 +89,11 @@ void MigrationReopenRequest<I>::handle_get_migration_header(int r) {
   case cls::rbd::MIGRATION_STATE_EXECUTED:
     break;
   case cls::rbd::MIGRATION_STATE_PREPARING:
-    // the prepare is still writing the header, so there is nothing to follow
-    // yet and nothing has gone wrong either -- look again, as the refresh
-    // does when it lands in the middle of a prepare
-    ldout(cct, 5) << "migration is still being prepared, retrying" << dendl;
-    send_get_migration_header();
+    // the prepare is still writing the header, so there is nothing to
+    // follow yet and nothing has gone wrong either. Say so rather than
+    // spinning on the header here: whoever asked knows when to look again
+    ldout(cct, 5) << "migration is still being prepared" << dendl;
+    finish(-EAGAIN);
     return;
   case cls::rbd::MIGRATION_STATE_ABORTING:
     // the destination is on its way out
@@ -136,6 +137,10 @@ void MigrationReopenRequest<I>::send_reopen() {
   ldout(cct, 10) << "re-targeting at " << io_ctx.get_pool_name() << "/"
                  << m_migration_spec.image_name
                  << (snap_name.empty() ? "" : "@" + snap_name) << dendl;
+
+  if (m_reopened != nullptr) {
+    *m_reopened = true;
+  }
 
   auto ctx = create_context_callback<
     MigrationReopenRequest<I>,

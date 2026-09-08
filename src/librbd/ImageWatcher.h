@@ -223,6 +223,7 @@ private:
   // to freeze, so a notify resent in the meantime is answered when that
   // is done rather than told yes before it is
   bool m_migration_prepare_ready = false;
+  bool m_migration_reopen_in_flight = false;
   std::list<C_NotifyAck *> m_migration_prepare_acks;
 
   AsyncOpTracker m_async_op_tracker;
