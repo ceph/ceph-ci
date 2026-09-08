@@ -106,11 +106,11 @@ Current Members
  * Matt Benjamin <mbenjami@redhat.com>
  * Mike Perez <miperez@redhat.com>
  * Myoungwon Oh <ohmyoungwon@gmail.com>
- * Sage McTaggart <sagemct@ibm.com>
  * Neha Ojha <nojha@redhat.com>
  * Patrick Donnelly <pdonnell@ibm.com>
  * Radoslaw Zarzynski <rzarzyns@redhat.com>
  * Redouane Kachach <rkachach@redhat.com>
+ * Sage McTaggart <sagemct@ibm.com>
  * Venky Shankar <vshankar@redhat.com>
  * Vikhyat Umrao <vikhyat@ibm.com>
  * Xie Xingguo <xie.xingguo@zte.com.cn>
