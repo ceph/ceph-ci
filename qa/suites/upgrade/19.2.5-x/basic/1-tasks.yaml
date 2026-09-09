@@ -13,6 +13,10 @@ tasks:
 
 - exec:
     client.0:
+      - ceph config set osd osd_debug_inject_pg_info_delay 5 --force
+
+- exec:
+    client.0:
       - ceph versions
       - ceph osd pool create test_pool
       - ceph osd pool application enable test_pool rados

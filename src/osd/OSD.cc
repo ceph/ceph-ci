@@ -100,6 +100,7 @@
 #include "messages/MOSDPGLog.h"
 #include "messages/MOSDPGRemove.h"
 #include "messages/MOSDPGInfo.h"
+#include "messages/MOSDPGInfo2.h"
 #include "messages/MOSDPGCreate2.h"
 #include "messages/MOSDForceRecovery.h"
 #include "messages/MOSDPGCreated.h"
@@ -9462,6 +9463,12 @@ void OSD::dispatch_context(PeeringCtx &ctx, PG *pg, OSDMapRef curmap,
       }
       service.maybe_share_map(con.get(), curmap);
       for (auto m : ls) {
+        if (g_conf()->osd_debug_inject_pg_info_delay > 0 &&
+            dynamic_cast<MOSDPGInfo2*>(m.get())) {
+          utime_t delay;
+          delay.set_from_double(g_conf()->osd_debug_inject_pg_info_delay);
+          delay.sleep();
+        }
 	con->send_message2(m);
       }
       ls.clear();

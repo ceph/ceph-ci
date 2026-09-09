@@ -24,10 +24,10 @@ tasks:
     client.0:
       - ceph config set mgr mgr/cephadm/use_repo_digest true --force
       - ceph config set global log_to_journald false --force
-    client.0:
       - ceph osd pool create test_pool
       - ceph osd pool application enable test_pool rados
       - rados bench -p test_pool 30 write -b 4096 --no-cleanup
+      - ceph config set osd osd_debug_inject_pg_info_delay 5 --force
 - print: "**** done cephadm shell create test_pool and write to it"
 
 - cephadm.shell:

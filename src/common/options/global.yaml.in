@@ -3286,6 +3286,12 @@ options:
   level: dev
   default: 0.1
   with_legacy: true
+- name: osd_debug_inject_pg_info_delay
+  type: float
+  level: dev
+  desc: Inject a delay before sending MOSDPGInfo2 peering replies
+  default: 0
+  with_legacy: true
 - name: osd_debug_drop_ping_probability
   desc: N/A
   type: float
