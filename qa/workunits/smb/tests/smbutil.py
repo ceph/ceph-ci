@@ -1,5 +1,6 @@
 import base64
 import contextlib
+import functools
 import os
 import pathlib
 import time
@@ -220,8 +221,6 @@ def _apply(smb_cfg, resources, immediate=False, check=None):
         input_json={'resources': resources},
         load_json=True,
     )
-    assert jres.returncode == 0
-    assert jres.obj and jres.obj.get('success')
     if check:
         ret = check(jres)
     else:
@@ -234,6 +233,8 @@ def _apply(smb_cfg, resources, immediate=False, check=None):
 
 
 def _res_check(jres):
+    assert jres.returncode == 0
+    assert jres.obj and jres.obj.get('success')
     assert 'results' in jres.obj
     _results = jres.obj['results']
     assert len(_results) == 1, "more than one result found"
@@ -264,3 +265,34 @@ def apply_resource(
 
     rr = _apply(smb_cfg, [resource], immediate=immediate, check=_res_check)
     return rr
+
+
+def _res_check_many(jres, count):
+    assert jres.returncode == 0
+    assert jres.obj and jres.obj.get('success')
+    assert 'results' in jres.obj
+    _results = jres.obj['results']
+    assert len(_results) == count
+    return jres.obj
+
+
+def apply_resources(
+    smb_cfg,
+    resources,
+    immediate=False,
+):
+    """Apply resources via the apply command."""
+
+    _check = functools.partial(_res_check_many, count=len(resources))
+    rr = _apply(smb_cfg, resources, immediate=immediate, check=_check)
+    return rr
+
+
+def apply_resources_unchecked(
+    smb_cfg,
+    resources,
+    immediate=False,
+):
+    """Apply resources via the apply command. Do not assert result is OK."""
+
+    return _apply(smb_cfg, resources, immediate=immediate)
