@@ -279,6 +279,7 @@ options:
   enum_values:
   - HDD
   - SSD
+  - ZBD
 - name: seastore_data_backend_type
   type: str
   level: dev
