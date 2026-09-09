@@ -908,16 +908,16 @@ struct LogNode
   range_t has_between(const std::optional<std::string>& start,
     const std::optional<std::string>& end);
 
-  // The deletion bitmap in effect for this transaction, i.e. including any
-  // pending delta.
-  d_bitmap_t get_live_bitmap();
-
   /*
    * Invoke fn(entry, index) for every entry of this node that is not marked
    * deleted, stopping early if fn returns true. Defined here rather than in
    * the .cc so that callers outside log_node.cc can scan a node without
    * materialising its keys.
    */
+  // The deletion bitmap in effect for this transaction, i.e. including any
+  // pending delta.
+  d_bitmap_t get_live_bitmap();
+
   template <typename F>
   void for_each_live_entry(F&& fn) {
     d_bitmap_t bitmap = get_live_bitmap();
@@ -986,6 +986,11 @@ struct LogNode
 
   size_t get_max_val_length(size_t ksize) {
     return (capacity() - get_entry_size(ksize, 0));
+  }
+
+  // Only valid on a non-empty node, as with has_multi_block_kv().
+  std::string_view get_first_key() const {
+    return iter_begin()->get_key_view();
   }
 
   bool is_first_multi_block(const std::string &key) const {
