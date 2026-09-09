@@ -7,6 +7,15 @@
   to determine whether any clients hold the lock.
 * RGW: The "Bytes Sent" field is always set to "-" when bucket-logging is enabled
   in Standard mode.
+* RBD: The ``schedule_time`` field in the output of
+  ``rbd mirror snapshot schedule status`` and
+  ``rbd trash purge schedule status`` has been renamed to
+  ``next_scheduled_time``. Scripts or tools that parse this output
+  must be updated accordingly.
+* RBD: The ``rbd mirror snapshot schedule add`` and
+  ``rbd trash purge schedule add`` commands now accept a ``w`` suffix to
+  specify the schedule interval in weeks (e.g. ``2w``), in addition to the
+  existing ``d``, ``h``, and ``m`` suffixes.
 
 * Cephadm: ``ceph orch upgrade start`` and ``ceph orch upgrade check`` now
   verify that every host's CPU supports the x86-64 microarchitecture level
@@ -21,6 +30,13 @@
   for reshard on or off while not affecting resharding itself until the
   next realm reload. Now changes to ``rgw_dynamic_resharding`` require a
   restart. Running RGWs will ignore the change.
+
+* RBD: The Python ``Image.list_lockers()`` method now returns a dictionary
+  containing ``tag``, ``exclusive``, and ``lockers`` fields even when no clients
+  hold the lock, instead of an empty list. Callers should check the
+  ``lockers`` field rather than the truth value of the returned object
+  to determine whether any clients hold the lock.
+
 * RGW: The default value of ``rgw_rest_conn_connect_to_resolved_ips`` changed
   from ``false`` to ``true``.
 * RGW: The default value of ``rgw_rest_conn_ip_fail_timeout_secs`` changed
