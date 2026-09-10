@@ -104,9 +104,8 @@ class DistroKind(StrEnum):
     CENTOS10 = "centos10"
     CENTOS8 = "centos8"
     CENTOS9 = "centos9"
-    FEDORA41 = "fedora41"
-    FEDORA42 = "fedora42"
     FEDORA43 = "fedora43"
+    FEDORA44 = "fedora44"
     ROCKY9 = "rocky9"
     ROCKY10 = "rocky10"
     UBUNTU2004 = "ubuntu20.04"
@@ -115,6 +114,7 @@ class DistroKind(StrEnum):
     UBUNTU2604 = "ubuntu26.04"
     DEBIAN12 = "debian12"
     DEBIAN13 = "debian13"
+    OPENRUYI = "openruyi"
 
     @classmethod
     def uses_dnf(cls):
@@ -122,9 +122,11 @@ class DistroKind(StrEnum):
             cls.CENTOS10,
             cls.CENTOS8,
             cls.CENTOS9,
-            cls.FEDORA41,
+            cls.FEDORA43,
+            cls.FEDORA44,
             cls.ROCKY9,
             cls.ROCKY10,
+            cls.OPENRUYI,
         }
 
     @classmethod
@@ -147,12 +149,10 @@ class DistroKind(StrEnum):
             str(cls.ROCKY10): cls.ROCKY10,
             'rockylinux10': cls.ROCKY10,
             # fedora
-            str(cls.FEDORA41): cls.FEDORA41,
-            "fc41": cls.FEDORA41,
-            str(cls.FEDORA42): cls.FEDORA42,
-            "fc42": cls.FEDORA42,
             str(cls.FEDORA43): cls.FEDORA43,
             "fc43": cls.FEDORA43,
+            str(cls.FEDORA44): cls.FEDORA44,
+            "fc44": cls.FEDORA44,
             # ubuntu
             str(cls.UBUNTU2004): cls.UBUNTU2004,
             "ubuntu-focal": cls.UBUNTU2004,
@@ -173,6 +173,9 @@ class DistroKind(StrEnum):
             str(cls.DEBIAN13): cls.DEBIAN13,
             "debian-trixie": cls.DEBIAN13,
             "trixie": cls.DEBIAN13,
+            # openruyi
+            str(cls.OPENRUYI): cls.OPENRUYI,
+            "openruyi-creek": cls.OPENRUYI,
         }
 
     @classmethod
@@ -193,9 +196,8 @@ class DefaultImage(StrEnum):
     ROCKY9 = "docker.io/rockylinux/rockylinux:9"
     ROCKY10 = "docker.io/rockylinux/rockylinux:10"
     # fedora
-    FEDORA41 = "registry.fedoraproject.org/fedora:41"
-    FEDORA42 = "registry.fedoraproject.org/fedora:42"
     FEDORA43 = "registry.fedoraproject.org/fedora:43"
+    FEDORA44 = "registry.fedoraproject.org/fedora:44"
     # ubuntu
     UBUNTU2004 = "docker.io/ubuntu:20.04"
     UBUNTU2204 = "docker.io/ubuntu:22.04"
@@ -204,6 +206,8 @@ class DefaultImage(StrEnum):
     # debian
     DEBIAN12 = "docker.io/debian:bookworm"
     DEBIAN13 = "docker.io/debian:trixie"
+    # openruyi
+    OPENRUYI = "community-ci.openruyi.cn/openruyi-oci:riscv64"
 
 
 class CommandFailed(Exception):
