@@ -117,6 +117,21 @@ compare_images() {
     return ${ret}
 }
 
+wait_for_watcher() {
+    local image=$1
+    local s
+
+    for s in 0.1 0.2 0.4 0.8 1 2 4 8 8 8 8 8; do
+        if rbd status ${image} | grep -q 'watcher='; then
+            return 0
+        fi
+        sleep ${s}
+    done
+
+    echo "no watcher appeared on ${image}" >&2
+    return 1
+}
+
 # Migrating an image no longer requires that whoever is using it is stopped
 # first, so run one with a client attached for the whole thing. Its own image
 # is used, since committing removes the source.
@@ -131,6 +146,13 @@ test_migration_in_use() {
     rbd bench --io-type write --io-pattern rand --io-size 4K \
         --io-threads 1 --io-total 32M ${base_image} &
     local bench_pid=$!
+
+    # the hand-over is only offered to clients that are already watching when
+    # the migration starts. One that opens the image while prepare is running
+    # is on its own and fails, as it always has, so make sure this one is
+    # there first -- otherwise the test races and only sometimes tests
+    # anything
+    wait_for_watcher ${base_image}
 
     rbd migration prepare ${base_image} ${dest_image}
     rbd status ${dest_image} | grep -q "Migration:"
