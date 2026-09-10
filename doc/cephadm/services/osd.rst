@@ -800,6 +800,10 @@ Add the ``tpm2`` attribute to the OSD spec:
       encrypted: true
       tpm2: true
 
+``ceph-objectstore-tool`` and ``ceph-bluestore-tool`` do not unlock
+LUKS. After a cephadm OSD stop, reopen the mapping before using those
+tools. See :ref:`cephadm-encrypted-osd-store-tools`.
+
 A full list of supported attributes:
 
 .. py:currentmodule:: ceph.deployment.drive_group
