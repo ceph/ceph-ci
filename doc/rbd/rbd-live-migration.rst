@@ -116,6 +116,14 @@ failure.
    asked to follow the image. They keep reading the source image, and will fail
    once the migration is committed and the source image is removed.
 
+.. note::
+   Only the clients that already have the image open when the prepare step
+   starts are asked to follow it. A client that opens the source image while
+   the prepare step is running is not among them, and fails as soon as the
+   source image is marked read-only, just as a client that opens the source
+   image after the prepare step does. Start it against the target image name
+   instead.
+
 A client holds its I/O for as long as the prepare step takes, which to the
 application on top is an unexplained pause. To make it one the application
 knows about, the prepare step asks each client to quiesce before holding its
