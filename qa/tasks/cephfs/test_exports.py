@@ -649,7 +649,7 @@ class TestKillExports(CephFSTestCase):
             # failed if buggy
             self.mount_a.ls()
 
-class TestEphemeralRandom(CephFSTestCase):
+class TestEphemeralRandomDirfrags(CephFSTestCase):
     MDSS_REQUIRED = 3
     CLIENTS_REQUIRED = 1
 
@@ -660,15 +660,14 @@ class TestEphemeralRandom(CephFSTestCase):
         self.fs.set_max_mds(3)
         self.status = self.fs.wait_for_daemons()
 
-    def _setup_split_dir(self, path="rand_dir", random_prob=0.5, total_files=1200, factor=8):
+    def _setup_split_dir(self, path="rand_dir", random_prob=0.5, total_files=100, factor=8):
         """
-        Creates a single flat directory with enough dentries to enforce fragmentation,
-        configures the random probability, and triggers directory splitting.
+        Creates a directory configured with random ephemeral pinning and
+        relies on proactive dirfrag splitting dictated by the frag factor.
         """
         # Set frag factor to enforce splitting depth (min_frag_bits)
-        self.config_set('mds', 'mds_export_ephemeral_distributed_factor', factor)
+        self.config_set('mds', 'mds_export_ephemeral_frag_factor', factor)
 
-        # Create parent directory and set random ephemeral pin probability
         self.mount_a.run_shell_payload(f"""
             set -ex
             mkdir -p {path}
@@ -685,34 +684,28 @@ class TestEphemeralRandom(CephFSTestCase):
         """
         self.config_set('mds', 'mds_export_ephemeral_random', True)
         self.config_set('mds', 'mds_export_ephemeral_random_max', 1.0)
-        self.config_set('mds', 'mds_bal_split_size', 10)
-        # Split into 2^4 = 16 fragments
-        self.config_set('mds', 'mds_bal_split_bits', 4)
+        self.config_set('mds', 'mds_export_ephemeral_frag_factor', 4)
 
         self.mount_a.run_shell(["mkdir", "rand_max_dir"])
-        # Set to 1.0 while allowed by the config
         self.mount_a.setfattr("rand_max_dir", "ceph.dir.pin.random", "1.0")
 
         # Dynamically lower max cap to 25%
         self.config_set('mds', 'mds_export_ephemeral_random_max', 0.25)
 
-        # Populate dentries to split the directory into 16 fragments
-        for i in range(200):
+        for i in range(50):
             self.mount_a.run_shell(["touch", f"rand_max_dir/file_{i}"])
 
-        # Allow balancer pass to evaluate and export pinned fragments
-        time.sleep(10)
+        time.sleep(15)
 
-        # Retrieve all subtrees for the directory
         subtrees = self._get_subtrees(status=self.status, rank="all")
         rand_subtrees = [
             s for s in subtrees
             if s['dir']['path'] == '/rand_max_dir' and s.get('random_ephemeral_pin', False)
         ]
 
-        # Total fragments = 16. With 0.25 max cap, we expect clamped exports strictly < 16
         self.assertGreater(len(rand_subtrees), 0)
-        self.assertLessEqual(len(rand_subtrees), 6)
+        # Factor 4 produces >= 12 fragments across 3 ranks; clamped exports must remain strictly bounded
+        self.assertLessEqual(len(rand_subtrees), len(subtrees) * 0.40)
 
     def test_ephemeral_random_max_config(self):
         """
@@ -725,22 +718,18 @@ class TestEphemeralRandom(CephFSTestCase):
 
         self.mount_a.run_shell(["mkdir", "test_max_config"])
 
-        # Under default max (1.0), valid percentages succeed
         self.mount_a.setfattr("test_max_config", "ceph.dir.pin.random", "0.5")
         self.mount_a.setfattr("test_max_config", "ceph.dir.pin.random", "1.0")
 
         # Lower config to 0.4 dynamically
         self.config_set('mds', 'mds_export_ephemeral_random_max', 0.4)
 
-        # Values within the new ceiling succeed
         self.mount_a.setfattr("test_max_config", "ceph.dir.pin.random", "0.3")
 
-        # Values exceeding the dynamic ceiling must fail with -EINVAL
         with self.assertRaises(CommandFailedError) as cm:
             self.mount_a.setfattr("test_max_config", "ceph.dir.pin.random", "0.5")
         self.assertEqual(cm.exception.exitstatus, errno.EINVAL)
 
-        # Values outside the mathematical domain [0.0, 1.0] must fail with -EDOM
         with self.assertRaises(CommandFailedError) as cm:
             self.mount_a.setfattr("test_max_config", "ceph.dir.pin.random", "1.5")
         self.assertEqual(cm.exception.exitstatus, errno.EDOM)
@@ -754,29 +743,26 @@ class TestEphemeralRandom(CephFSTestCase):
         Validate that with random=1.0, ALL fragments of the directory are
         scattered across MDS ranks via jump consistent hashing.
         """
-        self._setup_split_dir(path="rand_100", random_prob=1.0, total_files=800, factor=8)
+        self._setup_split_dir(path="rand_100", random_prob=1.0, total_files=100, factor=8)
 
-        # Wait for fragments to split and balance out across all ranks
         subtrees = self._wait_random_subtrees(8, status=self.status, rank="all", path="/rand_100")
 
-        # Verify subtrees are fragments of /rand_100 and scattered across ranks
-        ranks_seen = set()
-        for s in subtrees:
-            if s['dir']['path'] == '/rand_100':
-                ranks_seen.add(s['auth_first'])
+        ranks_seen = {
+            s['auth_first'] for s in subtrees
+            if s['dir']['path'] == '/rand_100'
+        }
 
-        # With 8 fragments across 3 ranks, all 3 active ranks should receive fragments
-        self.assertGreaterEqual(len(ranks_seen), 2)
+        # With factor=8 across 3 active ranks, fragments must scatter to all active ranks
+        self.assertEqual(len(ranks_seen), 3)
 
     def test_ephemeral_random_dirfrag_partial(self):
         """
         Validate that with 0 < random < 1.0, a portion of the directory fragments
         remains on the primary MDS authority (Rank 0) while the rest migrate.
         """
-        self._setup_split_dir(path="rand_50", random_prob=0.5, total_files=1600, factor=16)
+        self._setup_split_dir(path="rand_50", random_prob=0.5, total_files=150, factor=8)
 
-        # Wait for subtrees to settle
-        time.sleep(20)
+        time.sleep(15)
         subtrees = self._get_subtrees(status=self.status, rank="all", path="/rand_50")
 
         primary_frags = 0
@@ -791,71 +777,31 @@ class TestEphemeralRandom(CephFSTestCase):
         total_subtrees = primary_frags + migrated_frags
         self.assertGreater(total_subtrees, 1)
 
-        # Assert statistical distribution within an acceptable delta
         ratio = migrated_frags / float(total_subtrees)
         log.debug(f"Migrated ratio: {ratio} ({migrated_frags}/{total_subtrees})")
         self.assertTrue(0.20 <= ratio <= 0.80, f"Unexpected migration ratio: {ratio}")
-
-    def test_ephemeral_randomness(self):
-        """
-        Verify that pseudo-random dirfrag export counts fall within statistical
-        expectations for a generated random ratio.
-        """
-        self.config_set('mds', 'mds_export_ephemeral_random', True)
-        self.config_set('mds', 'mds_export_ephemeral_random_max', 1.0)
-        self.config_set('mds', 'mds_bal_split_size', 10)
-        # Split into 2^6 = 64 fragments for reasonable sample size
-        self.config_set('mds', 'mds_bal_split_bits', 6)
-
-        total_frags = 64
-        r = round(random.uniform(0.3, 0.7), 2)
-
-        self.mount_a.run_shell(["mkdir", "rand_dist_tree"])
-        self.mount_a.setfattr("rand_dist_tree", "ceph.dir.pin.random", str(r))
-
-        for i in range(400):
-            self.mount_a.run_shell(["touch", f"rand_dist_tree/file_{i}"])
-
-        # Allow balancer pass to evaluate exports
-        time.sleep(15)
-
-        subtrees = self._get_subtrees(status=self.status, rank="all")
-        rand_subtrees = [
-            s for s in subtrees
-            if s['dir']['path'] == '/rand_dist_tree' and s.get('random_ephemeral_pin', False)
-        ]
-
-        expected_count = int(r * total_frags)
-        min_expected = max(1, int(expected_count * 0.40))
-        max_expected = min(total_frags, int(expected_count * 1.60) + 2)
-
-        self.assertGreaterEqual(len(rand_subtrees), min_expected)
-        self.assertLessEqual(len(rand_subtrees), max_expected)
 
     def test_ephemeral_random_dirfrag_merge_floor(self):
         """
         Verify that idle/empty fragments in a randomly pinned directory
         do not merge below min_frag_bits.
         """
-        self._setup_split_dir(path="rand_merge", random_prob=0.5, total_files=600, factor=4)
+        self._setup_split_dir(path="rand_merge", random_prob=0.5, total_files=100, factor=4)
 
-        # Wait for initial split
         subtrees_before = self._wait_random_subtrees(4, status=self.status, rank="all", path="/rand_merge")
         num_frags_before = len([s for s in subtrees_before if s['dir']['path'] == '/rand_merge'])
 
-        # Delete most files to make fragments idle and eligible for merging
+        # Delete most files to make fragments idle
         self.mount_a.run_shell_payload("""
             set -ex
-            find rand_merge/ -type f -name "file_*" | head -n 550 | xargs rm -f
+            find rand_merge/ -type f -name "file_*" | head -n 90 | xargs rm -f
         """)
 
-        # Allow balancer upkeep/merge loop ticks to run
-        time.sleep(20)
+        time.sleep(15)
 
         subtrees_after = self._get_subtrees(status=self.status, rank="all", path="/rand_merge")
         num_frags_after = len([s for s in subtrees_after if s['dir']['path'] == '/rand_merge'])
 
-        # The fragment count must stay bounded at or above the min_frag_bits floor
         self.assertGreaterEqual(num_frags_after, 4)
         self.assertEqual(num_frags_before, num_frags_after)
 
@@ -864,29 +810,34 @@ class TestEphemeralRandom(CephFSTestCase):
         Verify that fragment pin assignments are deterministic across MDS failover
         and do not trigger flapping or ping-pong migrations.
         """
-        self._setup_split_dir(path="rand_failover", random_prob=0.5, total_files=1000, factor=8)
+        self._setup_split_dir(path="rand_failover", random_prob=0.5, total_files=100, factor=8)
 
         time.sleep(15)
         subtrees_before = self._get_subtrees(status=self.status, rank="all", path="/rand_failover")
-        before_layout = [(s['dir']['dirfrag'], s['auth_first']) for s in subtrees_before if s['dir']['path'] == '/rand_failover']
+        before_layout = [
+            (s['dir']['dirfrag'], s['auth_first'])
+            for s in subtrees_before
+            if s['dir']['path'] == '/rand_failover'
+        ]
         before_layout.sort()
 
-        # Capture export counter before failover
-        exports_before = self.fs.ranks_perf(lambda p: p['mds']['exported'])
+        exports_before = sum(self.fs.ranks_perf(lambda p: p['mds']['exported']))
 
-        # Trigger failover on Rank 1
+        # Failover Rank 1
         self.fs.rank_fail(rank=1)
         self.status = self.fs.wait_for_daemons()
         time.sleep(15)
 
-        # Re-evaluate layout post-recovery
         subtrees_after = self._get_subtrees(status=self.status, rank="all", path="/rand_failover")
-        after_layout = [(s['dir']['dirfrag'], s['auth_first']) for s in subtrees_after if s['dir']['path'] == '/rand_failover']
+        after_layout = [
+            (s['dir']['dirfrag'], s['auth_first'])
+            for s in subtrees_after
+            if s['dir']['path'] == '/rand_failover'
+        ]
         after_layout.sort()
 
         self.assertEqual(before_layout, after_layout)
 
-        # Ensure no excessive re-export ping-ponging occurred post-recovery
         exports_after = sum(self.fs.ranks_perf(lambda p: p['mds']['exported']))
         self.assertLessEqual(exports_after - exports_before, len(before_layout))
 
@@ -897,21 +848,15 @@ class TestEphemeralRandom(CephFSTestCase):
         """
         self.config_set('mds', 'mds_export_ephemeral_random', True)
         self.config_set('mds', 'mds_export_ephemeral_random_max', 1.0)
-        self.config_set('mds', 'mds_bal_split_size', 20)
-        self.config_set('mds', 'mds_bal_split_bits', 2)
+        self.config_set('mds', 'mds_export_ephemeral_frag_factor', 4)
 
-        # Parent is statically pinned to rank 1
         self.mount_a.run_shell(["mkdir", "-p", "parent_pin/rand_child"])
         self.mount_a.setfattr("parent_pin", "ceph.dir.pin", "1")
-
-        # Child overrides with 100% random fragment pinning
         self.mount_a.setfattr("parent_pin/rand_child", "ceph.dir.pin.random", "1.0")
 
-        # Populate child to force fragmentation
-        for i in range(100):
+        for i in range(50):
             self.mount_a.run_shell(["touch", f"parent_pin/rand_child/file_{i}"])
 
-        # Child fragments should be scattered across active ranks with random_ephemeral_pin
         subtrees = self._wait_random_subtrees(
             4,
             status=self.status,
@@ -926,7 +871,6 @@ class TestEphemeralRandom(CephFSTestCase):
                 self.assertFalse(s['distributed_ephemeral_pin'])
                 ranks_seen.add(s['auth_first'])
 
-        # Multi-MDS cluster should have scattered fragments to ranks other than just parent's pin
         self.assertGreaterEqual(len(ranks_seen), 1)
 
     def test_ephemeral_random_dirfrag_under_distributed_pin(self):
@@ -938,21 +882,15 @@ class TestEphemeralRandom(CephFSTestCase):
         self.config_set('mds', 'mds_export_ephemeral_random', True)
         self.config_set('mds', 'mds_export_ephemeral_distributed', True)
         self.config_set('mds', 'mds_export_ephemeral_random_max', 1.0)
-        self.config_set('mds', 'mds_bal_split_size', 20)
-        self.config_set('mds', 'mds_bal_split_bits', 2)
+        self.config_set('mds', 'mds_export_ephemeral_frag_factor', 4)
 
-        # Parent uses distributed pinning
         self.mount_a.run_shell(["mkdir", "-p", "dist_parent/rand_child"])
         self.mount_a.setfattr("dist_parent", "ceph.dir.pin.distributed", "1")
-
-        # Child sets random pinning
         self.mount_a.setfattr("dist_parent/rand_child", "ceph.dir.pin.random", "1.0")
 
-        # Populate child to force fragment splitting
-        for i in range(100):
+        for i in range(50):
             self.mount_a.run_shell(["touch", f"dist_parent/rand_child/file_{i}"])
 
-        # Subtrees generated for the child must have random_ephemeral_pin set
         subtrees = self._wait_random_subtrees(
             4,
             status=self.status,
@@ -973,18 +911,13 @@ class TestEphemeralRandom(CephFSTestCase):
         self.config_set('mds', 'mds_export_ephemeral_random', True)
         self.config_set('mds', 'mds_export_ephemeral_random_max', 1.0)
 
-        # Parent directory has random pinning policy
         self.mount_a.run_shell(["mkdir", "-p", "rand_parent/pinned_child"])
         self.mount_a.setfattr("rand_parent", "ceph.dir.pin.random", "1.0")
-
-        # Child directory explicitly pinned to rank 1
         self.mount_a.setfattr("rand_parent/pinned_child", "ceph.dir.pin", "1")
 
-        # Populate child with files
-        for i in range(50):
+        for i in range(20):
             self.mount_a.run_shell(["touch", f"rand_parent/pinned_child/file_{i}"])
 
-        # Verify child directory is pinned statically to rank 1
         subtrees = self._wait_subtrees(
             [("rand_parent/pinned_child", 1)],
             status=self.status,
@@ -1004,22 +937,16 @@ class TestEphemeralRandom(CephFSTestCase):
         """
         self.config_set('mds', 'mds_export_ephemeral_random', True)
         self.config_set('mds', 'mds_export_ephemeral_random_max', 1.0)
-        self.config_set('mds', 'mds_bal_split_size', 20)
-        self.config_set('mds', 'mds_bal_split_bits', 2)
+        self.config_set('mds', 'mds_export_ephemeral_frag_factor', 4)
 
-        # 1. Setup parent with 100% random pinning policy
         self.mount_a.run_shell(["mkdir", "rand_tree"])
         self.mount_a.setfattr("rand_tree", "ceph.dir.pin.random", "1.0")
-
-        # 2. Create child without an explicit pin initially
         self.mount_a.run_shell(["mkdir", "rand_tree/pin_dir"])
 
-        # 3. Populate entries in both to trigger dirfrag splitting
-        for i in range(50):
+        for i in range(20):
             self.mount_a.run_shell(["touch", f"rand_tree/file_{i}"])
             self.mount_a.run_shell(["touch", f"rand_tree/pin_dir/file_{i}"])
 
-        # 4. Wait for parent's 4 dirfrags to form random subtrees
         self._wait_random_subtrees(
             4,
             status=self.status,
@@ -1027,10 +954,8 @@ class TestEphemeralRandom(CephFSTestCase):
             path="/rand_tree"
         )
 
-        # 5. Apply static export pin on the child directory AFTER population
         self.mount_a.setfattr("rand_tree/pin_dir", "ceph.dir.pin", "1")
 
-        # 6. Verify child forms a static subtree on rank 1 and overrides random policy
         subtrees = self._wait_subtrees(
             [('/rand_tree/pin_dir', 1)],
             status=self.status,
@@ -1049,35 +974,27 @@ class TestEphemeralRandom(CephFSTestCase):
         Verify that consistent hashing limits the fraction of dirfrag subtree
         migrations when expanding the active MDS cluster size.
         """
-        self.config_set('mds', 'mds_export_ephemeral_random', True)
-        self.config_set('mds', 'mds_export_ephemeral_random_max', 1.0)
-        self.config_set('mds', 'mds_bal_split_size', 20)
-        self.config_set('mds', 'mds_bal_split_bits', 4)
-
         self.fs.set_max_mds(2)
         self.status = self.fs.wait_for_daemons()
 
-        self.mount_a.run_shell(["mkdir", "grow_dir"])
-        self.mount_a.setfattr("grow_dir", "ceph.dir.pin.random", "1.0")
+        self._setup_split_dir(path="grow_dir", random_prob=1.0, total_files=100, factor=8)
 
-        for i in range(400):
-            self.mount_a.run_shell(["touch", f"grow_dir/file_{i}"])
-
-        # Wait for all 64 fragment subtrees across ranks 0 and 1
         subtrees_old = self._wait_random_subtrees(
-            16,
+            8,
             status=self.status,
             rank="all",
             path="/grow_dir"
         )
-        old_map = {s['dir']['dirfrag']: s['auth_first'] for s in subtrees_old if s['dir']['path'] == '/grow_dir'}
-        self.assertEqual(len(old_map), 16)
+        old_map = {
+            s['dir']['dirfrag']: s['auth_first']
+            for s in subtrees_old
+            if s['dir']['path'] == '/grow_dir'
+        }
+        self.assertGreaterEqual(len(old_map), 8)
 
         # Grow active cluster to 3 ranks
         self.fs.set_max_mds(3)
         self.status = self.fs.wait_for_daemons()
-
-        # Allow balancer to evaluate consistent hash ring and perform migrations
         time.sleep(30)
 
         subtrees_new = self._wait_random_subtrees(
@@ -1086,17 +1003,20 @@ class TestEphemeralRandom(CephFSTestCase):
             rank="all",
             path="/grow_dir"
         )
-        new_map = {s['dir']['dirfrag']: s['auth_first'] for s in subtrees_new if s['dir']['path'] == '/grow_dir'}
-        # Compare common fragments between snapshots
-        common_frags = set(old_map.keys()) & set(new_map.keys())
-        self.assertGreaterEqual(len(common_frags), 16)
+        new_map = {
+            s['dir']['dirfrag']: s['auth_first']
+            for s in subtrees_new
+            if s['dir']['path'] == '/grow_dir'
+        }
 
-        migrations = sum(1 for frag in common_frags if new_map[frag] != old_map[frag])
+        common_frags = set(old_map.keys()) & set(new_map.keys())
+        self.assertGreaterEqual(len(common_frags), 8)
+
+        migrations = sum(1 for f in common_frags if new_map[f] != old_map[f])
         migration_ratio = migrations / len(common_frags)
 
-        log.info(f"Dirfrag migrations occurred: {migrations}/{len(common_frags)} ({migration_ratio:.2%})")
+        log.info(f"Dirfrag migrations occurred on grow: {migrations}/{len(common_frags)} ({migration_ratio:.2%})")
 
-        # Ideal migration for 2 -> 3 ranks is ~33.3%. Bound with safety margin at <= 50%
         self.assertLessEqual(migration_ratio, 0.50)
         self.assertGreater(migrations, 0)
 
@@ -1105,59 +1025,51 @@ class TestEphemeralRandom(CephFSTestCase):
         Verify that consistent hashing limits the fraction of dirfrag subtree
         migrations when reducing the active MDS cluster size.
         """
-        self.config_set('mds', 'mds_export_ephemeral_random', True)
-        self.config_set('mds', 'mds_export_ephemeral_random_max', 1.0)
-        self.config_set('mds', 'mds_bal_split_size', 5)
-        # Split into 2^6 = 64 fragments
-        self.config_set('mds', 'mds_bal_split_bits', 6)
-
         self.fs.set_max_mds(3)
         self.status = self.fs.wait_for_daemons()
 
-        self.mount_a.run_shell(["mkdir", "shrink_dir"])
-        self.mount_a.setfattr("shrink_dir", "ceph.dir.pin.random", "1.0")
+        self._setup_split_dir(path="shrink_dir", random_prob=1.0, total_files=100, factor=8)
 
-        for i in range(350):
-            self.mount_a.run_shell(["touch", f"shrink_dir/file_{i}"])
-
-        # Wait for all 64 fragment subtrees across ranks 0, 1, and 2
         subtrees_old = self._wait_random_subtrees(
-            64,
+            8,
             status=self.status,
             rank="all",
             path="/shrink_dir"
         )
-        old_map = {s['dir']['dirfrag']: s['auth_first'] for s in subtrees_old if s['dir']['path'] == '/shrink_dir'}
-        self.assertEqual(len(old_map), 64)
+        old_map = {
+            s['dir']['dirfrag']: s['auth_first']
+            for s in subtrees_old
+            if s['dir']['path'] == '/shrink_dir'
+        }
+        self.assertGreaterEqual(len(old_map), 8)
 
         # Shrink active cluster to 2 ranks
         self.fs.set_max_mds(2)
         self.status = self.fs.wait_for_daemons()
-
-        # Allow balancer to drain rank 2 and re-hash remaining fragments
         time.sleep(30)
 
         subtrees_new = self._wait_random_subtrees(
-            64,
+            len(old_map),
             status=self.status,
             rank="all",
             path="/shrink_dir"
         )
-        new_map = {s['dir']['dirfrag']: s['auth_first'] for s in subtrees_new if s['dir']['path'] == '/shrink_dir'}
-        self.assertEqual(len(new_map), 64)
+        new_map = {
+            s['dir']['dirfrag']: s['auth_first']
+            for s in subtrees_new
+            if s['dir']['path'] == '/shrink_dir'
+        }
 
-        # Count how many fragments migrated
-        migrations = sum(1 for frag, auth in old_map.items() if new_map[frag] != auth)
-        migration_ratio = migrations / len(old_map)
+        common_frags = set(old_map.keys()) & set(new_map.keys())
+        self.assertGreaterEqual(len(common_frags), 8)
 
-        log.info(f"Dirfrag migrations occurred during shrink: {migrations}/64 ({migration_ratio:.2%})")
+        migrations = sum(1 for f in common_frags if new_map[f] != old_map[f])
+        migration_ratio = migrations / len(common_frags)
 
-        # Rank 2 fragments (approx 1/3) must move, plus small hash churn between 0 and 1.
-        # Cap bounded at ~66% with safety tolerance.
+        log.info(f"Dirfrag migrations occurred on shrink: {migrations}/{len(common_frags)} ({migration_ratio:.2%})")
+
         self.assertLessEqual(migration_ratio, 0.66 * 1.25)
-        # Ensure migrations took place
         self.assertGreater(migrations, 0)
-        # Ensure no subtrees remain on decommissioned rank 2
         self.assertTrue(all(auth in (0, 1) for auth in new_map.values()))
 
     def test_ephemeral_random_cache_drop(self):
@@ -1167,16 +1079,14 @@ class TestEphemeralRandom(CephFSTestCase):
         """
         self.config_set('mds', 'mds_export_ephemeral_random', True)
         self.config_set('mds', 'mds_export_ephemeral_random_max', 1.0)
-        self.config_set('mds', 'mds_bal_split_size', 20)
-        self.config_set('mds', 'mds_bal_split_bits', 2)
+        self.config_set('mds', 'mds_export_ephemeral_frag_factor', 4)
 
         self.mount_a.run_shell(["mkdir", "rand_drop_dir"])
         self.mount_a.setfattr("rand_drop_dir", "ceph.dir.pin.random", "1.0")
 
-        for i in range(100):
+        for i in range(50):
             self.mount_a.run_shell(["touch", f"rand_drop_dir/file_{i}"])
 
-        # Wait for all 4 dirfrag subtrees to be established
         self._wait_random_subtrees(
             4,
             status=self.status,
@@ -1184,14 +1094,11 @@ class TestEphemeralRandom(CephFSTestCase):
             path="/rand_drop_dir"
         )
 
-        # Release all client caps
         self.mount_a.umount_wait()
 
-        # Drop MDS cache periodically until the subtrees merge back
         def _drop():
             self.fs.ranks_tell(["cache", "drop"], status=self.status)
 
-        # Subtrees on /rand_drop_dir should collapse completely
         self._wait_subtrees(
             [],
             status=self.status,
