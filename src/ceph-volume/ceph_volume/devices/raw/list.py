@@ -62,7 +62,7 @@ class List(object):
         return [
             dev
             for dev in devices
-            if (dev_name := dev["NAME"]) and os.path.exists(dev_name)
+            if dev["NAME"] and os.path.exists(dev["NAME"])
         ]
 
     def exclude_atari_partitions(self) -> None:
