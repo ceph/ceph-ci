@@ -1,8 +1,8 @@
 * Messenger: new ``ms_tcp_zerocopy`` option (default ``false``) makes the
-  async Posix stack send large plaintext payloads with ``MSG_ZEROCOPY``,
+  async Posix stack send large payloads with ``MSG_ZEROCOPY``,
   eliminating the kernel send copy. ``ms_tcp_zerocopy_min_size``
-  (default 16K) sets the per-send threshold. Only crc-mode connections
-  are eligible; secure mode already copies during encryption.
+  (default 16K) sets the per-send threshold. Applies to both crc and
+  secure mode; in secure mode the ciphertext buffer is pinned.
 
 * ceph-volume: Raw BlueStore OSD preparation now pre-formats NVMe devices and
   skips the slower BlueStore discard phase,reducing mkfs time on
