@@ -56,8 +56,6 @@ class ConnectedSocketImpl {
     uint64_t fallback = 0;        // kernel degraded to a copy
     uint64_t retired_bytes = 0;   // pinned bytes released
   };
-  // Disable MSG_ZEROCOPY for this connection (e.g. secure mode).
-  virtual void set_zerocopy_eligible(bool) {}
   // Payload bytes of the most recent send() pinned for MSG_ZEROCOPY
   // (awaiting kernel completion) rather than copied.
   virtual size_t last_send_zerocopy_bytes() const { return 0; }
@@ -164,9 +162,6 @@ class ConnectedSocket {
   }
 
   // MSG_ZEROCOPY forwards (safe when _csi is null).
-  void set_zerocopy_eligible(bool e) {
-    if (_csi) _csi->set_zerocopy_eligible(e);
-  }
   size_t last_send_zerocopy_bytes() const {
     return _csi ? _csi->last_send_zerocopy_bytes() : 0;
   }

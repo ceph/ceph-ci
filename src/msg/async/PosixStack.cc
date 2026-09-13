@@ -65,7 +65,6 @@ class PosixConnectedSocketImpl final : public ConnectedSocketImpl {
   // it. That keeps the wrap handling in one place and lets completed
   // ranges be ordered/merged with plain comparisons.
   bool zc_socket_enabled = false;   // SO_ZEROCOPY active on _fd
-  bool zc_eligible = true;          // cleared for secure connections
   uint64_t zc_min_size = 0;         // ms_tcp_zerocopy_min_size
   uint64_t zc_next_id = 0;          // next id we will submit
   uint64_t zc_retire_id = 0;        // oldest id not yet known complete
@@ -274,12 +273,11 @@ class PosixConnectedSocketImpl final : public ConnectedSocketImpl {
       }
       bool zerocopy = false;
 #ifdef CEPH_HAVE_MSG_ZEROCOPY
-      // Per-chunk: only large plaintext segments on a zero-copy-capable,
-      // non-secure socket. Sub-threshold framing/control stays plain.
+      // Per-chunk: only large segments on a zero-copy-capable socket.
+      // Sub-threshold framing/control stays plain.
       // A zero-length chunk must never take this path: the kernel
       // consumes no id for it, which would desync our id mirror.
-      zerocopy = zc_socket_enabled && zc_eligible &&
-                 msglen && msglen >= zc_min_size;
+      zerocopy = zc_socket_enabled && msglen && msglen >= zc_min_size;
 #endif
       ssize_t r = do_sendmsg(_fd, msg, msglen, left_pbrs || more,
                              zerocopy, &zc_stats);
@@ -435,11 +433,6 @@ class PosixConnectedSocketImpl final : public ConnectedSocketImpl {
     return _fd;
   }
 
-  void set_zerocopy_eligible(bool e) override {
-#ifdef CEPH_HAVE_MSG_ZEROCOPY
-    zc_eligible = e;
-#endif
-  }
   size_t last_send_zerocopy_bytes() const override {
 #ifdef CEPH_HAVE_MSG_ZEROCOPY
     return zc_last_bytes;
