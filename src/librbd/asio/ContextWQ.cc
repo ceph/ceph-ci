@@ -17,11 +17,21 @@ void ContextWQ::queue(Context* ctx, int r) {
 
   ++m_queued_ops;
 
-  post_serial([this, ctx, r]() {
+  Work work = [this, ctx, r]() {
     ctx->complete(r);
     ceph_assert(m_queued_ops > 0);
     --m_queued_ops;
-  });
+  };
+
+  // Prefer the caller's channel when already on one (e.g. submit reactor)
+  // so I/O continuations do not bounce to the image's default WQ reactor.
+  // Off-channel callers keep the serial path for drain() accounting.
+  auto channel = current_channel();
+  if (channel != nullptr) {
+    post_channel(channel, std::move(work));
+  } else {
+    post_serial(std::move(work));
+  }
 }
 
 } // namespace asio
