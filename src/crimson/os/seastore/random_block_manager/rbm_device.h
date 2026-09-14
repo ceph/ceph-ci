@@ -222,7 +222,7 @@ public:
     device_id_t id,
     size_t size,
     uint64_t block_size)
-    : RBMDevice(path, device_type_t::RANDOM_BLOCK_EPHEMERAL, id),
+    : RBMDevice(path, device_type_t::EPHEMERAL_MAIN, id),
       size(size),
       block_size(block_size),
       buf(nullptr) {}

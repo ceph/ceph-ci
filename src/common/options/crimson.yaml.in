@@ -265,7 +265,7 @@ options:
   level: dev
   desc: Backend used by the cache device, valid values are SEGMENTED and RANDOM_BLOCK
   default: SEGMENTED
-- name: seastore_cache_bw_throttle
+- name: seastore_cache_device_bw_throttle
   type: size
   level: advanced
   desc: Size in bytes per second written to the cache device, 0 indicates no limit
@@ -285,7 +285,7 @@ options:
   level: dev
   desc: Backend used by the data devices, valid values are SEGMENTED and RANDOM_BLOCK
   default: RANDOM_BLOCK
-- name: seastore_data_bw_throttle
+- name: seastore_data_device_bw_throttle
   type: size
   level: advanced
   desc: Size in bytes per second written to the secondary devices, 0 indicates no limit

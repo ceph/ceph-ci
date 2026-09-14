@@ -82,7 +82,7 @@ void device_superblock_t::validate() const
     ceph_assert(segment_capacity > 0);
     ceph_assert_always(segment_capacity <= SEGMENT_OFF_MAX);
   }
-  auto backend = get_default_backend_of_device(config.spec.dtype);
+  auto backend = config.spec.btype;
   if (backend == backend_type_t::SEGMENTED) {
     ceph_assert(segment_size > 0 && segment_size % block_size == 0);
     ceph_assert_always(segment_size <= SEGMENT_OFF_MAX);
@@ -106,8 +106,7 @@ void device_superblock_t::validate() const
   } else {
     // RBM
     ceph_assert(total_size > 0);
-    ceph_assert(get_default_backend_of_device(config.spec.dtype) ==
-                backend_type_t::RANDOM_BLOCK);
+    ceph_assert(config.spec.btype == backend_type_t::RANDOM_BLOCK);
     ceph_assert(shard_infos.size() >= shard_num);
     for (unsigned int i = 0; i < shard_num; i++) {
       ceph_assert(shard_infos[i].size > block_size &&

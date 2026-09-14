@@ -423,8 +423,7 @@ seastar::future<uint32_t> SeaStore::start()
   ceph_assert(root != "");
   std::string type = get_conf<std::string>("seastore_cache_device_type");
   device_type_t dtype = string_to_device_type(type);
-  assert(dtype == device_type_t::SSD ||
-         dtype == device_type_t::RANDOM_BLOCK_SSD);
+  assert(dtype == device_type_t::SSD);
   type = get_conf<std::string>("seastore_cache_backend_type");
   auto btype = string_to_backend_type(type);
   INFO("cache device type: {}, cache backend type: {}", dtype, btype);
@@ -459,7 +458,7 @@ seastar::future<uint32_t> SeaStore::start()
     }
   }
   if (!cache_exists && crimson::common::get_conf<bool>(
-        "seastore_logical_bucket_cache_test_stress")) {
+        "seastore_lbc_test_stress")) {
     // lbc test workload enabled while no secondary devices indicated, create one
     co_await seastar::make_directory(cache_dev_path);
     std::string path = fmt::format("{}/block", cache_dev_path);
@@ -830,8 +829,7 @@ Device::access_ertr::future<> SeaStore::_mkfs(uuid_d new_osd_fsid)
   for (auto &dev : cache_devices) {
     auto dtype = dev->get_device_type();
     auto btype = dev->get_backend_type();
-    assert(dtype == device_type_t::SSD ||
-      dtype == device_type_t::RANDOM_BLOCK_SSD);
+    assert(dtype == device_type_t::SSD);
     auto id = dev->get_device_id();
     cds.emplace((device_id_t)id,
                 device_spec_t{magic, dtype, btype, (device_id_t)id});
@@ -3152,22 +3150,21 @@ seastar::future<std::string> SeaStore::get_default_device_class()
   return seastar::make_ready_future<std::string>(type);
 }
 
-seastar::future<std::string> SeaStore::get_primary_backend_type_name()
+seastar::future<std::string> SeaStore::get_data_backend_type_name()
 {
   ceph_assert(seastar::this_shard_id() == primary_core);
-  ceph_assert(device);
   return seastar::make_ready_future<std::string>(
-    fmt::format("{}", device->get_backend_type()));
+    fmt::format("{}", data_devices.front()->get_backend_type()));
 }
 
-seastar::future<std::string> SeaStore::get_secondary_backend_type_name()
+seastar::future<std::string> SeaStore::get_cache_backend_type_name()
 {
   ceph_assert(seastar::this_shard_id() == primary_core);
-  if (secondaries.empty()) {
+  if (cache_devices.empty()) {
     return seastar::make_ready_future<std::string>();
   }
   return seastar::make_ready_future<std::string>(
-    fmt::format("{}", secondaries.front()->get_backend_type()));
+    fmt::format("{}", cache_devices.front()->get_backend_type()));
 }
 
 uuid_d SeaStore::Shard::get_fsid() const

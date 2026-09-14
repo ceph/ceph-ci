@@ -1782,7 +1782,6 @@ TransactionManagerRef make_transaction_manager(
   for (auto &dev : cache_devices) {
     auto dtype = dev->get_device_type();
     ceph_assert(dtype == device_type_t::SSD ||
-                dtype == device_type_t::RANDOM_BLOCK_SSD ||
                 dtype == device_type_t::EPHEMERAL_MAIN);
     auto c_backend_type = dev->get_backend_type();
     if (cache_backend_type == backend_type_t::NONE) {
