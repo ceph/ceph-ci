@@ -115,38 +115,37 @@ The ceph osd pool create command will be extended to become a parameterized comm
 For backward compatibility, the positional arguments will be maintained and can be
 specified along side the new paramaters. 
 
-2.2.1 Full command syntax
+2.1.1 Full command syntax
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The full command syntax is listed here. Refer to the later sections for pool-type specific details.
 
 .. code-block:: text
 
-   ceph osd pool create {pool_name} 
-        [{pg_num} | --pg_num <pg_num>]
-        [{pgp_num} | --pgp_num <pgp_num>]
-        [{replicated | erasure} | --pool_type <replicated|erasure>]
-        [{expected_num_objects} | --expected_num_objects <expected_num_objects>]
-        
+   ceph osd pool create {pool_name}
+        [--pg_num <pg_num>]
+        [--pgp_num <pgp_num>]
+        [--pool_type <replicated|erasure>]
+        [--expected_num_objects <expected_num_objects>]
+
         # CRUSH Placement Options (Mutually Exclusive)
-        [ {crush_rule_name} | --crush_rule_name <crush_rule_name> | 
-          [--crush_root <crush_root>] [--zone_failure_domain <zone_failure_domain>] [--osd_failure_domain <osd_failure_domain>] [--crush_device_class <class>] ]
-        
+        [ --rule <crush_rule_name> |
+          [--root <crush_root>] [--zone_failure_domain <zone_failure_domain>] [--osd_failure_domain <osd_failure_domain>] [--class <device_class>] ]
+
         # Replica-Specific Options
         [--size <size>]
-        
+        [--num_replica_per_zone <num_replica_per_zone>]
+
         # Erasure-Specific Options
-        [--data_shards <num_data_shards>]
-        [--coding_shards <num_coding_shards>]
-        [--stripe_unit <stripe_unit>]
-        [ {erasure_code_profile} | --profile <profile_name> ]
-        
+        [--k <num_data_shards>]
+        [--m <num_coding_shards>]
+        [ --erasure_code_profile <profile_name> ]
+
         # Topology and Redundancy
-        [num_zones=<num_zones>]
-        [--min_size <min_size>]
-        
+        [--num_zones <num_zones>]
+
         # Autoscaling and General Config
-        [--autoscale_mode=<on,off,warn>]
+        [--autoscale_mode <on|off|warn>]
         [--pg_num_min <pg_num_min>]
         [--pg_num_max <pg_num_max>]
         [--bulk]
@@ -154,11 +153,8 @@ The full command syntax is listed here. Refer to the later sections for pool-typ
         [--target_size_ratio <target_size_ratio>]
         [--crimson]
         [--yes_i_really_mean_it]
-        
-        # Legacy Options
-        [--stretch_mode]
 
-2.2.2 Legacy positional syntax
+2.1.2 Legacy positional syntax
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The following syntax, taken from the current docs, will be maintained for backward compatibility:
@@ -176,13 +172,13 @@ The following syntax, taken from the current docs, will be maintained for backwa
 This syntax can be used with the new parameters which do not directly conflict.  For example --pg_num cannot 
 be used with its positional counterpart. 
 
-2.2.1 Basic Parameters
+2.1.3 Basic Parameters
 ^^^^^^^^^^^^^^^^^^^^^^
 
 These are the primary parameters required for standard deployments.
 
 **--pool_type** (or positional equivalent)
-  - *Definition*: The type of pool to create. 
+  - *Definition*: The type of pool to create.
   - *Values*: ``replicated`` or ``erasure``.
   - *Default Value*: Derived from ``osd_pool_default_type`` if omitted, but highly recommended to specify.
 
@@ -190,75 +186,70 @@ These are the primary parameters required for standard deployments.
   - *Definition*: The number of OSDs the data is striped over for each object. (Replica only)
   - *Note*: Parameter will be ignored, rather than rejected for EC pools, for backward compatibility.
 
-**--data_shards** (or **--k**)
+**--k**
   - *Definition*: Within a zone, the number of OSDs the data is striped over for each object. (EC only)
 
-**--coding_shards** (or **--m**)
+**--m**
   - *Definition*: Within a zone, the number of OSDs the coding shards are striped over. (EC only)
 
-**num_zones**
+**--num_zones**
   - *Definition*: For a stretched cluster configuration defines the number of zones, each which store a full replica of the pool. (EC or Replica)
   - *Default Value*: ``1``
-  - *Behavior*: Setting this to >1 creates a stretched pool.    
-     A non-stretched pool achieves redundancy accross OSDs.  A stretched pool creates redundancy
-     accross ``num_zones``. 
+  - *Behavior*: Setting this to >1 creates a stretched pool.
+     A non-stretched pool achieves redundancy across OSDs.  A stretched pool creates redundancy
+     across ``num_zones``.
   - *Pool Size*: The resulting pool ``size`` is ``num_zones × (k + m)``.
 
 
-2.2.2 Advanced
-^^^^^^^^^^^^^^
+2.1.4 Advanced Parameters
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
 These parameters are intended for advanced users and offer finer control over the cluster layout.
-
-**--stripe_unit**
-  - *Definition*: The amount of data in a shard, per stripe. Sometimes referred to as "chunk size".  (EC only)
-  - *Default Value*: 16k for Fast EC, 4k for classic EC.
-  - *Purpose*: Where beneficial for a well-known access pattern, the stripe unit can
-    be tuned to any 4k-divisible value. 
 
 **--zone_failure_domain**
   - *Definition*: The CRUSH bucket type over which zone-redundancy is achieved.
   - *Default Value*: ``datacenter``
   - *Purpose*: This is the CRUSH bucket type that defines a zone.
-  - *Note*: Mutually exclusive with ``--crush_rule``
-  
+  - *Note*: Mutually exclusive with ``--rule``
+
 **--osd_failure_domain**
   - *Definition*: The CRUSH bucket type over which OSD-redundancy is achieved.
   - *Default Value*: ``host``
-  - *Note*: Mutually exclusive with ``--crush_rule``
+  - *Note*: Mutually exclusive with ``--rule``
 
-**--crush_device_class**
+**--class**
   - *Definition*: Restrict placement to devices of a specific class (e.g., ``ssd`` or ``hdd``), using the CRUSH device class names in the CRUSH map.
   - *Purpose*: Only required if a cluster has a mixture of different classes of OSD.
-  - *Note*: Mutually exclusive with ``--crush_rule``
+  - *Note*: Mutually exclusive with ``--rule``
 
-**--crush_root**
+**--root**
   - *Definition*: The root of the CRUSH tree to use.  (R2 only)
   - *Default Value*: The cluster root (``default``).
   - *Topology and Validation*: Specifying the CRUSH root to use (defaults to ``default``), the CRUSH level for a zone (defaults to ``datacenter``), and the number of zones (defaults to ``1``) is sufficient to define the pool's placement:
 
-    - Example 1: In a cluster with 2 datacenters, specifying ``--num-zones 2`` will create a stretch pool across the 2 datacenters.
-    - Example 2: In a cluster with 2 datacenters, specifying ``--crush_root DC1`` will create an pool completely contained in DC1.
+    - Example 1: In a cluster with 2 datacenters, specifying ``--num_zones 2`` will create a stretch pool across the 2 datacenters.
+    - Example 2: In a cluster with 2 datacenters, specifying ``--root DC1`` will create a pool completely contained in DC1.
     - Validation: If there are N datacenters with the same root and you specify a number of zones M != N, the command will fail because the specified number of zones is different from the number of zones in the CRUSH hierarchy.
     - Custom Rules: If users want to use a subset of zones (e.g., a special 3-datacenter configuration), they must specify a custom CRUSH rule. A custom CRUSH rule is mutually exclusive with specifying the CRUSH root and/or CRUSH level.
 
   - *Operational Restrictions*: When there are stretch pools, adding or moving a CRUSH bucket that impacts the number of zones for the pool will require a ``yes-i-really-mean-it`` flag, as this is liable to break things.
-  - *Note*: Mutually exclusive with ``--crush_rule``
+  - *Note*: Mutually exclusive with ``--rule``
 
-**--min_size**
-  - *Definition*: The minimum number of shards required to serve I/O within a zone.
-  - *Note*: The value should be within allowed specified ranges. For replica pools this range is ``1-<num replicas>``, for EC pools this is ``<num data shards>-<num data shards>+<num coding shards>``.
+**--rule**
+  - *Definition*: Use this CRUSH rule, instead of an auto-generated rule.
+  - *Purpose*: Create a bespoke CRUSH rule for advanced use cases not covered by the auto rule generation above.
+  - *Note*: Mutually exclusive with ``--root``, ``--osd_failure_domain`` and ``--zone_failure_domain``
 
-**--crush_rule**
-  - *Definition*: Use this CRUSH rule, instead of an auto-generated rule. 
-  - *Purpose*: Create a bespoke CRUSH rule for advanced use cases not covered by the auto rule generation above. 
-  - *Note*: Mutually exclusive with ``--crush_root``, ``--osd_failure_domain`` and ``--zone_failure_domain``
+**--erasure_code_profile**
+  - *Definition*: The legacy EC Profile to use.
+  - *Note*: Mutually exclusive with ``--num_zones``: Cannot be used with multi-zone configurations. Also
+    mutually exclusive with ``--k``/``--m``.
 
-**--profile**
-  - *Definition*: The legacy EC Profile to use. 
-  - *Note*: Mutually exclusive with ``num_zones``: Cannot be used with multi-zone configurations. 
+**--num_replica_per_zone**
+  - *Definition*: For replicated pools, the number of replicas within each zone. (Replica only)
+  - *Default Value*: ``2``
 
-.. note:: 
+.. note::
 
    The following parameters are existing, standard pool configuration options included here for completeness.
 
@@ -267,7 +258,7 @@ These parameters are intended for advanced users and offer finer control over th
 
 **--pgp_num**
   - *Definition*: The total number of placement groups for placement purposes.
-  - *Note*: This should never be modified. Purely here for backward compaitbility.
+  - *Note*: This should never be modified. Purely here for backward compatibility.
 
 **--expected_num_objects**
   - *Definition*: The expected number of objects for this pool, used to pre-split placement groups at pool creation.
@@ -299,17 +290,7 @@ These parameters are intended for advanced users and offer finer control over th
   - *Definition*: Internal safety override flag. In the context of pool creation, it is specifically used to allow the creation of hidden or system-reserved pools whose names begin with a dot (e.g., ``.rgw.root``).
 
 
-2.2.3 Deprecated
-^^^^^^^^^^^^^^^^
-
-These are used for backward compatibility only.
-
-**--stretch_mode**
-  - *Definition*: Deprecated parameter for Replica pools which configures two zones with half the specified number of replica copies in each zone. Not supported for EC pools.
-  - *Note*: Mutually exclusive with ``num_zones`` and erasure pools.
-
-
-2.3 Examples
+2.2 Examples
 ~~~~~~~~~~~~
 
 The following are examples of how the new parameterized ``ceph osd pool create`` command simplifies pool creation across different topologies.
@@ -326,35 +307,35 @@ Create an erasure-coded pool using a ``k=4, m=2`` configuration (yielding a size
 
 .. code-block:: bash
 
-   ceph osd pool create my_ec_pool --pool_type erasure --data_shards 4 --coding_shards 2 --pg_num 64
+   ceph osd pool create my_ec_pool --pool_type erasure --k 4 --m 2 --pg_num 64
 
 **Example 3: Stretched Replicated Pool**
 Create a replicated pool that spans across two datacenters, achieving a total size of 4 (2 replicas in each datacenter):
 
 .. code-block:: bash
 
-   ceph osd pool create stretch_rep pool_type=replicated size=4 zone_failure_domain=datacenter --num-zones 2
+   ceph osd pool create stretch_rep --pool_type replicated --size 4 --zone_failure_domain datacenter --num_zones 2
 
 **Example 4: Stretched Erasure Coded Pool**
 Create an erasure-coded pool stretched across two racks. Using a ``k=4, m=2`` configuration per zone across 2 zones creates a total pool size of 12 shards (4 data and 2 coding per rack):
 
 .. code-block:: bash
 
-   ceph osd pool create stretch_ec pool_type=erasure data_shards=4 coding_shards=2 zone_failure_domain=rack --num-zones 2
+   ceph osd pool create stretch_ec --pool_type erasure --k 4 --m 2 --zone_failure_domain rack --num_zones 2
 
 **Example 5: Single Datacenter Erasure Coded Pool**
-Create an EC pool confined entirely to a specific datacenter using the ``--crush_root`` parameter:
+Create an EC pool confined entirely to a specific datacenter using the ``--root`` parameter:
 
 .. code-block:: bash
 
-   ceph osd pool create dc1_ec --pool_type erasure --data_shards 4 --coding_shards 2 --crush_root DC1 
+   ceph osd pool create dc1_ec --pool_type erasure --k 4 --m 2 --root DC1
 
 **Example 6: Bulk Erasure Coded Pool with Autoscaling Limits**
 Create an EC pool where the system automatically scales the PG count but enforces a minimum boundary, marking it as a bulk pool:
 
 .. code-block:: bash
 
-   ceph osd pool create bulk_ec --pool_type erasure --data_shards 6 --coding_shards 3 --autoscale_mode on --pg_num_min 128 --bulk
+   ceph osd pool create bulk_ec --pool_type erasure --k 6 --m 3 --autoscale_mode on --pg_num_min 128 --bulk
 
 
 1. Approaches Considered but Rejected
