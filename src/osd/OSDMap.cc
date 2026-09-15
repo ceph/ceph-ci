@@ -405,6 +405,13 @@ unsigned OSDMap::stretch_ec_num_acting_below_min_size(const pg_pool_t& pool,
     }
     vector<int> zone_osds;
     crush->get_children_of_type(zone, 0, &zone_osds);
+    // Skip zones that contain no OSDs (e.g. the tiebreaker datacenter which
+    // holds only an arbiter monitor).  Including OSD-less zones would always
+    // produce a non-zero deficit and permanently prevent EC stretch PGs from
+    // going active after recovery.
+    if (zone_osds.empty()) {
+      continue;
+    }
     set<int> zone_osd_set(zone_osds.begin(), zone_osds.end());
 
     unsigned zone_acting = 0;

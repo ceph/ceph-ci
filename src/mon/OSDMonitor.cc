@@ -16846,13 +16846,18 @@ void OSDMonitor::trigger_recovery_stretch_mode()
   pending_inc.change_stretch_mode = true;
   pending_inc.stretch_mode_enabled = osdmap.stretch_mode_enabled;
   pending_inc.new_stretch_bucket_count = osdmap.stretch_bucket_count;
-  pending_inc.new_degraded_stretch_mode = osdmap.degraded_stretch_mode;
+  pending_inc.new_degraded_stretch_mode = 0;
   pending_inc.new_recovering_stretch_mode = 1;
   pending_inc.new_stretch_mode_bucket = osdmap.stretch_mode_bucket;
 
   for (auto pgi : osdmap.pools) {
     if (pgi.second.peering_crush_bucket_count) {
       pg_pool_t& newp = *pending_inc.get_new_pool(pgi.first, &pgi.second);
+      newp.peering_crush_bucket_count = osdmap.stretch_bucket_count;
+      newp.peering_crush_mandatory_member = CRUSH_ITEM_NONE;
+      if (newp.is_replicated()) {
+        newp.min_size = pgi.second.min_size * osdmap.stretch_bucket_count;
+      }
       newp.set_last_force_op_resend(pending_inc.epoch);
     }
   }
