@@ -383,25 +383,19 @@ namespace rgw::dedup {
   }
 
   //---------------------------------------------------------------------------
-  int Background::init_rados_access_handles(bool init_pool)
+  // Detect whether the data pool supports truncate (needed for split-head).
+  // EC pools without allow_ec_overwrites reject TRUNCATE with -EOPNOTSUPP.
+  // We only check the default placement pool because the BI filter applies
+  // exclusively to RGW_STORAGE_CLASS_STANDARD objects, which always reside
+  // in the default placement's data pool. Non-default storage classes have
+  // an empty head and skip the filter entirely.
+  static int detect_pool_alignment(rgw::sal::RadosStore* store,
+                                   const DoutPrefixProvider* dpp,
+                                   bool* p_pool_supports_truncate /* OUT-PARAM */)
   {
-    store = dynamic_cast<rgw::sal::RadosStore*>(driver);
-    if (!store) {
-      ldpp_dout(dpp, 0) << "ERR: failed dynamic_cast to RadosStore" << dendl;
-      // this is the return code used in rgw_bucket.cc
-      return -ENOTSUP;
-    }
+    auto p_rados_handle = store->getRados()->get_rados_handle();
 
-    rados = store->getRados();
-    rados_handle = rados->get_rados_handle();
-
-    // Detect whether the data pool supports truncate (needed for split-head).
-    // EC pools without allow_ec_overwrites reject TRUNCATE with -EOPNOTSUPP.
-    // We only check the default placement pool because the BI filter applies
-    // exclusively to RGW_STORAGE_CLASS_STANDARD objects, which always reside
-    // in the default placement's data pool. Non-default storage classes have
-    // an empty head and skip the filter entirely.
-    d_pool_supports_truncate = true;
+    *p_pool_supports_truncate = true;
     const auto& zone_params = store->svc()->zone->get_zone_params();
     const auto& zonegroup = store->svc()->zone->get_zonegroup();
     const std::string& default_placement_name = zonegroup.default_placement.name;
@@ -410,7 +404,7 @@ namespace rgw::dedup {
       const rgw_pool& data_pool = it->second.get_standard_data_pool();
       if (!data_pool.name.empty()) {
         librados::IoCtx data_ioctx;
-        int ret = rgw_init_ioctx(dpp, rados_handle, data_pool, data_ioctx);
+        int ret = rgw_init_ioctx(dpp, p_rados_handle, data_pool, data_ioctx);
         if (ret < 0) {
           ldpp_dout(dpp, 5) << __func__ << "::failed to open default data pool "
                             << data_pool.name << ": " << cpp_strerror(-ret) << dendl;
@@ -426,7 +420,7 @@ namespace rgw::dedup {
         }
 
         if (requires_alignment) {
-          d_pool_supports_truncate = false;
+          *p_pool_supports_truncate = false;
           ldpp_dout(dpp, 5) << __func__ << "::default data pool " << data_pool.name
                             << " is EC without allow_ec_overwrites, "
                             << "disabling split-head" << dendl;
@@ -443,6 +437,22 @@ namespace rgw::dedup {
                         << default_placement_name << ") has no valid pool" << dendl;
       return -ENOENT;
     }
+
+    return 0;
+  }
+
+  //---------------------------------------------------------------------------
+  int Background::init_rados_access_handles(bool init_pool)
+  {
+    store = dynamic_cast<rgw::sal::RadosStore*>(driver);
+    if (!store) {
+      ldpp_dout(dpp, 0) << "ERR: failed dynamic_cast to RadosStore" << dendl;
+      // this is the return code used in rgw_bucket.cc
+      return -ENOTSUP;
+    }
+
+    rados = store->getRados();
+    rados_handle = rados->get_rados_handle();
 
     if (init_pool) {
       int ret = init_dedup_pool_ioctx(store, dpp, d_dedup_cluster_ioctx);
@@ -3566,6 +3576,7 @@ namespace rgw::dedup {
     // 256x8KB=2MB
     const uint64_t PER_SHARD_BUFFER_SIZE = DISK_BLOCK_COUNT *sizeof(disk_block_t);
     ldpp_dout(dpp, 20) <<__func__ << "::dedup::main loop" << dendl;
+    bool has_default_placement_pool = false;
 
     while (!d_ctl.shutdown_req) {
       if (unlikely(d_ctl.should_pause())) {
@@ -3588,37 +3599,55 @@ namespace rgw::dedup {
           ldpp_dout(dpp, 1) << __func__ << "::bad pool_id" << dendl;
           return;
         }
-        work_shard_t num_work_shards = epoch.num_work_shards;
-        md5_shard_t  num_md5_shards  = epoch.num_md5_shards;
-        const uint64_t RAW_MEM_SIZE = PER_SHARD_BUFFER_SIZE * num_md5_shards;
-        ldpp_dout(dpp, 5) <<__func__ << "::RAW_MEM_SIZE=" << RAW_MEM_SIZE
-                          << "::num_work_shards=" << num_work_shards
-                          << "::num_md5_shards=" << num_md5_shards << dendl;
-        // DEDUP_DYN_ALLOC
-        auto raw_mem = std::make_unique<uint8_t[]>(RAW_MEM_SIZE);
-        if (raw_mem == nullptr) {
-          ldpp_dout(dpp, 1) << "failed slab memory allocation - size=" << RAW_MEM_SIZE << dendl;
-          return;
-        }
 
-        process_all_shards(true, &Background::f_ingress_work_shard, raw_mem.get(),
-                           RAW_MEM_SIZE, num_work_shards, num_md5_shards);
-        if (!d_ctl.should_stop()) {
-          // Wait for all other workers to finish ingress step
-          work_shards_barrier(num_work_shards);
-          if (!d_ctl.should_stop()) {
-            process_all_shards(false, &Background::f_dedup_md5_shard, raw_mem.get(),
-                               RAW_MEM_SIZE, num_work_shards, num_md5_shards);
-            // Wait for all other md5 shards to finish
-            md5_shards_barrier(num_md5_shards);
-            safe_pool_delete(store, dpp, pool_id);
+        if (!has_default_placement_pool) {
+          int ret = detect_pool_alignment(store, dpp, &d_pool_supports_truncate);
+          if (ret == 0) {
+            has_default_placement_pool = true;
+          }
+          else if (ret != -ENOENT) {
+            ldpp_dout(dpp, 1) << __func__ << "::ERR: Failed detect_pool_alignment -> exit" << dendl;
+            return;
           }
           else {
-            ldpp_dout(dpp, 5) <<__func__ << "::stop req from barrier" << dendl;
+            ldpp_dout(dpp, 1) << __func__ << "::default placement pool does not exist"
+                              << " -> There is nothing to dedup yet" << dendl;
           }
         }
-        else {
-          ldpp_dout(dpp, 5) <<__func__ << "::stop req from ingress_work_shard" << dendl;
+
+        if (has_default_placement_pool) {
+          work_shard_t num_work_shards = epoch.num_work_shards;
+          md5_shard_t  num_md5_shards  = epoch.num_md5_shards;
+          const uint64_t RAW_MEM_SIZE = PER_SHARD_BUFFER_SIZE * num_md5_shards;
+          ldpp_dout(dpp, 5) <<__func__ << "::RAW_MEM_SIZE=" << RAW_MEM_SIZE
+                            << "::num_work_shards=" << num_work_shards
+                            << "::num_md5_shards=" << num_md5_shards << dendl;
+          // DEDUP_DYN_ALLOC
+          auto raw_mem = std::make_unique<uint8_t[]>(RAW_MEM_SIZE);
+          if (raw_mem == nullptr) {
+            ldpp_dout(dpp, 1) << "failed slab memory allocation - size=" << RAW_MEM_SIZE << dendl;
+            return;
+          }
+
+          process_all_shards(true, &Background::f_ingress_work_shard, raw_mem.get(),
+                             RAW_MEM_SIZE, num_work_shards, num_md5_shards);
+          if (!d_ctl.should_stop()) {
+            // Wait for all other workers to finish ingress step
+            work_shards_barrier(num_work_shards);
+            if (!d_ctl.should_stop()) {
+              process_all_shards(false, &Background::f_dedup_md5_shard, raw_mem.get(),
+                                 RAW_MEM_SIZE, num_work_shards, num_md5_shards);
+              // Wait for all other md5 shards to finish
+              md5_shards_barrier(num_md5_shards);
+              safe_pool_delete(store, dpp, pool_id);
+            }
+            else {
+              ldpp_dout(dpp, 5) <<__func__ << "::stop req from barrier" << dendl;
+            }
+          }
+          else {
+            ldpp_dout(dpp, 5) <<__func__ << "::stop req from ingress_work_shard" << dendl;
+          }
         }
       } // dedup_exec
 
