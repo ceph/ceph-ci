@@ -62,7 +62,6 @@ MDLog::MDLog(MDSRank* m)
   log_warn_factor = g_conf().get_val<double>("mds_log_warn_factor");
   minor_segments_per_major_segment = g_conf().get_val<uint64_t>("mds_log_minor_segments_per_major_segment");
   upkeep_thread = std::thread(&MDLog::log_trim_upkeep, this);
-  hard_limit_segments = g_conf().get_val<uint64_t>("mds_log_hard_limit_segments");
   log_hard_limit_factor = g_conf().get_val<double>("mds_log_hard_limit_factor");
 
   if (log_hard_limit_factor > 0) {
