@@ -19,14 +19,14 @@ class TestJournalLimits(CephFSTestCase):
             'config', 'get', 'mds', 'mds_log_max_segments').strip()
         orig_warn = self.ceph_cluster.mon_manager.raw_cluster_cmd(
             'config', 'get', 'mds', 'mds_log_warn_factor').strip()
-        orig_hard = self.ceph_cluster.mon_manager.raw_cluster_cmd(
-            'config', 'get', 'mds', 'mds_log_hard_limit_segments').strip()
+        orig_hard_factor = self.ceph_cluster.mon_manager.raw_cluster_cmd(
+            'config', 'get', 'mds', 'mds_log_hard_limit_factor').strip()
 
         try:
             self.config_set('mds', 'mds_log_events_per_segment', '10')
             self.config_set('mds', 'mds_log_max_segments', '8')
             self.config_set('mds', 'mds_log_warn_factor', '1.0')
-            self.config_set('mds', 'mds_log_hard_limit_segments', '12')
+            self.config_set('mds', 'mds_log_hard_limit_factor', '1.5')
 
             self.fs.mds_restart()
             self.fs.wait_for_daemons()
@@ -48,7 +48,7 @@ class TestJournalLimits(CephFSTestCase):
             self.config_set('mds', 'mds_log_events_per_segment', orig_events)
             self.config_set('mds', 'mds_log_max_segments', orig_max)
             self.config_set('mds', 'mds_log_warn_factor', orig_warn)
-            self.config_set('mds', 'mds_log_hard_limit_segments', orig_hard)
+            self.config_set('mds', 'mds_log_hard_limit_segments', orig_hard_factor)
 
             # Verify that writes resume successfully using a retry loop (up to 60s)
             log.info("Waiting for MDS to process config and resume writes...")
@@ -70,4 +70,4 @@ class TestJournalLimits(CephFSTestCase):
             self.config_set('mds', 'mds_log_events_per_segment', orig_events)
             self.config_set('mds', 'mds_log_max_segments', orig_max)
             self.config_set('mds', 'mds_log_warn_factor', orig_warn)
-            self.config_set('mds', 'mds_log_hard_limit_segments', orig_hard)
+            self.config_set('mds', 'mds_log_hard_limit_segments', orig_hard_factor)
