@@ -63,15 +63,20 @@ MDLog::MDLog(MDSRank* m)
   minor_segments_per_major_segment = g_conf().get_val<uint64_t>("mds_log_minor_segments_per_major_segment");
   upkeep_thread = std::thread(&MDLog::log_trim_upkeep, this);
   hard_limit_segments = g_conf().get_val<uint64_t>("mds_log_hard_limit_segments");
+  log_hard_limit_factor = g_conf().get_val<double>("mds_log_hard_limit_factor");
 
-  if (hard_limit_segments > 0) {
+  if (log_hard_limit_factor > 0) {
+    hard_limit_segments = (uint64_t)(max_segments * log_hard_limit_factor);
     uint64_t min_hard_limit = (uint64_t)(max_segments * log_warn_factor) + 1;
+
     if (hard_limit_segments < min_hard_limit) {
-      dout(0) << "mds_log_hard_limit_segments (" << hard_limit_segments
-              << ") is too low. Clamping to " << min_hard_limit
-              << " to prevent freezing before health warnings." << dendl;
+      dout(0) << "mds_log_hard_limit_factor (" << log_hard_limit_factor
+              << ") is too low. Clamping hard limit to " << min_hard_limit
+              << " segments to prevent freezing before health warnings." << dendl;
       hard_limit_segments = min_hard_limit;
     }
+  } else {
+    hard_limit_segments = 0; // Disabled
   }
 }
 
@@ -1709,21 +1714,24 @@ void MDLog::handle_conf_change(const std::set<std::string>& changed, const MDSMa
   }
   if (changed.count("mds_log_max_segments") ||
       changed.count("mds_log_warn_factor") ||
-      changed.count("mds_log_hard_limit_segments")) {
+      changed.count("mds_log_hard_limit_factor")) {
 
-    // Refresh dependencies just in case they were updated simultaneously
     max_segments = g_conf().get_val<uint64_t>("mds_log_max_segments");
     log_warn_factor = g_conf().get_val<double>("mds_log_warn_factor");
-    hard_limit_segments = g_conf().get_val<uint64_t>("mds_log_hard_limit_segments");
+    log_hard_limit_factor = g_conf().get_val<double>("mds_log_hard_limit_factor");
 
-    if (hard_limit_segments > 0) {
+    if (log_hard_limit_factor > 0) {
+      hard_limit_segments = (uint64_t)(max_segments * log_hard_limit_factor);
       uint64_t min_hard_limit = (uint64_t)(max_segments * log_warn_factor) + 1;
+
       if (hard_limit_segments < min_hard_limit) {
-        dout(0) << "mds_log_hard_limit_segments (" << hard_limit_segments
-                << ") is too low. Clamping to " << min_hard_limit
-                << " to prevent freezing before health warnings." << dendl;
+        dout(0) << "mds_log_hard_limit_factor (" << log_hard_limit_factor
+                << ") is too low. Clamping hard limit to " << min_hard_limit
+                << " segments to prevent freezing before health warnings." << dendl;
         hard_limit_segments = min_hard_limit;
       }
+    } else {
+      hard_limit_segments = 0; // Disabled
     }
   }
 }

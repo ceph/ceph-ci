@@ -321,6 +321,7 @@ private:
   uint64_t events_per_segment;
   int64_t max_events;
   uint64_t max_segments;
+  double log_hard_limit_factor;
   uint64_t hard_limit_segments;
   uint64_t minor_segments_per_major_segment;
   bool pause;

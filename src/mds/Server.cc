@@ -2797,6 +2797,16 @@ void Server::dispatch_client_request(const MDRequestRef& mdr)
   }
 
   if (req->may_write() && mdlog->is_hard_limit_reached()) {
+    static utime_t last_warn;
+    utime_t now = ceph_clock_now();
+
+    // Warn in the cluster log once per minute max
+    if (now - last_warn > 60.0) {
+      mds->clog->warn() << "MDS journal size (" << mdlog->get_num_segments()
+                        << " segments) has hit the hard limit. Client mutating operations are frozen with -ENOSPC.";
+      last_warn = now;
+    }
+
     dout(1) << __func__ << ": journal size exceeds hard limit (" << mdlog->get_num_segments()
             << " segments), freezing non-read-only operations" << dendl;
     respond_to_request(mdr, -ENOSPC);
