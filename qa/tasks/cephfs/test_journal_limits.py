@@ -9,7 +9,7 @@ class TestJournalLimits(CephFSTestCase):
     def test_journal_hard_limit_enospc(self):
         """
         Verify that the MDS rejects mutating operations with ENOSPC when
-        the journal size exceeds mds_log_hard_limit_segments, and
+        the journal size exceeds the configured hard limit factor, and
         resumes normally when the limit is lifted.
         """
         # Save the original cluster configuration dynamically
@@ -48,7 +48,7 @@ class TestJournalLimits(CephFSTestCase):
             self.config_set('mds', 'mds_log_events_per_segment', orig_events)
             self.config_set('mds', 'mds_log_max_segments', orig_max)
             self.config_set('mds', 'mds_log_warn_factor', orig_warn)
-            self.config_set('mds', 'mds_log_hard_limit_segments', orig_hard_factor)
+            self.config_set('mds', 'mds_log_hard_limit_factor', orig_hard_factor)
 
             # Verify that writes resume successfully using a retry loop (up to 60s)
             log.info("Waiting for MDS to process config and resume writes...")
@@ -70,4 +70,4 @@ class TestJournalLimits(CephFSTestCase):
             self.config_set('mds', 'mds_log_events_per_segment', orig_events)
             self.config_set('mds', 'mds_log_max_segments', orig_max)
             self.config_set('mds', 'mds_log_warn_factor', orig_warn)
-            self.config_set('mds', 'mds_log_hard_limit_segments', orig_hard_factor)
+            self.config_set('mds', 'mds_log_hard_limit_factor', orig_hard_factor)
