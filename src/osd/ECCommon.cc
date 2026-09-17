@@ -1060,11 +1060,19 @@ void ECCommon::RMWPipeline::cache_ready(Op &op) {
       continue;
     }
 
-    // FIXME: We can avoid copying the last copy here.
-    ObjectStore::Transaction transaction = trans.at(rel_shard);
+    // For the common single-zone case (abs == rel) use a reference to avoid
+    // copying the transaction's std::map index structures on every write.
+    // For multi-zone pools abs != rel so we need a copy to call remap_shard().
+    std::optional<ObjectStore::Transaction> transaction_copy;
+    ObjectStore::Transaction *transaction_ptr;
     if (abs_shard != rel_shard) {
-      transaction.remap_shard(abs_shard);
+      transaction_copy.emplace(trans.at(rel_shard));
+      transaction_copy->remap_shard(abs_shard);
+      transaction_ptr = &*transaction_copy;
+    } else {
+      transaction_ptr = &trans.at(rel_shard);
     }
+    ObjectStore::Transaction &transaction = *transaction_ptr;
     if (transaction.empty()) {
       dout(20) << __func__ << " Transaction for osd." << pg_shard.osd << " shard " << pg_shard.shard << " is empty" << dendl;
     } else {
