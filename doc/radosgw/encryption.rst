@@ -58,6 +58,48 @@ The encryption algorithm for new objects can be configured with::
                upgraded. Once all instances support GCM, you can enable
                ``aes-256-gcm`` for new uploads.
 
+Re-encrypting Existing Objects
+------------------------------
+
+Changing ``rgw crypt sse algorithm`` does not rewrite objects that are
+already stored. An existing object keeps the encryption it was written
+with, and CopyObject is the way to change it.
+
+Copying an object onto itself with the encryption headers set rewrites it
+with the algorithm the gateway is configured with now::
+
+  aws s3 cp s3://bucket/key s3://bucket/key --sse aws:kms --sse-kms-key-id <key id>
+
+The copy decrypts the object and encrypts it again with the algorithm and
+key named in the request. The same request can also change the encryption
+type, for example from SSE-C to SSE-KMS.
+
+For SSE-C the gateway has no stored copy of the key, so the request names
+both: the key the object was written with as the copy source key, and the
+key to write it with as the destination key. Giving the same key twice
+re-encrypts the object where it stands, and giving a different one rotates
+the key as well::
+
+  aws s3 cp s3://bucket/key s3://bucket/key \
+      --sse-c-copy-source AES256 --sse-c-copy-source-key <current key> \
+      --sse-c AES256 --sse-c-key <new key>
+
+A copy request that carries no encryption headers uses the destination
+bucket's default encryption, the same as an upload. Copying an encrypted
+object into a bucket with no default encryption therefore stores it
+unencrypted, unless the gateway has ``rgw crypt default encryption key``
+set.
+
+The copy is also compressed for the destination storage class, but only in
+zonegroups where the ``compress_encrypted`` feature is enabled. Without it,
+an encrypted destination is stored uncompressed whatever the storage class
+is configured to use.
+
+On a versioned bucket the copy creates a new version, and earlier versions
+keep their original encryption. An object that was uploaded in multiple
+parts is rewritten as a single part, and keeps the ETag it was given at
+upload.
+
 GCM Encryption Format
 ---------------------
 
