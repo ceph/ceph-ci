@@ -7,7 +7,7 @@ import boto3
 import botocore.exceptions
 import random
 import json
-from time import sleep
+from time import sleep, time
 
 log.basicConfig(format = '%(message)s', level=log.DEBUG)
 log.getLogger('botocore').setLevel(log.CRITICAL)
@@ -58,6 +58,101 @@ def boto_connect(access_key, secret_key, config=None):
         except botocore.exceptions.ConnectionError:
             # retry with ssl
             return try_connect('443', True, 'https')
+
+def object_stat(bucket_name, object_key):
+    """Run radosgw-admin object stat and return parsed JSON."""
+    out = exec_cmd(
+        f'radosgw-admin object stat --bucket={bucket_name} --object={object_key}'
+    )
+    # some attrs (e.g. crypt.keysel) contain raw binary that isn't valid UTF-8
+    if isinstance(out, bytes):
+        out = out.decode('utf-8', errors='replace')
+    return json.loads(out)
+
+def get_compression_type(stat):
+    """
+    Extract the compression_type from object stat output.
+    Returns None if the object is not compressed.
+    """
+    compression = stat.get('compression')
+    if compression is None:
+        return None
+    ct = compression.get('compression_type', 'none')
+    if ct.lower() == 'none':
+        return None
+    return ct.lower()
+
+def get_storage_class(stat):
+    """
+    Extract the storage class from object stat output.
+    The storage class attr lives in attrs['user.rgw.storage_class'].
+    If absent, the object is in the STANDARD storage class.
+    """
+    attrs = stat.get('attrs', {})
+    sc = attrs.get('user.rgw.storage_class', '')
+    # The value may be a raw string possibly with trailing null bytes
+    sc = sc.strip().strip('\x00')
+    if not sc:
+        return 'STANDARD'
+    return sc
+
+def get_crypt_mode(stat):
+    """
+    Extract the encryption mode from object stat output.
+    Returns None if the object is not encrypted.
+    """
+    attrs = stat.get('attrs', {})
+    mode = attrs.get('user.rgw.crypt.mode', '')
+    mode = mode.strip().strip('\x00')
+    return mode if mode else None
+
+def get_crypt_salt(stat):
+    """
+    Extract the raw crypt salt attr for rotation comparisons.
+    Returns None if absent. The value may contain non-printable bytes
+    (decoded with errors='replace') but two distinct 32-byte random
+    salts are overwhelmingly unlikely to collide under that encoding.
+    """
+    attrs = stat.get('attrs', {})
+    salt = attrs.get('user.rgw.crypt.salt', '')
+    return salt if salt else None
+
+def is_aead_crypt_mode(mode):
+    """
+    True for GCM-family crypt modes that derive per-object keys from
+    a stored salt. CBC modes don't write crypt.salt at all.
+    """
+    return mode is not None and mode.endswith('-GCM')
+
+def make_compressible_body(size_bytes):
+    """Generate compressible data of the requested size."""
+    pattern = b'The quick brown fox jumps over the lazy dog. '
+    repeats = (size_bytes // len(pattern)) + 1
+    return (pattern * repeats)[:size_bytes]
+
+LC_POLL_INTERVAL = 10
+LC_TIMEOUT = 120
+
+def wait_for_transition(bucket_name, object_key, expected_class, timeout=LC_TIMEOUT):
+    """
+    Poll radosgw-admin lc process + object stat until the object
+    reaches the expected storage class, or timeout.
+    """
+    deadline = time() + timeout
+    while time() < deadline:
+        exec_cmd(f'radosgw-admin lc process --bucket={bucket_name}'
+                 ' --rgw-lc-debug-interval=10')
+        sleep(LC_POLL_INTERVAL)
+
+        stat = object_stat(bucket_name, object_key)
+        sc = get_storage_class(stat)
+        log.info(f'  current storage class: {sc} (waiting for {expected_class})')
+        if sc == expected_class:
+            return stat
+
+    raise AssertionError(
+        f'Timed out waiting for object to transition to {expected_class}'
+    )
 
 def put_objects(bucket, key_list):
     objs = []
