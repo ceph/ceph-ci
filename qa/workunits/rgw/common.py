@@ -59,6 +59,101 @@ def boto_connect(access_key, secret_key, config=None):
             # retry with ssl
             return try_connect('443', True, 'https')
 
+def object_stat(bucket_name, object_key):
+    """Run radosgw-admin object stat and return parsed JSON."""
+    out = exec_cmd(
+        f'radosgw-admin object stat --bucket={bucket_name} --object={object_key}'
+    )
+    # some attrs (e.g. crypt.keysel) contain raw binary that isn't valid UTF-8
+    if isinstance(out, bytes):
+        out = out.decode('utf-8', errors='replace')
+    return json.loads(out)
+
+def get_compression_type(stat):
+    """
+    Extract the compression_type from object stat output.
+    Returns None if the object is not compressed.
+    """
+    compression = stat.get('compression')
+    if compression is None:
+        return None
+    ct = compression.get('compression_type', 'none')
+    if ct.lower() == 'none':
+        return None
+    return ct.lower()
+
+def get_storage_class(stat):
+    """
+    Extract the storage class from object stat output.
+    The storage class attr lives in attrs['user.rgw.storage_class'].
+    If absent, the object is in the STANDARD storage class.
+    """
+    attrs = stat.get('attrs', {})
+    sc = attrs.get('user.rgw.storage_class', '')
+    # The value may be a raw string possibly with trailing null bytes
+    sc = sc.strip().strip('\x00')
+    if not sc:
+        return 'STANDARD'
+    return sc
+
+def get_crypt_mode(stat):
+    """
+    Extract the encryption mode from object stat output.
+    Returns None if the object is not encrypted.
+    """
+    attrs = stat.get('attrs', {})
+    mode = attrs.get('user.rgw.crypt.mode', '')
+    mode = mode.strip().strip('\x00')
+    return mode if mode else None
+
+def get_crypt_salt(stat):
+    """
+    Extract the raw crypt salt attr for rotation comparisons.
+    Returns None if absent. The value may contain non-printable bytes
+    (decoded with errors='replace') but two distinct 32-byte random
+    salts are overwhelmingly unlikely to collide under that encoding.
+    """
+    attrs = stat.get('attrs', {})
+    salt = attrs.get('user.rgw.crypt.salt', '')
+    return salt if salt else None
+
+def is_aead_crypt_mode(mode):
+    """
+    True for GCM-family crypt modes that derive per-object keys from
+    a stored salt. CBC modes don't write crypt.salt at all.
+    """
+    return mode is not None and mode.endswith('-GCM')
+
+def has_crypt_attr(stat, name):
+    """
+    True when a crypt attr is present, tested by key rather than value.
+    Object stat truncates an attr at its first null byte, so a binary
+    value can render empty and read back as absent.
+    """
+    return f'user.rgw.crypt.{name}' in stat.get('attrs', {})
+
+def get_crypt_attr_raw(bucket_name, object_key, name):
+    """
+    Read a crypt attr whole, straight off the object's head rados object.
+
+    Object stat can't be used where the exact bytes matter: it truncates
+    an attr at the first null byte.
+    """
+    out = exec_cmd(f'radosgw-admin object manifest --bucket={bucket_name}'
+                   f' --object={object_key}')
+    if isinstance(out, bytes):
+        out = out.decode('utf-8', errors='replace')
+    objects = json.loads(out)['objects']
+    assert objects, f'{object_key} has an empty manifest'
+
+    # the head object is always the first entry
+    head = objects[0]['raw_obj']
+    pool, oid = head['pool'], head['oid']
+
+    value = exec_cmd(f'rados -p {pool} getxattr "{oid}" user.rgw.crypt.{name}')
+    assert value, f'{object_key} has no crypt.{name} on {oid}'
+    return value
+
 def put_objects(bucket, key_list):
     objs = []
     for key in key_list:

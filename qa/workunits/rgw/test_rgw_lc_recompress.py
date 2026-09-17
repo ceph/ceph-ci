@@ -2,11 +2,12 @@
 
 import io
 import logging as log
-import json
 import sys
 import time
 import boto3.s3.transfer
-from common import exec_cmd, create_user, boto_connect
+from common import exec_cmd, create_user, boto_connect, object_stat, \
+    get_compression_type, get_storage_class, get_crypt_mode, get_crypt_salt, \
+    is_aead_crypt_mode
 
 """
 Tests that RGW lifecycle transitions correctly recompress objects
@@ -49,77 +50,6 @@ def make_compressible_body(size_bytes):
     pattern = b'The quick brown fox jumps over the lazy dog. '
     repeats = (size_bytes // len(pattern)) + 1
     return (pattern * repeats)[:size_bytes]
-
-
-def object_stat(bucket_name, object_key):
-    """Run radosgw-admin object stat and return parsed JSON."""
-    out = exec_cmd(
-        f'radosgw-admin object stat --bucket={bucket_name} --object={object_key}'
-    )
-    # some attrs (e.g. crypt.keysel) contain raw binary that isn't valid UTF-8
-    if isinstance(out, bytes):
-        out = out.decode('utf-8', errors='replace')
-    return json.loads(out)
-
-
-def get_compression_type(stat):
-    """
-    Extract the compression_type from object stat output.
-    Returns None if the object is not compressed.
-    """
-    compression = stat.get('compression')
-    if compression is None:
-        return None
-    ct = compression.get('compression_type', 'none')
-    if ct.lower() == 'none':
-        return None
-    return ct.lower()
-
-
-def get_storage_class(stat):
-    """
-    Extract the storage class from object stat output.
-    The storage class attr lives in attrs['user.rgw.storage_class'].
-    If absent, the object is in the STANDARD storage class.
-    """
-    attrs = stat.get('attrs', {})
-    sc = attrs.get('user.rgw.storage_class', '')
-    # The value may be a raw string possibly with trailing null bytes
-    sc = sc.strip().strip('\x00')
-    if not sc:
-        return 'STANDARD'
-    return sc
-
-
-def get_crypt_mode(stat):
-    """
-    Extract the encryption mode from object stat output.
-    Returns None if the object is not encrypted.
-    """
-    attrs = stat.get('attrs', {})
-    mode = attrs.get('user.rgw.crypt.mode', '')
-    mode = mode.strip().strip('\x00')
-    return mode if mode else None
-
-
-def get_crypt_salt(stat):
-    """
-    Extract the raw crypt salt attr for rotation comparisons.
-    Returns None if absent. The value may contain non-printable bytes
-    (decoded with errors='replace') but two distinct 32-byte random
-    salts are overwhelmingly unlikely to collide under that encoding.
-    """
-    attrs = stat.get('attrs', {})
-    salt = attrs.get('user.rgw.crypt.salt', '')
-    return salt if salt else None
-
-
-def is_aead_crypt_mode(mode):
-    """
-    True for GCM-family crypt modes that derive per-object keys from
-    a stored salt. CBC modes don't write crypt.salt at all.
-    """
-    return mode is not None and mode.endswith('-GCM')
 
 
 def put_lifecycle_rule(client, bucket_name, rule_id, target_class):
