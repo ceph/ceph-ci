@@ -3914,6 +3914,27 @@ int RGWCopyObj_ObjStore_S3::init_dest_policy()
   return create_s3_policy(s, driver, dest_policy, s->owner);
 }
 
+/*
+ * True when the request names a server-side encryption to use. Reads the
+ * request environment rather than crypt_attribute_map, which
+ * get_encryption_defaults() merges bucket defaults into, because a default
+ * is not something the client asked for. Deliberately not
+ * copy_dest_requests_encryption(), which also honors
+ * rgw_crypt_default_encryption_key to decide whether the data has to be
+ * rewritten.
+ */
+static bool sse_explicitly_requested(const req_state* s)
+{
+  for (const char* hdr : {"HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION",
+                          "HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_ALGORITHM"}) {
+    const char* val = s->info.env->get(hdr);
+    if (val && *val) {
+      return true;
+    }
+  }
+  return false;
+}
+
 int RGWCopyObj_ObjStore_S3::get_params(optional_yield y)
 {
   //handle object lock
@@ -4013,12 +4034,15 @@ int RGWCopyObj_ObjStore_S3::get_params(optional_yield y)
     }
   }
 
+  // an explicit encryption request changes the object, so a copy onto
+  // itself is legal for the same reason a storage class change is
   if (source_zone.empty() &&
       (s->bucket->get_tenant() == s->src_tenant_name) &&
       (s->bucket->get_name() == s->src_bucket_name) &&
       (s->object->get_name() == s->src_object->get_name()) &&
       s->src_object_key.instance.empty() &&
-      (attrs_mod != rgw::sal::ATTRSMOD_REPLACE)) {
+      (attrs_mod != rgw::sal::ATTRSMOD_REPLACE) &&
+      !sse_explicitly_requested(s)) {
     need_to_check_storage_class = true;
   }
 

@@ -895,6 +895,18 @@ int D4NFilterObject::copy_object(const ACLOwner& owner,
     }
   }
 
+  /*
+   * The write cache copies the source bytes as they are, so it cannot
+   * satisfy a request that needs the data transformed. Refuse before
+   * touching anything; the paths above hand dp_factory to the backing
+   * store, which does honor it.
+   */
+  if (write_to_cache && dp_factory && dp_factory->need_copy_data()) {
+    ldpp_dout(dpp, 0) << "D4NFilterObject::" << __func__
+        << "(): the write cache cannot transform object data" << dendl;
+    return -ERR_NOT_IMPLEMENTED;
+  }
+
   this->dest_object = dest_object;
   this->dest_bucket = dest_bucket;
   D4NFilterObject* d4n_dest_object = dynamic_cast<D4NFilterObject*>(dest_object);

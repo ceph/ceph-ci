@@ -3317,6 +3317,22 @@ int POSIXObject::copy_object(const ACLOwner& owner,
                               const DoutPrefixProvider* dpp,
                               optional_yield y)
 {
+  /*
+   * A copy onto the same object never reaches the data here: either the
+   * copy is skipped outright, or versioning hands the destination a new
+   * instance and the copy deletes the source's own directory first. So a
+   * request that needs the data transformed cannot be satisfied. Compare
+   * names rather than rgw_objs, which differ once an instance is added.
+   */
+  if (dp_factory && dp_factory->need_copy_data() &&
+      src_bucket->get_name() == dest_bucket->get_name() &&
+      get_name() == dest_object->get_name()) {
+    ldpp_dout(dpp, 0) << "ERROR: cannot copy " << get_name()
+                      << " onto itself: data transformation is not supported"
+                      << dendl;
+    return -ERR_NOT_IMPLEMENTED;
+  }
+
   int ret;
   POSIXBucket *db = static_cast<POSIXBucket*>(dest_bucket);
   POSIXBucket *sb = static_cast<POSIXBucket*>(src_bucket);
