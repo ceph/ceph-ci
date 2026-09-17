@@ -124,6 +124,36 @@ def is_aead_crypt_mode(mode):
     """
     return mode is not None and mode.endswith('-GCM')
 
+def has_crypt_attr(stat, name):
+    """
+    True when a crypt attr is present, tested by key rather than value.
+    Object stat truncates an attr at its first null byte, so a binary
+    value can render empty and read back as absent.
+    """
+    return f'user.rgw.crypt.{name}' in stat.get('attrs', {})
+
+def get_crypt_attr_raw(bucket_name, object_key, name):
+    """
+    Read a crypt attr whole, straight off the object's head rados object.
+
+    Object stat can't be used where the exact bytes matter: it truncates
+    an attr at the first null byte.
+    """
+    out = exec_cmd(f'radosgw-admin object manifest --bucket={bucket_name}'
+                   f' --object={object_key}')
+    if isinstance(out, bytes):
+        out = out.decode('utf-8', errors='replace')
+    objects = json.loads(out)['objects']
+    assert objects, f'{object_key} has an empty manifest'
+
+    # the head object is always the first entry
+    head = objects[0]['raw_obj']
+    pool, oid = head['pool'], head['oid']
+
+    value = exec_cmd(f'rados -p {pool} getxattr "{oid}" user.rgw.crypt.{name}')
+    assert value, f'{object_key} has no crypt.{name} on {oid}'
+    return value
+
 def make_compressible_body(size_bytes):
     """Generate compressible data of the requested size."""
     pattern = b'The quick brown fox jumps over the lazy dog. '
