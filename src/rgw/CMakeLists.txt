@@ -651,6 +651,7 @@ target_link_libraries(rgw_a
   PRIVATE
     rgw_schedulers
     kmip
+    heap_profiler
     legacy-option-headers
     common_utf8 global
     ${CRYPTO_LIBS}
@@ -749,7 +750,6 @@ target_include_directories(radosgw
 target_link_libraries(radosgw PRIVATE
   legacy-option-headers
   ${rgw_libs}
-  heap_profiler
   ${ALLOC_LIBS})
 
 if(WITH_RADOSGW_FDB)
@@ -962,7 +962,6 @@ target_link_libraries(rgw
   PRIVATE
   ${rgw_libs}
   rgw_common
-  heap_profiler
   librados
   cls_rgw_client
   cls_otp_client
