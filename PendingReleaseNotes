@@ -8,6 +8,10 @@
   configuration when the request carries no encryption headers, matching
   PutObject. CopyObject also now rejects a request that combines SSE-C with
   SSE-KMS or SSE-S3 headers, as PutObject already did.
+* RGW: A CopyObject request whose source and destination are the same object
+  is now accepted when it sets ``x-amz-server-side-encryption`` or SSE-C
+  headers, so an existing object can be re-encrypted in place without
+  replacing its metadata.
 
 * ``src/script/ceph-backport.sh`` now runs on macOS in addition to Linux: it
   re-execs under GNU bash >= 4 when the system bash is too old, and honors a
