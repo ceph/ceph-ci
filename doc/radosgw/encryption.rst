@@ -100,6 +100,30 @@ keep their original encryption. An object that was uploaded in multiple
 parts is rewritten as a single part, and keeps the ETag it was given at
 upload.
 
+Re-encrypting During a Lifecycle Transition
+-------------------------------------------
+
+A lifecycle transition can also move objects onto the configured algorithm,
+without a client copying each one. This is off by default and is enabled
+per zonegroup::
+
+  radosgw-admin zonegroup modify --rgw-zonegroup=<name> --enable-feature=transition-reencrypt
+  radosgw-admin period update --commit
+
+With the feature enabled, an object that a transition rewrites is encrypted
+with the algorithm named by ``rgw crypt sse algorithm`` rather than the one
+it was stored with. Enable it only once every zone in the zonegroup runs a
+release that understands the algorithm, because a zone that does not will
+serve those objects without decrypting them.
+
+Only objects that actually change storage class are reached, since that is
+what a transition acts on. An object is never moved from GCM back to CBC,
+whatever the setting says. Objects encrypted with a customer-provided key
+are never re-encrypted this way, because the gateway has no stored copy of
+the key; those transition with their original encryption intact and have to
+be rotated with CopyObject as described above. Empty objects keep their
+original encryption as well.
+
 GCM Encryption Format
 ---------------------
 

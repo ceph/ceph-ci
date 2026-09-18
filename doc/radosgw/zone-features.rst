@@ -11,15 +11,17 @@ On creation of new zones and zonegroups, all known features are supported and so
 Supported Features
 ------------------
 
-+-----------------------------------+---------+----------+
-| Feature                           | Release | Default  |
-+===================================+=========+==========+
-| :ref:`feature_resharding`         | Reef    | Enabled  |
-+-----------------------------------+---------+----------+
-| :ref:`feature_compress_encrypted` | Reef    | Disabled |
-+-----------------------------------+---------+----------+
-| :ref:`feature_notification_v2`    | Squid   | Enabled  |
-+-----------------------------------+---------+----------+
++-------------------------------------+----------+----------+
+| Feature                             | Release  | Default  |
++=====================================+==========+==========+
+| :ref:`feature_resharding`           | Reef     | Enabled  |
++-------------------------------------+----------+----------+
+| :ref:`feature_compress_encrypted`   | Reef     | Disabled |
++-------------------------------------+----------+----------+
+| :ref:`feature_transition_reencrypt` | Vampire  | Disabled |
++-------------------------------------+----------+----------+
+| :ref:`feature_notification_v2`      | Squid    | Enabled  |
++-------------------------------------+----------+----------+
 
 .. _feature_resharding:
 
@@ -52,6 +54,24 @@ must upgrade to Reef or later before enabling.
    and allow attackers to distinguish whether two same-sized objects might contain
    the same data. Due to these security considerations, this feature is disabled
    by default.
+
+
+.. _feature_transition_reencrypt:
+
+transition-reencrypt
+~~~~~~~~~~~~~~~~~~~~
+
+This feature allows a lifecycle transition to re-encrypt an object with the
+algorithm named by ``rgw crypt sse algorithm``, rather than preserving the one it
+was stored with. See :ref:`Server-Side Encryption <radosgw-encryption>`.
+
+Lifecycle runs on each zone independently, so enable this only once every zone in
+the zonegroup runs a release that understands the algorithm. A zone that does not
+will serve the re-encrypted objects without decrypting them. It is disabled by
+default for that reason.
+
+.. note:: Objects encrypted with a customer-provided key are never re-encrypted
+   this way, because the gateway keeps no copy of the key.
 
 
 .. _feature_notification_v2:
