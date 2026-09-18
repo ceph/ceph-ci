@@ -371,8 +371,20 @@ int rgw_prepare_decrypt_object(const DoutPrefixProvider* dpp,
                                std::unique_ptr<BlockCrypt>* block_crypt);
 
 /*
- * Build an encrypt crypt for LC in-place re-encryption. For AEAD,
- * regenerates dest_attrs[CRYPT_SALT] so the re-derived per-object
+ * The crypt mode an object should be written with now: the given mode's
+ * GCM counterpart when the gateway is configured for aes-256-gcm, and
+ * the given mode itself otherwise. Never moves an object from GCM back
+ * to CBC, and never changes an SSE-C mode, whose key isn't stored here.
+ */
+std::string rgw_target_crypt_mode(CephContext* cct,
+                                  const std::string& mode);
+
+/*
+ * Build an encrypt crypt for LC in-place re-encryption. dest_mode is
+ * the mode to write, which the caller resolves; empty means the object
+ * is plaintext and nothing is built. It goes into CRYPT_MODE before
+ * anything else, so the cipher, key fetch and attrs all follow it. For
+ * AEAD, regenerates dest_attrs[CRYPT_SALT] so the re-derived per-object
  * key differs from the source key (avoids GCM nonce reuse).
  */
 int rgw_prepare_reencrypt_object(const DoutPrefixProvider* dpp,
@@ -380,6 +392,7 @@ int rgw_prepare_reencrypt_object(const DoutPrefixProvider* dpp,
                                  rgw::sal::Attrs& dest_attrs,
                                  const std::string& bucket_id,
                                  const std::string& object_name,
+                                 const std::string& dest_mode,
                                  optional_yield y,
                                  std::unique_ptr<BlockCrypt>* block_crypt);
 

@@ -3246,57 +3246,76 @@ int rgw_prepare_decrypt_object(const DoutPrefixProvider* dpp,
   return -ENOTSUP;
 }
 
+std::string rgw_target_crypt_mode(CephContext* cct,
+                                  const std::string& mode)
+{
+  if (cct->_conf->rgw_crypt_sse_algorithm != "aes-256-gcm") {
+    return mode;
+  }
+  if (mode == "SSE-KMS") {
+    return "SSE-KMS-GCM";
+  }
+  if (mode == "AES256") {
+    return "AES256-GCM";
+  }
+  if (mode == "RGW-AUTO") {
+    return "RGW-AUTO-GCM";
+  }
+  return mode;
+}
+
 int rgw_prepare_reencrypt_object(const DoutPrefixProvider* dpp,
                                  CephContext* cct,
                                  rgw::sal::Attrs& dest_attrs,
                                  const std::string& bucket_id,
                                  const std::string& object_name,
+                                 const std::string& dest_mode,
                                  optional_yield y,
                                  std::unique_ptr<BlockCrypt>* block_crypt)
 {
   *block_crypt = nullptr;
 
-  const std::string mode = get_str_attribute(dest_attrs, RGW_ATTR_CRYPT_MODE);
-  if (mode.empty()) {
+  if (dest_mode.empty()) {
+    /* the object is plaintext and stays that way */
     return 0;
   }
 
-  if (!is_aead_mode(mode)) {
-    return rgw_prepare_decrypt_object(dpp, cct, dest_attrs,
-                                      bucket_id, object_name,
-                                      y, block_crypt);
-  }
-
   /*
-   * For AEAD, stage a fresh salt so that key derivation produces a
-   * different per-object key on each re-encrypt. Without this, the
-   * same key+salt would reuse GCM IVs across distinct plaintexts
-   * (e.g., after recompression). Roll back on failure so dest_attrs
-   * stays consistent with the on-disk state.
+   * Stage every attr change and commit only once the cipher is built,
+   * so a failure leaves dest_attrs describing what is still on disk.
+   * Write the mode first: mode dispatch, key fetch and the aead key
+   * derivation domain all read it from here, so they stay in step with
+   * what a later read will see.
    */
-  auto saved_iter = dest_attrs.find(RGW_ATTR_CRYPT_SALT);
-  const bool had_salt = (saved_iter != dest_attrs.end());
-  bufferlist saved_bl;
-  if (had_salt) {
-    saved_bl = saved_iter->second;
+  rgw::sal::Attrs staged = dest_attrs;
+  set_attr(staged, RGW_ATTR_CRYPT_MODE, dest_mode);
+
+  if (is_aead_mode(dest_mode)) {
+    /*
+     * Stage a fresh salt so that key derivation produces a different
+     * per-object key on each re-encrypt. Without this, the same
+     * key+salt would reuse GCM IVs across distinct plaintexts
+     * (e.g., after recompression).
+     */
+    std::string salt(AES_256_GCM_SALT_SIZE, '\0');
+    cct->random()->get_bytes(salt.data(), AES_256_GCM_SALT_SIZE);
+    bufferlist salt_bl;
+    salt_bl.append(salt);
+    staged[RGW_ATTR_CRYPT_SALT] = std::move(salt_bl);
   }
 
-  std::string salt(AES_256_GCM_SALT_SIZE, '\0');
-  cct->random()->get_bytes(salt.data(), AES_256_GCM_SALT_SIZE);
-  bufferlist new_salt_bl;
-  new_salt_bl.append(salt);
-  dest_attrs[RGW_ATTR_CRYPT_SALT] = std::move(new_salt_bl);
-
-  int r = rgw_prepare_decrypt_object(dpp, cct, dest_attrs,
+  int r = rgw_prepare_decrypt_object(dpp, cct, staged,
                                      bucket_id, object_name,
                                      y, block_crypt);
   if (r < 0) {
-    if (had_salt) {
-      dest_attrs[RGW_ATTR_CRYPT_SALT] = std::move(saved_bl);
-    } else {
-      dest_attrs.erase(RGW_ATTR_CRYPT_SALT);
-    }
+    return r;
   }
-  return r;
+
+  // cbc writes no alignment, so an upgraded object needs the one a
+  // gcm put would have written
+  maybe_write_prefetch_align(block_crypt->get(), staged);
+
+  dest_attrs = std::move(staged);
+  return 0;
 }
 
