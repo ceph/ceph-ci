@@ -3246,6 +3246,24 @@ int rgw_prepare_decrypt_object(const DoutPrefixProvider* dpp,
   return -ENOTSUP;
 }
 
+std::string rgw_target_crypt_mode(CephContext* cct,
+                                  const std::string& mode)
+{
+  if (cct->_conf->rgw_crypt_sse_algorithm != "aes-256-gcm") {
+    return mode;
+  }
+  if (mode == "SSE-KMS") {
+    return "SSE-KMS-GCM";
+  }
+  if (mode == "AES256") {
+    return "AES256-GCM";
+  }
+  if (mode == "RGW-AUTO") {
+    return "RGW-AUTO-GCM";
+  }
+  return mode;
+}
+
 int rgw_prepare_reencrypt_object(const DoutPrefixProvider* dpp,
                                  CephContext* cct,
                                  rgw::sal::Attrs& dest_attrs,
@@ -3296,7 +3314,12 @@ int rgw_prepare_reencrypt_object(const DoutPrefixProvider* dpp,
     } else {
       dest_attrs.erase(RGW_ATTR_CRYPT_SALT);
     }
+    return r;
   }
-  return r;
+
+  // cbc writes no alignment, so an object moving to gcm needs the one a
+  // gcm put would have written
+  maybe_write_prefetch_align(block_crypt->get(), dest_attrs);
+  return 0;
 }
 

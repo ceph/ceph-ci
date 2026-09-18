@@ -5879,24 +5879,35 @@ int RGWRados::transition_obj(RGWObjectCtx& obj_ctx,
       ((!src_compressed && dest_compression == "none") ||
        (src_compressed && cs_info.compression_type == dest_compression));
 
-  bool need_recompress = !already_matches;
+  /*
+   * The mode to write, which is the one the object already has unless
+   * the zonegroup feature is on and the gateway is configured for a
+   * different algorithm. Gated because it rewrites stored objects that
+   * peers can read as they stand today.
+   */
+  const std::string src_mode = get_str_attribute(attrs, RGW_ATTR_CRYPT_MODE);
+  const std::string dest_crypt_mode =
+      svc.zone->get_zonegroup().supports(rgw::zone_features::transition_reencrypt)
+      ? rgw_target_crypt_mode(cct, src_mode) : src_mode;
+
+  // a codec change and a mode change are both reasons to rewrite the data
+  bool need_transform = !already_matches || dest_crypt_mode != src_mode;
 
   /*
-   * Retrieve the decryption key when the source is encrypted
-   * and compression needs to change. The re-encryption path will
-   * fetch the same key again from the backend (after regenerating
-   * the GCM salt for AEAD modes) — a second KMS/SSE-S3 round-trip
-   * per transitioned object.
+   * Retrieve the decryption key when the source is encrypted and the
+   * pipeline is going to run. The re-encryption path will fetch the
+   * same key again from the backend (after regenerating the GCM salt
+   * for AEAD modes) — a second KMS/SSE-S3 round-trip per object.
    */
   std::unique_ptr<BlockCrypt> decrypt_crypt;
 
   if (obj_size == 0) {
     ldpp_dout(dpp, 20) << __func__ << " " << obj
         << " is empty, skipping recompression" << dendl;
-    need_recompress = false;
+    need_transform = false;
   }
 
-  if (need_recompress && is_encrypted) {
+  if (need_transform && is_encrypted) {
     ret = rgw_prepare_decrypt_object(
         dpp, cct, attrs,
         bucket_info.bucket.bucket_id, obj.key.name,
@@ -5919,23 +5930,31 @@ int RGWRados::transition_obj(RGWObjectCtx& obj_ctx,
       }
       ldpp_dout(dpp, 10) << __func__ << " " << obj
           << " encrypted but cannot decrypt, copying as-is" << dendl;
-      need_recompress = false;
+      // without the source key the data can't be rewritten
+      need_transform = false;
     } else {
-      ldpp_dout(dpp, 10) << __func__ << " re-encrypting "
-          << obj << " for recompression" << dendl;
+      ldpp_dout(dpp, 10) << __func__ << " re-encrypting " << obj
+          << " as " << dest_crypt_mode << dendl;
     }
   }
 
   bool compress_encrypted = svc.zone->get_zonegroup().supports(
       rgw::zone_features::compress_encrypted);
 
-  if (need_recompress) {
+  if (need_transform) {
     transition_dpf.emplace(cct, obj_size, attrs,
                            obj_ctx, obj,
                            dest_compression,
                            compress_encrypted,
                            std::move(decrypt_crypt));
     dp_factory = &*transition_dpf;
+    // the dpf took its copy of the source attrs above. from here attrs
+    // describe the object to write, and reencrypt reads the mode from them
+    if (dest_crypt_mode != src_mode) {
+      bufferlist bl;
+      bl.append(dest_crypt_mode);
+      attrs[RGW_ATTR_CRYPT_MODE] = std::move(bl);
+    }
   } else if (!is_encrypted) {
     ldpp_dout(dpp, 20) << __func__
         << " compression already matches dest config ("

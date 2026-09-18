@@ -279,7 +279,10 @@ public:
      * CopyObject: get_encrypt_crypt() strips all crypt attrs itself
      * then writes fresh ones (may change key, mode, etc.)
      *
-     * LC transition: same mode and same upstream key are preserved.
+     * LC transition: the upstream key is preserved. The mode is too,
+     * unless the transition-reencrypt zonegroup feature is on, in which
+     * case transition_obj() has already put the configured algorithm's
+     * mode into attrs for get_encrypt_crypt() to build from.
      * CRYPT_PARTS / CRYPT_PART_NUMS are always cleared (re-encryption
      * produces a single stream). For AEAD modes, get_encrypt_crypt()
      * also regenerates CRYPT_SALT so the re-derived per-object key
