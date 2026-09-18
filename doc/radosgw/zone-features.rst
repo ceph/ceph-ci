@@ -54,6 +54,24 @@ must upgrade to Reef or later before enabling.
    by default.
 
 
+.. _feature_transition_reencrypt:
+
+transition-reencrypt
+~~~~~~~~~~~~~~~~~~~~
+
+This feature allows a lifecycle transition to re-encrypt an object with the
+algorithm named by ``rgw crypt sse algorithm``, rather than preserving the one it
+was stored with. See :ref:`Server-Side Encryption <radosgw-encryption>`.
+
+Lifecycle runs on each zone independently, so enable this only once every zone in
+the zonegroup runs a release that understands the algorithm. A zone that does not
+will serve the re-encrypted objects without decrypting them. It is disabled by
+default for that reason.
+
+.. note:: Objects encrypted with a customer-provided key are never re-encrypted
+   this way, because the gateway keeps no copy of the key.
+
+
 .. _feature_notification_v2:
 
 notification_v2
