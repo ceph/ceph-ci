@@ -160,6 +160,21 @@ def make_compressible_body(size_bytes):
     repeats = (size_bytes // len(pattern)) + 1
     return (pattern * repeats)[:size_bytes]
 
+def connect_with_retry(access_key, secret_key, num_retries=8):
+    """
+    Connect to the gateway, retrying while it starts up.
+
+    ceph.restart waits for cluster health, not for radosgw to accept
+    connections, so use the same backoff the rgw task uses at startup.
+    """
+    for seconds in range(num_retries):
+        try:
+            return boto_connect(access_key, secret_key)
+        except botocore.exceptions.ConnectionError:
+            log.info(f'radosgw not accepting connections, retry in {2**seconds}s')
+            sleep(2**seconds)
+    raise AssertionError('radosgw did not come back up after restart')
+
 LC_POLL_INTERVAL = 10
 LC_TIMEOUT = 120
 
