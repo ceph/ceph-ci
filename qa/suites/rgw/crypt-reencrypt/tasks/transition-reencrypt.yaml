@@ -1,6 +1,6 @@
 overrides:
   rgw:
-    enable features: [compress-encrypted]
+    enable features: [compress-encrypted, transition-reencrypt]
 tasks:
 - install:
 - ceph:
@@ -8,9 +8,9 @@ tasks:
 - workunit:
     clients:
       client.0:
-        - rgw/run-copy-reencrypt.sh
+        - rgw/run-transition-reencrypt.sh
     env:
-      COPY_REENCRYPT_PHASE: put
+      TRANSITION_REENCRYPT_PHASE: put
 - exec:
     client.0:
       - sudo ceph config set client rgw_crypt_sse_algorithm aes-256-gcm
@@ -19,6 +19,7 @@ tasks:
 - workunit:
     clients:
       client.0:
-        - rgw/run-copy-reencrypt.sh
+        - rgw/run-transition-reencrypt.sh
     env:
-      COPY_REENCRYPT_PHASE: copy
+      TRANSITION_REENCRYPT_PHASE: transition
+      TRANSITION_REENCRYPT_EXPECT: SSE-KMS-GCM

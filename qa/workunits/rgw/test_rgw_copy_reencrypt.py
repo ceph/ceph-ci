@@ -4,11 +4,10 @@ import io
 import logging as log
 import os
 import sys
-import time
 import boto3.s3.transfer
 import botocore.exceptions
-from common import create_user, boto_connect, object_stat, \
-    get_compression_type, get_storage_class, get_crypt_mode, \
+from common import create_user, boto_connect, connect_with_retry, make_body, \
+    object_stat, get_compression_type, get_storage_class, get_crypt_mode, \
     has_crypt_attr, get_crypt_attr_raw
 
 """
@@ -61,30 +60,6 @@ KMS_ARGS = {
     'ServerSideEncryption': 'aws:kms',
     'SSEKMSKeyId': KMS_KEY_ID,
 }
-
-
-def make_body(size_bytes):
-    """Generate compressible data of the requested size."""
-    pattern = b'The quick brown fox jumps over the lazy dog. '
-    repeats = (size_bytes // len(pattern)) + 1
-    return (pattern * repeats)[:size_bytes]
-
-
-def connect_with_retry():
-    """
-    Connect to the gateway, retrying while it starts up.
-
-    ceph.restart waits for cluster health, not for radosgw to accept
-    connections, so use the same backoff the rgw task uses at startup.
-    """
-    num_retries = 8
-    for seconds in range(num_retries):
-        try:
-            return boto_connect(ACCESS_KEY, SECRET_KEY)
-        except botocore.exceptions.ConnectionError:
-            log.info(f'radosgw not accepting connections, retry in {2**seconds}s')
-            time.sleep(2**seconds)
-    raise AssertionError('radosgw did not come back up after restart')
 
 
 def put_object(client, key, body, extra_args):
@@ -155,7 +130,7 @@ def run_put_phase():
 def run_copy_phase():
     """Re-encrypt each object by copying it onto itself."""
     log.info('=== copy phase ===')
-    conn = connect_with_retry()
+    conn = connect_with_retry(ACCESS_KEY, SECRET_KEY)
     client = conn.meta.client
     bucket = conn.Bucket(BUCKET_NAME)
 

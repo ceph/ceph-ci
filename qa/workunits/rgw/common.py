@@ -154,6 +154,47 @@ def get_crypt_attr_raw(bucket_name, object_key, name):
     assert value, f'{object_key} has no crypt.{name} on {oid}'
     return value
 
+def make_body(size_bytes):
+    """Generate compressible data of the requested size."""
+    pattern = b'The quick brown fox jumps over the lazy dog. '
+    repeats = (size_bytes // len(pattern)) + 1
+    return (pattern * repeats)[:size_bytes]
+
+def connect_with_retry(access_key, secret_key, num_retries=8):
+    """
+    Connect to the gateway, retrying while it starts up.
+
+    ceph.restart waits for cluster health, not for radosgw to accept
+    connections, so use the same backoff the rgw task uses at startup.
+    """
+    for seconds in range(num_retries):
+        try:
+            return boto_connect(access_key, secret_key)
+        except botocore.exceptions.ConnectionError:
+            log.info(f'radosgw not accepting connections, retry in {2**seconds}s')
+            sleep(2**seconds)
+    raise AssertionError('radosgw did not come back up after restart')
+
+def wait_for_storage_class(bucket_name, object_key, expected_class,
+                           poll_interval=10, num_polls=12):
+    """
+    Drive lifecycle until the object reaches the expected storage class,
+    and return its stat. Raises if it never gets there.
+    """
+    for _ in range(num_polls):
+        exec_cmd(f'radosgw-admin lc process --bucket={bucket_name}'
+                 ' --rgw-lc-debug-interval=10')
+        sleep(poll_interval)
+
+        stat = object_stat(bucket_name, object_key)
+        sc = get_storage_class(stat)
+        log.info(f'  {object_key}: storage class {sc}, want {expected_class}')
+        if sc == expected_class:
+            return stat
+
+    raise AssertionError(
+        f'timed out waiting for {object_key} to reach {expected_class}')
+
 def put_objects(bucket, key_list):
     objs = []
     for key in key_list:
