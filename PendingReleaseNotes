@@ -12,6 +12,12 @@
   is now accepted when it sets ``x-amz-server-side-encryption`` or SSE-C
   headers, so an existing object can be re-encrypted in place without
   replacing its metadata.
+* RGW: A new ``transition-reencrypt`` zonegroup feature lets a lifecycle transition
+  re-encrypt objects with the algorithm named by ``rgw crypt sse algorithm``
+  instead of preserving the one they were written with. It is not enabled on
+  new zonegroups. Enable it only once every zone in the zonegroup runs a
+  release that understands the algorithm. Objects encrypted with a
+  customer-provided key are never re-encrypted this way.
 
 * ``src/script/ceph-backport.sh`` now runs on macOS in addition to Linux: it
   re-execs under GNU bash >= 4 when the system bash is too old, and honors a
