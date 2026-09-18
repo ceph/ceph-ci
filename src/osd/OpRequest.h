@@ -18,6 +18,7 @@
 #include "osd/osd_op_util.h"
 #include "osd/osd_types.h"
 #include "common/TrackedOp.h"
+#include "common/live_object_count.h"
 #include "common/tracer.h"
 #include "osd/Coroutines.h"
 
@@ -30,6 +31,7 @@ struct OpRequest : public TrackedOp {
 
 private:
   OpInfo op_info;
+  CEPH_LIVE_COUNT(OP_REQUEST);
 
 public:
   std::optional<CoroHandles> coro_handles = std::nullopt;

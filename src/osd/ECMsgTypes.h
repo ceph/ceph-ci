@@ -22,8 +22,10 @@
 #include "include/buffer.h"
 #include "os/ObjectStore.h"
 #include "boost/tuple/tuple.hpp"
+#include "common/live_object_count.h"
 
 struct ECSubWrite {
+  CEPH_LIVE_COUNT(EC_SUB_WRITE);
   pg_shard_t from;
   ceph_tid_t tid;
   osd_reqid_t reqid;

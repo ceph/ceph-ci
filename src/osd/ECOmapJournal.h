@@ -135,6 +135,15 @@ class ECOmapJournal {
  public:
   explicit ECOmapJournal(const DoutPrefixProvider& dpp_) : dpp(dpp_) {}
 
+  // Temporary memory-leak instrumentation (see MEMDBG log lines).
+  void memdbg_dump(std::ostream &os) const {
+    os << "entries=" << entries.size()
+       << " key_map=" << key_map.size()
+       << " removed_ranges=" << removed_ranges_map.size()
+       << " header_map=" << header_map.size()
+       << " object_state_map=" << object_state_map.size();
+  }
+
   void add_entry(const hobject_t &hoid, const ECOmapJournalEntry &entry);
   bool remove_entry(const hobject_t &hoid, const ECOmapJournalEntry &entry);
   bool remove_entry_by_version(const hobject_t &hoid, const eversion_t version);

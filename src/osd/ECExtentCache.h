@@ -77,6 +77,7 @@
 
 #include "ECUtil.h"
 #include "include/Context.h"
+#include "common/live_object_count.h"
 
 class ECExtentCache {
   class Address;
@@ -149,6 +150,7 @@ class ECExtentCache {
     friend class Object;
     friend class ECExtentCache;
 
+    CEPH_LIVE_COUNT(EC_CACHE_OP);
     Object &object;
     std::optional<ECUtil::shard_extent_set_t> const reads;
     ECUtil::shard_extent_set_t const writes;
@@ -214,6 +216,7 @@ private:
     friend class Line;
     friend class ECExtentCache;
 
+    CEPH_LIVE_COUNT(EC_CACHE_OBJECT);
     ECExtentCache &pg;
     ECUtil::shard_extent_set_t requesting;
     ECUtil::shard_extent_set_t do_not_read;
@@ -259,6 +262,7 @@ private:
 
 
   class Line {
+    CEPH_LIVE_COUNT(EC_CACHE_LINE);
    public:
     uint64_t offset;
     uint64_t size;
@@ -359,6 +363,16 @@ private:
 
   void execute(std::list<OpRef> &op_list);
   [[nodiscard]] bool idle() const;
+
+  // Temporary memory-leak instrumentation (see MEMDBG log lines).
+  size_t memdbg_num_objects() const { return objects.size(); }
+  size_t memdbg_num_waiting_ops() const { return waiting_ops.size(); }
+  uint32_t memdbg_active_ios() const { return active_ios; }
+  /// Returns (entries, bytes) held by the shared per-OSD-shard LRU.
+  std::pair<size_t, uint64_t> memdbg_lru_stats() const {
+    std::lock_guard l{lru.mutex};
+    return {lru.map.size(), lru.size};
+  }
 
   void add_on_write(std::function<void(void)> &&cb) const {
     if (waiting_ops.empty()) {

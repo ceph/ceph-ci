@@ -133,6 +133,8 @@
 #include "log/Log.h"
 #include "perfglue/cpu_profiler.h"
 #include "perfglue/heap_profiler.h"
+#include "common/live_object_count.h"
+#include "include/mempool.h"
 
 #include "osd/ClassHandler.h"
 #include "osd/OpRequest.h"
@@ -6433,6 +6435,45 @@ void OSD::tick_without_osd_lock()
 {
   ceph_assert(ceph_mutex_is_locked(tick_timer_lock));
   dout(10) << "tick_without_osd_lock" << dendl;
+
+  // Temporary memory-leak instrumentation: once a second, log the tcmalloc
+  // heap counters, the mempool totals and the live-object counters together
+  // so that heap growth can be correlated with a specific object type.
+  if (cct->_conf->subsys.should_gather<dout_subsys, 5>()) {
+    size_t heap_allocated = 0, heap_size = 0, heap_free = 0, heap_unmapped = 0;
+    ceph_heap_get_numeric_property("generic.current_allocated_bytes",
+                                   &heap_allocated);
+    ceph_heap_get_numeric_property("generic.heap_size", &heap_size);
+    ceph_heap_get_numeric_property("tcmalloc.pageheap_free_bytes", &heap_free);
+    ceph_heap_get_numeric_property("tcmalloc.pageheap_unmapped_bytes",
+                                   &heap_unmapped);
+    size_t mempool_bytes = 0, mempool_items = 0;
+    for (int i = 0; i < mempool::num_pools; ++i) {
+      const auto &p = mempool::get_pool(mempool::pool_index_t(i));
+      mempool_bytes += p.allocated_bytes();
+      mempool_items += p.allocated_items();
+    }
+    dout(5) << "MEMDBG osd heap.allocated=" << heap_allocated
+            << " heap.size=" << heap_size
+            << " heap.pageheap_free=" << heap_free
+            << " heap.pageheap_unmapped=" << heap_unmapped
+            << " mempool.bytes=" << mempool_bytes
+            << " mempool.items=" << mempool_items
+            << " buffer_anon=" << mempool::buffer_anon::allocated_bytes()
+            << " buffer_meta=" << mempool::buffer_meta::allocated_bytes()
+            << " osd_pglog=" << mempool::osd_pglog::allocated_bytes()
+            << " osd=" << mempool::osd::allocated_bytes()
+            << " ec_extent_cache=" << mempool::ec_extent_cache::allocated_bytes()
+            << " live(live/total): ";
+    ceph::live_count::dump(*_dout);
+    *_dout << " sizeof: Message=" << sizeof(Message)
+           << " OpRequest=" << sizeof(OpRequest)
+           << " Transaction=" << sizeof(ObjectStore::Transaction)
+           << " pg_stat_t=" << sizeof(pg_stat_t)
+           << " pg_log_entry_t=" << sizeof(pg_log_entry_t)
+           << " hobject_t=" << sizeof(hobject_t)
+           << dendl;
+  }
 
   logger->set(l_osd_cached_crc, ceph::buffer::get_cached_crc());
   logger->set(l_osd_cached_crc_adjusted, ceph::buffer::get_cached_crc_adjusted());

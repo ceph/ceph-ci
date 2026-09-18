@@ -6,6 +6,7 @@
 
 #include "osd_types.h"
 #include "OpRequest.h"
+#include "common/live_object_count.h"
 #include "object_state.h"
 #include "Watch.h" // for WatchRef
 
@@ -38,6 +39,7 @@ struct ObjectContext;
 typedef std::shared_ptr<ObjectContext> ObjectContextRef;
 
 struct ObjectContext {
+  CEPH_LIVE_COUNT(OBJECT_CONTEXT);
   ObjectState obs;
 
   SnapSetContext *ssc;  // may be null

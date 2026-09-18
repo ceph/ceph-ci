@@ -20,6 +20,7 @@
 #include <set>
 #include <string>
 
+#include "common/live_object_count.h"
 #include "erasure-code/ErasureCodeInterface.h"
 #include "include/buffer_fwd.h"
 #include "include/ceph_assert.h"
@@ -938,6 +939,7 @@ public:
 
 class shard_extent_map_t {
   static const uint64_t invalid_offset = std::numeric_limits<uint64_t>::max();
+  CEPH_LIVE_COUNT(SHARD_EXTENT_MAP);
 
 public:
   const stripe_info_t *sinfo;

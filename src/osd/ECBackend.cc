@@ -384,6 +384,58 @@ void ECBackend::sub_write_committed(
   }
 }
 
+void ECBackend::memdbg_dump(const char *where)
+{
+  if (!cct->_conf->subsys.should_gather<dout_subsys, 5>()) {
+    return;
+  }
+  size_t shard_to_read_tids = 0;
+  for (const auto &[shard, tids] : read_pipeline.shard_to_read_map) {
+    shard_to_read_tids += tids.size();
+  }
+  const auto [lru_entries, lru_bytes] =
+    rmw_pipeline.extent_cache.memdbg_lru_stats();
+  const PGLog &pg_log = get_parent()->get_log();
+  const PGLog::IndexedLog &log = pg_log.get_log();
+  const pg_info_t &info = get_parent()->get_info();
+  dout(5) << "MEMDBG pg " << where
+          << " sub_writes=" << memdbg_sub_write_count
+          << " rmw.tid_to_op_map=" << rmw_pipeline.tid_to_op_map.size()
+          << " rmw.oid_to_version=" << rmw_pipeline.oid_to_version.size()
+          << " rmw.waiting_commit=" << rmw_pipeline.waiting_commit.size()
+          << " rmw.pending_roll_forward="
+          << rmw_pipeline.pending_roll_forward.size()
+          << " cache.objects="
+          << rmw_pipeline.extent_cache.memdbg_num_objects()
+          << " cache.waiting_ops="
+          << rmw_pipeline.extent_cache.memdbg_num_waiting_ops()
+          << " cache.active_ios="
+          << rmw_pipeline.extent_cache.memdbg_active_ios()
+          << " lru.entries=" << lru_entries
+          << " lru.bytes=" << lru_bytes
+          << " read.tid_to_read_map=" << read_pipeline.tid_to_read_map.size()
+          << " read.shard_to_read_map="
+          << read_pipeline.shard_to_read_map.size() << "/" << shard_to_read_tids
+          << " read.in_progress_client_reads="
+          << read_pipeline.in_progress_client_reads.size()
+          << " omap_journal[";
+  ec_omap_journal.memdbg_dump(*_dout);
+  *_dout << "]"
+         << " pg_log.log=" << log.log.size()
+         << " pg_log.dups=" << log.dups.size()
+         << " pg_log.objects=" << log.objects.size()
+         << " pg_log.caller_ops=" << log.caller_ops.size()
+         << " pg_log.extra_caller_ops=" << log.extra_caller_ops.size()
+         << " pg_log.dup_index=" << log.dup_index.size()
+         << " missing=" << pg_log.get_missing().num_missing()
+         << " pwlc=" << info.partial_writes_last_complete.size()
+         << " acting_recovery_backfill="
+         << get_parent()->get_acting_recovery_backfill_shards().size()
+         << " last_update=" << info.last_update
+         << " log_tail=" << info.log_tail
+         << dendl;
+}
+
 void ECBackend::handle_sub_write(
   pg_shard_t from,
   OpRequestRef msg,
@@ -394,6 +446,12 @@ void ECBackend::handle_sub_write(
     msg->mark_event("sub_op_started");
   }
   trace.event("handle_sub_write");
+
+  // Temporary memory-leak instrumentation: every write on every shard passes
+  // through here, so snapshot the per-PG container sizes periodically.
+  if ((++memdbg_sub_write_count & 4095) == 1) {
+    memdbg_dump("handle_sub_write");
+  }
 
   if (cct->_conf->bluestore_debug_inject_read_err &&
     ECInject::test_write_error3(op.soid)) {

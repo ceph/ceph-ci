@@ -30,6 +30,7 @@
 #endif
 
 #include "include/Context.h"
+#include "common/live_object_count.h"
 #include "common/RefCountedObj.h"
 #include "common/ThrottleInterface.h"
 #include "common/config.h"
@@ -339,6 +340,8 @@ protected:
   uint64_t dispatch_throttle_size = 0;
 
   friend class Messenger;
+
+  CEPH_LIVE_COUNT(MESSAGE);
 
 public:
   Message() = default;

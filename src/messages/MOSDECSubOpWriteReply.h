@@ -18,11 +18,13 @@
 
 #include "MOSDFastDispatchOp.h"
 #include "osd/ECMsgTypes.h"
+#include "common/live_object_count.h"
 
 class MOSDECSubOpWriteReply : public MOSDFastDispatchOp {
 private:
   static constexpr int HEAD_VERSION = 2;
   static constexpr int COMPAT_VERSION = 1;
+  CEPH_LIVE_COUNT(MSG_EC_WRITE_REPLY);
 
 public:
   spg_t pgid;

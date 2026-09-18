@@ -21,6 +21,7 @@
 #include <variant>
 
 #include "common/hobject.h"
+#include "common/live_object_count.h"
 #ifndef WITH_CRIMSON
 #include "osd/osd_internal_types.h"
 #else
@@ -44,6 +45,7 @@ typedef crimson::osd::ObjectContextRef ObjectContextRef;
 class PGTransaction {
 public:
   std::map<hobject_t, ObjectContextRef> obc_map;
+  CEPH_LIVE_COUNT(PG_TRANSACTION);
 
   class ObjectOperation {
   public:

@@ -277,6 +277,12 @@ public:
 
   ceph::ErasureCodeInterfaceRef ec_impl;
 
+  // Temporary memory-leak instrumentation (see MEMDBG log lines).
+  // Counts every handle_sub_write on this PG shard; a per-PG snapshot of the
+  // persistent EC/PG container sizes is logged at level 5 every 4096 calls.
+  uint64_t memdbg_sub_write_count = 0;
+  void memdbg_dump(const char *where);
+
   PGBackend::Listener *get_parent() const { return parent; }
 
   /**

@@ -6,6 +6,7 @@
 #include <map>
 
 #include "include/Context.h"
+#include "common/live_object_count.h"
 #include "include/int_types.h"
 #include "include/buffer.h"
 
@@ -250,6 +251,8 @@ private:
   std::list<Context *> on_applied;
   std::list<Context *> on_commit;
   std::list<Context *> on_applied_sync;
+
+  CEPH_LIVE_COUNT(OS_TRANSACTION);
 
 public:
   Transaction() = default;

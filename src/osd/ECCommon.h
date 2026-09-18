@@ -16,6 +16,7 @@
 #pragma once
 
 #include <expected>
+#include "common/live_object_count.h"
 #include <boost/intrusive/list.hpp>
 #include <utility>
 #include <fmt/format.h>
@@ -257,6 +258,7 @@ struct ECCommon {
   friend struct CallClientContexts;
 
   struct ClientAsyncReadStatus {
+    CEPH_LIVE_COUNT(EC_CLIENT_READ);
     unsigned objects_to_read;
     GenContextURef<ec_extents_t&&> func;
     ec_extents_t results;
@@ -290,6 +292,7 @@ struct ECCommon {
   };
 
   struct ReadOp {
+    CEPH_LIVE_COUNT(EC_READ_OP);
     int priority;
     ceph_tid_t tid;
     OpRequestRef op; // may be null if not on behalf of a client
@@ -543,6 +546,7 @@ struct ECCommon {
 
   struct RMWPipeline : ECExtentCache::BackendReadListener {
     struct Op : boost::intrusive::list_base_hook<> {
+      CEPH_LIVE_COUNT(EC_RMW_OP);
       /// From submit_transaction caller, describes operation
       hobject_t hoid;
       object_stat_sum_t delta_stats;

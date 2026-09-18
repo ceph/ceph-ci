@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "msg/Message.h"
+#include "common/live_object_count.h"
 
 #include "MOSDOp.h"
 #include "common/errno.h"
@@ -37,6 +38,7 @@ class MOSDOpReply final : public Message {
 private:
   static constexpr int HEAD_VERSION = 8;
   static constexpr int COMPAT_VERSION = 2;
+  CEPH_LIVE_COUNT(MSG_OSD_OP_REPLY);
 
   object_t oid;
   pg_t pgid;

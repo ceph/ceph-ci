@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "MOSDFastDispatchOp.h"
+#include "common/live_object_count.h"
 #include "include/ceph_features.h"
 #include "include/ceph_fs.h" // for CEPH_MSG_OSD_OP
 #include "common/hobject.h"
@@ -42,6 +43,7 @@ class MOSDOp final : public MOSDFastDispatchOp {
 private:
   static constexpr int HEAD_VERSION = 9;
   static constexpr int COMPAT_VERSION = 3;
+  CEPH_LIVE_COUNT(MSG_OSD_OP);
 
 private:
   uint32_t client_inc = 0;

@@ -18,6 +18,7 @@
 #define CEPH_CONTEXT_H
 
 #include "common/dout.h"
+#include "common/live_object_count.h"
 
 #include <functional>
 #include <list>
@@ -90,6 +91,8 @@ class Finisher;
 class Context {
   Context(const Context& other);
   const Context& operator=(const Context& other);
+
+  CEPH_LIVE_COUNT(CONTEXT);
 
  protected:
   virtual void finish(int r) = 0;
