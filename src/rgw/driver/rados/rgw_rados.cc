@@ -10520,27 +10520,34 @@ int RGWRados::follow_olh(const DoutPrefixProvider *dpp, RGWBucketInfo& bucket_in
       return ret;
     }
   }
+  const map<string, bufferlist>* attrs = &state->attrset;
+  map<string, bufferlist> replayed_attrs;
   if (!pending_entries.empty()) {
     ldpp_dout(dpp, 20) << __func__ << "(): found pending entries, need to update_olh() on bucket=" << olh_obj.bucket << dendl;
 
     int ret = update_olh(dpp, obj_ctx, state, bucket_info, olh_obj, y);
-    if (ret < 0) {
-      if (ret == -ECANCELED) {
-        // In this context, ECANCELED means that the OLH tag changed in either the bucket index entry or the OLH object.
-        // If the OLH tag changed, it indicates that a previous OLH entry was removed since this request started. We
-        // return ENOENT to indicate that the OLH object was removed.
-        ret = -ENOENT;
-      }
+    if (ret < 0 && ret != -ECANCELED) {
       return ret;
     }
+    /*
+     * the log was replayed, by us or by a racing request, so resolve the
+     * target from the olh head as it is now instead of as we loaded it
+     */
+    ObjectReadOperation op;
+    op.getxattrs(&replayed_attrs, nullptr);
+    ret = obj_operate(dpp, bucket_info, olh_obj, std::move(op), y);
+    if (ret < 0) {
+      return ret;
+    }
+    attrs = &replayed_attrs;
   }
 
-  auto iter = state->attrset.find(RGW_ATTR_OLH_VER);
-  if (iter == state->attrset.end()) {
+  auto iter = attrs->find(RGW_ATTR_OLH_VER);
+  if (iter == attrs->end()) {
     return -EINVAL;
   }
-  iter = state->attrset.find(RGW_ATTR_OLH_INFO);
-  if (iter == state->attrset.end()) {
+  iter = attrs->find(RGW_ATTR_OLH_INFO);
+  if (iter == attrs->end()) {
     return -ENOENT;
   }
 
