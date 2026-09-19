@@ -12528,6 +12528,19 @@ bool Server::build_snap_diff(
       if (p.first >= snapid_prev && p.first <= snapid && !p.second.empty())
 	return true;
     }
+    // Nothing has been COWed yet.  client_need_snapflush and client_snap_caps
+    // are only populated by MDCache::cow_inode(), so a client that has not
+    // reported anything since the snapshot leaves no trace in either.  Fall
+    // back to the predicate cow_inode() itself uses to decide whether a
+    // snapflush is owed: a client holding write caps that has not followed
+    // @snapid may still have a capsnap queued, which means @in's metadata for
+    // @snapid is not known here yet.
+    for (const auto& p : head->get_client_caps()) {
+      const Capability& cap = p.second;
+      if ((cap.issued() & CEPH_CAP_ANY_WR) && cap.client_follows < snapid) {
+        return true;
+      }
+    }
     return false;
   };
 
