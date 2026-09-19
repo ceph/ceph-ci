@@ -3317,6 +3317,16 @@ int POSIXObject::copy_object(const ACLOwner& owner,
                               const DoutPrefixProvider* dpp,
                               optional_yield y)
 {
+  /*
+   * The bytes are copied as they are, so a request that needs the data
+   * transformed cannot be satisfied.
+   */
+  if (dp_factory && dp_factory->need_copy_data()) {
+    ldpp_dout(dpp, 0) << "ERROR: cannot copy " << get_name()
+                      << ": data transformation is not supported" << dendl;
+    return -ERR_NOT_IMPLEMENTED;
+  }
+
   int ret;
   POSIXBucket *db = static_cast<POSIXBucket*>(dest_bucket);
   POSIXBucket *sb = static_cast<POSIXBucket*>(src_bucket);
