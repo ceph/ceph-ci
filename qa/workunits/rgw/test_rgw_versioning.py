@@ -145,6 +145,32 @@ def main():
     assert num_leftover_olh_entries == 0, \
       'Found leftover olh entries after concurrent deletes'
 
+    # TESTCASE 'verify that a versionless read survives losing the olh log replay'
+    log.debug('TEST: verify that a versionless read survives losing the olh log replay\n')
+    bucket.object_versions.all().delete()
+
+    key = 'olh-replay-race'
+    bucket.Object(key).put(Body=b'a')
+    bucket.Object(key).put(Body=b'b')
+    out = exec_cmd(f'rados -p {DATA_POOL} ls | grep -v __: | grep _{key}$')
+    olh_oid = out.decode().strip()
+    try:
+        # make the stored olh version newer than any log batch a replay can
+        # read, so every replay of this key loses its guard
+        exec_cmd(f'rados -p {DATA_POOL} setxattr {olh_oid} user.rgw.olh.ver 9223372036854775807')
+        # this put links a new version but its own replay loses, leaving a
+        # pending entry that forces the reads below to replay and lose too
+        bucket.Object(key).put(Body=b'c')
+        bucket.Object(key).load()
+        body = bucket.Object(key).get()['Body'].read()
+        assert body in (b'b', b'c'), f'unexpected body {body}'
+    finally:
+        exec_cmd(f'rados -p {DATA_POOL} setxattr {olh_oid} user.rgw.olh.ver 0')
+    # the pending update replays now that its guard can pass again, and
+    # the read has to return the version that replay links
+    body = bucket.Object(key).get()['Body'].read()
+    assert body == b'c', f'unexpected body {body}'
+
     # Clean up
     log.debug("Deleting bucket {}".format(BUCKET_NAME))
     bucket.object_versions.all().delete()
