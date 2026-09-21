@@ -1070,6 +1070,11 @@ protected:
   /* Flags for check_caps() */
   static const unsigned CHECK_CAPS_NODELAY = 0x1;
   static const unsigned CHECK_CAPS_SYNCHRONOUS = 0x2;
+  // Send the cap message without flushing dirty caps. send_cap() only sets
+  // snap_follows when it is flushing something, so this produces a message the
+  // MDS will not turn into a cap update -- and therefore will not COW past a
+  // snapid whose capsnap the client has not sent yet.
+  static const unsigned CHECK_CAPS_NOFLUSH = 0x4;
 
   void check_caps(const InodeRef& in, unsigned flags);
 

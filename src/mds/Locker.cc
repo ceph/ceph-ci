@@ -3625,7 +3625,9 @@ void Locker::handle_client_caps(const cref_t<MClientCaps> &m)
 	dout(10) << " revocation in progress, not making any conclusions about null snapflushes" << dendl;
       }
     }
-    if (cap->need_snapflush() && !(m->flags & MClientCaps::FLAG_PENDING_CAPSNAP))
+    if (m->flags & MClientCaps::FLAG_PENDING_CAPSNAP)
+      cap->mark_needsnapflush();
+    else if (cap->need_snapflush())
       cap->clear_needsnapflush();
 
     if (dirty && in->is_auth()) {

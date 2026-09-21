@@ -12689,7 +12689,23 @@ bool Server::build_snap_diff(
 
         // A replica's first can lag the inode auth MDS, so only use the
         // range as a fast path when it is authoritative.
-        const bool inode_state_authoritative = head && head->is_auth();
+        const bool is_auth = head && head->is_auth();
+
+        // ...and only while no client is sitting on a capsnap it has told us it
+        // could not send. Until that snapflush arrives the MDS has not been
+        // told about the change at all: nothing is COWed, the head still spans
+        // both snapids, and the fast path below would drop a modified file.
+        bool pending_capsnap = false;
+        if (is_auth) {
+          for (const auto& p : head->get_client_caps()) {
+            if (p.second.need_snapflush()) {
+              pending_capsnap = true;
+              break;
+            }
+          }
+        }
+
+        const bool inode_state_authoritative = is_auth && !pending_capsnap;
         bool inode_spans_both =
           inode_state_authoritative &&
           snapid_prev >= in->first && snapid <= in->last;
