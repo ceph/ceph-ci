@@ -12502,12 +12502,18 @@ bool Server::build_snap_diff(
       return res_mask != 0;
     }
 
+    // Compare projected state.  Locker::_do_snap_update() applies a FLUSHSNAP
+    // by projecting onto the inode and journalling; the projection is only
+    // popped when that EUpdate commits, and the FLUSHSNAP path does not flush
+    // the mdlog.  Until then get_inode() still returns the pre-snapflush
+    // values, which makes a changed file compare equal to its own snapshot.
     bool meta_differs(const CInode* _in,
                       unsigned mask,
                       unsigned& res_mask) const {
       ceph_assert(in);
       ceph_assert(_in);
-      return meta_differs(*in->get_inode(), *_in->get_inode(),
+      return meta_differs(*in->get_projected_inode(),
+                          *_in->get_projected_inode(),
                           mask, res_mask);
     }
   } before;
@@ -12521,6 +12527,19 @@ bool Server::build_snap_diff(
     for (const auto& p : head->client_need_snapflush) {
       if (p.first >= snapid_prev && p.first <= snapid && !p.second.empty())
 	return true;
+    }
+    // Nothing has been COWed yet.  client_need_snapflush and client_snap_caps
+    // are only populated by MDCache::cow_inode(), so a client that has not
+    // reported anything since the snapshot leaves no trace in either.  Fall
+    // back to the predicate cow_inode() itself uses to decide whether a
+    // snapflush is owed: a client holding write caps that has not followed
+    // @snapid may still have a capsnap queued, which means @in's metadata for
+    // @snapid is not known here yet.
+    for (const auto& p : head->get_client_caps()) {
+      const Capability& cap = p.second;
+      if ((cap.issued() & CEPH_CAP_ANY_WR) && cap.client_follows < snapid) {
+        return true;
+      }
     }
     return false;
   };
@@ -12554,12 +12573,18 @@ bool Server::build_snap_diff(
   // Return the inode metadata visible at @snapid. Multiversion inodes keep
   // their historical versions in old_inodes, keyed by the version's last
   // snapshot.
+  //
+  // The head is read through its projection for the same reason as
+  // EntryInfo::meta_differs(): a FLUSHSNAP that has been applied but not yet
+  // committed lives only in the projection. old_inodes needs no such care --
+  // Locker::_do_snap_update() installs it with reset_old_inodes() up front
+  // rather than projecting it.
   auto inode_at_snap = [](const CInode* head, snapid_t snapid)
       -> const CInode::mempool_inode* {
     ceph_assert(head->is_head());
 
     if (snapid >= head->first)
-      return head->get_inode().get();
+      return head->get_projected_inode().get();
 
     snapid_t old_last = head->pick_old_inode(snapid);
     if (!old_last)
