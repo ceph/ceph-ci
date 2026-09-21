@@ -1306,6 +1306,7 @@ int ECBackend::objects_read_sync(
 
     if (waiting) {
       coro.resume();
+      coro.check_done();
     }
   });
 

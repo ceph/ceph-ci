@@ -2645,24 +2645,32 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
     auto resumer = std::make_unique<resume_token_t>(
       counted_stack(),
       [this, op_raw](yield_token_t& yield) {
-        op_raw->coro_handles.emplace(CoroHandles{ yield, *coro_resumer });
-        {
-          const OpRequestRef op_ref(op_raw);
-          do_op_impl(op_ref);
-        }
-
-        // Cleanup
-        coro_resumer = nullptr;
-        on_coroutine_complete();
+        op_raw->coro_handles.emplace(CoroHandles{
+          yield, *coro_resumer, [this] { check_coroutine_done(); } });
+        const OpRequestRef op_ref(op_raw);
+        do_op_impl(op_ref);
+        // Teardown happens in check_coroutine_done() on the resumer's side.
       });
 
     coro_resumer = std::move(resumer);
 
     // Startup the coroutine
     (*coro_resumer)();
+    check_coroutine_done();
   } else {
     // Handle the message directly in the current thread
     do_op_impl(op);
+  }
+}
+
+void PrimaryLogPG::check_coroutine_done()
+{
+  // Runs on the resumer's stack after a resume returns. Destroying the
+  // push_type from outside the fiber is what makes boost unwind it and free
+  // its stack; doing so from inside the coroutine body leaks the stack.
+  if (coro_resumer && !*coro_resumer) {
+    coro_resumer = nullptr;
+    on_coroutine_complete();
   }
 }
 

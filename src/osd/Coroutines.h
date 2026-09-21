@@ -22,6 +22,7 @@
  */
 
 #pragma once
+#include <functional>
 #include <boost/coroutine2/all.hpp>
 
 using yield_token_t = boost::coroutines2::coroutine<void>::pull_type;
@@ -30,4 +31,9 @@ using resume_token_t = boost::coroutines2::coroutine<void>::push_type;
 struct CoroHandles {
   yield_token_t& yield;
   resume_token_t& resume;
+
+  // Must be called after every resume() returns. Tears the coroutine down
+  // from the resumer's stack if it has completed; destroying the push_type
+  // from inside the coroutine leaks its stack.
+  std::function<void()> check_done;
 };
