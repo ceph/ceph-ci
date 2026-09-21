@@ -50,6 +50,7 @@ enum id_t : unsigned {
   EC_CACHE_OBJECT,    // ECExtentCache::Object
   EC_CACHE_LINE,      // ECExtentCache::Line
   EC_CACHE_OP,        // ECExtentCache::Op
+  CORO_STACK,         // boost::coroutines2 stack used by PrimaryLogPG::do_op
   NUM
 };
 
@@ -74,6 +75,7 @@ inline constexpr const char *names[NUM] = {
   "ECExtentCache::Object",
   "ECExtentCache::Line",
   "ECExtentCache::Op",
+  "CoroStack",
 };
 
 struct counter_t {

@@ -33,6 +33,7 @@
 #include "common/ceph_crypto.h"
 #include "common/config.h"
 #include "common/errno.h"
+#include "common/live_object_count.h"
 #include "common/perf_counters.h"
 #include "common/scrub_types.h"
 #include "include/compat.h"
@@ -1988,6 +1989,32 @@ void PrimaryLogPG::do_request(
   }
 }
 
+namespace {
+
+// A fixedsize_stack that mirrors every allocation/deallocation into
+// ceph::live_count::CORO_STACK, so leaked coroutine stacks (which are raw
+// std::malloc'd memory that CEPH_LIVE_COUNT cannot otherwise see) show up as
+// unbounded growth in the per-second MEMDBG line.
+struct counted_stack : boost::context::fixedsize_stack {
+  using boost::context::fixedsize_stack::fixedsize_stack;
+
+  boost::context::stack_context allocate() {
+    auto s = boost::context::fixedsize_stack::allocate();
+    auto &c = ceph::live_count::counters[ceph::live_count::CORO_STACK];
+    c.live.fetch_add(1, std::memory_order_relaxed);
+    c.total.fetch_add(1, std::memory_order_relaxed);
+    return s;
+  }
+
+  void deallocate(boost::context::stack_context &s) noexcept {
+    ceph::live_count::counters[ceph::live_count::CORO_STACK]
+      .live.fetch_sub(1, std::memory_order_relaxed);
+    boost::context::fixedsize_stack::deallocate(s);
+  }
+};
+
+} // namespace
+
 bool PrimaryLogPG::should_use_coroutine(MOSDOp* m)
 {
   if (!pool.info.allows_ecoptimizations()) {
@@ -2616,6 +2643,7 @@ void PrimaryLogPG::do_op(OpRequestRef& op)
 
     // Spawn a coroutine to handle the message
     auto resumer = std::make_unique<resume_token_t>(
+      counted_stack(),
       [this, op_raw](yield_token_t& yield) {
         op_raw->coro_handles.emplace(CoroHandles{ yield, *coro_resumer });
         {
