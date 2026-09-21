@@ -273,3 +273,63 @@ class TestSessionMap(CephFSTestCase):
 
         self.mount_a.kill_cleanup()
         self.mount_a.mount_wait()
+
+    def test_sessionmap_inotable_divergence(self):
+        """
+        Reproduce the prealloc_inos interval_set crash caused by SessionMap 
+        flushing to OMAP before InoTable metadata hits the journal.
+        """
+        # 1. Force the MDS into a split-brain vulnerability window.
+        # Setting keys_per_op to 1 ensures every single prealloc_inos update 
+        # flushes immediately to OMAP, bypassing the MDLog journal queue.
+        self.config_set('mds', 'mds_sessionmap_keys_per_op', 1)
+        
+        # Lower prealloc size so we rapidly trigger InoTable projections
+        self.config_set('mds', 'mds_client_prealloc_inos', 10)
+
+        self.mount_a.run_shell(["mkdir", "testdir"])
+
+        log.info("Spawning asynchronous file creates to drain prealloc_inos...")
+        # 2. Fire an async create storm to force the MDS to assign new 
+        # InoTable ranges to the client session.
+        create_script = "for i in $(seq 1 100); do touch testdir/splitbrain_$i; done"
+        p = self.mount_a.run_shell_payload(create_script, wait=False)
+
+        # Give the client just enough time to trigger the OMAP save, 
+        # but not enough time for the MDS MDLog to automatically flush 
+        # the InoTable EUpdate to the journal (usually ~1-2 seconds).
+        time.sleep(0.5)
+
+        # 3. Execute the Hard Crash via SIGKILL
+        log.info("Sending SIGKILL to active MDS to orphan the journal flush...")
+        active_mds = self.fs.get_active_mds()
+        
+        # We must use kill=True to simulate a power loss / ungraceful crash.
+        # A normal stop() would cleanly flush the journal and mask the bug.
+        self.fs.daemons['mds'][active_mds].stop(kill=True)
+
+        # Clean up the orphaned client process from the test runner
+        try:
+            p.wait()
+        except Exception:
+            pass 
+
+        # 4. Recover the Cluster
+        log.info("Restarting MDS and waiting for up:active...")
+        self.fs.mds_restart(active_mds)
+        self.fs.wait_for_daemons()
+
+        # 5. The Verification Trigger
+        # If the bug exists, the SessionMap loaded the newer OMAP state, 
+        # but the InoTable loaded the older disk state. This next file create
+        # will ask the InoTable for inodes, receive an overlapping range, 
+        # and crash the MDS via the interval_set assert.
+        log.info("Triggering subsequent file create to test for overlap crash...")
+        self.mount_a.run_shell(["touch", "testdir/survival_flag"])
+
+        # 6. Assert cluster survival
+        status = self.fs.status()
+        active_rank = status.get_rank(self.fs.id, 0)
+        self.assertEqual(active_rank['state'], 'up:active', 
+                         "MDS crashed! Overlapping prealloc_inos hit interval_set assert.")
+        log.info("MDS successfully survived the InoTable state divergence sequence.")
