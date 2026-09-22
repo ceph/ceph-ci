@@ -12505,12 +12505,18 @@ bool Server::build_snap_diff(
       return res_mask != 0;
     }
 
+    // Compare projected state.  Locker::_do_snap_update() applies a FLUSHSNAP
+    // by projecting onto the inode and journalling; the projection is only
+    // popped when that EUpdate commits, and the FLUSHSNAP path does not flush
+    // the mdlog.  Until then get_inode() still returns the pre-snapflush
+    // values, which makes a changed file compare equal to its own snapshot.
     bool meta_differs(const CInode* _in,
                       unsigned mask,
                       unsigned& res_mask) const {
       ceph_assert(in);
       ceph_assert(_in);
-      return meta_differs(*in->get_inode(), *_in->get_inode(),
+      return meta_differs(*in->get_projected_inode(),
+                          *_in->get_projected_inode(),
                           mask, res_mask);
     }
   } before;
@@ -12557,12 +12563,18 @@ bool Server::build_snap_diff(
   // Return the inode metadata visible at @snapid. Multiversion inodes keep
   // their historical versions in old_inodes, keyed by the version's last
   // snapshot.
+  //
+  // The head is read through its projection for the same reason as
+  // EntryInfo::meta_differs(): a FLUSHSNAP that has been applied but not yet
+  // committed lives only in the projection. old_inodes needs no such care --
+  // Locker::_do_snap_update() installs it with reset_old_inodes() up front
+  // rather than projecting it.
   auto inode_at_snap = [](const CInode* head, snapid_t snapid)
       -> const CInode::mempool_inode* {
     ceph_assert(head->is_head());
 
     if (snapid >= head->first)
-      return head->get_inode().get();
+      return head->get_projected_inode().get();
 
     snapid_t old_last = head->pick_old_inode(snapid);
     if (!old_last)
@@ -12677,7 +12689,23 @@ bool Server::build_snap_diff(
 
         // A replica's first can lag the inode auth MDS, so only use the
         // range as a fast path when it is authoritative.
-        const bool inode_state_authoritative = head && head->is_auth();
+        const bool is_auth = head && head->is_auth();
+
+        // ...and only while no client is sitting on a capsnap it has told us it
+        // could not send. Until that snapflush arrives the MDS has not been
+        // told about the change at all: nothing is COWed, the head still spans
+        // both snapids, and the fast path below would drop a modified file.
+        bool pending_capsnap = false;
+        if (is_auth) {
+          for (const auto& p : head->get_client_caps()) {
+            if (p.second.need_snapflush()) {
+              pending_capsnap = true;
+              break;
+            }
+          }
+        }
+
+        const bool inode_state_authoritative = is_auth && !pending_capsnap;
         bool inode_spans_both =
           inode_state_authoritative &&
           snapid_prev >= in->first && snapid <= in->last;

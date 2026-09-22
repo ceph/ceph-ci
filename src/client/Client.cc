@@ -4406,7 +4406,8 @@ void Client::check_caps(const InodeRef& in, unsigned flags)
     int flushing;
     int msg_flags = 0;
     ceph_tid_t flush_tid;
-    if (in->auth_cap == &cap && in->dirty_caps) {
+    if (in->auth_cap == &cap && in->dirty_caps &&
+	!(flags & CHECK_CAPS_NOFLUSH)) {
       flushing = mark_caps_flushing(in.get(), &flush_tid);
       if (flags & CHECK_CAPS_SYNCHRONOUS)
 	msg_flags |= MClientCaps::FLAG_SYNC;
@@ -4454,6 +4455,20 @@ void Client::queue_cap_snap(Inode *in, const SnapContext& old_snapc)
       capsnap.writing = 1;
     } else {
       finish_cap_snap(in, capsnap, used);
+    }
+
+    // If the capsnap could not be sent -- writeback is still in
+    // flight, or a write is -- tell the MDS that one is queued.
+    // send_cap() tags the message with FLAG_PENDING_CAPSNAP, and
+    // the MDS can learn that its  view of this inode is incomplete
+    // for snapids after old_snapc.seq.
+    // Without NOFLUSH, the cap flush would use snapp_follows as the
+    // post-snapshot seq which results in the MDS doing a COW for a
+    // snapid whose cap nap hasn't yet been sent by the client.
+    if (capsnap.flush_tid == 0) {
+      ldout(cct, 10) << __func__ << " capsnap on " << *in
+		     << " not flushable yet, notifying mds" << dendl;
+      check_caps(in, CHECK_CAPS_NODELAY|CHECK_CAPS_NOFLUSH);
     }
   } else {
     ldout(cct, 10) << __func__ << " not dirty|writing on " << *in << dendl;
