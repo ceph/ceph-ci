@@ -47,6 +47,7 @@ public:
     return _profile;
   }
 
+  using ErasureCodeInterface::create_rule;
   int create_rule(const std::string &name,
                   int num_zones,
                   const std::string &root,
