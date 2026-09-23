@@ -54,6 +54,21 @@ class TestOldInodeGrowth(TestVolumesHelper):
         rel = str(path).lstrip("/") or "."
         return self.mount_a.path_to_ino(rel)
 
+    def _rel(self, path):
+        """
+        A path from `subvolume getpath` is filesystem-absolute.  Mount.read_file
+        and Mount.write_file prepend the mount point with os.path.join(), which
+        is a no-op for an absolute second argument, so strip the leading slash
+        before handing them a path.
+        """
+        return str(path).lstrip("/")
+
+    def _write(self, path, content):
+        self.mount_a.write_file(self._rel(path), content)
+
+    def _read(self, path):
+        return self.mount_a.read_file(self._rel(path))
+
     def _old_inode_counts(self, paths):
         """
         count of @old_inodes for each inode in the chain.
@@ -461,3 +476,203 @@ class TestOldInodeGrowth(TestVolumesHelper):
             max(pre), 2,
             "/volumes never accumulated even before a commit (pre=%s); the "
             "CoW is not happening at all, so this arm proves nothing." % pre)
+
+
+class TestStaleOldInodeReclaim(TestVolumesHelper):
+    """
+    The other side of TestOldInodeGrowth: these assert the FIXED behaviour.
+
+    TestOldInodeGrowth is a characterization test - it pins down what the MDS
+    does today, buggy behaviour included, and is expected to fail once a fix
+    lands.  This class asserts what the fix is supposed to do, so the two
+    together make the change visible from both directions.
+
+    Three things are checked, and all three matter:
+
+      1. An ancestor whose snaprealm has no snapshot covering the range is not
+         CoW'd at all (CInode::pre_cow_old_inode()).  This is the fix.
+      2. An inode whose realm DOES have a covering snapshot is still CoW'd.
+         Without this, #1 could "pass" by breaking snapshots outright.
+    """
+
+    CLIENTS_REQUIRED = 1
+    MDSS_REQUIRED = 1
+
+    SNAPS = 90
+
+    def setUp(self):
+        super(TestStaleOldInodeReclaim, self).setUp()
+        # one snapshot means one propagation attempt; see TestOldInodeGrowth
+        self.config_set('mds', 'mds_dirstat_min_interval', '0')
+
+    def _ino(self, path):
+        rel = str(path).lstrip("/") or "."
+        return self.mount_a.path_to_ino(rel)
+
+    def _old_inodes(self, path):
+        """len(old_inodes) for `path`, or None if it is not in the cache."""
+        try:
+            dump = self.fs.mds_asok(['dump', 'inode', hex(self._ino(path))])
+        except CommandFailedError:
+            return None
+        return len(dump["old_inodes"]) if dump else None
+
+    def _subvol_paths(self, group, subvol):
+        sv = Path(self._fs_cmd("subvolume", "getpath", self.volname,
+                               subvol, group).strip())
+        # sv == /volumes/<group>/<subvol>/<uuid>
+        return collections.OrderedDict([
+            ("subvol", sv.parent),
+            ("group", sv.parent.parent),
+            ("volumes", sv.parent.parent.parent),
+            ("root", Path("/")),
+        ])
+
+    def _make_subvolume(self):
+        group = self._gen_subvol_grp_name()
+        subvol = self._gen_subvol_name()
+        self._fs_cmd("subvolumegroup", "create", self.volname, group)
+        self._fs_cmd("subvolume", "create", self.volname, subvol, group,
+                     "--mode=777")
+        return group, subvol
+
+    def _cleanup_subvolume(self, group, subvol, snapnames):
+        for name in snapnames:
+            try:
+                self._fs_cmd("subvolume", "snapshot", "rm", self.volname,
+                             subvol, name, group, "--force")
+            except CommandFailedError:
+                pass
+        self._fs_cmd("subvolume", "rm", self.volname, subvol, group, "--force")
+        self._fs_cmd("subvolumegroup", "rm", self.volname, group, "--force")
+        self._wait_for_trash_empty()
+
+    def _restart_mds(self):
+        """
+        Re-fetch the dirfrags from RADOS so @snap_purged_thru advances to
+        @last_destroyed and the purge gate is SHUT - the state a long lived
+        cluster is in, and the one the fix has to hold in.
+        """
+        self.fs.mds_asok(["flush", "journal"])
+        self.fs.mds_asok(["flush", "journal"])
+        self.fs.fail()
+        self.mount_a.umount_wait(force=True)
+        self.fs.set_joinable()
+        self.fs.wait_for_daemons()
+        self.mount_a.mount_wait()
+
+    def test_ancestors_are_not_cowed_for_subvolume_snapshots(self):
+        """
+        Subvolume snapshots must not mint old_inodes on /volumes, the
+        subvolume group or /.
+
+        A subvolume owns its snaprealm, so its snapids never reach those
+        ancestors' realm - realms inherit downward, not upward.  With
+        @follows taken from the global snaprealm seq but staleness judged
+        against the inode's own realm, every old_inode CoW'd onto an ancestor
+        is stale the moment it is created.  pre_cow_old_inode() must therefore
+        advance @first and skip the CoW.
+        """
+        self.config_set('mds', 'mds_use_global_snaprealm_seq_for_subvol', True)
+        # suppress trimming so nothing can commit a dirfrag and quietly purge
+        # behind us - anything we observe here has to be absence of CoW, not
+        # reclaim after the fact
+        self.config_set('mds', 'mds_log_max_segments', '1024')
+
+        group, subvol = self._make_subvolume()
+        paths = self._subvol_paths(group, subvol)
+        # `getpath` returns /volumes/<group>/<subvol>/<uuid>; a v2 subvolume
+        # snapshot lives at /volumes/<group>/<subvol>/.snap/<name>, so the data
+        # written at <uuid>/f reads back at .snap/<name>/<uuid>/f
+        data_dir = Path(self._fs_cmd("subvolume", "getpath", self.volname,
+                                     subvol, group).strip())
+        uuid = data_dir.name
+        snapnames = []
+        expected = []
+
+        try:
+            self._restart_mds()
+
+            for i in range(self.SNAPS):
+                content = "gen-%d" % i
+                self._write(data_dir / "f", content)
+                name = "s_%d" % i
+                self._fs_cmd("subvolume", "snapshot", "create", self.volname,
+                             subvol, name, group)
+                snapnames.append(name)
+                expected.append((name, content))
+
+            counts = collections.OrderedDict(
+                (label, self._old_inodes(path))
+                for label, path in paths.items())
+            log.info("OLDINO after %d subvolume snapshots: %s",
+                     self.SNAPS, json.dumps(counts))
+
+            for label in ("volumes", "group"):
+                self.assertIsNotNone(
+                    counts[label],
+                    "%s was not in the MDS cache, cannot measure old_inodes "
+                    "(counts=%s)" % (label, counts))
+                self.assertEqual(
+                    counts[label], 0,
+                    "%s accumulated %d old_inodes over %d subvolume snapshots "
+                    "(counts=%s). Its snaprealm has no snapshot that can "
+                    "reference them, so pre_cow_old_inode() should have "
+                    "advanced first and skipped the CoW."
+                    % (label, counts[label], self.SNAPS, counts))
+
+            # the subvolume itself owns the snapshots, so it MUST keep its
+            # old_inodes - if this is 0 the guard is over-suppressing and
+            # snapshots are broken, which would make the assertions above
+            # meaningless
+            self.assertGreaterEqual(
+                counts["subvol"], self.SNAPS // 2,
+                "the subvolume itself lost its old_inodes (counts=%s); the "
+                "CoW guard is suppressing versions that its own snapshots "
+                "reference" % counts)
+
+            # ... and the point of all of it: every snapshot still serves what
+            # was visible when it was taken.  Asserting the ancestors are empty
+            # without this would be passable by a change that simply stopped
+            # preserving data.
+            for name, want in expected:
+                snap_file = paths["subvol"] / ".snap" / name / uuid / "f"
+                got = self._read(snap_file)
+                self.assertEqual(
+                    got, want,
+                    "%s should read %r but read %r - a subvolume snapshot lost "
+                    "data" % (snap_file, want, got))
+        finally:
+            self._cleanup_subvolume(group, subvol, snapnames)
+
+    def test_cow_still_happens_under_a_snapshotted_directory(self):
+        """
+        Guard against the fix being too aggressive.
+
+        /parent owns a snaprealm with one snapshot; /parent/child inherits it.
+        Modifying child after the snapshot must CoW, because the snapshot can
+        and will be read back.  If pre_cow_old_inode() skips this, snapshots
+        silently stop preserving data.
+        """
+        parent = "parent"
+        child = "parent/child"
+
+        self.mount_a.run_shell(["mkdir", "-p", child])
+        self.mount_a.write_n_mb(os.path.join(child, "f"), 1)
+        self.mount_a.run_shell(["mkdir", os.path.join(parent, ".snap", "s1")])
+
+        # dirty the child so that it is CoW'd against s1
+        self.mount_a.write_n_mb(os.path.join(child, "g"), 1)
+        self.mount_a.run_shell(["sync"])
+
+        got = self._old_inodes(child)
+        log.info("OLDINO child under a snapshotted parent: %s", got)
+        self.assertIsNotNone(got, "%s not in the MDS cache" % child)
+        self.assertGreaterEqual(
+            got, 1,
+            "%s was not CoW'd although its snaprealm holds s1; the CoW guard "
+            "in pre_cow_old_inode() is suppressing a version that a snapshot "
+            "references" % child)
+
+        self.mount_a.run_shell(["rmdir", os.path.join(parent, ".snap", "s1")])
+        self.mount_a.run_shell(["rm", "-rf", parent])
