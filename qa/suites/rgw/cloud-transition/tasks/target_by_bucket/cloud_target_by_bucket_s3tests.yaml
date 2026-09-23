@@ -2,6 +2,7 @@ tasks:
 - install:
 - ceph:
 - rgw:
+    compression type: zstd
     client.0:
       port: 8000
     client.1:
