@@ -688,6 +688,9 @@ int RGWLCStreamRead::init_rest_obj() {
    * XXX: verify if its right way to copy attrs into rest obj
    */
   init_headers(attrs, rest_obj.attrs);
+  if (attrs.count(RGW_ATTR_CRYPT_MODE)) {
+    rest_obj.attrs["x-amz-meta-rgwx-source-encrypted"] = "true";
+  }
 
   const auto aiter = attrs.find(RGW_ATTR_ACL);
   if (aiter != attrs.end()) {

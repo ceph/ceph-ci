@@ -404,6 +404,7 @@ on the destination objects, as shown below::
   x-amz-meta-rgwx-source: rgw
   x-amz-meta-rgwx-source-etag: ed076287532e86365e841e92bfc50d8c
   x-amz-meta-rgwx-source-key: lc.txt
+  x-amz-meta-rgwx-source-encrypted: true (encrypted objects only)
   x-amz-meta-rgwx-source-mtime: 1608546349.757100363
   x-amz-meta-rgwx-versioned-epoch: 0
 
@@ -430,6 +431,8 @@ to true. However a ``GET`` operation on such an object will still fail
 with an ``InvalidObjectState`` error. Any other operations against original
 source objects will be for its metadata entries only keeping transitioned
 objects intact.
+
+Encrypted objects are skipped when ``retain_head_object`` is false.
 
 For example:
 

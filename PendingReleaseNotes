@@ -1,5 +1,8 @@
 >=22.0.0
 
+* RGW: Encrypted objects are skipped during cloud-s3 lifecycle transitions
+  when ``retain_head_object`` is false, preserving their encryption keys.
+
 * RGW: Cloud transitions now preserve the original part lengths of
   encrypted objects created with S3 Multipart Upload. Earlier releases
   could discard those lengths during transition, causing decryption
