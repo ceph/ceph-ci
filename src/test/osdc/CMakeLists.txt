@@ -34,3 +34,16 @@ add_executable(unittest_split_ops_ut
   )
 add_ceph_unittest(unittest_split_ops_ut)
 target_link_libraries(unittest_split_ops_ut global ${BLKID_LIBRARIES})
+
+# unittest_splitop_validate
+add_executable(unittest_splitop_validate
+  test_splitop_validate.cc
+  $<TARGET_OBJECTS:unit-main>
+  )
+add_ceph_unittest(unittest_splitop_validate)
+target_link_libraries(unittest_splitop_validate
+  osdc
+  global
+  ${EXTRALIBS}
+  ${CMAKE_DL_LIBS}
+  )
