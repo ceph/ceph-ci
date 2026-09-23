@@ -10322,7 +10322,8 @@ def test_lifecycle_cloud_transition_sse_kms():
     keys = [('single', data, 'STANDARD'),
             ('multipart', multipart_data.encode(), 'STANDARD'),
             ('compressed-encrypted', data, sc1)]
-    client.put_object(Bucket=bucket, Key='plain', Body=data)
+    client.put_object(Bucket=bucket, Key='plain', Body=data,
+                      Metadata={'rgwx-source-encrypted': 'true'})
     rules = [{'ID': 'cloud', 'Prefix': '', 'Status': 'Enabled',
               'Transitions': [{'Days': 1, 'StorageClass': cloud_sc}]}]
     client.put_bucket_lifecycle_configuration(Bucket=bucket, LifecycleConfiguration={'Rules': rules})
@@ -10330,7 +10331,9 @@ def test_lifecycle_cloud_transition_sse_kms():
 
     cloud_client = get_cloud_client()
     target_path = get_cloud_target_path() or 'rgwx-default-' + cloud_sc.lower() + '-cloud-bucket'
-    assert cloud_client.get_object(Bucket=target_path, Key=bucket + '/plain')['Body'].read() == data
+    response = cloud_client.get_object(Bucket=target_path, Key=bucket + '/plain')
+    assert 'rgwx-source-encrypted' not in response['Metadata']
+    assert response['Body'].read() == data
     if get_cloud_retain_head_object() != 'true':
         classes = list_bucket_storage_class(client, bucket)
         for key, expected, storage_class in keys:
