@@ -47,7 +47,14 @@ public:
     return _profile;
   }
 
-  int create_rule(const std::string &name, CrushWrapper &crush, std::ostream *ss) const override {
+  int create_rule(const std::string &name,
+                  int num_zones,
+                  const std::string &root,
+                  const std::string &zone_failure_domain,
+                  const std::string &osd_failure_domain,
+                  const std::string &device_class,
+                  CrushWrapper &crush,
+                  std::ostream *ss) const override {
     return 0;
   }
 
