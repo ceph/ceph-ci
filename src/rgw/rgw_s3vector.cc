@@ -2353,15 +2353,18 @@ namespace rgw::s3vector {
   int list_vectors(const list_vectors_t& configuration, rgw::sal::Driver* driver, const bucket_namespace_t& ns, DoutPrefixProvider* dpp, optional_yield y, list_vectors_reply_t& reply) {
     log_configuration(dpp, "ListVectors", configuration);
     int open_result = 0;
-    LanceDBTable* table = open_table(dpp, driver, ns, configuration.vector_bucket_name, configuration.index_name, open_result);
-    if (!table) {
+    auto table_handle = open_table_with_session_handle(dpp, driver, ns, configuration.vector_bucket_name, configuration.index_name, open_result);
+    if (!table_handle) {
       return open_result;
     }
+    LanceDBTable* table = table_handle.table;
+    LanceDBConnection* conn = table_handle.conn_handle.conn;
 
     LanceDBQuery* query = lancedb_query_new(table);
     if (!query) {
       ldpp_dout(dpp, 1) << "ERROR: s3vector failed to create query for index: " << configuration.index_name << dendl;
       lancedb_table_free(table);
+      lancedb_connection_free(conn);
       return -EIO;
     }
 
@@ -2373,6 +2376,7 @@ namespace rgw::s3vector {
         lancedb_free_string(error_message);
         lancedb_query_free(query);
         lancedb_table_free(table);
+        lancedb_connection_free(conn);
         return lancedb_error_to_errno(result);
       }
     }
@@ -2382,6 +2386,7 @@ namespace rgw::s3vector {
       lancedb_free_string(error_message);
       lancedb_query_free(query);
       lancedb_table_free(table);
+      lancedb_connection_free(conn);
       return lancedb_error_to_errno(result);
     }
 
@@ -2391,6 +2396,7 @@ namespace rgw::s3vector {
         lancedb_free_string(error_message);
         lancedb_query_free(query);
         lancedb_table_free(table);
+        lancedb_connection_free(conn);
         return lancedb_error_to_errno(result);
       }
     }
@@ -2400,6 +2406,7 @@ namespace rgw::s3vector {
       ldpp_dout(dpp, 1) << "ERROR: s3vector failed to execute query on index: " << configuration.index_name << dendl;
       lancedb_query_free(query);
       lancedb_table_free(table);
+      lancedb_connection_free(conn);
       return -EIO;
     }
 
@@ -2412,6 +2419,7 @@ namespace rgw::s3vector {
       }
     }
     lancedb_table_free(table);
+    lancedb_connection_free(conn);
     return ret;
   }
 
