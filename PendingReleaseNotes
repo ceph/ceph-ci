@@ -5,6 +5,8 @@
   hold the lock, instead of an empty list. Callers should check the
   ``lockers`` field rather than the truth value of the returned object
   to determine whether any clients hold the lock.
+* RGW: The "Bytes Sent" field is always set to "-" when bucket-logging is enabled
+  in Standard mode.
 
 * Cephadm: ``ceph orch upgrade start`` and ``ceph orch upgrade check`` now
   verify that every host's CPU supports the x86-64 microarchitecture level
