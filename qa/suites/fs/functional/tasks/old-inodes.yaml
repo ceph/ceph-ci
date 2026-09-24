@@ -1,0 +1,15 @@
+overrides:
+  check-counter:
+    dry_run: true
+  ceph:
+    log-ignorelist:
+      - RECENT_CRASH
+
+tasks:
+- cephfs_test_runner:
+    fail_on_skip: false
+    # the arms of this suite are independent and more than one is expected to
+    # fail once a fix lands; stopping at the first would hide the rest
+    failfast: false
+    modules:
+      - tasks.cephfs.test_old_inodes
