@@ -4,3 +4,4 @@ tasks:
     conf:
       osd:
         debug monc: 20
+        debug osd: 20
