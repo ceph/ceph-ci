@@ -674,6 +674,19 @@ public:
     virtual int execute() = 0;
   };
 
+  /**
+   * Names the queue an op parked itself on before bailing out of
+   * execute_ctx() with -EAGAIN.  See release_object_locks().
+   */
+  struct snap_blocked_wait_t {
+    enum class queue_t {
+      degraded,    ///< waiting_for_degraded_object
+      unreadable,  ///< waiting_for_unreadable_object
+    };
+    hobject_t soid;  ///< key into that queue
+    queue_t queue;
+  };
+
   /*
    * Capture all object state associated with an in-progress read or write.
    */
@@ -788,6 +801,14 @@ public:
 
     RWState::State lock_type;
     ObcLockManager lock_manager;
+
+    /**
+     * Set when we are about to bail out with -EAGAIN after parking ourselves
+     * on a degraded or unreadable snap.  Ops queued behind us on lock_manager
+     * must then be handed over to that same queue instead of being requeued,
+     * or they can overtake us.  See release_object_locks().
+     */
+    std::optional<snap_blocked_wait_t> blocked_on_snap;
 
     std::map<int, std::unique_ptr<OpFinisher>> op_finishers;
 
@@ -964,10 +985,15 @@ protected:
    * Releases locks
    *
    * @param manager [in] manager with locks to release
+   * @param blocked_on_snap [in] if set, the releasing op has parked itself on
+   *   waiting_for_{degraded,unreadable}_object[soid]; ops released here are
+   *   appended to that same queue rather than requeued
    *
    * (moved to .cc due to scrubber access)
    */
-  void release_object_locks(ObcLockManager &lock_manager);
+  void release_object_locks(
+    ObcLockManager &lock_manager,
+    const std::optional<snap_blocked_wait_t> &blocked_on_snap = std::nullopt);
 
   // replica ops
   // [primary|tail]
@@ -1946,8 +1972,8 @@ public:
     const hobject_t& oid, OpRequestRef op);
   void block_write_on_snap_rollback(
     const hobject_t& oid, ObjectContextRef obc, OpRequestRef op);
-  void block_write_on_degraded_snap(const hobject_t& oid, OpRequestRef op);
-  void block_write_on_unreadable_snap(const hobject_t& snap, OpRequestRef op);
+  void block_write_on_degraded_snap(const hobject_t& oid, OpContext *ctx);
+  void block_write_on_unreadable_snap(const hobject_t& snap, OpContext *ctx);
 
   bool maybe_await_blocked_head(const hobject_t &soid, OpRequestRef op);
   void wait_for_blocked_object(const hobject_t& soid, OpRequestRef op);

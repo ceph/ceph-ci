@@ -757,18 +757,22 @@ void PrimaryLogPG::block_write_on_snap_rollback(
 }
 
 void PrimaryLogPG::block_write_on_degraded_snap(
-  const hobject_t& snap, OpRequestRef op)
+  const hobject_t& snap, OpContext *ctx)
 {
   dout(20) << __func__ << ": blocking object " << snap.get_head()
 	   << " on degraded snap " << snap << dendl;
   // otherwise, we'd have blocked in do_op
   ceph_assert(objects_blocked_on_degraded_snap.count(snap.get_head()) == 0);
   objects_blocked_on_degraded_snap[snap.get_head()] = snap.snap;
-  wait_for_degraded_object(snap, op);
+  wait_for_degraded_object(snap, ctx->op);
+  // whatever is queued behind us on our object locks must follow us onto this
+  // same queue when those locks are dropped
+  ctx->blocked_on_snap =
+    snap_blocked_wait_t{snap, snap_blocked_wait_t::queue_t::degraded};
 }
 
 void PrimaryLogPG::block_write_on_unreadable_snap(
-  const hobject_t& snap, OpRequestRef op)
+  const hobject_t& snap, OpContext *ctx)
 {
   dout(20) << __func__ << ": blocking object " << snap.get_head()
 	   << " on unreadable snap " << snap << dendl;
@@ -777,6 +781,10 @@ void PrimaryLogPG::block_write_on_unreadable_snap(
   objects_blocked_on_unreadable_snap[snap.get_head()] = snap.snap;
   // the op must be queued before calling block_write_on_unreadable_snap
   ceph_assert(waiting_for_unreadable_object.count(snap) == 1);
+  // whatever is queued behind us on our object locks must follow us onto this
+  // same queue when those locks are dropped
+  ctx->blocked_on_snap =
+    snap_blocked_wait_t{snap, snap_blocked_wait_t::queue_t::unreadable};
 }
 
 bool PrimaryLogPG::maybe_await_blocked_head(
@@ -1746,7 +1754,8 @@ bool PrimaryLogPG::get_rw_locks(bool write_ordered, OpContext *ctx)
  * @param manager [in] manager with locks to release
  */
 void PrimaryLogPG::release_object_locks(
-  ObcLockManager &lock_manager) {
+  ObcLockManager &lock_manager,
+  const std::optional<snap_blocked_wait_t> &blocked_on_snap) {
   std::list<std::pair<ObjectContextRef, std::list<OpRequestRef> > > to_req;
   bool requeue_recovery = false;
   bool requeue_snaptrim = false;
@@ -1762,7 +1771,33 @@ void PrimaryLogPG::release_object_locks(
   if (!to_req.empty()) {
     // requeue at front of scrub blocking queue if we are blocked by scrub
     for (auto&& p : to_req) {
-      if (m_scrubber->write_blocked_by_scrub(p.first->obs.oi.soid.get_head())) {
+      if (blocked_on_snap &&
+	  p.first->obs.oi.soid.get_head() == blocked_on_snap->soid.get_head()) {
+	/* We have parked ourselves on waiting_for_{degraded,unreadable}_object
+	 * and are about to drop this object's locks.  These ops were ordered
+	 * behind us by those locks, and must stay behind us.
+	 *
+	 * Requeueing them would not be enough: objects_blocked_on_*_snap[],
+	 * the gate do_op() would re-check them against, is erased by
+	 * finish_*_object() as soon as our snap is recovered.  An op that has
+	 * been requeued but has not yet re-entered do_op() by then would find
+	 * the gate gone and overtake us.  Hand them straight over to the queue
+	 * we are on instead, so that they are never out of an ordered queue.
+	 */
+	using queue_t = snap_blocked_wait_t::queue_t;
+	const bool unreadable = blocked_on_snap->queue == queue_t::unreadable;
+	auto &q = unreadable ?
+	  waiting_for_unreadable_object[blocked_on_snap->soid] :
+	  waiting_for_degraded_object[blocked_on_snap->soid];
+	dout(20) << __func__ << " deferring " << p.second.size() << " op(s) on "
+		 << p.first->obs.oi.soid << " behind " << blocked_on_snap->soid
+		 << dendl;
+	for (auto& op : p.second) {
+	  op->mark_delayed(unreadable ? "waiting for missing object" :
+					"waiting for degraded object");
+	}
+	q.splice(q.end(), p.second);
+      } else if (m_scrubber->write_blocked_by_scrub(p.first->obs.oi.soid.get_head())) {
         for (auto& op : p.second) {
           op->mark_delayed("waiting for scrub");
         }
@@ -4522,7 +4557,7 @@ void PrimaryLogPG::execute_ctx(OpContext *ctx)
 }
 
 void PrimaryLogPG::close_op_ctx(OpContext *ctx) {
-  release_object_locks(ctx->lock_manager);
+  release_object_locks(ctx->lock_manager, ctx->blocked_on_snap);
 
   ctx->op_t.reset();
 
@@ -8563,11 +8598,11 @@ int PrimaryLogPG::_rollback_to(OpContext *ctx, OSDOp& op)
     ceph_assert(is_degraded_or_backfilling_object(missing_oid) || is_degraded_on_async_recovery_target(missing_oid));
     dout(20) << "_rollback_to attempted to roll back to a missing or backfilling clone "
 	     << missing_oid << " (requested snapid: ) " << snapid << dendl;
-    block_write_on_degraded_snap(missing_oid, ctx->op);
+    block_write_on_degraded_snap(missing_oid, ctx);
     return ret;
   }
   /*
-   * In rollback, if the head object is not manfest and the rollback_to is manifest,
+   * In rollback, if the head object is not manifest and the rollback_to is manifest,
    * the head object will become the manifest object. At this point,
    * we need to check adjacent clones beside the head object to calculate 
    * correct reference count for deduped chunks because the head object is now 
@@ -8577,25 +8612,25 @@ int PrimaryLogPG::_rollback_to(OpContext *ctx, OSDOp& op)
    * unreadable object is recovered if either adjacent clones is 
    * unreadable to calculate chunk references.
    */
-  auto block_write_if_unreadable = [this](ObjectContextRef obc, OpRequestRef op) {
-    snapid_t sid = do_recover_adjacent_clones(obc, op);
+  auto block_write_if_unreadable = [this, ctx](ObjectContextRef obc) {
+    snapid_t sid = do_recover_adjacent_clones(obc, ctx->op);
     if (sid != snapid_t()) {
-      hobject_t oid = obc->obs.oi.soid; 
+      hobject_t oid = obc->obs.oi.soid;
       oid.snap = sid;
-      block_write_on_unreadable_snap(oid, op);
+      block_write_on_unreadable_snap(oid, ctx);
       return -EAGAIN;
-    } 
+    }
     return 0;
   };
   if (oi.has_manifest() && oi.manifest.is_chunked()) {
-    int r = block_write_if_unreadable(ctx->obc, ctx->op);
+    int r = block_write_if_unreadable(ctx->obc);
     if (r < 0) {
       return r;
     }
   }
   if (rollback_to && rollback_to->obs.oi.has_manifest() &&
       rollback_to->obs.oi.manifest.is_chunked()) {
-    int r = block_write_if_unreadable(rollback_to, ctx->op);
+    int r = block_write_if_unreadable(rollback_to);
     if (r < 0) {
       return r;
     }
@@ -8665,7 +8700,7 @@ int PrimaryLogPG::_rollback_to(OpContext *ctx, OSDOp& op)
 	is_degraded_on_async_recovery_target(rollback_to_sobject)) {
       dout(20) << "_rollback_to attempted to roll back to a degraded object "
 	       << rollback_to_sobject << " (requested snapid: ) " << snapid << dendl;
-      block_write_on_degraded_snap(rollback_to_sobject, ctx->op);
+      block_write_on_degraded_snap(rollback_to_sobject, ctx);
       ret = -EAGAIN;
     } else if (rollback_to->obs.oi.soid.snap == CEPH_NOSNAP) {
       // rolling back to the head; we just need to clone it.
