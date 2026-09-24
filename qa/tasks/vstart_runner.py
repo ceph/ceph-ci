@@ -1204,9 +1204,9 @@ class LogStream(object):
         self.buffer = ''
 
     def flush(self):
-        pass
+        self._write()
 
-    def __del__(self):
+    def __exit__(self):
         self._write()
 
 
