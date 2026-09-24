@@ -211,7 +211,7 @@ void ECSplitOp::init_read(OSDOp &op, bool sparse, int ops_index) {
       break;
     }
   }
-  bool primary_required = count > 1 || orig_op->objver || has_non_read_ops;
+  bool primary_required = !single_op || orig_op->objver || has_non_read_ops;
 
   int first_shard = start_chunk % data_chunk_count;
   // Check all shards are online.
@@ -1131,6 +1131,7 @@ bool SplitOp::create(Objecter::Op *op, Objecter &objecter,
   }
 
   // STAGE 4: Initialize sub-operations (may set abort if problems detected)
+  split_read->single_op = single_op;
   for (unsigned i = 0; i < op->ops.size(); ++i) {
     split_read->init( op->ops[i], i);
     if (split_read->abort) {

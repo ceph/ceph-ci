@@ -341,6 +341,7 @@ class SplitOp {
    * the creation process itself.
    */
   bool abort = false;
+  bool single_op = false; ///< whole op is sent as a single op (from validate())
   int flags = 0;
   pg_shard_t reference_sub_read;
   int reference_sub_read_key = -1; ///< acting index of the reference entry; sub_reads is keyed by acting index
