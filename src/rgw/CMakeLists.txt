@@ -425,10 +425,6 @@ if(WITH_OPENLDAP)
     PRIVATE
       OpenLDAP::OpenLDAP)
 endif()
-if(WITH_RADOSGW_LUA_PACKAGES)
-  target_link_libraries(rgw_common
-    PRIVATE Boost::filesystem StdFilesystem::filesystem)
-endif()
 
 if(WITH_LTTNG)
   # rgw/rgw_op.cc includes "tracing/rgw_op.h"
@@ -531,10 +527,6 @@ if(WITH_RADOSGW_STANDALONE)
     target_link_libraries(rgw_common_standalone
       PRIVATE
       OpenLDAP::OpenLDAP)
-  endif()
-  if(WITH_RADOSGW_LUA_PACKAGES)
-    target_link_libraries(rgw_common_standalone
-      PRIVATE Boost::filesystem StdFilesystem::filesystem)
   endif()
 
   if(WITH_JAEGER)
