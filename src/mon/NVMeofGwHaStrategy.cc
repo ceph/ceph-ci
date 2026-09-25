@@ -94,6 +94,7 @@ int ActiveActiveHaStrategy::on_disaster_clear(NVMeofGwMap& map, const NvmeGroupK
 
 void ActiveActiveHaStrategy::gw_down(NVMeofGwMap& map, const NvmeGwId& gw_id,
                  const NvmeGroupKey& group_key, bool &propose_pending) {
+  map.process_gw_map_gw_down_active_active(gw_id, group_key, propose_pending);
     // 1. Transient hold active during blocklisting
     //map.set_transient_hold(true);
 

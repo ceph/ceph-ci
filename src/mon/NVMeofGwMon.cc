@@ -513,6 +513,9 @@ bool NVMeofGwMon::nvme_gw_show_command(ceph::Formatter* f, bufferlist &rdata, co
       f->open_object_section("stat");
       f->dump_string("gw-id", gw_id);
       f->dump_unsigned("anagrp-id",state.ana_grp_id+1);
+      if (/*active-active &&*/ map.is_timer_started(gw_id, group_key, 0)) {
+         f->dump_bool("in-Failover", true);
+      }
       f->dump_string("location", state.location);
       bool cleanup_in_process;
       bool is_disaster = map.is_location_in_disaster

@@ -150,9 +150,17 @@ public:
   void process_gw_map_ka_active_active(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
     epoch_t& last_osd_epoch, bool &propose_pending);
+  bool check_gw_failover_completed_active_active(const NvmeGwId &gw_id,
+      const NvmeGroupKey& group_key, epoch_t& last_osd_epoch);
   int process_gw_map_gw_down(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
     bool &propose_pending);
+  int process_gw_map_gw_down_active_active(
+    const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
+    bool &propose_pending);
+  void handle_failover_to_expired_active_active(
+    const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
+    bool &map_modified);
   int process_gw_map_gw_pass_to_created(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
     bool &propose_pending);
@@ -252,6 +260,9 @@ private:
   void update_ana_states_location_modified(const NvmeGroupKey& group_key);
   void update_gw_ana_states(const NvmeGwId &gw_id, const NvmeGroupKey& group_key);
 public:
+  bool is_timer_started(
+    const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
+    NvmeAnaGrpId anagrpid);
   void process_failover_list(bool &propose);
   int blocklist_gw(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
