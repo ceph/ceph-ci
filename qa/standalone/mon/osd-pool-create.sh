@@ -152,6 +152,22 @@ function TEST_erasure_code_pool_km_crush_params() {
         --zone_failure_domain rack --osd_failure_domain osd || return 1
 }
 
+function TEST_erasure_code_pool_crush_params_need_km() {
+    local dir=$1
+    run_mon $dir a || return 1
+    # without k/m or a profile the pool shares the default profile and the
+    # "erasure-code" rule, so crush parameters cannot be honoured; they
+    # must be rejected even when they equal the default profile's values
+    for fd in osd host ; do
+        ! ceph osd pool create crush_no_km --pool_type erasure \
+            --pg_num 8 --pgp_num 8 --osd_failure_domain $fd \
+            2> $dir/err.txt || return 1
+        cat $dir/err.txt
+        grep 'crush parameters .* require k and m' $dir/err.txt || return 1
+    done
+    ! ceph osd pool ls | grep crush_no_km || return 1
+}
+
 function TEST_replicated_pool_with_rule() {
     local dir=$1
     run_mon $dir a
