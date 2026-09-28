@@ -849,6 +849,11 @@ The maximum number of vectors in a request is set by:
 
 An empty response body is returned on success.
 
+The number of vectors that fit into a single request depends on their dimension
+and metadata. The size of the payload of any S3 Vectors request is limited by:
+
+.. confval:: rgw_s3vector_max_request_size
+
 Get Vectors
 ```````````
 
