@@ -1487,16 +1487,19 @@ public:
 
   bool should_block_io_on_clean() const final {
     assert(background_callback->is_ready());
+    if (get_segments_reclaimable() == 0) {
+      // No CLOSED segments to reclaim; the cleaner cannot free space, so
+      // blocking IO here would deadlock: in-flight writers hold all open
+      // segments, blocking new admission stalls every future writer too,
+      // and no segment can ever become reclaimable.  Let IO proceed so
+      // the current writers can finish and close their segments.
+      return false;
+    }
     // Hard floor: once spare empty segments drop to the reserved minimum,
-    // block unconditionally. This must be checked before the reclaimable
-    // shortcut below, otherwise admission keeps being granted right up to
-    // the point allocate_segment() finds no empty segment left and aborts.
+    // block new admission.  There are reclaimable segments at this point
+    // (checked above), so the cleaner can make progress and unblock IO.
     if (segments.get_num_empty() <= min_reserved_empty_segments) {
       return true;
-    }
-    if (get_segments_reclaimable() == 0) {
-      // No CLOSED segments to reclaim
-      return false;
     }
     auto aratio = get_projected_available_ratio();
     return aratio < config.available_ratio_hard_limit;
@@ -1512,11 +1515,14 @@ public:
     if (get_segments_reclaimable() == 0) {
       return false;
     }
+    if (segments.get_num_empty() <= min_reserved_empty_segments) {
+      return true;
+    }
     auto aratio = segments.get_available_ratio();
     auto projected_aratio = get_projected_available_ratio();
     auto rratio = get_reclaim_ratio();
-    // should_block_io_on_clean() uses projected ratio; mirror that here so the
-    // cleaner wakes whenever IO would block, not only when actual space is low.
+    // Mirror the IO-blocking conditions so the cleaner wakes whenever IO would
+    // block, including when the empty-segment floor is reached.
     return (
       (projected_aratio < config.available_ratio_hard_limit) ||
       ((aratio < config.available_ratio_gc_max) &&
@@ -1773,9 +1779,11 @@ private:
   static constexpr std::size_t backlog_headroom_segments = 8;
 
   // Minimum number of empty segments that must remain available before
-  // admission is blocked outright, regardless of ratio/reclaimability state.
+  // admission is blocked (when there are reclaimable segments to clean).
   // Guarantees allocate_segment() always has room for in-flight named
   // writers plus headroom for the already-admitted backlog.
+  // Note: the block only fires when reclaimable > 0; if no segments are
+  // reclaimable the cleaner cannot help and blocking would deadlock.
   std::size_t min_reserved_empty_segments = 1;
 
   // Peak projected_used with slow exponential decay per adjust cycle. Decay
