@@ -639,11 +639,14 @@ void ExtentCommitter::commit_shadow_demote(Transaction &t) {
       continue;
     }
     TRACET("removing shadow {} from retired_set of t.{}", t, *shadow, view_tid);
-    [[maybe_unused]] bool removed =
-      trans_view.t->remove_from_retired_set(*shadow);
-    assert(removed);
-    trans_view.t->remove_shadow_from_write_set(
-      shadow->get_paddr(), shadow->get_length());
+    // trans_view's transaction may have retired "prior" after
+    // commit_shadow_promote() already ran, in which case shadow was never
+    // added to its retired/write sets -- nothing to clean up then.
+    bool removed = trans_view.t->remove_from_retired_set(*shadow);
+    if (removed) {
+      trans_view.t->remove_shadow_from_write_set(
+        shadow->get_paddr(), shadow->get_length());
+    }
   }
 }
 
