@@ -177,6 +177,8 @@ def test_small_object(r, client, s3):
     datacache_path = '/tmp/rgw_d4n_datacache/' + bucketID + '/test.txt/'
     datacache = subprocess.check_output(['ls', '-a', datacache_path])
     datacache = datacache.decode('latin-1').strip().splitlines()
+    print("Datacache value:")
+    print(datacache)
     if '#' in datacache[3]: # datablock key
       datacache = datacache[3]
     else:
