@@ -3981,6 +3981,49 @@ TEST_F(PGLogTest, merge_log_epoch_change_basic) {
   ASSERT_EQ(2, missing.get_rmissing().size());
 }
 
+// merge_log extending the head: a divergent partial write that the local
+// shard took part in must be undone for a zone-1 shard as for its zone-0 twin.
+TEST_F(PGLogTest, merge_log_divergent_partial_write_zone1_shard) {
+  const pg_pool_t pool = mk_stretch_pool(3, 2);
+  for (shard_id_t shard : {shard_id_t(1), shard_id_t(4)}) {
+    clear();
+    hobject_t a = mk_obj(1);
+    hobject_t b = mk_obj(2);
+    pg_info_t info;
+    info.last_backfill = hobject_t::get_max();
+    log.tail = eversion_t(1, 0);
+    log.add(mk_ple_mod(a, eversion_t(1, 1), eversion_t(1, 0)));
+    pg_log_entry_t partial = mk_ple_mod(a, eversion_t(1, 2), eversion_t(1, 1));
+    partial.written_shards.insert(shard_id_t(0));
+    partial.written_shards.insert(shard_id_t(1));
+    log.add(partial);
+    info.last_update = info.last_complete = log.head;
+
+    pg_log_t olog;
+    olog.tail = eversion_t(1, 0);
+    olog.log.push_back(mk_ple_mod(a, eversion_t(1, 1), eversion_t(1, 0)));
+    olog.log.push_back(mk_ple_mod(b, eversion_t(2, 3), eversion_t(1, 0)));
+    olog.head = eversion_t(2, 3);
+    pg_info_t oinfo;
+    oinfo.last_update = olog.head;
+    oinfo.last_backfill = hobject_t::get_max();
+
+    LogHandler h;
+    bool dirty_info = false;
+    bool dirty_big_info = false;
+    merge_log(oinfo, std::move(olog), pg_shard_t(1, shard_id_t(0)), info,
+              pool, pg_shard_t(0, shard), &h, dirty_info, dirty_big_info,
+              true);
+
+    EXPECT_EQ(eversion_t(2, 3), info.last_update) << "shard " << shard;
+    EXPECT_TRUE(h.removed.contains(a)) << "shard " << shard;
+    ASSERT_TRUE(missing.is_missing(a)) << "shard " << shard;
+    EXPECT_EQ(eversion_t(1, 1), missing.get_items().at(a).need)
+      << "shard " << shard;
+    EXPECT_TRUE(missing.is_missing(b)) << "shard " << shard;
+  }
+}
+
 // rewind_divergent_log on a zone-1 shard matches written_shards by relative id.
 TEST_F(PGLogTest, rewind_divergent_log_partial_write_zone1_shard) {
   const pg_pool_t pool = mk_stretch_pool(3, 2);
