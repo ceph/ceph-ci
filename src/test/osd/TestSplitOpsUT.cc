@@ -991,3 +991,40 @@ TEST_F(TestSplitOpInit, ECSingleChunkBalanceReadsSkipZoneMissingShard)
     op->put();
   }
 }
+
+// BALANCE_READS picks the zone of each data shard independently.
+TEST_F(TestSplitOpInit, ECBalanceReadsChooseZonePerShard)
+{
+  std::vector<int> acting = {0, 1, 2, 4, 5, 6};
+  pg_pool_t pool = objecter->with_osdmap([](const OSDMap& o) {
+    return *o.get_pg_pool(ec_pool_id);
+  });
+  bool mixed = false;
+  for (unsigned seed = 0; seed < 16; seed++) {
+    srand(seed);
+    auto op = make_read_op(ec_pool_id, acting, 0, 8192, CEPH_OSD_FLAG_BALANCE_READS);
+    {
+      ECSplitOpProbe split(op, *objecter, g_ceph_context, 6, false);
+      split.init_reference_sub_read();
+      ASSERT_FALSE(split.abort);
+      split.init_read(op->ops[0], false, 0);
+      ASSERT_FALSE(split.abort);
+      std::set<int> zones;
+      for (auto& [key, sr] : split.sub_reads) {
+        if (sr.details.contains(0)) {
+          int rel_shard = (int)pool.get_relative_shard(sr.abs_shard);
+          zones.insert(zone_of(acting[(int)sr.abs_shard]));
+          sr.details[0].bl.append(std::string(4096, 'a' + rel_shard));
+        }
+      }
+      mixed = mixed || zones.size() > 1;
+      bufferlist out;
+      split.assemble_buffer_read(out, 0);
+      std::string expected = std::string(4096, 'a') + std::string(4096, 'b');
+      EXPECT_TRUE(out.contents_equal(expected.data(), expected.size()))
+        << "seed " << seed;
+    }
+    op->put();
+  }
+  EXPECT_TRUE(mixed);
+}
