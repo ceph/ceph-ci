@@ -45,6 +45,22 @@ public:
     ECPeeringTestFixture::SetUp();
   }
 
+  std::vector<int> zone_osds(int zone) const {
+    std::vector<int> osds;
+    for (int i = 0; i < k + m; i++) {
+      osds.push_back(zone * (k + m) + i);
+    }
+    return osds;
+  }
+
+  bool shard_has_object(const std::string& obj_name, version_t gen, int shard) {
+    TestPG* test_pg = get_test_pg(shard, shard);
+    ceph_assert(test_pg != nullptr);
+    ghobject_t ghoid(make_test_object(obj_name), gen, shard_id_t(shard));
+    struct stat st;
+    return get_osd_fixture(shard)->store->stat(test_pg->ch, ghoid, &st) == 0;
+  }
+
   /**
    * Helper method to run zone recovery test with specified zone failure order.
    *
@@ -2348,6 +2364,434 @@ TEST_P(TestECFailoverWithPeering, AddNewZoneWhileSingleZone) {
   verify_object(obj_name);
 
   std::cout << "=== AddNewZoneWhileSingleZone test completed successfully ===" << std::endl;
+}
+
+// Primary stays in zone 0 while zone 0 holds only k-1 shards: reads, writes
+// and recovery must source the missing relative shards from zone 1.
+TEST_P(TestECFailoverWithPeering, LocalZoneBelowKUsesRemoteZone) {
+  if (num_zones < 2) {
+    GTEST_SKIP() << "requires num_zones > 1";
+  }
+
+  const size_t object_size = stripe_unit * k;
+  const std::string full_obj = "test_remote_full";
+  const std::string partial_obj = "test_remote_partial";
+  const std::string pattern_a(object_size, 'A');
+
+  create_and_write_verify(full_obj, pattern_a);
+  create_and_write_verify(partial_obj, pattern_a);
+
+  set_pool_min_size(num_zones * (k + m) - (m + 1));
+  std::vector<int> failed;
+  for (int i = 1; i <= m + 1; i++) {
+    failed.push_back(i);
+  }
+  mark_osds_down(failed);
+  ASSERT_EQ(0, get_primary_shard_from_osdmap());
+  ASSERT_TRUE(all_shards_active());
+
+  verify_object(full_obj);
+  verify_object(partial_obj);
+
+  write_verify(full_obj, 0, std::string(object_size, 'B'), object_size);
+  write_verify(partial_obj, stripe_unit, std::string(stripe_unit, 'C'), object_size);
+  std::string partial_expected = pattern_a;
+  partial_expected.replace(stripe_unit, stripe_unit, std::string(stripe_unit, 'C'));
+
+  for (int osd : failed) {
+    mark_osd_up(osd);
+  }
+  ASSERT_EQ(0, get_primary_shard_from_osdmap());
+  auto* primary_ps = get_primary_test_pg()->get_peering_state();
+  ASSERT_TRUE(primary_ps->is_active());
+  hobject_t full_hoid = make_test_object(full_obj);
+  for (int osd : failed) {
+    const auto& pm = primary_ps->get_peer_missing().at(pg_shard_t(osd, shard_id_t(osd)));
+    EXPECT_TRUE(pm.is_missing(full_hoid)) << "shard " << osd;
+  }
+
+  run_parallel_recovery({full_obj, partial_obj}, false,
+                        {std::string(object_size, 'B'), partial_expected});
+  for (int osd : failed) {
+    const auto& pm = primary_ps->get_peer_missing().at(pg_shard_t(osd, shard_id_t(osd)));
+    EXPECT_FALSE(pm.is_missing(full_hoid)) << "shard " << osd;
+  }
+  EXPECT_FALSE(scrub_object(full_obj));
+  EXPECT_FALSE(scrub_object(partial_obj));
+
+  mark_osds_down(zone_osds(1));
+  set_pool_min_size(k);
+  ASSERT_LT(get_primary_shard_from_osdmap(), k + m);
+  verify_object(full_obj);
+  verify_object(partial_obj);
+}
+
+// Both copies of the same relative shard miss different writes and are
+// recovered together in one recovery op.
+TEST_P(TestECFailoverWithPeering, SameRelativeShardMissingInBothZones) {
+  if (num_zones < 2) {
+    GTEST_SKIP() << "requires num_zones > 1";
+  }
+
+  const size_t object_size = stripe_unit * k;
+  const int zone0_shard = 1;
+  const int zone1_shard = k + m + 1;
+  const std::string obj1 = "test_same_rel_obj1";
+  const std::string obj2 = "test_same_rel_obj2";
+
+  create_and_write_verify(obj1, std::string(object_size, 'A'));
+  mark_osd_down(zone0_shard);
+  write_verify(obj1, 0, std::string(object_size, 'B'), object_size);
+  mark_osd_down(zone1_shard);
+  write_verify(obj1, 0, std::string(object_size, 'C'), object_size);
+  create_and_write_verify(obj2, std::string(object_size, 'D'));
+  mark_osd_up(zone0_shard);
+  mark_osd_up(zone1_shard);
+
+  auto* primary_ps = get_primary_test_pg()->get_peering_state();
+  ASSERT_TRUE(primary_ps->is_active());
+  for (int shard : {zone0_shard, zone1_shard}) {
+    const auto& pm = primary_ps->get_peer_missing().at(pg_shard_t(shard, shard_id_t(shard)));
+    EXPECT_TRUE(pm.is_missing(make_test_object(obj1))) << "shard " << shard;
+    EXPECT_TRUE(pm.is_missing(make_test_object(obj2))) << "shard " << shard;
+  }
+
+  run_parallel_recovery({obj1, obj2}, false,
+                        {std::string(object_size, 'C'), std::string(object_size, 'D')});
+  for (const std::string& obj : {obj1, obj2}) {
+    EXPECT_EQ(read_shard_object_info(obj, 0).version,
+              read_shard_object_info(obj, zone0_shard).version);
+    EXPECT_EQ(read_shard_object_info(obj, 0).version,
+              read_shard_object_info(obj, zone1_shard).version);
+    EXPECT_FALSE(scrub_object(obj));
+  }
+
+  mark_osds_down(zone_osds(0));
+  set_pool_min_size(k);
+  verify_object(obj1);
+  verify_object(obj2);
+}
+
+// A zone-1 nonprimary shard that misses a mix of sub-stripe writes is
+// recovered to the per-shard version of the last write to its relative shard.
+TEST_P(TestECFailoverWithPeering, Zone1NonPrimaryPartialWriteMissingNeed) {
+  if (num_zones < 2 || k < 3) {
+    GTEST_SKIP() << "requires num_zones > 1 and k >= 3";
+  }
+
+  const size_t object_size = stripe_unit * k;
+  const int rel = 2;
+  const int target = k + m + rel;
+  const pg_shard_t target_shard(target, shard_id_t(target));
+  const std::string obj = "test_zone1_partial";
+  const std::string untouched_obj = "test_zone1_untouched";
+  std::string expected(object_size, 'A');
+
+  create_and_write_verify(obj, expected);
+  create_and_write_verify(untouched_obj, expected);
+
+  mark_osd_down(target);
+  write_verify(obj, 0, std::string(stripe_unit, 'B'), object_size);
+  write_verify(obj, rel * stripe_unit, std::string(stripe_unit, 'C'), object_size);
+  const eversion_t rel_write = read_shard_object_info(obj, 0).version;
+  write_verify(obj, 0, std::string(stripe_unit, 'D'), object_size);
+  const eversion_t last_write = read_shard_object_info(obj, 0).version;
+  write_verify(untouched_obj, 0, std::string(stripe_unit, 'E'), object_size);
+  mark_osd_up(target);
+  expected.replace(0, stripe_unit, std::string(stripe_unit, 'D'));
+  expected.replace(rel * stripe_unit, stripe_unit, std::string(stripe_unit, 'C'));
+
+  auto* primary_ps = get_primary_test_pg()->get_peering_state();
+  ASSERT_TRUE(primary_ps->is_active());
+  const pg_missing_t& pm = primary_ps->get_peer_missing().at(target_shard);
+  pg_missing_item item;
+  ASSERT_TRUE(pm.is_missing(make_test_object(obj), &item));
+  EXPECT_EQ(last_write, item.need);
+  EXPECT_FALSE(pm.is_missing(make_test_object(untouched_obj)));
+
+  run_recovery(obj, false, expected);
+  object_info_t primary_oi = read_shard_object_info(obj, 0);
+  EXPECT_EQ(rel_write, primary_oi.get_version_for_shard(shard_id_t(rel)));
+  EXPECT_EQ(rel_write, read_shard_object_info(obj, target).version);
+  EXPECT_EQ(read_shard_object_info(obj, rel).version,
+            read_shard_object_info(obj, target).version);
+  EXPECT_FALSE(scrub_object(obj));
+  EXPECT_FALSE(scrub_object(untouched_obj));
+
+  mark_osds_down(zone_osds(0));
+  set_pool_min_size(k);
+  verify_object(obj);
+  verify_object(untouched_obj);
+}
+
+// A zone-1 primary issues sub-stripe writes to live zone-0 nonprimary shards,
+// then zone 0 takes the primary back and recovers from both zones.
+TEST_P(TestECFailoverWithPeering, Zone1PrimaryPartialWritesThenZone0Recovers) {
+  if (num_zones < 2 || k < 3) {
+    GTEST_SKIP() << "requires num_zones > 1 and k >= 3";
+  }
+
+  const size_t object_size = stripe_unit * k;
+  const std::string obj = "test_zone1_primary_partial";
+  std::string expected(object_size, 'A');
+
+  create_and_write_verify(obj, expected);
+  const eversion_t v_create = read_shard_object_info(obj, 0).version;
+
+  std::vector<int> zone0_primaries = {0};
+  for (int i = k; i < k + m; i++) {
+    zone0_primaries.push_back(i);
+  }
+  set_pool_min_size(num_zones * (k + m) - (m + 1));
+  mark_osds_down(zone0_primaries);
+  ASSERT_EQ(k + m, get_primary_shard_from_osdmap());
+  ASSERT_TRUE(all_shards_active());
+  create_and_write_verify("dummy", std::string(object_size, 'Z'));
+
+  write_verify(obj, 0, std::string(stripe_unit / 2, 'B'), object_size);
+  write_verify(obj, 2 * stripe_unit, std::string(stripe_unit, 'C'), object_size);
+  const eversion_t v_rel2 = read_shard_object_info(obj, k + m).version;
+  ASSERT_EQ(0, write_attribute(obj, "key", "v1", false));
+  expected.replace(0, stripe_unit / 2, std::string(stripe_unit / 2, 'B'));
+  expected.replace(2 * stripe_unit, stripe_unit, std::string(stripe_unit, 'C'));
+
+  EXPECT_EQ(v_create, read_shard_object_info(obj, 1).version);
+  EXPECT_EQ(v_rel2, read_shard_object_info(obj, 2).version);
+  object_info_t primary_oi = read_shard_object_info(obj, k + m);
+  for (int rel = 1; rel < k; rel++) {
+    EXPECT_EQ(primary_oi.get_version_for_shard(shard_id_t(rel)),
+              read_shard_object_info(obj, rel).version) << "shard " << rel;
+    EXPECT_EQ(primary_oi.get_version_for_shard(shard_id_t(rel)),
+              read_shard_object_info(obj, k + m + rel).version) << "shard " << k + m + rel;
+  }
+
+  for (int osd : zone0_primaries) {
+    mark_osd_up(osd);
+  }
+  ASSERT_EQ(0, get_primary_shard_from_osdmap());
+  run_recovery(obj, true, expected);
+  verify_object(obj);
+  primary_oi = read_shard_object_info(obj, 0);
+  for (int rel = 1; rel < k; rel++) {
+    EXPECT_EQ(primary_oi.get_version_for_shard(shard_id_t(rel)),
+              read_shard_object_info(obj, rel).version) << "shard " << rel;
+  }
+  EXPECT_FALSE(scrub_object(obj));
+
+  mark_osds_down(zone_osds(1));
+  set_pool_min_size(k);
+  verify_object(obj);
+}
+
+// Zero-size object attrs written by a zone-1 primary must be recovered to
+// every primary-capable shard once zone 0 returns.
+TEST_P(TestECFailoverWithPeering, ZeroSizeAttrsAcrossZoneFailover) {
+  if (num_zones < 2) {
+    GTEST_SKIP() << "requires num_zones > 1";
+  }
+
+  const std::string obj = "test_zero_size_attrs";
+  ASSERT_EQ(0, create_and_write(obj, ""));
+
+  mark_osds_down(zone_osds(0));
+  set_pool_min_size(k);
+  ASSERT_GE(get_primary_shard_from_osdmap(), k + m);
+  ASSERT_EQ(0, write_attribute(obj, "key", "v1", false));
+
+  for (int osd : zone_osds(0)) {
+    mark_osd_up(osd);
+  }
+  ASSERT_EQ(0, get_primary_shard_from_osdmap());
+  run_recovery(obj, true, "");
+
+  hobject_t hoid = make_test_object(obj);
+  for (int zone = 0; zone < num_zones; zone++) {
+    for (int rel = 0; rel < k + m; rel++) {
+      if (rel > 0 && rel < k) {
+        continue;
+      }
+      int shard = zone * (k + m) + rel;
+      ceph::buffer::ptr value;
+      int r = get_osd_fixture(shard)->store->getattr(
+        get_test_pg(shard, shard)->ch,
+        ghobject_t(hoid, ghobject_t::NO_GEN, shard_id_t(shard)), "key", value);
+      ASSERT_GE(r, 0) << "shard " << shard;
+      EXPECT_EQ("v1", std::string(value.c_str(), value.length())) << "shard " << shard;
+    }
+  }
+  EXPECT_FALSE(scrub_object(obj));
+
+  mark_osds_down(zone_osds(1));
+  verify_object(obj);
+}
+
+// Delete and recreate (smaller) an object while zone 1 is down; zone 1 must
+// be left with no stale pre-delete data after recovery.
+TEST_P(TestECFailoverWithPeering, DeleteRecreateAcrossZoneFailover) {
+  if (num_zones < 2) {
+    GTEST_SKIP() << "requires num_zones > 1";
+  }
+
+  const size_t object_size = stripe_unit * k;
+  const std::string obj = "test_delete_recreate";
+  const std::string recreated(stripe_unit / 2, 'B');
+
+  create_and_write_verify(obj, std::string(object_size, 'A'));
+
+  mark_osds_down(zone_osds(1));
+  set_pool_min_size(k);
+  ASSERT_EQ(0, get_primary_shard_from_osdmap());
+  ASSERT_EQ(0, delete_object(obj));
+  create_and_write_verify(obj, recreated);
+
+  for (int osd : zone_osds(1)) {
+    mark_osd_up(osd);
+  }
+  auto* primary_ps = get_primary_test_pg()->get_peering_state();
+  ASSERT_TRUE(primary_ps->is_active());
+  hobject_t hoid = make_test_object(obj);
+  for (int osd : zone_osds(1)) {
+    EXPECT_TRUE(primary_ps->get_peer_missing().at(
+      pg_shard_t(osd, shard_id_t(osd))).is_missing(hoid)) << "shard " << osd;
+  }
+
+  run_recovery(obj, false, recreated);
+  for (int rel = 0; rel < k + m; rel++) {
+    int shard = k + m + rel;
+    EXPECT_EQ(read_shard_object_info(obj, rel).version,
+              read_shard_object_info(obj, shard).version) << "shard " << shard;
+    EXPECT_EQ(read_shard_object_info(obj, rel).size,
+              read_shard_object_info(obj, shard).size) << "shard " << shard;
+  }
+  EXPECT_FALSE(scrub_object(obj));
+
+  mark_osds_down(zone_osds(0));
+  verify_object(obj);
+}
+
+// Zone-1 shards that miss writes rejoin as async recovery targets, receive
+// log-only updates for new writes, and are then recovered.
+TEST_P(TestECFailoverWithPeering, AsyncRecoveryOfZone1Shards) {
+  if (num_zones < 2 || m < 2) {
+    GTEST_SKIP() << "requires num_zones > 1 and m >= 2";
+  }
+  ScopedConfig cfg_async_recovery("osd_async_recovery_min_cost", "0");
+
+  const size_t object_size = stripe_unit * k;
+  const std::vector<int> targets = {k + m, 2 * k + m};
+  const std::string obj1 = "test_async_zone1_full";
+  const std::string obj2 = "test_async_zone1_partial";
+  const std::string obj3 = "test_async_zone1_new";
+  std::string expected2(object_size, 'A');
+
+  create_and_write_verify(obj1, std::string(object_size, 'A'));
+  create_and_write_verify(obj2, expected2);
+  mark_osds_down(targets);
+  write_verify(obj1, 0, std::string(object_size, 'B'), object_size);
+  write_verify(obj2, stripe_unit, std::string(stripe_unit, 'C'), object_size);
+  expected2.replace(stripe_unit, stripe_unit, std::string(stripe_unit, 'C'));
+  for (int osd : targets) {
+    mark_osd_up(osd);
+  }
+
+  auto* primary_ps = get_primary_test_pg()->get_peering_state();
+  ASSERT_TRUE(primary_ps->is_active());
+  for (int osd : targets) {
+    pg_shard_t shard(osd, shard_id_t(osd));
+    EXPECT_TRUE(primary_ps->get_async_recovery_targets().contains(shard)) << "shard " << osd;
+    EXPECT_FALSE(primary_ps->is_acting(shard)) << "shard " << osd;
+  }
+
+  create_and_write_verify(obj3, std::string(object_size, 'D'));
+  for (int osd : targets) {
+    EXPECT_EQ(primary_ps->get_info().last_update,
+              get_peering_state(osd)->get_info().last_update) << "shard " << osd;
+    EXPECT_TRUE(shard_has_object(obj3, ghobject_t::NO_GEN, osd)) << "shard " << osd;
+  }
+
+  run_recovery(obj1, false, std::string(object_size, 'B'));
+  run_recovery(obj2, false, expected2);
+  EXPECT_FALSE(primary_ps->needs_recovery());
+
+  set_config("osd_async_recovery_min_cost", "100");
+  mark_osd_down(1);
+  mark_osd_up(1);
+  primary_ps = get_primary_test_pg()->get_peering_state();
+  for (int osd : targets) {
+    EXPECT_TRUE(primary_ps->is_acting(pg_shard_t(osd, shard_id_t(osd)))) << "shard " << osd;
+  }
+  EXPECT_TRUE(primary_is_clean());
+  for (const std::string& obj : {obj1, obj2, obj3}) {
+    for (int osd : targets) {
+      EXPECT_EQ(read_shard_object_info(obj, osd - (k + m)).version,
+                read_shard_object_info(obj, osd).version)
+        << obj << " shard " << osd;
+    }
+    EXPECT_FALSE(scrub_object(obj));
+  }
+}
+
+// Divergent sub-stripe writes rolled forward on a zone-1 async recovery
+// target are rewound into its missing set on the next interval.
+TEST_P(TestECFailoverWithPeering, DivergentLogRewindZone1Target) {
+  if (num_zones < 2 || m < 2 || k < 3) {
+    GTEST_SKIP() << "requires num_zones > 1, k >= 3 and m >= 2";
+  }
+
+  ScopedConfig cfg_async_recovery("osd_async_recovery_min_cost", "0");
+  ScopedConfig cfg_trim_min("osd_pg_log_trim_min", "1");
+  ScopedConfig cfg_trim_max("osd_pg_log_trim_max", "1000");
+  osdmap->set_flag(CEPH_OSDMAP_PGLOG_HARDLIMIT);
+
+  const int target = k + m + 1;
+  const int blocked = 2 * k + m + 1;
+  const pg_shard_t target_shard(target, shard_id_t(target));
+  const size_t data_size = stripe_unit * k;
+  const std::string pa(data_size, 'A'), pb(data_size, 'B');
+  const std::string chunk_b(stripe_unit, 'B');
+
+  create_and_write_verify("obj_head", pa);
+  create_and_write_verify("obj_clone", pa);
+  create_and_write_verify("trigger", pa);
+  enable_log_trimming = true;
+  set_target_pg_log_entries(1);
+  for (int i = 0; i < 10; ++i) {
+    write_verify("obj_head", 0, pa, data_size);
+    write_verify("obj_clone", 0, pa, data_size);
+  }
+
+  mark_osd_down(target);
+  write_verify("trigger", 0, pb, data_size);
+  mark_osd_up(target);
+  ASSERT_FALSE(get_peering_state(0)->is_acting(target_shard));
+
+  suspend_primary_to_osd(blocked);
+  ASSERT_EQ(-EINPROGRESS, write("obj_head", stripe_unit, chunk_b, data_size));
+  ASSERT_EQ(-EINPROGRESS, write("obj_clone", stripe_unit, chunk_b, data_size));
+  {
+    auto* t = get_peering_state(target);
+    ASSERT_EQ(t->get_pg_log().get_can_rollback_to(), t->get_pg_log().get_log().head);
+  }
+
+  run_recovery("trigger", false, pb);
+  set_stall_recovery_reservations(true);
+
+  mark_osd_down(2);
+  unsuspend_primary_to_osd(blocked);
+  event_loop->run_until_idle();
+  {
+    auto* t = get_peering_state(target);
+    EXPECT_TRUE(t->get_pg_log().get_log().log.empty());
+    EXPECT_EQ(2u, t->get_pg_log().get_missing().num_missing());
+    EXPECT_LT(t->get_info().last_complete, t->get_info().last_update);
+  }
+
+  set_config("osd_async_recovery_min_cost", "100");
+  advance_epoch();
+  auto* primary_ps = get_primary_test_pg()->get_peering_state();
+  const auto& pm = primary_ps->get_peer_missing().at(target_shard);
+  EXPECT_TRUE(pm.is_missing(make_test_object("obj_head")));
+  EXPECT_TRUE(pm.is_missing(make_test_object("obj_clone")));
 }
 
 // ---------------------------------------------------------------------------
