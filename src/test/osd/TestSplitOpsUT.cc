@@ -32,11 +32,17 @@
 
 #include <boost/asio/io_context.hpp>
 
+#include "common/Cond.h"
+#include "messages/MOSDMap.h"
+#include "messages/MOSDOpReply.h"
+#include "mon/MonClient.h"
+#include "msg/Messenger.h"
 #include "osd/OSDMap.h"
 #include "osd/osd_types.h"
 #include "osdc/SplitOp.h"
 #include "include/rados.h"
 #include "global/global_context.h"
+#include "test/osd/MockConnection.h"
 #include "test/osd/OSDMapTestHelpers.h"
 
 // ---------------------------------------------------------------------------
@@ -648,12 +654,15 @@ protected:
   static constexpr int64_t rep_pool_id = 2;
   static constexpr int64_t degraded_ec_pool_id = 3;
   boost::asio::io_context ioc;
+  MonClient monc{g_ceph_context, ioc};
+  std::unique_ptr<Messenger> msgr{
+    Messenger::create_client_messenger(g_ceph_context, "client")};
   std::unique_ptr<Objecter> objecter;
 
   void SetUp() override
   {
     g_ceph_context->_conf.set_val_or_die("osd_min_split_replica_read_size", "4096");
-    objecter = std::make_unique<Objecter>(g_ceph_context, nullptr, nullptr, ioc);
+    objecter = std::make_unique<Objecter>(g_ceph_context, msgr.get(), &monc, ioc);
     objecter->init();
 
     OSDMap map;
@@ -727,15 +736,21 @@ protected:
     return osd / osds_per_zone;
   }
 
-  Objecter::Op *make_read_op(int64_t pool, const std::vector<int>& acting,
-                             int primary_shard, uint64_t len, int flags)
+  Objecter::Op *new_read_op(int64_t pool, uint64_t off, uint64_t len,
+                            int flags, Context *onfinish = nullptr)
   {
     osdc_opvec ops(1);
     ops[0].op.op = CEPH_OSD_OP_READ;
-    ops[0].op.extent.offset = 0;
+    ops[0].op.extent.offset = off;
     ops[0].op.extent.length = len;
-    auto op = new Objecter::Op(object_t("obj"), object_locator_t(pool),
-                               std::move(ops), flags, (Context*)nullptr, nullptr);
+    return new Objecter::Op(object_t("obj"), object_locator_t(pool),
+                            std::move(ops), flags, onfinish, nullptr);
+  }
+
+  Objecter::Op *make_read_op(int64_t pool, const std::vector<int>& acting,
+                             int primary_shard, uint64_t len, int flags)
+  {
+    auto op = new_read_op(pool, 0, len, flags);
     op->target.acting = acting;
     op->target.actual_pgid = spg_t(pg_t(0, pool), shard_id_t(primary_shard));
     return op;
@@ -1231,4 +1246,191 @@ TEST_F(TestSplitOpInit, ECSingleChunkReadsOfDifferentShardsKeepReference)
     EXPECT_TRUE(split.sub_reads.contains(split.reference_sub_read_key));
   }
   op->put();
+}
+
+// ===========================================================================
+// Section 6: split and direct reads across OSDMap changes
+//
+// The Objecter is initialised with a session per OSD whose connection records
+// the MOSDOps sent on it.  Maps are delivered through handle_osd_map() and
+// replies through ms_dispatch2(); PG 1.0 has acting [0,1,2 | 4,5,6].
+// ===========================================================================
+
+class RecordingConnection : public MockConnection {
+public:
+  using MockConnection::MockConnection;
+  std::vector<MessageRef> sent;
+
+protected:
+  int send_msg(MessageRef&& m) override {
+    sent.push_back(std::move(m));
+    return 0;
+  }
+};
+
+class TestSplitOpMapChange : public TestSplitOpInit {
+protected:
+  static constexpr int primary = 0;
+  const std::vector<int> acting = {0, 1, 2, 4, 5, 6};
+  std::map<int, ceph::ref_t<RecordingConnection>> cons;
+  C_SaferCond done;
+
+  void SetUp() override
+  {
+    TestSplitOpInit::SetUp();
+    for (int osd = 0; osd < 3 * osds_per_zone; osd++) {
+      auto s = new Objecter::OSDSession(g_ceph_context, osd);
+      cons[osd] = ceph::make_ref<RecordingConnection>(osd);
+      s->con = cons[osd];
+      s->con->set_priv(RefCountedPtr{s});
+      objecter->osd_sessions[osd] = s;
+    }
+  }
+
+  void poll()
+  {
+    ioc.restart();
+    ioc.poll();
+  }
+
+  void advance_map(const std::function<void(OSDMap::Incremental&)>& change)
+  {
+    auto [epoch, fsid] = objecter->with_osdmap([](const OSDMap& o) {
+      return std::make_pair(o.get_epoch(), o.get_fsid());
+    });
+    OSDMap::Incremental inc(epoch + 1);
+    inc.fsid = fsid;
+    change(inc);
+    auto m = ceph::make_message<MOSDMap>(monc.get_fsid(),
+                                         CEPH_FEATURES_SUPPORTED_DEFAULT);
+    inc.encode(m->incremental_maps[inc.epoch],
+               CEPH_FEATURES_SUPPORTED_DEFAULT | CEPH_FEATURE_RESERVED);
+    objecter->handle_osd_map(m.get());
+    poll();
+  }
+
+  void mark_down(int osd)
+  {
+    advance_map([osd](OSDMap::Incremental& inc) {
+      inc.new_state[osd] = CEPH_OSD_UP;
+    });
+  }
+
+  ceph_tid_t submit_read(uint64_t off, uint64_t len, int flags)
+  {
+    ceph_tid_t tid = 0;
+    objecter->op_submit(new_read_op(ec_pool_id, off, len,
+                                    flags | CEPH_OSD_FLAG_READ, &done),
+                        &tid);
+    poll();
+    return tid;
+  }
+
+  void raise_min_size()
+  {
+    auto pool = objecter->with_osdmap([](const OSDMap& o) {
+      return *o.get_pg_pool(ec_pool_id);
+    });
+    pool.min_size++;
+    advance_map([&pool](OSDMap::Incremental& inc) {
+      inc.new_pools[ec_pool_id] = pool;
+    });
+  }
+
+  std::vector<std::pair<ceph_tid_t, shard_id_t>> sent_to(int osd)
+  {
+    std::vector<std::pair<ceph_tid_t, shard_id_t>> ops;
+    for (auto& m : cons[osd]->sent) {
+      ceph_assert(m->get_type() == CEPH_MSG_OSD_OP);
+      auto op = boost::static_pointer_cast<_mosdop::MOSDOp<osdc_opvec>>(m);
+      ops.emplace_back(op->get_tid(), op->get_spg().shard);
+    }
+    return ops;
+  }
+
+  void reply(int osd, const MessageRef& m)
+  {
+    auto op = boost::static_pointer_cast<_mosdop::MOSDOp<osdc_opvec>>(m);
+    auto r = ceph::make_message<MOSDOpReply>();
+    r->set_tid(op->get_tid());
+    r->set_op_returns(std::vector<pg_log_op_return_item_t>(op->ops.size()));
+    r->set_connection(cons[osd]);
+    objecter->ms_dispatch2(r);
+    poll();
+  }
+
+  void split_read_with_shard_osd_down(int flags)
+  {
+    set_client_zone(1);
+    ceph_tid_t parent = submit_read(0, 8192, flags);
+    ASSERT_EQ(1u, sent_to(primary).size());
+    int victim = -1;
+    for (int osd : acting) {
+      if (osd != primary && !sent_to(osd).empty()) {
+        victim = osd;
+      }
+    }
+    ASSERT_NE(-1, victim);
+    SCOPED_TRACE("victim osd." + std::to_string(victim));
+    auto sub_read = sent_to(victim).back();
+    for (int osd : acting) {
+      if (osd == victim) {
+        continue;
+      }
+      auto sent = cons[osd]->sent;
+      for (auto& m : sent) {
+        reply(osd, m);
+      }
+    }
+
+    mark_down(11);
+    EXPECT_EQ(1u, sent_to(victim).size());
+
+    raise_min_size();
+    EXPECT_EQ(2u, sent_to(victim).size());
+    EXPECT_EQ(sub_read, sent_to(victim).back());
+
+    mark_down(acting[2]);
+    EXPECT_EQ(3u, sent_to(victim).size());
+    EXPECT_EQ(sub_read, sent_to(victim).back());
+    EXPECT_EQ(ETIMEDOUT, done.wait_for(0));
+
+    mark_down(victim);
+    ASSERT_EQ(2u, sent_to(primary).size());
+    EXPECT_EQ(parent, sent_to(primary).back().first);
+    reply(primary, cons[primary]->sent.back());
+    EXPECT_EQ(0, done.wait_for(0));
+  }
+};
+
+TEST_F(TestSplitOpMapChange, ECLocalizedSplitReadRedrivesWhenShardOsdDown)
+{
+  split_read_with_shard_osd_down(CEPH_OSD_FLAG_LOCALIZE_READS);
+}
+
+TEST_F(TestSplitOpMapChange, ECBalancedSplitReadRedrivesWhenShardOsdDown)
+{
+  split_read_with_shard_osd_down(CEPH_OSD_FLAG_BALANCE_READS);
+}
+
+// Moving the primary first makes the Objecter recalculate the target, which
+// clears used_replica before osd.1 goes down.
+TEST_F(TestSplitOpMapChange, ECDirectReadRedrivesWhenShardOsdDown)
+{
+  set_client_zone(0);
+  ceph_tid_t tid = submit_read(4096, 4096, CEPH_OSD_FLAG_LOCALIZE_READS);
+  ASSERT_EQ(1u, sent_to(1).size());
+  EXPECT_EQ(std::make_pair(tid, shard_id_t(1)), sent_to(1).back());
+
+  advance_map([](OSDMap::Incremental& inc) {
+    inc.new_primary_temp[pg_t(0, ec_pool_id)] = 2;
+  });
+  EXPECT_EQ(2u, sent_to(1).size());
+  EXPECT_EQ(std::make_pair(tid, shard_id_t(1)), sent_to(1).back());
+
+  mark_down(1);
+  ASSERT_EQ(1u, sent_to(2).size());
+  EXPECT_EQ(std::make_pair(tid, shard_id_t(2)), sent_to(2).back());
+  reply(2, cons[2]->sent.back());
+  EXPECT_EQ(0, done.wait_for(0));
 }
