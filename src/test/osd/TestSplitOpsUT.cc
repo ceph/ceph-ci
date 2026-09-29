@@ -1076,3 +1076,28 @@ TEST_F(TestSplitOpInit, ReplicaStatBeforeReadTargetsReference)
   }
   op->put();
 }
+
+// Each replica gets at most one slice of a read: a second read in the same
+// sub-op would share its output buffer.
+TEST_F(TestSplitOpInit, ReplicaSplitReadOneSlicePerReplica)
+{
+  std::vector<int> acting = {0, 1, 2, 3};
+  const uint64_t len = 4 * 4096 + 1;
+  auto op = make_read_op(rep_pool_id, acting, 0, len, CEPH_OSD_FLAG_BALANCE_READS);
+  {
+    ReplicaSplitOpProbe split(op, *objecter, g_ceph_context, 16, false);
+    split.init_reference_sub_read();
+    ASSERT_FALSE(split.abort);
+    split.init_read(op->ops[0], false, 0);
+    ASSERT_FALSE(split.abort);
+    uint64_t total = 0;
+    for (auto& [key, sr] : split.sub_reads) {
+      EXPECT_EQ(1u, sr.rd.ops.size()) << "key " << key;
+      for (auto& o : sr.rd.ops) {
+        total += o.op.extent.length;
+      }
+    }
+    EXPECT_EQ(len, total);
+  }
+  op->put();
+}
