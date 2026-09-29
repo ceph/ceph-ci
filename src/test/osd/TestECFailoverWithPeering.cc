@@ -2897,6 +2897,48 @@ TEST_P(TestECFailoverWithPeering, RollbackVersionMismatchZone1) {
   EXPECT_FALSE(scrub_object(obj_name));
 }
 
+// CRUSH can put a PG's zones in a different order, e.g. after a datacenter's
+// weight changes, while every OSD stays up. Each OSD then only holds the
+// shard of its old position, so the PG must keep serving from those until
+// the new positions are backfilled. The upmap stands in for the new CRUSH
+// order, and the pg_temp matching the old up set is dropped as the monitor
+// would have dropped it.
+TEST_P(TestECFailoverWithPeering, ZoneOrderChangeKeepsPGAvailable) {
+  if (num_zones < 2) {
+    GTEST_SKIP() << "requires num_zones > 1";
+  }
+
+  ScopedConfig cfg_trim_min("osd_pg_log_trim_min", "1");
+  ScopedConfig cfg_trim_max("osd_pg_log_trim_max", "1000");
+  osdmap->set_flag(CEPH_OSDMAP_PGLOG_HARDLIMIT);
+  const size_t object_size = stripe_unit * k;
+  const std::string obj = "test_zone_order";
+  create_and_write_verify(obj, std::string(object_size, 'A'));
+  enable_log_trimming = true;
+  set_target_pg_log_entries(1);
+  for (int i = 0; i < 3; ++i) {
+    write_verify(obj, 0, std::string(object_size, 'B' + i), object_size);
+  }
+
+  std::vector<int> reordered = zone_osds(1);
+  for (int osd : zone_osds(0)) {
+    reordered.push_back(osd);
+  }
+  auto new_osdmap = std::make_shared<OSDMap>();
+  new_osdmap->deepish_copy_from(*osdmap);
+  OSDMap::Incremental inc(new_osdmap->get_epoch() + 1);
+  inc.fsid = new_osdmap->get_fsid();
+  inc.new_pg_upmap[pgid] =
+    mempool::osdmap::vector<int32_t>(reordered.begin(), reordered.end());
+  inc.new_pg_temp[pgid] = mempool::osdmap::vector<int32_t>();
+  new_osdmap->apply_incremental(inc);
+  update_osdmap_with_peering(new_osdmap);
+
+  auto* primary_ps = get_primary_test_pg()->get_peering_state();
+  ASSERT_TRUE(primary_ps->is_active()) << primary_ps->get_current_state();
+  verify_object(obj);
+}
+
 // ---------------------------------------------------------------------------
 // Instantiate TestECFailoverWithPeering with EC configurations
 // ---------------------------------------------------------------------------
