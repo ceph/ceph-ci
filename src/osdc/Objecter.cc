@@ -3299,6 +3299,8 @@ int Objecter::_calc_target(op_target_t *t, bool any_change)
           t->flags &= ~CEPH_OSD_FLAGS_DIRECT_READ;
           t->flags &= ~CEPH_OSD_FLAG_FORCE_OSD;
         }
+      } else {
+        spgid.reset_shard(t->actual_pgid.shard);
       }
     }
     if (pi->is_erasure()) {
