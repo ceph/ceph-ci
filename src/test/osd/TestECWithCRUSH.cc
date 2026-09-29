@@ -367,3 +367,74 @@ TEST_F(TestLocalZoneForActingSet, FastECLocalizeBothFlagsAccepted)
   // No read flag at all should fail.
   EXPECT_FALSE(SplitOp::validate_flags(&pool, 0, g_ceph_context));
 }
+
+// ===========================================================================
+// Peering on a real stretch EC pool (2 zones, 2+1, per-zone min_size k+m).
+// ===========================================================================
+
+class TestECStretchPeering : public ECCrushTestFixture {
+public:
+  TestECStretchPeering() : ECCrushTestFixture() {
+    k = 2;
+    m = 1;
+    num_zones = 2;
+    ec_plugin = "isa";
+  }
+
+protected:
+  void pre_peering_hook() override {
+    ECCrushTestFixture::pre_peering_hook();
+    pg_pool_t updated = *osdmap->get_pg_pool(pool_id);
+    updated.min_size = k + 1;
+    updated.peering_crush_bucket_barrier =
+      osdmap->crush->get_type_id("datacenter");
+    updated.peering_crush_bucket_target = num_zones;
+    updated.peering_crush_bucket_count = num_zones;
+    updated.peering_crush_mandatory_member = CRUSH_ITEM_NONE;
+    OSDMap::Incremental inc(osdmap->get_epoch() + 1);
+    inc.fsid = osdmap->get_fsid();
+    inc.new_pools[pool_id] = updated;
+    osdmap->apply_incremental(inc);
+  }
+};
+
+// Losing a whole zone leaves the PG peered until degraded stretch mode names the surviving zone as mandatory.
+TEST_F(TestECStretchPeering, ZoneLoss_PeeredUntilDegradedStretchMode)
+{
+  ASSERT_TRUE(all_shards_active());
+  vector<int> acting;
+  int acting_primary;
+  osdmap->pg_to_acting_osds(pgid, &acting, &acting_primary);
+  const int zone_size = k + m;
+  const int primary_zone =
+    osdmap->crush->get_parent_of_type(acting_primary, 8,
+                                      osdmap->get_pg_pool(pool_id)->crush_rule);
+  vector<int> other_zone_osds;
+  for (int i = 0; i < num_zones * zone_size; ++i) {
+    if (osdmap->crush->get_parent_of_type(
+          i, 8, osdmap->get_pg_pool(pool_id)->crush_rule) != primary_zone) {
+      other_zone_osds.push_back(i);
+    }
+  }
+  ASSERT_EQ(other_zone_osds.size(), (size_t)zone_size);
+
+  mark_osds_down(other_zone_osds);
+  PeeringState *ps = get_primary_test_pg()->get_peering_state();
+  EXPECT_TRUE(ps->is_peered()) << get_state_name(0);
+  EXPECT_FALSE(ps->is_active()) << get_state_name(0);
+
+  auto new_osdmap = std::make_shared<OSDMap>();
+  new_osdmap->deepish_copy_from(*osdmap);
+  pg_pool_t degraded = *new_osdmap->get_pg_pool(pool_id);
+  degraded.peering_crush_bucket_count = 1;
+  degraded.peering_crush_bucket_target = 1;
+  degraded.peering_crush_mandatory_member = primary_zone;
+  OSDMap::Incremental inc(new_osdmap->get_epoch() + 1);
+  inc.fsid = new_osdmap->get_fsid();
+  inc.new_pools[pool_id] = degraded;
+  new_osdmap->apply_incremental(inc);
+  update_osdmap_with_peering(new_osdmap);
+
+  ps = get_primary_test_pg()->get_peering_state();
+  EXPECT_TRUE(ps->is_active()) << get_state_name(0);
+}
