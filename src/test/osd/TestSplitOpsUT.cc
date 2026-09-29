@@ -937,3 +937,32 @@ TEST_F(TestSplitOpInit, LocalZoneForActingSetThreeZones)
   acting[0] = acting[1] = acting[2] = CRUSH_ITEM_NONE;
   EXPECT_EQ(1, zone_for(1));
 }
+
+// Replica sub-reads are keyed by acting index and the reference OSD gets one.
+TEST_F(TestSplitOpInit, ReplicaSubReadsTargetActingOsds)
+{
+  std::vector<int> acting = {8, 9, 10, 11};
+  for (unsigned seed = 0; seed < 16; seed++) {
+    srand(seed);
+    auto op = make_read_op(rep_pool_id, acting, 0, 4 * 65536,
+                           CEPH_OSD_FLAG_BALANCE_READS);
+    {
+      ReplicaSplitOpProbe split(op, *objecter, g_ceph_context, 16, false);
+      split.init_reference_sub_read();
+      ASSERT_FALSE(split.abort);
+      split.init_read(op->ops[0], false, 0);
+      ASSERT_FALSE(split.abort);
+      bool reference_has_read = false;
+      for (auto& [key, sr] : split.sub_reads) {
+        ASSERT_LT((int)sr.abs_shard, (int)acting.size())
+          << "seed " << seed << " key " << key;
+        if (key == split.reference_sub_read_key) {
+          reference_has_read =
+            acting[(int)sr.abs_shard] == split.reference_sub_read.osd;
+        }
+      }
+      EXPECT_TRUE(reference_has_read) << "seed " << seed;
+    }
+    op->put();
+  }
+}
