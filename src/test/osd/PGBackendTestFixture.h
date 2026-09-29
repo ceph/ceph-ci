@@ -544,7 +544,8 @@ public:
     inc.fsid = new_osdmap->get_fsid();
 
     for (int failed_osd : failed_osds) {
-      inc.new_state[failed_osd] = CEPH_OSD_EXISTS;  // Mark as down (exists but not UP)
+      ceph_assert(new_osdmap->is_up(failed_osd));
+      inc.new_state[failed_osd] = CEPH_OSD_UP;  // toggles UP: marks it down
     }
 
     // Convert to mempool vector for pg_temp
