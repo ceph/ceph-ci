@@ -447,6 +447,68 @@ TEST_F(OSDMonitorValidateStretchModeNewPoolTest, RejectsRuleWithWrongNumberOfSit
     << "RejectsRuleWithWrongNumberOfSites: " << ss.str();
 }
 
+// A stretch rule over the configured zones is accepted, with or without a device class.
+TEST_F(OSDMonitorValidateStretchModeNewPoolTest, AcceptsRuleOverConfiguredZones) {
+  int zone_type = crush.get_type_id(zone_failure_domain_name);
+  pg_pool_t existing;
+  existing.type = pg_pool_t::TYPE_REPLICATED;
+  existing.crush_rule = stretch_replica_rule;
+  existing.peering_crush_bucket_count = 2;
+  existing.peering_crush_bucket_barrier = zone_type;
+  pools[1] = existing;
+
+  EXPECT_EQ(0, validate_stretch_mode_new_pool(stretch_ec_rule, 2, zone_type,
+                                              zone_failure_domain_name, &ss))
+    << ss.str();
+
+  for (int i = 0; i < 12; i++) {
+    ASSERT_GE(crush.update_device_class(i, "ssd", "osd." + std::to_string(i), &ss), 0);
+  }
+  int ssd_rule = crush.add_simple_stretch_rule("stretch_ec_ssd_rule", root_name,
+    zone_failure_domain_name, osd_failure_domain_name, 2, 6, "ssd", "indep",
+    pg_pool_t::TYPE_ERASURE, force, &ss);
+  ASSERT_GE(ssd_rule, 0) << ss.str();
+  EXPECT_EQ(0, validate_stretch_mode_new_pool(ssd_rule, 2, zone_type,
+                                              zone_failure_domain_name, &ss))
+    << ss.str();
+}
+
+// Rules over other zone buckets than existing stretch pools, or unknown types, are rejected.
+TEST_F(OSDMonitorValidateStretchModeNewPoolTest, RejectsDifferentZonesAndUnknownType) {
+  int zone_type = crush.get_type_id(zone_failure_domain_name);
+  pg_pool_t existing;
+  existing.type = pg_pool_t::TYPE_REPLICATED;
+  existing.crush_rule = stretch_replica_rule;
+  existing.peering_crush_bucket_count = 2;
+  existing.peering_crush_bucket_barrier = zone_type;
+  pools[1] = existing;
+
+  int other_root = 0;
+  crush.add_bucket(0, CRUSH_BUCKET_STRAW, CRUSH_HASH_RJENKINS1,
+                   10, 0, NULL, NULL, &other_root);
+  crush.set_item_name(other_root, "other");
+  crush.set_max_devices(20);
+  for (int osd = 12; osd < 20; osd++) {
+    string zone = osd < 16 ? "zone3" : "zone4";
+    crush.insert_item(g_ceph_context, osd, 1.0, "osd." + std::to_string(osd),
+      map<string, string>{{"host", "other-host" + std::to_string(osd)},
+                          {"zone", zone}, {"root", "other"}});
+  }
+  int other_rule = crush.add_simple_stretch_rule("other_stretch_rule", "other",
+    zone_failure_domain_name, osd_failure_domain_name, 2, 2, "", mode,
+    pg_pool_t::TYPE_REPLICATED, force, &ss);
+  ASSERT_GE(other_rule, 0) << ss.str();
+
+  EXPECT_EQ(-EINVAL, validate_stretch_mode_new_pool(other_rule, 2, zone_type,
+                                                    zone_failure_domain_name, &ss));
+  EXPECT_NE(ss.str().find("uses different"), string::npos) << ss.str();
+
+  stringstream ss2;
+  EXPECT_EQ(-EINVAL, validate_stretch_mode_new_pool(stretch_ec_rule, 2, zone_type,
+                                                    "nosuchtype", &ss2));
+  EXPECT_NE(ss2.str().find("does not exist"), string::npos) << ss2.str();
+}
+
 int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
