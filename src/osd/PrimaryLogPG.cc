@@ -14743,8 +14743,9 @@ void PrimaryLogPG::scan_range_primary(
     } else {
       bool added_default = false;
       for (auto & shard: backfill_targets) {
-	if (shard_versions.contains(shard.shard)) {
-	  auto shard_version = shard_versions.at(shard.shard);
+        const shard_id_t rel_shard = pool.info.get_relative_shard(shard.shard);
+        if (shard_versions.contains(rel_shard)) {
+          auto shard_version = shard_versions.at(rel_shard);
 	  bi->objects.insert(make_pair(*p, std::make_pair(shard.shard,
 							  shard_version)));
 	} else if (!added_default) {
@@ -16312,10 +16313,9 @@ int PrimaryLogPG::get_internal_versions(const hobject_t& soid,
 
   if (is_primary() && pool.info.is_erasure()) {
     for (unsigned int i = 0; i < pool.info.get_size(); ++i) {
-      (*out)[shard_id_t(i)] = obc->obs.oi.version;
-    }
-    for (const auto& [shard, version] : obc->obs.oi.shard_versions) {
-      out->at(shard) = version;
+      const shard_id_t shard(i);
+      (*out)[shard] = obc->obs.oi.get_version_for_shard(
+        pool.info.get_relative_shard(shard));
     }
   } else {
     (*out)[pg_whoami.shard] = obc->obs.oi.version;
