@@ -966,3 +966,31 @@ TEST_F(TestSplitOpInit, ReplicaSubReadsTargetActingOsds)
     op->put();
   }
 }
+
+// LOCALIZE_READS on a stretch replica pool reads only from the client's zone.
+TEST_F(TestSplitOpInit, ReplicaLocalizeReadsOnlyLocalZone)
+{
+  set_client_zone(1);
+  std::vector<int> acting = {0, 1, 4, 5};
+  for (unsigned seed = 0; seed < 16; seed++) {
+    srand(seed);
+    auto op = make_read_op(rep_pool_id, acting, 0, 4 * 4096,
+                           CEPH_OSD_FLAG_LOCALIZE_READS);
+    {
+      ReplicaSplitOpProbe split(op, *objecter, g_ceph_context, 16, true);
+      split.init_reference_sub_read();
+      ASSERT_FALSE(split.abort);
+      split.init_read(op->ops[0], false, 0);
+      ASSERT_FALSE(split.abort);
+      for (auto& [key, sr] : split.sub_reads) {
+        EXPECT_LT((int)sr.abs_shard, (int)acting.size())
+          << "seed " << seed << " key " << key;
+        if ((int)sr.abs_shard < (int)acting.size()) {
+          EXPECT_EQ(1, zone_of(acting[(int)sr.abs_shard]))
+            << "seed " << seed << " key " << key;
+        }
+      }
+    }
+    op->put();
+  }
+}
