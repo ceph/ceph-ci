@@ -459,144 +459,7 @@ TEST_F(TestLocalZoneGuards, ActingTooSmallReturnsZero)
 }
 
 // ===========================================================================
-// Section 4: abs_shard computation for reference_sub_read (Bug 2 regression)
-//
-// When init_read() decides that primary_required is true it creates an extra
-// sub-read for the version-check "reference" shard.  Before the fix the code
-// always assigned:
-//
-//   sub_reads.emplace(reference_sub_read,  ..., shard_id_t(reference_sub_read));
-//                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-//                                               was: always a zone-0 acting index
-//
-// The fix uses:
-//   shard_id_t(reference_sub_read + local_zone_index * zone_size)
-//
-// so the version-check sub-read goes to the same zone as the data sub-reads.
-//
-// The helpers below model both the old (buggy) and new (correct) formula so
-// that the tests document what changed and act as regression guards.
-// ===========================================================================
-
-class TestReferenceSubReadAbsShard : public ::testing::Test {
-protected:
-  // Pool: k=2, m=1, 2 zones  →  pool.size=6, zone_size=3, data_chunk_count=2
-  // Acting set:  [osd.0, osd.1, osd.2(par), osd.3, osd.4, osd.5(par)]
-  //               zone-0 ────────────────── zone-1 ──────────────────
-  static constexpr int k          = 2;
-  static constexpr int m          = 1;
-  static constexpr int num_zones  = 2;
-  static constexpr int zone_size  = k + m;          // 3
-  static constexpr int pool_size  = zone_size * num_zones; // 6
-  // Primary shard lives at acting index 0 (zone-0).
-  static constexpr int reference_sub_read = 0;
-
-  // Compute the abs_shard that the current (buggy) code assigns to the
-  // reference sub-read.
-  static shard_id_t buggy_reference_abs_shard()
-  {
-    // Current code: shard_id_t(reference_sub_read) — ignores local_zone_index.
-    return shard_id_t(reference_sub_read);
-  }
-
-  // Compute the abs_shard that the correct code should assign.
-  static shard_id_t correct_reference_abs_shard(int local_zone_index)
-  {
-    return shard_id_t(reference_sub_read + local_zone_index * zone_size);
-  }
-};
-
-// For a zone-0 client the bug is latent: both formulae agree.
-TEST_F(TestReferenceSubReadAbsShard, Zone0ClientBugIsLatent)
-{
-  constexpr int local_zone = 0;
-  EXPECT_EQ(buggy_reference_abs_shard(), correct_reference_abs_shard(local_zone))
-    << "Zone-0: buggy and correct formula agree — bug is not visible";
-  // Both map to acting[0], which is a zone-0 OSD — correct.
-  EXPECT_EQ(shard_id_t(0), buggy_reference_abs_shard());
-}
-
-// For a zone-1 client the bug is exposed: the buggy formula targets
-// acting[0] (zone-0 OSD) instead of acting[3] (zone-1 equivalent).
-TEST_F(TestReferenceSubReadAbsShard, Zone1ClientBugExposed)
-{
-  constexpr int local_zone = 1;
-
-  shard_id_t buggy   = buggy_reference_abs_shard();
-  shard_id_t correct = correct_reference_abs_shard(local_zone);
-
-  // Buggy code dispatches to acting[0] — a zone-0 OSD.
-  EXPECT_EQ(shard_id_t(0),         buggy);
-  // Correct code should dispatch to acting[3] — a zone-1 OSD.
-  EXPECT_EQ(shard_id_t(zone_size), correct);
-
-  // The two must differ — if they are equal this test is vacuous.
-  EXPECT_NE(buggy, correct)
-    << "Bug: reference sub-read abs_shard=" << (int)buggy
-    << " targets zone-0 acting index even though local_zone=" << local_zone
-    << "; correct abs_shard=" << (int)correct
-    << " would target zone-1 acting index (acting[" << (int)correct << "])";
-}
-
-// Demonstrate that acting[buggy_abs] is always a zone-0 OSD regardless of
-// which zone the client wants to read from.
-TEST_F(TestReferenceSubReadAbsShard, BuggyShardAlwaysInZero)
-{
-  // acting = [0, 1, 2, 3, 4, 5]  (osd ids == acting indices for simplicity)
-  std::vector<int> acting(pool_size);
-  std::iota(acting.begin(), acting.end(), 0);
-
-  for (int local_zone = 0; local_zone < num_zones; ++local_zone) {
-    shard_id_t buggy = buggy_reference_abs_shard();
-    int buggy_osd    = acting[(int)buggy];
-
-    // Zone-0 OSDs are at acting indices [0, zone_size).
-    bool is_zone0_osd = ((int)buggy < zone_size);
-    EXPECT_TRUE(is_zone0_osd)
-      << "local_zone=" << local_zone
-      << ": buggy abs_shard=" << (int)buggy
-      << " maps to acting[" << (int)buggy << "]=" << buggy_osd
-      << " which is in zone-0 regardless of client zone";
-
-    if (local_zone == 1) {
-      // The correct zone-1 OSD should be at a strictly higher acting index.
-      shard_id_t correct = correct_reference_abs_shard(local_zone);
-      int correct_osd    = acting[(int)correct];
-      bool is_zone1_osd  = ((int)correct >= zone_size && (int)correct < pool_size);
-      EXPECT_TRUE(is_zone1_osd)
-        << "correct abs_shard=" << (int)correct
-        << " maps to acting[" << (int)correct << "]=" << correct_osd
-        << " which should be in zone-1";
-    }
-  }
-}
-
-// Generalise over (k, m) combinations to show the bug scales with zone_size.
-TEST(TestReferenceSubReadAbsShardParametric, BugScalesWithZoneSize)
-{
-  // { k, m }  →  zone_size = k+m
-  const std::vector<std::pair<int,int>> configs = {{2,1},{4,2},{3,2},{8,3}};
-  for (auto [k, m] : configs) {
-    int zs = k + m;  // zone_size
-    // reference_sub_read is the acting index of the primary shard (always 0
-    // for a standard single-PG test setup).
-    constexpr int ref = 0;
-    constexpr int local_zone = 1;
-
-    shard_id_t buggy   = shard_id_t(ref);
-    shard_id_t correct = shard_id_t(ref + local_zone * zs);
-
-    EXPECT_EQ(shard_id_t(0), buggy)
-      << "k=" << k << " m=" << m << ": buggy always 0";
-    EXPECT_EQ(shard_id_t(zs), correct)
-      << "k=" << k << " m=" << m << ": correct should be zone_size=" << zs;
-    EXPECT_NE(buggy, correct)
-      << "k=" << k << " m=" << m << ": bug is visible for local_zone=1";
-  }
-}
-
-// ===========================================================================
-// Section 5: ReplicaSplitOp LOCALIZE_READS zone filtering
+// Section 4: ReplicaSplitOp LOCALIZE_READS zone filtering
 //
 // When localize=true on a stretch replica pool, ReplicaSplitOp::init_read()
 // must restrict the OSD set to replicas in the client's local zone only.
@@ -751,7 +614,7 @@ TEST_F(TestReplicaLocalizeZoneFiltering, FilteredSetSizeEqualsZoneSize)
 }
 
 // ===========================================================================
-// Section 6: init_reference_sub_read() / init_read() against a real Objecter
+// Section 5: init_reference_sub_read() / init_read() against a real Objecter
 //
 // Three datacenters "zone-0".."zone-2", OSDs 4z..4z+3 in zone-z.  The
 // Objecter is never started; only its OSDMap and crush_location are used.
@@ -886,8 +749,9 @@ TEST_F(TestSplitOpInit, ECLocalizeZone1PrimaryReadsLocalShards)
     EXPECT_EQ(3, split.reference_sub_read_key);
     split.init_read(op->ops[0], false, 0);
     ASSERT_FALSE(split.abort);
-    EXPECT_EQ(shard_id_t(3), split.sub_reads.at(0).abs_shard);
-    EXPECT_EQ(shard_id_t(4), split.sub_reads.at(1).abs_shard);
+    EXPECT_EQ(2u, split.sub_reads.size());
+    EXPECT_EQ(shard_id_t(3), split.sub_reads.at(3).abs_shard);
+    EXPECT_EQ(shard_id_t(4), split.sub_reads.at(4).abs_shard);
     for (auto& [key, sr] : split.sub_reads) {
       EXPECT_EQ(1, zone_of(acting[(int)sr.abs_shard])) << "key " << key;
     }
@@ -1050,6 +914,34 @@ TEST_F(TestSplitOpInit, ECLocalizeZone0PrimaryKeepsLocalDataShard)
     EXPECT_TRUE(abs_shards.contains(3));
     EXPECT_TRUE(abs_shards.contains(4));
     EXPECT_TRUE(abs_shards.contains(0));
+  }
+  op->put();
+}
+
+// A localized sparse read from zone 1 reassembles chunks read from zone-1 shards.
+TEST_F(TestSplitOpInit, ECLocalizeZone1SparseReadAssembles)
+{
+  set_client_zone(1);
+  std::vector<int> acting = {0, 1, 2, 4, 5, 6};
+  auto op = make_read_op(ec_pool_id, acting, 0, 8192, CEPH_OSD_FLAG_LOCALIZE_READS);
+  op->ops[0].op.op = CEPH_OSD_OP_SPARSE_READ;
+  {
+    ECSplitOpProbe split(op, *objecter, g_ceph_context, 6, true);
+    split.init_reference_sub_read();
+    ASSERT_FALSE(split.abort);
+    split.init_read(op->ops[0], true, 0);
+    ASSERT_FALSE(split.abort);
+    for (int rel_shard = 0; rel_shard < 2; rel_shard++) {
+      auto& d = split.sub_reads.at(rel_shard + 3).details[0];
+      d.e->emplace(rel_shard * 4096, 4096);
+      d.bl.append(std::string(4096, 'a' + rel_shard));
+    }
+    auto [extents, bl] = split.assemble_buffer_sparse_read(0);
+    EXPECT_EQ(1u, extents.num_intervals());
+    EXPECT_EQ(0u, extents.range_start());
+    EXPECT_EQ(8192u, extents.range_end());
+    std::string expected = std::string(4096, 'a') + std::string(4096, 'b');
+    EXPECT_TRUE(bl.contents_equal(expected.data(), expected.size()));
   }
   op->put();
 }

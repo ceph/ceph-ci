@@ -463,7 +463,7 @@ class ECSplitOp : public SplitOp{
  public:
   ECSplitOp(Objecter::Op *op, Objecter &objecter, CephContext *cct, int count,
             bool localize)
-    : SplitOp(op, objecter, cct, count), localize(localize) {}
+    : SplitOp(op, objecter, cct, count), localize(localize), data_shards(count) {}
 
   /**
    * @brief Initialize reference_sub_read to primary shard.
@@ -550,10 +550,9 @@ class ECSplitOp : public SplitOp{
   /// mark sub-reads that are dispatched to non-local zones.
   const bool localize;
 
-  /// The zone index selected by init_read() for this operation.
-  /// Set once on the first init_read() call and reused by init() for
-  /// non-read ops (stat, getxattr, etc.) that also target reference_sub_read.
-  int local_zone_index = 0;
+  /// Absolute shard that each relative data shard is read from; sub_reads
+  /// is keyed by absolute shard.
+  shard_id_map<shard_id_t> data_shards;
 };
 
 /**

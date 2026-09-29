@@ -84,16 +84,16 @@ std::pair<SplitOp::extent_set, bufferlist> ECSplitOp::assemble_buffer_sparse_rea
   for (auto &&chunk_info : stripe_view) {
     shard_id_t shard = pi->get_shard(chunk_info.raw_shard);
     ceph_assert(shard != shard_id_t::NO_SHARD);
-    int shard_index = (int)shard;
+    int shard_index = (int)data_shards.at(shard);
     ldout(cct, DBG_LVL) << __func__ << " object_id=" << orig_op->target.base_oid << " tid=" << orig_op->tid << " chunk: " << chunk_info
         << " shard: " << shard << dendl;
     auto &details = sub_reads.at(shard_index).details.at(ops_index);
 
-    if (!map_iterators.contains(shard_index)) {
-      map_iterators.emplace(shard_index, details.e->begin());
+    if (!map_iterators.contains((int)chunk_info.raw_shard)) {
+      map_iterators.emplace((int)chunk_info.raw_shard, details.e->begin());
     }
 
-    extents_map::const_iterator &extent_iter = map_iterators.at(shard_index);
+    extents_map::const_iterator &extent_iter = map_iterators.at((int)chunk_info.raw_shard);
 
     uint64_t bl_len = 0;
     while (extent_iter != details.e->end() && extent_iter->first < chunk_info.ro_offset + stripe_view.chunk_size) {
@@ -143,7 +143,7 @@ void ECSplitOp::assemble_buffer_read(bufferlist &bl_out, int ops_index) const {
     ldout(cct, DBG_LVL) << __func__ << " object_id=" << orig_op->target.base_oid << " tid=" << orig_op->tid << " chunk info " << chunk_info << dendl;
     shard_id_t shard = pi->get_shard(chunk_info.raw_shard);
     ceph_assert(shard != shard_id_t::NO_SHARD);
-    int shard_index = (int)shard;
+    int shard_index = (int)data_shards.at(shard);
     auto &details = sub_reads.at(shard_index).details.at(ops_index);
     uint64_t src_len = details.bl.length();
     uint64_t buf_off = buffer_offset[(int)chunk_info.raw_shard];
@@ -179,10 +179,8 @@ void ECSplitOp::init_read(OSDOp &op, bool sparse, int ops_index) {
   const pg_pool_t *pi = objecter.osdmap->get_pg_pool(target.base_oloc.pool);
   ceph_assert(pi);
 
-  int zone_size = pi->get_zone_size();
-  int num_zone = pi->get_num_zone();
-  local_zone_index = choose_local_zone_index(
-      localize, target.acting, num_zone, zone_size,
+  int zone = choose_local_zone_index(
+      localize, target.acting, pi->get_num_zone(), pi->get_zone_size(),
       objecter.osdmap->crush.get(), cct, objecter.crush_location);
 
   uint64_t offset = op.op.extent.offset;
@@ -227,19 +225,20 @@ void ECSplitOp::init_read(OSDOp &op, bool sparse, int ops_index) {
       abort = true;
       return;
     }
-    int rel_shard_index = (int)shard;
-    shard_id_t abs_shard(rel_shard_index + local_zone_index * zone_size);
+    if (!data_shards.contains(shard)) {
+      data_shards.emplace(shard, pi->get_abs_shard(shard, zone));
+    }
+    shard_id_t abs_shard = data_shards.at(shard);
     if (!objecter.osdmap->exists(target.acting[(int)abs_shard])) {
       ldout(cct, DBG_LVL) << __func__ << " ABORT: no available OSD for "
-                          << "abs_shard=" << abs_shard
-                          << " zone=" << local_zone_index << dendl;
+                          << "abs_shard=" << abs_shard << dendl;
       abort = true;
       return;
     }
-    if (!sub_reads.contains(rel_shard_index)) {
-      sub_reads.emplace(rel_shard_index, orig_op->ops.size() + 1, abs_shard);
+    if (!sub_reads.contains((int)abs_shard)) {
+      sub_reads.emplace((int)abs_shard, orig_op->ops.size() + 1, abs_shard);
     }
-    auto &sr = sub_reads.at(rel_shard_index);
+    auto &sr = sub_reads.at((int)abs_shard);
 
     auto &d = sr.details[ops_index];
     if (sparse) {
@@ -250,13 +249,9 @@ void ECSplitOp::init_read(OSDOp &op, bool sparse, int ops_index) {
     }
   }
 
-  if (primary_required) {
-    int ref_key = (int)reference_sub_read.shard;
-    if (!sub_reads.contains(ref_key)) {
-      sub_reads.emplace(ref_key, orig_op->ops.size() + 1, reference_sub_read.shard);
-    } else {
-      sub_reads.at(ref_key).abs_shard = reference_sub_read.shard;
-    }
+  if (primary_required && !sub_reads.contains(reference_sub_read_key)) {
+    sub_reads.emplace(reference_sub_read_key, orig_op->ops.size() + 1,
+                      reference_sub_read.shard);
   }
 }
 
@@ -343,7 +338,7 @@ void ReplicaSplitOp::init_reference_sub_read() {
     int local_zone = local_zone_for_acting_set(
         target.acting, pi->get_num_zone(), zone_size,
         objecter.osdmap->crush.get(), cct, objecter.crush_location);
-    first = local_zone * zone_size;
+    first = (int)pi->get_abs_shard(shard_id_t(0), local_zone);
     end = std::min(end, first + zone_size);
   }
 
