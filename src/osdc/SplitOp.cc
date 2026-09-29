@@ -450,8 +450,8 @@ void ReplicaSplitOp::init_read(OSDOp &op, bool sparse, int ops_index) {
   uint64_t offset = op.op.extent.offset;
   uint64_t length = op.op.extent.length;
   uint64_t slice_count = replica_min_shard_read_size == 0 ? 1 :
-                          std::min(length / replica_min_shard_read_size,
-                                   read_order.size());
+                          std::clamp<uint64_t>(length / replica_min_shard_read_size,
+                                               1, read_order.size());
   uint64_t chunk_size = p2roundup(div_round_up(length, slice_count),
                                   REPLICA_MIN_SPLIT_SIZE);
   
