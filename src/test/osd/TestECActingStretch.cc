@@ -1885,3 +1885,34 @@ TEST_F(TestECActingStretch, OtherAbsoluteShardPick_IsBackfilled) {
     check(up, acting, all_info, true);
   }
 }
+
+// Strays picked for zone 0 must count toward dc0's bucket_max, so a
+// cross-zone up entry (legal pg-upmap-items 3->6) cannot push dc0 past it.
+TEST_F(TestECActingStretch, StrayPick_CountsTowardZoneBucketMax) {
+  const int N = CRUSH_ITEM_NONE;
+  vector<int> up = {0, N, N, 6, N, N};
+  vector<int> acting = up;
+  map<pg_shard_t, pg_info_t> all_info;
+  add_info(all_info, 0, 0, eversion_t(1, 10));
+  add_info(all_info, 1, 1, eversion_t(1, 10));
+  add_info(all_info, 2, 2, eversion_t(1, 10));
+  add_info(all_info, 6, 3, eversion_t(1, 10));
+
+  vector<int> want;
+  set<pg_shard_t> backfill, acting_backfill;
+  ostringstream ss;
+  calc(up, acting, all_info, pg_shard_t(0, shard_id_t(0)), false,
+       &want, &backfill, &acting_backfill, ss);
+  const unsigned bucket_max = 3;
+  map<int, unsigned> per_dc;
+  for (int osd : want) {
+    if (osd != N) {
+      ++per_dc[dc_of(osd)];
+    }
+  }
+  for (auto &[dc, count] : per_dc) {
+    EXPECT_LE(count, bucket_max)
+      << "dc " << dc << " supplies " << count << " OSDs, want " << want
+      << "\n" << ss.str();
+  }
+}
