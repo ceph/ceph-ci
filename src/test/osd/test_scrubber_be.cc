@@ -65,6 +65,7 @@ class TestScrubBackend : public ScrubBackend {
   bool get_m_repair() const { return m_repair; }
   bool get_is_replicated() const { return m_is_replicated; }
   auto get_omap_stats() const { return m_omap_stats; }
+  using ScrubBackend::get_error_counts;
 
   const std::vector<pg_shard_t>& all_but_me() const { return m_acting_but_me; }
 
@@ -981,6 +982,20 @@ class TestTScrubberBeECStretch : public TestTScrubberBeECCorruptShards {
       obj.digest += 1;
     }
   }
+
+  // One inconsistent object, whose only shard error is on the corrupt copy;
+  // deep errors count the object and that copy.
+  void expect_only_copy_inconsistent(pg_shard_t corrupt) {
+    logger.set_expected_err_count(1);
+    auto [incons, fix_list] = sbe->scrub_compare_maps(true, *test_scrubber);
+    ASSERT_EQ(1u, incons.size()) << "corrupted " << corrupt;
+    const auto& obj = std::get<inconsistent_obj_wrapper>(incons.front());
+    for (const auto& [osd_shard, shard] : obj.shards) {
+      EXPECT_EQ(osd_shard.osd == corrupt.osd, shard.has_ec_hash_error())
+          << "osd " << osd_shard.osd << ", corrupted " << corrupt;
+    }
+    EXPECT_EQ(2, sbe->get_error_counts().deep_errors);
+  }
 };
 
 // Both zones hold identical shards: a deep scrub is clean.
@@ -999,6 +1014,15 @@ TEST_F(TestTScrubberBeECStretch, corrupt_first_seen_zone_copy) {
   logger.set_expected_err_count(1);
   auto [incons, fix_list] = sbe->scrub_compare_maps(true, *test_scrubber);
   EXPECT_EQ(1u, incons.size()) << "corrupted " << first;
+}
+
+// Only the copy of a data shard that the scrub compares second is corrupt:
+// the cross-zone CRC mismatch must still be reported.
+TEST_F(TestTScrubberBeECStretch, corrupt_second_seen_zone_copy) {
+  pg_shard_t second = std::max(pg_shard_of(shard_id_t(0)),
+                               pg_shard_of(shard_id_t(k + m)));
+  corrupt_digest(second);
+  expect_only_copy_inconsistent(second);
 }
 
 // ///////////////////////////////////////////////////////////////////////////
