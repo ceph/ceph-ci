@@ -2859,6 +2859,44 @@ TEST_P(TestECFailoverWithPeering, PartialOverwriteRollForwardTrimsZone1Clones) {
   }
 }
 
+// Rolling back a full write must restore the per-shard OI version on zone-1
+// nonprimary shards, as it does on their zone-0 twins.
+TEST_P(TestECFailoverWithPeering, RollbackVersionMismatchZone1) {
+  if (num_zones < 2 || k < 3 || m < 2) {
+    GTEST_SKIP() << "requires num_zones > 1, k >= 3 and m >= 2";
+  }
+
+  const std::string obj_name = "test_attr_rollback_zone1";
+  const int zone1_nonprimary = k + m + 1;
+  const int zone1_parity = 2 * k + m;
+
+  create_and_write_verify(obj_name, "initial_data");
+  eversion_t v1 = read_shard_object_info(obj_name, 0).version;
+  ASSERT_EQ(v1, read_shard_object_info(obj_name, zone1_nonprimary).version);
+
+  ASSERT_EQ(0, write_attribute(obj_name, "test_attr", "value1", false));
+  eversion_t v2 = read_shard_object_info(obj_name, 0).version;
+  ASSERT_GT(v2, v1);
+  ASSERT_EQ(v1, read_shard_object_info(obj_name, 1).version);
+  ASSERT_EQ(v1, read_shard_object_info(obj_name, zone1_nonprimary).version);
+  ASSERT_EQ(v2, read_shard_object_info(obj_name, zone1_parity).version);
+
+  suspend_primary_to_osd(k);
+  ASSERT_NE(0, write_attribute(obj_name, "test_attr", "value2", true));
+  mark_osd_down(2);
+  unsuspend_primary_to_osd(k);
+  event_loop->run_until_idle();
+
+  EXPECT_EQ(v1, read_shard_object_info(obj_name, 1).version);
+  EXPECT_EQ(v2, read_shard_object_info(obj_name, zone1_parity).version);
+  object_info_t oi = read_shard_object_info(obj_name, zone1_nonprimary);
+  EXPECT_EQ(v1, oi.version);
+  EXPECT_TRUE(oi.shard_versions.empty());
+
+  mark_osd_up(2);
+  EXPECT_FALSE(scrub_object(obj_name));
+}
+
 // ---------------------------------------------------------------------------
 // Instantiate TestECFailoverWithPeering with EC configurations
 // ---------------------------------------------------------------------------
