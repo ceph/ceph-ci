@@ -2378,6 +2378,27 @@ bool pg_pool_t::stretch_set_can_peer(const set<int>& want, const OSDMap& osdmap,
   return true;
 }
 
+bool pg_pool_t::stretch_ec_zone_blocks_meet_min_size(
+  const vector<int>& acting) const
+{
+  map<int, unsigned> present; // zone block -> shards in acting
+  for (unsigned i = 0; i < acting.size(); ++i) {
+    if (acting[i] != CRUSH_ITEM_NONE) {
+      ++present[get_shard_zone(shard_id_t(i))];
+    }
+  }
+  int blocks_met = 0;
+  for (int zone = 0; zone < get_num_zone(); ++zone) {
+    if (present[zone] >= min_size) {
+      ++blocks_met;
+    }
+  }
+  if (peering_crush_mandatory_member != CRUSH_ITEM_NONE) {
+    return blocks_met > 0;
+  }
+  return blocks_met == get_num_zone();
+}
+
 list<pg_pool_t> pg_pool_t::generate_test_instances()
 {
   list<pg_pool_t> o;
@@ -4511,10 +4532,18 @@ bool PastIntervals::check_new_interval(
     const pg_pool_t& old_pg_pool = lastmap->get_pools().find(pgid.pool())->second;
     set<pg_shard_t> old_acting_shards;
     old_pg_pool.convert_to_pg_shards(old_acting, &old_acting_shards);
+    // Stretch EC min_size is per zone (acting_set_writeable()).  Also count
+    // by position, which later CRUSH changes in the interval cannot alter.
+    const bool min_size_met =
+      (old_pg_pool.is_erasure() && old_pg_pool.is_stretch_pool()) ?
+      (old_pg_pool.stretch_ec_zone_blocks_meet_min_size(old_acting) ||
+       lastmap->stretch_ec_num_acting_below_min_size(old_pg_pool,
+                                                     old_acting) == 0) :
+      num_acting >= old_pg_pool.min_size;
 
     if (num_acting &&
 	i.primary != -1 &&
-	num_acting >= old_pg_pool.min_size &&
+        min_size_met &&
 	(!old_pg_pool.is_stretch_pool() ||
 	 old_pg_pool.stretch_set_can_peer(old_acting, *lastmap, out)) &&
         could_have_gone_active(old_acting_shards)) {

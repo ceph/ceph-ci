@@ -1646,6 +1646,10 @@ public:
     for (auto i : want) swant.insert(i);
     return stretch_set_can_peer(swant, osdmap, out);
   }
+  /// Stretch EC: whether each zone block of acting (in degraded stretch
+  /// mode, any one block) has min_size shards, counted by position
+  bool stretch_ec_zone_blocks_meet_min_size(
+    const std::vector<int>& acting) const;
 
   uint64_t target_max_bytes = 0;   ///< tiering: target max pool size
   uint64_t target_max_objects = 0; ///< tiering: target max pool size

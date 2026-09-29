@@ -182,6 +182,35 @@ protected:
       ceph_assert(r == 0);
     });
   }
+
+  // Ends an interval with the current map as its last map and old_acting as
+  // its acting set, and returns how many intervals may have gone read/write.
+  size_t maybe_rw_intervals(const vector<int> &old_acting, std::ostream &out) {
+    struct AlwaysRecoverable : public IsPGRecoverablePredicate {
+      bool operator()(const std::set<pg_shard_t> &) const override { return true; }
+    } recoverable;
+
+    OSDMap::Incremental up_thru_inc(osdmap->get_epoch() + 1);
+    up_thru_inc.fsid = osdmap->get_fsid();
+    for (int i = 0; i < 8; ++i) {
+      up_thru_inc.new_up_thru[i] = osdmap->get_epoch() + 1;
+    }
+    osdmap->apply_incremental(up_thru_inc);
+    auto lastmap = std::make_shared<OSDMap>();
+    lastmap->deepish_copy_from(*osdmap);
+    OSDMap::Incremental next(osdmap->get_epoch() + 1);
+    next.fsid = osdmap->get_fsid();
+    osdmap->apply_incremental(next);
+    pool = osdmap->get_pg_pool(1);
+
+    const vector<int> new_acting = {0, 1, 2, 3, 4, 7};
+    PastIntervals past_intervals;
+    ceph_assert(PastIntervals::check_new_interval(
+      0, 0, old_acting, new_acting, 0, 0, old_acting, new_acting,
+      1, 0, osdmap.get(), lastmap.get(), pg_t(0, 1), recoverable,
+      &past_intervals, &out));
+    return past_intervals.size();
+  }
 };
 
   // ===========================================================================
@@ -428,37 +457,58 @@ TEST_F(StretchECMinSizeTest, DeviceClassRule_DatacenterWithoutClassOsdsNoDeficit
     hdd, {0, 1, 2, N, N, N}));
 }
 
+TEST_F(StretchECMinSizeTest, ZoneBlocksMeetMinSize)
+{
+  const int N = CRUSH_ITEM_NONE;
+  EXPECT_TRUE(pool->stretch_ec_zone_blocks_meet_min_size({0, 1, N, 3, N, 5}));
+  EXPECT_FALSE(pool->stretch_ec_zone_blocks_meet_min_size({0, 1, 2, 3, N, N}));
+  EXPECT_FALSE(pool->stretch_ec_zone_blocks_meet_min_size({0, 1, 2, N, N, N}));
+
+  pg_pool_t degraded = *pool;
+  degraded.peering_crush_bucket_count = 1;
+  degraded.peering_crush_mandatory_member = osdmap->crush->get_item_id("dc0");
+  EXPECT_TRUE(degraded.stretch_ec_zone_blocks_meet_min_size({0, 1, 2, N, N, N}));
+  EXPECT_FALSE(degraded.stretch_ec_zone_blocks_meet_min_size({0, N, N, 3, N, N}));
+}
+
 // An interval whose acting set leaves a zone below the per-zone min_size
 // could never have been writeable (acting_set_writeable() is false), so it
 // must not be recorded as maybe_went_rw.
 TEST_F(StretchECMinSizeTest, PastIntervals_ZoneBelowMinSizeNotMaybeWentRW)
 {
-  struct AlwaysRecoverable : public IsPGRecoverablePredicate {
-    bool operator()(const std::set<pg_shard_t> &) const override { return true; }
-  } recoverable;
-
-  OSDMap::Incremental up_thru_inc(osdmap->get_epoch() + 1);
-  up_thru_inc.fsid = osdmap->get_fsid();
-  for (int i = 0; i < 8; ++i) {
-    up_thru_inc.new_up_thru[i] = osdmap->get_epoch() + 1;
-  }
-  osdmap->apply_incremental(up_thru_inc);
-  auto lastmap = std::make_shared<OSDMap>();
-  lastmap->deepish_copy_from(*osdmap);
-  OSDMap::Incremental next(osdmap->get_epoch() + 1);
-  next.fsid = osdmap->get_fsid();
-  osdmap->apply_incremental(next);
-
   const int N = CRUSH_ITEM_NONE;
   vector<int> old_acting = {0, 1, 2, 3, N, N};
-  vector<int> new_acting = {0, 1, 2, 3, 4, 5};
-  ASSERT_EQ(1u, lastmap->stretch_ec_num_acting_below_min_size(*pool, old_acting));
-
-  PastIntervals past_intervals;
+  ASSERT_EQ(1u, osdmap->stretch_ec_num_acting_below_min_size(*pool, old_acting));
   std::ostringstream out;
-  ASSERT_TRUE(PastIntervals::check_new_interval(
-    0, 0, old_acting, new_acting, 0, 0, old_acting, new_acting,
-    1, 0, osdmap.get(), lastmap.get(), pg_t(0, 1), recoverable,
-    &past_intervals, &out));
-  EXPECT_EQ(0u, past_intervals.size()) << out.str();
+  EXPECT_EQ(0u, maybe_rw_intervals(old_acting, out)) << out.str();
+}
+
+TEST_F(StretchECMinSizeTest, PastIntervals_FullActingMaybeWentRW)
+{
+  std::ostringstream out;
+  EXPECT_EQ(1u, maybe_rw_intervals({0, 1, 2, 3, 4, 5}, out)) << out.str();
+}
+
+// A CRUSH change that does not remap the PG does not end the interval, so it
+// must not hide that the interval went read/write.
+TEST_F(StretchECMinSizeTest, PastIntervals_EmptyDatacenterAddedStillMaybeWentRW)
+{
+  add_empty_datacenter("dc2");
+  std::ostringstream out;
+  EXPECT_EQ(1u, maybe_rw_intervals({0, 1, 2, 3, 4, 5}, out)) << out.str();
+}
+
+TEST_F(StretchECMinSizeTest, PastIntervals_ActingHostsMovedStillMaybeWentRW)
+{
+  modify_crush([&](CrushWrapper &crush) {
+    for (const char *host : {"host4", "host5"}) {
+      int r = crush.move_bucket(g_ceph_context, crush.get_item_id(host),
+                                {{"root", "default"}, {"datacenter", "dc0"}});
+      ceph_assert(r == 0);
+    }
+  });
+  const vector<int> acting = {0, 1, 2, 3, 4, 5};
+  ASSERT_NE(0u, osdmap->stretch_ec_num_acting_below_min_size(*pool, acting));
+  std::ostringstream out;
+  EXPECT_EQ(1u, maybe_rw_intervals(acting, out)) << out.str();
 }
