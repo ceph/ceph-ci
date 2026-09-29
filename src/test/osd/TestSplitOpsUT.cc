@@ -1195,3 +1195,40 @@ TEST_F(TestSplitOpInit, ECSingleChunkReadsOfDifferentShardsNotDirect)
     << "whole op sent to osd." << op->target.osd;
   op->put();
 }
+
+// Single-chunk reads from one shard in different stripes stay one direct read.
+TEST_F(TestSplitOpInit, ECSingleChunkReadsOfOneShardDirect)
+{
+  set_client_zone(1);
+  auto op = make_reads_op(degraded_ec_pool_id, {0, 8192}, 100,
+                          CEPH_OSD_FLAG_LOCALIZE_READS);
+  shunique_lock<ceph::shared_mutex> sul;
+  EXPECT_FALSE(SplitOp::create(op, *objecter, sul, g_ceph_context));
+  EXPECT_TRUE(op->target.flags & CEPH_OSD_FLAG_EC_DIRECT_READ);
+  EXPECT_EQ(4, op->target.osd);
+  op->put();
+}
+
+// Single-chunk reads of different shards, split without needing the primary
+// for any one of them, still include the reference sub-read that the torn
+// read check compares the shards' versions with.
+TEST_F(TestSplitOpInit, ECSingleChunkReadsOfDifferentShardsKeepReference)
+{
+  set_client_zone(1);
+  auto op = make_reads_op(ec_pool_id, {0, 4096}, 100,
+                          CEPH_OSD_FLAG_LOCALIZE_READS);
+  op->target.acting = {0, 1, 2, 4, 5, 6};
+  op->target.actual_pgid = spg_t(pg_t(0, ec_pool_id), shard_id_t(0));
+  {
+    ECSplitOpProbe split(op, *objecter, g_ceph_context, 6, true);
+    split.init_reference_sub_read();
+    ASSERT_FALSE(split.abort);
+    split.init_read(op->ops[0], false, 0);
+    split.init_read(op->ops[1], false, 1);
+    ASSERT_FALSE(split.abort);
+    EXPECT_TRUE(split.sub_reads.contains(3));
+    EXPECT_TRUE(split.sub_reads.contains(4));
+    EXPECT_TRUE(split.sub_reads.contains(split.reference_sub_read_key));
+  }
+  op->put();
+}

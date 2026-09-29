@@ -249,7 +249,8 @@ void ECSplitOp::init_read(OSDOp &op, bool sparse, int ops_index) {
     }
   }
 
-  if (primary_required && !sub_reads.contains(reference_sub_read_key)) {
+  if ((primary_required || sub_reads.size() > 1) &&
+      !sub_reads.contains(reference_sub_read_key)) {
     sub_reads.emplace(reference_sub_read_key, orig_op->ops.size() + 1,
                       reference_sub_read.shard);
   }
@@ -751,9 +752,10 @@ void SplitOp::init(OSDOp &op, int ops_index) {
 #define dout_prefix *_dout << " SplitOp::"
 
 namespace {
-std::pair<bool, bool> is_single_chunk(const pg_pool_t *pi, uint64_t offset, uint64_t len) {
+// The raw shard holding all of offset~len, if it lies within one chunk.
+std::optional<raw_shard_id_t> single_chunk_shard(const pg_pool_t *pi, uint64_t offset, uint64_t len) {
   if (!pi->is_erasure()) {
-    return {false, false};
+    return std::nullopt;
   }
 
   uint64_t stripe_width = pi->get_stripe_width();
@@ -763,14 +765,14 @@ std::pair<bool, bool> is_single_chunk(const pg_pool_t *pi, uint64_t offset, uint
   // chunk_size = stripe_width / k <= stripe_width / 2. This early check avoids
   // the more expensive division operation (stripe_width / data_chunk_count) below.
   if (len > stripe_width / 2) {
-    return {false, false};
+    return std::nullopt;
   }
   uint64_t data_chunk_count = pi->get_ec_data_shard_count();
   uint32_t chunk_size = pi->get_stripe_width() / data_chunk_count;
 
   // Chunk_size should never be zero, so this is paranoia.
   if (len > chunk_size || chunk_size == 0) {
-    return {false, false};
+    return std::nullopt;
   }
 
   uint64_t offset_to_end_of_chunk;
@@ -783,10 +785,10 @@ std::pair<bool, bool> is_single_chunk(const pg_pool_t *pi, uint64_t offset, uint
   }
 
   if (len > offset_to_end_of_chunk) {
-    return {false, false};
+    return std::nullopt;
   }
 
-  return {true, offset % stripe_width < chunk_size};
+  return raw_shard_id_t((offset / chunk_size) % data_chunk_count);
 }
 
 /**
@@ -843,7 +845,7 @@ bool validate_flags(const pg_pool_t *pi, Objecter::Op *op, CephContext *cct) {
 bool validate_operations(Objecter::Op *op, const pg_pool_t *pi, bool is_erasure,
                         uint64_t replica_min_read_size, CephContext *cct,
                         bool &has_primary_ops, bool &single_direct_op) {
-  bool is_first_chunk = true;
+  std::optional<raw_shard_id_t> direct_shard;
   bool suitable_read_found = false;
 
   for (auto &o : op->ops) {
@@ -862,9 +864,9 @@ bool validate_operations(Objecter::Op *op, const pg_pool_t *pi, bool is_erasure,
           suitable_read_found = true;
         }
         if (single_direct_op) {
-          auto [single_chunk, first_chunk] = is_single_chunk(pi, o.op.extent.offset, o.op.extent.length);
-          is_first_chunk = is_first_chunk && first_chunk;
-          single_direct_op = single_direct_op && single_chunk;
+          auto shard = single_chunk_shard(pi, o.op.extent.offset, o.op.extent.length);
+          single_direct_op = shard && (!direct_shard || *direct_shard == *shard);
+          direct_shard = shard;
         }
         break;
       }
@@ -885,7 +887,7 @@ bool validate_operations(Objecter::Op *op, const pg_pool_t *pi, bool is_erasure,
   }
 
   if (single_direct_op && has_primary_ops) {
-    single_direct_op = is_first_chunk;
+    single_direct_op = direct_shard == raw_shard_id_t(0);
   }
 
   return suitable_read_found;
@@ -989,15 +991,15 @@ void SplitOp::prepare_single_op(Objecter::Op *op, Objecter &objecter, CephContex
   ceph_assert(pi);
 
   objecter._calc_target(&op->target, op);
-  uint64_t data_chunk_count = pi->get_ec_data_shard_count();
-  uint32_t chunk_size = pi->get_stripe_width() / data_chunk_count;
 
   // Find the first read to work out where the IO goes.
   for (auto o : op->ops) {
     if (o.op.op == CEPH_OSD_OP_SPARSE_READ ||
         o.op.op == CEPH_OSD_OP_READ) {
-      raw_shard_id_t raw_shard((o.op.extent.offset) / chunk_size % data_chunk_count);
-      shard_id_t shard = pi->get_shard(raw_shard);
+      auto raw_shard = single_chunk_shard(pi, o.op.extent.offset,
+                                          o.op.extent.length);
+      shard_id_t shard = raw_shard ? pi->get_shard(*raw_shard)
+                                   : shard_id_t::NO_SHARD;
       if (shard != shard_id_t::NO_SHARD) {
         std::optional<int> local_zone;
         shard = ECSplitOp::choose_read_shard(
