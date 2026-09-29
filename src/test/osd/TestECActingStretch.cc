@@ -148,10 +148,42 @@ protected:
 
     update_osdmap_with_peering(new_osdmap);
   }
+
+  void add_info(map<pg_shard_t, pg_info_t> &all_info, int osd, int shard,
+                eversion_t last_update, eversion_t log_tail = eversion_t()) {
+    pg_info_t info(spg_t(pg_t(1, pool_id), shard_id_t(shard)));
+    info.history.epoch_created = 1;
+    info.history.same_interval_since = 1;
+    info.last_update = last_update;
+    info.last_complete = last_update;
+    info.log_tail = log_tail;
+    all_info[pg_shard_t(osd, shard_id_t(shard))] = info;
+  }
+
+  void calc(const vector<int> &up, const vector<int> &acting,
+            const map<pg_shard_t, pg_info_t> &all_info, pg_shard_t auth,
+            bool restrict_to_up_acting, vector<int> *want,
+            set<pg_shard_t> *backfill, set<pg_shard_t> *acting_backfill,
+            ostringstream &ss) {
+    const pg_pool_t *pool = osdmap->get_pg_pool(pool_id);
+    ASSERT_NE(pool, nullptr);
+    PGPool pgpool(osdmap, pool_id, *pool, "test_ec_pool");
+    auto auth_it = all_info.find(auth);
+    ASSERT_NE(auth_it, all_info.end());
+    PeeringState::calc_ec_acting_stretch(
+      auth_it, pool->size, acting, up, all_info, restrict_to_up_acting,
+      want, backfill, acting_backfill, osdmap, pgpool, ss);
+    ASSERT_EQ(want->size(), pool->size);
+  }
+
+  int dc_of(int osd) {
+    return osdmap->crush->get_parent_of_type(
+      osd, 9, osdmap->get_pg_pool(pool_id)->crush_rule);
+  }
 };
 
 
-// calc_ec_acting_stretch Tests 
+// calc_ec_acting_stretch Tests
 /**
  * Test: Zone isolation - up set respects zone boundaries
  *
@@ -1664,4 +1696,88 @@ TEST_F(TestECActingStretch, NoOsdAppearsTwiceInWant) {
       << "osd." << want[i] << " appears more than once in want, at position "
       << i << "\n" << ss.str();
   }
+}
+
+// restrict_to_up_acting keeps a current same-zone stray out of want.
+TEST_F(TestECActingStretch, RestrictToUpActing_NoStrays) {
+  const int N = CRUSH_ITEM_NONE;
+  vector<int> up = {0, N, 2, 3, 4, 5};
+  vector<int> acting = up;
+  map<pg_shard_t, pg_info_t> all_info;
+  for (int i : {0, 2, 3, 4, 5}) {
+    add_info(all_info, i, i, eversion_t(1, 10));
+  }
+  add_info(all_info, 6, 1, eversion_t(1, 10));
+
+  vector<int> want;
+  set<pg_shard_t> backfill, acting_backfill;
+  ostringstream ss;
+  calc(up, acting, all_info, pg_shard_t(0, shard_id_t(0)), true,
+       &want, &backfill, &acting_backfill, ss);
+  EXPECT_EQ(want, (vector<int>{0, N, 2, 3, 4, 5})) << ss.str();
+  EXPECT_TRUE(backfill.empty()) << ss.str();
+  EXPECT_FALSE(acting_backfill.count(pg_shard_t(6, shard_id_t(1)))) << ss.str();
+
+  want.clear();
+  backfill.clear();
+  acting_backfill.clear();
+  ostringstream ss2;
+  calc(up, acting, all_info, pg_shard_t(0, shard_id_t(0)), false,
+       &want, &backfill, &acting_backfill, ss2);
+  EXPECT_EQ(want, (vector<int>{0, 6, 2, 3, 4, 5})) << ss2.str();
+}
+
+// restrict_to_up_acting still falls back to acting[i] when up[i] is behind.
+TEST_F(TestECActingStretch, RestrictToUpActing_ActingFallbackStillUsed) {
+  vector<int> up = {0, 6, 2, 3, 4, 5};
+  vector<int> acting = {0, 1, 2, 3, 4, 5};
+  map<pg_shard_t, pg_info_t> all_info;
+  for (int i = 0; i < 6; ++i) {
+    add_info(all_info, i, i, eversion_t(1, 10), eversion_t(1, 5));
+  }
+  add_info(all_info, 6, 1, eversion_t(1, 2));
+
+  vector<int> want;
+  set<pg_shard_t> backfill, acting_backfill;
+  ostringstream ss;
+  calc(up, acting, all_info, pg_shard_t(0, shard_id_t(0)), true,
+       &want, &backfill, &acting_backfill, ss);
+  EXPECT_EQ(want, (vector<int>{0, 1, 2, 3, 4, 5})) << ss.str();
+  EXPECT_EQ(backfill, (set<pg_shard_t>{pg_shard_t(6, shard_id_t(1))})) << ss.str();
+  EXPECT_TRUE(acting_backfill.count(pg_shard_t(6, shard_id_t(1)))) << ss.str();
+}
+
+// Auth log in zone 1 with all of zone 0 behind its tail: zone 0 is refilled
+// only from a same-zone stray holding the same absolute shard.
+TEST_F(TestECActingStretch, Zone1Auth_Zone0BehindLogTail) {
+  const int N = CRUSH_ITEM_NONE;
+  vector<int> up = {0, 1, 2, 3, 4, 5};
+  vector<int> acting = up;
+  map<pg_shard_t, pg_info_t> all_info;
+  for (int i : {0, 1, 2}) {
+    add_info(all_info, i, i, eversion_t(1, 5));
+  }
+  for (int i : {3, 4, 5}) {
+    add_info(all_info, i, i, eversion_t(1, 12), eversion_t(1, 10));
+  }
+  add_info(all_info, 6, 0, eversion_t(1, 12));
+  add_info(all_info, 7, 3, eversion_t(1, 12));
+
+  vector<int> want;
+  set<pg_shard_t> backfill, acting_backfill;
+  ostringstream ss;
+  calc(up, acting, all_info, pg_shard_t(4, shard_id_t(4)), false,
+       &want, &backfill, &acting_backfill, ss);
+  EXPECT_EQ(want, (vector<int>{6, N, N, 3, 4, 5})) << ss.str();
+  EXPECT_EQ(backfill, (set<pg_shard_t>{pg_shard_t(0, shard_id_t(0)),
+                                       pg_shard_t(1, shard_id_t(1)),
+                                       pg_shard_t(2, shard_id_t(2))}))
+    << ss.str();
+  set<pg_shard_t> expected_ab = backfill;
+  for (unsigned i = 0; i < want.size(); ++i) {
+    if (want[i] != N) {
+      expected_ab.insert(pg_shard_t(want[i], shard_id_t(i)));
+    }
+  }
+  EXPECT_EQ(acting_backfill, expected_ab) << ss.str();
 }

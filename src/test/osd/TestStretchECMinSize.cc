@@ -45,6 +45,7 @@
 #include "osd/osd_types.h"
 #include "crush/CrushWrapper.h"
 #include "crush/crush.h"
+#include <functional>
 
 using namespace std;
 
@@ -133,6 +134,20 @@ protected:
     osdmap = make_stretch_ec_osdmap();
     pool = osdmap->get_pg_pool(1);
     ASSERT_NE(pool, nullptr);
+  }
+
+  void modify_crush(const std::function<void(CrushWrapper&)> &f) {
+    CrushWrapper crush;
+    bufferlist bl;
+    osdmap->crush->encode(bl, CEPH_FEATURES_SUPPORTED_DEFAULT);
+    auto p = bl.cbegin();
+    crush.decode(p);
+    f(crush);
+    OSDMap::Incremental inc(osdmap->get_epoch() + 1);
+    inc.fsid = osdmap->get_fsid();
+    crush.encode(inc.crush, CEPH_FEATURES_SUPPORTED_DEFAULT);
+    osdmap->apply_incremental(inc);
+    pool = osdmap->get_pg_pool(1);
   }
 };
 
@@ -246,4 +261,67 @@ TEST_F(StretchECMinSizeTest, NumActingBelowMinSize_ReplicatedPool)
   vector<int> acting = {0, CRUSH_ITEM_NONE, CRUSH_ITEM_NONE,
                         3, CRUSH_ITEM_NONE, CRUSH_ITEM_NONE};
   EXPECT_EQ(0u, osdmap->stretch_ec_num_acting_below_min_size(rep, acting));
+}
+
+// Degraded stretch mode: only the mandatory zone contributes to the deficit.
+TEST_F(StretchECMinSizeTest, NumActingBelowMinSize_MandatoryMemberOnlyCountsThatZone)
+{
+  pg_pool_t degraded = *pool;
+  degraded.peering_crush_bucket_count = 1;
+  degraded.peering_crush_mandatory_member = osdmap->crush->get_item_id("dc0");
+  const int N = CRUSH_ITEM_NONE;
+  EXPECT_EQ(0u, osdmap->stretch_ec_num_acting_below_min_size(
+    degraded, {0, 1, 2, N, N, N}));
+  EXPECT_EQ(1u, osdmap->stretch_ec_num_acting_below_min_size(
+    degraded, {0, N, N, 3, 4, 5}));
+  EXPECT_EQ(2u, osdmap->stretch_ec_num_acting_below_min_size(
+    degraded, {N, N, N, 3, 4, 5}));
+}
+
+// A rule with one TAKE per datacenter finds the same zones as a root TAKE.
+TEST_F(StretchECMinSizeTest, PerDatacenterTakeRule_FindsBothZones)
+{
+  int rule_id = -1;
+  modify_crush([&](CrushWrapper &crush) {
+    const int dc0 = crush.get_item_id("dc0");
+    const int dc1 = crush.get_item_id("dc1");
+    crush_rule *rule = crush_make_rule(6, pg_pool_t::TYPE_ERASURE);
+    int step = 0;
+    crush_rule_set_step(rule, step++, CRUSH_RULE_TAKE, dc0, 0);
+    crush_rule_set_step(rule, step++, CRUSH_RULE_CHOOSELEAF_INDEP, 3, 1);
+    crush_rule_set_step(rule, step++, CRUSH_RULE_EMIT, 0, 0);
+    crush_rule_set_step(rule, step++, CRUSH_RULE_TAKE, dc1, 0);
+    crush_rule_set_step(rule, step++, CRUSH_RULE_CHOOSELEAF_INDEP, 3, 1);
+    crush_rule_set_step(rule, step++, CRUSH_RULE_EMIT, 0, 0);
+    rule_id = crush_add_rule(crush.get_crush_map(), rule, -1);
+    ceph_assert(rule_id >= 0);
+    crush.set_rule_name(rule_id, "per_dc_rule");
+  });
+  pg_pool_t per_dc = *pool;
+  per_dc.crush_rule = rule_id;
+  const int N = CRUSH_ITEM_NONE;
+  EXPECT_EQ(0u, osdmap->stretch_ec_num_acting_below_min_size(
+    per_dc, {0, 1, 2, 3, 4, 5}));
+  EXPECT_EQ(1u, osdmap->stretch_ec_num_acting_below_min_size(
+    per_dc, {0, 1, 2, 3, N, N}));
+  EXPECT_EQ(2u, osdmap->stretch_ec_num_acting_below_min_size(
+    per_dc, {N, N, N, 3, 4, 5}));
+  EXPECT_TRUE(osdmap->at_least_one_zone_has_min_size(per_dc, {N, N, N, 3, 4, N}));
+  EXPECT_FALSE(osdmap->at_least_one_zone_has_min_size(per_dc, {0, N, N, 3, N, N}));
+}
+
+// stretch_set_can_peer skips NONE entries and honours the mandatory member.
+TEST_F(StretchECMinSizeTest, StretchSetCanPeer_NoneEntriesAndMandatoryMember)
+{
+  const int N = CRUSH_ITEM_NONE;
+  EXPECT_FALSE(pool->stretch_set_can_peer(vector<int>{0, 1, 2, N, N, N}, *osdmap, nullptr));
+  EXPECT_TRUE(pool->stretch_set_can_peer(vector<int>{0, N, N, 3, N, N}, *osdmap, nullptr));
+  EXPECT_FALSE(pool->stretch_set_can_peer(vector<int>(6, N), *osdmap, nullptr));
+
+  pg_pool_t degraded = *pool;
+  degraded.peering_crush_bucket_count = 1;
+  degraded.peering_crush_mandatory_member = osdmap->crush->get_item_id("dc1");
+  EXPECT_FALSE(degraded.stretch_set_can_peer(vector<int>{0, 1, 2, N, N, N}, *osdmap, nullptr));
+  EXPECT_TRUE(degraded.stretch_set_can_peer(vector<int>{N, N, N, 3, 4, 5}, *osdmap, nullptr));
+  EXPECT_TRUE(degraded.stretch_set_can_peer(vector<int>{N, N, N, 3, N, N}, *osdmap, nullptr));
 }
