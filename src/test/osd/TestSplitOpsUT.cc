@@ -740,6 +740,19 @@ protected:
     op->target.actual_pgid = spg_t(pg_t(0, pool), shard_id_t(primary_shard));
     return op;
   }
+
+  Objecter::Op *make_reads_op(int64_t pool, const std::vector<uint64_t>& offsets,
+                              uint64_t len, int flags)
+  {
+    osdc_opvec ops(offsets.size());
+    for (size_t i = 0; i < offsets.size(); i++) {
+      ops[i].op.op = CEPH_OSD_OP_READ;
+      ops[i].op.extent.offset = offsets[i];
+      ops[i].op.extent.length = len;
+    }
+    return new Objecter::Op(object_t("obj"), object_locator_t(pool),
+                            std::move(ops), flags, (Context*)nullptr, nullptr);
+  }
 };
 
 // LOCALIZE_READS from zone 1 with a zone-1 primary reads zone-1 data shards.
@@ -1166,5 +1179,19 @@ TEST_F(TestSplitOpInit, ReplicaSplitReadShorterThanMinimumSlice)
         << "key " << key;
     }
   }
+  op->put();
+}
+
+// Single-chunk reads from different shards are not sent together as one
+// direct read to the first read's shard.
+TEST_F(TestSplitOpInit, ECSingleChunkReadsOfDifferentShardsNotDirect)
+{
+  set_client_zone(1);
+  auto op = make_reads_op(degraded_ec_pool_id, {0, 4096}, 100,
+                          CEPH_OSD_FLAG_LOCALIZE_READS);
+  shunique_lock<ceph::shared_mutex> sul;
+  EXPECT_FALSE(SplitOp::create(op, *objecter, sul, g_ceph_context));
+  EXPECT_FALSE(op->target.flags & CEPH_OSD_FLAG_EC_DIRECT_READ)
+    << "whole op sent to osd." << op->target.osd;
   op->put();
 }
