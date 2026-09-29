@@ -633,6 +633,7 @@ public:
 class ReplicaSplitOpProbe : public ReplicaSplitOp {
 public:
   using ReplicaSplitOp::ReplicaSplitOp;
+  using SplitOp::init;
   using SplitOp::sub_reads;
   using SplitOp::reference_sub_read;
   using SplitOp::reference_sub_read_key;
@@ -1048,4 +1049,30 @@ TEST_F(TestSplitOpInit, ECBalanceReadsSkipZoneMissingShard)
     }
     op->put();
   }
+}
+
+// A stat ahead of the read still sends the reference sub-read to the reference replica.
+TEST_F(TestSplitOpInit, ReplicaStatBeforeReadTargetsReference)
+{
+  std::vector<int> acting = {0, 1, 2, 3};
+  osdc_opvec ops(2);
+  ops[0].op.op = CEPH_OSD_OP_STAT;
+  ops[1].op.op = CEPH_OSD_OP_READ;
+  ops[1].op.extent.length = 4 * 65536;
+  auto op = new Objecter::Op(object_t("obj"), object_locator_t(rep_pool_id),
+                             std::move(ops), CEPH_OSD_FLAG_BALANCE_READS,
+                             (Context*)nullptr, nullptr);
+  op->target.acting = acting;
+  {
+    ReplicaSplitOpProbe split(op, *objecter, g_ceph_context, 16, false);
+    split.init_reference_sub_read();
+    ASSERT_FALSE(split.abort);
+    split.init(op->ops[0], 0);
+    split.init(op->ops[1], 1);
+    ASSERT_FALSE(split.abort);
+    auto& ref = split.sub_reads.at(split.reference_sub_read_key);
+    ASSERT_GE((int)ref.abs_shard, 0);
+    EXPECT_EQ(split.reference_sub_read.osd, acting[(int)ref.abs_shard]);
+  }
+  op->put();
 }
