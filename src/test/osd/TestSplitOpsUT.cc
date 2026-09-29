@@ -1030,3 +1030,26 @@ TEST_F(TestSplitOpInit, ReplicaLocalizeReadsOnlyLocalZone)
     op->put();
   }
 }
+
+// LOCALIZE_READS from zone 1 with a zone-0 primary keeps data reads in zone 1.
+TEST_F(TestSplitOpInit, ECLocalizeZone0PrimaryKeepsLocalDataShard)
+{
+  set_client_zone(1);
+  std::vector<int> acting = {0, 1, 2, 4, 5, 6};
+  auto op = make_read_op(ec_pool_id, acting, 0, 8192, CEPH_OSD_FLAG_LOCALIZE_READS);
+  {
+    ECSplitOpProbe split(op, *objecter, g_ceph_context, 6, true);
+    split.init_reference_sub_read();
+    ASSERT_FALSE(split.abort);
+    split.init_read(op->ops[0], false, 0);
+    ASSERT_FALSE(split.abort);
+    std::set<int> abs_shards;
+    for (auto& [key, sr] : split.sub_reads) {
+      abs_shards.insert((int)sr.abs_shard);
+    }
+    EXPECT_TRUE(abs_shards.contains(3));
+    EXPECT_TRUE(abs_shards.contains(4));
+    EXPECT_TRUE(abs_shards.contains(0));
+  }
+  op->put();
+}
