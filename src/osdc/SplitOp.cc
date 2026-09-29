@@ -380,7 +380,11 @@ std::pair<SplitOp::extent_set, bufferlist> ReplicaSplitOp::assemble_buffer_spars
   extent_set extents_out;
   bufferlist bl_out;
 
-  for (auto && [acting_index, sr] : sub_reads) {
+  for (int acting_index : read_order) {
+    if (!sub_reads.contains(acting_index)) {
+      break;
+    }
+    auto &sr = sub_reads.at(acting_index);
     for (auto [off, len] : *sr.details.at(ops_index).e) {
       extents_out.insert(off, len);
     }
@@ -399,8 +403,11 @@ std::pair<SplitOp::extent_set, bufferlist> ReplicaSplitOp::assemble_buffer_spars
  * @param ops_index Index of the operation in the operation list
  */
 void ReplicaSplitOp::assemble_buffer_read(bufferlist &bl_out, int ops_index) const {
-  for (auto && [acting_index, sr] : sub_reads) {
-    bl_out.append(sr.details.at(ops_index).bl);
+  for (int acting_index : read_order) {
+    if (!sub_reads.contains(acting_index)) {
+      break;
+    }
+    bl_out.append(sub_reads.at(acting_index).details.at(ops_index).bl);
   }
 }
 
