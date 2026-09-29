@@ -322,28 +322,31 @@ int ECSplitOp::choose_local_zone_index(
 /**
  * @brief Initialize reference_sub_read to a random valid OSD.
  *
- * Counts valid OSDs in the acting set and picks a random acting index.
+ * Collects the acting indices of valid OSDs into read_order, rotated so
+ * that a randomly chosen one comes first and becomes the reference.
  * Must be called after _calc_target() populates the acting set.
  */
 void ReplicaSplitOp::init_reference_sub_read() {
   auto &target = orig_op->target;
 
-  std::vector<int> valid_osds;
-  for (int osd : target.acting) {
-    if (objecter.osdmap->exists(osd)) {
-      valid_osds.push_back(osd);
+  for (int i = 0; i < (int)target.acting.size(); ++i) {
+    if (objecter.osdmap->exists(target.acting[i])) {
+      read_order.push_back(i);
     }
   }
 
-  if (valid_osds.size() < 2) {
+  if (read_order.size() < 2) {
     abort = true;
     ldout(cct, DBG_LVL) << __func__ << " ABORT: Not enough valid OSDs" << dendl;
     return;
   }
 
-  int chosen = valid_osds[rand() % valid_osds.size()];
-  reference_sub_read = pg_shard_t(chosen, shard_id_t::NO_SHARD);
-  reference_sub_read_key = chosen;
+  std::rotate(read_order.begin(),
+              read_order.begin() + rand() % read_order.size(),
+              read_order.end());
+  reference_sub_read_key = read_order.front();
+  reference_sub_read = pg_shard_t(target.acting[reference_sub_read_key],
+                                  shard_id_t::NO_SHARD);
 }
 
 /**
@@ -459,10 +462,8 @@ void ReplicaSplitOp::init_read(OSDOp &op, bool sparse, int ops_index) {
                                    osds.size());
   uint64_t chunk_size = p2roundup(length / slice_count, REPLICA_MIN_SPLIT_SIZE);
   
-  // Use reference_sub_read (set in constructor) as the starting shard
-  // This provides load balancing while ensuring reference_sub_read is always set
-  for (unsigned i = reference_sub_read_key; length > 0; i = (i + 1 == osds.size()) ? 0 : i + 1) {
-    int acting_index = i;
+  for (unsigned i = 0; length > 0; i = (i + 1) % read_order.size()) {
+    int acting_index = read_order[i];
     if (!sub_reads.contains(acting_index)) {
       sub_reads.emplace(acting_index, orig_op->ops.size() + 1, shard_id_t(acting_index));
     }

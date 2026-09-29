@@ -640,6 +640,9 @@ class ReplicaSplitOp : public SplitOp {
   /// Set to true when LOCALIZE_READS was requested.
   const bool localize;
 
+  /// Acting indices that receive sub-reads, reference first.
+  std::vector<int> read_order;
+
   ~ReplicaSplitOp() {
     complete();
   }
