@@ -325,3 +325,29 @@ TEST_F(StretchECMinSizeTest, StretchSetCanPeer_NoneEntriesAndMandatoryMember)
   EXPECT_TRUE(degraded.stretch_set_can_peer(vector<int>{N, N, N, 3, 4, 5}, *osdmap, nullptr));
   EXPECT_TRUE(degraded.stretch_set_can_peer(vector<int>{N, N, N, 3, N, N}, *osdmap, nullptr));
 }
+
+// A profile with crush-device-class makes the stretch rule TAKE the shadow
+// root default~hdd; its datacenters are shadow buckets and must still count
+// as zones.
+TEST_F(StretchECMinSizeTest, DeviceClassRule_ShadowZonesCounted)
+{
+  int rule_id = -1;
+  modify_crush([&](CrushWrapper &crush) {
+    for (int osd = 0; osd < 8; ++osd) {
+      std::ostringstream ss;
+      int r = crush.update_device_class(osd, "hdd", "osd." + std::to_string(osd), &ss);
+      ceph_assert(r >= 0);
+    }
+    std::ostringstream ss;
+    rule_id = crush.add_simple_stretch_rule(
+      "hdd_stretch_rule", "default", "datacenter", "host", 2, 3, "hdd",
+      "indep", pg_pool_t::TYPE_ERASURE, false, &ss);
+    ceph_assert(rule_id >= 0);
+  });
+  pg_pool_t hdd = *pool;
+  hdd.crush_rule = rule_id;
+  const int N = CRUSH_ITEM_NONE;
+  EXPECT_EQ(2u, osdmap->stretch_ec_num_acting_below_min_size(
+    hdd, {0, 1, 2, N, N, N}));
+  EXPECT_TRUE(osdmap->at_least_one_zone_has_min_size(hdd, {0, 1, 2, 3, 4, 5}));
+}
