@@ -708,8 +708,8 @@ TransactionManager::update_lba_mappings(
   return seastar::do_with(
     std::list<LogicalChildNodeRef>(),
     std::list<CachedExtentRef>(),
-    [this, &t, &pre_allocated_extents](auto &lextents, auto &pextents) {
-    auto chksum_func = [&lextents, &pextents, this](auto &extent) {
+    [this, &t, &pre_allocated_extents, FNAME](auto &lextents, auto &pextents) {
+    auto chksum_func = [&lextents, &pextents, this, &t, FNAME](auto &extent) {
       if (!extent->is_valid() ||
           !extent->is_fully_loaded() ||
           // EXIST_MUTATION_PENDING extents' crc will be calculated when
@@ -731,7 +731,9 @@ TransactionManager::update_lba_mappings(
 	}
 #ifndef NDEBUG
 	if (get_checksum_needed(extent->get_paddr())) {
-	  assert(extent->get_last_committed_crc() == extent->calc_crc32c());
+	  if (extent->get_last_committed_crc() != extent->calc_crc32c()) {
+            ERRORT("inconsistent last_committed_crc: {}", t, *extent);
+          }
 	} else {
 	  assert(extent->get_last_committed_crc() == CRC_NULL);
 	}
