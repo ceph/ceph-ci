@@ -1832,3 +1832,56 @@ TEST_F(TestECActingStretch, UpZoneBlockAllNone_CurrentActingZoneKept) {
        &want, &backfill, &acting_backfill, ss);
   EXPECT_EQ(want, (vector<int>{0, 1, 2, 3, 4, 5})) << ss.str();
 }
+
+// An OSD picked for position i on the strength of its info for another
+// absolute shard j (same relative shard) holds no data for shard i, so it
+// must either have a usable info for shard i or be backfilled.
+TEST_F(TestECActingStretch, OtherAbsoluteShardPick_IsBackfilled) {
+  const int N = CRUSH_ITEM_NONE;
+  auto check = [&](const vector<int> &up, const vector<int> &acting,
+                   const map<pg_shard_t, pg_info_t> &all_info,
+                   bool restrict_to_up_acting) {
+    vector<int> want;
+    set<pg_shard_t> backfill, acting_backfill;
+    ostringstream ss;
+    calc(up, acting, all_info, pg_shard_t(0, shard_id_t(0)),
+         restrict_to_up_acting, &want, &backfill, &acting_backfill, ss);
+    const eversion_t log_tail =
+      all_info.at(pg_shard_t(0, shard_id_t(0))).log_tail;
+    for (unsigned i = 0; i < want.size(); ++i) {
+      if (want[i] == N) {
+        continue;
+      }
+      pg_shard_t s(want[i], shard_id_t(i));
+      auto it = all_info.find(s);
+      bool usable = it != all_info.end() && !it->second.is_incomplete() &&
+                    it->second.last_update >= log_tail;
+      EXPECT_TRUE(usable || backfill.count(s))
+        << "want[" << i << "]=osd." << want[i] << " has no info for shard "
+        << i << " and is not backfilled\n" << ss.str();
+    }
+  };
+
+  // Stray path: osd.7 (dc1) has current relative shard 1 as absolute shard 1.
+  {
+    vector<int> up = {0, 1, 2, 3, N, 5};
+    map<pg_shard_t, pg_info_t> all_info;
+    for (int i : {0, 1, 2, 3, 5}) {
+      add_info(all_info, i, i, eversion_t(1, 10), eversion_t(1, 5));
+    }
+    add_info(all_info, 7, 1, eversion_t(1, 10));
+    check(up, up, all_info, false);
+  }
+
+  // Acting path: osd.7 (dc1) sits at acting[1] and is taken for position 4.
+  {
+    vector<int> up = {0, 1, 2, 3, N, 5};
+    vector<int> acting = {0, 7, 2, 3, N, 5};
+    map<pg_shard_t, pg_info_t> all_info;
+    for (int i : {0, 1, 2, 3, 5}) {
+      add_info(all_info, i, i, eversion_t(1, 10), eversion_t(1, 5));
+    }
+    add_info(all_info, 7, 1, eversion_t(1, 10));
+    check(up, acting, all_info, true);
+  }
+}
