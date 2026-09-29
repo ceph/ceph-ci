@@ -149,6 +149,25 @@ protected:
     osdmap->apply_incremental(inc);
     pool = osdmap->get_pg_pool(1);
   }
+
+  // Gives every OSD device class hdd and returns a stretch rule taking the
+  // shadow root default~hdd, as a profile with crush-device-class does.
+  int add_hdd_stretch_rule() {
+    int rule_id = -1;
+    modify_crush([&](CrushWrapper &crush) {
+      for (int osd = 0; osd < 8; ++osd) {
+        std::ostringstream ss;
+        int r = crush.update_device_class(osd, "hdd", "osd." + std::to_string(osd), &ss);
+        ceph_assert(r >= 0);
+      }
+      std::ostringstream ss;
+      rule_id = crush.add_simple_stretch_rule(
+        "hdd_stretch_rule", "default", "datacenter", "host", 2, 3, "hdd",
+        "indep", pg_pool_t::TYPE_ERASURE, false, &ss);
+      ceph_assert(rule_id >= 0);
+    });
+    return rule_id;
+  }
 };
 
   // ===========================================================================
@@ -331,23 +350,23 @@ TEST_F(StretchECMinSizeTest, StretchSetCanPeer_NoneEntriesAndMandatoryMember)
 // as zones.
 TEST_F(StretchECMinSizeTest, DeviceClassRule_ShadowZonesCounted)
 {
-  int rule_id = -1;
-  modify_crush([&](CrushWrapper &crush) {
-    for (int osd = 0; osd < 8; ++osd) {
-      std::ostringstream ss;
-      int r = crush.update_device_class(osd, "hdd", "osd." + std::to_string(osd), &ss);
-      ceph_assert(r >= 0);
-    }
-    std::ostringstream ss;
-    rule_id = crush.add_simple_stretch_rule(
-      "hdd_stretch_rule", "default", "datacenter", "host", 2, 3, "hdd",
-      "indep", pg_pool_t::TYPE_ERASURE, false, &ss);
-    ceph_assert(rule_id >= 0);
-  });
   pg_pool_t hdd = *pool;
-  hdd.crush_rule = rule_id;
+  hdd.crush_rule = add_hdd_stretch_rule();
   const int N = CRUSH_ITEM_NONE;
   EXPECT_EQ(2u, osdmap->stretch_ec_num_acting_below_min_size(
     hdd, {0, 1, 2, N, N, N}));
   EXPECT_TRUE(osdmap->at_least_one_zone_has_min_size(hdd, {0, 1, 2, 3, 4, 5}));
+}
+
+// The degraded mode mandatory member is the normal bucket id of the
+// surviving zone, whichever tree the rule takes.
+TEST_F(StretchECMinSizeTest, DeviceClassRule_StretchSetCanPeerMandatoryMember)
+{
+  pg_pool_t hdd = *pool;
+  hdd.crush_rule = add_hdd_stretch_rule();
+  hdd.peering_crush_bucket_count = 1;
+  hdd.peering_crush_mandatory_member = osdmap->crush->get_item_id("dc0");
+  const int N = CRUSH_ITEM_NONE;
+  EXPECT_TRUE(hdd.stretch_set_can_peer(vector<int>{0, 1, 2, N, N, N}, *osdmap, nullptr));
+  EXPECT_FALSE(hdd.stretch_set_can_peer(vector<int>{N, N, N, 3, 4, 5}, *osdmap, nullptr));
 }
