@@ -140,6 +140,8 @@ protected:
     };
     new_osdmap->set_erasure_code_profile("default", erasure_code_profile);
     pool_info.erasure_code_profile = "default";
+    pool_info.ec_data_shard_count = 2;
+    pool_info.ec_coding_shard_count = 1;
 
     pool_info.peering_crush_bucket_barrier = 9;
     pool_info.peering_crush_bucket_target  = 2;
@@ -1313,6 +1315,8 @@ protected:
     };
     new_osdmap->set_erasure_code_profile("default", ec_profile);
     pool_info.erasure_code_profile = "default";
+    pool_info.ec_data_shard_count = 2;
+    pool_info.ec_coding_shard_count = 1;
 
     pool_info.peering_crush_bucket_barrier = 9; // datacenter type
     pool_info.peering_crush_bucket_target  = 3; // 3 datacenters
