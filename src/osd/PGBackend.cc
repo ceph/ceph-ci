@@ -783,8 +783,9 @@ void PGBackend::rollback_setattrs(
     decode(oi, p);
 
     shard_id_t my_shard = get_parent()->whoami_shard().shard;
-    if (oi.shard_versions.contains(my_shard) && oi.shard_versions.at(my_shard) != oi.version) {
-      oi.version = oi.shard_versions.at(my_shard);
+    const shard_id_t rel_shard = get_parent()->get_pool().get_relative_shard(my_shard);
+    if (oi.shard_versions.contains(rel_shard) && oi.shard_versions.at(rel_shard) != oi.version) {
+      oi.version = oi.shard_versions.at(rel_shard);
       oi.shard_versions.clear();
       
       bufferlist bl;
