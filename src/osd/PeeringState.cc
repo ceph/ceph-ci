@@ -1955,173 +1955,201 @@ void PeeringState::calc_ec_acting_stretch(
   unsigned bucket_max = pool.info.size / pool.info.peering_crush_bucket_target;
 
   vector<int> want(size, CRUSH_ITEM_NONE);
-  map<shard_id_t, set<pg_shard_t> > all_info_by_rel_shard;
-  for (auto i = all_info.begin();
-       i != all_info.end();
-       ++i) {
-    auto rel_shard = pool.info.get_relative_shard(i->first.shard);
-    all_info_by_rel_shard[rel_shard].insert(i->first);
-  }
 
-  int zone_size = pool.info.get_zone_size();
-  // Track how many shards selected from each zone/bucket
-  std::map<int, unsigned> zone_shard_count;
-  boost::container::flat_map<int, int> shard_zone_to_crush_zone; // zone index (i/zone_size) -> CRUSH zone id
   boost::container::flat_map<int, int> osd_to_zone; // osd id -> CRUSH zone id
-
-  // Helper to get zone for an OSD
   auto get_crush_zone = [&](int osd) -> int {
-    return osdmap->crush->get_parent_of_type(
-      osd,
-      pool.info.peering_crush_bucket_barrier,
-      pool.info.crush_rule);
-  };
-
-  auto get_shard_zone = [&](const shard_id_t shard) -> int {
-    if (std::cmp_less(shard.id, zone_size)) {
-      return 0;
+    auto [it, inserted] = osd_to_zone.try_emplace(osd, 0);
+    if (inserted) {
+      it->second = osdmap->crush->get_parent_of_type(
+        osd,
+        pool.info.peering_crush_bucket_barrier,
+        pool.info.crush_rule);
     }
-    // Modern compilers optimize / well on recent CPUs
-    return shard.id / zone_size;
+    return it->second;
   };
 
-  // Helper to check if a zone has reached bucket_max
-  auto zone_at_max = [&](int zone) -> bool {
-    auto it = zone_shard_count.find(zone);
-    return (it != zone_shard_count.end() && it->second >= bucket_max);
+  auto usable = [&](const pg_shard_t &shard) {
+    auto it = all_info.find(shard);
+    return it != all_info.end() &&
+           !it->second.is_incomplete() &&
+           it->second.last_update >= auth_log_shard->second.log_tail;
   };
 
-  for (uint8_t i = 0; i < up.size(); ++i) {
-    if (up[i] != CRUSH_ITEM_NONE && !osd_to_zone.contains(up[i])) {
-      osd_to_zone[up[i]] = get_crush_zone(up[i]);
+  // OSDs with a usable copy of each absolute shard, most preferred first:
+  // up[i], acting[i], then strays.
+  vector<vector<int>> holders(size);
+  auto add_holder = [&](vector<int> &h, unsigned shard, int osd) {
+    if (osd != CRUSH_ITEM_NONE &&
+        usable(pg_shard_t(osd, shard_id_t(shard))) &&
+        std::find(h.begin(), h.end(), osd) == h.end()) {
+      h.push_back(osd);
+    }
+  };
+  for (unsigned i = 0; i < size; ++i) {
+    if (i < up.size()) {
+      add_holder(holders[i], i, up[i]);
+    }
+    if (i < acting.size()) {
+      add_holder(holders[i], i, acting[i]);
     }
   }
-
-  {
-    int i = 0;
-    while (i < static_cast<int>(up.size())) {
-      if (up[i] != CRUSH_ITEM_NONE) {
-        int zone_shard = get_shard_zone(shard_id_t(i));
-        shard_zone_to_crush_zone[zone_shard] = osd_to_zone[up[i]];
-        i = zone_size * (zone_shard + 1);
-      } else {
-        ++i;
+  if (!restrict_to_up_acting) {
+    for (const auto &[shard, info] : all_info) {
+      if (shard.shard.id >= 0 && std::cmp_less(shard.shard.id, size)) {
+        add_holder(holders[shard.shard.id], shard.shard.id, shard.osd);
       }
     }
   }
 
-  for (uint8_t i = 0; i < acting.size(); ++i) {
-    if (acting[i] != CRUSH_ITEM_NONE && !osd_to_zone.contains(acting[i])) {
-      osd_to_zone[acting[i]] = get_crush_zone(acting[i]);
-    }
-  }
-
-  // Helper to increment zone count when selecting an OSD
-  auto select_osd = [&](int osd) {
-    zone_shard_count[osd_to_zone[osd]]++;
-  };
-
-  for (uint8_t i = 0; i < want.size(); ++i) {
-    ss << "For position " << (unsigned)i << ": ";
-    // Determine which zone this shard position should belong to
-    int shard_zone = get_shard_zone(shard_id_t(i));
-    int expected_zone = CRUSH_ITEM_NONE;
-    auto rel_shard = pool.info.get_relative_shard(shard_id_t(i));
-    auto shard_zone_it = shard_zone_to_crush_zone.find(shard_zone);
-    if (shard_zone_it != shard_zone_to_crush_zone.end())
-      expected_zone = shard_zone_it->second;
-    // We first try to fill the position with up[i]
-    if (up.size() > (unsigned)i && up[i] != CRUSH_ITEM_NONE) {
-      auto info_it = all_info.find(pg_shard_t(up[i], shard_id_t(i)));
-      bool data_ok = (info_it != all_info.end() &&
-                      !info_it->second.is_incomplete() &&
-                      info_it->second.last_update >=
-                      auth_log_shard->second.log_tail);
-      if (!zone_at_max(expected_zone) && data_ok) {
-        ss << " selecting up[i]: " << pg_shard_t(up[i], shard_id_t(i))
-           << " in expected zone " << expected_zone << std::endl;
-        want[i] = up[i];
-        select_osd(up[i]);
-        continue;
+  // With more than one zone, each zone block is served from a single CRUSH
+  // zone that no other block uses.  Choose the zones serving the most
+  // distinct relative shards, up to k, then those holding the most of their
+  // blocks' shards, counting a zone only if it holds at least k of them,
+  // then the most up[i] in those zones, then the most shards, then the most
+  // up[i], then the most acting[i].
+  const bool one_zone_per_block = pool.info.get_num_zone() > 1;
+  auto choose_block_zones = [&](const vector<vector<int>> &shard_holders) {
+    // (any holder if at least k, up[i] if at least k, any holder, up[i],
+    //  acting[i])
+    using held_t = std::array<unsigned, 5>;
+    using block_held_t = map<int, map<int, held_t>>; // block -> zone -> held
+    block_held_t held;
+    map<int, map<int, shard_id_set>> rel_held; // block -> zone -> rel shards
+    for (unsigned i = 0; i < size; ++i) {
+      const shard_id_t shard(i);
+      const int block_id = pool.info.get_shard_zone(shard);
+      auto &block = held[block_id];
+      set<int> zones;
+      for (int osd : shard_holders[i]) {
+        const int zone = get_crush_zone(osd);
+        auto &h = block[zone];
+        if (zones.insert(zone).second) {
+          ++h[2];
+          rel_held[block_id][zone].insert(pool.info.get_relative_shard(shard));
+        }
+        if (i < up.size() && osd == up[i]) {
+          ++h[3];
+        }
+        if (i < acting.size() && osd == acting[i]) {
+          ++h[4];
+        }
       }
-
-      // Only backfill if the data itself is missing or stale.  If up[i] was
-      // rejected solely because zone_at_max, its data is intact — inserting
-      // it into backfill would create a target with last_backfill==MAX
-      if (!data_ok) {
-        ss << " backfilling up[i]: " << pg_shard_t(up[i], shard_id_t(i)) << " and ";
-        backfill->insert(pg_shard_t(up[i], shard_id_t(i)));
-      } else {
-        ss << " skipping up[i]: " << pg_shard_t(up[i], shard_id_t(i))
-           << " (zone at max, data intact)" << std::endl;
+    }
+    const unsigned k = pool.info.get_ec_data_shard_count();
+    for (auto &[block, zones] : held) {
+      for (auto &[zone, h] : zones) {
+        if (h[2] >= k) {
+          h[0] = h[2];
+          h[1] = h[3];
+        }
       }
     }
 
-    // Try acting set when up[i] doesn't work out.
-    // Only valid when acting has the same size as up (same pool size epoch).
-    if (expected_zone != CRUSH_ITEM_NONE) {
-      bool acting_used = false;
-      // CRUSH rehash could cause osds to change location in up set so need to
-      // iterate through the same relative shard in all zones
-      for (uint8_t j = rel_shard.id; j < acting.size(); j += zone_size) {
-        if (acting.size() > (unsigned)j && acting[j] != CRUSH_ITEM_NONE) {
-          int acting_zone = osd_to_zone[acting[j]];
-          auto info_it = all_info.find(pg_shard_t(acting[j], shard_id_t(j)));
-          if (!zone_at_max(expected_zone) &&
-              expected_zone == acting_zone &&
-              info_it != all_info.end() &&
-              !info_it->second.is_incomplete() &&
-              info_it->second.last_update >= auth_log_shard->second.log_tail) {
-            want[i] = acting[j];
-            select_osd(acting[j]);
-            acting_used = true;
-            break;
+    map<int, int> block_zone, trial;
+    set<int> used_zones;
+    std::pair<size_t, held_t> best{};
+    std::function<void(block_held_t::const_iterator, const held_t&,
+                       const shard_id_set&)> assign =
+      [&](block_held_t::const_iterator b, const held_t &total,
+          const shard_id_set &served) {
+        if (b == held.cend()) {
+          const std::pair score{std::min<size_t>(served.size(), k), total};
+          if (score > best) {
+            best = score;
+            block_zone = trial;
+          }
+          return;
+        }
+        assign(std::next(b), total, served);
+        for (const auto &[zone, h] : b->second) {
+          if (used_zones.insert(zone).second) {
+            trial[b->first] = zone;
+            held_t sum = total;
+            for (unsigned j = 0; j < sum.size(); ++j) {
+              sum[j] += h[j];
+            }
+            assign(std::next(b), sum, served | rel_held[b->first][zone]);
+            trial.erase(b->first);
+            used_zones.erase(zone);
           }
         }
-      }
-      if (acting_used)
-        continue;
-    }
-    if (!restrict_to_up_acting) {
-      // Search for stray, but ONLY from the same zone
-      // and only if zone hasn't reached bucket_max
-      // Need to iterate through the same relative shard in all zones
-      for (auto j = all_info_by_rel_shard[rel_shard].begin();
-           j != all_info_by_rel_shard[rel_shard].end();
-           ++j) {
-        ceph_assert(pool.info.get_relative_shard(j->shard) == rel_shard);
-
-        int stray_zone = get_crush_zone(j->osd);
-
-        // Check if stray is in the expected zone.
-        if (expected_zone == CRUSH_ITEM_NONE ||
-            stray_zone != expected_zone) {
-          ss << " skipping stray " << *j << " (wrong zone)" << std::endl;
-          continue;
-        }
-
-        // Check if zone has already reached bucket_max
-        if (zone_at_max(stray_zone)) {
-          ss << " skipping stray " << *j << " (zone " << stray_zone 
-             << " at bucket_max " << bucket_max << ")" << std::endl;
-          continue;
-        }
-
-        // The stray is in the valid zone and is good.
-        auto info_it = all_info.find(*j);
-        if (info_it != all_info.end() &&
-            !info_it->second.is_incomplete() &&
-            info_it->second.last_update >= auth_log_shard->second.log_tail) {
-          ss << " selecting stray: " << *j << " (zone " << stray_zone << ")" << std::endl;
-          want[i] = j->osd;
-          select_osd(j->osd);
-          break;
-        }
-      }
-      if (want[i] == CRUSH_ITEM_NONE)
-        ss << " failed to fill position " << (int)i << std::endl;
+      };
+    assign(held.cbegin(), held_t{}, shard_id_set{});
+    return block_zone;
+  };
+  map<int, int> block_zone;
+  if (one_zone_per_block) {
+    block_zone = choose_block_zones(holders);
+    for (const auto &[block, zone] : block_zone) {
+      ss << "zone block " << block << " served from zone " << zone
+         << std::endl;
     }
   }
+
+  std::map<int, unsigned> zone_shard_count;
+  for (unsigned i = 0; i < size; ++i) {
+    ss << "For position " << i << ":";
+    const auto bz = block_zone.find(pool.info.get_shard_zone(shard_id_t(i)));
+    for (int osd : holders[i]) {
+      pg_shard_t shard(osd, shard_id_t(i));
+      const int zone = get_crush_zone(osd);
+      if (one_zone_per_block &&
+          (bz == block_zone.end() || zone != bz->second)) {
+        ss << " skipping " << shard << " (zone " << zone << ")";
+      } else if (zone_shard_count[zone] >= bucket_max) {
+        ss << " skipping " << shard << " (zone at bucket_max "
+           << bucket_max << ")";
+      } else {
+        ss << " selecting " << shard;
+        want[i] = osd;
+        ++zone_shard_count[zone];
+        break;
+      }
+    }
+    if (want[i] == CRUSH_ITEM_NONE) {
+      ss << " failed to fill position";
+    }
+    ss << std::endl;
+  }
+
+  // Backfill an up[i] not chosen for position i only if its block would be
+  // served from its zone once up holds its data, so that a completed
+  // backfill target joins want.  Strays outside want are left out so that
+  // calls restricted to up and acting (from Recovered) reach the same goal.
+  map<int, int> goal_zone;
+  if (one_zone_per_block && want != up) {
+    vector<vector<int>> goal(size);
+    for (unsigned i = 0; i < size; ++i) {
+      if (i < up.size() && up[i] != CRUSH_ITEM_NONE) {
+        goal[i].push_back(up[i]);
+      }
+      if (i < acting.size()) {
+        add_holder(goal[i], i, acting[i]);
+      }
+      add_holder(goal[i], i, want[i]);
+    }
+    goal_zone = choose_block_zones(goal);
+  }
+  for (unsigned i = 0; i < size && i < up.size(); ++i) {
+    if (up[i] == CRUSH_ITEM_NONE || want[i] == up[i]) {
+      continue;
+    }
+    pg_shard_t shard(up[i], shard_id_t(i));
+    if (one_zone_per_block) {
+      const int zone = get_crush_zone(up[i]);
+      const auto gz = goal_zone.find(pool.info.get_shard_zone(shard.shard));
+      if (gz == goal_zone.end() || gz->second != zone) {
+        ss << "not backfilling up[" << i << "]: " << shard << " (zone "
+           << zone << ")" << std::endl;
+        continue;
+      }
+    } else if (usable(shard)) {
+      continue;
+    }
+    ss << "backfilling up[" << i << "]: " << shard << std::endl;
+    backfill->insert(shard);
+  }
+
   // acting_backfill includes all want and backfill items.
   for (uint8_t i = 0; i < want.size(); ++i) {
     if (want[i] != CRUSH_ITEM_NONE) {
