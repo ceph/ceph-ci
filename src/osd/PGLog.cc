@@ -510,7 +510,7 @@ void PGLog::merge_log(pg_info_t &oinfo, pg_log_t&& olog, pg_shard_t fromosd,
       missing,
       rollbacker,
       ec_optimizations_enabled,
-      toosd.shard,
+      pool.get_relative_shard(toosd.shard),
       this);
 
     info.last_update = log.head = olog.head;
