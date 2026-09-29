@@ -450,7 +450,8 @@ void ReplicaSplitOp::init_read(OSDOp &op, bool sparse, int ops_index) {
   uint64_t slice_count = replica_min_shard_read_size == 0 ? 1 :
                           std::min(length / replica_min_shard_read_size,
                                    read_order.size());
-  uint64_t chunk_size = p2roundup(length / slice_count, REPLICA_MIN_SPLIT_SIZE);
+  uint64_t chunk_size = p2roundup(div_round_up(length, slice_count),
+                                  REPLICA_MIN_SPLIT_SIZE);
   
   for (unsigned i = 0; length > 0; i = (i + 1) % read_order.size()) {
     int acting_index = read_order[i];
