@@ -30,9 +30,14 @@
 #include <gtest/gtest.h>
 #include <numeric>
 
+#include <boost/asio/io_context.hpp>
+
+#include "osd/OSDMap.h"
 #include "osd/osd_types.h"
 #include "osdc/SplitOp.h"
 #include "include/rados.h"
+#include "global/global_context.h"
+#include "test/osd/OSDMapTestHelpers.h"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -743,4 +748,192 @@ TEST_F(TestReplicaLocalizeZoneFiltering, FilteredSetSizeEqualsZoneSize)
       << "zone " << z << ": expected " << zone_size
       << " replicas, got " << count;
   }
+}
+
+// ===========================================================================
+// Section 6: init_reference_sub_read() / init_read() against a real Objecter
+//
+// Three datacenters "zone-0".."zone-2", OSDs 4z..4z+3 in zone-z.  The
+// Objecter is never started; only its OSDMap and crush_location are used.
+// ===========================================================================
+
+class ECSplitOpProbe : public ECSplitOp {
+public:
+  using ECSplitOp::ECSplitOp;
+  using SplitOp::sub_reads;
+  using SplitOp::reference_sub_read;
+  using SplitOp::reference_sub_read_key;
+  using SplitOp::abort;
+  ~ECSplitOpProbe() { abort = true; }
+};
+
+class ReplicaSplitOpProbe : public ReplicaSplitOp {
+public:
+  using ReplicaSplitOp::ReplicaSplitOp;
+  using SplitOp::sub_reads;
+  using SplitOp::reference_sub_read;
+  using SplitOp::reference_sub_read_key;
+  using SplitOp::abort;
+  ~ReplicaSplitOpProbe() { abort = true; }
+};
+
+class TestSplitOpInit : public ::testing::Test {
+protected:
+  static constexpr int osds_per_zone = 4;
+  static constexpr int64_t ec_pool_id = 1;
+  static constexpr int64_t rep_pool_id = 2;
+  boost::asio::io_context ioc;
+  std::unique_ptr<Objecter> objecter;
+
+  void SetUp() override
+  {
+    g_ceph_context->_conf.set_val_or_die("osd_min_split_replica_read_size", "4096");
+    objecter = std::make_unique<Objecter>(g_ceph_context, nullptr, nullptr, ioc);
+
+    OSDMap map;
+    uuid_d fsid;
+    fsid.generate_random();
+    ceph_assert(map.build_simple(g_ceph_context, 1, fsid, 3 * osds_per_zone) == 0);
+    for (int i = 0; i < 3 * osds_per_zone; i++) {
+      map.set_state(i, CEPH_OSD_EXISTS | CEPH_OSD_UP);
+    }
+
+    CrushWrapper crush;
+    crush.create();
+    OSDMap::_build_crush_types(crush);
+    int rootid = 0;
+    ceph_assert(crush.add_bucket(0, CRUSH_BUCKET_STRAW2, CRUSH_HASH_DEFAULT,
+                                 crush.get_type_id("root"), 0, nullptr,
+                                 nullptr, &rootid) == 0);
+    crush.set_item_name(rootid, "default");
+    for (int z = 0; z < 3; z++) {
+      std::map<std::string, std::string> loc = {
+        {"root", "default"},
+        {"datacenter", "zone-" + std::to_string(z)},
+        {"host", "host-" + std::to_string(z)}};
+      for (int i = 0; i < osds_per_zone; i++) {
+        int osd = z * osds_per_zone + i;
+        crush.insert_item(g_ceph_context, osd, 1.0, "osd." + std::to_string(osd), loc);
+      }
+    }
+    crush.finalize();
+    OSDMap::Incremental inc(map.get_epoch() + 1);
+    inc.fsid = map.get_fsid();
+    crush.encode(inc.crush, CEPH_FEATURES_SUPPORTED_DEFAULT);
+    map.apply_incremental(inc);
+
+    pg_pool_t ec = make_ec_pool(2, 1, 4096);
+    ec.size = 6;
+    ec.opts.set(pool_opts_t::NUM_ZONES, static_cast<int64_t>(2));
+    ec.peering_crush_bucket_count = 2;
+    ec.set_pg_num(1);
+    ec.set_pgp_num(1);
+    OSDMapTestHelpers::add_pool(map, ec_pool_id, ec);
+
+    pg_pool_t rep = make_replicated_pool(4);
+    rep.opts.set(pool_opts_t::NUM_ZONES, static_cast<int64_t>(2));
+    rep.peering_crush_bucket_count = 2;
+    rep.set_pg_num(1);
+    rep.set_pgp_num(1);
+    OSDMapTestHelpers::add_pool(map, rep_pool_id, rep);
+
+    objecter->with_osdmap([&](const OSDMap& o) {
+      const_cast<OSDMap&>(o).deepish_copy_from(map);
+    });
+  }
+
+  void TearDown() override
+  {
+    objecter.reset();
+    g_ceph_context->_conf.set_val_or_die("osd_min_split_replica_read_size", "0");
+  }
+
+  void set_client_zone(int zone)
+  {
+    objecter->crush_location = {{"datacenter", "zone-" + std::to_string(zone)}};
+  }
+
+  int zone_of(int osd) const
+  {
+    return osd / osds_per_zone;
+  }
+
+  Objecter::Op *make_read_op(int64_t pool, const std::vector<int>& acting,
+                             int primary_shard, uint64_t len, int flags)
+  {
+    osdc_opvec ops(1);
+    ops[0].op.op = CEPH_OSD_OP_READ;
+    ops[0].op.extent.offset = 0;
+    ops[0].op.extent.length = len;
+    auto op = new Objecter::Op(object_t("obj"), object_locator_t(pool),
+                               std::move(ops), flags, (Context*)nullptr, nullptr);
+    op->target.acting = acting;
+    op->target.actual_pgid = spg_t(pg_t(0, pool), shard_id_t(primary_shard));
+    return op;
+  }
+};
+
+// LOCALIZE_READS from zone 1 with a zone-1 primary reads zone-1 data shards.
+TEST_F(TestSplitOpInit, ECLocalizeZone1PrimaryReadsLocalShards)
+{
+  set_client_zone(1);
+  std::vector<int> acting = {0, 1, 2, 4, 5, 6};
+  auto op = make_read_op(ec_pool_id, acting, 3, 8192, CEPH_OSD_FLAG_LOCALIZE_READS);
+  {
+    ECSplitOpProbe split(op, *objecter, g_ceph_context, 6, true);
+    split.init_reference_sub_read();
+    ASSERT_FALSE(split.abort);
+    EXPECT_EQ(3, split.reference_sub_read_key);
+    split.init_read(op->ops[0], false, 0);
+    ASSERT_FALSE(split.abort);
+    EXPECT_EQ(shard_id_t(3), split.sub_reads.at(0).abs_shard);
+    EXPECT_EQ(shard_id_t(4), split.sub_reads.at(1).abs_shard);
+    for (auto& [key, sr] : split.sub_reads) {
+      EXPECT_EQ(1, zone_of(acting[(int)sr.abs_shard])) << "key " << key;
+    }
+  }
+  op->put();
+}
+
+// A missing shard in the chosen zone aborts the split read; no cross-zone fallback.
+TEST_F(TestSplitOpInit, ECLocalizeMissingLocalShardAborts)
+{
+  set_client_zone(1);
+  std::vector<int> acting = {0, 1, 2, 4, CRUSH_ITEM_NONE, 6};
+  auto op = make_read_op(ec_pool_id, acting, 0, 8192, CEPH_OSD_FLAG_LOCALIZE_READS);
+  {
+    ECSplitOpProbe split(op, *objecter, g_ceph_context, 6, true);
+    split.init_reference_sub_read();
+    ASSERT_FALSE(split.abort);
+    split.init_read(op->ops[0], false, 0);
+    EXPECT_TRUE(split.abort);
+  }
+  op->put();
+}
+
+// Three zones: nearest zone wins, NONE representatives fall through or are skipped.
+TEST_F(TestSplitOpInit, LocalZoneForActingSetThreeZones)
+{
+  const int zone_size = 3;
+  std::vector<int> acting = {0, 1, 2, 4, 5, 6, 8, 9, 10};
+  auto zone_for = [&](int client_zone) {
+    std::multimap<std::string, std::string> loc =
+      {{"datacenter", "zone-" + std::to_string(client_zone)}};
+    return objecter->with_osdmap([&](const OSDMap& o) {
+      return SplitOp::local_zone_for_acting_set(acting, 3, zone_size,
+                                                o.crush.get(), g_ceph_context, loc);
+    });
+  };
+  EXPECT_EQ(0, zone_for(0));
+  EXPECT_EQ(1, zone_for(1));
+  EXPECT_EQ(2, zone_for(2));
+
+  acting[6] = CRUSH_ITEM_NONE;
+  EXPECT_EQ(2, zone_for(2));
+
+  acting[7] = acting[8] = CRUSH_ITEM_NONE;
+  EXPECT_NE(2, zone_for(2));
+
+  acting[0] = acting[1] = acting[2] = CRUSH_ITEM_NONE;
+  EXPECT_EQ(1, zone_for(1));
 }
