@@ -502,6 +502,9 @@ OSDMapRef TestTScrubberBe::setup_map(int num_osds,
   auto osdmap = std::make_shared<OSDMap>();
   uuid_d fsid;
   osdmap->build_simple(g_ceph_context, 0, fsid, num_osds);
+  // The flat map needs more than the default 50 tries to place every shard
+  // of a pool as wide as the map (two-zone EC pools reach 30).
+  osdmap->crush->set_choose_total_tries(100);
   OSDMap::Incremental pending_inc(osdmap->get_epoch() + 1);
   pending_inc.fsid = osdmap->get_fsid();
   entity_addrvec_t sample_addrs;
