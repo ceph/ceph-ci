@@ -1140,3 +1140,31 @@ TEST_F(TestSplitOpInit, ReplicaSplitReadsOfDifferentSizes)
   }
   op->put();
 }
+
+// A read shorter than the minimum slice, next to a longer one, is not split.
+TEST_F(TestSplitOpInit, ReplicaSplitReadShorterThanMinimumSlice)
+{
+  std::vector<int> acting = {0, 1, 2, 3};
+  osdc_opvec ops(2);
+  ops[0].op.op = CEPH_OSD_OP_READ;
+  ops[0].op.extent.length = 4 * 4096;
+  ops[1].op.op = CEPH_OSD_OP_READ;
+  ops[1].op.extent.length = 100;
+  auto op = new Objecter::Op(object_t("obj"), object_locator_t(rep_pool_id),
+                             std::move(ops), CEPH_OSD_FLAG_BALANCE_READS,
+                             (Context*)nullptr, nullptr);
+  op->target.acting = acting;
+  {
+    ReplicaSplitOpProbe split(op, *objecter, g_ceph_context, 16, false);
+    split.init_reference_sub_read();
+    ASSERT_FALSE(split.abort);
+    split.init(op->ops[0], 0);
+    split.init(op->ops[1], 1);
+    ASSERT_FALSE(split.abort);
+    for (auto& [key, sr] : split.sub_reads) {
+      EXPECT_EQ(key == split.reference_sub_read_key, sr.details.contains(1))
+        << "key " << key;
+    }
+  }
+  op->put();
+}
