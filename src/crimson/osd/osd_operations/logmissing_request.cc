@@ -91,6 +91,15 @@ LogMissingRequest::with_pg_interruptible(
     return pg->osdmap_gate.wait_for_map(
       std::move(trigger), req->min_epoch);
   }));
+  if (!(req->entries.begin()->version > pg->get_peering_state().get_info().last_update)) {
+    const auto &plog = pg->get_peering_state().get_pg_log().get_log().log;
+    ERRORI("{}: LMDBG OOO entry {} <= last_update {} msg_seq={} tid={} | pg log head entry: {}",
+           *this,
+           req->entries.begin()->version,
+           pg->get_peering_state().get_info().last_update,
+           req->get_seq(), req->get_tid(),
+           plog.empty() ? std::string("<empty>") : fmt::format("{}", plog.back()));
+  }
   co_await pg->do_update_log_missing(req, get_remote_connection());
   logger().debug("{}: complete", *this);
   co_await interruptor::make_interruptible(handle.complete());
