@@ -2897,6 +2897,41 @@ TEST_P(TestECFailoverWithPeering, RollbackVersionMismatchZone1) {
   EXPECT_FALSE(scrub_object(obj_name));
 }
 
+// A healthy-mode interval with zone 0 below min_size never went active, so
+// peering must not wait for its OSDs once zone 1 is lost for good and zone 0
+// is back at min_size in degraded stretch mode, even though fewer than k of
+// that interval's zone-0 OSDs are up.
+TEST_P(TestECFailoverWithPeering, PeeredIntervalBelowZoneMinSizeDoesNotBlock) {
+  if (num_zones < 2) {
+    GTEST_SKIP() << "requires num_zones > 1";
+  }
+
+  const int tolerated = k + m - get_pool().min_size;
+  std::vector<int> peered_down;
+  for (int osd = 1; osd <= tolerated + 1; osd++) {
+    peered_down.push_back(osd);
+  }
+  mark_osds_down(peered_down);
+  ASSERT_FALSE(get_primary_test_pg()->get_peering_state()->is_active());
+
+  mark_osds_down(zone_osds(1));
+  enter_degraded_stretch_mode(0);
+
+  std::vector<int> more_down;
+  for (int osd = k + tolerated; osd < k + m; osd++) {
+    more_down.push_back(osd);
+  }
+  if (!more_down.empty()) {
+    mark_osds_down(more_down);
+  }
+  for (int osd : peered_down) {
+    mark_osd_up(osd);
+  }
+
+  auto* primary_ps = get_primary_test_pg()->get_peering_state();
+  EXPECT_TRUE(primary_ps->is_active()) << primary_ps->get_current_state();
+}
+
 // CRUSH can put a PG's zones in a different order, e.g. after a datacenter's
 // weight changes, while every OSD stays up. Each OSD then only holds the
 // shard of its old position, so the PG must keep serving from those until
