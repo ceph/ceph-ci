@@ -4,6 +4,7 @@ import json
 import os
 import random
 import string
+import shutil
 import time
 
 from logging import getLogger
@@ -551,6 +552,82 @@ class TestFSCryptVolumes(CephFSTestCase):
         #compare locked
         self.mount_a.run_shell_payload(f"sudo fscrypt lock --verbose {src_path}")
         self.mount_a.compare_trees(src_path, dst_path)
+
+    def test_fscrypt_backup(self):
+        """ Test that an fscrypt tree can be backed up """
+        v = "cephfs"
+        sv = "sv1"
+        sv2= "sv2"
+
+        self.run_ceph_cmd(f'fs subvolume create {v} {sv} --mode=777')
+        src_path = self._get_sv_path(v, sv)
+
+        self.mount_a.run_shell_payload(f'mkdir -p {src_path}')
+
+        self.mount_a.run_shell_payload(f"sudo fscrypt encrypt --verbose --source=raw_key --name={self.protector} --no-recovery --key={self.key_file} {src_path}")
+        self.mount_a.run_shell_payload(f'sudo chmod 777 {src_path}')
+
+        long_name = f'{src_path}/'
+        for i in range(255):
+            long_name += 'a'
+
+        self.mount_a.write_file(long_name, 'contents')
+
+        num_of_files = 10
+        dirs = 3
+        for i in range(num_of_files):
+            self.mount_a.run_shell_payload(f'mkdir -p {src_path}/{i}')
+            for j in range(dirs):
+                rand_file = f'{src_path}/{i}/rand_file{j}'
+                block = ''.join(random.choice(string.ascii_letters) for _ in range(1 * 1024))
+                contents = block * 16
+                self.mount_a.write_file(rand_file, contents)
+
+        self.run_ceph_cmd(f'fs subvolume create {v} {sv2} --mode=777')
+        dst_path = self._get_sv_path(v, sv2)
+
+        self.mount_a.run_shell_payload(f'mkdir -p {dst_path}')
+
+        self.fs.set_ceph_conf('client', 'client fscrypt as', False)
+        self.fs.set_ceph_conf('client', 'client alternate name visible', True)
+        self.mount_a.remount()
+
+        xattrs = ['ceph.fscrypt.auth', 'ceph.fscrypt.auth', 'ceph.alternate_name']
+        for dirpath, dirnames, filenames in os.walk(src_path, followlinks=True):
+            rel_path = os.path.relpath(dirpath, src_path)
+            cur_dst_path = os.path.join(dst_path, rel_path)
+            self.mount_a.run_shell_payload(f'mkdir -p {cur_dst_path}')
+
+            for xattr in xattrs:
+                try:
+                    value = os.getxattr(dirpath, xattr)
+                    if value is None:
+                        continue
+                    os.setxattr(cur_dst_path, xattr, value)
+                except OSError:
+                    pass
+
+            for file in filenames:
+                src_file = os.path.join(dirpath, file)
+                dst_file = os.path.join(cur_dst_path, file)
+
+                shutil.copy2(src_file, dst_file)
+                for xattr in xattrs:
+                    try:
+                        value = os.getxattr(src_file, xattr)
+                        if value is None:
+                            continue
+                        os.setxattr(dst_file, xattr, value)
+                    except OSError:
+                        pass
+
+        self.fs.set_ceph_conf('client', 'client fscrypt as', True)
+        self.fs.set_ceph_conf('client', 'client alternate name visible', False)
+        self.mount_a.remount()
+
+        self.mount_a.run_shell_payload(f"sudo fscrypt unlock --verbose --key=/tmp/key_volume {dst_path}")
+        for i in range(num_of_files):
+            self.mount_a.compare_trees(f"{src_path}/{i}", f"{dst_path}/{i}")
 
 class TestFSCryptXFS(XFSTestsDev):
 

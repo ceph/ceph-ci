@@ -1649,11 +1649,11 @@ class CephFSMountBase(object):
             for file in files:
                 src_file = '{src}/' + file
                 dst_file = '{dst}/' + file
-
                 exists = os.path.exists(dst_file)
                 lexists = os.path.lexists(dst_file)
                 if not exists and not lexists:
-                    log.debug('path_dne:=' + dst_file)
+                    print('path_dne:=' + dst_file)
+                    #log.debug('path_dne:=' + dst_file)
                     raise
 
                 if os.path.islink('{src}'):
