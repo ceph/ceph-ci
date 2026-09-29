@@ -328,8 +328,26 @@ int ECSplitOp::choose_local_zone_index(
  */
 void ReplicaSplitOp::init_reference_sub_read() {
   auto &target = orig_op->target;
+  const pg_pool_t *pi = objecter.osdmap->get_pg_pool(target.base_oloc.pool);
+  ceph_assert(pi);
 
-  for (int i = 0; i < (int)target.acting.size(); ++i) {
+  // When LOCALIZE_READS is set on a stretch replica pool, restrict sub-reads
+  // to replicas in the client's local zone only.  If fewer than two are
+  // available the split is aborted and the op falls back to the primary.
+  //
+  // For BALANCE_READS (localize=false) we use all available replicas.
+  int first = 0;
+  int end = target.acting.size();
+  if (localize && pi->is_stretch_pool() && pi->get_num_zone() > 1) {
+    int zone_size = pi->get_zone_size();
+    int local_zone = local_zone_for_acting_set(
+        target.acting, pi->get_num_zone(), zone_size,
+        objecter.osdmap->crush.get(), cct, objecter.crush_location);
+    first = local_zone * zone_size;
+    end = std::min(end, first + zone_size);
+  }
+
+  for (int i = first; i < end; ++i) {
     if (objecter.osdmap->exists(target.acting[i])) {
       read_order.push_back(i);
     }
@@ -402,56 +420,6 @@ void ReplicaSplitOp::assemble_buffer_read(bufferlist &bl_out, int ops_index) con
  * @param ops_index Index of the operation in the operation list
  */
 void ReplicaSplitOp::init_read(OSDOp &op, bool sparse, int ops_index) {
-
-  auto &target = orig_op->target;
-  const pg_pool_t *pi = objecter.osdmap->get_pg_pool(target.base_oloc.pool);
-  ceph_assert(pi);
-
-  // When LOCALIZE_READS is set on a stretch replica pool, restrict sub-reads
-  // to replicas in the client's local zone only.  This avoids cross-zone
-  // traffic: a split that would span both zones is aborted and falls back to
-  // the primary instead.
-  //
-  // For BALANCE_READS (localize=false) we use all available replicas as before.
-  std::set<int> osds;
-  if (localize && pi->is_stretch_pool() && pi->get_num_zone() > 1) {
-    int zone_size = pi->get_zone_size();
-    int num_zone  = pi->get_num_zone();
-    int local_zone = local_zone_for_acting_set(
-        target.acting, num_zone, zone_size,
-        objecter.osdmap->crush.get(), cct, objecter.crush_location);
-
-    // Collect only replicas that belong to the chosen local zone.
-    int zone_start = local_zone * zone_size;
-    int zone_end   = zone_start + zone_size;
-    for (int i = zone_start; i < zone_end && i < (int)target.acting.size(); ++i) {
-      int osd = target.acting[i];
-      if (objecter.osdmap->exists(osd)) {
-        osds.insert(osd);
-      }
-    }
-
-    if (osds.size() < 2) {
-      ldout(cct, DBG_LVL) << __func__
-        << " ABORT: fewer than 2 local-zone replicas available"
-           " (local_zone=" << local_zone << "); falling back to primary" << dendl;
-      abort = true;
-      return;
-    }
-  } else {
-    for (int direct_osd : target.acting) {
-      if (objecter.osdmap->exists(direct_osd)) {
-        osds.insert(direct_osd);
-      }
-    }
-  }
-
-  if (osds.size() < 2) {
-    ldout(cct, DBG_LVL) << __func__ <<" ABORT: No OSDs" << dendl;
-    abort = true;
-    return;
-  }
-
   uint64_t replica_min_shard_read_size
     = objecter.get_min_split_replica_read_size();
 
@@ -459,7 +427,7 @@ void ReplicaSplitOp::init_read(OSDOp &op, bool sparse, int ops_index) {
   uint64_t length = op.op.extent.length;
   uint64_t slice_count = replica_min_shard_read_size == 0 ? 1 :
                           std::min(length / replica_min_shard_read_size,
-                                   osds.size());
+                                   read_order.size());
   uint64_t chunk_size = p2roundup(length / slice_count, REPLICA_MIN_SPLIT_SIZE);
   
   for (unsigned i = 0; length > 0; i = (i + 1) % read_order.size()) {
