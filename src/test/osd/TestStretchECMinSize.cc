@@ -168,6 +168,19 @@ protected:
     });
     return rule_id;
   }
+
+  void add_empty_datacenter(const std::string &name) {
+    modify_crush([&](CrushWrapper &crush) {
+      int dc = 0;
+      int r = crush.add_bucket(0, CRUSH_BUCKET_STRAW2, CRUSH_HASH_RJENKINS1,
+                               9, 0, nullptr, nullptr, &dc);
+      ceph_assert(r == 0);
+      crush.set_item_name(dc, name);
+      r = crush.insert_item(g_ceph_context, dc, 0.0, name,
+                            {{"root", "default"}});
+      ceph_assert(r == 0);
+    });
+  }
 };
 
   // ===========================================================================
@@ -369,4 +382,16 @@ TEST_F(StretchECMinSizeTest, DeviceClassRule_StretchSetCanPeerMandatoryMember)
   const int N = CRUSH_ITEM_NONE;
   EXPECT_TRUE(hdd.stretch_set_can_peer(vector<int>{0, 1, 2, N, N, N}, *osdmap, nullptr));
   EXPECT_FALSE(hdd.stretch_set_can_peer(vector<int>{N, N, N, 3, 4, 5}, *osdmap, nullptr));
+}
+
+// A datacenter with no OSDs, e.g. a site still being built, cannot hold any
+// of the pool and must not add a deficit.
+TEST_F(StretchECMinSizeTest, EmptyDatacenterUnderRoot_NoDeficit)
+{
+  add_empty_datacenter("dc2");
+  const int N = CRUSH_ITEM_NONE;
+  EXPECT_EQ(0u, osdmap->stretch_ec_num_acting_below_min_size(
+    *pool, {0, 1, 2, 3, 4, 5}));
+  EXPECT_EQ(2u, osdmap->stretch_ec_num_acting_below_min_size(
+    *pool, {0, 1, 2, N, N, N}));
 }
