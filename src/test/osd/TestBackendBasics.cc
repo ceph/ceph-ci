@@ -1315,3 +1315,17 @@ TEST_F(TestECStretchBackend, SubReadErrorRetriesFromRemoteZone) {
   EXPECT_EQ(reads_to_osd1, 1);
   EXPECT_TRUE(read_from_zone1);
 }
+
+// Fast read on a zone-1 primary: the op completes after k replies while
+// redundant reads to other zone-1 shards are still in flight.
+TEST_F(TestECStretchBackend, FastReadZone1PrimaryWithReadsInFlight) {
+  const std::string obj = "fast_read_zone1";
+  const std::string data(4 * stripe_unit, 'A');
+  create_and_write_verify(obj, data);
+  simulate_multiple_osd_failures({0, 1, 2, 3, 4, 5});
+  ASSERT_GE(int(get_primary_listener()->whoami_shard().shard), k + m);
+
+  bufferlist out;
+  ASSERT_GE(read_object(obj, 0, data.size(), out, data.size(), true), 0);
+  ASSERT_EQ(out.to_str(), data);
+}
