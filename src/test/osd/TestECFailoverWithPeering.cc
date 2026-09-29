@@ -682,6 +682,9 @@ const std::vector<BackendConfig> kECPeeringConfigs = {
 
   // Multi-zone configuration (num_zones = 2)
   {PGBackendTestFixture::EC, "isa", "reed_sol_van", pg_pool_t::FLAG_EC_OVERWRITES | pg_pool_t::FLAG_EC_OPTIMIZATIONS,  4096,  4, 2, 2, "EC_ISA_Opt_k4m2_zones2"},
+  {PGBackendTestFixture::EC, "isa", "reed_sol_van", pg_pool_t::FLAG_EC_OVERWRITES | pg_pool_t::FLAG_EC_OPTIMIZATIONS,  4096,  2, 1, 2, "EC_ISA_Opt_k2m1_zones2"},
+  {PGBackendTestFixture::EC, "isa", "reed_sol_van", pg_pool_t::FLAG_EC_OVERWRITES | pg_pool_t::FLAG_EC_OPTIMIZATIONS,  4096,  8, 3, 2, "EC_ISA_Opt_k8m3_zones2"},
+  {PGBackendTestFixture::EC, "jerasure", "reed_sol_van", pg_pool_t::FLAG_EC_OVERWRITES | pg_pool_t::FLAG_EC_OPTIMIZATIONS,  8192,  4, 2, 2, "EC_Jerasure_Opt_k4m2_su8k_zones2"},
 };
 
 }  // namespace
