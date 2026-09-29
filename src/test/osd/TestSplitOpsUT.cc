@@ -652,6 +652,7 @@ protected:
   {
     g_ceph_context->_conf.set_val_or_die("osd_min_split_replica_read_size", "4096");
     objecter = std::make_unique<Objecter>(g_ceph_context, nullptr, nullptr, ioc);
+    objecter->init();
 
     OSDMap map;
     uuid_d fsid;
@@ -699,14 +700,14 @@ protected:
     rep.set_pg_num(1);
     rep.set_pgp_num(1);
     OSDMapTestHelpers::add_pool(map, rep_pool_id, rep);
+    OSDMapTestHelpers::set_pg_acting(map, pg_t(0, ec_pool_id), {0, 1, 2, 4, 5, 6});
 
-    objecter->with_osdmap([&](const OSDMap& o) {
-      const_cast<OSDMap&>(o).deepish_copy_from(map);
-    });
+    objecter->start(&map);
   }
 
   void TearDown() override
   {
+    objecter->shutdown();
     objecter.reset();
     g_ceph_context->_conf.set_val_or_die("osd_min_split_replica_read_size", "0");
   }
@@ -944,4 +945,31 @@ TEST_F(TestSplitOpInit, ECLocalizeZone1SparseReadAssembles)
     EXPECT_TRUE(bl.contents_equal(expected.data(), expected.size()));
   }
   op->put();
+}
+
+// A single-chunk LOCALIZE_READS read goes directly to the client's zone.
+TEST_F(TestSplitOpInit, ECSingleChunkLocalizeReadsLocalZone)
+{
+  set_client_zone(1);
+  auto op = make_read_op(ec_pool_id, {}, 0, 4096, CEPH_OSD_FLAG_LOCALIZE_READS);
+  SplitOp::prepare_single_op(op, *objecter, g_ceph_context);
+  EXPECT_TRUE(op->target.flags & CEPH_OSD_FLAG_EC_DIRECT_READ);
+  EXPECT_EQ(4, op->target.osd);
+  EXPECT_EQ(shard_id_t(3), op->target.actual_pgid.shard);
+  op->put();
+}
+
+// Single-chunk BALANCE_READS reads are spread over every zone.
+TEST_F(TestSplitOpInit, ECSingleChunkBalanceReadsUsesEveryZone)
+{
+  std::set<int> zones;
+  for (unsigned seed = 0; seed < 16; seed++) {
+    srand(seed);
+    auto op = make_read_op(ec_pool_id, {}, 0, 4096, CEPH_OSD_FLAG_BALANCE_READS);
+    SplitOp::prepare_single_op(op, *objecter, g_ceph_context);
+    EXPECT_TRUE(op->target.flags & CEPH_OSD_FLAG_EC_DIRECT_READ);
+    zones.insert(zone_of(op->target.osd));
+    op->put();
+  }
+  EXPECT_EQ(2u, zones.size());
 }
