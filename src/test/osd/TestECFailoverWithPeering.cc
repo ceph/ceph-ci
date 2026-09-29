@@ -2831,6 +2831,34 @@ TEST_P(TestECFailoverWithPeering, PartialOverwriteRollbackZone1Shards) {
   verify_object(obj_name);
 }
 
+// Once a sub-stripe overwrite is rolled forward, the rollback clone objects
+// must be trimmed on the zone-1 copies of the written shards too.
+TEST_P(TestECFailoverWithPeering, PartialOverwriteRollForwardTrimsZone1Clones) {
+  if (num_zones < 2 || k < 3) {
+    GTEST_SKIP() << "requires num_zones > 1 and k >= 3";
+  }
+
+  const std::string obj_name = "test_partial_trim";
+  const size_t object_size = stripe_unit * k;
+  enable_log_trimming = true;
+
+  create_and_write_verify(obj_name, std::string(object_size, 'A'));
+  write_verify(obj_name, stripe_unit, std::string(stripe_unit, 'B'), object_size);
+  const version_t gen = read_shard_object_info(obj_name, 0).version.version;
+  for (int i = 0; i < 3; i++) {
+    create_and_write_verify("dummy" + std::to_string(i),
+                            std::string(object_size, 'C'));
+  }
+
+  for (int zone = 0; zone < num_zones; zone++) {
+    for (int rel : {1, k, k + 1}) {
+      int shard = zone * (k + m) + rel;
+      EXPECT_FALSE(shard_has_object(obj_name, gen, shard))
+        << "rollback clone object not trimmed on shard " << shard;
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Instantiate TestECFailoverWithPeering with EC configurations
 // ---------------------------------------------------------------------------
