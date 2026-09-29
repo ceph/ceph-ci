@@ -575,7 +575,8 @@ public:
       chunk_mapping(complete_chunk_mapping(_chunk_mapping, k + m)),
       chunk_mapping_reverse(reverse_chunk_mapping(chunk_mapping)),
       data_shards(calc_shards(raw_shard_id_t(), k, chunk_mapping)),
-      parity_shards(calc_shards(raw_shard_id_t(k), m, chunk_mapping)) {
+      parity_shards(calc_shards(raw_shard_id_t(k), m, chunk_mapping)),
+      all_shards(calc_all_shards(k + m)) {
     ceph_assert(stripe_width != 0);
     ceph_assert(stripe_width % k == 0);
   }
@@ -592,7 +593,8 @@ public:
       chunk_mapping(complete_chunk_mapping(_chunk_mapping, k + m)),
       chunk_mapping_reverse(reverse_chunk_mapping(chunk_mapping)),
       data_shards(calc_shards(raw_shard_id_t(), k, chunk_mapping)),
-      parity_shards(calc_shards(raw_shard_id_t(k), m, chunk_mapping)) {
+      parity_shards(calc_shards(raw_shard_id_t(k), m, chunk_mapping)),
+      all_shards(calc_all_shards(k + m)) {
     ceph_assert(stripe_width != 0);
     ceph_assert(stripe_width % k == 0);
   }
@@ -609,7 +611,8 @@ public:
       chunk_mapping(complete_chunk_mapping(std::vector<shard_id_t>(), k + m)),
       chunk_mapping_reverse(reverse_chunk_mapping(chunk_mapping)),
       data_shards(calc_shards(raw_shard_id_t(), k, chunk_mapping)),
-      parity_shards(calc_shards(raw_shard_id_t(k), m, chunk_mapping)) {
+      parity_shards(calc_shards(raw_shard_id_t(k), m, chunk_mapping)),
+      all_shards(calc_all_shards(k + m)) {
     ceph_assert(stripe_width != 0);
     ceph_assert(stripe_width % k == 0);
   }
