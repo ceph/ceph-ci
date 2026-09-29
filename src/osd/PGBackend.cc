@@ -367,11 +367,13 @@ struct TrimmerPostRemove : public ObjectModDesc::Visitor {
     const uint64_t object_size,
     const std::vector<shard_id_set> &shards) override {
     auto dpp = pg->get_parent()->get_dpp();
+    const shard_id_t rel_shard = pg->get_parent()->get_pool().get_relative_shard(
+      pg->get_parent()->whoami_shard().shard);
     ceph_assert(shards.empty() || shards.size() == extents.size());
     for (unsigned int i = 0; i < extents.size(); i++) {
       if (shards.empty() ||
 	  shards[i].empty() ||
-	  shards[i].contains(pg->get_parent()->whoami_shard().shard)) {
+          shards[i].contains(rel_shard)) {
         ldpp_dout(dpp, 30) << __func__ << " trim " << shards << " "
 			   << pg->get_parent()->whoami_shard().shard << dendl;
         pg->trim_rollback_object(
