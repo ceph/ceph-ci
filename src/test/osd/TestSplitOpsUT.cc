@@ -1101,3 +1101,42 @@ TEST_F(TestSplitOpInit, ReplicaSplitReadOneSlicePerReplica)
   }
   op->put();
 }
+
+// Reads of different sizes in one op each reassemble from their own slices.
+TEST_F(TestSplitOpInit, ReplicaSplitReadsOfDifferentSizes)
+{
+  std::vector<int> acting = {0, 1, 2, 3};
+  osdc_opvec ops(2);
+  ops[0].op.op = CEPH_OSD_OP_READ;
+  ops[0].op.extent.length = 4 * 4096;
+  ops[1].op.op = CEPH_OSD_OP_READ;
+  ops[1].op.extent.length = 2 * 4096;
+  auto op = new Objecter::Op(object_t("obj"), object_locator_t(rep_pool_id),
+                             std::move(ops), CEPH_OSD_FLAG_BALANCE_READS,
+                             (Context*)nullptr, nullptr);
+  op->target.acting = acting;
+  {
+    ReplicaSplitOpProbe split(op, *objecter, g_ceph_context, 16, false);
+    split.init_reference_sub_read();
+    ASSERT_FALSE(split.abort);
+    split.init(op->ops[0], 0);
+    split.init(op->ops[1], 1);
+    ASSERT_FALSE(split.abort);
+    for (auto& [key, sr] : split.sub_reads) {
+      unsigned rd_index = 0;
+      for (int ops_index = 0; ops_index < 2; ops_index++) {
+        if (sr.details.contains(ops_index)) {
+          auto& extent = sr.rd.ops[rd_index++].op.extent;
+          sr.details[ops_index].bl.append_zero(extent.length);
+        }
+      }
+    }
+    for (int ops_index = 0; ops_index < 2; ops_index++) {
+      bufferlist out;
+      split.assemble_buffer_read(out, ops_index);
+      EXPECT_EQ(op->ops[ops_index].op.extent.length, out.length())
+        << "ops_index " << ops_index;
+    }
+  }
+  op->put();
+}
