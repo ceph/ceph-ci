@@ -416,13 +416,9 @@ unsigned OSDMap::stretch_ec_num_acting_below_min_size(const pg_pool_t& pool,
   get_stretch_zones(pool, &zones);
   int deficit = 0;
   for (const auto& [zone, zone_osd_set] : zones) {
-    if (pool.peering_crush_mandatory_member != CRUSH_ITEM_NONE) {
-      int base_zone = zone;
-      int class_id;
-      crush->split_id_class(zone, &base_zone, &class_id);
-      if (base_zone != (int)pool.peering_crush_mandatory_member) {
-        continue;
-      }
+    if (pool.peering_crush_mandatory_member != CRUSH_ITEM_NONE &&
+        crush->get_non_shadow_id(zone) != (int)pool.peering_crush_mandatory_member) {
+      continue;
     }
     unsigned zone_acting = 0;
     for (int osd : acting) {
