@@ -1668,6 +1668,7 @@ TEST(ECUtil, get_shard_zone_consistency_with_get_rel_shard)
     shard_id_t rel_shard = sinfo.get_rel_shard(abs_shard);
     int reconstructed = zone * sinfo.get_k_plus_m() + rel_shard.id;
     ASSERT_EQ(shard_id, reconstructed);
+    ASSERT_EQ(abs_shard, sinfo.get_abs_shard(rel_shard, zone));
   }
 }
 
