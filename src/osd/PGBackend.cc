@@ -291,11 +291,13 @@ void PGBackend::rollback(
 		  pool.allows_ecoptimizations());
       auto dpp = pg->get_parent()->get_dpp();
       bool donework = false;
+      const shard_id_t rel_shard =
+        pool.get_relative_shard(pg->get_parent()->whoami_shard().shard);
       ceph_assert(shards.empty() || shards.size() == extents.size());
       for (unsigned int i = 0; i < extents.size(); i++) {
         if (shards.empty() ||
 	    shards[i].empty() ||
-	    shards[i].contains(pg->get_parent()->whoami_shard().shard)) {
+            shards[i].contains(rel_shard)) {
 	  // Written shard - rollback extents
 	  const uint64_t shard_size = pg->object_size_to_shard_size(
 					object_size,
