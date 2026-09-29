@@ -309,14 +309,6 @@ class SplitOp {
   virtual void init_reference_sub_read() = 0;
   virtual void init(OSDOp &op, int ops_index);
 
-  /**
-   * @brief Return the absolute shard id to use when emplacing the reference
-   * sub-read entry for pass-thru ops (stat, getxattr, etc.).
-   */
-  virtual shard_id_t abs_shard_for_reference() const {
-    return reference_sub_read.shard;
-  }
-
   Objecter::Op *orig_op;
   Objecter &objecter;
   mini_flat_map<int, SubRead> sub_reads;
@@ -351,7 +343,7 @@ class SplitOp {
   bool abort = false;
   int flags = 0;
   pg_shard_t reference_sub_read;
-  int reference_sub_read_key = -1; ///< key into sub_reads for the reference entry
+  int reference_sub_read_key = -1; ///< acting index of the reference entry; sub_reads is keyed by acting index
   std::map<int, std::vector<int>> op_offset_map;
 
  public:

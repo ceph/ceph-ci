@@ -735,7 +735,7 @@ void SplitOp::init(OSDOp &op, int ops_index) {
   default: {
     if (!sub_reads.contains(reference_sub_read_key)) {
       sub_reads.emplace(reference_sub_read_key, orig_op->ops.size() + 1,
-                        abs_shard_for_reference());
+                        shard_id_t(reference_sub_read_key));
     }
     Details &d = sub_reads.at(reference_sub_read_key).details[ops_index];
     orig_op->pass_thru_op(sub_reads.at(reference_sub_read_key).rd, ops_index, &d.bl, &d.rval);
