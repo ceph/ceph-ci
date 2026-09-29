@@ -1042,7 +1042,7 @@ void ECBackend::handle_sub_read_reply(
      */
     for (auto pg_shard : rop.in_progress) {
       for (auto &&[oid, read] : rop.to_read) {
-        read.zeros_for_decode.erase(pg_shard.shard);
+        read.zeros_for_decode.erase(sinfo.get_rel_shard(pg_shard.shard));
       }
     }
     read_pipeline.complete_read_op(std::move(rop));
