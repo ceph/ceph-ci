@@ -36,7 +36,7 @@
  *     datacenter "dc0"  (type 9): OSDs 0, 1, 2, 6
  *     datacenter "dc1"  (type 9): OSDs 3, 4, 5, 7
  *
- *   pool: erasure, size=8, min_size=2
+ *   pool: erasure, 2 zones of 3 shards (size=6), min_size=2
  */
 
 #include <gtest/gtest.h>
@@ -116,6 +116,7 @@ static std::shared_ptr<OSDMap> make_stretch_ec_osdmap()
   pool.set_pg_num(8);
   pool.set_pgp_num(8);
   pool.set_flag(pg_pool_t::FLAG_EC_OVERWRITES);
+  pool.opts.set(pool_opts_t::NUM_ZONES, static_cast<int64_t>(2));
   pool.peering_crush_bucket_barrier = 9; // datacenter
   pool.peering_crush_bucket_target  = 2;
   pool.peering_crush_bucket_count   = 2;
@@ -425,4 +426,39 @@ TEST_F(StretchECMinSizeTest, DeviceClassRule_DatacenterWithoutClassOsdsNoDeficit
     hdd, {0, 1, 2, 3, 4, 5}));
   EXPECT_EQ(2u, osdmap->stretch_ec_num_acting_below_min_size(
     hdd, {0, 1, 2, N, N, N}));
+}
+
+// An interval whose acting set leaves a zone below the per-zone min_size
+// could never have been writeable (acting_set_writeable() is false), so it
+// must not be recorded as maybe_went_rw.
+TEST_F(StretchECMinSizeTest, PastIntervals_ZoneBelowMinSizeNotMaybeWentRW)
+{
+  struct AlwaysRecoverable : public IsPGRecoverablePredicate {
+    bool operator()(const std::set<pg_shard_t> &) const override { return true; }
+  } recoverable;
+
+  OSDMap::Incremental up_thru_inc(osdmap->get_epoch() + 1);
+  up_thru_inc.fsid = osdmap->get_fsid();
+  for (int i = 0; i < 8; ++i) {
+    up_thru_inc.new_up_thru[i] = osdmap->get_epoch() + 1;
+  }
+  osdmap->apply_incremental(up_thru_inc);
+  auto lastmap = std::make_shared<OSDMap>();
+  lastmap->deepish_copy_from(*osdmap);
+  OSDMap::Incremental next(osdmap->get_epoch() + 1);
+  next.fsid = osdmap->get_fsid();
+  osdmap->apply_incremental(next);
+
+  const int N = CRUSH_ITEM_NONE;
+  vector<int> old_acting = {0, 1, 2, 3, N, N};
+  vector<int> new_acting = {0, 1, 2, 3, 4, 5};
+  ASSERT_EQ(1u, lastmap->stretch_ec_num_acting_below_min_size(*pool, old_acting));
+
+  PastIntervals past_intervals;
+  std::ostringstream out;
+  ASSERT_TRUE(PastIntervals::check_new_interval(
+    0, 0, old_acting, new_acting, 0, 0, old_acting, new_acting,
+    1, 0, osdmap.get(), lastmap.get(), pg_t(0, 1), recoverable,
+    &past_intervals, &out));
+  EXPECT_EQ(0u, past_intervals.size()) << out.str();
 }
