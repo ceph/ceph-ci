@@ -1016,6 +1016,8 @@ public:
   bool subtree_is_down(int id, std::set<int> *down_cache) const;
   bool containing_subtree_is_down(CephContext *cct, int osd, int subtree_type, std::set<int> *down_cache) const;
 
+  void get_stretch_zones(const pg_pool_t& pool,
+                         std::map<int, std::set<int>>* zone_osds) const;
   bool at_least_one_zone_has_min_size(const pg_pool_t& pool, const std::vector<int>& acting) const ;
   unsigned stretch_ec_num_acting_below_min_size(const pg_pool_t& pool, const std::vector<int>& acting) const;
 

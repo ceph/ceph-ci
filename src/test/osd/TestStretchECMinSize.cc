@@ -369,6 +369,14 @@ TEST_F(StretchECMinSizeTest, DeviceClassRule_ShadowZonesCounted)
   EXPECT_EQ(2u, osdmap->stretch_ec_num_acting_below_min_size(
     hdd, {0, 1, 2, N, N, N}));
   EXPECT_TRUE(osdmap->at_least_one_zone_has_min_size(hdd, {0, 1, 2, 3, 4, 5}));
+
+  // The mon stores the degraded-mode mandatory member as the normal bucket id
+  hdd.peering_crush_bucket_count = 1;
+  hdd.peering_crush_mandatory_member = osdmap->crush->get_item_id("dc0");
+  EXPECT_EQ(0u, osdmap->stretch_ec_num_acting_below_min_size(
+    hdd, {0, 1, 2, N, N, N}));
+  EXPECT_EQ(2u, osdmap->stretch_ec_num_acting_below_min_size(
+    hdd, {N, N, N, 3, 4, 5}));
 }
 
 // The degraded mode mandatory member is the normal bucket id of the
@@ -394,4 +402,27 @@ TEST_F(StretchECMinSizeTest, EmptyDatacenterUnderRoot_NoDeficit)
     *pool, {0, 1, 2, 3, 4, 5}));
   EXPECT_EQ(2u, osdmap->stretch_ec_num_acting_below_min_size(
     *pool, {0, 1, 2, N, N, N}));
+}
+
+// A datacenter whose only OSD has another device class cannot hold any of a
+// device-class pool either: its shadow bucket dc2~hdd is empty.
+TEST_F(StretchECMinSizeTest, DeviceClassRule_DatacenterWithoutClassOsdsNoDeficit)
+{
+  pg_pool_t hdd = *pool;
+  hdd.crush_rule = add_hdd_stretch_rule();
+  modify_crush([&](CrushWrapper &crush) {
+    int r = crush.insert_item(g_ceph_context, 8, 1.0, "osd.8",
+                              {{"root", "default"}, {"datacenter", "dc2"},
+                               {"host", "host8"}});
+    ceph_assert(r == 0);
+    std::ostringstream ss;
+    r = crush.update_device_class(8, "ssd", "osd.8", &ss);
+    ceph_assert(r >= 0);
+  });
+  ASSERT_TRUE(osdmap->crush->name_exists("dc2~hdd"));
+  const int N = CRUSH_ITEM_NONE;
+  EXPECT_EQ(0u, osdmap->stretch_ec_num_acting_below_min_size(
+    hdd, {0, 1, 2, 3, 4, 5}));
+  EXPECT_EQ(2u, osdmap->stretch_ec_num_acting_below_min_size(
+    hdd, {0, 1, 2, N, N, N}));
 }
