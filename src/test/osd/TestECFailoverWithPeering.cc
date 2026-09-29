@@ -2794,6 +2794,43 @@ TEST_P(TestECFailoverWithPeering, DivergentLogRewindZone1Target) {
   EXPECT_TRUE(pm.is_missing(make_test_object("obj_clone")));
 }
 
+// A rolled-back sub-stripe overwrite must be undone on the zone-1 copies of
+// the written shards too, so a later zone-0 outage reads the old data.
+TEST_P(TestECFailoverWithPeering, PartialOverwriteRollbackZone1Shards) {
+  if (num_zones < 2 || m < 2 || k < 3) {
+    GTEST_SKIP() << "requires num_zones > 1, k >= 3 and m >= 2";
+  }
+
+  const std::string obj_name = "test_partial_rollback";
+  const size_t object_size = stripe_unit * k;
+
+  create_and_write_verify(obj_name, std::string(object_size, 'A'));
+
+  suspend_primary_to_osd(k);
+  ASSERT_EQ(-EINPROGRESS, write(obj_name, stripe_unit,
+                                std::string(stripe_unit, 'B'), object_size));
+  const version_t gen = get_peering_state(0)->get_pg_log().get_head().version;
+  mark_osd_down(2);
+  unsuspend_primary_to_osd(k);
+  event_loop->run_until_idle();
+  mark_osd_up(2);
+  ASSERT_TRUE(all_shards_active());
+
+  verify_object(obj_name);
+  for (int zone = 0; zone < num_zones; zone++) {
+    for (int rel : {1, k, k + 1}) {
+      int shard = zone * (k + m) + rel;
+      EXPECT_FALSE(shard_has_object(obj_name, gen, shard))
+        << "rollback clone object left behind on shard " << shard;
+    }
+  }
+
+  mark_osds_down(zone_osds(0));
+  set_pool_min_size(k);
+  ASSERT_GE(get_primary_shard_from_osdmap(), k + m);
+  verify_object(obj_name);
+}
+
 // ---------------------------------------------------------------------------
 // Instantiate TestECFailoverWithPeering with EC configurations
 // ---------------------------------------------------------------------------
