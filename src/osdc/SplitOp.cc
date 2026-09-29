@@ -396,7 +396,8 @@ std::pair<SplitOp::extent_set, bufferlist> ReplicaSplitOp::assemble_buffer_spars
   bufferlist bl_out;
 
   for (int acting_index : read_order) {
-    if (!sub_reads.contains(acting_index)) {
+    if (!sub_reads.contains(acting_index) ||
+        !sub_reads.at(acting_index).details.contains(ops_index)) {
       break;
     }
     auto &sr = sub_reads.at(acting_index);
@@ -419,7 +420,8 @@ std::pair<SplitOp::extent_set, bufferlist> ReplicaSplitOp::assemble_buffer_spars
  */
 void ReplicaSplitOp::assemble_buffer_read(bufferlist &bl_out, int ops_index) const {
   for (int acting_index : read_order) {
-    if (!sub_reads.contains(acting_index)) {
+    if (!sub_reads.contains(acting_index) ||
+        !sub_reads.at(acting_index).details.contains(ops_index)) {
       break;
     }
     bl_out.append(sub_reads.at(acting_index).details.at(ops_index).bl);
