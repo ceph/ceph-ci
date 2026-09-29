@@ -2625,3 +2625,41 @@ TEST(ECCommon, cache_ready_remote_zone_backfill_target_not_sent_op)
   EXPECT_TRUE(to_backfill->op.backfill_or_async_recovery);
   EXPECT_EQ(to_backfill->op.stats.stats.sum.num_objects, 123);
 }
+
+// Recovery read with a zone-0 backfill copy of relative shard 1 and too few
+// local shards to decode: the remote fallback must keep the local backfill
+// copy of shard 1 rather than read its zone-1 acting copy.
+TEST(ECCommon, get_min_avail_to_read_shards_zones_local_backfill_not_displaced_by_remote_acting) {
+  const uint64_t align_size = EC_ALIGN_SIZE;
+  const uint64_t swidth = 64 * align_size;
+  const unsigned int k = 4;
+  const unsigned int m = 2;
+  const uint64_t object_size = swidth * 1024;
+
+  pg_pool_t pool;
+  pool.size = 2 * (k + m);
+  pool.opts.set(pool_opts_t::NUM_ZONES, 2);
+  ECUtil::stripe_info_t s(k, m, swidth, &pool);
+  ECListenerStub listenerStub;
+  listenerStub.whoami = pg_shard_t(0, shard_id_t(0));
+  ErasureCodeInterfaceRef ec_impl(new MockErasureCode());
+  ECCommon::ReadPipeline pipeline(g_ceph_context, ec_impl, s, &listenerStub);
+
+  for (int i : {0, 2, 6, 7, 8, 9, 10, 11}) {
+    listenerStub.acting_shards.insert(pg_shard_t(i, shard_id_t(i)));
+  }
+  const pg_shard_t local_backfill(20, shard_id_t(1));
+  listenerStub.backfill_shards.insert(local_backfill);
+
+  hobject_t hoid;
+  ECUtil::shard_extent_set_t to_read_list(s.get_k_plus_m());
+  for (shard_id_t i; i < k; ++i) {
+    to_read_list[i].insert(int(i) * 2 * align_size, align_size);
+  }
+  ECCommon::read_request_t read_request(to_read_list, ECCommon::WantAttrs::No,
+    ECCommon::WantOmapHeader::No, ECCommon::WantOmapKeys::No, "", 0, object_size);
+  ASSERT_EQ(pipeline.get_min_avail_to_read_shards(hoid, true, false, read_request), 0);
+
+  ASSERT_TRUE(read_request.shard_reads.contains(shard_id_t(1)));
+  EXPECT_EQ(read_request.shard_reads.at(shard_id_t(1)).pg_shard, local_backfill);
+}
