@@ -1028,3 +1028,24 @@ TEST_F(TestSplitOpInit, ECBalanceReadsChooseZonePerShard)
   }
   EXPECT_TRUE(mixed);
 }
+
+// BALANCE_READS split reads only pick zones that hold each shard.
+TEST_F(TestSplitOpInit, ECBalanceReadsSkipZoneMissingShard)
+{
+  std::vector<int> acting = {0, 1, 2, 4, CRUSH_ITEM_NONE, 6};
+  for (unsigned seed = 0; seed < 16; seed++) {
+    srand(seed);
+    auto op = make_read_op(degraded_ec_pool_id, acting, 0, 8192,
+                           CEPH_OSD_FLAG_BALANCE_READS);
+    {
+      ECSplitOpProbe split(op, *objecter, g_ceph_context, 6, false);
+      split.init_reference_sub_read();
+      ASSERT_FALSE(split.abort);
+      split.init_read(op->ops[0], false, 0);
+      ASSERT_FALSE(split.abort) << "seed " << seed;
+      EXPECT_TRUE(split.sub_reads.contains(1)) << "seed " << seed;
+      EXPECT_FALSE(split.sub_reads.contains(4)) << "seed " << seed;
+    }
+    op->put();
+  }
+}

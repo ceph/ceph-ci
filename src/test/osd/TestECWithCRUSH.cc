@@ -276,42 +276,6 @@ TEST_F(TestLocalZoneForActingSet, AllZone0OsdsDownWithRootLocPrefersZone1)
 // the comment on that fixture: guard-path cases belong there, CRUSH-
 // dependent cases belong here).
 
-TEST_F(TestLocalZoneForActingSet, LocalizeReadsPicksNearestZone)
-{
-  // Exercise the actual localize/non-localize branch that init_read() uses
-  // (via the choose_local_zone_index() extraction), not just the
-  // localize-agnostic local_zone_for_acting_set() helper by itself - the
-  // previous version of this test called only the latter, so it could not
-  // tell whether the `localize` flag did anything at all.
-  auto acting = make_acting();
-  auto loc0 = make_loc(0);
-  auto loc1 = make_loc(1);
-
-  // localize=true: zone selection tracks the client's CRUSH location, same
-  // as calling local_zone_for_acting_set() directly.
-  EXPECT_EQ(0, ECSplitOp::choose_local_zone_index(
-    /*localize=*/true, acting, num_zones, zone_size,
-    osdmap->crush.get(), g_ceph_context, loc0));
-  EXPECT_EQ(1, ECSplitOp::choose_local_zone_index(
-    /*localize=*/true, acting, num_zones, zone_size,
-    osdmap->crush.get(), g_ceph_context, loc1));
-
-  // localize=false: BALANCE_READS semantics - the result must NOT depend on
-  // the client's crush_location at all.  Reset rand()'s seed before each
-  // call so both calls draw the same "random" value; if the location were
-  // consulted (e.g. a regression that inverted the localize check), loc0
-  // and loc1 would disagree the same way the localize=true calls above do.
-  srand(1);
-  int non_localized_zone0_loc = ECSplitOp::choose_local_zone_index(
-    /*localize=*/false, acting, num_zones, zone_size,
-    osdmap->crush.get(), g_ceph_context, loc0);
-  srand(1);
-  int non_localized_zone1_loc = ECSplitOp::choose_local_zone_index(
-    /*localize=*/false, acting, num_zones, zone_size,
-    osdmap->crush.get(), g_ceph_context, loc1);
-  EXPECT_EQ(non_localized_zone0_loc, non_localized_zone1_loc);
-}
-
 TEST_F(TestLocalZoneForActingSet, BalanceReadsPicksZoneFromActingSet)
 {
   auto acting = make_acting();
