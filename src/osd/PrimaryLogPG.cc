@@ -5999,6 +5999,9 @@ int PrimaryLogPG::do_read(OpContext *ctx, OSDOp& osd_op) {
     if (ctx->op->ec_direct_read()) {
       int r = pgbackend->objects_read_local(
         soid, op.extent.offset, op.extent.length, op.flags, &osd_op.outdata);
+      if (r == -EIO) {
+        r = rep_repair_primary_object(soid, ctx);
+      }
       if (r >= 0) {
         bytes_read = r;
         // Don't update op.extent.length - causes issues with recursive
@@ -15976,18 +15979,20 @@ bool PrimaryLogPG::_range_available_for_scrub(const hobject_t& begin,
 int PrimaryLogPG::rep_repair_primary_object(const hobject_t& soid, OpContext *ctx)
 {
   OpRequestRef op = ctx->op;
-  // Only supports replicated pools
-  ceph_assert(!pool.info.is_erasure());
 
-  if (!is_primary()) {
-    // Must be a balanced/localized read that has failed on a replica.
-    // Replicas cannot run recovery, so the request need to be
+  if (!is_primary() || op->ec_direct_read()) {
+    // Must be a balanced/localized read that has failed on a replica, or
+    // an EC direct read, which only reads this OSD's shard.
+    // Neither can run recovery, so the request need to be
     // failed with EAGAIN to the client which will then retry the
     // request to the primary
-    dout(10) << __func__ << " not primary, failing op with EAGAIN" << dendl;
+    dout(10) << __func__ << " direct read, failing op with EAGAIN" << dendl;
     osd->reply_op_error(op, -EAGAIN);
     return -EAGAIN;
   }
+
+  // Only supports replicated pools
+  ceph_assert(!pool.info.is_erasure());
 
   dout(10) << __func__ << " " << soid
 	   << " peers osd.{" << get_acting_recovery_backfill() << "}" << dendl;
