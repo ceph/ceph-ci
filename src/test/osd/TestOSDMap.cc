@@ -11,6 +11,7 @@
 #include "common/ceph_argparse.h"
 #include "common/ceph_json.h"
 #include "crush/CrushWrapper.h"
+#include "test/osd/OSDMapTestHelpers.h"
 #include "include/stringify.h"
 
 #include <iostream>
@@ -3699,6 +3700,81 @@ TEST_F(OSDMapTest, pgtemp_primaryfirst_comprehensive) {
         test_primaryfirst_patterns(osdmap, pgid, k, m, num_zones);
       }
     }
+  }
+}
+
+// Stretch EC pg_temp with CRUSH_ITEM_NONE holes decodes to the shard-ordered
+// acting set and picks a primary-capable acting primary.
+TEST_F(OSDMapTest, pgtemp_primaryfirst_stretch_none_holes) {
+  set_up_map(18);
+  int64_t pool_id = my_rep_pool + 1;
+  for (auto [k, m, num_zones] : std::vector<std::tuple<int, int, int>>{
+         {4, 2, 2}, {2, 1, 3}, {2, 2, 2}}) {
+    pg_pool_t pool = OSDMapTestHelpers::create_ec_pool(
+      k, m, k * 4096,
+      pg_pool_t::FLAG_EC_OPTIMIZATIONS | pg_pool_t::FLAG_EC_OVERWRITES,
+      pool_id, num_zones);
+    OSDMapTestHelpers::add_pool(osdmap, pool_id, pool);
+    const pg_pool_t *p = osdmap.get_pg_pool(pool_id);
+    pg_t pgid(0, pool_id);
+    int zone_size = k + m;
+
+    std::vector<std::vector<int>> patterns;
+    std::vector<int> all(p->size);
+    std::iota(all.begin(), all.end(), 0);
+    auto zone0_down = all;
+    std::fill(zone0_down.begin(), zone0_down.begin() + zone_size, CRUSH_ITEM_NONE);
+    patterns.push_back(zone0_down);
+    auto zone0_primaries_down = all;
+    zone0_primaries_down[0] = CRUSH_ITEM_NONE;
+    for (int s = k; s < zone_size; s++) {
+      zone0_primaries_down[s] = CRUSH_ITEM_NONE;
+    }
+    patterns.push_back(zone0_primaries_down);
+    auto alternating = all;
+    for (int s = 0; s < p->size; s += 2) {
+      alternating[s] = CRUSH_ITEM_NONE;
+    }
+    patterns.push_back(alternating);
+
+    for (auto& acting_in : patterns) {
+      SCOPED_TRACE(::testing::Message() << "k=" << k << " m=" << m
+                   << " zones=" << num_zones << " acting=" << acting_in);
+      std::vector<int> encoded = osdmap.pgtemp_primaryfirst(*p, acting_in);
+      OSDMap::Incremental inc(osdmap.get_epoch() + 1);
+      inc.new_pg_temp[pgid] = mempool::osdmap::vector<int>(encoded.begin(),
+                                                           encoded.end());
+      osdmap.apply_incremental(inc);
+
+      std::vector<int> up, acting;
+      int up_primary, acting_primary;
+      osdmap.pg_to_up_acting_osds(pgid, &up, &up_primary, &acting, &acting_primary);
+      EXPECT_EQ(acting_in, acting);
+
+      int expected_primary = -1;
+      for (int osd : encoded) {
+        if (osd != CRUSH_ITEM_NONE) {
+          expected_primary = osd;
+          break;
+        }
+      }
+      ASSERT_NE(-1, acting_primary);
+      EXPECT_EQ(expected_primary, acting_primary);
+      EXPECT_FALSE(p->is_nonprimary_shard(shard_id_t(acting_primary)));
+      if (acting_in[0] == CRUSH_ITEM_NONE && acting_in[k] == CRUSH_ITEM_NONE &&
+          acting_in[zone_size] != CRUSH_ITEM_NONE) {
+        EXPECT_EQ(zone_size, acting_primary);
+      }
+
+      for (size_t pos = 0; pos < encoded.size(); pos++) {
+        shard_id_t shard = osdmap.pgtemp_undo_primaryfirst(*p, pgid, shard_id_t(pos));
+        EXPECT_EQ(encoded[pos], acting_in[shard.id]) << "pos " << pos;
+      }
+    }
+    OSDMap::Incremental clear(osdmap.get_epoch() + 1);
+    clear.new_pg_temp[pgid] = mempool::osdmap::vector<int>();
+    osdmap.apply_incremental(clear);
+    pool_id++;
   }
 }
 
