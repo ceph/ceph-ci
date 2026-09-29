@@ -438,3 +438,50 @@ TEST_F(TestECStretchPeering, ZoneLoss_PeeredUntilDegradedStretchMode)
   ps = get_primary_test_pg()->get_peering_state();
   EXPECT_TRUE(ps->is_active()) << get_state_name(0);
 }
+
+// A pg-upmap swapping the two zone blocks while a pg_temp still pins the old
+// acting set, with a trimmed log so the up OSDs need backfill for their new
+// shards.  Peering must not abort in choose_acting.
+TEST_F(TestECStretchPeering, ZoneBlockSwapWithPgTemp_NoChooseActingAbort)
+{
+  ASSERT_TRUE(osdmap->get_pg_pool(pool_id)->is_stretch_pool());
+  ASSERT_TRUE(all_shards_active());
+
+  ScopedConfig trim_min("osd_pg_log_trim_min", "1");
+  ScopedConfig trim_max("osd_pg_log_trim_max", "1000");
+  osdmap->set_flag(CEPH_OSDMAP_PGLOG_HARDLIMIT);
+  const std::string data(stripe_unit * k, 'A');
+  create_and_write_verify("obj", data);
+  enable_log_trimming = true;
+  set_target_pg_log_entries(1);
+  for (int i = 0; i < 5; ++i) {
+    write_verify("obj", 0, data, data.size());
+  }
+  ASSERT_GT(get_primary_test_pg()->get_peering_state()->get_info().log_tail,
+            eversion_t());
+
+  vector<int> up, acting;
+  int up_primary, acting_primary;
+  osdmap->pg_to_up_acting_osds(pgid, &up, &up_primary, &acting, &acting_primary);
+  const int zone_size = k + m;
+  vector<int> swapped(acting.begin() + zone_size, acting.end());
+  swapped.insert(swapped.end(), acting.begin(), acting.begin() + zone_size);
+
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  EXPECT_EXIT({
+    auto new_osdmap = std::make_shared<OSDMap>();
+    new_osdmap->deepish_copy_from(*osdmap);
+    OSDMap::Incremental inc(new_osdmap->get_epoch() + 1);
+    inc.fsid = new_osdmap->get_fsid();
+    vector<int> pg_temp =
+      new_osdmap->pgtemp_primaryfirst(*new_osdmap->get_pg_pool(pool_id), acting);
+    inc.new_pg_temp[pgid] =
+      mempool::osdmap::vector<int32_t>(pg_temp.begin(), pg_temp.end());
+    inc.new_pg_upmap[pgid] =
+      mempool::osdmap::vector<int32_t>(swapped.begin(), swapped.end());
+    new_osdmap->apply_incremental(inc);
+    update_osdmap_with_peering(new_osdmap);
+    event_loop->run_until_idle();
+    exit(0);
+  }, ::testing::ExitedWithCode(0), "");
+}

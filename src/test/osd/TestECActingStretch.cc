@@ -1791,3 +1791,25 @@ TEST_F(TestECActingStretch, Zone1Auth_Zone0BehindLogTail) {
   }
   EXPECT_EQ(acting_backfill, expected_ab) << ss.str();
 }
+
+// Zone blocks swapped in up with a trimmed log: the up OSDs only have the
+// empty info returned for a shard they do not hold.  choose_acting asserts
+// that want == up implies no backfill.
+TEST_F(TestECActingStretch, ZoneBlockSwap_WantEqualsUpImpliesNoBackfill) {
+  vector<int> up = {3, 4, 5, 0, 1, 2};
+  vector<int> acting = {0, 1, 2, 3, 4, 5};
+  map<pg_shard_t, pg_info_t> all_info;
+  for (int i = 0; i < 6; ++i) {
+    add_info(all_info, i, i, eversion_t(1, 10), eversion_t(1, 5));
+    add_info(all_info, up[i], i, eversion_t());
+  }
+
+  vector<int> want;
+  set<pg_shard_t> backfill, acting_backfill;
+  ostringstream ss;
+  calc(up, acting, all_info, pg_shard_t(0, shard_id_t(0)), false,
+       &want, &backfill, &acting_backfill, ss);
+  EXPECT_FALSE(want == up && !backfill.empty())
+    << "want " << want << " == up with backfill " << backfill << "\n"
+    << ss.str();
+}
