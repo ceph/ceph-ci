@@ -967,6 +967,42 @@ TEST_F(TestSplitOpInit, ReplicaSubReadsTargetActingOsds)
   }
 }
 
+// Replica split read slices reassemble in offset order whichever replica starts.
+TEST_F(TestSplitOpInit, ReplicaSplitReadAssemblesInOffsetOrder)
+{
+  std::vector<int> acting = {0, 1, 2, 3};
+  const uint64_t len = 4 * 65536;
+  for (unsigned seed = 0; seed < 16; seed++) {
+    srand(seed);
+    auto op = make_read_op(rep_pool_id, acting, 0, len,
+                           CEPH_OSD_FLAG_BALANCE_READS);
+    {
+      ReplicaSplitOpProbe split(op, *objecter, g_ceph_context, 16, false);
+      split.init_reference_sub_read();
+      ASSERT_FALSE(split.abort);
+      split.init_read(op->ops[0], false, 0);
+      ASSERT_FALSE(split.abort);
+      for (auto& [key, sr] : split.sub_reads) {
+        auto& extent = sr.rd.ops[0].op.extent;
+        std::string data;
+        for (uint64_t i = 0; i < extent.length; i++) {
+          data.push_back(static_cast<char>((extent.offset + i) / 4096));
+        }
+        sr.details[0].bl.append(data);
+      }
+      bufferlist out;
+      split.assemble_buffer_read(out, 0);
+      std::string expected;
+      for (uint64_t i = 0; i < len; i++) {
+        expected.push_back(static_cast<char>(i / 4096));
+      }
+      EXPECT_TRUE(out.contents_equal(expected.data(), expected.size()))
+        << "seed " << seed << " reference key " << split.reference_sub_read_key;
+    }
+    op->put();
+  }
+}
+
 // LOCALIZE_READS on a stretch replica pool reads only from the client's zone.
 TEST_F(TestSplitOpInit, ReplicaLocalizeReadsOnlyLocalZone)
 {
