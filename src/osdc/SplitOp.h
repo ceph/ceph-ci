@@ -532,6 +532,23 @@ class ECSplitOp : public SplitOp{
       const std::multimap<std::string, std::string>& crush_location);
 
   /**
+   * @brief Choose the absolute shard to read data shard @p shard from.
+   *
+   * LOCALIZE_READS reads from the nearest zone, which is looked up on first
+   * use and kept in @p local_zone. BALANCE_READS picks a zone at random from
+   * those with an OSD for the shard.
+   *
+   * @return the absolute shard, or NO_SHARD if there is no OSD to read from
+   */
+  static shard_id_t choose_read_shard(
+      Objecter &objecter,
+      CephContext *cct,
+      const Objecter::op_target_t &target,
+      bool localize,
+      shard_id_t shard,
+      std::optional<int> &local_zone);
+
+  /**
    * @brief Check for version mismatches across EC shards.
    *
    * Compares the internal versions returned by each shard to ensure all

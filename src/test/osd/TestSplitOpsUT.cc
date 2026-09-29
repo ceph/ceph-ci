@@ -645,6 +645,7 @@ protected:
   static constexpr int osds_per_zone = 4;
   static constexpr int64_t ec_pool_id = 1;
   static constexpr int64_t rep_pool_id = 2;
+  static constexpr int64_t degraded_ec_pool_id = 3;
   boost::asio::io_context ioc;
   std::unique_ptr<Objecter> objecter;
 
@@ -701,6 +702,9 @@ protected:
     rep.set_pgp_num(1);
     OSDMapTestHelpers::add_pool(map, rep_pool_id, rep);
     OSDMapTestHelpers::set_pg_acting(map, pg_t(0, ec_pool_id), {0, 1, 2, 4, 5, 6});
+    OSDMapTestHelpers::add_pool(map, degraded_ec_pool_id, ec);
+    OSDMapTestHelpers::set_pg_acting(map, pg_t(0, degraded_ec_pool_id),
+                                     {0, 1, 2, 4, CRUSH_ITEM_NONE, 6});
 
     objecter->start(&map);
   }
@@ -972,4 +976,18 @@ TEST_F(TestSplitOpInit, ECSingleChunkBalanceReadsUsesEveryZone)
     op->put();
   }
   EXPECT_EQ(2u, zones.size());
+}
+
+// BALANCE_READS single-chunk reads only pick zones that hold the shard.
+TEST_F(TestSplitOpInit, ECSingleChunkBalanceReadsSkipZoneMissingShard)
+{
+  for (unsigned seed = 0; seed < 16; seed++) {
+    srand(seed);
+    auto op = make_read_op(degraded_ec_pool_id, {}, 0, 4096, CEPH_OSD_FLAG_BALANCE_READS);
+    op->ops[0].op.extent.offset = 4096;
+    SplitOp::prepare_single_op(op, *objecter, g_ceph_context);
+    EXPECT_TRUE(op->target.flags & CEPH_OSD_FLAG_EC_DIRECT_READ) << "seed " << seed;
+    EXPECT_EQ(1, op->target.osd) << "seed " << seed;
+    op->put();
+  }
 }

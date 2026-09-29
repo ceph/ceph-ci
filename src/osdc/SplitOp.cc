@@ -311,6 +311,44 @@ int ECSplitOp::choose_local_zone_index(
   return 0;
 }
 
+shard_id_t ECSplitOp::choose_read_shard(
+    Objecter &objecter,
+    CephContext *cct,
+    const Objecter::op_target_t &target,
+    bool localize,
+    shard_id_t shard,
+    std::optional<int> &local_zone)
+{
+  const pg_pool_t *pi = objecter.osdmap->get_pg_pool(target.base_oloc.pool);
+  ceph_assert(pi);
+  auto readable = [&](int zone) {
+    return objecter.osdmap->exists(
+        target.acting[(int)pi->get_abs_shard(shard, zone)]);
+  };
+
+  if (localize) {
+    if (!local_zone) {
+      local_zone = local_zone_for_acting_set(
+          target.acting, pi->get_num_zone(), pi->get_zone_size(),
+          objecter.osdmap->crush.get(), cct, objecter.crush_location);
+    }
+    return readable(*local_zone) ? pi->get_abs_shard(shard, *local_zone)
+                                 : shard_id_t::NO_SHARD;
+  }
+
+  std::vector<int> zones;
+  for (int zone = 0; zone < pi->get_num_zone(); ++zone) {
+    if (readable(zone)) {
+      zones.push_back(zone);
+    }
+  }
+  if (zones.empty()) {
+    return shard_id_t::NO_SHARD;
+  }
+  int zone = zones.size() > 1 ? zones[rand() % zones.size()] : zones.front();
+  return pi->get_abs_shard(shard, zone);
+}
+
 #undef dout_prefix
 #define dout_prefix *_dout << " ReplicaSplitOp::"
 
@@ -976,14 +1014,18 @@ void SplitOp::prepare_single_op(Objecter::Op *op, Objecter &objecter, CephContex
       raw_shard_id_t raw_shard((o.op.extent.offset) / chunk_size % data_chunk_count);
       shard_id_t shard = pi->get_shard(raw_shard);
       if (shard != shard_id_t::NO_SHARD) {
-        int acting_index = (int)shard;
-        if (objecter.osdmap->exists(op->target.acting[acting_index])) {
-          op->target.flags |= CEPH_OSD_FLAG_EC_DIRECT_READ;
-          op->target.flags |= CEPH_OSD_FLAG_FORCE_OSD;
-          target.osd = target.acting[acting_index];
-          target.actual_pgid.reset_shard(shard);
-          target.used_replica = (target.acting_primary != target.osd);
-        }
+        std::optional<int> local_zone;
+        shard = ECSplitOp::choose_read_shard(
+            objecter, cct, target,
+            (target.flags & CEPH_OSD_FLAG_LOCALIZE_READS) != 0, shard,
+            local_zone);
+      }
+      if (shard != shard_id_t::NO_SHARD) {
+        op->target.flags |= CEPH_OSD_FLAG_EC_DIRECT_READ;
+        op->target.flags |= CEPH_OSD_FLAG_FORCE_OSD;
+        target.osd = target.acting[(int)shard];
+        target.actual_pgid.reset_shard(shard);
+        target.used_replica = (target.acting_primary != target.osd);
       }
       break;
     }
