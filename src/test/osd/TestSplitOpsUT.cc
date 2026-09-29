@@ -29,6 +29,7 @@
 
 #include <gtest/gtest.h>
 #include <numeric>
+#include <thread>
 
 #include <boost/asio/io_context.hpp>
 
@@ -1305,8 +1306,19 @@ protected:
                                          CEPH_FEATURES_SUPPORTED_DEFAULT);
     inc.encode(m->incremental_maps[inc.epoch],
                CEPH_FEATURES_SUPPORTED_DEFAULT | CEPH_FEATURE_RESERVED);
+    // An op left without an OSD makes the Objecter ask for the next map;
+    // wanting it already stops the unconnected MonClient opening a session.
+    monc.sub_want("osdmap", inc.epoch + 1, CEPH_SUBSCRIBE_ONETIME);
     objecter->handle_osd_map(m.get());
     poll();
+  }
+
+  void set_pg_temp(const std::vector<int>& osds)
+  {
+    advance_map([&osds](OSDMap::Incremental& inc) {
+      inc.new_pg_temp[pg_t(0, ec_pool_id)] =
+        mempool::osdmap::vector<int32_t>(osds.begin(), osds.end());
+    });
   }
 
   void mark_down(int osd)
@@ -1432,5 +1444,38 @@ TEST_F(TestSplitOpMapChange, ECDirectReadRedrivesWhenShardOsdDown)
   ASSERT_EQ(1u, sent_to(2).size());
   EXPECT_EQ(std::make_pair(tid, shard_id_t(2)), sent_to(2).back());
   reply(2, cons[2]->sent.back());
+  EXPECT_EQ(0, done.wait_for(0));
+}
+
+// The relock delay makes _op_submit() drop the rwlock for a second after the
+// first sub-read has its target, so the map moving every shard lands there.
+TEST_F(TestSplitOpMapChange, ECSplitReadShardsMoveDuringSubmit)
+{
+  set_client_zone(1);
+  const std::vector<int> moved = {4, 5, 6, 0, 1, 2};
+  g_ceph_context->_conf.set_val_or_die("objecter_debug_inject_relock_delay",
+                                       "true");
+  ceph_tid_t parent = 0;
+  std::thread submitter([&] {
+    objecter->op_submit(new_read_op(ec_pool_id, 0, 8192,
+                                    CEPH_OSD_FLAG_READ |
+                                    CEPH_OSD_FLAG_LOCALIZE_READS, &done),
+                        &parent);
+  });
+  while (!objecter->is_active()) {
+    std::this_thread::yield();
+  }
+  set_pg_temp(moved);
+  submitter.join();
+  g_ceph_context->_conf.set_val_or_die("objecter_debug_inject_relock_delay",
+                                       "false");
+  for (int osd : acting) {
+    EXPECT_TRUE(sent_to(osd).empty()) << "osd." << osd;
+  }
+
+  mark_down(moved[2]);
+  ASSERT_EQ(1u, sent_to(moved[0]).size());
+  EXPECT_EQ(std::make_pair(parent, shard_id_t(0)), sent_to(moved[0]).back());
+  reply(moved[0], cons[moved[0]]->sent.back());
   EXPECT_EQ(0, done.wait_for(0));
 }
