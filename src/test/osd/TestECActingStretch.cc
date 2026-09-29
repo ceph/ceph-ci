@@ -1813,3 +1813,22 @@ TEST_F(TestECActingStretch, ZoneBlockSwap_WantEqualsUpImpliesNoBackfill) {
     << "want " << want << " == up with backfill " << backfill << "\n"
     << ss.str();
 }
+
+// All of dc1 marked out but still up: CRUSH leaves the zone 1 block of up
+// empty, yet acting[3..5] are up with current data and should be kept.
+TEST_F(TestECActingStretch, UpZoneBlockAllNone_CurrentActingZoneKept) {
+  const int N = CRUSH_ITEM_NONE;
+  vector<int> up = {0, 1, 2, N, N, N};
+  vector<int> acting = {0, 1, 2, 3, 4, 5};
+  map<pg_shard_t, pg_info_t> all_info;
+  for (int i = 0; i < 6; ++i) {
+    add_info(all_info, i, i, eversion_t(1, 10), eversion_t(1, 5));
+  }
+
+  vector<int> want;
+  set<pg_shard_t> backfill, acting_backfill;
+  ostringstream ss;
+  calc(up, acting, all_info, pg_shard_t(0, shard_id_t(0)), false,
+       &want, &backfill, &acting_backfill, ss);
+  EXPECT_EQ(want, (vector<int>{0, 1, 2, 3, 4, 5})) << ss.str();
+}
