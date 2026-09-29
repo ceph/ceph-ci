@@ -1916,3 +1916,23 @@ TEST_F(TestECActingStretch, StrayPick_CountsTowardZoneBucketMax) {
       << "\n" << ss.str();
   }
 }
+
+// A single cross-zone up entry (pg-upmap-items 3->6) must not cost the
+// rest of the healthy zone 1 block.
+TEST_F(TestECActingStretch, SingleCrossZoneUpEntry_KeepsRestOfZoneBlock) {
+  vector<int> up = {0, 1, 2, 6, 4, 5};
+  vector<int> acting = {0, 1, 2, 3, 4, 5};
+  map<pg_shard_t, pg_info_t> all_info;
+  for (int i = 0; i < 6; ++i) {
+    add_info(all_info, i, i, eversion_t(1, 10), eversion_t(1, 5));
+  }
+  add_info(all_info, 6, 3, eversion_t());
+
+  vector<int> want;
+  set<pg_shard_t> backfill, acting_backfill;
+  ostringstream ss;
+  calc(up, acting, all_info, pg_shard_t(0, shard_id_t(0)), false,
+       &want, &backfill, &acting_backfill, ss);
+  EXPECT_EQ(want[4], 4) << ss.str();
+  EXPECT_EQ(want[5], 5) << ss.str();
+}
