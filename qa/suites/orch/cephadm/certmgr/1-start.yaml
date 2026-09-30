@@ -1,0 +1,31 @@
+# Three hosts so services can be placed on one host while the others keep
+# quorum, and two mgrs so the tests can fail over the active one.
+roles:
+- - host.a
+  - mon.a
+  - mgr.a
+  - osd.0
+  - client.0
+- - host.b
+  - mon.b
+  - mgr.b
+  - osd.1
+- - host.c
+  - mon.c
+  - osd.2
+overrides:
+  ceph:
+    log-only-match:
+      - CEPHADM_
+    log-ignorelist:
+      # raised on purpose by the health and renewal tests
+      - CEPHADM_CERT_ERROR
+      - CEPHADM_CERT_WARNING
+      # services are deployed and removed repeatedly
+      - CEPHADM_FAILED_DAEMON
+      - CEPHADM_STRAY_DAEMON
+      - CEPHADM_DAEMON_PLACE_FAIL
+      - CEPHADM_APPLY_SPEC_FAIL
+tasks:
+- install:
+- cephadm:

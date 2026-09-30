@@ -1,0 +1,6 @@
+# Expected behaviour main does not implement yet; see the class docstrings.
+# Drop this facet, or land it together with the fixes, before merging.
+tasks:
+- cephfs_test_runner:
+    modules:
+      - tasks.cephadm_cases.test_certmgr.TestCertMgrOpenIssues
