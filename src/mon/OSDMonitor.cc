@@ -10103,6 +10103,13 @@ int OSDMonitor::prepare_command_pool_stretch_set(const cmdmap_t& cmdmap,
       return -EINVAL;
     }
 
+    if (bucket_count != p.get_num_zone()) {
+      ss << "For EC pool in stretch mode, peering_crush_bucket_count must be "
+         << "the pool's num_zones " << p.get_num_zone() << ", got "
+         << bucket_count;
+      return -EINVAL;
+    }
+
     ErasureCodeInterfaceRef erasure_code;
     int err = get_erasure_code(p.erasure_code_profile, &erasure_code, &ss);
     if (err == 0) {
