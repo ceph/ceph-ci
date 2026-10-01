@@ -24,6 +24,7 @@
 #include "common/Thread.h"
 #include "include/stringify.h"
 #include "osd/ReplicatedBackend.h"
+#include "messages/MOSDOpReply.h"
 
 #include <iostream> // for std::cout
 #include <sstream>
@@ -3088,6 +3089,57 @@ TEST(pg_history_t, merge_never_touched_peer_does_not_open_false_rebuild_span)
       << "merging a blank peer must not move last_rebuild_active_start past "
          "rebuild_span_reported and create a false open span";
   EXPECT_EQ(later_report, local.rebuild_span_reported);
+}
+
+static ceph::ref_t<MOSDOpReply> reply_roundtrip(
+  const ceph::ref_t<MOSDOpReply>& in,
+  uint64_t features)
+{
+  in->encode_payload(features);
+  auto out = ceph::make_message<MOSDOpReply>();
+  out->set_header(in->get_header());
+  ceph::buffer::list payload = in->get_payload();
+  out->set_payload(payload);
+  out->set_data(in->get_data());
+  out->decode_payload();
+  return out;
+}
+
+TEST(MOSDOpReply, core_hint_roundtrip)
+{
+  entity_addr_t a;
+  ASSERT_TRUE(a.parse("v2:127.0.0.1:6810/1234"));
+  const osd_core_hint_t hint{3, entity_addrvec_t(a)};
+
+  auto reply = ceph::make_message<MOSDOpReply>();
+  reply->set_core_hint(hint);
+  auto decoded = reply_roundtrip(reply, CEPH_FEATURES_ALL);
+  EXPECT_EQ(decoded->get_header().version, 9);
+  ASSERT_TRUE(decoded->get_core_hint().has_value());
+  EXPECT_EQ(*decoded->get_core_hint(), hint);
+  EXPECT_EQ(fmt::format("{}", *decoded->get_core_hint()),
+            "core 3 at v2:127.0.0.1:6810/1234");
+}
+
+TEST(MOSDOpReply, no_core_hint)
+{
+  auto reply = ceph::make_message<MOSDOpReply>();
+  auto decoded = reply_roundtrip(reply, CEPH_FEATURES_ALL);
+  EXPECT_EQ(decoded->get_header().version, 9);
+  EXPECT_FALSE(decoded->get_core_hint().has_value());
+}
+
+TEST(MOSDOpReply, core_hint_dropped_for_old_peer)
+{
+  entity_addr_t a;
+  ASSERT_TRUE(a.parse("v2:127.0.0.1:6810/1234"));
+
+  auto reply = ceph::make_message<MOSDOpReply>();
+  reply->set_core_hint(osd_core_hint_t{3, entity_addrvec_t(a)});
+  auto decoded = reply_roundtrip(
+    reply, CEPH_FEATURES_ALL & ~CEPH_FEATURE_SERVER_VAMPIRE);
+  EXPECT_EQ(decoded->get_header().version, 8);
+  EXPECT_FALSE(decoded->get_core_hint().has_value());
 }
 
 /*
