@@ -26,7 +26,7 @@ tasks:
 - install:
     # extra packages added for the rgw-d4ntests task
     extra_system_packages:
-      deb: ['s3cmd'] 
+      deb: ['s3cmd']
       rpm: ['s3cmd']
 - fdb:
     c1.client.0:

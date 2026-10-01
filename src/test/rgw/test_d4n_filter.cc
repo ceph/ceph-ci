@@ -172,15 +172,6 @@ class D4NFilterFixture: public ::testing::Test {
       rgw::sal::Driver* next = filterDriver;
       driver = newD4NFilter(next, io);
       d4nFilter = dynamic_cast<rgw::sal::D4NFilterDriver*>(driver);
-
-      /* Reset Redis state */
-      net::spawn(io, [this] (net::yield_context yield) {
-		boost::system::error_code ec;
-		request req;
-		req.push("FLUSHALL");
-		response<boost::redis::ignore_t> resp;
-		conn->async_exec(req, resp, yield[ec]);
-      }, rethrow);
     } 
 
     virtual void TearDown() {
@@ -188,6 +179,13 @@ class D4NFilterFixture: public ::testing::Test {
     }
 
     void init_driver(net::yield_context yield) {
+      /* Reset Redis state before each test */
+      boost::system::error_code ec;
+      request req;
+      req.push("FLUSHALL");
+      response<boost::redis::ignore_t> resp;
+      conn->async_exec(req, resp, yield[ec]);
+
       d4nFilter->save_y(optional_yield{yield});
       driver->initialize(env->cct.get(), env->dpp);
 
