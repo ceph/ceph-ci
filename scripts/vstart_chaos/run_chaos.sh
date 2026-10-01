@@ -165,7 +165,7 @@ import json, sys
 for p in json.load(sys.stdin)["pg_stats"]:
     a = [o for o in p["acting"] if o != 2147483647]
     if len(a) != len(set(a)):
-        print(f"    {p[\"pgid\"]} acting {p[\"acting\"]} {p[\"state\"]}")' || true
+        print("   ", p["pgid"], "acting", p["acting"], p["state"])' || true
 echo "health   : $(ceph health 2>/dev/null)"
 echo "diag     : $(ls -d $R/chaos/diag-* 2>/dev/null | tr '\n' ' ')"
 } | tee $R/SUMMARY
