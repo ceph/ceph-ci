@@ -103,7 +103,8 @@ class LFUDAPolicyFixture : public ::testing::Test {
       objDir = new rgw::d4n::RedisObjectDirectory{redis_conn};
       bucketDir = new rgw::d4n::RedisBucketDirectory{redis_conn};
 
-      policyDriver = new rgw::d4n::PolicyDriver(*dir, *blockDir, *objDir, *bucketDir, "redis", cacheDriver, "lfuda", null_yield);
+      lease = std::make_unique<rgw::d4n::RedisLease>(redis_conn);
+      policyDriver = new rgw::d4n::PolicyDriver(*dir, *blockDir, *objDir, *bucketDir, lease.get(), "redis", cacheDriver, "lfuda", null_yield);
 
       ASSERT_NE(dir, nullptr);
       ASSERT_NE(blockDir, nullptr);
@@ -154,7 +155,7 @@ class LFUDAPolicyFixture : public ::testing::Test {
 		policyDriver->get_cache_policy()->update(env->dpp, oid, 0, TEST_DATA_LENGTH, "", std::nullopt, uid, block->cacheObj.bucketName, rgw::d4n::RefCount::NOOP, y, nullptr);
         return 0;
       } else {
-		if ((ret = blockDir->get(env->dpp, block, y)) < 0 && ret != -ENOENT) {
+		if ((ret = blockDir->get(env->dpp, y, block, std::nullopt)) < 0 && ret != -ENOENT) {
 		  std::cout << "ERROR: Directory get failed, ret=" << ret << std::endl;
 		  return ret;
 		} else if (ret == 0) { 
@@ -167,7 +168,7 @@ class LFUDAPolicyFixture : public ::testing::Test {
 		  if (block->cacheObj.hostsList.size() > 0) { /* Remote copy */
 			block->globalWeight += age;
 			auto globalWeight = std::to_string(block->globalWeight);
-			if ((ret = blockDir->update_field(env->dpp, block, "globalWeight", globalWeight, y)) < 0) {
+			if ((ret = blockDir->update_field(env->dpp, y, block, "globalWeight", globalWeight, std::nullopt)) < 0) {
 			  std::cout << "ERROR: update_field failed, ret=" << ret << std::endl;
 			  return ret;
 			} 
@@ -179,7 +180,7 @@ class LFUDAPolicyFixture : public ::testing::Test {
 			this->policyDriver->get_cache_policy()->update(dpp, oid, 0, TEST_DATA_LENGTH, "", false, uid, block->cacheObj.bucketName, rgw::d4n::RefCount::NOOP, y, nullptr);
 			// Add local cache address to block's directory entry
             std::string host = "127.0.0.1:6379";
-			if ((ret = blockDir->update_field(env->dpp, block, "hosts", host, y)) < 0) {
+			if ((ret = blockDir->update_field(env->dpp, y, block, "hosts", host, std::nullopt)) < 0) {
 			  std::cout << "ERROR: update_field failed, ret=" << ret << std::endl;
 			  return ret;
 			}
@@ -194,7 +195,7 @@ class LFUDAPolicyFixture : public ::testing::Test {
 		  }
 		  this->policyDriver->get_cache_policy()->update(dpp, oid, 0, TEST_DATA_LENGTH, "", false, uid, block->cacheObj.bucketName, rgw::d4n::RefCount::NOOP, y, nullptr);
 		  // Add local cache address to block's directory entry
-		  if ((ret = blockDir->set(env->dpp, block, y)) < 0) {
+		  if ((ret = blockDir->set(env->dpp, y, block, std::nullopt)) < 0) {
 			std::cout << "ERROR: Directory set failed, ret=" << ret << std::endl;
 			return ret;
 		  }
@@ -203,6 +204,7 @@ class LFUDAPolicyFixture : public ::testing::Test {
 	  }
     }
 
+    std::unique_ptr<rgw::d4n::Lease> lease;
     rgw::d4n::CacheBlock* block;
     std::unique_ptr<rgw::d4n::RedisDirectory> dir;
     rgw::d4n::RedisBlockDirectory* blockDir;
@@ -306,13 +308,13 @@ TEST_F(LFUDAPolicyFixture, RemoteGetBlockYield)
     ASSERT_EQ(0, cacheDriver->put(env->dpp, victimKeyInCache, bl, TEST_DATA_LENGTH, attrs, optional_yield{yield}));
 	policyDriver->get_cache_policy()->update(env->dpp, victimKeyInCache, 0, TEST_DATA_LENGTH, victim.version, false, uid, block->cacheObj.bucketName, rgw::d4n::RefCount::NOOP, optional_yield{yield}, nullptr);
 
-    ASSERT_EQ(0, blockDir->set(env->dpp, &victim, optional_yield{yield}));
+    ASSERT_EQ(0, blockDir->set(env->dpp, optional_yield{yield}, &victim, std::nullopt));
 
     // Remote block
     block->cacheObj.hostsList.clear();
     block->cacheObj.hostsList.insert("127.0.0.1:6000");
 
-    ASSERT_EQ(0, blockDir->set(env->dpp, block, optional_yield{yield}));
+    ASSERT_EQ(0, blockDir->set(env->dpp, optional_yield{yield}, block, std::nullopt));
 
     { // Avoid sending victim block to remote cache since no network is available
       boost::system::error_code ec;
@@ -400,14 +402,14 @@ TEST_F(LFUDAPolicyFixture, RemoteVersionEnabledGetBlockYield)
     ASSERT_EQ(0, cacheDriver->put(env->dpp, victimKeyInCache, bl, TEST_DATA_LENGTH, attrs, optional_yield{yield}));
 	policyDriver->get_cache_policy()->update(env->dpp, victimKeyInCache, 0, TEST_DATA_LENGTH, victim.version, false, uid, block->cacheObj.bucketName, rgw::d4n::RefCount::NOOP, optional_yield{yield}, nullptr);
 
-    ASSERT_EQ(0, blockDir->set(env->dpp, &victim, optional_yield{yield}));
+    ASSERT_EQ(0, blockDir->set(env->dpp, optional_yield{yield}, &victim, std::nullopt));
 
     // Remote block
     block->cacheObj.hostsList.clear();
     block->cacheObj.hostsList.insert("127.0.0.1:6000");
 
     block->cacheObj.objName = "_:version_testName";
-    ASSERT_EQ(0, blockDir->set(env->dpp, block, optional_yield{yield}));
+    ASSERT_EQ(0, blockDir->set(env->dpp, optional_yield{yield}, block, std::nullopt));
 
     { // Avoid sending victim block to remote cache since no network is available
       boost::system::error_code ec;
@@ -495,14 +497,14 @@ TEST_F(LFUDAPolicyFixture, RemoteVersionSuspendedGetBlockYield)
     ASSERT_EQ(0, cacheDriver->put(env->dpp, victimKeyInCache, bl, TEST_DATA_LENGTH, attrs, optional_yield{yield}));
 	policyDriver->get_cache_policy()->update(env->dpp, victimKeyInCache, 0, TEST_DATA_LENGTH, victim.version, false, uid, block->cacheObj.bucketName, rgw::d4n::RefCount::NOOP, optional_yield{yield}, nullptr);
 
-    ASSERT_EQ(0, blockDir->set(env->dpp, &victim, optional_yield{yield}));
+    ASSERT_EQ(0, blockDir->set(env->dpp, optional_yield{yield}, &victim, std::nullopt));
 
     // Remote block
     block->cacheObj.hostsList.clear();
     block->cacheObj.hostsList.insert("127.0.0.1:6000");
 
     block->cacheObj.objName = "_:version_testName";
-    ASSERT_EQ(0, blockDir->set(env->dpp, block, optional_yield{yield}));
+    ASSERT_EQ(0, blockDir->set(env->dpp, optional_yield{yield}, block, std::nullopt));
 
     { // Avoid sending victim block to remote cache since no network is available
       boost::system::error_code ec;
