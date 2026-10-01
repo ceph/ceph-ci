@@ -9204,7 +9204,15 @@ void MDCache::_open_ino_fetch_dir(inodeno_t ino, const cref_t<MMDSOpenIno> &m, b
     return;
   }
 
-  dir->fetch(dname, CEPH_NOSNAP, fin);
+  // During rejoin, inodes being opened (cap imports etc..) tend to share
+  // dirfrags. Opening them via keyed fetches (mds_dir_prefetch=false) issues
+  // a separate omap read per dentry. Fetch the entire dirfrag instead so that
+  // the rest of the opens wait on a single fetch.
+  if (mds->is_rejoin()) {
+    dir->fetch(fin);
+  } else {
+    dir->fetch(dname, CEPH_NOSNAP, fin);
+  }
   if (mds->logger)
     mds->logger->inc(l_mds_openino_dir_fetch);
 }
