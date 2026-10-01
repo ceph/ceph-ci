@@ -55,6 +55,8 @@ elif [ $ZONES = 2 ]; then
 else
     ceph osd pool create $POOL replicated --pg_num 16
     ceph osd pool set $POOL size ${REPLICAS:-3} --yes-i-really-mean-it
+    r=${REPLICAS:-3}
+    ceph osd pool set $POOL min_size $(( r > 1 ? r - 1 : 1 ))
 fi
 ceph osd pool application enable $POOL rbd
 ceph osd pool create rbd replicated --pg_num 8

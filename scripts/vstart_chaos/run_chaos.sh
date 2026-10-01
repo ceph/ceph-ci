@@ -134,6 +134,10 @@ set +e
     --rundir $R/chaos "$@" > $R/chaos.out 2>&1 )
 rc=$?
 set -e
+if [ $rc != 0 ] && [ $rc != 124 ]; then
+    say "archiving daemon logs to $R/daemon-logs.tar.gz"
+    tar -C $B/out -czf $R/daemon-logs.tar.gz $(cd $B/out && ls osd.*.log mon.*.log mgr.*.log 2>/dev/null) || true
+fi
 
 # --- 5. conclusion
 {
