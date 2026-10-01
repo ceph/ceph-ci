@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Random-offset/length writes to an rbd image whose data lives in the
-stretch EC pool, verified against an in-memory model. Exits non-zero on the
+test pool, verified against an in-memory model. Exits non-zero on the
 first miscompare."""
 
 import os
@@ -12,7 +12,7 @@ import rados
 import rbd
 
 META_POOL = "rbd"
-DATA_POOL = sys.argv[2] if len(sys.argv) > 2 else "ecs"
+DATA_POOL = sys.argv[2] if len(sys.argv) > 2 else "chaos"
 SEED = int(sys.argv[1]) if len(sys.argv) > 1 else int(time.time())
 SIZE = 32 << 20
 ROUNDS = 400

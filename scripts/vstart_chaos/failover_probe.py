@@ -23,7 +23,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from stretchy_cokey import Cluster, Daemons, log  # noqa: E402
+from chaos import Cluster, Daemons, log  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -32,6 +32,8 @@ class Run:
     def __init__(self, args):
         self.args = args
         self.c = Cluster(args.pool)
+        if not self.c.multi_zone:
+            sys.exit(f"pool {args.pool} has a single zone; nothing to fail over")
         self.d = Daemons()
         self.phases = []
         self.probes = {}
@@ -223,7 +225,7 @@ class Run:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pool", default="ecs")
+    ap.add_argument("--pool", default="chaos")
     ap.add_argument("--zone", default=None, help="only fail this zone")
     ap.add_argument("--iterations", type=int, default=1, help="0 = forever")
     ap.add_argument("--baseline", type=int, default=60)

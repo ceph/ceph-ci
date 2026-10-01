@@ -9,7 +9,8 @@ each object's PG.  Expectations checked:
 
   none      client ops land on the PG primaries only
   localize  client ops land only in the client's zone (or zone 0 if unknown)
-  balance   client ops spread over both zones
+  balance   client ops spread over every zone (with one zone: not only
+            on the primaries)
 
 Run on an otherwise idle cluster; concurrent IO pollutes the deltas.
 """
@@ -53,18 +54,20 @@ def zones():
 
     def leaves(i):
         return [i] if i >= 0 else sum((leaves(c) for c in nodes[i].get("children", [])), [])
-    return {n["name"]: sorted(leaves(n["id"])) for n in tree["nodes"]
-            if n["type"] == "datacenter" and leaves(n["id"])}
+    z = {n["name"]: sorted(leaves(n["id"])) for n in tree["nodes"]
+         if n["type"] == "datacenter" and leaves(n["id"])}
+    return z or {"all": sorted(o for o in nodes if o >= 0)}
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pool", default="ecs")
+    ap.add_argument("--pool", default="chaos")
     ap.add_argument("--objects", type=int, default=48)
     ap.add_argument("--size", type=int, default=64 << 10)
     ap.add_argument("--reads", type=int, default=20, help="reads per object")
-    ap.add_argument("--configs", default="none:,balance:,localize:dc1,localize:dc2,"
-                    "localize:nowhere,none:dc1,balance:dc2")
+    ap.add_argument("--configs", default=None,
+                    help="comma list of policy:client_zone (default: every "
+                         "policy without a zone, and localize from each zone)")
     ap.add_argument("--sections", default="osd",
                     help="comma list of perf dump sections to diff ('' = all)")
     ap.add_argument("--show", default="op_r,op_rw,subop,ec_,read",
@@ -73,6 +76,10 @@ def main():
     args = ap.parse_args()
 
     z = zones()
+    if args.configs is None:
+        multi = [zn for zn in sorted(z) if zn != "all"]
+        args.configs = ",".join(["none:", "balance:", "localize:"] +
+                                [f"localize:{zn}" for zn in multi])
     osd_zone = {o: name for name, osds in z.items() for o in osds}
     osds = sorted(osd_zone)
     sections = [s for s in args.sections.split(",") if s]
@@ -121,8 +128,10 @@ def main():
             if total and off:
                 verdict.append(f"localize {zone}: {off}/{total} client reads outside {want}")
         if policy == "balance" and total:
-            if min(by_zone.values()) < 0.2 * total:
+            if len(z) > 1 and min(by_zone.values()) < 0.2 * total:
                 verdict.append(f"balance: skewed {by_zone}")
+            if len(z) == 1 and on_prim == total:
+                verdict.append("balance: every client read on a primary")
         if verdict:
             ok = False
         print(f"\n=== {policy} client_zone={zone or '-'}: op_r total={total} "

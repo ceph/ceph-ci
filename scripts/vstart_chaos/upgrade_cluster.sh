@@ -13,7 +13,7 @@ export CEPH_ARGS="--erasure_code_dir=$S/lib --plugin_dir=$S/lib"
 waitpid_gone() { for i in $(seq 1 120); do kill -0 $1 2>/dev/null || return 0; sleep 1; done; return 1; }
 clean() {
     for i in $(seq 1 90); do
-        bad=$(env -u CEPH_ARGS ceph pg ls-by-pool ecs 2>/dev/null | awk 'NR>1 && /^2\./ && $11 !~ /^active\+clean/' | wc -l)
+        bad=$(env -u CEPH_ARGS ceph pg ls 2>/dev/null | awk 'NR>1 && /^[0-9]+\./ && $11 !~ /^active\+clean/' | wc -l)
         [ "$bad" = 0 ] && return 0; sleep 5
     done; echo "not clean"; return 1
 }

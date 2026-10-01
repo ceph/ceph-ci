@@ -1,32 +1,40 @@
 #!/usr/bin/env python3
 """
-Stretchy Cokey: zone-aware chaos for stretch EC pools on the vstart cluster in
-$CEPH_BUILD (source env.sh).  Combines random single-OSD faults with full
-stretch-mode zone failovers (zone OSDs + zone monitor, using
-scripts/zone_thrasher.py), while verifying workloads run:
+Chaos testing for a pool on the vstart cluster in $CEPH_BUILD (source env.sh).
+Works on replicated and erasure coded pools, single or multi-zone: it reads
+the pool's type, size and num_zones and only uses the actions and clients
+that apply.  Random OSD faults run while verifying workloads:
 
-  rados-local-<dc>  ceph_test_rados with localized reads from each zone
+  rados-plain       ceph_test_rados
+  rados-local[-z]   ceph_test_rados with localized reads (one per zone)
   rados-balanced    ceph_test_rados with balanced reads
   ioseq             ceph_test_rados_io_sequence
-  rbd               random rbd writes on the EC data pool, read back and compared
+  rbd               random rbd writes with data in the pool, read back and compared
+  probe-*           io_probe.py clients, watched for stuck ops
 
-Single-OSD actions (per-zone budget of m unavailable OSDs):
-  mark_down, out_in, kill_restart, upmap_zone, upmap_flip, upmap_items,
-  rm_upmap, repeer, deep_scrub, zone_partial (drops a zone below k)
+Actions for every pool, keeping each zone within its failure budget (m for
+an EC pool, otherwise size - min_size, or zone size - 1 with zones):
+  mark_down, out_in, kill_restart, upmap_items, rm_upmap, repeer, deep_scrub
 
-Zone failover (zone_failover action) variants, run as a state machine across
-cycles so other actions and workloads continue while a zone is down:
-  standard        kill zone OSDs+mon, wait degraded, hold, revive mon then OSDs
-  osds_first      as standard, but revive OSDs before the mon and do not nudge
-                  the monitor; getting stuck in degraded mode is recorded
-  flap            once the revived zone is recovering, kill the other zone
-  surviving_loss  while degraded, also kill m OSDs in the surviving zone
-  osds_only       kill every OSD in a zone but leave its mon running
-  mon_only        kill only the zone mon
+Multi-zone pools (num_zones > 1, which enables stretch mode) also get:
+  upmap_zone, upmap_flip  move or swap a PG's zone blocks
+  zone_partial            (EC) kill enough of a zone's OSDs to drop it below k
+  zone_failover           whole zone failures (zone OSDs and zone monitor via
+                          scripts/zone_thrasher.py), run as a state machine
+                          across cycles so other actions and workloads continue
+                          while a zone is down:
+    standard        kill zone OSDs+mon, wait degraded, hold, revive mon then OSDs
+    osds_first      as standard, but revive OSDs before the mon and do not nudge
+                    the monitor; getting stuck in degraded mode is recorded
+    flap            once the revived zone is recovering, kill the other zone
+    surviving_loss  while degraded, also kill a failure budget of OSDs in the
+                    surviving zone
+    osds_only       kill every OSD in a zone but leave its mon running
+    mon_only        kill only the zone mon
 
 Stops (leaving the cluster as it is) on: daemon crash signature, a daemon
 dying that we did not kill, workload failure/miscompare, scrub inconsistency,
-or PGs / stretch mode not returning to healthy after everything is revived.
+or PGs (and stretch mode) not returning to healthy after everything is revived.
 Non-fatal oddities are appended to <rundir>/findings.log with diagnostics.
 """
 
@@ -166,27 +174,46 @@ class Cluster:
         p = next(p for p in pools if p["pool_name"] == pool)
         self.pool_id = p["pool_id"]
         self.size = p["size"]
+        self.min_size = p["min_size"]
         self.num_zones = p.get("options", {}).get("num_zones", 1)
+        self.multi_zone = self.num_zones > 1
         self.zone_size = self.size // self.num_zones
-        prof = ceph_json(f"osd erasure-code-profile get {p['erasure_code_profile']}")
-        self.k, self.m = int(prof["k"]), int(prof["m"])
-        zone_thrasher.CEPH_BIN = "ceph"
-        topo = zone_thrasher.discover_zones()
-        self.tiebreak = topo["tiebreak_mon"]
-        self.zones = {z["name"]: z["osds"] for z in topo["zones"]}
-        self.zone_mon = {z["name"]: z["mon"] for z in topo["zones"]}
+        self.erasure = bool(p.get("erasure_code_profile"))
+        if self.erasure:
+            prof = ceph_json(f"osd erasure-code-profile get {p['erasure_code_profile']}")
+            self.k, self.m = int(prof["k"]), int(prof["m"])
+            self.budget = self.m
+        elif self.multi_zone:
+            self.budget = self.zone_size - 1
+        else:
+            self.budget = self.size - self.min_size
+        if self.multi_zone:
+            zone_thrasher.CEPH_BIN = "ceph"
+            topo = zone_thrasher.discover_zones()
+            self.tiebreak = topo["tiebreak_mon"]
+            self.zones = {z["name"]: z["osds"] for z in topo["zones"]}
+            self.zone_mon = {z["name"]: z["mon"] for z in topo["zones"]}
+            self.all_mons = sorted([m for m in self.zone_mon.values() if m] +
+                                   [self.tiebreak])
+        else:
+            self.tiebreak = None
+            self.zones = {"all": sorted(int(o) for o in ceph_json("osd ls"))}
+            self.zone_mon = {}
+            self.all_mons = sorted(m["name"] for m in ceph_json("mon dump")["mons"])
         self.osd_zone = {o: z for z, osds in self.zones.items() for o in osds}
         self.all_osds = sorted(self.osd_zone)
-        self.all_mons = sorted([m for m in self.zone_mon.values() if m] +
-                               [self.tiebreak])
-        log(f"pool {pool} id={self.pool_id} k={self.k} m={self.m} "
-            f"zones={self.zones} mons={self.zone_mon} tiebreak={self.tiebreak}")
+        kind = f"erasure k={self.k} m={self.m}" if self.erasure else \
+            f"replicated size={self.size} min_size={self.min_size}"
+        log(f"pool {pool} id={self.pool_id} {kind} num_zones={self.num_zones} "
+            f"budget/zone={self.budget} zones={self.zones} mons={self.all_mons}")
 
     def pgs(self):
         d = ceph_json(f"pg ls-by-pool {self.pool}", quiet=True)
         return d["pg_stats"] if d else []
 
     def stretch(self):
+        if not self.multi_zone:
+            return {}
         d = ceph_json("osd dump", quiet=True)
         return d.get("stretch_mode", {}) if d else None
 
@@ -219,10 +246,13 @@ class Workloads:
             if "none" in pols:
                 specs["rados-plain"] = f"{common} {rados_ops}"
             if "localize" in pols:
-                for z in sorted(self.c.zones):
-                    specs[f"rados-local-{z}"] = (
-                        f"{common} --localize-reads --crush-location datacenter={z} "
-                        f"{rados_ops}")
+                if self.c.multi_zone:
+                    for z in sorted(self.c.zones):
+                        specs[f"rados-local-{z}"] = (
+                            f"{common} --localize-reads "
+                            f"--crush-location datacenter={z} {rados_ops}")
+                else:
+                    specs["rados-local"] = f"{common} --localize-reads {rados_ops}"
             if "balance" in pols:
                 specs["rados-balanced"] = f"{common} --balance-reads {rados_ops}"
         if "ioseq" in self.args.workloads:
@@ -240,11 +270,13 @@ class Workloads:
         if "rbd" in self.args.workloads:
             specs["rbd"] = f"python3 {here}/rbd_roundtrip.py {{seed}} {pool}"
         if "probe" in self.args.workloads:
+            zones = sorted(self.c.zones) if self.c.multi_zone else [None]
             for pol in pols:
-                for z in sorted(self.c.zones):
-                    name = f"probe-{pol}-{z}"
+                for z in zones:
+                    name = f"probe-{pol}-{z}" if z else f"probe-{pol}"
+                    zone_arg = f"--zone {z} " if z else ""
                     specs[name] = (f"python3 {here}/io_probe.py --pool {pool} "
-                                   f"--policy {pol} --zone {z} --duration 1800 "
+                                   f"--policy {pol} {zone_arg}--duration 1800 "
                                    f"--out {self.rundir}/{name}.jsonl --name {name}")
         return specs
 
@@ -437,7 +469,7 @@ class ZoneFailover:
             self.hold_until = ch.cycle + self.hold
             if self.variant == "surviving_loss":
                 victims = random.sample(self.c.zones[self.other],
-                                        min(self.c.m, len(self.c.zones[self.other])))
+                                        min(self.c.budget, len(self.c.zones[self.other])))
                 ch.record(f"{tag} also killing surviving-zone OSDs {victims}")
                 for o in victims:
                     ch.d.kill(("osd", o))
@@ -558,7 +590,7 @@ class Chaos:
         if self.zf and z == self.zf.zone:
             return False
         bad = {o for o in down | out if self.c.osd_zone.get(o) == z}
-        return osd not in bad and len(bad) < self.c.m + self.args.extra_per_zone
+        return osd not in bad and len(bad) < self.c.budget + self.args.extra_per_zone
 
     def candidates(self):
         down, out = self.unavailable()
@@ -769,7 +801,8 @@ class Chaos:
             time.sleep(10)
         bad = [(p["pgid"], p["state"]) for p in self.c.pgs()
                if not p["state"].startswith("active+clean")][:10]
-        self.fatal(f"NOT_HEALTHY after {timeout}s stretch={self.c.stretch()} pgs={bad}")
+        st = f" stretch={self.c.stretch()}" if self.c.multi_zone else ""
+        self.fatal(f"NOT_HEALTHY after {timeout}s{st} pgs={bad}")
         return False
 
     def quiesce(self):
@@ -799,9 +832,23 @@ class Chaos:
             return False
         return self.check()
 
+    MULTI_ZONE_ACTIONS = ("zone_failover", "zone_partial", "upmap_zone", "upmap_flip")
+
+    def applicable(self, action):
+        if action in self.MULTI_ZONE_ACTIONS and not self.c.multi_zone:
+            return False
+        if action == "zone_failover" and not (self.c.stretch() or {}).get(
+                "stretch_mode_enabled"):
+            return False
+        return action != "zone_partial" or self.c.erasure
+
     def run(self):
         actions = {n: float(w) for n, w in
                    (a.split("=") for a in self.args.actions.split(","))}
+        skipped = [n for n in actions if not self.applicable(n)]
+        actions = {n: w for n, w in actions.items() if n not in skipped}
+        log(f"actions: {sorted(actions)}"
+            + (f" (not applicable to this pool: {sorted(skipped)})" if skipped else ""))
         self.w.start_all()
         try:
             while self.args.cycles == 0 or self.cycle < self.args.cycles:
@@ -847,13 +894,13 @@ DEFAULT_ACTIONS = ("mark_down=3,out_in=2,kill_restart=3,zone_partial=1,"
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawTextHelpFormatter)
-    ap.add_argument("--pool", default="ecs")
+    ap.add_argument("--pool", default="chaos")
     ap.add_argument("--cycles", type=int, default=100, help="0 = forever")
     ap.add_argument("--delay", type=float, default=8)
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--max-actions", type=int, default=2)
     ap.add_argument("--extra-per-zone", type=int, default=0,
-                    help="allow this many failures beyond m per zone")
+                    help="allow this many failures beyond the budget per zone")
     ap.add_argument("--actions", default=DEFAULT_ACTIONS)
     ap.add_argument("--zf-variants", default=",".join(ZoneFailover.VARIANTS))
     ap.add_argument("--hold-cycles", type=int, nargs=2, default=[2, 8])

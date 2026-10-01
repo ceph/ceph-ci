@@ -1,4 +1,4 @@
-# Source this before using the stretchy_chaos tools.
+# Source this before using the vstart_chaos tools.
 #   CEPH_BUILD   build dir the vstart cluster runs from (default: the main
 #                checkout's build/, also when this file is in a worktree)
 #   CHAOS_RUNS   where run output goes (default $CEPH_BUILD/chaos-runs)

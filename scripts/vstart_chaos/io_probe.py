@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""IO continuity + correctness probe for a stretch EC pool.
+"""IO continuity + correctness probe for a pool.
 
 One client (read policy none|balance|localize, optional crush_location) does a
 steady mix of full writes, partial overwrites and reads of a small object set,
@@ -23,7 +23,7 @@ import time
 import radosc
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--pool", default="ecs")
+ap.add_argument("--pool", default="chaos")
 ap.add_argument("--policy", choices=list(radosc.POLICY_FLAGS), default="none")
 ap.add_argument("--zone", default=None, help="client datacenter for crush_location")
 ap.add_argument("--objects", type=int, default=24)
