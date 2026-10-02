@@ -43,6 +43,7 @@ import json
 import os
 import random
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -331,9 +332,23 @@ class Workloads:
                 self.failed.append((name, rc, logf))
             else:
                 log(f"  workload {name} completed OK")
+                if name.startswith("rados-"):
+                    self.remove_rados_objects(p.pid)
                 if restart:
                     self.launch(name, self.specs()[name])
         return not self.failed
+
+    def remove_rados_objects(self, pid):
+        """Clean up after a finished ceph_test_rados (objects <hostname><pid>-<n>
+        and the snaps holding their clones) in the background, so a long run
+        does not fill the small test devices."""
+        here = os.path.dirname(os.path.abspath(__file__))
+        prefix = f"{socket.gethostname()}{pid}-"
+        subprocess.Popen(
+            ["timeout", "1800", "python3", f"{here}/rados_cleanup.py",
+             self.c.pool, prefix],
+            cwd=BUILD, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True)
 
     def stop_all(self):
         for name, (p, logf, cmd) in self.procs.items():
