@@ -663,10 +663,10 @@ int RGWSelectObj_ObjStore_S3::handle_aws_cli_parameters(std::string& sql_query)
   if (m_start_scan.size() || m_end_scan.size()) {
     m_scan_range_ind = true;
     if (m_start_scan.size()) {
-      m_start_scan_sz = std::stol(m_start_scan);
+      m_start_scan_sz = ceph::parse<int64_t>(m_start_scan).value_or(-1);
     }
     if (m_end_scan.size()) {
-      m_end_scan_sz = std::stol(m_end_scan);
+      m_end_scan_sz = ceph::parse<int64_t>(m_end_scan).value_or(-1);
     } else {
       m_end_scan_sz = std::numeric_limits<std::int64_t>::max();
     } 
@@ -743,6 +743,14 @@ void RGWSelectObj_ObjStore_S3::execute(optional_yield y)
       
       op_ret = -ERR_INVALID_REQUEST;
       return;
+  }
+
+  if (m_start_scan_sz < 0 || m_end_scan_sz < m_start_scan_sz) {
+    ldpp_dout(this, 10) << "s3select: invalid ScanRange" << dendl;
+    m_aws_response_handler.send_error_response_rgw_formatter("InvalidScanRange",
+      "s3select : invalid ScanRange");
+    op_ret = -ERR_INVALID_REQUEST;
+    return;
   }
 
   if (m_parquet_type) {
@@ -1030,9 +1038,6 @@ int RGWSelectObj_ObjStore_S3::send_response_data(bufferlist& bl, off_t ofs, off_
     m_object_size_for_processing = s->obj_size;
   }
   if (m_scan_range_ind == true){
-      if (m_end_scan_sz == -1){
-       	m_end_scan_sz = s->obj_size;
-      }
       if (static_cast<uint64_t>((m_end_scan_sz - m_start_scan_sz))>s->obj_size){ //in the case user provides range bigger than object-size
 	m_object_size_for_processing = s->obj_size;
       } else {
