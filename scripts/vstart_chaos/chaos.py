@@ -955,6 +955,9 @@ def main():
                     default=["_shutdown_cache", "get_nref() == 1"],
                     help="substring of a crash line to treat as known")
     args = ap.parse_args()
+    # timeout(1) ends a time-limited run with SIGTERM; exit through the
+    # finally blocks so the workloads, in their own sessions, are stopped
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
     if args.seed is None:
         args.seed = random.randint(1, 1 << 30)
     random.seed(args.seed)
