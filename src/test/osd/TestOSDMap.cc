@@ -3855,6 +3855,47 @@ TEST_F(OSDMapTest, pgtemp_primaryfirst_stretch_none_holes) {
   }
 }
 
+// An optimized EC pool's size can change while a PG still has a pg_temp
+// encoded for the old size, e.g. a stretch pool going from 2 zones to 1
+// while one of its OSDs is down. The stale pg_temp must not be decoded: the
+// monitor asserted in clean_temps() on every proposal that made the change.
+TEST_F(OSDMapTest, ECPoolSizeChangeWithPGTemp) {
+  set_up_map(18);
+  int64_t pool_id = my_rep_pool + 1;
+  const uint64_t flags =
+    pg_pool_t::FLAG_EC_OPTIMIZATIONS | pg_pool_t::FLAG_EC_OVERWRITES;
+  OSDMapTestHelpers::add_pool(osdmap, pool_id,
+    OSDMapTestHelpers::create_ec_pool(2, 1, 2 * 4096, flags, pool_id, 2));
+  const pg_pool_t *p = osdmap.get_pg_pool(pool_id);
+  pg_t pgid(0, pool_id);
+
+  std::vector<int> acting_in(p->size);
+  std::iota(acting_in.begin(), acting_in.end(), 0);
+  acting_in[0] = CRUSH_ITEM_NONE;
+  std::vector<int> encoded = osdmap.pgtemp_primaryfirst(*p, acting_in);
+  OSDMap::Incremental inc(osdmap.get_epoch() + 1);
+  inc.new_pg_temp[pgid] = mempool::osdmap::vector<int>(encoded.begin(),
+                                                       encoded.end());
+  osdmap.apply_incremental(inc);
+  ASSERT_TRUE(osdmap.has_pgtemp(pgid));
+
+  OSDMap::Incremental pending_inc(osdmap.get_epoch() + 1);
+  pending_inc.new_pools[pool_id] =
+    OSDMapTestHelpers::create_ec_pool(2, 1, 2 * 4096, flags, pool_id, 1);
+  OSDMap tmpmap;
+  tmpmap.deepish_copy_from(osdmap);
+  tmpmap.apply_incremental(pending_inc);
+
+  std::vector<int> up, acting;
+  int up_primary, acting_primary;
+  tmpmap.pg_to_up_acting_osds(pgid, &up, &up_primary, &acting, &acting_primary);
+  EXPECT_EQ(up, acting);
+
+  OSDMap::clean_temps(g_ceph_context, osdmap, tmpmap, &pending_inc);
+  EXPECT_TRUE(pending_inc.new_pg_temp.count(pgid) &&
+              pending_inc.new_pg_temp[pgid].empty());
+}
+
 INSTANTIATE_TEST_SUITE_P(
   OSDMap,
   OSDMapTest,
