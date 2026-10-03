@@ -1187,9 +1187,10 @@ AWSv4ComplMulti::ChunkMeta::create_next(CephContext* const cct,
       throw rgw::io::Exception(EINVAL, std::system_category());
     }
 
+    const size_t consumed =
+        semicolon_pos + sarrlen(";") + data_sep_pos + sarrlen("\r\n");
     const size_t data_starts_in_stream =
-        +semicolon_pos + sarrlen(";") + data_sep_pos + sarrlen("\r\n") +
-        old.data_offset_in_stream + old.data_length;
+        consumed + old.data_offset_in_stream + old.data_length;
 
     ldout(cct, 20) << "parsed new chunk; signature=" << signature
                    << ", data_length=" << data_length
@@ -1199,7 +1200,7 @@ AWSv4ComplMulti::ChunkMeta::create_next(CephContext* const cct,
     return std::make_pair(
 	     ChunkMeta(data_starts_in_stream, data_length, signature, flags,
 		       ++old.cnt),
-	     semicolon_pos + 83);
+	     consumed);
   } else {
     /* no-chunk-signature aws-chunked */
     ldout(cct, 20) << "AWSv4ComplMulti: non-signature meta chunk; data_length "
