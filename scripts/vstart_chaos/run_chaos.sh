@@ -134,7 +134,20 @@ set +e
     --rundir $R/chaos "$@" > $R/chaos.out 2>&1 )
 rc=$?
 set -e
-if [ $rc != 0 ] && [ $rc != 124 ]; then
+dups=$(ceph pg ls-by-pool $POOL -f json 2>/dev/null | python3 -c '
+import json, sys
+for p in json.load(sys.stdin)["pg_stats"]:
+    a = [o for o in p["acting"] if o != 2147483647]
+    if len(a) != len(set(a)) and "clean" in p["state"]:
+        print(p["pgid"])' || true)
+if [ -n "$dups" ]; then
+    say "duplicate OSDs in acting sets of $(echo $dups); saving evidence in $R/dup-evidence"
+    mkdir -p $R/dup-evidence
+    for pg in $dups; do ceph pg $pg query > $R/dup-evidence/$pg.query.json 2>&1 || true; done
+    ceph osd dump -f json > $R/dup-evidence/osd_dump.json 2>&1 || true
+    ceph pg dump pgs -f json > $R/dup-evidence/pg_dump.json 2>&1 || true
+fi
+if { [ $rc != 0 ] && [ $rc != 124 ]; } || [ -n "$dups" ]; then
     say "archiving daemon logs to $R/daemon-logs.tar.gz"
     tar -C $B/out -czf $R/daemon-logs.tar.gz $(cd $B/out && ls osd.*.log mon.*.log mgr.*.log 2>/dev/null) || true
 fi

@@ -559,6 +559,7 @@ class Chaos:
         self.zf = None
         self.failed = False
         self.pending_restart = {}
+        self.dup_acting_seen = set()
 
     def record(self, what):
         line = f"{time.strftime('%H:%M:%S')} cycle={self.cycle} {what}"
@@ -766,6 +767,17 @@ class Chaos:
         st = os.statvfs(BUILD)
         if st.f_bavail * st.f_frsize < 5 << 30:
             self.fatal(f"DISK: {BUILD} below 5G free")
+        pgs = ceph_json(f"pg ls-by-pool {self.c.pool}", quiet=True)
+        for p in (pgs or {}).get("pg_stats", []):
+            a = [o for o in p["acting"] if o != 2147483647]
+            # an OSD holding two shards may serve both until backfill moves
+            # one (as calc_ec_acting allows); only a clean PG should not
+            if len(a) != len(set(a)) and "clean" in p["state"] and \
+                    p["pgid"] not in self.dup_acting_seen:
+                self.dup_acting_seen.add(p["pgid"])
+                with open(f"{self.rundir}/dup-{p['pgid']}-c{self.cycle}.query.json", "w") as f:
+                    f.write(ceph(f"pg {p['pgid']} query", quiet=True) or "")
+                self.finding(f"DUP_ACTING {p['pgid']} up {p['up']} acting {p['acting']} {p['state']}")
         df = ceph_json("osd df", quiet=True)
         if df:
             full = [(n["id"], n["utilization"]) for n in df.get("nodes", [])
