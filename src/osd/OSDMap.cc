@@ -2105,6 +2105,17 @@ void OSDMap::clean_temps(CephContext *cct,
     nextmap.pg_to_raw_up(pg.first, &raw_up, &primary);
     bool remove = false;
     const pg_pool_t *pool = nextmap.get_pg_pool(pg.first.pool());
+    // an optimized EC pg_temp encodes exactly size entries, so one left
+    // from before a size change cannot be decoded
+    if (pool->allows_ecoptimizations() && pg.second.size() != pool->size) {
+      ldout(cct, 10) << __func__ << "  removing pg_temp " << pg.first << " "
+		     << pg.second << " that does not match pool size" << dendl;
+      if (oldmap.pg_temp->count(pg.first))
+	pending_inc->new_pg_temp[pg.first].clear();
+      else
+	pending_inc->new_pg_temp.erase(pg.first);
+      continue;
+    }
     auto acting_set = nextmap.pgtemp_undo_primaryfirst(*pool, pg.first, pg.second);
     if (raw_up == acting_set) {
       bool keep = false;
@@ -3124,8 +3135,14 @@ void OSDMap::_get_temp_osds(const pg_pool_t& pool, pg_t pg,
 {
   vector<int> temp;
   pg = pool.raw_pg_to_pg(pg);
-  const auto p = pg_temp->find(pg);
+  auto p = pg_temp->find(pg);
   temp_pg->clear();
+  // ignore a pg_temp left from before an optimized EC pool changed size;
+  // clean_temps() removes it
+  if (p != pg_temp->end() && pool.allows_ecoptimizations() &&
+      p->second.size() != pool.size) {
+    p = pg_temp->end();
+  }
   if (p != pg_temp->end()) {
     for (unsigned i=0; i<p->second.size(); i++) {
       if (!exists(p->second[i]) || is_down(p->second[i])) {
