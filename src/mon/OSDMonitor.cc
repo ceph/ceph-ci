@@ -8312,18 +8312,14 @@ int OSDMonitor::prepare_pool_crush_rule(const unsigned pool_type,
     case pg_pool_t::TYPE_REPLICATED:
       {
 	if (rule_name == "") {
-	  if (mon.monmap->global_stretch_mode_enabled) {
+          if (num_zones > 1) {
 	    int err = crush_rule_create_replica(pool_name, root, num_zones, num_replica_per_zone, zone_failure_domain, osd_failure_domain, device_class, false, crush_rule, ss);
-      return handle_crush_rule_creation_result(err, pool_name);
+            return handle_crush_rule_creation_result(err, pool_name);
+          } else if (mon.monmap->global_stretch_mode_enabled) {
+            *crush_rule = get_replicated_stretch_crush_rule();
 	  } else {
-      if(num_zones > 1) {
-        int err = crush_rule_create_replica(pool_name, root, num_zones, num_replica_per_zone, zone_failure_domain, osd_failure_domain, device_class, false, crush_rule, ss);
-        return handle_crush_rule_creation_result(err, pool_name);
-      }
-	    else {
 	    // Use default rule
 	    *crush_rule = osdmap.crush->get_osd_pool_default_crush_replicated_rule(cct);
-      }
 	  }
 	  if (*crush_rule < 0) {
 	    // Errors may happen e.g. if no valid rule is available
