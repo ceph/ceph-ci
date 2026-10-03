@@ -615,6 +615,29 @@ TEST_P(TestECFailoverWithPeering, MultiZoneFailoverWithPeering) {
   verify_object(obj_name);
 }
 
+// Degraded stretch mode only handles two zones, so with three zones every
+// zone must still meet min_size: losing one leaves the PG peered until it is
+// back.
+TEST_P(TestECFailoverWithPeering, ThreeZoneZoneLossPeeredUntilZoneReturns) {
+  if (num_zones != 3) {
+    GTEST_SKIP() << "requires num_zones == 3";
+  }
+  ASSERT_TRUE(all_shards_active()) << "Initial peering must complete";
+  const std::string obj_name = "test_3zone_loss";
+  create_and_write_verify(obj_name, "Data for three-zone loss");
+
+  for (int zone = 0; zone < num_zones; ++zone) {
+    mark_osds_down(zone_osds(zone));
+    EXPECT_FALSE(get_primary_test_pg()->get_peering_state()->is_active())
+      << "zone " << zone << " down";
+    for (int osd : zone_osds(zone)) {
+      mark_osd_up(osd);
+    }
+    ASSERT_TRUE(all_shards_active()) << "zone " << zone << " back";
+    verify_object(obj_name);
+  }
+}
+
 TEST_P(TestECFailoverWithPeering, ZeroSizeObjectWithAttributesRecovery) {
   //  ASSERT_TRUE(all_shards_active()) << "Initial peering must complete";
 
