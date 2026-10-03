@@ -39,6 +39,7 @@ class Run:
         self.probes = {}
         self.offsets = {}
         self.problem = None
+        self.down = None
 
     def mark(self, p):
         self.phases.append((p, time.time()))
@@ -112,6 +113,7 @@ class Run:
         mon = ("mon", c.zone_mon[zone]) if c.zone_mon.get(zone) and not a.keep_mon else None
         if mon:
             d.kill(mon, sig)
+        self.down = (zone, mon)
         seen = {}
 
         def degraded():
@@ -131,6 +133,7 @@ class Run:
             d.start(("osd", o))
         if mon and order == "osds_first":
             d.start(mon)
+        self.down = None
 
         def healthy():
             st = c.stretch() or {}
@@ -173,6 +176,14 @@ class Run:
                            f"ceph osd dump > {a.rundir}/problem_osd_dump.txt 2>&1; "
                            f"ceph pg ls-by-pool {a.pool} > {a.rundir}/problem_pgs.txt 2>&1",
                            shell=True)
+            if self.down:
+                zone, mon = self.down
+                log(f"reviving {zone} after the problem")
+                if mon:
+                    self.d.start(mon)
+                    self.wait(120, lambda: len(self.c.quorum()) == len(self.c.all_mons))
+                for o in self.c.zones[zone]:
+                    self.d.start(("osd", o))
             if a.leave_probes:
                 log("probes left running for inspection")
             else:
