@@ -1308,17 +1308,19 @@ AWSv4ComplMulti::ReceiveChunkResult AWSv4ComplMulti::recv_chunk(
   ldout(cct(), 20) << "AWSv4ComplMulti::recv_chunk() cnt: " << cnt << dendl;
 
   if (chunk_meta.is_new_chunk_in_stream(stream_pos)) {
-    /* Verify signature of the previous chunk. We aren't doing that for new
-     * one as the procedure requires calculation of payload hash. This code
-     * won't be triggered for the last, zero-length chunk. Instead, it will
-     * be checked in the complete() method.  */
-    if (stream_pos >= ChunkMeta::META_MAX_SIZE && is_signature_mismatched()) {
+    /* Verify signature of the previous chunk, if there is one. We aren't
+     * doing that for new one as the procedure requires calculation of payload
+     * hash. This code won't be triggered for the last, zero-length chunk.
+     * Instead, it will be checked in the complete() method.  */
+    if (stream_pos > 0 && is_signature_mismatched()) {
       throw rgw::io::Exception(ERR_SIGNATURE_NO_MATCH, std::system_category());
     }
 
     /* We don't have metadata for this range. This means a new chunk, so we
-     * need to parse a fresh portion of the stream. Let's start. */
-    size_t to_extract = parsing_buf.capacity() - parsing_buf.size();
+     * need to parse a fresh portion of the stream. Read META_READ_SIZE at a
+     * time until we have the header's CRLF. */
+    size_t to_extract = ChunkMeta::META_READ_SIZE -
+      std::min(parsing_buf.size(), ChunkMeta::META_READ_SIZE);
     do {
       const size_t orig_size = parsing_buf.size();
       parsing_buf.resize(parsing_buf.size() + to_extract);
@@ -1348,6 +1350,14 @@ AWSv4ComplMulti::ReceiveChunkResult AWSv4ComplMulti::recv_chunk(
 
       stream_pos += received;
       to_extract -= received;
+
+      const std::string_view pb(parsing_buf.data(), parsing_buf.size());
+      /* skip the CRLF that ends the previous chunk's data */
+      const size_t start = pb.starts_with("\r\n") ? sarrlen("\r\n") : 0;
+      if (to_extract == 0 && pb.find("\r\n", start) == std::string_view::npos) {
+        to_extract = std::min(ChunkMeta::META_READ_SIZE,
+                              parsing_buf.capacity() - parsing_buf.size());
+      }
     } while (to_extract > 0);
 
     size_t consumed;
@@ -1379,9 +1389,6 @@ AWSv4ComplMulti::ReceiveChunkResult AWSv4ComplMulti::recv_chunk(
     dout(30) << "AWSv4ComplMulti: to_extract=" << to_extract
 	     << ", data_len=" << data_len
 	     << dendl;
-
-    /* if is-last-frag, then */
-    lf_bytes = stream_pos - stream_pos_was - data_len;
 
     std::copy(std::begin(parsing_buf), data_end_iter, buf);
     parsing_buf.erase(std::begin(parsing_buf), data_end_iter);
@@ -1606,16 +1613,14 @@ bool AWSv4ComplMulti::complete()
 
     /* in the last-chunk case, parsing_buf potentially holds unconsumed
      * data, including the final chunk boundary */
-    std::string_view last_frag(parsing_buf.begin().get_ptr(), lf_bytes);
-
-    size_t tbuf_pos = 0;
+    size_t tbuf_pos = parsing_buf.size();
 
     static constexpr size_t trailer_buf_size = 256;
+    /* recv_chunk() leaves less than META_READ_SIZE bytes in parsing_buf */
+    static_assert(ChunkMeta::META_READ_SIZE < trailer_buf_size);
     boost::container::static_vector<char, trailer_buf_size> trailer_vec;
 
-    std::copy(parsing_buf.begin(), parsing_buf.begin() + lf_bytes,
-              trailer_vec.begin());
-    tbuf_pos += lf_bytes;
+    std::copy(parsing_buf.begin(), parsing_buf.end(), trailer_vec.begin());
 
     while (tbuf_pos < trailer_buf_size) {
       const size_t received =

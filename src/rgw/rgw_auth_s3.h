@@ -315,9 +315,13 @@ class AWSv4ComplMulti : public rgw::auth::Completer,
   public:
     static constexpr size_t SIG_SIZE = 64;
 
-    /* Let's suppose the data length fields can't exceed uint64_t. */
-    static constexpr size_t META_MAX_SIZE = \
+    /* Read ahead this much for a chunk header. Let's suppose the data length
+     * fields can't exceed uint64_t. */
+    static constexpr size_t META_READ_SIZE = \
       sarrlen("\r\nffffffffffffffff;chunk-signature=") + SIG_SIZE + sarrlen("\r\n");
+
+    /* Longest chunk header, leaving room for other chunk extensions. */
+    static constexpr size_t META_MAX_SIZE = 1024;
 
     /* The metadata size of for the last, empty chunk. */
     static constexpr size_t META_MIN_SIZE = \
@@ -353,7 +357,6 @@ class AWSv4ComplMulti : public rgw::auth::Completer,
 						    uint32_t flags);
   } chunk_meta;
 
-  uint16_t lf_bytes;
   size_t stream_pos;
   boost::container::static_vector<char, ChunkMeta::META_MAX_SIZE> parsing_buf;
   boost::optional<std::string_view> x_amz_trailer;
@@ -421,7 +424,6 @@ class AWSv4ComplMulti : public rgw::auth::Completer,
       /* The evolving state. */
       chunk_meta(ChunkMeta::create_first(
 		   seed_signature, flags, 0 /* first call in cycle */)),
-      lf_bytes(0),
       stream_pos(0),
       sha256_hash(calc_hash_sha256_open_stream()),
       prev_chunk_signature(std::move(seed_signature))

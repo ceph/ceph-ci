@@ -26,6 +26,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <map>
 #include <string>
 
@@ -38,6 +39,7 @@
 
 #include "rgw_auth_s3.h"
 #include "rgw_common.h"
+#include "rgw_process_env.h"
 
 using rgw::auth::s3::get_v4_canonical_headers;
 
@@ -331,6 +333,39 @@ TEST_F(SigV4CanonicalHeaders, MinioGoStreamingTrailerPutObjectIsAccepted)
 
 namespace rgw::auth::s3 {
 
+/* serves the request body 7 bytes per recv_body() call */
+class StringClient : public rgw::io::RestfulClient {
+  RGWEnv env;
+  std::string body;
+  size_t pos = 0;
+
+  int init_env(CephContext*) override { return 0; }
+
+public:
+  explicit StringClient(std::string body) : body(std::move(body)) {}
+
+  RGWEnv& get_env() noexcept override { return env; }
+  size_t complete_request() override { return 0; }
+  size_t send_100_continue() override { return 0; }
+  size_t send_status(int, const char*) override { return 0; }
+  size_t send_header(const std::string_view&, const std::string_view&) override
+  {
+    return 0;
+  }
+  size_t send_content_length(uint64_t) override { return 0; }
+  size_t complete_header() override { return 0; }
+  size_t send_body(const char*, size_t) override { return 0; }
+  void flush() override {}
+
+  size_t recv_body(char* buf, size_t max) override
+  {
+    const size_t len = std::min({max, size_t(7), body.size() - pos});
+    std::copy_n(body.data() + pos, len, buf);
+    pos += len;
+    return len;
+  }
+};
+
 class ChunkMetaParse : public ::testing::Test {
 protected:
   using ChunkMeta = AWSv4ComplMulti::ChunkMeta;
@@ -344,7 +379,22 @@ protected:
         buf.size(), flags).second;
   }
 
+  static void
+  attach(AWSv4ComplMulti& cio, rgw::io::RestfulClient& client)
+  {
+    cio.set_decoratee(client);
+  }
+
+  static size_t
+  buffered(const AWSv4ComplMulti& cio)
+  {
+    return cio.parsing_buf.size();
+  }
+
   const std::string sig = std::string(ChunkMeta::SIG_SIZE, 'a');
+  RGWProcessEnv penv;
+  RGWEnv env;
+  req_state s{g_ceph_context, penv, &env, 0};
 };
 
 TEST_F(ChunkMetaParse, ChunkSignature)
@@ -375,6 +425,50 @@ TEST_F(ChunkMetaParse, MalformedHeaderIsRejected)
   };
   for (const auto& header : headers) {
     EXPECT_THROW(parse(header), rgw::io::Exception) << header;
+  }
+}
+
+TEST_F(ChunkMetaParse, LongHeaderIsReadInBlocks)
+{
+  StringClient client("1;x=" + std::string(298, 'x') + "\r\nD\r\n400;" +
+                      std::string(200, 'x') + "\r\n" + std::string(1024, 'E') +
+                      "\r\n0\r\n\r\n");
+  AWSv4ComplMulti cio(&s, "", "", "", AWSv4ComplMulti::FLAG_UNSIGNED_CHUNKED, {});
+  attach(cio, client);
+
+  char buf[1024];
+  ASSERT_EQ(1u, cio.recv_body(buf, 1));
+  ASSERT_EQ('D', buf[0]);
+  ASSERT_LT(buffered(cio), ChunkMeta::META_READ_SIZE);
+  ASSERT_EQ(sizeof(buf), cio.recv_body(buf, sizeof(buf)));
+  ASSERT_EQ(std::string(sizeof(buf), 'E'), std::string(buf, sizeof(buf)));
+  ASSERT_TRUE(cio.complete());
+}
+
+TEST_F(ChunkMetaParse, TooLongHeaderIsRejected)
+{
+  StringClient client("1;x=" + std::string(ChunkMeta::META_MAX_SIZE, 'x') +
+                      "\r\n");
+  AWSv4ComplMulti cio(&s, "", "", "", AWSv4ComplMulti::FLAG_UNSIGNED_CHUNKED, {});
+  attach(cio, client);
+
+  char buf[1];
+  EXPECT_THROW(cio.recv_body(buf, sizeof(buf)), rgw::io::Exception);
+}
+
+TEST_F(ChunkMetaParse, PreviousChunkSignatureIsChecked)
+{
+  StringClient client("5;chunk-signature=" + sig + "\r\nDDDDD\r\n" +
+                      "1;chunk-signature=" + sig + "\r\nE\r\n");
+  AWSv4ComplMulti cio(&s, "", "", "", AWSv4ComplMulti::FLAG_NONE, {});
+  attach(cio, client);
+
+  char buf[6];
+  try {
+    cio.recv_body(buf, sizeof(buf));
+    FAIL();
+  } catch (const rgw::io::Exception& e) {
+    ASSERT_EQ(ERR_SIGNATURE_NO_MATCH, e.code().value());
   }
 }
 
