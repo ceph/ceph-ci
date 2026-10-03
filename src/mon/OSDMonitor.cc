@@ -10201,6 +10201,14 @@ int OSDMonitor::prepare_command_pool_stretch_unset(const cmdmap_t& cmdmap,
     return -EINVAL;
   }
 
+  // num_zones sets an EC pool's size and its non-primary shards
+  if (p.is_erasure() && pool_size != p.size) {
+    ss << "For an EC pool, size must stay " << (int)p.size
+       << " (num_zones " << p.get_num_zone()
+       << " * (k+m)); set num_zones to change it";
+    return -EINVAL;
+  }
+
   // unset stretch values
   p.peering_crush_bucket_count = 0;
   p.peering_crush_bucket_target = 0;
