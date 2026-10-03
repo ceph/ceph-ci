@@ -353,16 +353,29 @@ TEST_F(ChunkMetaParse, ChunkSignature)
   ASSERT_EQ(header.size(), parse(header + "data"));
 }
 
-TEST_F(ChunkMetaParse, ShortExtensionNameEndsBuffer)
+TEST_F(ChunkMetaParse, ExtensionsAroundSignature)
 {
-  const std::string header = "\r\n1;x=" + sig + "\r\n";
+  const std::string header =
+      "\r\n1;a=b;Chunk-Signature=" + sig + ";c=d;e\r\n";
   ASSERT_EQ(header.size(), parse(header));
 }
 
-TEST_F(ChunkMetaParse, LongExtensionName)
+TEST_F(ChunkMetaParse, MalformedHeaderIsRejected)
 {
-  const std::string header = "\r\n1;chunk-signature-x=" + sig + "\r\n";
-  ASSERT_EQ(header.size(), parse(header + "d"));
+  const std::string headers[] = {
+      "\r\n1;x=" + sig + "\r\n",
+      "\r\n1;chunk-signature-x=" + sig + "\r\n",
+      "\r\n1;chunk-signature=" + sig + ";chunk-signature=" + sig + "\r\n",
+      "\r\n1;chunk-signature=" + sig.substr(1) + "\r\n",
+      "\r\n1;chunk-signature=" + sig + "a\r\n",
+      "\r\n1;chunk-signature\r\n",
+      "\r\n1;chunk-signature=" + sig,
+      "\r\n1;a\r;chunk-signature=" + sig + "\r\n",
+      "\r\n1x;chunk-signature=" + sig + "\r\n",
+  };
+  for (const auto& header : headers) {
+    EXPECT_THROW(parse(header), rgw::io::Exception) << header;
+  }
 }
 
 } // namespace rgw::auth::s3

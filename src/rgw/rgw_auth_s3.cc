@@ -1152,43 +1152,49 @@ AWSv4ComplMulti::ChunkMeta::create_next(CephContext* const cct,
 
   if (expect_chunk_signature) {
 
-    /* traditional parse looks for
-       string(IntHexBase(chunk-size)) + ";chunk-signature=" + signature + \r\n + chunk-data + \r\n
+    /* string(IntHexBase(chunk-size)) *(";" ext-name ["=" ext-value]) + \r\n + chunk-data + \r\n
+       where exactly one extension is chunk-signature and the others are ignored
        cf. https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-streaming.html */
 
-    const size_t semicolon_pos = metastr.find(";");
-    if (semicolon_pos == std::string_view::npos) {
-      ldout(cct, 20) << "AWSv4ComplMulti cannot find the ';' separator"
-		     << dendl;
+    const size_t exts_begin = data_field_end - metabuf;
+    const size_t exts_end = metastr.find_first_of("\r\n", exts_begin);
+    if (exts_end == std::string_view::npos ||
+        metastr.substr(exts_end, sarrlen("\r\n")) != "\r\n") {
+      ldout(cct, 20) << "AWSv4ComplMulti: no new line at chunk header end"
+                     << dendl;
       throw rgw::io::Exception(EINVAL, std::system_category());
     }
-
-    /* Parse the chunk_signature=... part. */
-    const auto signature_part = metastr.substr(semicolon_pos + 1);
-    const size_t eq_sign_pos = signature_part.find("=");
-    if (eq_sign_pos == std::string_view::npos) {
-      ldout(cct, 20) << "AWSv4ComplMulti: cannot find the '=' separator"
+    const auto exts = metastr.substr(exts_begin, exts_end - exts_begin);
+    if (!exts.starts_with(';')) {
+      ldout(cct, 20) << "AWSv4ComplMulti: cannot find the ';' separator"
                      << dendl;
       throw rgw::io::Exception(EINVAL, std::system_category());
     }
 
-    /* OK, we have at least the beginning of a signature. */
-    const size_t data_sep_pos = signature_part.find("\r\n");
-    if (data_sep_pos == std::string_view::npos) {
-      ldout(cct, 20) << "AWSv4ComplMulti: no new line at signature end"
-                     << dendl;
+    std::string_view signature;
+    for (const auto ext : ceph::split(exts, ";")) {
+      const size_t eq_sign_pos = ext.find('=');
+      if (!boost::iequals(ext.substr(0, eq_sign_pos), "chunk-signature")) {
+        continue;
+      }
+      if (!signature.empty()) {
+        ldout(cct, 20) << "AWSv4ComplMulti: duplicate chunk-signature" << dendl;
+        throw rgw::io::Exception(EINVAL, std::system_category());
+      }
+      if (eq_sign_pos == std::string_view::npos ||
+          ext.size() - eq_sign_pos - 1 != SIG_SIZE) {
+        ldout(cct, 20) << "AWSv4ComplMulti: signature.length() != 64" << dendl;
+        throw rgw::io::Exception(EINVAL, std::system_category());
+      }
+      signature = ext.substr(eq_sign_pos + 1);
+    }
+
+    if (signature.empty()) {
+      ldout(cct, 20) << "AWSv4ComplMulti: cannot find chunk-signature" << dendl;
       throw rgw::io::Exception(EINVAL, std::system_category());
     }
 
-    const auto signature =
-        signature_part.substr(eq_sign_pos + 1, data_sep_pos - 1 - eq_sign_pos);
-    if (signature.length() != SIG_SIZE) {
-      ldout(cct, 20) << "AWSv4ComplMulti: signature.length() != 64" << dendl;
-      throw rgw::io::Exception(EINVAL, std::system_category());
-    }
-
-    const size_t consumed =
-        semicolon_pos + sarrlen(";") + data_sep_pos + sarrlen("\r\n");
+    const size_t consumed = exts_end + sarrlen("\r\n");
     const size_t data_starts_in_stream =
         consumed + old.data_offset_in_stream + old.data_length;
 
