@@ -559,6 +559,7 @@ class Chaos:
         self.zf = None
         self.failed = False
         self.pending_restart = {}
+        self.partial_until = -1
         self.dup_acting_seen = set()
 
     def record(self, what):
@@ -653,6 +654,9 @@ class Chaos:
         osds = self.c.zones[z]
         victims = random.sample(osds, len(osds) - self.c.k + 1)
         when = self.cycle + random.randint(1, 6)
+        # the zone's PGs stay peered until the victims return, and the hold
+        # is in cycles, so slow cycles can outlast --stuck-limit
+        self.partial_until = when + 2
         self.record(f"zone_partial {z} {victims} restart@{when}")
         for o in victims:
             self.d.kill(("osd", o))
@@ -761,7 +765,8 @@ class Chaos:
             for name, rc, logf in self.w.failed:
                 self.fatal(f"WORKLOAD_FAIL {name} rc={rc} {logf}")
             self.w.failed = []
-        limit = self.args.stuck_limit_zf if self.zf else self.args.stuck_limit
+        relaxed = self.zf or self.cycle <= self.partial_until
+        limit = self.args.stuck_limit_zf if relaxed else self.args.stuck_limit
         for name, age, op in self.w.stuck_probes(limit):
             self.fatal(f"STUCK_OP {name} {op} outstanding {age:.0f}s")
         st = os.statvfs(BUILD)
@@ -940,7 +945,7 @@ def main():
     ap.add_argument("--stuck-limit", type=int, default=240,
                     help="fatal if a probe op is outstanding longer than this")
     ap.add_argument("--stuck-limit-zf", type=int, default=900,
-                    help="stuck limit while a zone failover is in progress "
+                    help="stuck limit while a zone failover or zone_partial is in progress "
                          "(flap can legitimately block IO until the zone returns)")
     ap.add_argument("--quiesce-every", type=int, default=30)
     ap.add_argument("--clean-timeout", type=int, default=1200)
