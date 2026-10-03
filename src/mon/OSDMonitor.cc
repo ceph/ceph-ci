@@ -17006,7 +17006,10 @@ void OSDMonitor::trigger_healthy_stretch_mode()
   for (auto pgi : osdmap.pools) {
     if (pgi.second.peering_crush_bucket_count) {
       pg_pool_t& newp = *pending_inc.get_new_pool(pgi.first, &pgi.second);
-      newp.peering_crush_bucket_count = osdmap.stretch_bucket_count;
+      // a stretch EC pool spans all of its zones
+      newp.peering_crush_bucket_count =
+        newp.is_erasure() && newp.get_num_zone() > 1 ?
+          newp.get_num_zone() : osdmap.stretch_bucket_count;
       newp.peering_crush_mandatory_member = CRUSH_ITEM_NONE;
       if (newp.is_replicated()) {
       newp.min_size = g_conf().get_val<uint64_t>("mon_stretch_pool_min_size");
