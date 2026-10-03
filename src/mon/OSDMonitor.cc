@@ -9999,6 +9999,19 @@ int OSDMonitor::prepare_command_pool_application(const string &prefix,
   return _command_pool_application(prefix, cmdmap, ss, nullptr, true);
 }
 
+// the surviving bucket that degraded stretch mode made mandatory for the
+// existing stretch pools
+static int degraded_stretch_mandatory_member(const OSDMap& osdmap)
+{
+  for (const auto& [id, p] : osdmap.get_pools()) {
+    if (p.peering_crush_bucket_count == osdmap.degraded_stretch_mode &&
+        p.peering_crush_mandatory_member != CRUSH_ITEM_NONE) {
+      return p.peering_crush_mandatory_member;
+    }
+  }
+  return CRUSH_ITEM_NONE;
+}
+
 int OSDMonitor::prepare_command_pool_stretch_set(const cmdmap_t& cmdmap,
                                                     stringstream& ss)
 {
@@ -10139,6 +10152,13 @@ int OSDMonitor::prepare_command_pool_stretch_set(const cmdmap_t& cmdmap,
   p.peering_crush_bucket_count = static_cast<uint32_t>(bucket_count);
   p.peering_crush_bucket_target = static_cast<uint32_t>(bucket_target);
   p.peering_crush_bucket_barrier = static_cast<uint32_t>(bucket_barrier);
+  // in degraded stretch mode the pool peers in the surviving zone, as the
+  // other stretch pools do, until the healthy transition restores it
+  p.peering_crush_mandatory_member = CRUSH_ITEM_NONE;
+  if (osdmap.stretch_mode_enabled && osdmap.degraded_stretch_mode) {
+    p.peering_crush_bucket_count = osdmap.degraded_stretch_mode;
+    p.peering_crush_mandatory_member = degraded_stretch_mandatory_member(osdmap);
+  }
   p.crush_rule = static_cast<__u8>(crush_rule);
   p.size = static_cast<__u8>(pool_size);
   p.min_size = static_cast<__u8>(pool_min_size);
@@ -16738,19 +16758,6 @@ int OSDMonitor::validate_stretch_mode_new_pool(CrushWrapper& crush, int new_crus
     }
   }
   return 0;
-}
-
-// the surviving bucket that degraded stretch mode made mandatory for the
-// existing stretch pools
-static int degraded_stretch_mandatory_member(const OSDMap& osdmap)
-{
-  for (const auto& [id, p] : osdmap.get_pools()) {
-    if (p.peering_crush_bucket_count == osdmap.degraded_stretch_mode &&
-        p.peering_crush_mandatory_member != CRUSH_ITEM_NONE) {
-      return p.peering_crush_mandatory_member;
-    }
-  }
-  return CRUSH_ITEM_NONE;
 }
 
 void OSDMonitor::try_enable_stretch_mode(stringstream& ss, bool *okay,
