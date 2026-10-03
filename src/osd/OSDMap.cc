@@ -3079,6 +3079,15 @@ const std::vector<int> OSDMap::pgtemp_primaryfirst(const pg_pool_t& pool,
  * to be reversed by OSDs (but not clients) and is called by PeeringState
  * when initializing the the acting set.
  */
+// nonprimary_shards can still name shards beyond size until the monitor
+// refreshes it after a size change; pgtemp_primaryfirst() never encodes them
+static int num_nonprimary_shards(const pg_pool_t& pool)
+{
+  return std::count_if(pool.nonprimary_shards.begin(),
+                       pool.nonprimary_shards.end(),
+                       [&pool](shard_id_t s) { return s.id < pool.size; });
+}
+
 const std::vector<int> OSDMap::pgtemp_undo_primaryfirst(const pg_pool_t& pool,
 	const pg_t pg, const std::vector<int>& acting) const
 {
@@ -3088,7 +3097,7 @@ const std::vector<int> OSDMap::pgtemp_undo_primaryfirst(const pg_pool_t& pool,
     if (has_pgtemp(pool.raw_pg_to_pg(pg))) {
       std::vector<int> result;
       int primaryshard = 0;
-      int nonprimaryshard = pool.size - pool.nonprimary_shards.size();
+      int nonprimaryshard = pool.size - num_nonprimary_shards(pool);
       ceph_assert(acting.size() == pool.size);
       for (auto shard = 0; shard < pool.size; shard++) {
 	if (pool.is_nonprimary_shard(shard_id_t(shard))) {
@@ -3113,7 +3122,7 @@ shard_id_t OSDMap::pgtemp_undo_primaryfirst(const pg_pool_t& pool,
     return primary_first_pos;
   }
   shard_id_t i(0);
-  shard_id_t j(pool.size - pool.nonprimary_shards.size());
+  shard_id_t j(pool.size - num_nonprimary_shards(pool));
   for (shard_id_t shard(0); shard < pool.size; ++shard) {
     if (pool.is_nonprimary_shard(shard_id_t(shard))) {
       if (j == primary_first_pos) {
