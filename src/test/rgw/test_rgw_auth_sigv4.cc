@@ -329,6 +329,44 @@ TEST_F(SigV4CanonicalHeaders, MinioGoStreamingTrailerPutObjectIsAccepted)
 
 } // anonymous namespace
 
+namespace rgw::auth::s3 {
+
+class ChunkMetaParse : public ::testing::Test {
+protected:
+  using ChunkMeta = AWSv4ComplMulti::ChunkMeta;
+
+  static size_t
+  parse(std::string_view buf)
+  {
+    const uint32_t flags = AWSv4ComplMulti::FLAG_NONE;
+    return ChunkMeta::create_next(
+        g_ceph_context, ChunkMeta::create_first("", flags, 0), buf.data(),
+        buf.size(), flags).second;
+  }
+
+  const std::string sig = std::string(ChunkMeta::SIG_SIZE, 'a');
+};
+
+TEST_F(ChunkMetaParse, ChunkSignature)
+{
+  const std::string header = "400;chunk-signature=" + sig + "\r\n";
+  ASSERT_EQ(header.size(), parse(header + "data"));
+}
+
+TEST_F(ChunkMetaParse, ShortExtensionNameEndsBuffer)
+{
+  const std::string header = "\r\n1;x=" + sig + "\r\n";
+  ASSERT_EQ(header.size(), parse(header));
+}
+
+TEST_F(ChunkMetaParse, LongExtensionName)
+{
+  const std::string header = "\r\n1;chunk-signature-x=" + sig + "\r\n";
+  ASSERT_EQ(header.size(), parse(header + "d"));
+}
+
+} // namespace rgw::auth::s3
+
 int
 main(int argc, char** argv)
 {

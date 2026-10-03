@@ -279,6 +279,8 @@ class AWSv4ComplMulti : public rgw::auth::Completer,
 
   using trailer_map_t = boost::container::flat_map<std::string_view, std::string_view>;
 
+  friend class ChunkMetaParse;
+
   const req_state* const s;
 
   const std::string_view date;
