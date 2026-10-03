@@ -575,8 +575,8 @@ TEST_P(TestECFailoverWithPeering, MultiZoneFailoverWithPeering) {
   const auto& config = GetParam();
 
   // Skip test if zones are not configured or only one zone
-  if (config.num_zones <= 1) {
-    GTEST_SKIP() << "MultiZoneFailoverWithPeering test requires num_zones > 1";
+  if (config.num_zones != 2) {
+    GTEST_SKIP() << "MultiZoneFailoverWithPeering test requires num_zones == 2";
   }
 
   ASSERT_TRUE(all_shards_active()) << "Initial peering must complete";
@@ -712,6 +712,8 @@ const std::vector<BackendConfig> kECPeeringConfigs = {
   {PGBackendTestFixture::EC, "isa", "reed_sol_van", pg_pool_t::FLAG_EC_OVERWRITES | pg_pool_t::FLAG_EC_OPTIMIZATIONS,  4096,  2, 1, 2, "EC_ISA_Opt_k2m1_zones2"},
   {PGBackendTestFixture::EC, "isa", "reed_sol_van", pg_pool_t::FLAG_EC_OVERWRITES | pg_pool_t::FLAG_EC_OPTIMIZATIONS,  4096,  8, 3, 2, "EC_ISA_Opt_k8m3_zones2"},
   {PGBackendTestFixture::EC, "jerasure", "reed_sol_van", pg_pool_t::FLAG_EC_OVERWRITES | pg_pool_t::FLAG_EC_OPTIMIZATIONS,  8192,  4, 2, 2, "EC_Jerasure_Opt_k4m2_su8k_zones2"},
+  {PGBackendTestFixture::EC, "isa", "reed_sol_van", pg_pool_t::FLAG_EC_OVERWRITES | pg_pool_t::FLAG_EC_OPTIMIZATIONS,  4096,  2, 1, 3, "EC_ISA_Opt_k2m1_zones3"},
+  {PGBackendTestFixture::EC, "isa", "reed_sol_van", pg_pool_t::FLAG_EC_OVERWRITES | pg_pool_t::FLAG_EC_OPTIMIZATIONS,  4096,  4, 2, 3, "EC_ISA_Opt_k4m2_zones3"},
 };
 
 }  // namespace
@@ -1887,8 +1889,8 @@ TEST_P(TestECFailoverWithPeering, DivergentLogRewindThenNewInterval) {
  */
 TEST_P(TestECFailoverWithPeering, ECZoneRecoveryTest) {
   // Skip test if zones are not configured or only one zone
-  if (num_zones <= 1) {
-    GTEST_SKIP() << "ECZoneRecoveryTest requires num_zones > 1";
+  if (num_zones != 2) {
+    GTEST_SKIP() << "ECZoneRecoveryTest requires num_zones == 2";
   }
 
   ASSERT_TRUE(all_shards_active()) << "Initial peering must complete";
@@ -1914,8 +1916,8 @@ TEST_P(TestECFailoverWithPeering, ECZoneRecoveryTest) {
  */
 TEST_P(TestECFailoverWithPeering, ECZoneRecoveryTestReverse) {
   // Skip test if zones are not configured or only one zone
-  if (num_zones <= 1) {
-    GTEST_SKIP() << "ECZoneRecoveryTestReverse requires num_zones > 1";
+  if (num_zones != 2) {
+    GTEST_SKIP() << "ECZoneRecoveryTestReverse requires num_zones == 2";
   }
 
   ASSERT_TRUE(all_shards_active()) << "Initial peering must complete";
@@ -1942,8 +1944,8 @@ TEST_P(TestECFailoverWithPeering, ECZoneRecoveryTestReverse) {
  */
 TEST_P(TestECFailoverWithPeering, ECZoneRecoveryPartialWriteTest) {
   // Skip test if zones are not configured or only one zone
-  if (num_zones <= 1) {
-    GTEST_SKIP() << "ECZoneRecoveryPartialWriteTest requires num_zones > 1";
+  if (num_zones != 2) {
+    GTEST_SKIP() << "ECZoneRecoveryPartialWriteTest requires num_zones == 2";
   }
 
   ASSERT_TRUE(all_shards_active()) << "Initial peering must complete";
@@ -1957,8 +1959,8 @@ TEST_P(TestECFailoverWithPeering, ECZoneRecoveryPartialWriteTest) {
 
 TEST_P(TestECFailoverWithPeering, ECZoneRecoveryPartialWriteTestReverse) {
   // Skip test if zones are not configured or only one zone
-  if (num_zones <= 1) {
-    GTEST_SKIP() << "ECZoneRecoveryPartialWriteTest requires num_zones > 1";
+  if (num_zones != 2) {
+    GTEST_SKIP() << "ECZoneRecoveryPartialWriteTest requires num_zones == 2";
   }
 
   ASSERT_TRUE(all_shards_active()) << "Initial peering must complete";
@@ -2384,8 +2386,8 @@ TEST_P(TestECFailoverWithPeering, AddNewZoneWhileSingleZone) {
 // and recovery must source the missing relative shards from zone 1. A stretch
 // pool only gets there in recovery stretch mode, with zone 0 partly back.
 TEST_P(TestECFailoverWithPeering, LocalZoneBelowKUsesRemoteZone) {
-  if (num_zones < 2) {
-    GTEST_SKIP() << "requires num_zones > 1";
+  if (num_zones != 2) {
+    GTEST_SKIP() << "requires num_zones == 2";
   }
 
   const size_t object_size = stripe_unit * k;
@@ -2448,8 +2450,8 @@ TEST_P(TestECFailoverWithPeering, LocalZoneBelowKUsesRemoteZone) {
 // Both copies of the same relative shard miss different writes and are
 // recovered together in one recovery op.
 TEST_P(TestECFailoverWithPeering, SameRelativeShardMissingInBothZones) {
-  if (num_zones < 2) {
-    GTEST_SKIP() << "requires num_zones > 1";
+  if (num_zones != 2) {
+    GTEST_SKIP() << "requires num_zones == 2";
   }
 
   const size_t object_size = stripe_unit * k;
@@ -2493,8 +2495,8 @@ TEST_P(TestECFailoverWithPeering, SameRelativeShardMissingInBothZones) {
 // A zone-1 nonprimary shard that misses a mix of sub-stripe writes is
 // recovered to the per-shard version of the last write to its relative shard.
 TEST_P(TestECFailoverWithPeering, Zone1NonPrimaryPartialWriteMissingNeed) {
-  if (num_zones < 2 || k < 3) {
-    GTEST_SKIP() << "requires num_zones > 1 and k >= 3";
+  if (num_zones != 2 || k < 3) {
+    GTEST_SKIP() << "requires num_zones == 2 and k >= 3";
   }
 
   const size_t object_size = stripe_unit * k;
@@ -2544,8 +2546,8 @@ TEST_P(TestECFailoverWithPeering, Zone1NonPrimaryPartialWriteMissingNeed) {
 // A zone-1 primary issues sub-stripe writes to live zone-0 nonprimary shards,
 // then zone 0 takes the primary back and recovers from both zones.
 TEST_P(TestECFailoverWithPeering, Zone1PrimaryPartialWritesThenZone0Recovers) {
-  if (num_zones < 2 || k < 3) {
-    GTEST_SKIP() << "requires num_zones > 1 and k >= 3";
+  if (num_zones != 2 || k < 3) {
+    GTEST_SKIP() << "requires num_zones == 2 and k >= 3";
   }
 
   const size_t object_size = stripe_unit * k;
@@ -2607,8 +2609,8 @@ TEST_P(TestECFailoverWithPeering, Zone1PrimaryPartialWritesThenZone0Recovers) {
 // Zero-size object attrs written by a zone-1 primary must be recovered to
 // every primary-capable shard once zone 0 returns.
 TEST_P(TestECFailoverWithPeering, ZeroSizeAttrsAcrossZoneFailover) {
-  if (num_zones < 2) {
-    GTEST_SKIP() << "requires num_zones > 1";
+  if (num_zones != 2) {
+    GTEST_SKIP() << "requires num_zones == 2";
   }
 
   const std::string obj = "test_zero_size_attrs";
@@ -2647,8 +2649,8 @@ TEST_P(TestECFailoverWithPeering, ZeroSizeAttrsAcrossZoneFailover) {
 // Delete and recreate (smaller) an object while zone 1 is down; zone 1 must
 // be left with no stale pre-delete data after recovery.
 TEST_P(TestECFailoverWithPeering, DeleteRecreateAcrossZoneFailover) {
-  if (num_zones < 2) {
-    GTEST_SKIP() << "requires num_zones > 1";
+  if (num_zones != 2) {
+    GTEST_SKIP() << "requires num_zones == 2";
   }
 
   const size_t object_size = stripe_unit * k;
@@ -2816,8 +2818,8 @@ TEST_P(TestECFailoverWithPeering, DivergentLogRewindZone1Target) {
 // A rolled-back sub-stripe overwrite must be undone on the zone-1 copies of
 // the written shards too, so a later zone-0 outage reads the old data.
 TEST_P(TestECFailoverWithPeering, PartialOverwriteRollbackZone1Shards) {
-  if (num_zones < 2 || m < 2 || k < 3) {
-    GTEST_SKIP() << "requires num_zones > 1, k >= 3 and m >= 2";
+  if (num_zones != 2 || m < 2 || k < 3) {
+    GTEST_SKIP() << "requires num_zones == 2, k >= 3 and m >= 2";
   }
 
   const std::string obj_name = "test_partial_rollback";
@@ -2920,8 +2922,8 @@ TEST_P(TestECFailoverWithPeering, RollbackVersionMismatchZone1) {
 // is back at min_size in degraded stretch mode, even though fewer than k of
 // that interval's zone-0 OSDs are up.
 TEST_P(TestECFailoverWithPeering, PeeredIntervalBelowZoneMinSizeDoesNotBlock) {
-  if (num_zones < 2) {
-    GTEST_SKIP() << "requires num_zones > 1";
+  if (num_zones != 2) {
+    GTEST_SKIP() << "requires num_zones == 2";
   }
 
   const int tolerated = k + m - get_pool().min_size;
