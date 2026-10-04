@@ -677,8 +677,11 @@ function TEST_stretch_ec_stretch_set() {
     ceph osd pool set data0 allow_ec_optimizations true
     ceph osd pool set data1 allow_ec_optimizations true
 
-    ceph osd pool stretch set data0 2 6 datacenter stretch_ec 12 4 --yes-i-really-mean-it || return 1
-    ceph osd pool stretch set data1 2 6 datacenter stretch_ec 12 4 --yes-i-really-mean-it || return 1
+    # a pool created from a profile has a single zone, and stretch set does
+    # not change the number of zones of an EC pool
+    for pool in data0 data1; do
+        ceph osd pool stretch set $pool 2 6 datacenter stretch_ec 12 4 --yes-i-really-mean-it 2>&1 | grep "must be the pool's num_zones 1" || return 1
+    done
 }
 
 function TEST_stretch_diff_bucket_barrier() {
