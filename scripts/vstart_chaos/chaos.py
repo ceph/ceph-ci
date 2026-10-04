@@ -15,6 +15,10 @@ that apply.  Random OSD faults run while verifying workloads:
 Actions for every pool, keeping each zone within its failure budget (m for
 an EC pool, otherwise size - min_size, or zone size - 1 with zones):
   mark_down, out_in, kill_restart, upmap_items, rm_upmap, repeer, deep_scrub
+  reweight          osd reweight of an in OSD to 0.5, 0.75 or 1
+  primary_affinity  osd primary-affinity 0, 0.5 or 1
+  pg_num            double or halve the pool's pg_num (split/merge), one at a time
+Quiesce resets reweight and primary-affinity to 1.
 
 Multi-zone pools (num_zones > 1, which enables stretch mode) also get:
   upmap_zone, upmap_flip  move or swap a PG's zone blocks
@@ -739,6 +743,35 @@ class Chaos:
             self.record(f"deep_scrub {pg['pgid']}")
             ceph(f"pg deep-scrub {pg['pgid']}")
 
+    def a_reweight(self):
+        _, out = self.unavailable()
+        cands = [o for o in self.c.all_osds if o not in out]
+        if cands:
+            o = random.choice(cands)
+            w = random.choice([0.5, 0.75, 1.0])
+            self.record(f"reweight osd.{o} {w}")
+            ceph(f"osd reweight {o} {w}")
+
+    def a_primary_affinity(self):
+        o = random.choice(self.c.all_osds)
+        a = random.choice([0, 0.5, 1])
+        self.record(f"primary_affinity osd.{o} {a}")
+        ceph(f"osd primary-affinity osd.{o} {a}")
+
+    def a_pg_num(self):
+        pools = ceph_json("osd pool ls detail", quiet=True) or []
+        p = next((x for x in pools if x["pool_name"] == self.c.pool), None)
+        # one split or merge at a time
+        if not p or p["pg_num"] != p["pg_num_target"] or \
+                p["pg_placement_num"] != p["pg_placement_num_target"]:
+            return
+        n = p["pg_num"]
+        new = random.choice([v for v in (n * 2, n // 2)
+                             if self.args.pg_min <= v <= self.args.pg_max] or [n])
+        if new != n:
+            self.record(f"pg_num {self.c.pool} {n} -> {new}")
+            ceph(f"osd pool set {self.c.pool} pg_num {new}")
+
     # ---- checks -----------------------------------------------------------
 
     def check(self):
@@ -844,6 +877,9 @@ class Chaos:
         self.record("quiesce")
         self.zf = None
         self.revive_everything()
+        for o in self.c.all_osds:
+            ceph(f"osd reweight {o} 1", quiet=True)
+            ceph(f"osd primary-affinity osd.{o} 1", quiet=True)
         if not self.wait_healthy(self.args.clean_timeout):
             return False
         ceph("osd unset noscrub", quiet=True)
@@ -928,7 +964,8 @@ class Chaos:
 
 DEFAULT_ACTIONS = ("mark_down=3,out_in=2,kill_restart=3,zone_partial=1,"
                    "zone_failover=3,upmap_zone=2,upmap_flip=1,upmap_items=2,"
-                   "rm_upmap=2,repeer=1,deep_scrub=1")
+                   "rm_upmap=2,repeer=1,deep_scrub=1,reweight=2,"
+                   "primary_affinity=1,pg_num=1")
 
 
 def main():
@@ -942,6 +979,8 @@ def main():
     ap.add_argument("--extra-per-zone", type=int, default=0,
                     help="allow this many failures beyond the budget per zone")
     ap.add_argument("--actions", default=DEFAULT_ACTIONS)
+    ap.add_argument("--pg-min", type=int, default=8)
+    ap.add_argument("--pg-max", type=int, default=64)
     ap.add_argument("--zf-variants", default=",".join(ZoneFailover.VARIANTS))
     ap.add_argument("--hold-cycles", type=int, nargs=2, default=[2, 8])
     ap.add_argument("--degrade-timeout", type=int, default=180)
