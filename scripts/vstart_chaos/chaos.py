@@ -808,16 +808,11 @@ class Chaos:
         pgs = ceph_json(f"pg ls-by-pool {self.c.pool}", quiet=True)
         for p in (pgs or {}).get("pg_stats", []):
             a = [o for o in p["acting"] if o != 2147483647]
-            # an OSD holding two shards may serve both until backfill moves
-            # one, or while up has no OSD for one of them (as calc_ec_acting
-            # allows, also on main); otherwise a clean PG should not
-            if len(a) != len(set(a)) and "clean" in p["state"] and \
-                    2147483647 not in p["up"] and \
-                    p["pgid"] not in self.dup_acting_seen:
+            # expected for EC while the cluster is changing; run_chaos.sh
+            # checks again once the cluster is quiesced
+            if len(a) != len(set(a)) and p["pgid"] not in self.dup_acting_seen:
                 self.dup_acting_seen.add(p["pgid"])
-                with open(f"{self.rundir}/dup-{p['pgid']}-c{self.cycle}.query.json", "w") as f:
-                    f.write(ceph(f"pg {p['pgid']} query", quiet=True) or "")
-                self.finding(f"DUP_ACTING {p['pgid']} up {p['up']} acting {p['acting']} {p['state']}")
+                log(f"  dup acting {p['pgid']} up {p['up']} acting {p['acting']} {p['state']}")
         df = ceph_json("osd df", quiet=True)
         if df:
             full = [(n["id"], n["utilization"]) for n in df.get("nodes", [])
