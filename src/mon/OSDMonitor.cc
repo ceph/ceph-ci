@@ -8316,6 +8316,14 @@ int OSDMonitor::prepare_pool_crush_rule(const unsigned pool_type,
 	    int err = crush_rule_create_replica(pool_name, root, num_zones, num_replica_per_zone, zone_failure_domain, osd_failure_domain, device_class, false, crush_rule, ss);
             return handle_crush_rule_creation_result(err, pool_name);
           } else if (mon.monmap->global_stretch_mode_enabled) {
+            if (!root.empty() || !zone_failure_domain.empty() ||
+                !osd_failure_domain.empty() || !device_class.empty()) {
+              *ss << "crush parameters (crush_root, zone_failure_domain, "
+                  << "osd_failure_domain, crush_device_class) cannot be used "
+                  << "without num_zones in stretch mode, where the pool uses "
+                  << "the stretch rule";
+              return -EINVAL;
+            }
             *crush_rule = get_replicated_stretch_crush_rule();
 	  } else {
 	    // Use default rule
