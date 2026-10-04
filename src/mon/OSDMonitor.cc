@@ -14603,6 +14603,12 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       goto reply_no_propose;
     }
 
+    if (pool_type == pg_pool_t::TYPE_ERASURE && !has_ec_params && num_zones > 1) {
+      ss << "multi-zone erasure coded pools require k and m";
+      err = -EINVAL;
+      goto reply_no_propose;
+    }
+
     if (has_crush_params && has_crush_rule) {
       ss << "cannot specify both crush rule and crush parameters (crush_root, "
             "zone_failure_domain, osd_failure_domain, crush_device_class)";
