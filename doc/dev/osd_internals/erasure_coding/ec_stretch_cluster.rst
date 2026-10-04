@@ -1659,7 +1659,7 @@ The existing ``pg_pool_t`` fields remain unchanged:
      - zones (zones) in healthy; reduced during degraded
    * - ``peering_crush_bucket_target``
      - Target CRUSH buckets for ``bucket_max`` calc
-     - zones (zones) in healthy; reduced during degraded
+     - zones; not changed by the stretch mode transitions
    * - ``peering_crush_bucket_barrier``
      - CRUSH type level (e.g., datacenter)
      - Same as replica — the failure domain
@@ -1684,13 +1684,13 @@ The existing ``pg_pool_t`` fields remain unchanged:
      - NONE
    * - Degraded
      - 1
-     - 1
-     - 6
+     - 2
+     - 3
      - surviving_site
    * - Recovery
      - 1
-     - 1
-     - 6
+     - 2
+     - 3
      - surviving_site
    * - Healthy (restored)
      - 2
@@ -1698,8 +1698,10 @@ The existing ``pg_pool_t`` fields remain unchanged:
      - 3
      - NONE
 
-``bucket_max = ceil(size / bucket_target)`` — in healthy mode, ``6 / 2 = 3 =
-K+M``. This naturally prevents more than one copy of each shard per zone.
+``bucket_max = ceil(size / bucket_target)`` — ``6 / 2 = 3 = K+M``. The stretch
+mode transitions do not change ``bucket_target``, so this holds in every state
+and naturally prevents more than one copy of each shard per zone, also in the
+surviving zone while a zone is down.
 
 11.7 Network Partition Handling
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
