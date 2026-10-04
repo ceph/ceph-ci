@@ -1560,6 +1560,12 @@ For a K=2, M=1, --num-zones 2 pool: ``min_size = 5 − 3 = 2``.
 Also set ``peering_crush_bucket_count`` and
 ``peering_crush_mandatory_member`` as for replicated pools.
 
+A replicated pool created after ``ceph mon enable_stretch_mode`` while the
+cluster is in degraded stretch mode keeps its full ``size`` and
+``peering_crush_bucket_target``, as the existing stretch pools do, and is given
+the degraded ``peering_crush_bucket_count`` and halved ``min_size``, so the
+healthy transition (11.4.4) restores it with the other stretch pools.
+
 **11.4.4 Healthy Stretch Mode** (``trigger_healthy_stretch_mode``)
 
 *Currently reads* ``mon_stretch_pool_min_size`` *config for replica pools.*
