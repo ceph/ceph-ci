@@ -513,7 +513,7 @@ bool NVMeofGwMon::nvme_gw_show_command(ceph::Formatter* f, bufferlist &rdata, co
       f->open_object_section("stat");
       f->dump_string("gw-id", gw_id);
       f->dump_unsigned("anagrp-id",state.ana_grp_id+1);
-      if (/*active-active &&*/ map.is_timer_started(gw_id, group_key, 0)) {
+      if (map.is_gw_in_failover_active_active(gw_id, group_key)) {
          f->dump_bool("in-Failover", true);
       }
       f->dump_string("location", state.location);
@@ -1145,8 +1145,7 @@ bool NVMeofGwMon::prepare_beacon(MonOpRequestRef op)
 	dout(1) << " Warning :GW marked as Available in the NVmeofGwMon "
 		<< "database, performed full startup - Apply it but don't allow failover!"
 		<< gw_id << dendl;
-	 pending_map.process_gw_map_gw_pass_to_created
-                               (gw_id, group_key, gw_propose);
+	 pending_map.handle_gw_pass_to_created(gw_id, group_key, gw_propose);
 	 pending_map.skip_failovers_for_group(group_key);
 	 dout(4) << "fast_reboot:set skip-failovers for group " << gw_id << " group "
 	 << group_key << dendl;
@@ -1249,8 +1248,7 @@ check_availability:
   } else if (avail == gw_availability_t::GW_CREATED) {
     LastBeacon lb = {gw_id, group_key};
     last_beacon[lb] = now;
-    pending_map.process_gw_map_gw_pass_to_created
-      (gw_id, group_key, gw_propose);
+    pending_map.handle_gw_pass_to_created(gw_id, group_key, gw_propose);
   }
   // Periodic: check active FSM timers
   pending_map.update_active_timers(timer_propose);

@@ -30,6 +30,9 @@ public:
                    const NvmeGroupKey& group_key, bool &propose_pending) = 0;
     virtual void gw_alive(NVMeofGwMap& map, const NvmeGwId& gw_id,
        const NvmeGroupKey& group_key, epoch_t& last_osd_epoch, bool &propose_pending) = 0;
+
+    virtual int gw_created(NVMeofGwMap& map, const NvmeGwId& gw_id,
+                   const NvmeGroupKey& group_key, bool &propose_pending) = 0;
     virtual void periodic_ha(NVMeofGwMap& map, bool &propose_pending) = 0;
     //virtual void update_ana_states(NVMeofGwMap& map) = 0;
 };
@@ -47,6 +50,8 @@ public:
                    const NvmeGroupKey& group_key, bool &propose_pending) override;
     void gw_alive(NVMeofGwMap& map, const NvmeGwId& gw_id, const NvmeGroupKey& group_key,
                    epoch_t& last_osd_epoch, bool &propose_pending) override;
+    virtual int gw_created(NVMeofGwMap& map, const NvmeGwId& gw_id,
+                   const NvmeGroupKey& group_key, bool &propose_pending) override;
     void periodic_ha(NVMeofGwMap& map, bool &propose_pending) override;
    // void update_ana_states(NVMeofGwMap& map) override;
 };
@@ -64,6 +69,8 @@ public:
                    const NvmeGroupKey& group_key, bool &propose_pending) override;
     void gw_alive(NVMeofGwMap& map, const NvmeGwId& gw_id, const NvmeGroupKey& group_key,
                    epoch_t& last_osd_epoch, bool &propose_pending) override;
+    virtual int gw_created(NVMeofGwMap& map, const NvmeGwId& gw_id,
+                   const NvmeGroupKey& group_key, bool &propose_pending) override;
     void periodic_ha(NVMeofGwMap& map, bool &propose_pending) override;
    // void update_ana_states(NVMeofGwMap& map) override;
 };

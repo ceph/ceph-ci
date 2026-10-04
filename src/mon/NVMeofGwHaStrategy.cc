@@ -54,6 +54,12 @@ void ActivePassiveHaStrategy::gw_alive(NVMeofGwMap& map, const NvmeGwId& gw_id,
     // Legacy recovery / failback rules
     map.process_gw_map_ka(gw_id, group_key, last_osd_epoch, propose_pending);
 }
+
+int ActivePassiveHaStrategy::gw_created(NVMeofGwMap& map, const NvmeGwId& gw_id,
+                            const NvmeGroupKey& group_key, bool &propose_pending) {
+   return map.process_gw_map_gw_pass_to_created(gw_id, group_key, propose_pending);
+}
+
 void ActivePassiveHaStrategy::periodic_ha(NVMeofGwMap& map, bool &propose_pending) {
     // Legacy recovery / failback rules
     map.handle_abandoned_ana_groups(propose_pending);
@@ -111,6 +117,11 @@ void ActiveActiveHaStrategy::gw_down(NVMeofGwMap& map, const NvmeGwId& gw_id,
 void ActiveActiveHaStrategy::gw_alive(NVMeofGwMap& map, const NvmeGwId& gw_id,
                  const NvmeGroupKey& group_key, epoch_t& last_osd_epoch, bool &propose_pending) {
    map.process_gw_map_ka_active_active(gw_id, group_key, last_osd_epoch, propose_pending);
+}
+
+int ActiveActiveHaStrategy::gw_created(NVMeofGwMap& map, const NvmeGwId& gw_id,
+                            const NvmeGroupKey& group_key, bool &propose_pending) {
+  return map.process_gw_map_gw_pass_to_created_active_active(gw_id, group_key, propose_pending);
 }
 
 void ActiveActiveHaStrategy::periodic_ha(NVMeofGwMap& map, bool &propose_pending) {

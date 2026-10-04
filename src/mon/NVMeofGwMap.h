@@ -61,10 +61,12 @@ private:
 
 public:
    void set_ha_mode(HaMode new_mode);
-  // HA event methods invoked by NVMeofGwMon
+  // HA event virtual methods invoked by NVMeofGwMon
    void handle_gw_down(const NvmeGwId& gw_id, const NvmeGroupKey& group_key, bool &propose_pending);
    void handle_gw_alive(const NvmeGwId& gw_id, const NvmeGroupKey& group_key,
-           epoch_t& last_osd_epoch, bool &propose_pending );
+           epoch_t& last_osd_epoch, bool &propose_pending);
+   void handle_gw_pass_to_created(const NvmeGwId& gw_id, const NvmeGroupKey& group_key,
+           bool &propose_pending);
    //void update_ana_states();
    int handle_gw_creation(const NvmeGwId& gw_id, const NvmeGroupKey& group_key, uint64_t features);
    int handle_gw_deletion(const NvmeGwId& gw_id, const NvmeGroupKey& group_key);
@@ -164,6 +166,9 @@ public:
   int process_gw_map_gw_pass_to_created(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
     bool &propose_pending);
+  int process_gw_map_gw_pass_to_created_active_active(
+      const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
+      bool &propose_pending);
   void update_active_timers(bool &propose_pending);
   void handle_abandoned_ana_groups(bool &propose_pending);
   void handle_removed_subsystems(
@@ -187,6 +192,7 @@ public:
          const NvmeGroupKey& group_key, uint64_t beacon_sequence);
   bool is_location_in_disaster(const NvmeGroupKey& group_key,
              NvmeLocation& location, bool &cleanup_in_process);
+  bool is_gw_in_failover_active_active(const NvmeGwId &gw_id, const NvmeGroupKey& group_key);
 private:
   int  do_delete_gw(const NvmeGwId &gw_id, const NvmeGroupKey& group_key);
   int  do_erase_gw_id(const NvmeGwId &gw_id,
@@ -233,6 +239,9 @@ private:
   void cancel_timer(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
     NvmeAnaGrpId anagrpid);
+  bool is_timer_started(
+    const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
+    NvmeAnaGrpId anagrpid);
   void validate_gw_map(
     const NvmeGroupKey& group_key);
   void increment_gw_epoch(const NvmeGroupKey& group_key);
@@ -260,9 +269,6 @@ private:
   void update_ana_states_location_modified(const NvmeGroupKey& group_key);
   void update_gw_ana_states(const NvmeGwId &gw_id, const NvmeGroupKey& group_key);
 public:
-  bool is_timer_started(
-    const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
-    NvmeAnaGrpId anagrpid);
   void process_failover_list(bool &propose);
   int blocklist_gw(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,

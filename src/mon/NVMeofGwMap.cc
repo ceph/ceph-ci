@@ -62,6 +62,11 @@ void NVMeofGwMap::handle_gw_alive(const NvmeGwId& gw_id,
   strategy()->gw_alive(*this, gw_id, group_key, last_osd_epoch, propose_pending);
 }
 
+void NVMeofGwMap::handle_gw_pass_to_created(const NvmeGwId& gw_id,
+     const NvmeGroupKey& group_key, bool &propose_pending) {
+  strategy()->gw_created(*this, gw_id, group_key, propose_pending);
+}
+
 int NVMeofGwMap::handle_gw_creation(const NvmeGwId& gw_id, const NvmeGroupKey& group_key, uint64_t features) {
   return strategy()->on_create_gw(*this, gw_id, group_key, features);
 }
@@ -753,6 +758,18 @@ void NVMeofGwMap::add_to_failover_list(
     const NvmeGroupKey& group_key,
     std::chrono::system_clock::time_point end_time)
 {
+    auto& gws_states = created_gws[group_key];
+    bool all_down = true;
+    for (auto& [gw_id, st]: gws_states) {
+      if (st.availability == gw_availability_t::GW_AVAILABLE) {
+        all_down = false;
+        break;
+      }
+    }
+    if (all_down) {
+     dout(1) << "all GWs are down, nothing to add to the failover list " << dendl;
+     return;
+    }
     // Access (or create) the FailoverList for this specific group_key
     auto& list = failover_wait_list[group_key];
     fully_inaccessible[group_key] = 1; // in order to send hold_io in the map
@@ -785,14 +802,20 @@ void NVMeofGwMap::process_failover_list(bool & propose_pending) {
         if (!entry.hold_io_map_accepted) {
           bool gw_exists = (group_it != created_gws.end() && group_it->second.count(entry.gw_id) > 0);
           if (gw_exists) {
-            if (created_gws[group_key][entry.gw_id].last_gw_map_epoch_valid) {
-              entry.hold_io_map_accepted = true; //TODO  need to correct a code - check last_gw_map_epoch_valid on other Gws - for loop
-              dout(1) << "hold on IO map accepted for gw_id " << entry.gw_id
-                       << dendl;
-            } else {
-              group_hold_on_map_accepted = false;
+            entry.hold_io_map_accepted = true;
+            for (auto& [_gw_id, _state]: created_gws[group_key]) {
+              if (entry.gw_id == _gw_id)
+                 continue;
+              if (!_state.last_gw_map_epoch_valid) {
+                entry.hold_io_map_accepted = false;
+                group_hold_on_map_accepted = false;
+                break;
+              }
             }
-          } else {
+            dout(1) << "hold on IO map accepted for gw_id " << entry.gw_id << " "
+                    << entry.hold_io_map_accepted << dendl;
+          }
+          else {
           // Gateway deleted or missing -> mark entry for removal
             dout(1) << "waiting list: GW not exist in the DB. gw_id "<< entry.gw_id << dendl;
             entry.to_remove = true;
@@ -862,6 +885,10 @@ void NVMeofGwMap::process_failover_list(bool & propose_pending) {
   });
 }
 
+bool NVMeofGwMap::is_gw_in_failover_active_active(const NvmeGwId &gw_id, const NvmeGroupKey& group_key)
+{
+  return ha_mode == HaMode::ACTIVE_ACTIVE && is_timer_started(gw_id, group_key, 0);
+}
 
 /*
  This function called in the following cases:
@@ -893,6 +920,37 @@ int NVMeofGwMap::process_gw_map_gw_pass_to_created(
     propose_pending = true; // map should reflect that gw becames Created
     if (propose_pending) {
       validate_gw_map(group_key);
+      increment_gw_epoch(group_key);
+    }
+  } else {
+    dout(1)  << __FUNCTION__ << "ERROR GW-id was not found in the map "
+         << gw_id << dendl;
+    rc = -EINVAL;
+  }
+  return rc;
+}
+
+int NVMeofGwMap::process_gw_map_gw_pass_to_created_active_active(
+  const NvmeGwId &gw_id, const NvmeGroupKey& group_key, bool &propose_pending)
+{
+  int rc = 0;
+  auto& gws_states = created_gws[group_key];
+  auto  gw_state = gws_states.find(gw_id);
+  if (gw_state != gws_states.end()) {
+    dout(10) << "GW-id passes to Created state " << gw_id << dendl;
+    auto& st = gw_state->second;
+    if (st.availability == gw_availability_t::GW_CREATED) {
+       dout(20) << "GW-id was already in Created state " <<gw_id << dendl;
+       return 0;
+    }
+    st.availability = gw_availability_t::GW_CREATED;
+    cancel_timer(gw_id, group_key, 0); // cancell failover timer if armed
+    for (auto& state_itr: created_gws[group_key][gw_id].sm_state) {
+      state_itr.second = gw_states_per_group_t::GW_STANDBY_STATE;
+    }
+    propose_pending = true; // map should reflect that gw becames Created
+    if (propose_pending) {
+      //validate_gw_map(group_key);
       increment_gw_epoch(group_key);
     }
   } else {
@@ -945,11 +1003,11 @@ int NVMeofGwMap::process_gw_map_gw_down_active_active(
 	    st.set_unavailable_state();
 	    st.set_last_gw_down_ts();
 	    st.reset_beacon_sequence();
+	    cancel_timer(gw_id, group_key, 0); // cancell failover timer if armed
 	    for (auto& state_itr: created_gws[group_key][gw_id].sm_state) {
 	      state_itr.second = gw_states_per_group_t::GW_STANDBY_STATE;
 	    }
 	    /* start failover activity
-	     *
 	    */
 	    std::chrono::system_clock::time_point end_time =
 	         std::chrono::system_clock::now() + std::chrono::seconds(2);
