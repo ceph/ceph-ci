@@ -1530,6 +1530,10 @@ For EC pools with ``num_zones > 1``, add validation:
 
 - Validate ``min_size ∈ [num_zones×(K+M)−M, num_zones×(K+M)]``
 - If ``size`` is provided, validate it matches ``num_zones × (K+M)``
+- Validate that the given ``peering_crush_bucket_count`` equals ``num_zones``.
+  This applies to every EC pool, including one with ``num_zones = 1``:
+  ``stretch_set`` does not change the number of zones of an EC pool, so it must
+  not change its ``size`` either (Section 13.2).
 
 ``stretch_unset`` clears all ``peering_crush_*`` fields. No EC-specific
 changes required.
