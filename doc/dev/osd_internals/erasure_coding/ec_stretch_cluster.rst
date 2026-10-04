@@ -242,6 +242,12 @@ These parameters are intended for advanced users and offer finer control over th
   - *Definition*: Use this CRUSH rule, instead of an auto-generated rule.
   - *Purpose*: Create a bespoke CRUSH rule for advanced use cases not covered by the auto rule generation above.
   - *Note*: Mutually exclusive with ``--root``, ``--osd_failure_domain`` and ``--zone_failure_domain``
+  - *Global Stretch Mode*: After ``ceph mon enable_stretch_mode``, every new replicated pool
+    is a stretch pool. Without ``--rule`` and without ``--num_zones`` greater than 1, the pool
+    uses the stretch CRUSH rule of the existing replicated stretch pools, as in earlier
+    releases, and ``--root``, ``--zone_failure_domain``, ``--osd_failure_domain`` and
+    ``--class`` are rejected. Global stretch mode keeps its earlier behaviour and does not take
+    the per-pool placement options; give ``--rule`` to place a pool differently.
 
 **--erasure_code_profile**
   - *Definition*: The legacy EC Profile to use.
