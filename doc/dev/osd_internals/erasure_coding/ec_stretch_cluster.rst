@@ -337,6 +337,9 @@ For an erasure pool, ``ceph osd pool create`` rejects these with EINVAL:
 * ``--erasure_code_profile`` (any name, ``default`` included) with ``--num_zones`` greater
   than 1: "erasure_code_profile cannot be used with multi-zone configurations".
   ``--num_zones 1`` is accepted.
+* ``--num_zones`` greater than 1 without ``--k`` and ``--m``: "multi-zone erasure coded
+  pools require k and m". The pool would otherwise take the ``default`` profile and turn the
+  shared ``erasure-code`` rule into a stretch rule.
 * ``--erasure_code_profile`` with any of ``--root``, ``--zone_failure_domain``,
   ``--osd_failure_domain`` or ``--class``: "cannot specify both erasure_code_profile and crush
   parameters (crush_root, zone_failure_domain, osd_failure_domain, crush_device_class)".
@@ -463,9 +466,7 @@ rule from the profile's keys alone.
   is marked experimental; a chunk size that is not a multiple of 4096.
 * A multi-zone pool is created with ``--k``/``--m``; its plugin and technique come from
   ``osd_pool_default_erasure_code_profile``, or from a profile of the generated name created in
-  advance. A create with ``--num_zones`` greater than 1 and neither ``--k``/``--m`` nor
-  ``--erasure_code_profile`` is not rejected: it uses the ``default`` profile and the shared
-  ``erasure-code`` rule.
+  advance.
 * This FastEC check at creation is the only release check. There is no OSD feature bit.
 
 **num_zones is a pool option**
