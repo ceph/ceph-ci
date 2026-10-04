@@ -914,6 +914,12 @@ class Chaos:
             if not self.w.wait_idle(self.args.clean_timeout):
                 log("workloads still running at the end; stopping them")
             return 0 if self.quiesce() and self.w.poll(restart=False) else 1
+        except SystemExit:
+            # the time limit can land mid zone failover; leave the cluster up
+            if not self.failed:
+                log("time limit reached; reviving the cluster")
+                self.revive_everything()
+            raise
         finally:
             self.w.stop_all()
             if self.failed:
