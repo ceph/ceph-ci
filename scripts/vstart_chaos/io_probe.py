@@ -174,4 +174,5 @@ finally:
             cl.remove(oid)
     print(f"reads={state['reads']} writes={state['writes']} "
           f"max_lat={state['max_lat']:.1f}s rc={rc}", flush=True)
+    cl.close()
 sys.exit(rc)
