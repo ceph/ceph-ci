@@ -1781,6 +1781,11 @@ recovery process will automatically perform all necessary expansion (or
 contraction) to match the new configuration — no manual data migration is
 required.
 
+When the ``size`` of an optimized EC pool changes, a ``pg_temp``
+recorded for the old ``size`` cannot be decoded, so the monitor removes it in
+the same OSDMap change that sets the new ``size``. Peering then chooses an
+acting set for the new ``size``.
+
 
 14. Implementation Order
 -------------------------
