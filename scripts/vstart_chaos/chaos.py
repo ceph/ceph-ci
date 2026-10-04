@@ -918,7 +918,7 @@ class Chaos:
             # the time limit can land mid zone failover; leave the cluster up
             if not self.failed:
                 log("time limit reached; reviving the cluster")
-                self.revive_everything()
+                self.quiesce()
             raise
         finally:
             self.w.stop_all()
