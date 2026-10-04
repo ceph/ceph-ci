@@ -1535,8 +1535,11 @@ For EC pools with ``num_zones > 1``, add validation:
   ``stretch_set`` does not change the number of zones of an EC pool, so it must
   not change its ``size`` either (Section 13.2).
 
-``stretch_unset`` clears all ``peering_crush_*`` fields. No EC-specific
-changes required.
+``stretch_unset`` clears ``peering_crush_bucket_count``,
+``peering_crush_bucket_target`` and ``peering_crush_bucket_barrier``. For EC pools it does
+not change ``size``: the given ``size`` must equal the pool's current size
+(``num_zones × (K+M)``), because ``num_zones`` sets the size and the
+non-primary shards (Section 13.2).
 
 **11.4.2 Enable/Disable Stretch Mode** (``try_enable_stretch_mode_pools``)
 
