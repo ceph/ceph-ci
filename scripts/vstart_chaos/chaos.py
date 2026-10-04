@@ -216,6 +216,12 @@ class Cluster:
         d = ceph_json(f"pg ls-by-pool {self.pool}", quiet=True)
         return d["pg_stats"] if d else []
 
+    def pg_num_settled(self):
+        pools = ceph_json("osd pool ls detail", quiet=True) or []
+        p = next((p for p in pools if p["pool_name"] == self.pool), None)
+        return p is not None and p["pg_num"] == p["pg_num_target"] and \
+            p["pg_placement_num"] == p["pg_placement_num_target"]
+
     def stretch(self):
         if not self.multi_zone:
             return {}
@@ -849,8 +855,11 @@ class Chaos:
             pgs = self.c.pgs()
             deg = st.get("degraded_stretch_mode", 0)
             rec = st.get("recovering_stretch_mode", 0)
+            # merges or splits still in progress change PG intervals, which
+            # drops the deep scrubs requested next
             if not deg and not rec and pgs and \
-               all(p["state"].startswith("active+clean") for p in pgs):
+               all(p["state"].startswith("active+clean") for p in pgs) and \
+               self.c.pg_num_settled():
                 return True
             if deg and not rec and not nudged and \
                time.time() - start > self.args.nudge_after:
