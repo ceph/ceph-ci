@@ -2259,7 +2259,32 @@ class CephManager:
             assert isinstance(pg_num, int)
             assert pool_name not in self.pools
             self.log("creating pool_name %s" % (pool_name,))
-            if erasure_code_profile_name:
+            if erasure_code_profile_name and num_zones is not None and \
+                    int(num_zones) > 1:
+                # A multi-zone EC pool is created from k and m and takes the
+                # profile named <pool>-k<k>-m<m>; set that one up with the
+                # keys of the named profile so the pool keeps its plugin.
+                profile = json.loads(self.raw_cluster_cmd(
+                    'osd', 'erasure-code-profile', 'get',
+                    erasure_code_profile_name, '--format=json'))
+                k, m = profile['k'], profile['m']
+                self.raw_cluster_cmd(
+                    'osd', 'erasure-code-profile', 'set',
+                    '{0}-k{1}-m{2}'.format(pool_name, k, m),
+                    *['{0}={1}'.format(key, val) for key, val in profile.items()])
+                cmd_args = ['osd', 'pool', 'create',
+                            pool_name, str(pg_num),
+                            str(pg_num), 'erasure',
+                            '--k', str(k), '--m', str(m),
+                            '--num_zones', str(num_zones)]
+                if erasure_code_crush_rule_name:
+                    cmd_args.extend(['--rule', erasure_code_crush_rule_name])
+                elif osd_failure_domain is not None:
+                    cmd_args.extend(['--osd_failure_domain', osd_failure_domain])
+                self.raw_cluster_cmd(*cmd_args)
+            elif erasure_code_profile_name:
+                # the profile carries the failure domain; a named profile
+                # cannot be combined with --osd_failure_domain
                 cmd_args = ['osd', 'pool', 'create',
                             pool_name, str(pg_num),
                             str(pg_num), 'erasure',
@@ -2267,11 +2292,6 @@ class CephManager:
 
                 if erasure_code_crush_rule_name:
                     cmd_args.extend([erasure_code_crush_rule_name])
-
-                if num_zones is not None:
-                    cmd_args.extend(['--num_zones', str(num_zones)])
-                    if osd_failure_domain is not None:
-                        cmd_args.extend(['--osd_failure_domain', osd_failure_domain])
                 self.raw_cluster_cmd(*cmd_args)
             else:
                 cmd_args = ['osd', 'pool', 'create',
