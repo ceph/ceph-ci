@@ -46,7 +46,7 @@ same time.
 Profile lifecycle
 =================
 
-An erasure code profile exists only for as long as a pool uses it.
+An erasure code profile is deleted with the last pool that uses it.
 
 A profile is created in one of two ways:
 
