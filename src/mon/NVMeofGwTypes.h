@@ -146,7 +146,7 @@ struct Blocklist_data{
   bool is_failover;
   Blocklist_data() {
     osd_epoch = 0;
-    is_failover = true;
+    is_failover = false;
   };
   Blocklist_data(epoch_t epoch, bool failover)
     : osd_epoch(epoch), is_failover(failover) {};

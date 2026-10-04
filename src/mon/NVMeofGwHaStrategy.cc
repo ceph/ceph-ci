@@ -54,6 +54,12 @@ void ActivePassiveHaStrategy::gw_alive(NVMeofGwMap& map, const NvmeGwId& gw_id,
     // Legacy recovery / failback rules
     map.process_gw_map_ka(gw_id, group_key, last_osd_epoch, propose_pending);
 }
+
+int ActivePassiveHaStrategy::gw_created(NVMeofGwMap& map, const NvmeGwId& gw_id,
+                            const NvmeGroupKey& group_key, bool &propose_pending) {
+   return map.process_gw_map_gw_pass_to_created(gw_id, group_key, propose_pending);
+}
+
 void ActivePassiveHaStrategy::periodic_ha(NVMeofGwMap& map, bool &propose_pending) {
     // Legacy recovery / failback rules
     map.handle_abandoned_ana_groups(propose_pending);
@@ -76,18 +82,12 @@ int ActiveActiveHaStrategy::on_delete_gw(NVMeofGwMap& map, const NvmeGwId& gw_id
 int ActiveActiveHaStrategy::on_update_gw_location(NVMeofGwMap& map, const NvmeGwId& gw_id,
         const NvmeGroupKey& group_key,
           std::string& NvmeLocation, bool &propose_pending) {
-    //update_ana_states(map);
-	/*return map.cfg_set_location(gw_id, group_key, NvmeLocation, propose_pending);
-	 *  need to update the maps of all gws and incremen gw epoch for the group key
-	 *  update_ana_states_location_modified
-	 *
-	 * */
-	return 0;
+	return map.cfg_set_location_active_active(gw_id, group_key, NvmeLocation, propose_pending);
 }
 
 int ActiveActiveHaStrategy::on_disaster_clear(NVMeofGwMap& map, const NvmeGroupKey& group_key,
                       std::string& NvmeLocation, bool &propose_pending) {
-  // return map.cfg_location_disaster_clear(group_key, NvmeLocation, propose_pending);
+  // return map.cfg_location_disaster_clear(group_key, NvmeLocation, propose_pending);TODO
   // but no need to put  disaster intermediate state with "failbacks_in_process = true"
   return 0;
 }
@@ -95,17 +95,6 @@ int ActiveActiveHaStrategy::on_disaster_clear(NVMeofGwMap& map, const NvmeGroupK
 void ActiveActiveHaStrategy::gw_down(NVMeofGwMap& map, const NvmeGwId& gw_id,
                  const NvmeGroupKey& group_key, bool &propose_pending) {
   map.process_gw_map_gw_down_active_active(gw_id, group_key, propose_pending);
-    // 1. Transient hold active during blocklisting
-    //map.set_transient_hold(true);
-
-    // 2. Issue blocklist for dead GW
-    //map.issue_osd_blocklist(gw_id);
-
-    // 3. Recalculate static location-based ANA states
-    //update_ana_states(map);
-
-    // 4. Release transient hold
-    //map.set_transient_hold(false);
 }
 
 void ActiveActiveHaStrategy::gw_alive(NVMeofGwMap& map, const NvmeGwId& gw_id,
@@ -113,7 +102,12 @@ void ActiveActiveHaStrategy::gw_alive(NVMeofGwMap& map, const NvmeGwId& gw_id,
    map.process_gw_map_ka_active_active(gw_id, group_key, last_osd_epoch, propose_pending);
 }
 
+int ActiveActiveHaStrategy::gw_created(NVMeofGwMap& map, const NvmeGwId& gw_id,
+                            const NvmeGroupKey& group_key, bool &propose_pending) {
+  return map.process_gw_map_gw_pass_to_created_active_active(gw_id, group_key, propose_pending);
+}
+
 void ActiveActiveHaStrategy::periodic_ha(NVMeofGwMap& map, bool &propose_pending) {
     // Legacy recovery / failback rules
-   // update_ana_states(map);
+  map.process_failover_list(propose_pending);
 }

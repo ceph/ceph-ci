@@ -205,6 +205,11 @@ inline std::ostream& print_gw_created_t(
     os << " " << blklst_itr.first <<": " << blklst_itr.second.osd_epoch
        << ":" <<blklst_itr.second.is_failover ;
   }
+  if (value.blocklist_data.size())
+  {
+    os << " in-failover: "
+       << static_cast<int>(value.blocklist_data.begin()->second.is_failover);
+  }
   os << "\n" << MODULE_PREFFIX << "nonces: " << value.nonce_map << " }";
 
   for (auto& state_itr: value.sm_state )
@@ -225,6 +230,12 @@ inline std::ostream& operator<<(std::ostream& os, const NvmeGwMonState value) {
   for (auto &blklst_itr: value.blocklist_data) {
     os << " " << blklst_itr.second.osd_epoch;
   }
+  //if (value.blocklist_data.size())
+  {
+    os << "in-failover: "
+       << static_cast<int>(value.blocklist_data.begin()->second.is_failover);
+  }
+
   os << "\n" << MODULE_PREFFIX << "nonces: " << value.nonce_map << " }";
 
   for (auto& state_itr: value.sm_state ) {
