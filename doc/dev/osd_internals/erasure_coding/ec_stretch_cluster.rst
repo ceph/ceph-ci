@@ -1529,6 +1529,16 @@ several places. These gaps must be filled for EC pools with ``num_zones > 1``.
 ``stretch_set`` currently works for any pool type, setting
 ``peering_crush_bucket_*``, ``crush_rule``, ``size``, ``min_size``.
 
+In degraded or recovery stretch mode, ``stretch_set`` gives the pool the
+degraded ``peering_crush_bucket_count`` and the surviving
+``peering_crush_mandatory_member`` that the other stretch pools have
+(Section 11.6), so the pool peers in the surviving zone and the healthy
+transition restores it with them. Otherwise it clears
+``peering_crush_mandatory_member``. The other values are applied as given.
+Like the degraded transition, this applies to every stretch pool, so a pool
+whose ``peering_crush_bucket_barrier`` is not the stretch mode bucket type is
+given a mandatory member it cannot match while the cluster is degraded.
+
 For EC pools with ``num_zones > 1``, add validation:
 
 - Validate ``min_size ∈ [num_zones×(K+M)−M, num_zones×(K+M)]``
