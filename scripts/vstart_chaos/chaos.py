@@ -776,8 +776,10 @@ class Chaos:
         for p in (pgs or {}).get("pg_stats", []):
             a = [o for o in p["acting"] if o != 2147483647]
             # an OSD holding two shards may serve both until backfill moves
-            # one (as calc_ec_acting allows); only a clean PG should not
+            # one, or while up has no OSD for one of them (as calc_ec_acting
+            # allows, also on main); otherwise a clean PG should not
             if len(a) != len(set(a)) and "clean" in p["state"] and \
+                    2147483647 not in p["up"] and \
                     p["pgid"] not in self.dup_acting_seen:
                 self.dup_acting_seen.add(p["pgid"])
                 with open(f"{self.rundir}/dup-{p['pgid']}-c{self.cycle}.query.json", "w") as f:
