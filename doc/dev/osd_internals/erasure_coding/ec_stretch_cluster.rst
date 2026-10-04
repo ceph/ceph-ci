@@ -1586,6 +1586,12 @@ For EC pools, compute from the EC profile::
 
     newp.min_size = r × (k + m) − m
 
+For an EC pool with ``num_zones > 1``, the healthy transition sets
+``peering_crush_bucket_count`` back to the pool's ``num_zones`` rather than the
+cluster's ``stretch_bucket_count``, because a stretch EC pool spans all of its
+zones (Section 11.6). ``peering_crush_mandatory_member`` is cleared for every
+stretch pool.
+
 **11.4.5 Recovery Stretch Mode** (``trigger_recovery_stretch_mode``)
 
 No changes required — does not modify ``min_size``.
