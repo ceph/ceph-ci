@@ -3780,6 +3780,42 @@ TEST_F(OSDMapTest, pgtemp_primaryfirst_comprehensive) {
   }
 }
 
+// osd pool stretch unset can shrink an optimized EC pool from 2 zones to 1
+// without refreshing nonprimary_shards, which then still names shard 4 of a
+// 3 shard pool. A pg_temp encoded in that state must still decode to the
+// acting set it came from: decoding it as [NONE,4,4] left a PG with a
+// duplicate OSD in its acting set, stuck in unknown.
+TEST_F(OSDMapTest, ECPGTempWithStaleNonprimaryShards) {
+  set_up_map(18);
+  int64_t pool_id = my_rep_pool + 1;
+  pg_pool_t pool = OSDMapTestHelpers::create_ec_pool(
+    2, 1, 2 * 4096,
+    pg_pool_t::FLAG_EC_OPTIMIZATIONS | pg_pool_t::FLAG_EC_OVERWRITES,
+    pool_id, 2);
+  pool.size = 3;
+  pool.min_size = 2;
+  OSDMapTestHelpers::add_pool(osdmap, pool_id, pool);
+  const pg_pool_t *p = osdmap.get_pg_pool(pool_id);
+  ASSERT_TRUE(p->is_nonprimary_shard(shard_id_t(4)));
+  pg_t pgid(0, pool_id);
+
+  std::vector<int> acting_in = {CRUSH_ITEM_NONE, 7, 4};
+  std::vector<int> encoded = osdmap.pgtemp_primaryfirst(*p, acting_in);
+  OSDMap::Incremental inc(osdmap.get_epoch() + 1);
+  inc.new_pg_temp[pgid] = mempool::osdmap::vector<int>(encoded.begin(),
+                                                       encoded.end());
+  osdmap.apply_incremental(inc);
+
+  std::vector<int> up, acting;
+  int up_primary, acting_primary;
+  osdmap.pg_to_up_acting_osds(pgid, &up, &up_primary, &acting, &acting_primary);
+  EXPECT_EQ(acting_in, acting);
+  for (size_t pos = 0; pos < encoded.size(); pos++) {
+    shard_id_t shard = osdmap.pgtemp_undo_primaryfirst(*p, pgid, shard_id_t(pos));
+    EXPECT_EQ(encoded[pos], acting_in[shard.id]) << "pos " << pos;
+  }
+}
+
 // Stretch EC pg_temp with CRUSH_ITEM_NONE holes decodes to the shard-ordered
 // acting set and picks a primary-capable acting primary.
 TEST_F(OSDMapTest, pgtemp_primaryfirst_stretch_none_holes) {
