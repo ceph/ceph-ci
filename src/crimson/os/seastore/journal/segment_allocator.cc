@@ -57,6 +57,16 @@ SegmentAllocator::do_open(bool is_mkfs)
     new_segment_seq,
     reinterpret_cast<const unsigned char *>(meta.seastore_id.bytes()),
     sizeof(meta.seastore_id.uuid));
+  // For OOL segments on the hot/main tier (where the journal also lives),
+  // wait until at least 2 empty segments are available before opening one.
+  // This reserves one slot for the journal's next roll and prevents the
+  // race where the GC OOL open drives the empty count to 0 just as the
+  // journal needs to roll.  Journal-type opens never wait.
+  auto wait_fut = (type == segment_type_t::OOL)
+    ? segment_provider.wait_for_ool_segment_available()
+    : seastar::now();
+  return std::move(wait_fut
+  ).then([this, is_mkfs, FNAME, new_segment_seq]() -> open_ret {
   auto new_segment_id = segment_provider.allocate_segment(
       new_segment_seq, type, category, gen);
   ceph_assert(new_segment_id != NULL_SEG_ID);
@@ -141,6 +151,7 @@ SegmentAllocator::do_open(bool is_mkfs)
       return new_journal_seq;
     });
   });
+  }); // end wait_for_ool_segment_available().then
 }
 
 SegmentAllocator::open_ret

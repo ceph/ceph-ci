@@ -5,6 +5,7 @@
 
 #include <boost/intrusive/set.hpp>
 #include <seastar/core/metrics_types.hh>
+#include <seastar/core/shared_future.hh>
 
 #include "common/ceph_time.h"
 
@@ -801,6 +802,15 @@ public:
 
   virtual SegmentManagerGroup* get_segment_manager_group() = 0;
 
+  // Called by OOL writers before opening a new segment.  On the hot/main
+  // tier (where the journal also lives) this returns a future that resolves
+  // only when at least 2 empty segments are available: one for the OOL open
+  // itself and one reserved for the journal's next roll.  This prevents the
+  // race where a GC OOL open drives empty to 0 right as the journal rolls.
+  virtual seastar::future<> wait_for_ool_segment_available() {
+    return seastar::now();
+  }
+
   virtual ~SegmentProvider() {}
 };
 
@@ -1437,6 +1447,29 @@ public:
     return sm_group.get();
   }
 
+  seastar::future<> wait_for_ool_segment_available() final {
+    // On the hot/main tier the journal also lives here: reserve at least one
+    // empty segment for the journal's next roll.  If we are at exactly 1
+    // empty slot, an OOL open would drive the count to 0 and a concurrent
+    // journal roll would then find no segments available → crash.
+    // Block the OOL opener until a second empty slot appears (produced by
+    // the reclaim path's mark_empty).
+    //
+    // Only block when reclaimable segments exist: if nothing is reclaimable,
+    // the GC reclaim path cannot produce new empty segments via mark_empty,
+    // so blocking here would deadlock.  In that case the caller must proceed
+    // regardless (and the OSD will abort only if truly out of space).
+    if (is_cold ||
+        segments.get_num_empty() >= 2 ||
+        get_segments_reclaimable() == 0) {
+      return seastar::now();
+    }
+    if (!blocking_ool_open) {
+      blocking_ool_open = seastar::shared_promise<>();
+    }
+    return blocking_ool_open->get_shared_future();
+  }
+
   /*
    * AsyncCleaner interfaces
    */
@@ -1839,6 +1872,20 @@ private:
   // TODO: drop once paddr->journal_seq_t is introduced
   SegmentSeqAllocator &ool_segment_seq_allocator;
   const rewrite_gen_t max_rewrite_generation = NULL_GENERATION;
+
+  // Shared promise used to block OOL segment opens on the hot/main tier when
+  // only one empty segment remains (reserving it for the journal's next roll).
+  // Set by wait_for_ool_segment_available(); resolved by
+  // maybe_wake_blocked_ool_open() after mark_empty increases empty count.
+  std::optional<seastar::shared_promise<>> blocking_ool_open;
+
+  // Resolve the blocking_ool_open shared promise if the empty count is now >= 2.
+  void maybe_wake_blocked_ool_open() {
+    if (!is_cold && blocking_ool_open && segments.get_num_empty() >= 2) {
+      blocking_ool_open->set_value();
+      blocking_ool_open = std::nullopt;
+    }
+  }
 
   enum class gc_formula_t {
     GREEDY,
