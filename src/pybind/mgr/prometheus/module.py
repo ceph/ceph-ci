@@ -1426,7 +1426,12 @@ class Module(MgrModule, OrchestratorClientMixin):
                 int(flag in osd_flags)
             )
 
-        osd_devices = self.get('osd_map_crush')['devices']
+        # id -> crush device class, so the loop below doesn't rescan the
+        # whole device list once per OSD
+        osd_dev_class = {device['id']: device.get('class', '')
+                         for device in self.get('osd_map_crush')['devices']}
+        # one call for every OSD's metadata, instead of one call per OSD
+        all_osd_metadata = self.get('osd_metadata')
         servers = self.get_service_list()
         for osd in osd_map['osds']:
             # id can be used to link osd metrics and metadata
@@ -1441,11 +1446,7 @@ class Module(MgrModule, OrchestratorClientMixin):
                 )
                 continue
 
-            dev_class = None
-            for osd_device in osd_devices:
-                if osd_device['id'] == id_:
-                    dev_class = osd_device.get('class', '')
-                    break
+            dev_class = osd_dev_class.get(id_)
 
             if dev_class is None:
                 self.log.info("OSD {0} is missing from CRUSH map, "
@@ -1455,8 +1456,8 @@ class Module(MgrModule, OrchestratorClientMixin):
             osd_version = servers.get((str(id_), 'osd'), ('', '', ''))
 
             # collect disk occupation metadata
-            osd_metadata = self.get_metadata("osd", str(id_))
-            if osd_metadata is None:
+            osd_metadata = all_osd_metadata.get(str(id_))
+            if not osd_metadata:
                 continue
 
             obj_store = osd_metadata.get('osd_objectstore', '')
