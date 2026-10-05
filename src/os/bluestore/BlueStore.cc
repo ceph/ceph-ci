@@ -1961,7 +1961,7 @@ BlueStore::OnodeRef BlueStore::OnodeSpace::add_onode(const ghobject_t& oid,
   }
   ldout(cache->cct, 20) << __func__ << " " << oid << " " << o << dendl;
   cache->_add(o.get(), 1);
-  cache->_trim();
+  cache->_trim_some();
   return o;
 }
 
@@ -2048,7 +2048,7 @@ void BlueStore::OnodeSpace::rename(
 
   o->oid = new_oid;
   o->key = new_okey;
-  cache->_trim();
+  cache->_trim_some();
 }
 
 bool BlueStore::OnodeSpace::map_any(std::function<bool(Onode*)> f)
@@ -3790,7 +3790,7 @@ void BlueStore::ExtentMap::reshard(
       if (e->logical_offset >= needs_reshard_end) {
 	break;
       }
-      dout(30) << " extent " << *e << dendl;
+      dout(30) << __func__ << " extent " << *e << dendl;
       while (e->logical_offset >= shard_end) {
 	shard_start = shard_end;
 	ceph_assert(sp != esp);
@@ -3805,42 +3805,18 @@ void BlueStore::ExtentMap::reshard(
       }
 
       if (e->blob_escapes_range(shard_start, shard_end - shard_start)) {
-	if (!e->blob->is_spanning()) {
+	BlobRef b = e->blob;
+	uint32_t bstart = e->blob_start();
+	uint32_t bend = e->blob_end();
+	if (!b->is_spanning()) {
 	  // We have two options: (1) split the blob into pieces at the
 	  // shard boundaries (and adjust extents accordingly), or (2)
 	  // mark it spanning.  We prefer to cut the blob if we can.  Note that
 	  // we may have to split it multiple times--potentially at every
 	  // shard boundary.
-	  bool must_span = false;
-	  BlobRef b = e->blob;
-	  if (b->can_split()) {
-	    uint32_t bstart = e->blob_start();
-	    uint32_t bend = e->blob_end();
-	    for (const auto& sh : shards) {
-	      if (bstart < sh.shard_info->offset &&
-		  bend > sh.shard_info->offset) {
-		uint32_t blob_offset = sh.shard_info->offset - bstart;
-		if (b->can_split_at(blob_offset)) {
-		  dout(20) << __func__ << "    splitting blob, bstart 0x"
-			   << std::hex << bstart << " blob_offset 0x"
-			   << blob_offset << std::dec << " " << *b << dendl;
-		  b = split_blob(b, blob_offset, sh.shard_info->offset);
-		  // switch b to the new right-hand side, in case it
-		  // *also* has to get split.
-		  bstart += blob_offset;
-		  onode->c->store->logger->inc(l_bluestore_blob_split);
-		} else {
-		  must_span = true;
-		  break;
-		}
-	      }
-	    }
-	  } else {
-	    must_span = true;
-	  }
-	  if (must_span) {
-            auto bid = allocate_spanning_blob_id();
-            b->id = bid;
+	  auto _make_spanning = [&](BlobRef& b) {
+	    auto bid = allocate_spanning_blob_id();
+	    b->id = bid;
 	    spanning_blob_map[b->id] = b;
 	    dout(20) << __func__ << "    adding spanning " << *b << dendl;
 	    if (!was_too_many_blobs_check &&
@@ -3854,9 +3830,53 @@ void BlueStore::ExtentMap::reshard(
 		  break;
 		}
 		if (!oldest_slot || (oldest_slot &&
-		    dumped_onodes[i].second < oldest_slot->second)) {
+		  dumped_onodes[i].second < oldest_slot->second)) {
 		  oldest_slot = &dumped_onodes[i];
 		}
+	      }
+	    }
+	  };
+	  if (b->can_split()) {
+	    auto bstart1 = bstart;
+	    for (const auto& sh : shards) {
+	      if (bstart1 < sh.shard_info->offset &&
+		  bend > sh.shard_info->offset) {
+		uint32_t blob_offset = sh.shard_info->offset - bstart1;
+		if (b->can_split_at(blob_offset)) {
+		  dout(20) << __func__ << "    splitting blob, bstart 0x"
+			   << std::hex << bstart1 << " blob_offset 0x"
+			   << blob_offset << std::dec << " " << *b << dendl;
+		  b = split_blob(b, blob_offset, sh.shard_info->offset);
+		  // switch b to the new right-hand side, in case it
+		  // *also* has to get split.
+		  bstart1 = sh.shard_info->offset;
+		  onode->c->store->logger->inc(l_bluestore_blob_split);
+		} else {
+		  _make_spanning(b);
+		  break;
+		}
+	      }
+	    }
+	  } else {
+	    _make_spanning(b);
+	  }
+	} // if (!extent->blob->is_spanning())
+	// Make sure extent with a spanning blob doesn't span over shard boundary
+	if (e->blob->is_spanning()) {
+	  BlobRef b = e->blob;
+	  uint32_t bstart = e->blob_start();
+	  for (const auto& sh : shards) {
+	    if (bstart < sh.shard_info->offset && bend > sh.shard_info->offset) {
+	      uint32_t blob_offset = sh.shard_info->offset - bstart;
+	      auto pos = sh.shard_info->offset;
+	      if (e->logical_offset < pos && e->logical_end() > pos) {
+		// split extent
+		size_t left = pos - e->logical_offset;
+		Extent* ne = new Extent(pos, blob_offset, e->length - left, b);
+		extent_map.insert(*ne);
+		e->length = left;
+		dout(20) << __func__ << "  split " << *e << dendl;
+		dout(20) << __func__ << "     to " << *ne << dendl;
 	      }
 	    }
 	  }
@@ -3865,7 +3885,7 @@ void BlueStore::ExtentMap::reshard(
 	if (e->blob->is_spanning()) {
 	  spanning_blob_map.erase(e->blob->id);
 	  e->blob->id = -1;
-	  dout(30) << __func__ << "    un-spanning " << *e->blob << dendl;
+	  dout(20) << __func__ << "    un-spanning " << *e->blob << dendl;
 	}
       }
     }
@@ -3907,19 +3927,22 @@ bool BlueStore::ExtentMap::encode_some(
 
   unsigned n = 0;
   size_t bound = 0;
-  bool must_reshard = false;
   for (auto p = start;
        p != extent_map.end() && p->logical_offset < end;
        ++p, ++n) {
     ceph_assert(p->logical_offset >= offset);
     p->blob->last_encoded_id = -1;
     if (!p->blob->is_spanning() && p->blob_escapes_range(offset, length)) {
-      dout(30) << __func__ << " 0x" << std::hex << offset << "~" << length
+      dout(20) << __func__ << " 0x" << std::hex << offset << "~" << length
 	       << std::dec << " hit new spanning blob " << *p << dendl;
       request_reshard(p->blob_start(), p->blob_end());
-      must_reshard = true;
-    }
-    if (!must_reshard) {
+      return true;
+    } else if (p->blob->is_spanning() && p->logical_end() > end) {
+      dout(20) << __func__ << std::hex << offset << "~" << length
+               << std::dec << " extent stands out " << *p << dendl;
+      request_reshard(p->blob_start(), p->blob_end());
+      return true;
+    } else {
       denc_varint(0, bound); // blobid
       denc_varint(0, bound); // logical_offset
       denc_varint(0, bound); // len
@@ -3931,9 +3954,6 @@ bool BlueStore::ExtentMap::encode_some(
         p->blob->get_sbid(),
         false);
     }
-  }
-  if (must_reshard) {
-    return true;
   }
 
   denc(struct_v, bound);
@@ -5226,7 +5246,9 @@ void BlueStore::Collection::split_cache(
       }
     }
   }
-  dest->cache->_trim();
+  // The cache has now more elements.
+  // Trimming right away will cause stalls.
+  // It will get adjusted in MempoolThread
 }
 
 // =======================================================
@@ -5756,6 +5778,7 @@ const char **BlueStore::get_tracked_conf_keys() const
     "bluestore_warn_on_no_per_pool_omap",
     "bluestore_warn_on_no_per_pg_omap",
     "bluestore_max_defer_interval",
+    "bluestore_allocator_lookup_policy",
     NULL
   };
   return KEYS;
@@ -5825,6 +5848,9 @@ void BlueStore::handle_conf_change(const ConfigProxy& conf,
       changed.count("osd_memory_cache_min") ||
       changed.count("osd_memory_expected_fragmentation")) {
     _update_osd_memory_options();
+  }
+  if (changed.count("bluestore_allocator_lookup_policy")) {
+    _update_allocator_lookup_policy();
   }
 }
 
@@ -5958,6 +5984,24 @@ void BlueStore::_update_osd_memory_options()
            << " osd_memory_expected_fragmentation " << osd_memory_expected_fragmentation
            << " osd_memory_cache_min " << osd_memory_cache_min
            << dendl;
+}
+
+
+void BlueStore::_update_allocator_lookup_policy()
+{
+  auto policy = cct->_conf.get_val<string>("bluestore_allocator_lookup_policy");
+  if (policy == "hdd_optimized") {
+    use_last_allocator_lookup_position = true;
+  } else if (policy == "ssd_optimized") {
+    use_last_allocator_lookup_position = false;
+  } else {
+    // Apply "auto" policy for everything else.
+    // Which means reusing last lookup position for hdds.
+    use_last_allocator_lookup_position = _use_rotational_settings();
+  }
+  dout(5) << __func__
+          << " use_last_lookup_position " << use_last_allocator_lookup_position
+          << dendl;
 }
 
 int BlueStore::_set_cache_sizes()
@@ -11170,7 +11214,7 @@ int BlueStore::_fsck_on_open(BlueStore::FSCKDepth depth, bool repair)
 	    dout(5) << __func__ << "::NCB::(F)alloc=" << alloc << ", length=" << e->length << dendl;
 	    int64_t alloc_len =
               alloc->allocate(e->length, min_alloc_size,
-				       0, 0, &exts);
+				       0, -1, &exts);
 	    if (alloc_len < 0 || alloc_len < (int64_t)e->length) {
 	      derr << __func__
 	           << " failed to allocate 0x" << std::hex << e->length
@@ -11594,7 +11638,7 @@ void BlueStore::inject_leaked(uint64_t len)
 {
   PExtentVector exts;
   int64_t alloc_len = alloc->allocate(len, min_alloc_size,
-					   min_alloc_size * 256, 0, &exts);
+					   min_alloc_size * 256, -1, &exts);
   ceph_assert(alloc_len >= 0); // generally we do not expect any errors
   if (fm->is_null_manager()) {
     return;
@@ -13982,6 +14026,7 @@ int BlueStore::_open_super_meta()
   _set_csum();
   _set_compression();
   _set_blob_size();
+  _update_allocator_lookup_policy();
 
   _validate_bdev();
   return 0;
@@ -16906,7 +16951,8 @@ int BlueStore::_do_alloc_write(
   auto start = mono_clock::now();
   prealloc_left = alloc->allocate(
     need, min_alloc_size, need,
-    0, &prealloc);
+    use_last_allocator_lookup_position ? -1 : 0,
+    &prealloc);
   log_latency("allocator@_do_alloc_write",
     l_bluestore_allocator_lat,
     mono_clock::now() - start,
@@ -17677,7 +17723,7 @@ int BlueStore::_do_remove(
       bluestore_blob_t& blob = e.blob->dirty_blob();
       blob.clear_flag(bluestore_blob_t::FLAG_SHARED);
       e.blob->get_dirty_shared_blob() = nullptr;
-      h->extent_map.dirty_range(e.logical_offset, 1);
+      h->extent_map.dirty_range(e.logical_offset, e.length);
     }
   }
   txc->write_onode(h);
@@ -19313,6 +19359,7 @@ void RocksDBBlueFSVolumeSelector::dump(ostream& sout) {
   sout << "RocksDBBlueFSVolumeSelector " << std::endl;
   sout << ">>Settings<<"
        << " extra=" << byte_u_t(db_avail4slow)
+       << ", extra level=" << extra_level
        << ", l0_size=" << byte_u_t(level0_size)
        << ", l_base=" << byte_u_t(level_base)
        << ", l_multi=" << byte_u_t(level_multiplier)
@@ -19339,13 +19386,13 @@ void RocksDBBlueFSVolumeSelector::dump(ostream& sout) {
     sout.width(width);
     switch (l + LEVEL_FIRST) {
     case LEVEL_LOG:
-      sout << "LOG"; break;
+      sout << "log"; break;
     case LEVEL_WAL:
-      sout << "WAL"; break;
+      sout << "db.wal"; break;
     case LEVEL_DB:
-      sout << "DB"; break;
+      sout << "db"; break;
     case LEVEL_SLOW:
-      sout << "SLOW"; break;
+      sout << "db.slow"; break;
     case LEVEL_MAX:
       sout << "TOTAL"; break;
     }
@@ -19366,13 +19413,13 @@ void RocksDBBlueFSVolumeSelector::dump(ostream& sout) {
     sout.width(width);
     switch (l + LEVEL_FIRST) {
     case LEVEL_LOG:
-      sout << "LOG"; break;
+      sout << "log"; break;
     case LEVEL_WAL:
-      sout << "WAL"; break;
+      sout << "db.wal"; break;
     case LEVEL_DB:
-      sout << "DB"; break;
+      sout << "db"; break;
     case LEVEL_SLOW:
-      sout << "SLOW"; break;
+      sout << "db.slow"; break;
     case LEVEL_MAX:
       sout << "TOTAL"; break;
     }
