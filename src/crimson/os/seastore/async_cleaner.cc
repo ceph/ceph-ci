@@ -1570,6 +1570,7 @@ SegmentCleaner::clean_space_ret SegmentCleaner::clean_space()
             adjust_segment_util(old_usage, new_usage);
             INFO("reclaim released {}, {}",
                  segment_to_release, stat_printer_t{*this, false});
+            maybe_wake_blocked_ool_open();
             background_callback->maybe_wake_blocked_io();
           });
         } else {

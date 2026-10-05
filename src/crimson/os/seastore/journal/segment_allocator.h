@@ -84,6 +84,12 @@ class SegmentAllocator : public JournalAllocator {
   // close the current segment and initialize next one
   roll_ertr::future<> roll() final;
 
+  // Set the transaction source for the next roll/open.  Must be called before
+  // roll() when the caller knows which transaction type is driving the write.
+  void set_transaction_src(transaction_type_t src) {
+    current_src = src;
+  }
+
   journal_seq_t get_written_to() const final;
 
   // write the buffer, return the write result
@@ -128,6 +134,10 @@ class SegmentAllocator : public JournalAllocator {
   SegmentSeqAllocator &segment_seq_allocator;
   segment_nonce_t current_segment_nonce;
   JournalTrimmer *trimmer;
+  // Transaction source driving the current roll; forwarded to
+  // wait_for_ool_segment_available() so cleaner transactions bypass the
+  // "reserve a slot for the journal" guard that would otherwise deadlock them.
+  transaction_type_t current_src = transaction_type_t::MUTATE;
 };
 
 }

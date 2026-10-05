@@ -124,6 +124,11 @@ SegmentedOolWriter::do_write(
             t, std::move(record), std::move(pending_extents),
             true/* with_atomic_roll_segment */);
       }
+      // Forward the transaction source so that wait_for_ool_segment_available()
+      // can bypass the ">=2 empty segments" guard for cleaner transactions,
+      // which would deadlock if forced to wait (they are the only producers of
+      // empty segments via mark_empty).
+      segment_allocator.set_transaction_src(t.get_src());
       return trans_intr::make_interruptible(
         record_submitter.roll_segment(
         ).safe_then([fut_write=std::move(fut_write)]() mutable {
