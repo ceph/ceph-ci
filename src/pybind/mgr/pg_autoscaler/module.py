@@ -337,16 +337,20 @@ class PgAutoscaler(MgrModule):
             self.remote('progress', 'complete', ev.ev_id)
             del self._event[pool_id]
 
+    def get_osdmap_flags(self) -> str:
+        # self.get('osd_map') and self.get_osdmap().dump() both come from
+        # OSDMap::dump(), but the former is served from the mgr's api cache
+        # and doesn't deep-copy the OSDMap first.
+        return self.get('osd_map').get('flags', '')
+
     def has_noautoscale_flag(self) -> bool:
-        flags = self.get_osdmap().dump().get('flags', '')
-        if 'noautoscale' in flags:
+        if 'noautoscale' in self.get_osdmap_flags():
             return True
         else:
             return False
 
     def has_norecover_flag(self) -> bool:
-        flags = self.get_osdmap().dump().get('flags', '')
-        if 'norecover' in flags:
+        if 'norecover' in self.get_osdmap_flags():
             return True
         else:
             return False
