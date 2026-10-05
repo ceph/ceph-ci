@@ -1956,7 +1956,7 @@ class Module(MgrModule, OrchestratorClientMixin):
 
     @profile_method()
     def get_pool_repaired_objects(self) -> None:
-        dump = self.get('pg_dump')
+        dump = self.get('pool_stats')
         for stats in dump['pool_stats']:
             path = 'pool_objects_repaired'
             self.metrics[path].set(stats['stat_sum']['num_objects_repaired'],
