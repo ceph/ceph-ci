@@ -1,0 +1,67 @@
+overrides:
+  ceph:
+    conf:
+      global:
+        ms inject delay max: 1
+        ms inject delay probability: 0.005
+        ms inject delay type: osd
+        ms inject internal delays: 0.002
+        ms inject socket failures: 2500
+        mon client directed command retry: 5
+tasks:
+- ceph:
+    fs: xfs
+    log-ignorelist:
+      - overall HEALTH_
+      - \(OSDMAP_FLAGS\)
+      - \(OSD_
+      - \(PG_
+      - \(POOL_
+      - \(CACHE_POOL_
+      - \(SMALLER_PGP_NUM\)
+      - \(OBJECT_
+      - \(SLOW_OPS\)
+      - \(TOO_FEW_PGS\)
+      - \(OSD_SLOW_PING_TIME
+      - slow request
+- thrashosds:
+    chance_pgnum_grow: 2
+    chance_pgnum_shrink: 2
+    chance_pgpnum_fix: 1
+    timeout: 1200
+- exec:
+    client.0:
+      - sudo ceph osd pool create benchpool 64
+      - sudo ceph osd pool application enable benchpool rados
+      # pool create returns before the new PGs can take IO, and thrashosds
+      # is already running. Block until a client can list the pool.
+      - sudo timeout 180 sh -c 'until rados -p benchpool ls >/dev/null 2>&1; do sleep 2; done'
+- full_sequential:
+  - radosbench:
+      clients: [client.0]
+      time: 150
+      pool: benchpool
+      create_pool: false
+      cleanup: false
+  - radosbench:
+      clients: [client.0]
+      time: 150
+      type: rollback
+      rollback_snap: snap_0
+      skip_write: true
+      # The default mutates half the objects. This run only checks that
+      # rollback itself completes; a later seq read still expects the
+      # original write payload in every object.
+      extra_args: "--mutate-percent=0"
+      pool: benchpool
+      create_pool: false
+  - radosbench:
+      clients: [client.0]
+      time: 150
+      type: seq
+      skip_write: true
+      pool: benchpool
+      create_pool: false
+- exec:
+    client.0:
+      - sudo ceph osd pool rm benchpool benchpool --yes-i-really-really-mean-it
