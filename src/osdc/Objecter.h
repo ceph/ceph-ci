@@ -4137,6 +4137,8 @@ private:
   bool retry_writes_after_first_reply =
     cct->_conf->objecter_retry_writes_after_first_reply;
 
+  std::atomic_bool dispatch_to_session_strand = false;
+
 public:
   void set_epoch_barrier(epoch_t epoch);
 

@@ -235,6 +235,7 @@ std::vector<std::string> Objecter::get_tracked_keys() const noexcept
     "rados_osd_op_timeout"s,
     "osd_min_split_replica_read_size"s,
     "rados_replica_read_policy"s,
+    "objecter_dispatch_to_session_strand"s,
   };
 }
 
@@ -266,6 +267,9 @@ void Objecter::handle_conf_change(const ConfigProxy& conf,
     } else {
       extra_read_flags = 0;
     }
+  }
+  if (changed.count("objecter_dispatch_to_session_strand")) {
+    dispatch_to_session_strand = conf.get_val<bool>("objecter_dispatch_to_session_strand");
   }
 }
 
@@ -1100,7 +1104,7 @@ void Objecter::ms_fast_dispatch2(const MessageRef& m)
   case CEPH_MSG_OSD_OPREPLY: {
     auto priv = m->get_connection()->get_priv();
     auto s = static_cast<OSDSession*>(priv.get());
-    if (s) {
+    if (s && dispatch_to_session_strand) {
       s->track_enqueue(m, [this, priv, s, m]() {
         handle_osd_op_reply(cref_cast<MOSDOpReply>(m));
         s->track_dequeue(m);
@@ -1114,7 +1118,7 @@ void Objecter::ms_fast_dispatch2(const MessageRef& m)
   case CEPH_MSG_WATCH_NOTIFY: {
     auto priv = m->get_connection()->get_priv();
     auto s = static_cast<OSDSession*>(priv.get());
-    if (s) {
+    if (s && dispatch_to_session_strand) {
       s->track_enqueue(m, [this, priv, s, m]() {
         handle_watch_notify(cref_cast<MWatchNotify>(m));
         s->track_dequeue(m);
@@ -1137,7 +1141,7 @@ Dispatcher::dispatch_result_t Objecter::ms_dispatch2(const MessageRef& m)
   case CEPH_MSG_OSD_BACKOFF: {
     auto priv = m->get_connection()->get_priv();
     auto s = static_cast<OSDSession*>(priv.get());
-    if (s) {
+    if (s && dispatch_to_session_strand) {
       s->track_enqueue(m, [this, priv, s, m]() {
         handle_osd_backoff(cref_cast<MOSDBackoff>(m));
         s->track_dequeue(m);
@@ -1154,7 +1158,7 @@ Dispatcher::dispatch_result_t Objecter::ms_dispatch2(const MessageRef& m)
     if (m->get_source().type() == CEPH_ENTITY_TYPE_OSD) {
       auto priv = m->get_connection()->get_priv();
       auto s = static_cast<OSDSession*>(priv.get());
-      if (s) {
+      if (s && dispatch_to_session_strand) {
         s->track_enqueue(m, [this, priv, s, m]() {
           handle_command_reply(cref_cast<MCommandReply>(m));
           s->track_dequeue(m);
