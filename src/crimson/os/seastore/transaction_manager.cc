@@ -1529,6 +1529,17 @@ TransactionManager::rewrite_extents_ret TransactionManager::rewrite_extents(
         [this, &t, target_generation, modify_time, FNAME,
         &paddr_hint, &next_laddr, hint, &extent]() mutable
         -> rewrite_extent_iertr::future<> {
+      // Re-check: while we were in wait_io() another transaction may have
+      // retired this extent and already freed its paddr.  If so, skip it
+      // to avoid a double-free in the AvlAllocator free tree.
+      {
+        auto updated = cache->update_extent_from_transaction(t, extent);
+        if (!updated) {
+          DEBUGT("extent retired during wait_io, skipping -- {}", t, *extent);
+          return rewrite_extent_iertr::now();
+        }
+        extent = updated;
+      }
       assert(extent->is_valid() && !extent->is_initial_pending());
       if (extent->is_stable_dirty()) {
         if (epm->can_inplace_rewrite(t, extent)) {
