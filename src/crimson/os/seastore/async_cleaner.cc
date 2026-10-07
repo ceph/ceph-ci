@@ -2055,13 +2055,21 @@ void RBMCleaner::mark_space_free(
   }
 }
 
-void RBMCleaner::commit_space_used(paddr_t addr, extent_len_t len) 
+void RBMCleaner::commit_space_used(paddr_t addr, extent_len_t len)
 {
+  LOG_PREFIX(RBMCleaner::commit_space_used);
+  assert(addr.is_absolute_random_block());
   auto rbms = rb_group->get_rb_managers();
   for (auto rbm : rbms) {
     if (addr.get_device_id() == rbm->get_device_id()) {
       if (rbm->get_start() <= addr) {
+	DEBUG("commit addr: {} len: 0x{:x}", addr, len);
+	// Finalize the in-allocator reservation and account the space as used.
+	// mark_space_used() must NOT be called here because alloc_extents()
+	// already removed this range from the free tree; mark_space_used()
+	// would call allocator->mark_extent_used() and double-remove it.
 	rbm->complete_allocation(addr, len);
+	stats.used_bytes += len;
       }
       return;
     }
