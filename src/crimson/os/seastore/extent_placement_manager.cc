@@ -1078,6 +1078,31 @@ ExtentPlacementManager::BackgroundProcess::do_background_cycle()
     force_trim = true;
   }
 
+  // If the cleaner is blocking IO and the trimmer needs to run but the
+  // space reservation failed, force the trim through anyway.
+  //
+  // trim_dirty relocates dirty extents to advance the journal tail, which
+  // is the only operation that can free closed journal segments.  When the
+  // device is nearly full the cleaner blocks new IO admission
+  // (should_block_io_on_clean() == true), and try_reserve_projected_usage()
+  // returns false for trim too, preventing trim_dirty from ever running.
+  // That creates a deadlock:
+  //   - the cleaner needs journal segments freed (via trim) to make progress
+  //   - the trimmer needs space reservation (which the cleaner blocks)
+  //
+  // Since trim_dirty is the only escape from this situation, bypass the
+  // reservation check when the cleaner is already blocking IO.  The trim
+  // transaction's net space footprint is approximately zero -- it retires
+  // the old extent location while writing the new one, so letting it
+  // through cannot make the space situation materially worse.
+  if (!proceed_trim && should_trim &&
+      main_cleaner->should_block_io_on_clean()) {
+    DEBUG("forcing trim: cleaner is blocking IO but trim reservation failed");
+    proceed_trim = true;
+    force_trim = true;
+    should_abort_cleaner_usage = false;
+  }
+
   if (proceed_trim) {
     DEBUG("started trimming...");
     return trimmer->trim(force_trim
