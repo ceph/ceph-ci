@@ -808,10 +808,27 @@ void PG::publish_stats_to_osd()
     });
 
   std::lock_guard l{pg_stats_publish_lock};
+  const bool was_dirty = recovery_state.debug_has_dirty_state();
   auto stats =
     recovery_state.prepare_stats_for_publish(pg_stats_publish, unstable_stats);
   if (stats) {
     pg_stats_publish = std::move(stats);
+  }
+
+  if (!was_dirty && recovery_state.debug_has_dirty_state()) {
+    // prepare_stats_for_publish() just latched or recorded a
+    // vulnerability-window/active-rebuild transition. Not every caller
+    // of publish_stats_to_osd() has a transaction in flight to carry
+    // this write. An op/repop-completion callback, for instance, runs
+    // after its own transaction has already committed. So don't rely
+    // on one coming along later; write it now.
+    dout(15) << __func__ << " forcing an immediate write for a new "
+             << "vulnerability/rebuild latch transition" << dendl;
+    ObjectStore::Transaction t;
+    recovery_state.write_if_dirty(t);
+    if (!t.empty()) {
+      osd->store->queue_transaction(ch, std::move(t), nullptr);
+    }
   }
 }
 
