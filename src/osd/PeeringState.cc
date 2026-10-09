@@ -6189,7 +6189,7 @@ PeeringState::NotBackfilling::react(const RequestBackfill &evt)
   DECLARE_LOCALS;
 
   if (ps->pool.info.has_flag(pg_pool_t::FLAG_NOBACKFILL)) {
-    ceph_assert(ps->state_test(PG_STATE_BACKFILL_PAUSED));
+    psdout(10) << "Ignoring RequestBackfill as the pool is flaged with FLAG_NOBACKFILL" << dendl;
     return discard_event();
   }
   ps->state_clear(PG_STATE_BACKFILL_PAUSED);
