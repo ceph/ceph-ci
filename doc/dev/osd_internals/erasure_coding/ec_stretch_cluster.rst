@@ -2318,7 +2318,8 @@ before ``Recovered``. A completed backfill target therefore always joins the
 new acting set, as it does with ``calc_ec_acting``, and ``choose_acting`` never
 finds ``want == acting`` with fewer backfill targets. An ``up[i]`` placed in a
 zone its block will not be served from, for example by a ``pg-upmap-items``
-entry into another zone, is not backfilled and the ``pg_temp`` stays.
+entry into another zone (Section 11.9), is not backfilled and the ``pg_temp``
+stays.
 
 CRUSH ``bucket_max`` constraints apply: no zone may contribute more than
 ``size / peering_crush_bucket_target`` OSDs.
@@ -2453,6 +2454,57 @@ logic described in Section 11.2:
 - **Reintegration**: When enough OSDs return to meet the per-zone threshold,
   they are added back into the up set. Standard peering will handle resyncing
   data — no new recovery code is required for reintegration.
+
+11.9 Upmaps and the Balancer
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A ``pg-upmap`` or ``pg-upmap-items`` entry replaces OSDs that CRUSH chose for a
+PG. For a pool with ``num_zones > 1`` an entry can move a copy or a shard into
+another zone. ``CrushWrapper::verify_upmap``, which checks every entry, does
+not prevent this for the usual stretch rule, which takes one root and chooses
+``num_zones`` buckets of the zone type: it checks only that the OSDs span no
+more buckets than each ``choose`` step picks, and that no two share a failure
+domain of a ``chooseleaf`` step. Only a rule that takes each zone bucket on its
+own keeps every block in its zone, because each emitted block must stay under
+its ``take``.
+
+**Manual upmaps** stay as flexible as they are today. ``ceph osd pg-upmap``,
+``pg-upmap-items`` and ``pg-upmap-primary`` are operator tools: the monitor does
+not refuse an entry, and ``clean_pg_upmaps`` does not remove one, because it
+moves OSDs across zones. Peering limits the effect:
+
+- a replicated stretch pool takes at most ``size / peering_crush_bucket_target``
+  OSDs from a zone (Section 11.5.1), so an extra copy in one zone is left out
+  of the acting set and the PG stays undersized while the entry exists;
+- an EC shard placed in a zone that will not serve its block is not
+  backfilled, and the ``pg_temp`` stays (Section 11.5.1), so the PG stays
+  remapped while the entry exists.
+
+**The upmap balancer** (``OSDMap::calc_pg_upmaps``) must not make such entries.
+For a pool with ``num_zones > 1`` it accepts a move only if the OSD it replaces
+and the OSD it chooses are in the same bucket of the pool's zone type
+(``peering_crush_bucket_barrier``). For an EC pool this also keeps each shard
+in the zone of its block. The balancer therefore balances within each zone. It
+never moves load between zones: stretch mode already requires the zones to have
+similar weights (Section 11.3), and a copy moved to the other zone would only
+leave its PG undersized or remapped.
+
+**The read balancer** (``pg-upmap-primary``, replicated pools only) moves
+primaries to spread read load. Moving a primary to the other zone is open:
+
+.. note::
+
+   **Open questions for reviewers**
+
+   - Should the read balancer keep a stretch pool's primaries in the zone that
+     CRUSH chose for them? Localized and balanced reads (Section 7) already
+     serve reads from the client's zone, so primaries matter mostly for writes
+     and for clients without read affinity.
+   - Should a health warning list PGs whose upmap entries break zone affinity,
+     so that a manual entry that leaves a PG undersized or remapped is visible?
+   - The ``crush-compat`` balancer mode changes per-OSD weights in a weight
+     set. Should it keep each zone's total weight, so that the zones stay as
+     even as stretch mode requires?
 
 
 12. Scrub Behavior — *R1*
