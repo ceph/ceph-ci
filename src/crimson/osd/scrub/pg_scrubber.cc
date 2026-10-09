@@ -122,6 +122,8 @@ void PGScrubber::on_primary_active_clean()
 {
   LOG_PREFIX(PGScrubber::on_primary_active_clean);
   DEBUGDPP("", pg);
+  last_applied_durable = std::max(
+    last_applied_durable, pg.peering_state.get_info().last_complete);
   handle_event(events::primary_activate_t{});
 }
 
@@ -129,6 +131,8 @@ void PGScrubber::on_replica_activate()
 {
   LOG_PREFIX(PGScrubber::on_replica_activate);
   DEBUGDPP("", pg);
+  last_applied_durable = std::max(
+    last_applied_durable, pg.peering_state.get_info().last_complete);
   handle_event(events::replica_activate_t{});
 }
 
@@ -142,6 +146,7 @@ void PGScrubber::on_interval_change()
   handle_event(events::reset_t{});
   waiting_for_update = std::nullopt;
   pending_writes.clear();
+  last_applied_durable = pg.peering_state.get_info().last_complete;
 }
 
 void PGScrubber::flag_reservations_failure()
@@ -191,7 +196,8 @@ void PGScrubber::on_log_update(eversion_t v)
   // would never wake.  Checking only last_applied_durable + pending_writes
   // is correct in both orderings.
   if (waiting_for_update &&
-      *waiting_for_update <= last_applied_durable) {
+      (*waiting_for_update <= last_applied_durable ||
+       *waiting_for_update <= pg.peering_state.get_info().last_complete)) {
     auto it = pending_writes.begin();
     if (it == pending_writes.end() || *it > *waiting_for_update) {
       DEBUGDPP("waiting_for_update: {}, v: {}", pg, *waiting_for_update, v);
@@ -895,7 +901,7 @@ void PGScrubber::handle_scrub_message(Message &_m)
     MOSDRepScrub &m = *static_cast<MOSDRepScrub*>(&_m);
     DEBUGDPP("MOSDRepScrub: {}", pg, m);
     handle_event(events::replica_scan_t{
-	m.start, m.end, m.scrub_from, m.deep
+ m.start, m.end, m.scrub_to, m.deep
       });
     break;
   }
@@ -1137,7 +1143,8 @@ bool PGScrubber::await_update(const eversion_t &version)
   // 'version', but an earlier in-flight write at a version <= 'version'
   // may still be outstanding.  We must wait until all pending writes with
   // version <= 'version' have committed before starting the scan.
-  if (version <= last_applied_durable) {
+  if (version <= last_applied_durable ||
+      version <= pg.peering_state.get_info().last_complete) {
     auto it = pending_writes.begin();
     if (it == pending_writes.end() || *it > version) {
       return true;
