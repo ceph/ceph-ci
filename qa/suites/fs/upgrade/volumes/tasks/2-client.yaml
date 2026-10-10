@@ -1,0 +1,7 @@
+# IO clients: client.0 (no v2 snaps) and client.2 (two v2 snaps) are kernel,
+# client.1 (one v2 snap) is ceph-fuse. client.3 (admin) is always kernel.
+# NB: kclient must come first, it sets (instead of merging into) ctx.mounts.
+tasks:
+- kclient: [client.0, client.2, client.3]
+- ceph-fuse: [client.1]
+- print: "**** done client"
