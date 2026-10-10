@@ -1,0 +1,18 @@
+# client.0-2 each mount (and do IO in) one subvolume with subvolume-scoped
+# caps; client.3 mounts the file system root to inspect the subvolume layout.
+roles:
+- - mon.a
+  - mgr.x
+  - client.0
+  - client.1
+  - osd.0
+  - osd.1
+  - osd.2
+- - mon.b
+  - mon.c
+  - mgr.y
+  - client.2
+  - client.3
+  - osd.3
+  - osd.4
+  - osd.5

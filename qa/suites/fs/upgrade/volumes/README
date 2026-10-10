@@ -1,0 +1,43 @@
+This suite verifies that mgr/volumes' auto-upgrade of pre-v3 (to start with,
+v2) subvolumes to the v3 layout is non-disruptive across a Ceph upgrade.
+
+Starting from an N-1|N-2 release (where `fs subvolume create` produces v2
+subvolumes), the setup step creates:
+
+  - 3 subvolumes, each mounted by a dedicated client (a mix of kernel and
+    ceph-fuse) using the
+    subvolume-scoped credentials from `fs subvolume authorize`, with a
+    background writer continuously doing IO in it. Two of them get v2
+    snapshots (one and two) taken while their clients are writing.
+  - 3 async clones (from a v2 snapshot of a separate source subvolume, which
+    has two v2 snapshots) that are caught mid-copy and paused
+    (mgr/volumes/pause_cloning).
+  - 3 subvolume purges (`fs subvolume rm`) that are caught mid-purge and
+    paused (mgr/volumes/pause_purging).
+
+The cluster is then upgraded, either:
+
+  - mgr-only first: the new ceph-mgr can't auto-upgrade subvolumes as the old
+    MDS does not know the `ceph.dir.subvolume.prevpath` vxattr. The v2
+    subvolumes must keep working as v2: client IO and subvolume commands
+    (getpath, info, snapshot create/ls/info, clone status) must succeed, and
+    the clones and purges must finish. The remaining daemons are upgraded
+    afterwards.
+  - full: all daemons in one go.
+
+After the upgrade, the first subvolume command on each subvolume must upgrade
+it to v3 in place, keeping its uuid whether or not it has snapshots, while
+its client keeps doing IO uninterrupted and without having to remount. The
+clones and purges started before the upgrade must finish successfully.
+Snapshot listing must include the snapshots taken before (v2) and after (v3)
+the auto-upgrade, and new clones of v2 snapshots must work (both with only
+ceph-mgr upgraded and after the full upgrade), with data matching the
+snapshot.
+
+Finally, each client is remounted at its subvolume's new v3 path twice: with
+the credentials it had been using (authorized for the v2 path before the
+upgrade), and with new ones from `fs subvolume authorize` after the upgrade
+(which must be for the v3 path). Each time, all the data written by it must
+be accessible and intact, and the subvolume must be writable.
+
+This suite should make use of N-1|N-2 releases.
