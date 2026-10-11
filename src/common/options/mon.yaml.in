@@ -134,6 +134,13 @@ options:
   default: 0
   services:
   - mon
+- name: mon_nvmeofgw_default_ha_mode
+  type: uint
+  level: advanced
+  desc: default HA mode. 0 stands for Active-Passive  legacy mode
+  default: 0
+  services:
+  - mon
 - name: mon_nvmeofgw_wrong_map_ignore_sec
   type: uint
   level: advanced
