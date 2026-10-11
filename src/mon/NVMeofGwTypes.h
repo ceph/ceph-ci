@@ -88,6 +88,7 @@ enum class subsystem_change_t {
 };
 
 #define REDUNDANT_GW_ANA_GROUP_ID 0xFF
+#define ACTIVE_ACTIVE_FAILOVER_TIMER 255
 using SmState = std::map < NvmeAnaGrpId, gw_states_per_group_t>;
 
 using ana_state_t =
@@ -336,5 +337,6 @@ using NvmeGwMonClientStates = std::map<NvmeGwId, NvmeGwClientState>;
 using NvmeGwTimers = std::map<NvmeGwId, NvmeGwTimerState>;
 using NvmeGwMonStates = std::map<NvmeGwId, NvmeGwMonState>;
 using LocationStates = std::map<NvmeLocation, LocationState>;
+using LocationAnaGroups = std::map<NvmeLocation, NvmeAnaGrpId>;
 
 #endif /* SRC_MON_NVMEOFGWTYPES_H_ */

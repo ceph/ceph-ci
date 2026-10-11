@@ -1610,6 +1610,13 @@ COMMAND("nvme-gw set-location"
    "set location for nvmeof gateway id for (pool, group)",
    "mgr", "rw")
 
+COMMAND("nvme-gw set-ha-mode"
+   " name=pool,type=CephString"
+   " name=group,type=CephString"
+   " name=ha_mode,type=CephChoices,strings=active-active|active-passive ",
+   " set high availability mode for (pool, group)",
+   "mgr", "rw")
+
 COMMAND("nvme-gw disaster-set"
      " name=pool,type=CephString"
      " name=group,type=CephString"

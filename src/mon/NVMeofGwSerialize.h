@@ -107,6 +107,33 @@ inline std::ostream& operator<<(
   return os;
 }
 
+inline std::ostream& operator << (std::ostream& os, const std::map<NvmeGroupKey, uint8_t>& val) {
+    os << "{";
+    bool first = true;
+    for (const auto& [key, value] : val) {
+        if (!first) {
+            os << ", ";
+        }
+        // Cast uint8_t to int so it prints as a number, not an ASCII character
+        os << key << ": " << static_cast<int>(value);
+        first = false;
+    }
+    os << "}";
+    return os;
+}
+
+inline std::ostream& operator<<(std::ostream& os, HaMode mode) {
+  switch (mode) {
+
+    case HaMode::ACTIVE_PASSIVE:
+      return os << "ACTIVE_PASSIVE";
+    case HaMode::ACTIVE_ACTIVE:
+      return os << "ACTIVE_ACTIVE";
+    default:
+      return os << "UNKNOWN(" << static_cast<unsigned>(static_cast<uint8_t>(mode)) << ")";
+  }
+}
+
 inline std::ostream& operator<<(std::ostream& os, const SmState value) {
   os << "SM_STATE [ ";
   for (auto& state_itr: value ) {
@@ -275,12 +302,31 @@ inline std::ostream& operator<<(std::ostream& os, const LocationStates value) {
   return os;
 }
 
+inline std::ostream& operator<<(std::ostream& os, const LocationAnaGroups value) {
+  if(value.size()) os << "\n" << MODULE_PREFFIX;;
+
+  for (auto &locations : value) {
+    os  <<  "location " << locations.first  << " ana grp_id "
+        << locations.second;
+    os  << "\n"<< MODULE_PREFFIX;
+  }
+  return os;
+}
+
 inline std::ostream& operator<<(std::ostream& os, const NVMeofGwMap value) {
   os <<  "\n" <<  MODULE_PREFFIX << "== NVMeofGwMap [ Created_gws: epoch "
      << value.epoch  << " features " << value.published_features;
   for (auto& group_gws: value.gw_epoch) {
     os <<  "\n" <<  MODULE_PREFFIX  << "{ " << group_gws.first
        << " } -> GW epoch: " << group_gws.second << " }";
+  }
+  for (auto& group_gws: value._ha_mode) {
+        os <<  "\n" <<  MODULE_PREFFIX  << "{ " << group_gws.first
+           << " } -> ha_mode: " << group_gws.second << " }";
+  }
+  for (auto& group_gws: value.location_groups) {
+        os <<  "\n" <<  MODULE_PREFFIX  << "{ " << group_gws.first
+           << " } -> location_groups: " <<  group_gws.second << " }";
   }
   for (auto& group_gws: value.disaster_locations) {
     os <<  "\n" <<  MODULE_PREFFIX  << "{ " << group_gws.first
