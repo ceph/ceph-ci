@@ -33,60 +33,53 @@ using std::string;
 #undef dout_prefix
 #define dout_prefix *_dout << "nvmeofgw " << __PRETTY_FUNCTION__ << " "
 
-static Active_mode_t g_active_mode = ACTIVE_ACTIVE;
+NVMeofHaStrategy* NVMeofGwMap::strategy(const NvmeGroupKey& group_key) const {
 
-// 1. Helper implementation (Lazy Instantiation)
-NVMeofHaStrategy* NVMeofGwMap::strategy() const {
-  if (!ha_strategy) {
-    ha_strategy = create_ha_strategy(ha_mode);
+  HaMode ha_mode = HaMode::ACTIVE_ACTIVE; // TODO change to default mode from the config
+  if (auto it = _ha_mode.find(group_key); it != _ha_mode.end()) {
+    ha_mode = it->second;
   }
+  ha_strategy = create_ha_strategy(ha_mode);// TODO call get_ha_strategy
   return ha_strategy.get();
-}
-
-void NVMeofGwMap::set_ha_mode(HaMode new_mode) {
-  if (ha_mode != new_mode) {
-    ha_mode = new_mode;
-    ha_strategy.reset(); // Clears the pointer (sets to nullptr)
-  }
 }
 
 // ======= 2.Event delegation calls ======================
 
 void NVMeofGwMap::handle_gw_down(const NvmeGwId& gw_id, const NvmeGroupKey& group_key, bool &propose_pending) {
     // Calls ActiveActiveHaStrategy::gw_down or ActivePassiveHaStrategy::gw_down
-  strategy()->gw_down(*this, gw_id, group_key, propose_pending);
+  strategy(group_key)->gw_down(*this, gw_id, group_key, propose_pending);
 }
 
 void NVMeofGwMap::handle_gw_alive(const NvmeGwId& gw_id,
      const NvmeGroupKey& group_key, epoch_t& last_osd_epoch, bool &propose_pending) {
-  strategy()->gw_alive(*this, gw_id, group_key, last_osd_epoch, propose_pending);
+  strategy(group_key)->gw_alive(*this, gw_id, group_key, last_osd_epoch, propose_pending);
 }
 
 void NVMeofGwMap::handle_gw_pass_to_created(const NvmeGwId& gw_id,
      const NvmeGroupKey& group_key, bool &propose_pending) {
-  strategy()->gw_created(*this, gw_id, group_key, propose_pending);
+  strategy(group_key)->gw_created(*this, gw_id, group_key, propose_pending);
 }
 
 int NVMeofGwMap::handle_gw_creation(const NvmeGwId& gw_id, const NvmeGroupKey& group_key, uint64_t features) {
-  return strategy()->on_create_gw(*this, gw_id, group_key, features);
+  return strategy(group_key)->on_create_gw(*this, gw_id, group_key, features);
 }
 
 int NVMeofGwMap::handle_gw_deletion(const NvmeGwId& gw_id, const NvmeGroupKey& group_key) {
-  return strategy()->on_delete_gw(*this, gw_id, group_key);
+  return strategy(group_key)->on_delete_gw(*this, gw_id, group_key);
 }
 
 int NVMeofGwMap::handle_location_update(const NvmeGwId& gw_id, const NvmeGroupKey& group_key,
                          std::string& NvmeLocation, bool &propose_pending) {
-  return strategy()->on_update_gw_location(*this, gw_id, group_key, NvmeLocation, propose_pending);
+  return strategy(group_key)->on_update_gw_location(*this, gw_id, group_key, NvmeLocation, propose_pending);
 }
 
 int NVMeofGwMap::handle_disaster_clear(const NvmeGroupKey& group_key,
         std::string& NvmeLocation, bool &propose_pending) {
-	return strategy()->on_disaster_clear(*this, group_key, NvmeLocation, propose_pending);
+	return strategy(group_key)->on_disaster_clear(*this, group_key, NvmeLocation, propose_pending);
 }
 
-void NVMeofGwMap::handle_periodic_ha(bool &propose_pending) {
-  strategy()->periodic_ha(*this, propose_pending);
+void NVMeofGwMap::handle_periodic_ha(const NvmeGroupKey& group_key, bool &propose_pending) {
+   strategy(group_key)->periodic_ha(*this, group_key, propose_pending); // TODO call per group_key
 }
 // =============================================================
 
@@ -95,7 +88,7 @@ void NVMeofGwMap::to_gmap(
 {
   Gmap.clear();
   for (const auto& created_map_pair: created_gws) {
-    const auto& group_key = created_map_pair.first;
+    auto& group_key = created_map_pair.first;
     const NvmeGwMonStates& gw_created_map = created_map_pair.second;
     for (const auto& gw_created_pair: gw_created_map) {
       const auto& gw_id = gw_created_pair.first;
@@ -111,7 +104,9 @@ void NVMeofGwMap::to_gmap(
       auto gw_state = NvmeGwClientState(
 	gw_created.ana_grp_id, epoch, availability, gw_created.beacon_sequence,
 	gw_created.beacon_sequence_ooo, published_features);
-      if (g_active_mode != ACTIVE_PASSIVE) {
+       // each group_key automatically added to the _ha_mode  map
+      auto it = _ha_mode.find(group_key);
+      if (it != _ha_mode.end() && it->second != HaMode::ACTIVE_PASSIVE) {
         auto grp_it = fully_inaccessible.find(group_key);
         if ( (grp_it != fully_inaccessible.end())  && grp_it->second == 1) {
           gw_state.hold_ios = true;
@@ -139,6 +134,9 @@ void NVMeofGwMap::add_grp_id(
     gw_states_per_group_t::GW_STANDBY_STATE;
   fsm_timers[group_key][gw_id].data[grpid] = tm_data;
   created_gws[group_key][gw_id].blocklist_data[grpid] = blklist_data;
+
+  if(_ha_mode.find(group_key) != _ha_mode.end())
+    _ha_mode[group_key] = HaMode::ACTIVE_ACTIVE; // TODO set default from the config
 }
 
 void NVMeofGwMap::remove_grp_id(
@@ -160,6 +158,11 @@ int NVMeofGwMap::cfg_add_gw(
       dout(10) << "Allocated first gw_epoch : group_key "
           << group_key << " epoch " << gw_epoch[group_key] << dendl;
     }
+  }
+  if (is_failover_outgoing_active_active(group_key)) {
+    dout(4) << "GW-id is in failover now, cannot remove gw, try later "
+            << group_key << " " << gw_id << dendl;
+    return -EBUSY;
   }
   for (auto& itr: created_gws[group_key]) {
     allocated.insert(itr.second.ana_grp_id);
@@ -241,6 +244,11 @@ int NVMeofGwMap::cfg_delete_gw(
 {
   if (HAVE_FEATURE(mon->get_quorum_con_features(), NVMEOFHA)) {
     dout(10) << " has NVMEOFHA: 1" << dendl;
+    if (is_failover_outgoing_active_active(group_key)) {
+      dout(4) << "GW-id is in failover now, cannot add gw, try later "
+              << group_key << " " << gw_id << dendl;
+      return -EBUSY;
+    }
     for (auto& gws_states: created_gws[group_key]) {
       if (gws_states.first == gw_id) {
         auto& state = gws_states.second;
@@ -337,6 +345,11 @@ int NVMeofGwMap::cfg_admin_state_change(const NvmeGwId &gw_id,
   auto& gws_states = created_gws[group_key];
   auto  gw_state = gws_states.find(gw_id);
   if (gw_state != gws_states.end()) {
+    if (is_failover_outgoing_active_active(group_key)) {
+    dout(4) << "GW-id is in failover now, cannot change admin state, try later "
+            << group_key << " " << gw_id << dendl;
+      return -EBUSY;
+    }
     auto& st = gw_state->second;
     if (state == gw_admin_state_t::GW_ADMIN_DISABLED) {
       if (st.gw_admin_state == gw_admin_state_t::GW_ADMIN_ENABLED) {
@@ -424,19 +437,32 @@ int NVMeofGwMap::cfg_set_location(const NvmeGwId &gw_id,
   }
 }
 
+bool NVMeofGwMap::is_failover_outgoing_active_active(const NvmeGroupKey& group_key) {
+  auto grp_it = created_gws.find(group_key);
+  if (grp_it != created_gws.end() && _ha_mode[group_key] == HaMode::ACTIVE_ACTIVE) {
+    auto& gws_states = created_gws[group_key];
+    auto grp_inaccess = fully_inaccessible.find(group_key);
+    if ( (grp_inaccess != fully_inaccessible.end()) && grp_inaccess->second == 1) {
+      return true;
+    }
+    for (auto& [gw_id, state] : gws_states) {
+      if (state.blocklist_data[0].is_failover) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 int NVMeofGwMap::cfg_set_location_active_active(const NvmeGwId &gw_id,
     const NvmeGroupKey& group_key,
     std::string &location, bool &propose_pending) {
   int rc = 0;
   //check that no failovers outgoing, if found return ebusy
-  auto& gws_states = created_gws[group_key];
-  if (fully_inaccessible[group_key] == 1) {
-     return -EBUSY;
-  }
-  for (auto& [gw_id, state] : gws_states) {
-    if (state.blocklist_data[0].is_failover) {
-      return -EBUSY;
-    }
+  if (is_failover_outgoing_active_active(group_key)) {
+    dout(4) << "GW-id is in failover now, cannot change location, try later "
+            << group_key << " " << gw_id << dendl;
+    return -EBUSY;
   }
   rc = cfg_set_location(gw_id, group_key, location, propose_pending);
   if (propose_pending) {
@@ -593,6 +619,33 @@ int NVMeofGwMap::cfg_location_disaster_clear(
   }
 }
 
+int NVMeofGwMap::cfg_location_disaster_clear_active_active(
+         const NvmeGroupKey& group_key,
+         std::string &location, bool &propose_pending) {
+
+  if (!mon->get_quorum_mon_features().contains_all(ceph::features::mon::FEATURE_NVMEOF_BEACON_DIFF)) {
+    dout(4) << "Command is not allowed - feature is not installed"
+            << group_key << dendl;
+       return -EOPNOTSUPP;
+  }
+  bool cleanup_in_process = false;
+  // for all the gateways of the subsystem
+  if (!is_location_in_disaster(group_key, location, cleanup_in_process)) {
+      dout(4) << "command cannot be accepted: in a group " << group_key
+              << " disaster location " << location << " was not found" << dendl;
+      return -EINVAL;
+  }
+  if (is_failover_outgoing_active_active(group_key)) {
+    dout(1) << "cannot accept disaster clear - active failover in group "
+            << group_key << dendl;
+    return -EBUSY;
+  }
+  dout(10) << "command  accepted"<< dendl;
+  disaster_map_remove_location(group_key, location);
+  propose_pending = true;
+  return 0;
+}
+
 int NVMeofGwMap::cfg_enable_disable_beacon_diff(bool enable,
       bool &propose_pending)
 {
@@ -613,6 +666,37 @@ int NVMeofGwMap::cfg_enable_disable_beacon_diff(bool enable,
   } else {
     dout (10) << "no change" << dendl;
     /* allow idempotency */
+  }
+  return rc;
+}
+
+int NVMeofGwMap::cfg_set_ha_mode(const NvmeGroupKey& group_key,
+     const HaMode ha_mode)
+{
+  int rc = 0;
+  if( _ha_mode.find(group_key) == _ha_mode.end()) {
+    dout(1) << "HA mode try to set to " << ha_mode << " for invalid group "
+             << group_key  << dendl;
+    return -EINVAL;
+  }
+  if (_ha_mode[group_key] == ha_mode) {
+    dout(1) << "HA mode is already set to " << ha_mode << " for group "
+             << group_key  << dendl;
+    return -EALREADY;
+  }
+  for (auto& [gw_id, state]: created_gws[group_key]) {
+    if (state.gw_admin_state == gw_admin_state_t::GW_ADMIN_ENABLED) {
+       dout(1) << "set HA mode is not allowed for group "<< group_key
+                << " all Gateways should be in Admin Disabled state" << dendl;
+       return -EPERM;
+    }
+  }
+  dout(10) << "HA mode was set to " << ha_mode << " for group "
+              << group_key  << dendl;
+  _ha_mode[group_key] = ha_mode;
+  auto& gws_states = created_gws[group_key];
+  for (auto& [gw_id, st]: gws_states) {
+    st.blocklist_data[0].is_failover = false;
   }
   return rc;
 }
@@ -910,7 +994,7 @@ void NVMeofGwMap::process_failover_list(bool & propose_pending) {
 
 bool NVMeofGwMap::is_gw_in_failover_active_active(const NvmeGwId &gw_id, const NvmeGroupKey& group_key)
 {
-  return ha_mode == HaMode::ACTIVE_ACTIVE && is_timer_started(gw_id, group_key, 0);
+  return _ha_mode[group_key] == HaMode::ACTIVE_ACTIVE && is_timer_started(gw_id, group_key, 0);
 }
 
 /*
@@ -969,6 +1053,11 @@ int NVMeofGwMap::process_gw_map_gw_pass_to_created_active_active(
     st.availability = gw_availability_t::GW_CREATED;
     cancel_timer(gw_id, group_key, 0); // cancel failover timer if armed
     st.blocklist_data[0].is_failover = false; // TODO make func GW_compl_failover
+    if (is_failover_outgoing_active_active(group_key)) {
+      dout(1) << "cannot update gw map during failover in group "
+              << group_key << " GW " << gw_id << dendl;
+      return 0;
+    }
     for (auto& state_itr: created_gws[group_key][gw_id].sm_state) {
       state_itr.second = gw_states_per_group_t::GW_STANDBY_STATE;
     }
@@ -1135,6 +1224,11 @@ void NVMeofGwMap::process_gw_map_ka_active_active(
                << " but location is in disaster state " << st.location << dendl;
       return;
     }
+    if (is_failover_outgoing_active_active(group_key)) {
+        dout(1) << "cannot update gw map during failover in group "
+                << group_key << " GW " << gw_id << dendl;
+        return;
+    }
     // SET ANA states
     update_gw_ana_states(gw_id, group_key);
     propose_pending = true;
@@ -1153,16 +1247,14 @@ void NVMeofGwMap::process_gw_map_ka_active_active(
 }
 
 
-void NVMeofGwMap::handle_abandoned_ana_groups(bool& propose)
+void NVMeofGwMap::handle_abandoned_ana_groups(const NvmeGroupKey& group_key, bool& propose)
 {
   propose = false;
   std::chrono::system_clock::time_point now =
            std::chrono::system_clock::now();
-  for (auto& group_state: created_gws) {
-    auto& group_key = group_state.first;
-    auto& gws_states = group_state.second;
+ // for (auto& group_state: created_gws) {    auto& group_key = group_state.first;auto& gws_states = group_state.second;
 
-    for (auto& gw_state : gws_states) { // loop for GWs inside nqn group
+    for (auto& gw_state : created_gws[group_key]) { // loop for GWs inside nqn group
       auto& gw_id = gw_state.first;
       NvmeGwMonState& state = gw_state.second;
       bool disaster_cleanup = false;
@@ -1176,7 +1268,7 @@ void NVMeofGwMap::handle_abandoned_ana_groups(bool& propose)
 	      (in_disaster && !disaster_cleanup)) &&
  	      state.ana_grp_id != REDUNDANT_GW_ANA_GROUP_ID) {
 	auto found_gw_for_ana_group = false;
-	for (auto& gw_state2 : gws_states) {
+	for (auto& gw_state2 : created_gws[group_key]) {
 	  NvmeGwMonState& state2 = gw_state2.second;
 	  if (state2.availability == gw_availability_t::GW_AVAILABLE &&
 	      (state2.sm_state[state.ana_grp_id] ==
@@ -1213,7 +1305,48 @@ void NVMeofGwMap::handle_abandoned_ana_groups(bool& propose)
       validate_gw_map(group_key);
       increment_gw_epoch(group_key);
     }
-  }
+ // }
+}
+
+void  NVMeofGwMap::periodic_ha_handle_active_active(const NvmeGroupKey& group_key,
+                                                    bool& propose) {
+  propose = false;
+  process_failover_list(propose);
+  //for (auto& [group_key, gws_states]: created_gws) {
+    if (is_failover_outgoing_active_active(group_key)) {
+      dout(1) << "cannot update gw map during failover in group "
+              << group_key  << dendl;
+      return;
+    }
+    for (auto& [gw_id, state]: created_gws[group_key]) { // loop for GWs inside nqn group
+      if (state.availability == gw_availability_t::GW_AVAILABLE ) {
+        // if some state is not ACTIVE
+        bool cleanup_in_process;
+        if (!is_location_in_disaster(group_key, state.location, cleanup_in_process)) {
+          for (auto&[ana_grp, fsm_state]: state.sm_state) {
+            if (fsm_state == gw_states_per_group_t::GW_STANDBY_STATE) {
+              update_gw_ana_states(gw_id, group_key);
+              propose = true;
+              break;;
+            }
+          }
+        }
+      }
+      if (state.availability == gw_availability_t::GW_CREATED) {
+        // if some state is not Standby
+        for (auto&[ana_grp, fsm_state]: state.sm_state) {
+          if (fsm_state != gw_states_per_group_t::GW_STANDBY_STATE) {
+            update_gw_ana_states(gw_id, group_key);
+            propose = true;
+            break;
+          }
+        }
+      }
+    }
+    if (propose) {
+      increment_gw_epoch(group_key);
+    }
+ // }
 }
 
 void NVMeofGwMap::check_relocate_ana_groups(const NvmeGroupKey& group_key,
@@ -1586,9 +1719,6 @@ void NVMeofGwMap::fsm_handle_gw_alive(
 	       << " timer:" << timer_val << dendl;
       // Failover Gw still alive and guaranteed that
       gw_state.active_state(grpid);
-      // ana group wouldnt be taken back  during blocklist wait period
-      /* TODO  if last GW in the group  received  the Blocklist completion - remove the  Failback bit from the  GW Group -
-       *  but it would be in  A/A calback. this calback should be unchanged */
       cancel_timer(gw_id, group_key, grpid);
       map_modified = true;
     } else {
@@ -2117,13 +2247,13 @@ void NVMeofGwMap::update_active_timers(bool &propose_pending)
 		 << to_itr.first<< " value(seconds): "
 		 << (int)to.data[to_itr.first].timer_value << dendl;
 	if (now >= to.data[to_itr.first].end_time) {
-	  if (ha_mode == HaMode::ACTIVE_PASSIVE) {
+	  auto group_key = std::make_pair(pool, group);
+	  if (_ha_mode[group_key] == HaMode::ACTIVE_PASSIVE) {
 	  fsm_handle_to_expired(
-	    gw_id,
-	    std::make_pair(pool, group), to_itr.first, propose_pending);
+	    gw_id, group_key, to_itr.first, propose_pending);
 	  } else {
 	    handle_failover_to_expired_active_active(gw_id,
-	        std::make_pair(pool, group), propose_pending);
+	        group_key, propose_pending);
 	  }
 	}
       }

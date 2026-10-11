@@ -56,11 +56,10 @@ private:
   // Mutable allows strategy() to lazily instantiate even if map context is const
   mutable std::shared_ptr<NVMeofHaStrategy> ha_strategy;
   // Helper method that returns the strategy instance
-  HaMode ha_mode{HaMode::ACTIVE_ACTIVE};//TODO make it configurable per GW group
-  NVMeofHaStrategy* strategy() const;
+  //HaMode ha_mode{HaMode::ACTIVE_ACTIVE};//TODO make it configurable per GW group
+  NVMeofHaStrategy* strategy(const NvmeGroupKey& group_key) const;
 
 public:
-   void set_ha_mode(HaMode new_mode);
   // HA event virtual methods invoked mostly by NVMeofGwMon
    void handle_gw_down(const NvmeGwId& gw_id, const NvmeGroupKey& group_key, bool &propose_pending);
    void handle_gw_alive(const NvmeGwId& gw_id, const NvmeGroupKey& group_key,
@@ -74,7 +73,7 @@ public:
                                 std::string& location, bool& propose_pending);
    int handle_disaster_clear(const NvmeGroupKey& group_key, std::string& location,
                               bool& propose_pending);
-   void handle_periodic_ha(bool &propose_pending);
+   void handle_periodic_ha(const NvmeGroupKey& group_key,bool &propose_pending);
 
   Monitor *mon = NULL;
 
@@ -124,8 +123,9 @@ public:
      in active-active configuration failovers are done just from the  failover_waiting_list
      - in process_failover_list one brain
   */
-  std::map<NvmeGroupKey, FailoverList> failover_wait_list; //todo explain , non persistent no need to serialize
+  std::map<NvmeGroupKey, FailoverList> failover_wait_list; //todo explain
   std::map<NvmeGroupKey, uint8_t> fully_inaccessible; // indication per group to send fully inaccessible fencing map to subscribers
+  std::map<NvmeGroupKey, HaMode> _ha_mode;// HA mode per gateway group
 
   void to_gmap(std::map<NvmeGroupKey, NvmeGwMonClientStates>& Gmap) const;
   void track_deleting_gws(const NvmeGroupKey& group_key,
@@ -147,7 +147,10 @@ public:
           std::string &location, bool &propose_pending);
   int cfg_location_disaster_clear(const NvmeGroupKey& group_key,
           std::string &location, bool &propose_pending);
+  int cfg_location_disaster_clear_active_active(const NvmeGroupKey& group_key,
+          std::string &location, bool &propose_pending);
   int cfg_enable_disable_beacon_diff(bool enable, bool &propose_pending);
+  int cfg_set_ha_mode(const NvmeGroupKey& group_key, const HaMode ha_mode);
   void process_gw_map_ka(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
     epoch_t& last_osd_epoch,  bool &propose_pending);
@@ -172,7 +175,8 @@ public:
       const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
       bool &propose_pending);
   void update_active_timers(bool &propose_pending);
-  void handle_abandoned_ana_groups(bool &propose_pending);
+  void handle_abandoned_ana_groups(const NvmeGroupKey& group_key, bool &propose_pending);
+  void periodic_ha_handle_active_active(const NvmeGroupKey& group_key, bool& propose);
   void handle_removed_subsystems(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
     const std::vector<NvmeNqnId> &current_subsystems, bool &propose_pending);
@@ -268,6 +272,7 @@ private:
   /*bool remove_from_failover_list(const NvmeGwId& gw_id,
                                  const NvmeGroupKey& group_key,
                                  NvmeAnaGrpId grpid);*/
+  bool is_failover_outgoing_active_active(const NvmeGroupKey& group_key);
   void update_ana_states_location_modified(const NvmeGroupKey& group_key);
   void update_gw_ana_states(const NvmeGwId &gw_id, const NvmeGroupKey& group_key);
 public:
@@ -292,6 +297,7 @@ public:
     encode(published_features, bl);
     encode(fully_inaccessible, bl);
     encode(failover_wait_list, bl);
+    encode(_ha_mode, bl);
     ENCODE_FINISH(bl);
   }
 
@@ -316,6 +322,7 @@ public:
       decode(published_features, bl);
       decode(fully_inaccessible, bl);
       decode(failover_wait_list, bl);
+      decode(_ha_mode, bl);
       dout(20) << " decoded features " << published_features << dendl;
     }
     DECODE_FINISH(bl);
