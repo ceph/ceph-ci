@@ -60,9 +60,10 @@ int ActivePassiveHaStrategy::gw_created(NVMeofGwMap& map, const NvmeGwId& gw_id,
    return map.process_gw_map_gw_pass_to_created(gw_id, group_key, propose_pending);
 }
 
-void ActivePassiveHaStrategy::periodic_ha(NVMeofGwMap& map, bool &propose_pending) {
+void ActivePassiveHaStrategy::periodic_ha(NVMeofGwMap& map,
+                            const NvmeGroupKey& group_key, bool &propose_pending) {
     // Legacy recovery / failback rules
-    map.handle_abandoned_ana_groups(propose_pending);
+    map.handle_abandoned_ana_groups(group_key, propose_pending);
 }
 
 // ============================================================================
@@ -76,7 +77,7 @@ int ActiveActiveHaStrategy::on_create_gw(NVMeofGwMap& map, const NvmeGwId& gw_id
 int ActiveActiveHaStrategy::on_delete_gw(NVMeofGwMap& map, const NvmeGwId& gw_id,
                  const NvmeGroupKey& group_key) {
     //update_ana_states(map);
-	return 0;
+	return map.cfg_delete_gw(gw_id, group_key);
 }
 
 int ActiveActiveHaStrategy::on_update_gw_location(NVMeofGwMap& map, const NvmeGwId& gw_id,
@@ -87,9 +88,7 @@ int ActiveActiveHaStrategy::on_update_gw_location(NVMeofGwMap& map, const NvmeGw
 
 int ActiveActiveHaStrategy::on_disaster_clear(NVMeofGwMap& map, const NvmeGroupKey& group_key,
                       std::string& NvmeLocation, bool &propose_pending) {
-  // return map.cfg_location_disaster_clear(group_key, NvmeLocation, propose_pending);TODO
-  // but no need to put  disaster intermediate state with "failbacks_in_process = true"
-  return 0;
+  return map.cfg_location_disaster_clear_active_active(group_key, NvmeLocation, propose_pending);
 }
 
 void ActiveActiveHaStrategy::gw_down(NVMeofGwMap& map, const NvmeGwId& gw_id,
@@ -107,7 +106,8 @@ int ActiveActiveHaStrategy::gw_created(NVMeofGwMap& map, const NvmeGwId& gw_id,
   return map.process_gw_map_gw_pass_to_created_active_active(gw_id, group_key, propose_pending);
 }
 
-void ActiveActiveHaStrategy::periodic_ha(NVMeofGwMap& map, bool &propose_pending) {
+void ActiveActiveHaStrategy::periodic_ha(NVMeofGwMap& map,
+                            const NvmeGroupKey& group_key, bool &propose_pending) {
     // Legacy recovery / failback rules
-  map.process_failover_list(propose_pending);
+  map.periodic_ha_handle_active_active(group_key, propose_pending);
 }

@@ -336,5 +336,6 @@ using NvmeGwMonClientStates = std::map<NvmeGwId, NvmeGwClientState>;
 using NvmeGwTimers = std::map<NvmeGwId, NvmeGwTimerState>;
 using NvmeGwMonStates = std::map<NvmeGwId, NvmeGwMonState>;
 using LocationStates = std::map<NvmeLocation, LocationState>;
+using LocationAnaGroups = std::map<NvmeLocation, NvmeAnaGrpId>;
 
 #endif /* SRC_MON_NVMEOFGWTYPES_H_ */
