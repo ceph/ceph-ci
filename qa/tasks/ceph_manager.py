@@ -1039,8 +1039,10 @@ class OSDThrasher(Thrasher):
 
                 self.log("dead_osds={d}, live_osds={ld}".format(d=self.dead_osds, ld=self.live_osds))
                 minup = max(min_size, k)
-                # Choose a random PG and kill OSDs until only min_size remain
-                most_killable = min(len(self.live_osds) - minup, m)
+                # Choose a random PG and kill OSDs until only min_size remain.
+                # Cap at k + m - min_size rather than m: EC min_size defaults
+                # to k+1, so killing m shards would drop PGs below min_size.
+                most_killable = min(len(self.live_osds) - minup, k + m - min_size)
                 self.log("chose to kill {n} OSDs".format(n=most_killable))
                 acting_set = self.get_rand_pg_acting_set(pool_id)
                 assert most_killable < len(acting_set)
