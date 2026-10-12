@@ -591,7 +591,7 @@ option(WITH_RADOSGW_AMQP_ENDPOINT "RADOS Gateway's pubsub support for AMQP push 
 option(WITH_RADOSGW_KAFKA_ENDPOINT "RADOS Gateway's pubsub support for Kafka push endpoint" ON)
 option(WITH_SYSTEM_RDKAFKA "build against system librdkafka instead of the bundled submodule" OFF)
 option(WITH_RADOSGW_LUA_PACKAGES "RADOS Gateway's support for dynamically adding lua packagess" ON)
-option(WITH_RADOSGW_FDB "FoundationDB support for RADOS Gateway (experimental)" OFF)
+option(WITH_RADOSGW_FDB "FoundationDB support for RADOS Gateway (experimental)" ON)
 option(WITH_RADOSGW_DBSTORE "DBStore backend for RADOS Gateway" ON)
 option(WITH_RADOSGW_DAOS "DAOS backend for RADOS Gateway" OFF)
 if(WITH_RADOSGW_DAOS)

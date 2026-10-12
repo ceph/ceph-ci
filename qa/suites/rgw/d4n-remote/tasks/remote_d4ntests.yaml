@@ -12,6 +12,7 @@ overrides:
         rgw remote cache address: "127.0.0.1:8001"
         rgw d4n backend address: "127.0.0.1:8000"
         d4n writecache enabled: true
+        rgw d4n directory type: "fdb"
       c2.client.0:
         setuser: ceph
         setgroup: ceph
@@ -20,17 +21,18 @@ overrides:
         rgw local cache address: "127.0.0.1:8001" 
         d4n writecache enabled: true
         rgw d4n l1 datacache persistent path: "/tmp/rgw_d4n_datacache_c2/"
+        rgw d4n directory type: "fdb"
 tasks:
 - install:
     # extra packages added for the rgw-d4ntests task
     extra_system_packages:
-      deb: ['s3cmd', 'redis']
-      rpm: ['s3cmd', 'redis']
-- ceph: {cluster: c1}
-- ceph: {cluster: c2}
-- redis:
+      deb: ['s3cmd'] 
+      rpm: ['s3cmd']
+- fdb:
     c1.client.0:
     c2.client.0:
+- ceph: {cluster: c1}
+- ceph: {cluster: c2}
 - tox: [c1.client.0]
 - tox: [c2.client.0]
 - rgw:
@@ -45,9 +47,6 @@ tasks:
     c2.client.0:
       - sudo chmod 0777 /var/lib/ceph
       - sudo chmod 0777 /var/lib/ceph/radosgw
-- redis:
-    c1.client.0:
-    c2.client.0:
 - workunit:
     clients:
       c2.client.0:
