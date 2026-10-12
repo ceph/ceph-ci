@@ -11,6 +11,7 @@ overrides:
         rgw d4n local rgw address: "http://127.0.0.1:8000"
         rgw d4n remote cache address: "http://127.0.0.1:8001"
         d4n writecache enabled: true
+        rgw d4n directory type: "fdb"
       c2.client.0:
         setuser: ceph
         setgroup: ceph
@@ -20,15 +21,24 @@ overrides:
         rgw d4n remote cache address: "http://127.0.0.1:8000"
         d4n writecache enabled: true
         rgw d4n l1 datacache persistent path: "/tmp/rgw_d4n_datacache_c2/"
-tasks:
+        rgw d4n directory type: "fdb"
 - install:
     # extra packages added for the rgw-d4ntests task
     extra_system_packages:
-      deb: ['s3cmd'] # valkey not available by default
-      rpm: ['s3cmd', 'valkey']
+      deb: ['s3cmd'] 
+      rpm: ['s3cmd']
 - ceph: {cluster: c1}
 - ceph: {cluster: c2}
-- redis:
+- exec:
+    c1.client.0:
+      - wget https://github.com/apple/foundationdb/releases/download/7.3.63/foundationdb-clients-7.3.63-1.el7.x86_64.rpm
+      - wget https://github.com/apple/foundationdb/releases/download/7.3.63/foundationdb-server-7.3.63-1.el7.x86_64.rpm
+      - sudo dnf install ./foundationdb-clients-7.3.63-1.el7.x86_64.rpm ./foundationdb-server-7.3.63-1.el7.x86_64.rpm
+    c2.client.0:
+      - wget https://github.com/apple/foundationdb/releases/download/7.3.63/foundationdb-clients-7.3.63-1.el7.x86_64.rpm
+      - wget https://github.com/apple/foundationdb/releases/download/7.3.63/foundationdb-server-7.3.63-1.el7.x86_64.rpm
+      - sudo dnf install ./foundationdb-clients-7.3.63-1.el7.x86_64.rpm ./foundationdb-server-7.3.63-1.el7.x86_64.rpm
+- fdb:
     c1.client.0:
     c2.client.0:
 - tox: [c1.client.0]
@@ -45,9 +55,6 @@ tasks:
     c2.client.0:
       - sudo chmod 0777 /var/lib/ceph
       - sudo chmod 0777 /var/lib/ceph/radosgw
-- redis:
-    c1.client.0:
-    c2.client.0:
 - workunit:
     clients:
       c2.client.0:
