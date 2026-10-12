@@ -498,7 +498,7 @@ void usage(const char *prog)
   cout << "        [--dedup_chunk_size <bytes>]" << std::endl;
   cout << "        [--timestamps]" << std::endl;
   cout << "        [--migrate-pool]" << std::endl;
-  cout << "        [--migration-enable-ec-optmizations]" << std::endl;
+  cout << "        [--migration-enable-ec-optimizations]" << std::endl;
   cout << "        [--initial-migration-delay <int>]" << std::endl;
   cout << "        [--migration-interval <int>]" << std::endl;
   cout << "        [--migration-pg-count <int>]" << std::endl;
