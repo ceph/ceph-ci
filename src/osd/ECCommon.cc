@@ -1158,6 +1158,8 @@ void ECCommon::RMWPipeline::cache_ready(Op &op) {
       // is never used again after this point.
       sop.t.swap(*transaction_copy);
     }
+    // MOSDECSubOpWrite claims sop below
+    const uint64_t sub_write_bytes = sop.t.get_num_bytes();
 
     ZTracer::Trace trace;
     if (op.trace) {
@@ -1186,7 +1188,7 @@ void ECCommon::RMWPipeline::cache_ready(Op &op) {
       if (should_send && is_cross_zone(get_parent(), sinfo, pg_shard, get_osdmap())) {
         get_parent()->get_logger()->inc(l_osd_stretch_cross_zone_write_ops);
         get_parent()->get_logger()->inc(l_osd_stretch_cross_zone_write_bytes,
-                                        transaction.get_num_bytes());
+                                        sub_write_bytes);
         op.cross_zone_write_dispatch_time[pg_shard] = ceph_clock_now();
       }
       messages.push_back(std::make_pair(pg_shard.osd, r));
