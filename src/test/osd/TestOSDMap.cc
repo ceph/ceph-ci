@@ -3712,6 +3712,27 @@ TEST_F(OSDMapTest, pgtemp_primaryfirst) {
   }
 }
 
+// The shard of an op from a pre-Tentacle client is passed through
+// pgtemp_undo_primaryfirst() by the OSD as it arrives, so a shard that is out
+// of range for the pool (a stale map, a smaller pool) must not abort the OSD.
+TEST_F(OSDMapTest, pgtemp_undo_primaryfirst_shard_out_of_range) {
+  set_up_map();
+
+  pg_pool_t pool;
+  pool.size = 3;
+  pool.set_flag(pg_pool_t::FLAG_EC_OPTIMIZATIONS);
+  pool.nonprimary_shards.insert(shard_id_t(1));
+
+  pg_t pgid = osdmap.raw_pg_to_pg(pg_t(0, my_ec_pool));
+  OSDMap::Incremental inc(osdmap.get_epoch() + 1);
+  inc.new_pg_temp[pgid] = mempool::osdmap::vector<int>{0, 2, 1};
+  osdmap.apply_incremental(inc);
+
+  ASSERT_EQ(shard_id_t(2), osdmap.pgtemp_undo_primaryfirst(pool, pgid, shard_id_t(1)));
+  EXPECT_EQ(shard_id_t(3), osdmap.pgtemp_undo_primaryfirst(pool, pgid, shard_id_t(3)));
+  EXPECT_EQ(shard_id_t(5), osdmap.pgtemp_undo_primaryfirst(pool, pgid, shard_id_t(5)));
+}
+
 // Helper function to test primaryfirst mapping with an OSD-per-shard array
 // (osd_vec[i] is the OSD holding shard i).
 // Verifies forward and reverse mapping consistency
