@@ -10,6 +10,7 @@
 #include <ostream>
 #include <set>
 #include <string>
+#include <string_view>
 
 #include "common/cmdparse.h"
 #include "common/config_fwd.h"
@@ -88,6 +89,10 @@ int check_command_line(const PoolCreateParams& p, PoolCommand command,
 // The most OSDs a pool can have: each shard id must fit in a shard_id_t.
 constexpr int64_t MAX_POOL_SIZE = 128;
 
+// The most copies of a replicated pool: its size, or its replica in each
+// zone of a pool over zones.
+constexpr int64_t MAX_POOL_REPLICA_COPIES = 10;
+
 // What check_pool_params() needs from the cluster.
 struct PoolCreateCluster {
   const CrushWrapper *crush = nullptr;
@@ -135,6 +140,11 @@ std::string profile_to_string(const std::map<std::string, std::string>& profile)
 // (allowed) must be set and the command must pass --yes-i-really-mean-it
 // (sure).
 int check_size_one(bool allowed, bool sure, std::ostream* ss);
+
+// Whether n copies (the size or the replica named by what) are from 1 to
+// MAX_POOL_REPLICA_COPIES.
+int check_pool_replica_copies(int64_t n, std::string_view what,
+                              std::ostream* ss);
 
 // The value of param in p, in the form its option (pool_default_options())
 // holds it: the rule as its id, and k and m as the whole profile.
