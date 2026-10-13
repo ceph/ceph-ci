@@ -2702,9 +2702,12 @@ proposed before.
   ships in Umbrella. Otherwise they move to version 34, gated on the next release's feature
   bit, which main does not define yet.
 * **Decode derives what an older version lacks.** For an older version, ``num_zones`` is
-  ``peering_crush_bucket_target`` for a stretch pool and 1 otherwise. ``replica`` is
-  ``size / num_zones``, and the per-zone ``min_size`` is ``min_size / num_zones``. Every pool
-  in memory therefore has ``num_zones`` and ``replica``, whichever format it was read from.
+  ``peering_crush_bucket_target`` for a replicated stretch pool and 1 otherwise, including an
+  EC pool that an older ``stretch set`` gave stretch values (Section 11.4.1). ``replica`` is
+  ``size / num_zones``, and the per-zone ``min_size`` is ``min_size / num_zones`` rounded up,
+  as ``stretch set`` rounds it: a pool that degraded stretch mode left at ``min_size`` 1 keeps
+  1 per zone, not 0. Every pool in memory therefore has ``num_zones`` and ``replica``,
+  whichever format it was read from.
 * **Encode in an older format writes the older meaning,** so that decode, encode and decode
   again give the same pool. ``size`` is already the total. ``min_size`` must be written as
   the total, the per-zone ``min_size`` × ``num_zones``. Today stretchy-C writes the per-zone
