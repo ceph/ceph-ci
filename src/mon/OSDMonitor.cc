@@ -12861,7 +12861,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
  	goto reply_no_propose;
       }
     } else {
-      ss << "created rule " << name << " at " << err;
+      ss << "created rule " << name << " at " << rule;
     }
 
     getline(ss, rs);
@@ -12897,7 +12897,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 	goto reply_no_propose;
       }
     } else {
-      ss << "created rule " << name << " at " << err;
+      ss << "created rule " << name << " at " << rule;
     }
 
     getline(ss, rs);
