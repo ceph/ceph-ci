@@ -3127,7 +3127,8 @@ shard_id_t OSDMap::pgtemp_undo_primaryfirst(const pg_pool_t& pool,
       ++i;
     }
   }
-  ceph_abort("Shard out of range!");
+  // out of range for the pool: return it unchanged, as before
+  return primary_first_pos;
 }
 
 void OSDMap::_get_temp_osds(const pg_pool_t& pool, pg_t pg,
