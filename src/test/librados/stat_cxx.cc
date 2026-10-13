@@ -73,7 +73,6 @@ TEST_P(LibRadosStatPP, PoolStatPP) {
 }
 
 TEST_P(LibRadosStatECPP, StatPP) {
-  SKIP_IF_CRIMSON();
   char buf[128];
   memset(buf, 0xcc, sizeof(buf));
   bufferlist bl;
@@ -87,13 +86,11 @@ TEST_P(LibRadosStatECPP, StatPP) {
 }
 
 TEST_P(LibRadosStatECPP, ClusterStatPP) {
-  SKIP_IF_CRIMSON();
   cluster_stat_t cstat;
   ASSERT_EQ(0, cluster.cluster_stat(cstat));
 }
 
 TEST_P(LibRadosStatECPP, PoolStatPP) {
-  SKIP_IF_CRIMSON();
   std::string n = ioctx.get_pool_name();
   ASSERT_EQ(n, pool_name);
   char buf[128];
@@ -137,7 +134,6 @@ TEST_P(LibRadosStatPP, StatPPNS) {
 }
 
 TEST_P(LibRadosStatECPP, StatPPNS) {
-  SKIP_IF_CRIMSON();
   char buf[128];
   memset(buf, 0xcc, sizeof(buf));
   bufferlist bl;

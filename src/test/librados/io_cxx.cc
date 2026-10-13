@@ -510,7 +510,6 @@ TEST_P(LibRadosIoPP, CrcZeroWrite) {
 }
 
 TEST_P(LibRadosIoECPP, SimpleWritePP) {
-  SKIP_IF_CRIMSON();
   char buf[128];
   memset(buf, 0xcc, sizeof(buf));
   bufferlist bl;
@@ -524,7 +523,6 @@ TEST_P(LibRadosIoECPP, SimpleWritePP) {
 }
 
 TEST_P(LibRadosIoECPP, ReadOpPP) {
-  SKIP_IF_CRIMSON();
   char buf[128];
   memset(buf, 0xcc, sizeof(buf));
   bufferlist bl;
@@ -692,7 +690,6 @@ TEST_P(LibRadosIoECPP, SparseReadOpPP) {
 }
 
 TEST_P(LibRadosIoECPP, RoundTripPP) {
-  SKIP_IF_CRIMSON();
   char buf[128];
   Rados cluster;
   memset(buf, 0xcc, sizeof(buf));
@@ -706,7 +703,6 @@ TEST_P(LibRadosIoECPP, RoundTripPP) {
 
 TEST_P(LibRadosIoECPP, RoundTripPP2)
 {
-  SKIP_IF_CRIMSON();
   bufferlist bl;
   bl.append("ceph");
   ObjectWriteOperation write;
@@ -722,7 +718,6 @@ TEST_P(LibRadosIoECPP, RoundTripPP2)
 }
 
 TEST_P(LibRadosIoECPP, OverlappingWriteRoundTripPP) {
-  SKIP_IF_CRIMSON();
   int bsize = alignment;
   int dbsize = bsize * 2;
   char *buf = (char *)new char[dbsize];
@@ -747,7 +742,6 @@ TEST_P(LibRadosIoECPP, OverlappingWriteRoundTripPP) {
 }
 
 TEST_P(LibRadosIoECPP, WriteFullRoundTripPP) {
-  SKIP_IF_CRIMSON();
   char buf[128];
   char buf2[64];
   memset(buf, 0xcc, sizeof(buf));
@@ -765,7 +759,6 @@ TEST_P(LibRadosIoECPP, WriteFullRoundTripPP) {
 
 TEST_P(LibRadosIoECPP, WriteFullRoundTripPP2)
 {
-  SKIP_IF_CRIMSON();
   bufferlist bl;
   bl.append("ceph");
   ObjectWriteOperation write;
@@ -781,7 +774,6 @@ TEST_P(LibRadosIoECPP, WriteFullRoundTripPP2)
 }
 
 TEST_P(LibRadosIoECPP, AppendRoundTripPP) {
-  SKIP_IF_CRIMSON();
   char *buf = (char *)new char[alignment];
   char *buf2 = (char *)new char[alignment];
   auto cleanup = [&] {
@@ -806,7 +798,6 @@ TEST_P(LibRadosIoECPP, AppendRoundTripPP) {
 }
 
 TEST_P(LibRadosIoECPP, TruncTestPP) {
-  SKIP_IF_CRIMSON();
   char buf[128];
   memset(buf, 0xaa, sizeof(buf));
   bufferlist bl;
@@ -821,7 +812,6 @@ TEST_P(LibRadosIoECPP, TruncTestPP) {
 }
 
 TEST_P(LibRadosIoECPP, RemoveTestPP) {
-  SKIP_IF_CRIMSON();
   char buf[128];
   memset(buf, 0xaa, sizeof(buf));
   bufferlist bl1;
@@ -884,7 +874,6 @@ TEST_P(LibRadosIoECPP, RmXattrPP) {
 }
 
 TEST_P(LibRadosIoECPP, CrcZeroWrite) {
-  SKIP_IF_CRIMSON();
   set_allow_ec_overwrites();
   char buf[128];
   memset(buf, 0xcc, sizeof(buf));
@@ -1110,7 +1099,6 @@ TEST_P(LibRadosIoPP, ZeroAndTruncateSameRequest) {
 }
 
 TEST_P(LibRadosIoECPP, CmpExtPP) {
-  SKIP_IF_CRIMSON();
   bufferlist bl;
   bl.append("ceph");
   ObjectWriteOperation write1;
@@ -1131,7 +1119,6 @@ TEST_P(LibRadosIoECPP, CmpExtPP) {
 }
 
 TEST_P(LibRadosIoECPP, CmpExtDNEPP) {
-  SKIP_IF_CRIMSON();
   bufferlist bl;
   bl.append(std::string(4, '\0'));
 
@@ -1149,7 +1136,6 @@ TEST_P(LibRadosIoECPP, CmpExtDNEPP) {
 }
 
 TEST_P(LibRadosIoECPP, CmpExtMismatchPP) {
-  SKIP_IF_CRIMSON();
   bufferlist bl;
   bl.append("ceph");
   ObjectWriteOperation write1;
@@ -1170,7 +1156,6 @@ TEST_P(LibRadosIoECPP, CmpExtMismatchPP) {
 }
 
 TEST_P(LibRadosIoECPP, ZeroAndTruncateSameRequest) {
-  SKIP_IF_CRIMSON();
   set_allow_ec_overwrites();
 
   constexpr size_t chunk_size = 4096;

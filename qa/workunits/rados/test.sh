@@ -171,12 +171,6 @@ do
         pids[$f]=$pid
         test_type["$f"]="neorados" # Store test type for later use in parallel mode
     else
-        if [ $crimson -eq 1 ]; then
-            if [ $f = "ec_io" ] || [ $f = "ec_list" ]; then
-                echo "Skipping EC with Crimson"
-                continue
-            fi
-        fi
         # If running in serial mode, run the test directly
         if ! timeout $timeout $executable $gtest_inject_filter; then
             echo "ERROR: Test $f timed out after $timeout seconds"

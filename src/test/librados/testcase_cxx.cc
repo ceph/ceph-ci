@@ -388,32 +388,40 @@ std::string RadosTestECPP::pool_name_fast;
 
 void RadosTestECPP::SetUpTestCase()
 {
-  SKIP_IF_CRIMSON();
   auto pool_prefix = fmt::format("{}_", ::testing::UnitTest::GetInstance()->current_test_case()->name());
   pool_name_default = get_temp_pool_name(pool_prefix);
   pool_name_fast = get_temp_pool_name(pool_prefix);
   std::map<std::string, std::string> config = {{"rados_replica_read_policy", "default"}};
   ASSERT_EQ("", connect_cluster_pp(s_cluster, config));
-  ASSERT_EQ("", create_ec_pool_pp(pool_name_default, s_cluster, false));
+  if (!is_crimson_cluster()) {
+    ASSERT_EQ("", create_ec_pool_pp(pool_name_default, s_cluster, false));
+  }
   ASSERT_EQ("", create_ec_pool_pp(pool_name_fast, s_cluster, true));
   s_cluster.wait_for_latest_osdmap();
 }
 
 void RadosTestECPP::TearDownTestCase()
 {
-  SKIP_IF_CRIMSON();
-  ASSERT_EQ(0, destroy_pool_pp(pool_name_default, s_cluster));
+  if (!is_crimson_cluster()) {
+    ASSERT_EQ(0, destroy_pool_pp(pool_name_default, s_cluster));
+  }
   ASSERT_EQ(0, destroy_pool_pp(pool_name_fast, s_cluster));
   s_cluster.shutdown();
 }
 
 void RadosTestECPP::SetUp()
 {
-  SKIP_IF_CRIMSON();
   const auto& params = GetParam();
   fast_ec = std::get<0>(params);
   split_ops = std::get<1>(params);
   balanced_read_flags = split_ops ? librados::OPERATION_BALANCE_READS : 0;
+
+  if (is_crimson_cluster() && !fast_ec) {
+    GTEST_SKIP() << "Crimson supports only Fast EC";
+  }
+  if (is_crimson_cluster() && split_ops) {
+    GTEST_SKIP() << "Crimson Fast EC does not support split reads yet";
+  }
 
   if (split_ops) {
     ASSERT_EQ(0, cluster.conf_set("osd_min_split_replica_read_size", "262144"));
@@ -438,7 +446,9 @@ void RadosTestECPP::SetUp()
 
 void RadosTestECPP::TearDown()
 {
-  SKIP_IF_CRIMSON();
+  if (pool_name.empty()) {
+    return;
+  }
   if (cleanup) {
     cleanup_default_namespace(ioctx);
     cleanup_namespace(ioctx, nspace);
@@ -454,8 +464,10 @@ void RadosTestECPP::TearDown()
 
 void RadosTestECPP::set_allow_ec_overwrites()
 {
-  ec_overwrites_set = true;
-  ASSERT_EQ("", set_allow_ec_overwrites_pp(pool_name, cluster, true));
+  ec_overwrites_set = !is_crimson_cluster();
+  if (!is_crimson_cluster()) {
+    ASSERT_EQ("", set_allow_ec_overwrites_pp(pool_name, cluster, true));
+  }
 
   char buf[128];
   memset(buf, 0xcc, sizeof(buf));

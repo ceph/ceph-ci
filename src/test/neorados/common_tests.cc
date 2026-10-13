@@ -34,6 +34,11 @@ std::string get_temp_pool_name(std::string_view prefix)
 
 
 asio::awaitable<uint64_t> NeoRadosECTest::create_pool() {
+  if (is_crimson_cluster()) {
+    co_return co_await ::create_fast_ec_pool(rados(), pool_name(),
+                                            asio::use_awaitable);
+  }
+
   // Workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=110913
   std::vector<std::string> profile_set = {
     fmt::format(
@@ -57,6 +62,11 @@ asio::awaitable<uint64_t> NeoRadosECTest::create_pool() {
 }
 
 asio::awaitable<void> NeoRadosECTest::clean_pool() {
+  if (is_crimson_cluster()) {
+    co_return co_await ::delete_fast_ec_pool(rados(), pool().get_pool(),
+                                             pool_name(), asio::use_awaitable);
+  }
+
   co_await rados().delete_pool(pool().get_pool(), asio::use_awaitable);
   std::vector<std::string> profile_rm = {
     fmt::format(
