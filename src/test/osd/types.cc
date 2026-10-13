@@ -253,6 +253,21 @@ TEST_F(PgPoolStretchEncodingTest, OlderFormatUsesBucketTargetWhenDegraded) {
   EXPECT_EQ(1u, out.get_min_size());
 }
 
+// Test an older release's total min_size that does not divide by the zones
+// rounds up per zone: degraded stretch mode halved min_size 2 to 1, and an
+// operator can set 3 on a size 4 pool. num_zones 1 makes the encoder write
+// min_size unchanged, as the older release's total.
+TEST_F(PgPoolStretchEncodingTest, OlderFormatMinSizeRoundsUpPerZone) {
+  pg_pool_t in = make_stretch_pool(2, 2, 1);
+  in.num_zones = 1;
+  in.peering_crush_bucket_count = 1;
+  EXPECT_EQ(1u, round_trip(in, older_features).get_min_size());
+
+  in = make_stretch_pool(2, 2, 3);
+  in.num_zones = 1;
+  EXPECT_EQ(2u, round_trip(in, older_features).get_min_size());
+}
+
 // Test an EC pool that an older release's stretch set gave stretch values,
 // keeping its size, decodes as one zone with its min_size
 TEST_F(PgPoolStretchEncodingTest, OlderFormatErasurePoolIsOneZone) {
