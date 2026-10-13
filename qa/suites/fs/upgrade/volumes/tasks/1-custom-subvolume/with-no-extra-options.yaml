@@ -1,0 +1,11 @@
+overrides:
+  ceph:
+    subvols:
+      version: 2
+      create: 1
+  ceph-fuse:
+    client.0:
+      mount_subvol_num: 0
+  ceph-fuse:
+    client.0:
+      mount_subvol_num: 1

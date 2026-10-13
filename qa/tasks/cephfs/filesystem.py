@@ -20,6 +20,7 @@ from teuthology import contextutil
 
 from tasks.ceph_manager import write_conf
 from tasks.ceph_manager import CephManager, RunCephCmd
+from tasks.cephfs.helpers.subvolumes import SubvolV3, SubvolV2
 
 
 log = logging.getLogger(__name__)
@@ -867,51 +868,54 @@ class FilesystemBase(MDSClusterBase):
             if session_timeout != 60:
                 self.set_session_timeout(session_timeout)
 
-            if self.fs_config.get('subvols', None) is not None:
-                log.debug(f"Creating {self.fs_config.get('subvols')} subvols "
-                          f"for filesystem '{self.name}'")
-                if not hasattr(self._ctx, "created_subvols"):
-                    self._ctx.created_subvols = dict()
-
-                subvols = self.fs_config.get('subvols')
-                assert(isinstance(subvols, dict))
-                assert(isinstance(subvols['create'], int))
-                assert(subvols['create'] > 0)
-
-                self.run_ceph_cmd('fs', 'subvolumegroup', 'create', self.name, 'qa')
-                subvol_options = self.fs_config.get('subvol_options', '')
-
-                for sv in range(0, subvols['create']):
-                    sv_name = f'sv_{sv}'
-                    cmd = [
-                      'fs',
-                      'subvolume',
-                      'create',
-                      self.name,
-                      sv_name,
-                      '--group_name', 'qa',
-                    ]
-                    if subvol_options:
-                        cmd.append(subvol_options)
-                    self.run_ceph_cmd(*cmd)
-
-                    if self.name not in self._ctx.created_subvols:
-                        self._ctx.created_subvols[self.name] = []
-                    
-                    subvol_path = self.get_ceph_cmd_stdout(
-                        'fs', 'subvolume', 'getpath', self.name,
-                        '--group_name', 'qa',
-                        sv_name)
-                    subvol_path = subvol_path.strip()
-                    self._ctx.created_subvols[self.name].append(subvol_path)
+            subvols_config = self.fs_config.get('subvols', None)
+            if subvols_config is not None:
+                self._create_subvols(subvols_config)
             else:
                 log.debug(f"Not Creating any subvols for filesystem '{self.name}'")
 
-
         self.getinfo(refresh = True)
-
         # wait pgs to be clean
         self.mon_manager.wait_for_clean()
+
+    def _create_subvols(self, config):
+        assert isinstance(config, dict)
+        num = config['num']
+        version = config['version']
+        create_opts = config['create_opts']
+        assert type(num), int
+        assert type(version), int
+        assert type(create_opts) is str
+        assert num > 0
+        assert version in (3, 2, 1)
+
+        log.debug(f'creating {num} v{version} for FS {self.name}')
+
+        if hasattr(self._ctx, "created_subvols"):
+            if self.name not in self._ctx.created_subvols:
+                self._ctx.created_subvols[self.name] = []
+        else:
+            self._ctx.created_subvols = {self.name: []}
+
+        grp_name = 'qa'
+        self.run_ceph_cmd(f'fs subvolumegroup create {self.name} {grp_name}')
+ 
+        for i in range(1, num):
+            sv_name = f'subvol_v{version}_{i}'
+
+            sv_data_path = None
+            if version == 3:
+                v3 = SubvolV3(self.name, sv_name, grp_name=grp_name)
+                v3.create(create_opts)
+                sv_data_path = v3.data_path
+            elif version == 2:
+                # TODO allow create options
+                assert create_opts == ''
+
+                v2 = SubvolV2(self.fs.name, sv_name, grp_name=grp_name)
+                v2.create()
+                sv_data_path = v2.data_path
+            self._ctx.created_subvols[self.name].append(sv_data_path)
 
     def run_client_payload(self, cmd):
         # avoid circular dep by importing here:
