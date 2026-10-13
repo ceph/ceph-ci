@@ -251,8 +251,8 @@ int check_pool_params(const PoolCreateParams& p,
     return -EINVAL;
   }
   if (!erasure) {
-    if (p.is_given("size") && (p.size < 1 || p.size > 10)) {
-      *ss << "pool size must be between 1 and 10";
+    if (p.is_given("size") &&
+        check_pool_replica_copies(p.size, "pool size", ss) < 0) {
       return -EINVAL;
     }
     if (p.is_given("size") && p.num_zones > 1) {
@@ -260,8 +260,9 @@ int check_pool_params(const PoolCreateParams& p,
              "instead" << p.from_default("num_zones");
       return -EINVAL;
     }
-    if (!p.is_given("size") && (p.replica < 1 || p.replica > 10)) {
-      *ss << "replica must be between 1 and 10" << p.from_default("replica");
+    if (!p.is_given("size") &&
+        check_pool_replica_copies(p.replica, "replica", ss) < 0) {
+      *ss << p.from_default("replica");
       return -EINVAL;
     }
     if (p.is_given("min_size") && p.min_size &&
@@ -465,6 +466,16 @@ int check_size_one(bool allowed, bool sure, std::ostream* ss)
            "without recovery. If you are *ABSOLUTELY CERTAIN* that is what "
            "you want, pass the flag --yes-i-really-mean-it.";
     return -EPERM;
+  }
+  return 0;
+}
+
+int check_pool_replica_copies(int64_t n, std::string_view what,
+                              std::ostream* ss)
+{
+  if (n < 1 || n > MAX_POOL_REPLICA_COPIES) {
+    *ss << what << " must be between 1 and " << MAX_POOL_REPLICA_COPIES;
+    return -EINVAL;
   }
   return 0;
 }

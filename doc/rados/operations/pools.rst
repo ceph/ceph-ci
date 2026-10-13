@@ -462,7 +462,7 @@ You may set values for the following keys:
 
 .. describe:: min_size
    
-   :Description: Sets the minimum number of active replicas (or shards) required for PGs to be active and thus for I/O operations to proceed.  For further details, see `Setting the Number of RADOS Object Replicas`_.  For erasure-coded pools, this should be set to a value greater than ``K``. If I/O is allowed with only ``K`` shards available, there will be no redundancy and data will be lost in the event of an additional, permanent OSD failure. For more information, see :ref:`ecpool`
+   :Description: Sets the minimum number of active replicas (or shards) required for PGs to be active and thus for I/O operations to proceed.  For further details, see `Setting the Number of RADOS Object Replicas`_.  For erasure-coded pools, this should be set to a value greater than ``K``. If I/O is allowed with only ``K`` shards available, there will be no redundancy and data will be lost in the event of an additional, permanent OSD failure. For more information, see :ref:`ecpool`. For a pool with ``num_zones`` greater than 1, ``min_size`` counts the replicas or shards in each zone, so for a replicated pool it is from 1 to the number of replicas in each zone.
    :Type: Integer
    :Version: ``0.54`` and above
 

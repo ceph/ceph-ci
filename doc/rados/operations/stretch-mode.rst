@@ -61,7 +61,12 @@ can be supplied. Those that are not take their values from the pool creation
 defaults (see :ref:`pool-creation-defaults`). The pool size becomes twice the
 per-zone replica count. An erasure-coded pool must be a FastEC pool: a legacy
 erasure-coded pool cannot be stretched until it is converted with
-``ceph osd pool set <pool> allow_ec_optimizations true``. Changing ``replica`` on a two-zone pool
+``ceph osd pool set <pool> allow_ec_optimizations true``.
+
+``ceph osd pool set <pool> replica <count>`` sets the number of replicas in each
+zone of a replicated pool. It has the limits of ``size``: from 1 to 10, refused
+while the pool has the ``nosizechange`` flag, and a pool of one copy needs
+``mon_allow_pool_size_one`` and ``--yes-i-really-mean-it``. Changing ``replica`` on a two-zone pool
 assigns a CRUSH rule named ``<pool>-replica-<count>`` and recalculates
 ``min_size`` from the per-zone replica count. With
 ``osd_pool_default_min_size=0``, the calculation is
