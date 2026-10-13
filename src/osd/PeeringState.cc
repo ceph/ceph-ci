@@ -2830,20 +2830,12 @@ void PeeringState::choose_async_recovery_replicated(
   // take out as many osds as we can for async recovery, in order of cost
   for (auto rit = candidates_by_cost.rbegin();
        rit != candidates_by_cost.rend(); ++rit) {
-    bool below_min_size = pool.info.is_stretch_pool()
-      ? osdmap->stretch_num_acting_below_min_size(pool.info, *want)
-      : want->size() <= pool.info.min_size;
-    if (below_min_size) {
-      break;
-    }
     pg_shard_t cur_shard = rit->second;
     vector<int> candidate_want(*want);
     for (auto it = candidate_want.begin(); it != candidate_want.end(); ++it) {
       if (*it == cur_shard.osd) {
 	candidate_want.erase(it);
-	if (pool.info.stretch_set_can_peer(candidate_want, *osdmap, NULL)) {
-	  // if we're in stretch mode, we can only remove the osd if it doesn't
-	  // break peering limits.
+	if (osdmap->async_recovery_can_shrink(pool.info, *want, candidate_want)) {
 	  want->swap(candidate_want);
 	  async_recovery->insert(cur_shard);
 	}

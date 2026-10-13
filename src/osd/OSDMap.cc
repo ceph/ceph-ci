@@ -3131,6 +3131,16 @@ shard_id_t OSDMap::pgtemp_undo_primaryfirst(const pg_pool_t& pool,
   return primary_first_pos;
 }
 
+bool OSDMap::async_recovery_can_shrink(const pg_pool_t& pool,
+                                       const std::vector<int>& want,
+                                       const std::vector<int>& candidate_want) const
+{
+  bool below_min_size = pool.is_stretch_pool()
+    ? stretch_num_acting_below_min_size(pool, want)
+    : want.size() <= pool.min_size;
+  return !below_min_size && pool.stretch_set_can_peer(candidate_want, *this, NULL);
+}
+
 void OSDMap::_get_temp_osds(const pg_pool_t& pool, pg_t pg,
                             vector<int> *temp_pg, int *temp_primary) const
 {
