@@ -2968,7 +2968,7 @@ bool PeeringState::choose_acting(pg_shard_t &get_log_shard_id,
 	ss);
     }
   } else {
-    if (pool.info.is_stretch_pool()) {
+    if (pool.info.is_stretch_pool() && pool.info.get_num_zones() > 1) {
       psdout(20) << "calling calc_ec_acting_stretch for EC pool in stretch mode" << dendl;
       calc_ec_acting_stretch(
       auth_log_shard,
