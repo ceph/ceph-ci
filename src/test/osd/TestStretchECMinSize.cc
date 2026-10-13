@@ -308,6 +308,27 @@ TEST_F(StretchECMinSizeTest, NumActingBelowMinSize_ReplicatedPool)
   EXPECT_EQ(2u, osdmap->stretch_num_acting_below_min_size(rep, acting));
 }
 
+// Async recovery of a replicated stretch pool must not take a zone below its
+// min_size, however many OSDs the other zone has.
+TEST_F(StretchECMinSizeTest, AsyncRecoveryKeepsEachZoneAtMinSize)
+{
+  pg_pool_t rep = *pool;
+  rep.type = pg_pool_t::TYPE_REPLICATED;
+  rep.min_size = 2;
+  // zone dc0 is OSDs 0-2, dc1 OSDs 3-5
+  EXPECT_TRUE(osdmap->async_recovery_can_shrink(rep, {0, 1, 2, 3, 4, 5}, {0, 1, 3, 4, 5}));
+  EXPECT_FALSE(osdmap->async_recovery_can_shrink(rep, {0, 1, 3, 4, 5}, {0, 3, 4, 5}));
+  EXPECT_TRUE(osdmap->async_recovery_can_shrink(rep, {0, 1, 3, 4, 5}, {0, 1, 3, 4}));
+
+  rep.peering_crush_bucket_count = 0;
+  rep.peering_crush_bucket_target = 0;
+  rep.peering_crush_bucket_barrier = 0;
+  rep.num_zones = 1;
+  rep.size = 3;
+  EXPECT_TRUE(osdmap->async_recovery_can_shrink(rep, {0, 1, 2}, {0, 1}));
+  EXPECT_FALSE(osdmap->async_recovery_can_shrink(rep, {0, 1}, {0}));
+}
+
 // Degraded stretch mode: only the mandatory zone contributes to the deficit.
 TEST_F(StretchECMinSizeTest, NumActingBelowMinSize_MandatoryMemberOnlyCountsThatZone)
 {
