@@ -807,3 +807,57 @@ TEST_F(TestECStretchPeering, ZoneBlockSwap_UpShardBehindAuthLogRestarted)
   ASSERT_TRUE(ps->is_backfill_target(x));
   EXPECT_EQ(ps->get_peer_info(x).last_backfill, hobject_t());
 }
+
+// An older release's 'osd pool stretch set' gave this 2+1 pool stretch values
+// over two datacenters and left its size at 3, so the pool has one zone.
+class TestECOlderStretchValues : public ECCrushTestFixture {
+public:
+  TestECOlderStretchValues() : ECCrushTestFixture() {
+    k = 2;
+    m = 1;
+    ec_plugin = "isa";
+  }
+
+protected:
+  void pre_peering_hook() override {
+    ECCrushTestFixture::pre_peering_hook();
+    // osd.0 and osd.1 in datacenter zone-0, osd.2 in zone-1
+    CrushWrapper crush;
+    crush.create();
+    OSDMap::_build_crush_types(crush);
+    int root = 0;
+    int r = crush.add_bucket(0, CRUSH_BUCKET_STRAW2, CRUSH_HASH_DEFAULT,
+                             crush.get_type_id("root"), 0, nullptr, nullptr,
+                             &root);
+    ceph_assert(r == 0);
+    crush.set_item_name(root, "default");
+    for (int osd = 0; osd < k + m; ++osd) {
+      OSDMapTestHelpers::insert_stretch_osd(g_ceph_context, crush, osd, osd / 2);
+    }
+    std::stringstream ss;
+    const int rule = crush.add_simple_rule(
+      "ec_rule", "default", "host", "", "indep", pg_pool_t::TYPE_ERASURE, &ss);
+    ceph_assert(rule >= 0);
+    crush.finalize();
+
+    pg_pool_t updated = *osdmap->get_pg_pool(pool_id);
+    updated.crush_rule = rule;
+    updated.peering_crush_bucket_barrier = crush.get_type_id("datacenter");
+    updated.peering_crush_bucket_target = 2;
+    updated.peering_crush_bucket_count = 2;
+    updated.peering_crush_mandatory_member = CRUSH_ITEM_NONE;
+    OSDMap::Incremental inc(osdmap->get_epoch() + 1);
+    inc.fsid = osdmap->get_fsid();
+    crush.encode(inc.crush, CEPH_FEATURES_SUPPORTED_DEFAULT);
+    inc.new_pools[pool_id] = updated;
+    osdmap->apply_incremental(inc);
+  }
+};
+
+TEST_F(TestECOlderStretchValues, PeersAsOneZone)
+{
+  ASSERT_EQ(1u, osdmap->get_pg_pool(pool_id)->get_num_zones());
+  ASSERT_TRUE(all_shards_active());
+  const std::string data(stripe_unit * k, 'A');
+  create_and_write_verify("obj", data);
+}
