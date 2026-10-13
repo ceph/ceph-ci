@@ -46,6 +46,20 @@ function TEST_pool_get_unset_option() {
     ceph osd pool get p num_zones | grep 'num_zones: 1' || return 1
 }
 
+function TEST_pool_delete_keeps_operator_rule() {
+    local dir=$1
+    run_mon $dir a || return 1
+    ceph osd crush rule create-replicated op_rule default host || return 1
+    ceph osd pool create p 8 8 replicated op_rule || return 1
+    ceph osd pool delete p p --yes-i-really-really-mean-it || return 1
+    ceph osd crush rule ls | grep -qx op_rule || return 1
+    # a rule generated for an erasure coded pool goes with the pool
+    ceph osd pool create e 8 8 erasure || return 1
+    local rule=$(ceph osd pool get e crush_rule | awk '{print $2}')
+    ceph osd pool delete e e --yes-i-really-really-mean-it || return 1
+    ! ceph osd crush rule ls | grep -qx "$rule" || return 1
+}
+
 function TEST_erasure_invalid_profile() {
     local dir=$1
     run_mon $dir a || return 1
