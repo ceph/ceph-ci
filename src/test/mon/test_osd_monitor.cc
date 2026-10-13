@@ -1117,6 +1117,30 @@ TEST_F(OSDMonitorDefaultRuleTest, TwoZonesTakeOneZone) {
   EXPECT_FALSE(suits(rule, pg_pool_t::TYPE_REPLICATED, 2));
 }
 
+// Test a two-zone pool takes a rule that chooses as many zones as it needs,
+// but not one that chooses hosts anywhere under the root
+TEST_F(OSDMonitorDefaultRuleTest, TwoZonesChooseZones) {
+  const int root = crush.get_item_id("default");
+  const int zone = crush.get_type_id("zone");
+  const int host = crush.get_type_id("host");
+  int rule = crush.add_rule(-1, 4, pg_pool_t::TYPE_REPLICATED);
+  ASSERT_GE(rule, 0);
+  crush.set_rule_step_take(rule, 0, root);
+  crush.set_rule_step_choose_firstn(rule, 1, 0, zone);
+  crush.set_rule_step_choose_leaf_firstn(rule, 2, 2, host);
+  crush.set_rule_step_emit(rule, 3);
+  crush.set_rule_name(rule, "choose_zones");
+  EXPECT_TRUE(suits(rule, pg_pool_t::TYPE_REPLICATED, 2));
+
+  int hosts_rule = crush.add_rule(-1, 3, pg_pool_t::TYPE_REPLICATED);
+  ASSERT_GE(hosts_rule, 0);
+  crush.set_rule_step_take(hosts_rule, 0, root);
+  crush.set_rule_step_choose_leaf_firstn(hosts_rule, 1, 0, host);
+  crush.set_rule_step_emit(hosts_rule, 2);
+  crush.set_rule_name(hosts_rule, "any_hosts");
+  EXPECT_FALSE(suits(hosts_rule, pg_pool_t::TYPE_REPLICATED, 2));
+}
+
 // Test a three-zone pool does not take a rule across two zones
 TEST_F(OSDMonitorDefaultRuleTest, ThreeZonesTwoZoneRule) {
   EXPECT_FALSE(suits(stretch_replica_rule, pg_pool_t::TYPE_REPLICATED, 3));

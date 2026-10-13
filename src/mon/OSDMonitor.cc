@@ -15318,6 +15318,18 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
                                   osdmap.pools)) {
         rule_name = crush.get_rule_name(params.default_rule);
       }
+    } else if (num_zones > 1 && !rule_name.empty()) {
+      // a given rule must place the pool in its zones
+      CrushWrapper crush = _get_pending_crush();
+      int rule = crush.get_rule_id(rule_name);
+      if (rule >= 0 &&
+          !default_rule_suits_pool(crush, rule, pool_type, num_zones,
+                                   zone_failure_domain, osdmap.pools)) {
+        ss << "crush rule " << rule_name << " does not place the pool in "
+           << num_zones << " buckets of type " << zone_failure_domain;
+        err = -EINVAL;
+        goto reply_no_propose;
+      }
     }
 
     err = prepare_new_pool(poolstr,
@@ -17509,7 +17521,7 @@ bool OSDMonitor::default_rule_suits_pool(
                 op == CRUSH_RULE_CHOOSELEAF_FIRSTN ||
                 op == CRUSH_RULE_CHOOSELEAF_INDEP) &&
                crush.get_rule_arg2(rule, step) == zone_type &&
-               arg1 == num_zones) {
+               (arg1 == num_zones || arg1 == 0)) {
       chooses_zones = true;
     }
   }
