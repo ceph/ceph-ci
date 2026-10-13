@@ -1064,6 +1064,28 @@ protected:
    * encounter an unexpected error.  FIXME.
    */
 
+  /**
+   * Waiting lists along the request processing pipeline, in pipeline order.
+   * Used by requeue_op/requeue_ops to decide whether a requeued op should
+   * be pushed to the front or back of a waiting list to maintain op ordering.
+   */
+  enum class OpWaitingList : uint8_t {
+    MAP, // First waiting list
+    PEERED,
+    FLUSH,
+    ACTIVE,
+    READABLE,
+    CORO,
+    SCRUB,
+    CACHE_NOT_FULL,
+    PRIMARY_REPAIR,
+    UNREADABLE_OBJECT,
+    DEGRADED_OBJECT,
+    BLOCKED_OBJECT,
+    OBJECT_LOCK, // Last waiting list
+    IN_PROGRESS, // Not on a waiting list. Op was being processed
+  };
+
   // ops with newer maps than our (or blocked behind them)
   // track these by client, since inter-request ordering doesn't otherwise
   // matter.
@@ -1074,6 +1096,10 @@ protected:
 
   /// ops waiting on readble
   std::list<OpRequestRef>            waiting_for_readable;
+
+  /// ops waiting for the in-flight EC coroutine op to complete
+  std::list<OpRequestRef>            waiting_for_coro_op;
+  bool coro_op_in_flight = false;
 
   // ops waiting on active (require peered as well)
   std::list<OpRequestRef>            waiting_for_active;
@@ -1099,9 +1125,14 @@ protected:
 	std::tuple<OpRequestRef, version_t, int,
 		   std::vector<pg_log_op_return_item_t>>>> waiting_for_ondisk;
 
-  void requeue_object_waiters(std::map<hobject_t, std::list<OpRequestRef>>& m);
-  void requeue_op(OpRequestRef op);
-  void requeue_ops(std::list<OpRequestRef> &l);
+  void requeue_object_waiters(
+    std::map<hobject_t, std::list<OpRequestRef>>& m,
+    OpWaitingList prev_queue);
+  void requeue_op(
+    OpRequestRef op, OpWaitingList prev_queue);
+  void requeue_ops(
+    std::list<OpRequestRef> &l,
+    OpWaitingList prev_queue);
 
   // stats that persist lazily
   object_stat_collection_t unstable_stats;
