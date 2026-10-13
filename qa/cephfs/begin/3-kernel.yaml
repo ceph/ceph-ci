@@ -24,5 +24,20 @@ teuthology:
           py_attrgetter(kernel).pop('rpm', nil)
           py_attrgetter(kernel).pop('sha1', nil)
           py_attrgetter(kernel).pop('tag', nil)
+          -- Emptying the dict is not enough: after this script runs, the
+          -- scheduler copies every "sha1" key of the base config back into the
+          -- job yaml at every level it still finds a matching dict (see
+          -- update_key() in teuthology/misc.py), which puts the kernel sha1 we
+          -- just removed straight back. A bare "sha1" is all the kernel task
+          -- needs to install that kernel, so the job then does exactly what
+          -- this fragment is meant to prevent. Drop the whole mapping so there
+          -- is nothing left for update_key() to recurse into.
+          --
+          -- Only for a custom kernel. With "-k distro" (the default) the
+          -- re-injected "sha1: distro" is precisely what we want on all nodes.
+          if branch ~= 'distro' and py_len(kernel) == 0 then
+            log.debug("dropping emptied kernel specification")
+            py_attrgetter(yaml).pop('kernel', nil)
+          end
         end
       end
