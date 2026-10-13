@@ -674,6 +674,13 @@ over three or more data centers still needs ``ceph osd pool stretch set``. The
 intent is to replace individual stretch pools with ``num_zones`` 3 in a future
 release.
 
+An individual stretch pool behaves as in earlier releases, including after an
+upgrade: its ``num_zones`` stays 1, and its ``min_size`` counts the replicas in
+all data centers together. Once an upgrade is committed, OSDs count a data
+center once even if the pool's CRUSH rule reaches it through two device
+classes, and do not count a missing shard of an erasure-coded pool as a data
+center, as earlier releases did.
+
 Individual stretch pools and stretch mode cannot be combined. While stretch
 mode is enabled, it manages the stretch values of every pool itself, and
 ``ceph osd pool stretch set`` and ``ceph osd pool stretch unset`` fail. While
