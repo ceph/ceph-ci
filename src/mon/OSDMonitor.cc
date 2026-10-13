@@ -8995,6 +8995,16 @@ void OSDMonitor::maybe_remove_unused_crush_rule(int64_t skip_pool,
   if (old_rule_id == osdmap.crush->get_osd_pool_default_crush_replicated_rule(cct)) {
     return;
   }
+  // Only the rule of an erasure coded pool, as before, or a rule generated
+  // for this pool (named after it): an operator's rule may be used again.
+  if (const pg_pool_t *p = osdmap.get_pg_pool(skip_pool); p && !p->is_erasure()) {
+    const char *name = _get_pending_crush().get_rule_name(old_rule_id);
+    const string rule_name = name ? name : "";
+    const string pool_name = osdmap.get_pool_name(skip_pool);
+    if (rule_name != pool_name && !rule_name.starts_with(pool_name + "-")) {
+      return;
+    }
+  }
   // Check whether any pool other than current still references old_rule_id.
   for (const auto& [pid, committed_pool] : osdmap.pools) {
     if (pid == skip_pool || pending_inc.old_pools.count(pid)) {
