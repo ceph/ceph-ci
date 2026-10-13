@@ -2352,8 +2352,9 @@ void pg_pool_t::decode(ceph::buffer::list::const_iterator& bl)
     decode(replica, bl);
     decode(num_zones, bl);
   } else {
-    // Old pools that don't have num_zones and replica
-    if (is_stretch_pool()) {
+    // Old pools that don't have num_zones and replica. An EC pool can have
+    // stretch values from an older 'osd pool stretch set', but not zones.
+    if (is_stretch_pool() && !is_erasure()) {
       // Stretch pool: infer num_zones from peering_crush_bucket_target
       // we don't use peering_crush_bucket_count because there are some clusters
       // that set peering_crush_bucket_count to less than the actual number of 
