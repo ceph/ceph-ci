@@ -394,7 +394,7 @@ int execute_diff(const po::variables_map &vm,
   }
 
   if (!from_snap_name.empty()) {
-    ceph_assert(from_snap_id == 0);
+    ceph_assert(from_snap_id == CEPH_NOSNAP);
     r = image.snap_get_id(from_snap_name, &from_snap_id);
     if (r < 0) {
       return r;
