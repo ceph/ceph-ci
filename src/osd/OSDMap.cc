@@ -3136,8 +3136,8 @@ bool OSDMap::async_recovery_can_shrink(const pg_pool_t& pool,
                                        const std::vector<int>& candidate_want) const
 {
   bool below_min_size = pool.is_stretch_pool()
-    ? stretch_num_acting_below_min_size(pool, want)
-    : want.size() <= pool.min_size;
+    ? stretch_num_acting_below_min_size(pool, candidate_want)
+    : candidate_want.size() < pool.min_size;
   return !below_min_size && pool.stretch_set_can_peer(candidate_want, *this, NULL);
 }
 
