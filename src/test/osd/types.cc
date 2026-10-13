@@ -253,6 +253,22 @@ TEST_F(PgPoolStretchEncodingTest, OlderFormatUsesBucketTargetWhenDegraded) {
   EXPECT_EQ(1u, out.get_min_size());
 }
 
+// Test an EC pool that an older release's stretch set gave stretch values,
+// keeping its size, decodes as one zone with its min_size
+TEST_F(PgPoolStretchEncodingTest, OlderFormatErasurePoolIsOneZone) {
+  pg_pool_t in = make_local_pool(3, 2);
+  in.type = pg_pool_t::TYPE_ERASURE;
+  in.peering_crush_bucket_count = 2;
+  in.peering_crush_bucket_target = 2;
+  in.peering_crush_bucket_barrier = 8;
+  in.peering_crush_mandatory_member = CRUSH_ITEM_NONE;
+  const pg_pool_t out = round_trip(in, older_features);
+  EXPECT_TRUE(out.is_stretch_pool());
+  EXPECT_EQ(1u, out.get_num_zones());
+  EXPECT_EQ(3u, out.get_size());
+  EXPECT_EQ(2u, out.get_min_size());
+}
+
 // Test a local pool is unchanged by either format
 TEST_F(PgPoolStretchEncodingTest, LocalPoolUnchangedByEitherFormat) {
   const pg_pool_t in = make_local_pool(3, 2);

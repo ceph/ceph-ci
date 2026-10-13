@@ -36,7 +36,7 @@
  *     datacenter "dc0"  (type 9): OSDs 0, 1, 2, 6
  *     datacenter "dc1"  (type 9): OSDs 3, 4, 5, 7
  *
- *   pool: erasure, size=8, min_size=2
+ *   pool: erasure, two zones, size=6, min_size=2 per zone
  */
 
 #include <gtest/gtest.h>
@@ -112,6 +112,7 @@ static std::shared_ptr<OSDMap> make_stretch_ec_osdmap()
   pool.type     = pg_pool_t::TYPE_ERASURE;
   pool.size     = 6;
   pool.min_size = 2;
+  pool.num_zones = 2;
   pool.crush_rule = rule_id;
   pool.set_pg_num(8);
   pool.set_pgp_num(8);
@@ -286,6 +287,22 @@ TEST_F(StretchECMinSizeTest, NumActingBelowMinSize_ThreeAZCluster)
 
   acting = {0, 1, 2, 3, 4, CRUSH_ITEM_NONE};
   EXPECT_EQ(1u, osdmap->stretch_num_acting_below_min_size(three_az_pool, acting));
+}
+
+// An EC pool that an older release's stretch set gave stretch values has one
+// zone, so min_size counts the whole acting set, not each datacenter
+TEST_F(StretchECMinSizeTest, OneZonePoolWithStretchValues_WholeActingSetCounts)
+{
+  pg_pool_t one_zone = *pool;
+  one_zone.num_zones = 1;
+  one_zone.size = 3;
+  vector<int> acting = {0, 1, 3}; // dc0: 2, dc1: 1
+  EXPECT_EQ(0u, osdmap->stretch_num_acting_below_min_size(one_zone, acting));
+  EXPECT_TRUE(osdmap->at_least_one_zone_has_min_size(one_zone, acting));
+  acting = {0, CRUSH_ITEM_NONE, CRUSH_ITEM_NONE};
+  EXPECT_EQ(1u, osdmap->stretch_num_acting_below_min_size(one_zone, acting));
+  acting = {0, CRUSH_ITEM_NONE, 3};
+  EXPECT_TRUE(osdmap->at_least_one_zone_has_min_size(one_zone, acting));
 }
 
 // Non-stretch pool - always 0
