@@ -9336,7 +9336,7 @@ int OSDMonitor::prepare_command_pool_set_num_zones(
       if (int r = update_nonprimary_shards(p, &ss); r < 0) {
         return r;
       }
-      ss << "pool unstretched (num_zones=1)";
+      ss << "pool unstretched (num_zones=1); ";
       // an individual stretch pool leaves stretch mode, if off, as it is
       if (stretch_mode_enabled_or_pending() &&
           !other_pool(pool, [](const pg_pool_t& p) {
@@ -9510,6 +9510,7 @@ int OSDMonitor::prepare_command_pool_set_num_zones(
         ss << " (" << n << " zones * " << erasure_code->get_chunk_count() << " chunks)";
       }
     }
+    ss << "; ";
   }
   if (p.crush_rule != old_crush_rule) {
     maybe_remove_unused_crush_rule(pool, old_crush_rule);
@@ -9652,7 +9653,7 @@ int OSDMonitor::prepare_command_pool_set_replica(
     p.min_size = g_conf().get_osd_pool_default_min_size(p.replica);
   }
   ss << "set replica to " << static_cast<unsigned>(p.replica)
-     << " (legacy) size set to: " << static_cast<unsigned>(p.size);
+     << ", size set to " << static_cast<unsigned>(p.size) << "; ";
   if (new_crush_rule != old_crush_rule) {
     maybe_remove_unused_crush_rule(pool, old_crush_rule);
   }
