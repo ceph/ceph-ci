@@ -1564,6 +1564,25 @@ class RgwService(CephService):
                 ssl_cert = '\n'.join(ssl_cert)
             deps.append(f'ssl-cert:{utils.config_hash(ssl_cert)}')
 
+        if rgw_spec:
+            frontend_parts = []
+            if rgw_spec.rgw_frontend_type:
+                frontend_parts.append(f'type={rgw_spec.rgw_frontend_type}')
+            if rgw_spec.rgw_frontend_extra_args:
+                frontend_parts.append(
+                    f'extra_args={sorted(rgw_spec.rgw_frontend_extra_args)}')
+            allow_reuse = getattr(rgw_spec, 'allow_port_reuse', False)
+            frontend_parts.append(f'allow_port_reuse={allow_reuse}')
+            deps.append(f'frontend:{utils.config_hash(str(sorted(frontend_parts)))}')
+
+        # when metrics push is enabled, track pushgateway daemons and the
+        # security setting so the RGW daemon gets reconfigured when
+        # pushgateway is added/removed, changes status
+        if getattr(rgw_spec, 'metrics_push_enabled', False):
+            deps.append(f'secure_monitoring_stack:{mgr.secure_monitoring_stack}')
+            for dd in mgr.cache.get_daemons_by_type('pushgateway'):
+                deps.append(f'{dd.name()}:{dd.status}')
+
         return sorted(deps)
 
     def set_realm_zg_zone(self, spec: RGWSpec) -> None:
@@ -1888,7 +1907,42 @@ class RgwService(CephService):
                 'value': str(size),
             })
 
+        if spec.metrics_push_enabled:
+            pushgateway_url = self._get_pushgateway_url()
+            if pushgateway_url:
+                metrics_push_config: Dict[str, Any] = {
+                    'pushgateway_url': pushgateway_url,
+                    'zone_name': spec.rgw_zone or '',
+                    'interval': spec.metrics_push_interval or 3600,
+                    'timeout': spec.metrics_push_timeout or 300,
+                }
+                if self.mgr.secure_monitoring_stack:
+                    metrics_push_config['root_cert'] = self.mgr.cert_mgr.get_root_ca()
+                    self.mgr.cert_mgr.register_self_signed_cert_key_pair(
+                        spec.service_name(), 'metrics_push')
+                    tls_pair = self.get_self_signed_certificates_with_label(
+                        spec, daemon_spec, 'metrics_push')
+                    metrics_push_config['client_cert'] = tls_pair.cert
+                    metrics_push_config['client_key'] = tls_pair.key
+                daemon_spec.final_config['metrics_push'] = metrics_push_config
+            else:
+                logger.warning(
+                    f'{daemon_spec.name()}: metrics_push_enabled but no '
+                    'pushgateway daemon found, skipping timer setup'
+                )
+
         return daemon_spec
+
+    def _get_pushgateway_url(self) -> str:
+        """Return the URL of the first available pushgateway daemon."""
+        daemons = self.mgr.cache.get_daemons_by_type('pushgateway')
+        for dd in daemons:
+            if dd.status == DaemonDescriptionStatus.running and dd.hostname:
+                port = dd.ports[0] if dd.ports else 9091
+                host = dd.ip or self.mgr.inventory.get_addr(dd.hostname)
+                scheme = 'https' if self.mgr.secure_monitoring_stack else 'http'
+                return build_url(scheme=scheme, host=host, port=port)
+        return ''
 
     def get_keyring(self, rgw_id: str) -> str:
         """
