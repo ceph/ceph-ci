@@ -9173,6 +9173,9 @@ int OSDMonitor::prepare_command_pool_set_num_zones(
     ss << "pool num_zones must be at least 1";
     return -EINVAL;
   }
+  if (int r = check_size_change(p, &ss); r < 0) {
+    return r;
+  }
 
   if (old_num_zones > 1 && n == 1) {
     if (p.is_stretch_pool()) {
@@ -9199,6 +9202,14 @@ int OSDMonitor::prepare_command_pool_set_num_zones(
         }
         if (int r = check_pool_replica_copies(size, "replica", &ss); r < 0) {
           return r;
+        }
+        if (size == 1) {
+          if (int r = check_size_one(
+                g_conf().get_val<bool>("mon_allow_pool_size_one"),
+                cmd_getval_or<bool>(cmdmap, "yes_i_really_mean_it", false),
+                &ss); r < 0) {
+            return r;
+          }
         }
         p.size = size;
         p.min_size = g_conf().get_osd_pool_default_min_size(p.size);
