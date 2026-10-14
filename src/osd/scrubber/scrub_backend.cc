@@ -1447,6 +1447,12 @@ std::map<shard_id_t, shard_id_t> ScrubBackend::find_corrupt_zone_copies(
       }
       bufferlist& bl = zone_digests[zone].at(rel_shard);
       if (!same_crc(bl, ref_bl)) {
+        // a copy that ranks as well as the reference leaves nothing to say
+        // which is good, so both are reported and repair rebuilds both
+        if (rank(zone) == rank(*ref)) {
+          corrupt.emplace(sinfo.get_abs_shard(rel_shard, *ref),
+                          sinfo.get_abs_shard(rel_shard, zone));
+        }
         corrupt.emplace(sinfo.get_abs_shard(rel_shard, zone),
                         sinfo.get_abs_shard(rel_shard, *ref));
         bl = copy_of(ref_bl);
