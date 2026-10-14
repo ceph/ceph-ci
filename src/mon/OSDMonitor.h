@@ -981,13 +981,23 @@ public:
 
   // Whether a rule can serve a new pool: a rule of the pool's type that, for
   // more than one zone, divides the cluster as the pool's zones would.
+  // A zone_size other than 0 is the number of items each zone must get.
   static bool default_rule_suits_pool(
       CrushWrapper& crush,
       int64_t rule,
       int pool_type,
       int64_t num_zones,
       const std::string& zone_failure_domain,
-      const mempool::osdmap::map<int64_t, pg_pool_t>& pools);
+      const mempool::osdmap::map<int64_t, pg_pool_t>& pools,
+      unsigned zone_size = 0);
+
+  // The number of items a rule places in each bucket of zone_type for a
+  // pool of the given size, or -1 if the zones do not all get the same.
+  static int rule_items_per_zone(
+      const CrushWrapper& crush,
+      int rule,
+      int zone_type,
+      unsigned size);
 
   // The reason why a command waits for the upgrade to be committed.
   static std::string num_zones_upgrade_hint();

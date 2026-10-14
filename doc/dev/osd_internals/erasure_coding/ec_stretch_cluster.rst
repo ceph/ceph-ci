@@ -457,9 +457,10 @@ Without ``--rule`` the rule is named after the pool. Single-zone pools with the 
 profile are the exception: they share the ``erasure-code`` rule. If a committed rule of that name
 already exists it is reused. For a pool over zones it must place the pool in ``num_zones``
 buckets of the zone type, as a rule given with ``--rule`` must, else the command fails with
-"crush rule <rule> does not place the pool in <num_zones> buckets of type <type>"; for a
-single-zone pool it is not checked against ``k+m`` or the CRUSH options. Otherwise the plugin
-builds it:
+"crush rule <rule> does not place the pool in <num_zones> buckets of type <type>", and it must
+place ``k+m`` items in each, else "crush rule <rule> does not place <k+m> items in each <type>".
+For a single-zone pool it is not checked against ``k+m`` or the CRUSH options. Otherwise the
+plugin builds it:
 
 * ``num_zones`` greater than 1: a stretch rule that takes ``num_zones`` buckets of the zone type
   under the root (``choose firstn <num_zones>``), then ``k+m`` OSD failure domains
@@ -558,8 +559,8 @@ Only a pool deletion removes a profile automatically. A profile stays when:
   check or the PG limit. The profile stays, and so does the rule named after the pool if the failure came
   after the rule was created. A retry with the same ``k``, ``m`` and CRUSH options reuses both.
   A retry with different CRUSH options fails until the profile is removed. A retry with a
-  different ``k`` or ``m`` generates a new profile but reuses the leftover rule without checking
-  it. Remove them with ``ceph osd erasure-code-profile rm`` and ``ceph osd crush rule rm``.
+  different ``k`` or ``m`` generates a new profile and reuses the leftover rule, which a pool
+  over zones refuses if it does not place ``k+m`` items in each zone. Remove them with ``ceph osd erasure-code-profile rm`` and ``ceph osd crush rule rm``.
 
 OSDs store a deleted pool's profile with its final ``pg_pool_t``, so deleting the profile in the
 same epoch as the pool does not affect PG removal.
