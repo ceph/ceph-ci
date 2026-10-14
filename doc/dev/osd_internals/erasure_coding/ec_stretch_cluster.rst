@@ -929,7 +929,10 @@ The arguments are used as follows:
 * ``tiebreaker_mon`` is a legacy argument. Without it, the monitors pick the one monitor
   outside both zones (Section 11.4.2). It is still accepted, and used as today, so that
   existing callers keep working and a cluster with more than one monitor outside the zones
-  can still name its tiebreaker.
+  can still name its tiebreaker. Being the first positional argument, it can only be left
+  out when the other two are given by name: ``ceph mon enable_stretch_mode --new_crush_rule
+  <rule> --dividing_bucket <type>``. ``enable_stretch_mode <rule> <type>`` is refused by the
+  command line parser with "missing required parameter dividing_bucket".
 * ``new_crush_rule`` is given to every replicated pool that ``enable_stretch_mode`` changes,
   and ``crush_rule``, if given, to every replicated pool that ``disable_stretch_mode`` changes,
   as ``--crush_rule`` would be (Section 13.2); see the warning below. They are checked as

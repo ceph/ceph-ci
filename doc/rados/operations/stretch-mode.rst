@@ -359,12 +359,14 @@ with the CRUSH topology.
 
    **Option 1: Automatic tiebreaker selection** (recommended):
 
-   Let the cluster automatically select the tiebreaker:
+   Let the cluster automatically select the tiebreaker. Without the
+   tiebreaker the rule and the bucket type must be given by name, because the
+   first positional argument is the tiebreaker:
 
    .. prompt:: bash #
 
       ceph mon set_location e datacenter=zone3
-      ceph mon enable_stretch_mode stretch_replicated_rule datacenter
+      ceph mon enable_stretch_mode --new_crush_rule stretch_replicated_rule --dividing_bucket datacenter
 
    **Option 2: Explicit tiebreaker Monitor**:
 
