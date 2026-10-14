@@ -2458,20 +2458,28 @@ logic described in Section 11.2:
 11.9 Upmaps and the Balancer
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A ``pg-upmap`` or ``pg-upmap-items`` entry replaces OSDs that CRUSH chose for a
-PG. For a pool with ``num_zones > 1`` an entry can move a copy or a shard into
-another zone. ``CrushWrapper::verify_upmap``, which checks every entry, does
-not prevent this for the usual stretch rule, which takes one root and chooses
-``num_zones`` buckets of the zone type: it checks only that the OSDs span no
-more buckets than each ``choose`` step picks, and that no two share a failure
-domain of a ``chooseleaf`` step. Only a rule that takes each zone bucket on its
-own keeps every block in its zone, because each emitted block must stay under
-its ``take``.
+Every balancer mode follows two rules for a pool with ``num_zones > 1``:
 
-**Manual upmaps** stay as flexible as they are today. ``ceph osd pg-upmap``,
-``pg-upmap-items`` and ``pg-upmap-primary`` are operator tools: the monitor does
-not refuse an entry, and ``clean_pg_upmaps`` does not remove one, because it
-moves OSDs across zones. Peering limits the effect:
+1. **A balancer moves an OSD only within its zone.** Each change replaces an
+   OSD with another one in the same bucket of the pool's zone type
+   (``peering_crush_bucket_barrier``). CRUSH decides how many copies or shards
+   of a PG each zone holds, and no balancer changes that.
+2. **A balancer does not manage which zone serves each zone block.** CRUSH
+   orders the zones of each PG. That order gives each zone block its zone
+   (Section 11.5.1), and so decides the zone of the Primary. A balancer may
+   reorder the zones to spread primaries between zones, but only where no data
+   moves. The Zone Primaries of later releases (Section 6.2) take on the
+   Primary's work for their own zone, which solves the same problem better.
+
+**Manual upmaps** stay as flexible as they are today. A ``pg-upmap`` or
+``pg-upmap-items`` entry can move a copy or a shard of a multi-zone pool into
+another zone: ``CrushWrapper::verify_upmap`` checks only that the OSDs span no
+more buckets than each ``choose`` step picks and that no two share a failure
+domain of a ``chooseleaf`` step, which a stretch rule that takes one root and
+chooses the zones does not prevent. ``ceph osd pg-upmap``, ``pg-upmap-items``
+and ``pg-upmap-primary`` are operator tools: the monitor does not refuse an
+entry, and ``clean_pg_upmaps`` does not remove one, because it moves OSDs
+across zones. Peering limits the effect:
 
 - a replicated stretch pool takes at most ``size / peering_crush_bucket_target``
   OSDs from a zone (Section 11.5.1), so an extra copy in one zone is left out
@@ -2480,31 +2488,121 @@ moves OSDs across zones. Peering limits the effect:
   backfilled, and the ``pg_temp`` stays (Section 11.5.1), so the PG stays
   remapped while the entry exists.
 
-**The upmap balancer** (``OSDMap::calc_pg_upmaps``) must not make such entries.
-For a pool with ``num_zones > 1`` it accepts a move only if the OSD it replaces
-and the OSD it chooses are in the same bucket of the pool's zone type
-(``peering_crush_bucket_barrier``). For an EC pool this also keeps each shard
-in the zone of its block. The balancer therefore balances within each zone. It
-never moves load between zones: stretch mode already requires the zones to have
-similar weights (Section 11.3), and a copy moved to the other zone would only
-leave its PG undersized or remapped.
+**The upmap balancer** (``OSDMap::calc_pg_upmaps``)
 
-**The read balancer** (``pg-upmap-primary``, replicated pools only) moves
-primaries to spread read load. Moving a primary to the other zone is open:
+*Moves.* ``CrushWrapper::try_remap_rule`` replays the rule over the PG's
+current mapping and looks for a replacement only under the bucket that the
+mapping already uses at each ``choose`` level. For the rule that pool creation
+builds for ``num_zones > 1`` (Section 2.1), the root has exactly
+``num_zones`` zone buckets, every PG uses all of them, and every move stays in
+its zone. A rule given with ``--rule`` may differ: if its root holds more zone
+buckets than ``num_zones``, the first level can replace a zone that has no
+underfull OSD with another zone, which moves a whole block. So
+``find_best_remap`` checks each new pair explicitly. For a pool with
+``num_zones > 1`` it takes a position only if the new OSD is in the same zone
+bucket as the OSD it replaces. Because it already skips OSDs named in the PG's
+existing pairs, the replaced OSD is the one CRUSH chose, and every position
+stays in the zone CRUSH chose for it. Dropping an existing pair
+(``try_drop_remap_overfull``, ``try_drop_remap_underfull``) returns a position
+to the OSD CRUSH chose, and is allowed as it is today. For a manual entry into
+another zone, dropping the pair brings the copy or shard back to its own zone.
+PGs with a ``pg_upmap`` entry are still skipped.
+
+*Targets.* Today an OSD's target number of PGs is its share of the weight
+under the rule's ``take``: ``size × pg_num × w / W``. Here ``w`` is the OSD's
+CRUSH weight times its reweight, and ``W`` is the sum of ``w`` over the root.
+A stretch rule, however, gives every zone ``size / num_zones`` positions of
+every PG, whatever the zone weighs. Unless the zones weigh the same, every OSD
+of the lighter zone looks overfull and every OSD of the heavier zone looks
+underfull, and no move that rule 1 allows can change that. The balancer then
+stops while each zone is still unbalanced. An OSD that is marked out does the
+same to its zone. In ``osdmaptool --upmap`` runs (two zones, three copies in
+each, two OSDs per host, ``upmap_max_deviation 1``), the spread of PGs per OSD
+after balancing in the two zones was:
+
+- equal zones: 2 and 3;
+- one OSD out in the second zone: 14 and 8;
+- zones 10% apart, which ``mon_stretch_max_bucket_weight_delta`` allows: 11
+  and 9.
+
+No upmap entry moved an OSD to another zone in any of these runs.
+
+For a pool with ``num_zones > 1``, targets are computed per zone. An OSD in
+zone ``z`` gets ``N(z) × w / W(z)``. ``N(z)`` is the number of the pool's PG
+positions that CRUSH maps to ``z`` before upmaps, and ``W(z)`` is the sum of
+``w`` over the OSDs of ``z``. A zone with ``W(z) = 0`` is left out. Moves within
+a zone do not change ``N(z)``, so every zone can reach its targets. When the
+zones weigh the same and no OSD is out, the targets equal today's.
+``calc_deviations`` takes a target for each OSD instead of a single
+``pgs_per_weight``, and ``upmap_max_deviation`` keeps its meaning. Pools with
+``num_zones = 1`` keep today's targets. The mgr balancer calls
+``calc_pg_upmaps`` for one pool at a time. When ``osdmaptool --upmap-pool``
+passes several pools, each pool's targets are computed separately and summed
+for each OSD. In a zone with no OSD up (Degraded stretch mode), no OSD is
+overfull, so the balancer makes no move there. Apart from the
+``backfill_toofull`` exception, the mgr balancer does not run while objects
+are degraded.
+
+``ceph balancer eval`` (``Module.calc_eval``) also bases its targets on the
+``take`` root. For a multi-zone pool it therefore reports an imbalance between
+zones that no balancer can remove, so it should use the per-zone targets too.
+
+Even with per-zone targets, each OSD of the lighter zone holds more PGs per
+unit of weight than an OSD of the heavier zone, as CRUSH places them. Under
+rule 1 no balancer can change this, so the lighter zone fills first. This is
+why stretch mode keeps zone weights within
+``mon_stretch_max_bucket_weight_delta``.
+
+**Primaries.** For each PG, CRUSH picks the zone of the first block, and so of
+the Primary, with a probability in proportion to the zone's weight. Every zone
+therefore expects the same number of primaries per unit of weight. In a run
+with zones of 12 and 8 OSDs, the zones held 98 and 62 of the 160 primaries:
+8.2 and 7.8 per OSD. The balancer does not need to move primaries between
+zones to spread them evenly over the OSDs.
+
+- Replicated pools: the read balancer (``pg-upmap-primary``, modes ``read``
+  and ``upmap-read``) may make any OSD of the PG its Primary, including one
+  in another zone. Only the order of the zones changes and no
+  data moves, so rule 2 allows it, and the read balancer stays as it is.
+- EC pools: the monitor refuses ``pg-upmap-primary`` for them, and
+  ``OSDMap::balance_primaries`` skips them. Moving an EC Primary to another
+  zone means swapping zone blocks. Objects are stored per absolute shard
+  (Section 11.5.1), so a swap rewrites every shard of both blocks across the
+  inter-zone link. No balancer does this. An upmap move within a zone can move
+  the Primary, or a later release's Zone Primary, to another OSD of the same
+  zone, as it can for any EC pool today.
+- Later releases: spreading Zone Primaries over the OSDs of each zone is a
+  change within a zone, which rule 1 allows. EC pools would first need a way
+  to choose which primary-capable shard of a zone is its Zone Primary.
+
+**The crush-compat mode** changes per-OSD weights in the compat weight-set.
+``CrushWrapper::choose_args_adjust_item_weight`` sets a bucket's weight-set
+weight to the sum of its items' weights, so every change also changes the zone
+weights. Every PG still uses every zone, but CRUSH now chooses the zones of
+some PGs in a different order. In an ``osdmaptool`` run, adding 8% to one
+zone's weight reversed the zone order of 3 of 192 PGs. For a replicated pool
+that only moves the Primary. For an EC pool it swaps the PG's zone blocks and
+rewrites every shard of the PG, which breaks rule 2 as a side effect. The mode
+also aims at the per-root targets, which it can never reach while the zones
+are uneven, so it keeps changing weights. The balancer therefore refuses
+``crush-compat`` while any erasure pool has ``num_zones > 1``.
+``ceph balancer mode crush-compat`` fails and points to ``upmap``, which needs
+``require_min_compat_client`` luminous or later, and an optimize run in
+``crush-compat`` mode makes no change. An existing compat weight-set stays as
+it is. Replicated multi-zone pools keep today's behaviour.
 
 .. note::
 
    **Open questions for reviewers**
 
-   - Should the read balancer keep a stretch pool's primaries in the zone that
-     CRUSH chose for them? Localized and balanced reads (Section 7) already
-     serve reads from the client's zone, so primaries matter mostly for writes
-     and for clients without read affinity.
+   - Global stretch mode (Section 2.3) is legacy, but its pools have
+     ``num_zones = 2``, so the zone check and the per-zone targets apply to
+     them too. With the usual stretch rule the zone check changes nothing. The
+     per-zone targets change the result only when the zones are uneven or an
+     OSD is out. Should they apply to global stretch mode pools (recommended),
+     or should those pools keep the targets they get on main?
    - Should a health warning list PGs whose upmap entries break zone affinity,
      so that a manual entry that leaves a PG undersized or remapped is visible?
-   - The ``crush-compat`` balancer mode changes per-OSD weights in a weight
-     set. Should it keep each zone's total weight, so that the zones stay as
-     even as stretch mode requires?
 
 
 12. Scrub Behavior — *R1*
