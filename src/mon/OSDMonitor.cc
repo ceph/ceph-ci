@@ -8069,24 +8069,12 @@ bool OSDMonitor::should_remove_ec_profile(
     return false;
   }
 
-  // Check if any other pool in the current osdmap is using this profile
-  for (const auto& [pool_id, pool_info] : osdmap.pools) {
-    if (pool_id != pool &&
-        pool_info.is_erasure() &&
-        pool_info.erasure_code_profile == profile) {
-      *ss << "pool " << osdmap.pool_name[pool_id] << " uses erasure code profile '" << profile << "'";
-      return false;
-    }
-  }
-
-  // Check if any pending pool is using this profile
-  for (const auto& [pool_id, pool_info] : pending_inc.new_pools) {
-    if (pool_id != pool &&
-      pool_info.is_erasure() &&
-      pool_info.erasure_code_profile == profile) {
-      *ss << "pending pool " << pool_id << " uses erasure code profile '" << profile << "'";
-      return false;
-    }
+  // Check if any other pool, as the pending changes leave it, uses it
+  if (const auto other = other_pool(pool, [&profile](const pg_pool_t& p) {
+        return p.is_erasure() && p.erasure_code_profile == profile;
+      })) {
+    *ss << "pool " << *other << " uses erasure code profile '" << profile << "'";
+    return false;
   }
 
   // Profile is not used by any other pool - safe to remove

@@ -535,19 +535,21 @@ changes it (Section 13.2). A ``num_zones`` key set in a profile with
 When an erasure coded pool is deleted, with ``ceph osd pool delete`` or through librados, the
 monitor deletes its profile in the same OSDMap update as the pool, unless:
 
-* the profile is ``default``;
-* another erasure coded pool in the committed OSDMap uses it; or
-* a pool in the pending OSDMap update uses it. The pending update holds pools being created and
-  pending changes to existing pools.
+* the profile is ``default``; or
+* another erasure coded pool uses it, as the pending OSDMap update leaves the pools: pools being
+  created count, and pools being deleted in the same update do not.
+
+A pool create that names a profile whose removal is pending waits for that update to commit,
+and then finds the profile gone (or generates it again, if the create names it itself).
 
 This applies to every profile, whether ``ceph osd pool create`` generated it or it was created
 with ``ceph osd erasure-code-profile set``. Only erasure coded pools count as users. The command
 output does not mention the deletion; the monitor logs the decision at ``debug_mon`` 10.
 
-The pool's CRUSH rule is removed in the same update if no other pool in the committed OSDMap
-uses it, as it was before this change. The two decisions are independent: the rule check counts
-pools of any type but not pending pools, while the profile check counts only erasure coded pools
-but includes pending ones. One can be removed while the other is kept.
+The pool's CRUSH rule is removed in the same update if no other pool uses it, counted the same
+way, pools of any type. The rule of a replicated pool is removed only if it was generated for the
+pool (named after it, or ``<pool>-`` followed by anything), so that an operator's rule can be used
+again. The two decisions are independent: one can be removed while the other is kept.
 
 Only a pool deletion removes a profile automatically. A profile stays when:
 
