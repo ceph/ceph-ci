@@ -926,12 +926,12 @@ Here are the breakdowns of the arguments:
    :Required: Yes.
 
 .. describe:: {--yes-i-really-mean-it}
-   
-      This flag is required to confirm that you really want to bypass
-      safety checks and set the values for a pool, e.g,
-      when you are trying to set ``peering_crush_bucket_count`` or 
-      ``peering_crush_bucket_target`` to be more than the number of buckets in the crush map.
-   
+
+      Accepted so that existing scripts keep working. In earlier releases it
+      allowed ``peering_crush_bucket_count`` or ``peering_crush_bucket_target``
+      to be more than the number of buckets in the CRUSH map. Neither can now
+      be more than the number of zones that the CRUSH rule spans.
+
       :Type: Flag
       :Required: No.
 
