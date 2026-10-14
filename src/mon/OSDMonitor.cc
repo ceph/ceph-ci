@@ -8630,6 +8630,20 @@ int OSDMonitor::prepare_new_pool(string& name,
     *ss << "crush rule " << crush_rule << " type does not match pool";
     return -EINVAL;
   }
+  // the rule, given, the default or one left with the pool's name, must place
+  // a pool over zones in its zones
+  if (num_zones > 1) {
+    CrushWrapper newcrush = _get_pending_crush();
+    const char *name = osdmap.crush->get_rule_name(crush_rule);
+    const string rule_name = name ? name : stringify(crush_rule);
+    if (!default_rule_suits_pool(newcrush, crush_rule, pool_type, num_zones,
+                                 effective_zone_failure_domain, osdmap.pools)) {
+      *ss << "crush rule " << rule_name
+          << " does not place the pool in " << num_zones << " buckets of type "
+          << effective_zone_failure_domain;
+      return -EINVAL;
+    }
+  }
 
   uint32_t stripe_width = 0;
   r = prepare_pool_stripe_width(pool_type, erasure_code_profile, &stripe_width, ss);
@@ -15327,18 +15341,6 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
                                   num_zones, zone_failure_domain,
                                   osdmap.pools)) {
         rule_name = crush.get_rule_name(params.default_rule);
-      }
-    } else if (num_zones > 1 && !rule_name.empty()) {
-      // a given rule must place the pool in its zones
-      CrushWrapper crush = _get_pending_crush();
-      int rule = crush.get_rule_id(rule_name);
-      if (rule >= 0 &&
-          !default_rule_suits_pool(crush, rule, pool_type, num_zones,
-                                   zone_failure_domain, osdmap.pools)) {
-        ss << "crush rule " << rule_name << " does not place the pool in "
-           << num_zones << " buckets of type " << zone_failure_domain;
-        err = -EINVAL;
-        goto reply_no_propose;
       }
     }
 

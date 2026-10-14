@@ -979,9 +979,8 @@ public:
   // CRUSH map. crush must outlive the result.
   PoolCreateCluster pool_create_cluster(CrushWrapper& crush);
 
-  // Whether osd_pool_default_crush_rule can serve a new pool that gives no
-  // rule: a rule of the pool's type that, for more than one zone, divides
-  // the cluster as the pool's zones would.
+  // Whether a rule can serve a new pool: a rule of the pool's type that, for
+  // more than one zone, divides the cluster as the pool's zones would.
   static bool default_rule_suits_pool(
       CrushWrapper& crush,
       int64_t rule,

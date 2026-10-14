@@ -454,8 +454,12 @@ At creation the monitor loads the plugin named by the profile and sets:
 **CRUSH rule**
 
 Without ``--rule`` the rule is named after the pool. Single-zone pools with the ``default``
-profile are the exception: they share the ``erasure-code`` rule. If a committed rule of that name already exists it is reused, without checking that it
-fits ``k+m``, ``num_zones`` or the CRUSH options. Otherwise the plugin builds it:
+profile are the exception: they share the ``erasure-code`` rule. If a committed rule of that name
+already exists it is reused. For a pool over zones it must place the pool in ``num_zones``
+buckets of the zone type, as a rule given with ``--rule`` must, else the command fails with
+"crush rule <rule> does not place the pool in <num_zones> buckets of type <type>"; for a
+single-zone pool it is not checked against ``k+m`` or the CRUSH options. Otherwise the plugin
+builds it:
 
 * ``num_zones`` greater than 1: a stretch rule that takes ``num_zones`` buckets of the zone type
   under the root (``choose firstn <num_zones>``), then ``k+m`` OSD failure domains
@@ -472,7 +476,8 @@ fits ``k+m``, ``num_zones`` or the CRUSH options. Otherwise the plugin builds it
   ``--zone_failure_domain`` has no effect on such a rule.
 
 With ``--rule`` the named rule must already exist ("specified rule <rule> doesn't exist") and is
-used unchanged: ``num_zones`` and the profile's CRUSH keys are not applied to it.
+used unchanged: ``num_zones`` and the profile's CRUSH keys are not applied to it. For a pool over
+zones it must place the pool in its zones, as above.
 ``ceph osd crush rule create-erasure <name> [<profile>] [<num_zones>]`` builds the same kind of
 rule from the profile's keys alone.
 
