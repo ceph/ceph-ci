@@ -106,6 +106,18 @@ If no OSD's absolute deviation exceeds
 ``upmap_max_deviation``, the balancer considers the distribution
 sufficiently balanced and makes no changes.
 
+A pool with more than one zone (``num_zones`` greater than 1, see
+:ref:`creating_stretch_pools`) keeps the number of shards that CRUSH places in
+each zone: the balancer moves a shard only to another OSD in the same zone.
+Its targets are therefore computed for each zone::
+
+   target = osd_weight * (zone_shards / zone_weight)
+
+where ``zone_shards`` is the number of the pool's shards in the OSD's zone and
+``zone_weight`` is the sum of the weights of the OSDs in that zone. If the zones
+differ in weight, the OSDs of the lighter zone hold more shards for their
+weight than those of the heavier zone, and the balancer cannot change that.
+
 This value of PG replicas/shards (as distinct from logical PGs) is reported
 by the ``ceph osd df`` command under the ``PGS`` column and the variance
 above or below the average under the ``VAR`` column.  It may seem desirable

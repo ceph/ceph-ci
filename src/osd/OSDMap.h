@@ -1585,20 +1585,24 @@ private: // Bunch of internal functions used only by calc_pg_upmaps (result of c
     std::map<int,float>& osds_weight
   ) const;
 
+  /// the bucket of the pool's zone type that holds osd; 0 for a single-zone pool
+  int get_osd_zone(const pg_pool_t& pool, int osd) const;
+
   float build_pool_pgs_info (
     CephContext *cct,
     const std::set<int64_t>& pools,        ///< [optional] restrict to pool
     const OSDMap& tmp_osd_map,
-    int& total_pgs,
     std::map<int, std::set<pg_t>>& pgs_by_osd,
-    std::map<int,float>& osds_weight
+    std::map<int,float>& osds_weight,
+    std::map<int,float>& osd_target,
+    std::map<int,int>& osd_zone
   );  // return total weight of all OSDs
 
   float calc_deviations (
     CephContext *cct,
     const std::map<int,std::set<pg_t>>& pgs_by_osd,
     const std::map<int,float>& osd_weight,
-    float pgs_per_weight,
+    const std::map<int,float>& osd_target,
     std::map<int,float>& osd_deviation,
     std::multimap<float,int>& deviation_osd,
     double& bal_score

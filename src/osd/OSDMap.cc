@@ -5327,6 +5327,14 @@ bool OSDMap::try_pg_upmap(
     out);
   if (r < 0)
     return false;
+  if (pool->get_num_zones() > 1) {
+    for (size_t i = 0; i < out->size() && i < orig->size(); ++i) {
+      if ((*out)[i] != (*orig)[i] &&
+          get_osd_zone(*pool, (*out)[i]) != get_osd_zone(*pool, (*orig)[i])) {
+        (*out)[i] = (*orig)[i];
+      }
+    }
+  }
   if (*out == *orig)
     return false;
   return true;
@@ -5882,24 +5890,30 @@ int OSDMap::calc_pg_upmaps(
   tmp_osd_map.deepish_copy_from(*this);
   int num_changed = 0;
   map<int,set<pg_t>> pgs_by_osd;
-  int total_pgs = 0;
   float osd_weight_total = 0;
   map<int,float> osd_weight;
+  map<int,float> osd_target;
+  map<int,int> osd_zone;
 
   if (max <= 0) {
     lderr(cct) << __func__ << " abort due to max <= 0" << dendl;
     return 0;
   }
 
-  osd_weight_total = build_pool_pgs_info(cct, only_pools, tmp_osd_map, 
-                                         total_pgs, pgs_by_osd, osd_weight);
+  osd_weight_total = build_pool_pgs_info(cct, only_pools, tmp_osd_map,
+                                         pgs_by_osd, osd_weight, osd_target,
+                                         osd_zone);
+  auto zone_of = [&osd_zone](int osd) {
+    auto p = osd_zone.find(osd);
+    return p == osd_zone.end() ? 0 : p->second;
+  };
   if (osd_weight_total == 0) {
     lderr(cct) << __func__ << " abort due to osd_weight_total == 0" << dendl;
     return 0;
   }
   for (auto& [osd, pgs] : pgs_by_osd) {
     // straw2 picks a zero-weight item when every item in its bucket has zero weight
-    if (!osd_weight.count(osd)) {
+    if (!osd_target.count(osd)) {
       lderr(cct) << __func__ << " abort due to osd." << osd
                  << " with no weight under the crush rule in the up set of "
                  << pgs.size() << " pgs" << dendl;
@@ -5907,14 +5921,12 @@ int OSDMap::calc_pg_upmaps(
     }
   }
 
-  float pgs_per_weight = total_pgs / osd_weight_total;
   ldout(cct, 10) << " osd_weight_total " << osd_weight_total << dendl;
-  ldout(cct, 10) << " pgs_per_weight " << pgs_per_weight << dendl;
 
   double bal_score = 0; // how balanced the pgs are. 0 is perfect.
   map<int,float> osd_deviation;       // osd, deviation(pgs)
   multimap<float,int> deviation_osd;  // deviation(pgs), osd
-  float cur_max_deviation = calc_deviations(cct, pgs_by_osd, osd_weight, pgs_per_weight,
+  float cur_max_deviation = calc_deviations(cct, pgs_by_osd, osd_weight, osd_target,
 				      	    osd_deviation, deviation_osd, bal_score);
 
   ldout(cct, 10) << " bal_score " << bal_score << " max_deviation " << cur_max_deviation << dendl;
@@ -5948,9 +5960,21 @@ int OSDMap::calc_pg_upmaps(
       ldout(cct, 20) << __func__ << " failed to build overfull and underfull" << dendl;
       break;
     }
-    if (overfull.empty() && !underfull.empty()) {
+    // an underfull OSD takes PGs only from OSDs in its own zone
+    set<int> zones_without_overfull;
+    for (int osd : underfull) {
+      zones_without_overfull.insert(zone_of(osd));
+    }
+    for (int osd : overfull) {
+      zones_without_overfull.erase(zone_of(osd));
+    }
+    if (!zones_without_overfull.empty()) {
       ldout(cct, 20) << __func__ << " Using more_overfull since we still have underfull" << dendl;
-      overfull = more_overfull;
+      for (int osd : more_overfull) {
+        if (zones_without_overfull.contains(zone_of(osd))) {
+          overfull.insert(osd);
+        }
+      }
       using_more_overfull = true;
     }
 
@@ -5990,7 +6014,7 @@ int OSDMap::calc_pg_upmaps(
                        << dendl;
         break;
       }
-      float target = osd_weight[osd] * pgs_per_weight;
+      float target = osd_target[osd];
       ldout(cct, 10) << " Overfull search osd." << osd
                        << " target " << target
                        << " deviation " << deviation
@@ -6102,7 +6126,7 @@ int OSDMap::calc_pg_upmaps(
         if (std::find(underfull.begin(), underfull.end(), osd) ==
                       underfull.end())
           break;
-        float target = osd_weight[osd] * pgs_per_weight;
+        float target = osd_target[osd];
         ceph_assert(target > 0);
         if (fabsf(deviation) < max_deviation) {
           // respect max_deviation too
@@ -6150,7 +6174,7 @@ int OSDMap::calc_pg_upmaps(
     map<int,float> temp_osd_deviation;
     multimap<float,int> temp_deviation_osd;
     float cur_max_deviation = calc_deviations(cct, temp_pgs_by_osd, osd_weight,
-    					      pgs_per_weight, temp_osd_deviation,
+                                              osd_target, temp_osd_deviation,
 					      temp_deviation_osd, new_bal_score);
     // log the delta too: the totals are printed with the stream's default
     // precision, so a small but real improvement is invisible in them
@@ -6286,38 +6310,100 @@ float OSDMap::get_osds_weight(
   return osds_weight_total;
 }
 
+int OSDMap::get_osd_zone(const pg_pool_t& pool, int osd) const
+{
+  if (pool.get_num_zones() <= 1 || pool.peering_crush_bucket_barrier == 0)
+    return 0;
+  return crush->get_parent_of_type(osd, pool.peering_crush_bucket_barrier,
+                                   pool.get_crush_rule());
+}
+
 float OSDMap::build_pool_pgs_info (
   CephContext *cct,
   const std::set<int64_t>& only_pools,        ///< [optional] restrict to pool
   const OSDMap& tmp_osd_map,
-  int& total_pgs,
   map<int,set<pg_t>>& pgs_by_osd,
-  map<int,float>& osds_weight)
+  map<int,float>& osds_weight,
+  map<int,float>& osd_target,
+  map<int,int>& osd_zone)
 {
   //
   // This function builds some data structures that are used by calc_pg_upmaps.
-  // Specifically it builds pgs_by_osd and osd_weight maps, updates total_pgs 
-  // and returns the osd_weight_total
+  // Specifically it builds the pgs_by_osd, osd_weight, osd_target and osd_zone
+  // maps and returns the osd_weight_total
   //
   float osds_weight_total = 0.0;
+  int total_pgs = 0;
+  map<int,float> single_zone_weight;
+  float single_zone_weight_total = 0.0;
   for (auto& [pid, pdata] : pools) {
     if (!only_pools.empty() && !only_pools.count(pid))
       continue;
+    map<int,int> pool_pgs_by_osd;
     for (unsigned ps = 0; ps < pdata.get_pg_num(); ++ps) {
       pg_t pg(ps, pid);
       vector<int> up;
       tmp_osd_map.pg_to_up_acting_osds(pg, &up, nullptr, nullptr, nullptr);
       ldout(cct, 20) << __func__ << " " << pg << " up " << up << dendl;
       for (auto osd : up) {
-        if (osd != CRUSH_ITEM_NONE)
+        if (osd != CRUSH_ITEM_NONE) {
 	  pgs_by_osd[osd].insert(pg);
+          pool_pgs_by_osd[osd]++;
+        }
       }
     }
-    total_pgs += pdata.get_size() * pdata.get_pg_num();
-
-    osds_weight_total += get_osds_weight(cct, tmp_osd_map, pid, osds_weight);
+    map<int,float> pool_weight;
+    float pool_weight_total = get_osds_weight(cct, tmp_osd_map, pid, pool_weight);
+    osds_weight_total += pool_weight_total;
+    for (auto [oid, oweight] : pool_weight) {
+      osds_weight[oid] += oweight;
+    }
+    if (pdata.get_num_zones() <= 1) {
+      total_pgs += pdata.get_size() * pdata.get_pg_num();
+      single_zone_weight_total += pool_weight_total;
+      for (auto [oid, oweight] : pool_weight) {
+        single_zone_weight[oid] += oweight;
+      }
+      continue;
+    }
+    // No PG moves between zones, so each zone shares out the PGs it has
+    map<int,int> zone_by_osd;
+    auto get_zone = [&](int osd) {
+      auto [it, inserted] = zone_by_osd.try_emplace(osd, 0);
+      if (inserted) {
+        it->second = tmp_osd_map.get_osd_zone(pdata, osd);
+      }
+      return it->second;
+    };
+    map<int,int> zone_pgs;
+    map<int,float> zone_weight;
+    for (auto [oid, opgs] : pool_pgs_by_osd) {
+      zone_pgs[get_zone(oid)] += opgs;
+    }
+    for (auto [oid, oweight] : pool_weight) {
+      zone_weight[get_zone(oid)] += oweight;
+    }
+    for (auto [oid, oweight] : pool_weight) {
+      int zone = get_zone(oid);
+      osd_zone.try_emplace(oid, zone);
+      if (zone_pgs[zone] > 0) {
+        osd_target[oid] += zone_pgs[zone] * oweight / zone_weight[zone];
+      }
+    }
+  }
+  if (single_zone_weight_total > 0) {
+    float pgs_per_weight = total_pgs / single_zone_weight_total;
+    ldout(cct, 10) << " pgs_per_weight " << pgs_per_weight << dendl;
+    for (auto [oid, oweight] : single_zone_weight) {
+      osd_target[oid] += oweight * pgs_per_weight;
+    }
   }
   for (auto& [oid, oweight] : osds_weight) {
+    if (!osd_target.contains(oid)) {
+      ldout(cct, 20) << " osd." << oid << " weight " << oweight
+                     << " in a zone with no pgs, skipping" << dendl;
+      continue;
+    }
     int pgs = 0;
     auto p = pgs_by_osd.find(oid);
     if (p != pgs_by_osd.end())
@@ -6325,6 +6411,7 @@ float OSDMap::build_pool_pgs_info (
     else
       pgs_by_osd.emplace(oid, set<pg_t>());
     ldout(cct, 20) << " osd." << oid << " weight " << oweight
+                   << " target " << osd_target[oid]
 		   << " pgs " << pgs << dendl;
   }
   return osds_weight_total;
@@ -6335,7 +6422,7 @@ float OSDMap::calc_deviations (
   CephContext *cct,
   const map<int,set<pg_t>>& pgs_by_osd,
   const map<int,float>& osd_weight,
-  float pgs_per_weight,
+  const map<int,float>& osd_target,
   map<int,float>& osd_deviation,
   multimap<float,int>& deviation_osd,
   double& bal_score)  // return current max deviation
@@ -6359,7 +6446,7 @@ float OSDMap::calc_deviations (
     ceph_assert(osd_weight.count(oid));
     float weight = osd_weight.at(oid);
     float pgs = (float)opgs.size();
-    float target = weight * pgs_per_weight;
+    float target = osd_target.at(oid);
     float deviation = pgs - target;
     ceph_assert(target > 0);
     ldout(cct, 20) << " osd." << oid

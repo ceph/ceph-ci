@@ -272,6 +272,125 @@ public:
     }
     return ruleno;
   }
+  // Datacenters dc-0, dc-1, ... with hosts_per_zone[z] hosts of osds_per_host
+  // OSDs each, a rule "take default; choose firstn <num_zones> datacenter;
+  // <leaf_op> <per_zone> <leaf_type>; emit" and a replicated pool with
+  // per_zone copies in each zone and the zone fields of a stretch pool.
+  int64_t set_up_stretch_pool(const vector<int>& hosts_per_zone,
+                              int osds_per_host, int num_zones, int per_zone,
+                              int leaf_op, const string& leaf_type,
+                              unsigned pg_num) {
+    int n = 0;
+    for (int hosts : hosts_per_zone) {
+      n += hosts * osds_per_host;
+    }
+    set_up_map(n, true);
+    int osd = 0;
+    for (size_t z = 0; z < hosts_per_zone.size(); z++) {
+      for (int h = 0; h < hosts_per_zone[z]; h++) {
+        for (int i = 0; i < osds_per_host; i++, osd++) {
+          ceph_assert(0 == crush_move(osdmap, "osd." + stringify(osd), {
+            "root=default",
+            "datacenter=dc-" + stringify(z),
+            "host=dc-" + stringify(z) + "-host-" + stringify(h)}));
+        }
+      }
+    }
+    CrushWrapper crush;
+    get_crush(osdmap, crush);
+    int rno = 0;
+    while (crush.rule_exists(rno)) {
+      rno++;
+    }
+    int zone_type = crush.get_type_id("datacenter");
+    crush_rule *rule = crush_make_rule(4, pg_pool_t::TYPE_REPLICATED);
+    crush_rule_set_step(rule, 0, CRUSH_RULE_TAKE, crush.get_item_id("default"), 0);
+    crush_rule_set_step(rule, 1, CRUSH_RULE_CHOOSE_FIRSTN, num_zones, zone_type);
+    crush_rule_set_step(rule, 2, leaf_op, per_zone, crush.get_type_id(leaf_type));
+    crush_rule_set_step(rule, 3, CRUSH_RULE_EMIT, 0, 0);
+    ceph_assert(crush_add_rule(crush.get_crush_map(), rule, rno) >= 0);
+    crush.set_rule_name(rno, "stretch");
+    OSDMap::Incremental crush_inc(osdmap.get_epoch() + 1);
+    crush.encode(crush_inc.crush, CEPH_FEATURES_SUPPORTED_DEFAULT);
+    osdmap.apply_incremental(crush_inc);
+
+    OSDMap::Incremental pending_inc(osdmap.get_epoch() + 1);
+    pending_inc.new_pool_max = osdmap.get_pool_max();
+    int64_t pool_id = ++pending_inc.new_pool_max;
+    pg_pool_t empty;
+    auto p = pending_inc.get_new_pool(pool_id, &empty);
+    p->size = num_zones * per_zone;
+    p->min_size = 1;
+    p->num_zones = num_zones;
+    p->replica = per_zone;
+    p->peering_crush_bucket_count = num_zones;
+    p->peering_crush_bucket_target = num_zones;
+    p->peering_crush_bucket_barrier = zone_type;
+    p->set_pg_num(pg_num);
+    p->set_pgp_num(pg_num);
+    p->type = pg_pool_t::TYPE_REPLICATED;
+    p->crush_rule = rno;
+    p->set_flag(pg_pool_t::FLAG_HASHPSPOOL);
+    pending_inc.new_pool_names[pool_id] = "stretch";
+    osdmap.apply_incremental(pending_inc);
+    return pool_id;
+  }
+  int get_zone(int osd) {
+    return osdmap.crush->get_parent_of_type(
+      osd, osdmap.crush->get_type_id("datacenter"));
+  }
+  // run calc_pg_upmaps as the active balancer does until it changes nothing
+  void balance_upmaps(int64_t pool_id, int max_deviation) {
+    for (int i = 0; i < 100; i++) {
+      OSDMap::Incremental pending_inc(osdmap.get_epoch() + 1);
+      if (osdmap.calc_pg_upmaps(g_ceph_context, max_deviation, 100, {pool_id},
+                                &pending_inc) == 0) {
+        return;
+      }
+      osdmap.apply_incremental(pending_inc);
+    }
+  }
+  // largest difference between an up OSD's PG count and the mean of the up
+  // OSDs in its zone; every OSD has the same CRUSH weight
+  float max_deviation_in_zones(int64_t pool_id) {
+    map<int, int> pgs_by_osd;
+    for (unsigned ps = 0; ps < osdmap.get_pg_pool(pool_id)->get_pg_num(); ps++) {
+      vector<int> up;
+      osdmap.pg_to_up_acting_osds(pg_t(ps, pool_id), &up, nullptr, nullptr, nullptr);
+      for (int osd : up) {
+        pgs_by_osd[osd]++;
+      }
+    }
+    map<int, pair<int, int>> pgs_and_osds_by_zone;
+    for (int osd = 0; osd < osdmap.get_max_osd(); osd++) {
+      if (osdmap.is_up(osd) && osdmap.is_in(osd)) {
+        auto& [pgs, osds] = pgs_and_osds_by_zone[get_zone(osd)];
+        pgs += pgs_by_osd[osd];
+        osds++;
+      }
+    }
+    float max_deviation = 0;
+    for (int osd = 0; osd < osdmap.get_max_osd(); osd++) {
+      if (osdmap.is_up(osd) && osdmap.is_in(osd)) {
+        auto [pgs, osds] = pgs_and_osds_by_zone[get_zone(osd)];
+        max_deviation = std::max(max_deviation,
+                                 fabsf(pgs_by_osd[osd] - (float)pgs / osds));
+      }
+    }
+    return max_deviation;
+  }
+  void expect_upmaps_within_zones(int64_t pool_id) {
+    for (unsigned ps = 0; ps < osdmap.get_pg_pool(pool_id)->get_pg_num(); ps++) {
+      pg_t pg(ps, pool_id);
+      vector<int> raw, raw_upmap;
+      osdmap.pg_to_raw_upmap(pg, &raw, &raw_upmap);
+      ASSERT_EQ(raw.size(), raw_upmap.size());
+      for (size_t i = 0; i < raw.size(); i++) {
+        EXPECT_EQ(get_zone(raw[i]), get_zone(raw_upmap[i]))
+          << pg << " " << raw << " -> " << raw_upmap;
+      }
+    }
+  }
   void test_mappings(int pool,
 		     int num,
 		     vector<int> *any,
@@ -2624,6 +2743,83 @@ TEST_F(OSDMapTest, BUG_48896) {
       ASSERT_NE(1, to);
     }
   }
+}
+
+TEST_F(OSDMapTest, StretchUpmapUnevenZones) {
+  // zones 10% apart in weight: every zone still gets 3 copies of every PG
+  int64_t pool_id = set_up_stretch_pool({11, 10}, 2, 2, 3,
+                                        CRUSH_RULE_CHOOSELEAF_FIRSTN, "host", 256);
+  balance_upmaps(pool_id, 1);
+  expect_upmaps_within_zones(pool_id);
+  EXPECT_LE(max_deviation_in_zones(pool_id), 4.0);
+}
+
+TEST_F(OSDMapTest, StretchUpmapOsdOut) {
+  int64_t pool_id = set_up_stretch_pool({6, 6}, 2, 2, 3,
+                                        CRUSH_RULE_CHOOSELEAF_FIRSTN, "host", 256);
+  OSDMap::Incremental pending_inc(osdmap.get_epoch() + 1);
+  pending_inc.new_weight[osdmap.get_max_osd() - 1] = CEPH_OSD_OUT;
+  osdmap.apply_incremental(pending_inc);
+  balance_upmaps(pool_id, 1);
+  expect_upmaps_within_zones(pool_id);
+  EXPECT_LE(max_deviation_in_zones(pool_id), 4.0);
+}
+
+TEST_F(OSDMapTest, StretchUpmapZoneDown) {
+  int64_t pool_id = set_up_stretch_pool({4, 4}, 2, 2, 3,
+                                        CRUSH_RULE_CHOOSELEAF_FIRSTN, "host", 128);
+  OSDMap::Incremental pending_inc(osdmap.get_epoch() + 1);
+  for (int osd = 8; osd < 16; osd++) {
+    pending_inc.new_state[osd] = CEPH_OSD_UP;
+  }
+  osdmap.apply_incremental(pending_inc);
+  ASSERT_TRUE(osdmap.is_down(8));
+  balance_upmaps(pool_id, 1);
+  expect_upmaps_within_zones(pool_id);
+  for (unsigned ps = 0; ps < 128; ps++) {
+    vector<int> raw, raw_upmap;
+    osdmap.pg_to_raw_upmap(pg_t(ps, pool_id), &raw, &raw_upmap);
+    for (size_t i = 0; i < raw.size(); i++) {
+      if (raw[i] != raw_upmap[i]) {
+        EXPECT_LT(raw[i], 8) << raw << " -> " << raw_upmap;
+      }
+    }
+  }
+  EXPECT_LE(max_deviation_in_zones(pool_id), 4.0);
+}
+
+TEST_F(OSDMapTest, StretchUpmapSpareZone) {
+  // a rule that picks OSDs straight from the zones, with a zone to spare: the
+  // zone level of try_remap_rule can swap a zone that has no underfull OSD
+  int64_t pool_id = set_up_stretch_pool({3, 3, 3}, 1, 2, 2,
+                                        CRUSH_RULE_CHOOSE_FIRSTN, "osd", 8);
+  pg_t pg(0, pool_id);
+  vector<int> raw, orig;
+  osdmap.pg_to_raw_upmap(pg, &raw, &orig);
+  ASSERT_EQ(4u, orig.size());
+  set<int> zones;
+  for (int osd : orig) {
+    zones.insert(get_zone(osd));
+  }
+  ASSERT_EQ(2u, zones.size());
+  int spare = -1;
+  int sibling = -1;
+  for (int osd = 0; osd < osdmap.get_max_osd(); osd++) {
+    if (!zones.contains(get_zone(osd))) {
+      spare = osd;
+    } else if (get_zone(osd) == get_zone(orig[0]) &&
+               std::find(orig.begin(), orig.end(), osd) == orig.end()) {
+      sibling = osd;
+    }
+  }
+  ASSERT_NE(-1, spare);
+  ASSERT_NE(-1, sibling);
+  vector<int> out;
+  EXPECT_FALSE(osdmap.try_pg_upmap(g_ceph_context, pg, {orig[0]}, {spare}, {},
+                                   &orig, &out)) << orig << " -> " << out;
+  ASSERT_TRUE(osdmap.try_pg_upmap(g_ceph_context, pg, {orig[0]}, {sibling}, {},
+                                  &orig, &out));
+  EXPECT_EQ(sibling, out[0]);
 }
 
 TEST_P(OSDMapTest, BUG_51842) {
