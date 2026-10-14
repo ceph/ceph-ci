@@ -7737,7 +7737,7 @@ int OSDMonitor::prepare_new_pool(MonOpRequestRef op)
 			 params.device_class,
 			 pg_pool_t::TYPE_REPLICATED, 0, FAST_READ_OFF, {}, bulk,
 			 cct->_conf.get_val<bool>("osd_pool_default_crimson"),
-                         force_create, &ss);
+                         force_create, &ss, rule_from_defaults(params));
 
   if (ret < 0) {
     dout(10) << __func__ << " got " << ret << " " << ss.str() << dendl;
@@ -8579,7 +8579,8 @@ int OSDMonitor::prepare_new_pool(string& name,
 				 bool bulk,
 				 bool crimson,
          bool force_create,
-				 ostream *ss)
+				 ostream *ss,
+				 const string& rule_defaults)
 {
   if (crimson && pg_autoscale_mode.empty()) {
     // default pg_autoscale_mode to off for crimson, we'll error out below if
@@ -8614,6 +8615,9 @@ int OSDMonitor::prepare_new_pool(string& name,
 				 crush_rule_name, num_zones, root, num_replica_per_zone, zone_failure_domain, osd_failure_domain, device_class, &crush_rule, ss);
   if (r) {
     dout(10) << "prepare_pool_crush_rule returns " << r << dendl;
+    if (r != -EAGAIN) {
+      *ss << rule_defaults;
+    }
     return r;
   }
   // set zone_failure_domain to default value if it is not set for stretch
@@ -8628,6 +8632,7 @@ int OSDMonitor::prepare_new_pool(string& name,
       osdmap.pools, effective_zone_failure_domain, ss);
     if (r) {
       dout(10) << "validate_stretch_mode_pool returns " << r << dendl;
+      *ss << rule_defaults;
       return r;
     }
   }
@@ -8694,6 +8699,7 @@ int OSDMonitor::prepare_new_pool(string& name,
     r = check_rule_places_pool(crush_rule, pool_type, num_zones,
                                effective_zone_failure_domain, size, ss);
     if (r) {
+      *ss << rule_defaults;
       return r;
     }
   }
@@ -15515,7 +15521,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 			   bulk,
 			   params.crimson,
          force_create,
-			   &ss);
+			   &ss, rule_from_defaults(params));
     if (err < 0) {
       switch(err) {
       case -EEXIST:
