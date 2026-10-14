@@ -529,9 +529,17 @@ private:
         const std::string &zone_failure_domain,
         const std::string &osd_failure_domain,
         const std::string &device_class,
-				const std::string &profile,
-				int *rule,
-				std::ostream *ss);
+  	const std::string &profile,
+  	int *rule,
+  	std::ostream *ss);
+  int verify_crush_params_erasure(const std::string &name,
+        int64_t num_zones,
+        const std::string &root,
+        const std::string &zone_failure_domain,
+        const std::string &osd_failure_domain,
+        const std::string &device_class,
+        const ceph::ErasureCodeProfile &profile_map,
+        std::ostream *ss);
   int get_crush_rule(const std::string &rule_name,
 		     int *crush_rule,
 		     std::ostream *ss);

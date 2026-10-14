@@ -7929,6 +7929,43 @@ int OSDMonitor::crush_rule_create_erasure(const string &name,
   }
 }
 
+int OSDMonitor::verify_crush_params_erasure(const string &name,
+               int64_t num_zones,
+               const std::string &root,
+               const std::string &zone_failure_domain,
+               const std::string &osd_failure_domain,
+               const std::string &device_class,
+               const ErasureCodeProfile &profile_map,
+               ostream *ss)
+{
+  auto plugin_it = profile_map.find("plugin");
+  if (plugin_it == profile_map.end()) {
+    *ss << "no 'plugin' entry in erasure code profile" << std::endl;
+    return -EINVAL;
+  }
+
+  ErasureCodeInterfaceRef erasure_code;
+  ErasureCodePluginRegistry &registry = ErasureCodePluginRegistry::instance();
+  ErasureCodeProfile mutable_profile = profile_map;
+  int err = registry.factory(plugin_it->second,
+                             g_conf().get_val<std::string>("erasure_code_dir"),
+                             mutable_profile, &erasure_code, ss);
+  if (err)
+    return err;
+
+  err = erasure_code->init(mutable_profile, ss);
+  if (err)
+    return err;
+
+  CrushWrapper trial_crush = _get_pending_crush();
+  err = erasure_code->create_rule(name, num_zones, root,
+    zone_failure_domain, osd_failure_domain, device_class, trial_crush, ss);
+  if (err < 0)
+    return err;
+
+  return 0;
+}
+
 int OSDMonitor::get_erasure_code(const string &erasure_code_profile,
 				 ErasureCodeInterfaceRef *erasure_code,
 				 ostream *ss) const
@@ -15161,10 +15198,20 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
           if (err)
             goto reply_no_propose;
 
+          if (num_zones > 1) {
+            err = verify_crush_params_erasure(
+              auto_profile_name, num_zones,
+              root, given_value("zone_failure_domain", params.zone_failure_domain),
+              osd_failure_domain, device_class,
+              profile_map, &ss);
+            if (err)
+              goto reply_no_propose;
+          }
+
           if (pending_inc.has_erasure_code_profile(auto_profile_name)) {
             dout(20) << "EC profile " << auto_profile_name << " is already pending" << dendl;
-	    goto wait;
-	  }
+            goto wait;
+          }
 
           dout(20) << "auto-creating EC Profile " << auto_profile_name << "=" << profile_map << dendl;
 
