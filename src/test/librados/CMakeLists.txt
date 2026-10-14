@@ -167,6 +167,7 @@ install(TARGETS
   ceph_test_rados_api_c_write_operations
   ceph_test_rados_api_cmd
   ceph_test_rados_api_cmd_pp
+  ceph_test_rados_api_ec_pool_create_pp
   ceph_test_rados_api_io
   ceph_test_rados_api_io_pp
   ceph_test_rados_api_list
