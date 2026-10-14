@@ -2491,18 +2491,20 @@ across zones. Peering limits the effect:
 **The upmap balancer** (``OSDMap::calc_pg_upmaps``)
 
 *Moves.* ``CrushWrapper::try_remap_rule`` replays the rule over the PG's
-current mapping and looks for a replacement only under the bucket that the
-mapping already uses at each ``choose`` level. For the rule that pool creation
-builds for ``num_zones > 1`` (Section 2.1), the root has exactly
-``num_zones`` zone buckets, every PG uses all of them, and every move stays in
-its zone. A rule given with ``--rule`` may differ: if its root holds more zone
-buckets than ``num_zones``, the first level can replace a zone that has no
-underfull OSD with another zone, which moves a whole block. So
-``find_best_remap`` checks each new pair explicitly. For a pool with
-``num_zones > 1`` it takes a position only if the new OSD is in the same zone
-bucket as the OSD it replaces. Because it already skips OSDs named in the PG's
-existing pairs, the replaced OSD is the one CRUSH chose, and every position
-stays in the zone CRUSH chose for it. Dropping an existing pair
+current mapping. Below the first ``choose`` level it looks for a replacement
+only under the bucket that the mapping already uses, and any bucket it swaps
+must have the same parent. The rule that pool creation builds for
+``num_zones > 1`` (Section 2.1) chooses OSD failure domains inside each zone,
+so every move stays in its zone. A rule given with ``--rule`` may differ: if
+its root holds more zone buckets than ``num_zones`` and it picks OSDs straight
+from the zones, the zone level can replace a zone that has no underfull OSD
+with the spare zone, and the OSD then moves there. So ``try_pg_upmap`` checks
+each proposed change. For a pool with ``num_zones > 1`` it drops a change
+unless the new OSD is in the same zone bucket as the OSD it replaces.
+``find_best_remap`` then picks one of the remaining changes. It skips OSDs
+named in the PG's existing pairs, so the replaced OSD is the one CRUSH chose,
+and every position stays in the zone CRUSH chose for it. Dropping an existing
+pair
 (``try_drop_remap_overfull``, ``try_drop_remap_underfull``) returns a position
 to the OSD CRUSH chose, and is allowed as it is today. For a manual entry into
 another zone, dropping the pair brings the copy or shard back to its own zone.
@@ -2529,19 +2531,26 @@ No upmap entry moved an OSD to another zone in any of these runs.
 
 For a pool with ``num_zones > 1``, targets are computed per zone. An OSD in
 zone ``z`` gets ``N(z) × w / W(z)``. ``N(z)`` is the number of the pool's PG
-positions that CRUSH maps to ``z`` before upmaps, and ``W(z)`` is the sum of
-``w`` over the OSDs of ``z``. A zone with ``W(z) = 0`` is left out. Moves within
-a zone do not change ``N(z)``, so every zone can reach its targets. When the
+positions that the up sets place in ``z``, and ``W(z)`` is the sum of ``w``
+over the OSDs of ``z``. A zone with no positions, such as a zone with no OSD up
+in Degraded stretch mode, is left out, so the balancer makes no move there.
+Moves within a zone do not change ``N(z)``, so every zone can reach its
+targets. The choice of OSDs to move PGs from follows the zones too. Today, when
+no OSD is overfull but some are underfull, the slightly overfull OSDs are used
+instead. For a multi-zone pool, this is decided for each zone: a zone that has
+an underfull OSD but no overfull one uses its slightly overfull OSDs. When the
 zones weigh the same and no OSD is out, the targets equal today's.
 ``calc_deviations`` takes a target for each OSD instead of a single
 ``pgs_per_weight``, and ``upmap_max_deviation`` keeps its meaning. Pools with
-``num_zones = 1`` keep today's targets. The mgr balancer calls
-``calc_pg_upmaps`` for one pool at a time. When ``osdmaptool --upmap-pool``
-passes several pools, each pool's targets are computed separately and summed
-for each OSD. In a zone with no OSD up (Degraded stretch mode), no OSD is
-overfull, so the balancer makes no move there. Apart from the
-``backfill_toofull`` exception, the mgr balancer does not run while objects
-are degraded.
+``num_zones = 1`` keep today's targets. Pools of global stretch mode (Section
+2.3) have ``num_zones = 2`` and get the per-zone targets and the zone check
+too. With the usual stretch rule the zone check changes nothing for them, and
+the targets differ from main's only when the zones are uneven or an OSD is out.
+The mgr balancer calls ``calc_pg_upmaps`` for one pool at a time. When
+``osdmaptool --upmap-pool`` passes several pools, the targets of each
+multi-zone pool are computed on their own and added to those of the other
+pools. Apart from the ``backfill_toofull`` exception, the mgr balancer does not
+run while objects are degraded.
 
 ``ceph balancer eval`` (``Module.calc_eval``) also bases its targets on the
 ``take`` root. For a multi-zone pool it therefore reports an imbalance between
@@ -2595,12 +2604,6 @@ it is. Replicated multi-zone pools keep today's behaviour.
 
    **Open questions for reviewers**
 
-   - Global stretch mode (Section 2.3) is legacy, but its pools have
-     ``num_zones = 2``, so the zone check and the per-zone targets apply to
-     them too. With the usual stretch rule the zone check changes nothing. The
-     per-zone targets change the result only when the zones are uneven or an
-     OSD is out. Should they apply to global stretch mode pools (recommended),
-     or should those pools keep the targets they get on main?
    - Should a health warning list PGs whose upmap entries break zone affinity,
      so that a manual entry that leaves a PG undersized or remapped is visible?
 
