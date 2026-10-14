@@ -115,6 +115,19 @@ function TEST_failed_pool_create_removes_its_rule() {
     ! ceph osd erasure-code-profile ls | grep -q '^bigec-' || return 1
 }
 
+# A default profile with a stripe unit that is not a multiple of 4096, set
+# with --force as earlier releases allowed, still serves the pools that name
+# no profile
+function TEST_default_profile_odd_stripe_unit() {
+    local dir=$1
+    run_mon $dir a || return 1
+    ceph osd erasure-code-profile set default plugin=isa k=2 m=1 \
+        stripe_unit=2048 --force --yes-i-really-mean-it || return 1
+    ceph osd pool create e 8 8 erasure || return 1
+    test "$(ceph osd pool ls detail -f json |
+        jq '.[]|select(.pool_name=="e")|.stripe_width')" = 4096 || return 1
+}
+
 function TEST_erasure_crush_rule() {
     local dir=$1
     run_mon $dir a || return 1
