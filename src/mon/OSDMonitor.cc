@@ -8385,6 +8385,14 @@ int OSDMonitor::get_crush_rule(const string &rule_name,
   int ret;
   ret = osdmap.crush->get_rule_id(rule_name);
   if (ret != -ENOENT) {
+    // the pending changes may remove the rule with the last pool that used
+    // it; decide once they are committed
+    if (pending_inc.crush.length() &&
+        _get_pending_crush().get_rule_id(rule_name) != ret) {
+      dout(20) << __func__ << ": rule " << rule_name
+               << " is being removed, try again" << dendl;
+      return -EAGAIN;
+    }
     // found it, use it
     *crush_rule = ret;
   } else {
@@ -15233,6 +15241,15 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 	}
       }
 
+      // the pending changes may remove the profile with the last pool that
+      // used it; decide once they are committed
+      if (std::ranges::find(pending_inc.old_erasure_code_profiles,
+                            erasure_code_profile) !=
+          pending_inc.old_erasure_code_profiles.end()) {
+        dout(20) << "EC profile " << erasure_code_profile
+                 << " is being removed" << dendl;
+        goto wait;
+      }
       const map<string,string> &existing_profile = osdmap.get_erasure_code_profile(erasure_code_profile);
       auto it_crush_root = existing_profile.find("crush-root");
       auto it_zone = existing_profile.find("crush-zone-failure-domain");
