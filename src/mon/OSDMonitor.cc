@@ -9157,7 +9157,7 @@ int OSDMonitor::prepare_command_pool_set_num_zones(
       p.peering_crush_bucket_count = 0;
       p.peering_crush_bucket_target = 0;
       p.peering_crush_bucket_barrier = 0;
-      p.peering_crush_mandatory_member = 0;
+      p.peering_crush_mandatory_member = CRUSH_ITEM_NONE;
       if (p.type == pg_pool_t::TYPE_REPLICATED) {
         const auto size = cmd_getval_or<int64_t>(
           cmdmap, "replica", load_pool_defaults(g_conf()).replica);
