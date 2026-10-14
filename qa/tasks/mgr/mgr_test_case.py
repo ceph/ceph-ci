@@ -103,6 +103,11 @@ class MgrTestCase(CephTestCase):
     # stops, fails and restarts every mgr a second time.
     MODULE_PORTS: List[Tuple[str, str, int]] = []
 
+    # config epoch just after the module ports were assigned: tearDown()
+    # resets the config only this far back, so the mgrs keep their ports
+    # when they respawn
+    _module_ports_epoch = None
+
     @classmethod
     def setup_mgrs(cls):
         # for the port-in-use probes below; the map keeps the address
@@ -133,6 +138,8 @@ class MgrTestCase(CephTestCase):
         for module_name, config_name, min_port in cls.MODULE_PORTS:
             cls._assign_module_ports(ip_addr, module_name, config_name,
                                      min_port)
+        if cls.MODULE_PORTS:
+            cls._save_module_ports_epoch()
 
         # Start all the daemons
         for daemon in cls.mgr_cluster.mgr_daemons.values():
@@ -163,6 +170,25 @@ class MgrTestCase(CephTestCase):
         cls.mgr_cluster.mon_manager.raw_cluster_cmd('config', 'set', 'mds',
                                                     'defer_client_eviction_on_laggy_osds', 'false')
         cls.setup_mgrs()
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls._module_ports_epoch is not None:
+            cls._module_ports_epoch = None
+            cls.mgr_cluster.mon_manager.raw_cluster_cmd(
+                "config", "reset", str(cls.ctx.conf_epoch))
+        super().tearDownClass()
+
+    @classmethod
+    def _save_module_ports_epoch(cls):
+        J = json.loads(cls.mgr_cluster.mon_manager.raw_cluster_cmd(
+            "config", "log", "1", "--format=json"))
+        cls._module_ports_epoch = J[0]["version"]
+
+    def _config_reset_epoch(self):
+        if self._module_ports_epoch is not None:
+            return self._module_ports_epoch
+        return super()._config_reset_epoch()
 
     @classmethod
     def _unload_module(cls, module_name):
@@ -279,6 +305,7 @@ class MgrTestCase(CephTestCase):
             cls.mgr_cluster.mgr_fail(mgr_id)
 
         cls._assign_module_ports(ip_addr, module_name, config_name, min_port)
+        cls._save_module_ports_epoch()
 
         for mgr_id in cls.mgr_cluster.mgr_ids:
             cls.mgr_cluster.mgr_restart(mgr_id)
