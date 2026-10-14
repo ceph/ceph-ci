@@ -618,7 +618,8 @@ private:
 		       bool bulk,
 		       bool crimson,
            bool force_create,
-		       std::ostream *ss);
+		       std::ostream *ss,
+		       const std::string& rule_defaults = {});
   int prepare_new_pool(MonOpRequestRef op);
 
   void set_pool_flags(int64_t pool_id, uint64_t flags);
