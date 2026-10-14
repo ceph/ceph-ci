@@ -524,12 +524,16 @@ protected:
                              int mandatory_member = CRUSH_ITEM_NONE) {
     pg_pool_t p;
     p.type = pg_pool_t::TYPE_REPLICATED;
+    p.size = 4;
+    p.min_size = 2;
     p.peering_crush_bucket_count = bucket_count;
     p.peering_crush_bucket_target = bucket_count ? 2 : 0;
     p.peering_crush_mandatory_member = mandatory_member;
     return p;
   }
 
+  // the transitions change only the bucket count and the mandatory member:
+  // never size, min_size or the bucket target
   void expect_transitioned(int64_t id, uint32_t bucket_count,
                            int mandatory_member) {
     SCOPED_TRACE("pool " + std::to_string(id));
@@ -538,6 +542,9 @@ protected:
     EXPECT_EQ(bucket_count, p.peering_crush_bucket_count);
     EXPECT_EQ(mandatory_member, p.peering_crush_mandatory_member);
     EXPECT_EQ(epoch, p.get_last_force_op_resend());
+    EXPECT_EQ(4u, p.size);
+    EXPECT_EQ(2u, p.min_size);
+    EXPECT_EQ(2u, p.peering_crush_bucket_target);
   }
 };
 
