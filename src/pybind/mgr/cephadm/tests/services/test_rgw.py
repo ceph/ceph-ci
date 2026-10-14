@@ -1,6 +1,6 @@
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import call, patch, MagicMock
 
 from orchestrator import OrchestratorError
 
@@ -580,7 +580,10 @@ class TestRGWService:
                 with patch.object(cm, "try_rm_self_signed_cert_key_pair",
                                   wraps=cm.try_rm_self_signed_cert_key_pair) as rm_mock:
                     rgw_svc.post_remove(daemon, is_failed_deploy=False)
-                    rm_mock.assert_called_once_with(svc_name, host)
+                    rm_mock.assert_has_calls([
+                        call(svc_name, host),
+                        call(svc_name, host, label='metrics_push'),
+                    ])
 
                 # Assert cephadm-signed leftovers are gone
                 assert cm.get_cert(cert_name, host=host) is None
@@ -743,6 +746,61 @@ class TestRGWService:
                         assert kwargs == {
                             'custom_sans': ['s3.example.com', '*.s3.example.com'],
                         }
+
+    @patch("cephadm.serve.CephadmServe._run_cephadm", _run_cephadm('{}'))
+    @patch("cephadm.services.rgw.RgwService._get_pushgateway_url",
+           return_value='http://host1:9091')
+    def test_rgw_metrics_push_config(self, _mock_pg_url, cephadm_module: CephadmOrchestrator):
+        """Verify that metrics_push config is included in final_config
+        when metrics_push_enabled is True and a pushgateway daemon exists."""
+        with with_host(cephadm_module, 'host1'):
+            s = RGWSpec(service_id='foo',
+                        rgw_realm='realm',
+                        rgw_zone='zone',
+                        metrics_push_enabled=True,
+                        metrics_push_interval=1800,
+                        metrics_push_timeout=120)
+            with with_service(cephadm_module, s):
+                svc = service_registry.get_service('rgw')
+                daemon_spec = svc.prepare_create(
+                    DaemonDeployContext(CephadmDaemonDeploySpec(
+                        host='host1',
+                        daemon_type='rgw',
+                        daemon_id='foo.host1.0',
+                        service_name=s.service_name(),
+                        ports=[80],
+                        ip=None,
+                    )))
+                mp = daemon_spec.final_config.get('metrics_push')
+                assert mp is not None, "metrics_push config should be present"
+                assert mp['interval'] == 1800
+                assert mp['timeout'] == 120
+                assert mp['zone_name'] == 'zone'
+                assert mp['pushgateway_url'] == 'http://host1:9091'
+
+    @patch("cephadm.serve.CephadmServe._run_cephadm", _run_cephadm('{}'))
+    @patch("cephadm.services.rgw.RgwService._get_pushgateway_url",
+           return_value='')
+    def test_rgw_metrics_push_no_pushgateway(self, _mock_pg_url, cephadm_module: CephadmOrchestrator):
+        """When no pushgateway daemon exists, metrics_push should not appear in final_config."""
+        with with_host(cephadm_module, 'host1'):
+            s = RGWSpec(service_id='foo',
+                        rgw_realm='realm',
+                        rgw_zone='zone',
+                        metrics_push_enabled=True)
+            with with_service(cephadm_module, s):
+                svc = service_registry.get_service('rgw')
+                daemon_spec = svc.prepare_create(
+                    DaemonDeployContext(CephadmDaemonDeploySpec(
+                        host='host1',
+                        daemon_type='rgw',
+                        daemon_id='foo.host1.0',
+                        service_name=s.service_name(),
+                        ports=[80],
+                        ip=None,
+                    )))
+                mp = daemon_spec.final_config.get('metrics_push')
+                assert mp is None, "metrics_push should not be set without pushgateway"
 
 
 def test_rgw_dependencies_include_legacy_frontend_certificate_hash():
