@@ -624,36 +624,36 @@ TEST(ECPoolCreatePP, ErasurePoolSetNumZones) {
   cluster.shutdown();
 }
 
-// // DONT THINK THIS WORKS IN CURRENT STATE, NEED TO INJECT ERROR
-// TEST(ECPoolCreatePP, SetNumZonesFailureLeavesPoolUnchanged) {
-//   Rados cluster;
-//   ASSERT_EQ("", connect_cluster_pp(cluster));
+// Test a refused num_zones change leaves the pool as it was
+TEST(ECPoolCreatePP, SetNumZonesFailureLeavesPoolUnchanged) {
+  Rados cluster;
+  ASSERT_EQ("", connect_cluster_pp(cluster));
+  if (has_two_datacenters(cluster)) {
+    GTEST_SKIP() << "the CRUSH map has the two datacenters that the "
+                 << "change needs";
+  }
 
-//   const std::string pool_name = get_temp_pool_name("ec_set_num_zones_fail_");
-//   constexpr int k = 2;
-//   constexpr int m = 1;
+  const std::string pool_name = get_temp_pool_name("ec_set_num_zones_fail_");
+  constexpr int k = 2;
+  constexpr int m = 1;
 
-//   ASSERT_EQ(0, create_ec_pool_with_params(cluster, pool_name, k, m));
+  ASSERT_EQ(0, create_ec_pool_with_params(cluster, pool_name, k, m));
 
-//   const int initial_num_zones = get_pool_num_zones(cluster, pool_name);
-//   ASSERT_EQ(1, initial_num_zones);
-//   const std::string initial_crush_rule = get_pool_crush_rule(cluster, pool_name);
-//   ASSERT_FALSE(initial_crush_rule.empty());
-//   const int initial_size = get_pool_size(cluster, pool_name);
-//   ASSERT_EQ(k + m, initial_size);
+  ASSERT_EQ(1, get_pool_num_zones(cluster, pool_name));
+  const std::string initial_crush_rule = get_pool_crush_rule(cluster, pool_name);
+  ASSERT_FALSE(initial_crush_rule.empty());
+  ASSERT_EQ(k + m, get_pool_size(cluster, pool_name));
 
-//   // Stretch enable requires exactly two datacenter buckets.  In the standard
-//   // test cluster this validation fails, which exercises rollback after local
-//   // pool mutations have already started.
-//   ASSERT_EQ(-EINVAL, set_pool_num_zones(cluster, pool_name, 2));
+  // two zones need two datacenters, the default zone type
+  ASSERT_EQ(-EINVAL, set_pool_num_zones(cluster, pool_name, 2));
 
-//   ASSERT_EQ(initial_num_zones, get_pool_num_zones(cluster, pool_name));
-//   ASSERT_EQ(initial_crush_rule, get_pool_crush_rule(cluster, pool_name));
-//   ASSERT_EQ(initial_size, get_pool_size(cluster, pool_name));
+  ASSERT_EQ(1, get_pool_num_zones(cluster, pool_name));
+  ASSERT_EQ(initial_crush_rule, get_pool_crush_rule(cluster, pool_name));
+  ASSERT_EQ(k + m, get_pool_size(cluster, pool_name));
 
-//   ASSERT_EQ(0, cleanup_ec_pool(cluster, pool_name));
-//   cluster.shutdown();
-// }
+  ASSERT_EQ(0, cleanup_ec_pool(cluster, pool_name));
+  cluster.shutdown();
+}
 
 TEST(ECPoolCreatePP, ReplicatedPoolSetNumZones) {
   Rados cluster;
