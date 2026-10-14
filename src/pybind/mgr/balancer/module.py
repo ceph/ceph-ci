@@ -18,6 +18,22 @@ import datetime
 from .cli import BalancerCLICommand
 
 TIME_FORMAT = '%Y-%m-%d_%H:%M:%S'
+POOL_TYPE_ERASURE = 3
+
+
+def multi_zone_ec_pools(osdmap_dump: Dict[str, Any]) -> List[str]:
+    return [p['pool_name'] for p in osdmap_dump.get('pools', [])
+            if p['type'] == POOL_TYPE_ERASURE and p.get('num_zones', 1) > 1]
+
+
+def crush_compat_refused(osdmap_dump: Dict[str, Any]) -> Optional[str]:
+    # changing weights reorders the zones of some PGs, which rewrites every
+    # shard of a multi-zone erasure PG
+    pools = multi_zone_ec_pools(osdmap_dump)
+    if not pools:
+        return None
+    return ('crush-compat mode cannot balance multi-zone erasure coded pools '
+            '(%s); use upmap mode instead' % ', '.join(pools))
 
 
 class MappingState:
@@ -417,6 +433,9 @@ class Module(MgrModule):
                 warn = ('Unable to apply mode {} due to unknown min_compat_client {}.'.format(mode, min_compat_client))
                 return (-errno.EPERM, '', warn)
         elif mode == Mode.crush_compat:
+            refused = crush_compat_refused(self.get_osdmap().dump())
+            if refused:
+                return (-errno.EOPNOTSUPP, '', refused)
             ms = MappingState(self.get_osdmap(),
                               self.get("pg_stats"),
                               self.get("pool_stats"),
@@ -796,10 +815,17 @@ class Module(MgrModule):
                           pools)
         return plan
 
-    def calc_eval(self, ms: MappingState, pools: List[str]) -> Eval:
+    def calc_eval(self, ms: MappingState, pools: List[str],
+                  by_zone: bool = True) -> Eval:
+        """
+        With by_zone, each zone of a multi-zone pool is a root of its own:
+        no balancer moves PGs between zones, so each zone's OSDs share the
+        PGs that zone holds.
+        """
         pe = Eval(ms)
         pool_rule = {}
         pool_info = {}
+        zone_type_by_poolid = {}
         for p in ms.osdmap_dump.get('pools', []):
             if len(pools) and p['pool_name'] not in pools:
                 continue
@@ -811,6 +837,9 @@ class Module(MgrModule):
             pool_rule[p['pool_name']] = p['crush_rule']
             pe.pool_roots[p['pool_name']] = []
             pool_info[p['pool_name']] = p
+            if by_zone and p.get('num_zones', 1) > 1 and \
+                    p.get('peering_crush_bucket_barrier', 0) > 0:
+                zone_type_by_poolid[p['pool']] = p['peering_crush_bucket_barrier']
         if len(pool_info) == 0:
             return pe
         self.log.debug('pool_name %s' % pe.pool_name)
@@ -823,47 +852,62 @@ class Module(MgrModule):
 
         # get expected distributions by root
         actual_by_root: Dict[str, Dict[str, dict]] = {}
-        rootids = ms.crush.find_takes()
         roots = []
-        for rootid in rootids:
-            ls = ms.osdmap.get_pools_by_take(rootid)
-            want = []
-            # find out roots associating with pools we are passed in
-            for candidate in ls:
-                if candidate in pe.pool_name:
-                    want.append(candidate)
-            if len(want) == 0:
-                continue
+
+        def add_root(rootid: int, pool: str) -> None:
             root = ms.crush.get_item_name(rootid)
-            pe.root_pools[root] = []
-            for poolid in want:
-                pe.pool_roots[pe.pool_name[poolid]].append(root)
-                pe.root_pools[root].append(pe.pool_name[poolid])
-            pe.root_ids[root] = rootid
-            roots.append(root)
-            weight_map = ms.crush.get_take_weight_osd_map(rootid)
-            adjusted_map = {
-                osd: cw * osd_weight[osd]
-                for osd, cw in weight_map.items() if osd in osd_weight and cw > 0
-            }
-            sum_w = sum(adjusted_map.values())
-            assert len(adjusted_map) == 0 or sum_w > 0
-            pe.target_by_root[root] = {osd: w / sum_w
-                                       for osd, w in adjusted_map.items()}
-            actual_by_root[root] = {
-                'pgs': {},
-                'objects': {},
-                'bytes': {},
-            }
-            for osd in pe.target_by_root[root]:
-                actual_by_root[root]['pgs'][osd] = 0
-                actual_by_root[root]['objects'][osd] = 0
-                actual_by_root[root]['bytes'][osd] = 0
-            pe.total_by_root[root] = {
-                'pgs': 0,
-                'objects': 0,
-                'bytes': 0,
-            }
+            if root not in pe.root_ids:
+                pe.root_pools[root] = []
+                pe.root_ids[root] = rootid
+                roots.append(root)
+                weight_map = ms.crush.get_take_weight_osd_map(rootid)
+                adjusted_map = {
+                    osd: cw * osd_weight[osd]
+                    for osd, cw in weight_map.items() if osd in osd_weight and cw > 0
+                }
+                sum_w = sum(adjusted_map.values())
+                assert len(adjusted_map) == 0 or sum_w > 0
+                pe.target_by_root[root] = {osd: w / sum_w
+                                           for osd, w in adjusted_map.items()}
+                actual_by_root[root] = {
+                    'pgs': {},
+                    'objects': {},
+                    'bytes': {},
+                }
+                for osd in pe.target_by_root[root]:
+                    actual_by_root[root]['pgs'][osd] = 0
+                    actual_by_root[root]['objects'][osd] = 0
+                    actual_by_root[root]['bytes'][osd] = 0
+                pe.total_by_root[root] = {
+                    'pgs': 0,
+                    'objects': 0,
+                    'bytes': 0,
+                }
+            pe.pool_roots[pool].append(root)
+            pe.root_pools[root].append(pool)
+
+        buckets = {b['id']: b for b in ms.crush_dump.get('buckets', [])}
+
+        def buckets_of_type(rootid: int, type_id: int) -> List[int]:
+            if rootid not in buckets:
+                return []
+            if buckets[rootid]['type_id'] == type_id:
+                return [rootid]
+            found: List[int] = []
+            for item in buckets[rootid]['items']:
+                found += buckets_of_type(item['id'], type_id)
+            return found
+
+        for rootid in ms.crush.find_takes():
+            # find out roots associating with pools we are passed in
+            for poolid in ms.osdmap.get_pools_by_take(rootid):
+                if poolid not in pe.pool_name:
+                    continue
+                if poolid in zone_type_by_poolid:
+                    for zoneid in buckets_of_type(rootid, zone_type_by_poolid[poolid]):
+                        add_root(zoneid, pe.pool_name[poolid])
+                else:
+                    add_root(rootid, pe.pool_name[poolid])
         self.log.debug('pool_roots %s' % pe.pool_roots)
         self.log.debug('root_pools %s' % pe.root_pools)
         self.log.debug('target_by_root %s' % pe.target_by_root)
@@ -1259,9 +1303,13 @@ class Module(MgrModule):
         min_pg_per_osd = 2
 
         ms = plan.initial
+        refused = crush_compat_refused(ms.osdmap_dump)
+        if refused:
+            self.log.error(refused)
+            return -errno.EOPNOTSUPP, refused
         osdmap = ms.osdmap
         crush = osdmap.get_crush()
-        pe = self.calc_eval(ms, plan.pools)
+        pe = self.calc_eval(ms, plan.pools, by_zone=False)
         min_score_to_optimize = cast(float, self.get_module_option('min_score'))
         if pe.score <= min_score_to_optimize:
             if pe.score == 0:
@@ -1387,7 +1435,7 @@ class Module(MgrModule):
             # recalc
             plan.compat_ws = copy.deepcopy(next_ws)
             next_ms = plan.final_state()
-            next_pe = self.calc_eval(next_ms, plan.pools)
+            next_pe = self.calc_eval(next_ms, plan.pools, by_zone=False)
             next_misplaced = next_ms.calc_misplaced_from(ms)
             self.log.debug('Step result score %f -> %f, misplacing %f',
                            best_pe.score, next_pe.score, next_misplaced)
