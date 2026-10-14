@@ -880,6 +880,17 @@ class TestTScrubberBeECCorruptShards : public TestTScrubberBe {
   {
     test_pg->set_stripe_info(k, m, k * m_chunk_size, &test_pg->m_pool->info);
   }
+
+  // a fixed profile instead of the random one
+  void use_k_m(int8_t new_k, int8_t new_m) {
+    k = new_k;
+    m = new_m;
+    ec_profile.erasure_code_profile["k"] = fmt::format("{}", k);
+    ec_profile.erasure_code_profile["m"] = fmt::format("{}", m);
+    pl.size = k + m;
+    pl.min_size = k + 1;
+    pl.erasure_code_profile = ec_profile;
+  }
 };
 
 class TestTScrubberBeECNoCorruptShards : public TestTScrubberBeECCorruptShards {
@@ -1024,6 +1035,30 @@ TEST_F(TestTScrubberBeECStretch, corrupt_second_seen_zone_copy) {
                                pg_shard_of(shard_id_t(k + m)));
   corrupt_digest(second);
   expect_only_copy_inconsistent(second);
+}
+
+class TestTScrubberBeECStretchM2 : public TestTScrubberBeECStretch {
+ public:
+  TestTScrubberBeECStretchM2() { use_k_m(2, 2); }
+};
+
+// The zone-0 copy of the last parity shard is corrupt. The CRC check of a
+// zone's stripe covers only the first parity shard, so both zones look
+// consistent and neither copy can be trusted: both are reported, so that
+// repair rebuilds them from the data shards rather than copying zone 0's.
+TEST_F(TestTScrubberBeECStretchM2, corrupt_last_parity_copy_in_first_zone) {
+  const pg_shard_t corrupt = pg_shard_of(shard_id_t(k + m - 1));
+  const pg_shard_t good = pg_shard_of(shard_id_t(2 * (k + m) - 1));
+  corrupt_digest(corrupt);
+  logger.set_expected_err_count(1);
+  auto [incons, fix_list] = sbe->scrub_compare_maps(true, *test_scrubber);
+  ASSERT_EQ(1u, incons.size());
+  const auto& obj = std::get<inconsistent_obj_wrapper>(incons.front());
+  for (const auto& [osd_shard, shard] : obj.shards) {
+    EXPECT_EQ(osd_shard.osd == corrupt.osd || osd_shard.osd == good.osd,
+              shard.has_ec_hash_error())
+        << "osd " << osd_shard.osd << ", corrupted " << corrupt;
+  }
 }
 
 class TestTScrubberBeECStretch3 : public TestTScrubberBeECStretch {
