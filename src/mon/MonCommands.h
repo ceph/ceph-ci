@@ -1196,7 +1196,7 @@ COMMAND("osd pool create "
         "name=root,type=CephString,req=false,goodchars=[A-Za-z0-9-_.] "
         "name=zone_failure_domain,type=CephString,req=false,goodchars=[A-Za-z0-9-_.] "
         "name=osd_failure_domain,type=CephString,req=false,goodchars=[A-Za-z0-9-_.] "
-        "name=replica,type=CephInt,range=0,req=false "
+        "name=replica,type=CephInt,range=1,req=false "
         "name=class,type=CephString,goodchars=" CLASS_GOODCHARS ",req=false "
         "name=min_size,type=CephInt,range=1,req=false "
 	"name=yes_i_really_mean_it,type=CephBool,req=false "
@@ -1361,7 +1361,7 @@ COMMAND("osd pool set "
           "|write_fadvise_dontneed "
 	"name=val,type=CephString "
 	"-- "
-	"name=replica,type=CephInt,range=0,req=false "
+	"name=replica,type=CephInt,range=1,req=false "
 	"name=zone_failure_domain,type=CephString,req=false "
 	"name=osd_failure_domain,type=CephString,req=false "
 	"name=crush_rule,type=CephString,req=false "
@@ -1425,7 +1425,7 @@ COMMAND("osd pool stretch set "
 		"name=crush_rule,type=CephString "
 		"name=size,type=CephInt,range=0,req=false "
 		"name=min_size,type=CephInt,range=0 "
-		"name=replica,type=CephInt,range=0,req=false "
+		"name=replica,type=CephInt,range=1,req=false "
 		"name=yes_i_really_mean_it,type=CephBool,req=false",
         "make the pool stretched across the specified number of CRUSH buckets",
         "osd", "rw")
@@ -1434,7 +1434,7 @@ COMMAND("osd pool stretch unset "
 		"name=crush_rule,type=CephString "
 		"name=size,type=CephInt,range=0,req=false "
 		"name=min_size,type=CephInt,range=0 "
-		"name=replica,type=CephInt,range=0,req=false",
+		"name=replica,type=CephInt,range=1,req=false",
 		"unset the stretch mode for the pool",
 		"osd", "rw")
 COMMAND("osd pool availability-status", \
