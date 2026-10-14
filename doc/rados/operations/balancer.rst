@@ -212,6 +212,12 @@ There are four supported balancer modes:
    because of the difficulty of managing the space utilization on the shared
    OSDs, is generally not recommended.)
 
+   This mode cannot be used while an erasure-coded pool has more than one
+   zone. Changing the weights changes the order in which CRUSH chooses the
+   zones of some PGs, and every shard of such a PG then moves.
+   ``ceph balancer mode crush-compat`` fails while such a pool exists; use
+   ``upmap`` mode instead.
+
 #. **upmap**. In Luminous and later releases, the OSDMap can store explicit
    mappings for individual OSDs as exceptions to the normal CRUSH placement
    calculation. These ``upmap`` entries provide fine-grained control over the
