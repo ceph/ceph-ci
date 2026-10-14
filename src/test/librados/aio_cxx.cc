@@ -2199,7 +2199,11 @@ TEST(LibRadosAioEC, MultiWritePP) {
     TestAlarm alarm;
     ASSERT_EQ(0, my_completion2->wait_for_complete());
   }
-  ASSERT_EQ(-EOPNOTSUPP, my_completion2->get_return_value());
+  if (is_crimson_cluster()) {
+    ASSERT_EQ(0, my_completion2->get_return_value());
+  } else {
+    ASSERT_EQ(-EOPNOTSUPP, my_completion2->get_return_value());
+  }
 
   bufferlist bl3;
   auto my_completion3 = std::unique_ptr<AioCompletion>{Rados::aio_create_completion()};
@@ -2210,9 +2214,13 @@ TEST(LibRadosAioEC, MultiWritePP) {
     TestAlarm alarm;
     ASSERT_EQ(0, my_completion3->wait_for_complete());
   }
-  ASSERT_EQ((int)sizeof(buf), my_completion3->get_return_value());
-  ASSERT_EQ(sizeof(buf), bl3.length());
+  const auto expected_size = is_crimson_cluster() ? sizeof(buf) + sizeof(buf2) : sizeof(buf);
+  ASSERT_EQ((int)expected_size, my_completion3->get_return_value());
+  ASSERT_EQ(expected_size, bl3.length());
   ASSERT_EQ(0, memcmp(bl3.c_str(), buf, sizeof(buf)));
+  if (is_crimson_cluster()) {
+    ASSERT_EQ(0, memcmp(bl3.c_str() + sizeof(buf), buf2, sizeof(buf2)));
+  }
 
 }
 

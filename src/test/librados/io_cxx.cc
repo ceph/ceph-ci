@@ -734,11 +734,20 @@ TEST_P(LibRadosIoECPP, OverlappingWriteRoundTripPP) {
   memset(buf2, 0xdd, bsize);
   bufferlist bl2;
   bl2.append(buf2, bsize);
-  ASSERT_EQ(-EOPNOTSUPP, ioctx.write("foo", bl2, bsize, 0));
+  if (is_crimson_cluster()) {
+    ASSERT_EQ(0, ioctx.write("foo", bl2, bsize, 0));
+  } else {
+    ASSERT_EQ(-EOPNOTSUPP, ioctx.write("foo", bl2, bsize, 0));
+  }
   bufferlist bl3;
   ASSERT_EQ(dbsize, ioctx.read("foo", bl3, dbsize, 0));
-  // Read the same as first write
-  ASSERT_EQ(0, memcmp(bl3.c_str(), buf, dbsize));
+  if (is_crimson_cluster()) {
+    ASSERT_EQ(0, memcmp(bl3.c_str(), buf2, bsize));
+    ASSERT_EQ(0, memcmp(bl3.c_str() + bsize, buf + bsize, bsize));
+  } else {
+    // Read the same as first write
+    ASSERT_EQ(0, memcmp(bl3.c_str(), buf, dbsize));
+  }
 }
 
 TEST_P(LibRadosIoECPP, WriteFullRoundTripPP) {
@@ -803,12 +812,21 @@ TEST_P(LibRadosIoECPP, TruncTestPP) {
   bufferlist bl;
   bl.append(buf, sizeof(buf));
   ASSERT_EQ(0, ioctx.append("foo", bl, sizeof(buf)));
-  ASSERT_EQ(-EOPNOTSUPP, ioctx.trunc("foo", sizeof(buf) / 2));
+  if (is_crimson_cluster()) {
+    ASSERT_EQ(0, ioctx.trunc("foo", sizeof(buf) / 2));
+  } else {
+    ASSERT_EQ(-EOPNOTSUPP, ioctx.trunc("foo", sizeof(buf) / 2));
+  }
   bufferlist bl2;
-  // Same size
-  ASSERT_EQ((int)sizeof(buf), ioctx.read("foo", bl2, sizeof(buf), 0));
-  // No change
-  ASSERT_EQ(0, memcmp(bl2.c_str(), buf, sizeof(buf)));
+  if (is_crimson_cluster()) {
+    ASSERT_EQ((int)sizeof(buf) / 2, ioctx.read("foo", bl2, sizeof(buf), 0));
+    ASSERT_EQ(0, memcmp(bl2.c_str(), buf, sizeof(buf) / 2));
+  } else {
+    // Same size
+    ASSERT_EQ((int)sizeof(buf), ioctx.read("foo", bl2, sizeof(buf), 0));
+    // No change
+    ASSERT_EQ(0, memcmp(bl2.c_str(), buf, sizeof(buf)));
+  }
 }
 
 TEST_P(LibRadosIoECPP, RemoveTestPP) {
