@@ -9682,6 +9682,16 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
   }
   string var;
   cmd_getval(cmdmap, "var", var);
+  if (var != "num_zones") {
+    for (const char *opt : {"replica", "crush_rule", "zone_failure_domain",
+                            "osd_failure_domain", "root", "class"}) {
+      if (cmdmap.count(opt)) {
+        ss << "--" << opt
+           << " is only for 'ceph osd pool set <pool> num_zones'";
+        return -EINVAL;
+      }
+    }
+  }
 
   pg_pool_t p = *osdmap.get_pg_pool(pool);
   if (pending_inc.new_pools.count(pool))
