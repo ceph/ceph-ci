@@ -15399,7 +15399,8 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
         if (!device_class.empty())
           profile_map["crush-device-class"] = device_class;
 
-        err = normalize_profile(poolstr, profile_map, false, &ss);
+        // default's stripe unit, set with --force, is kept as it is
+        err = normalize_profile(poolstr, profile_map, true, &ss);
         if (err)
           goto reply_no_propose;
         unsigned k = 0, m = 0;
@@ -17722,7 +17723,7 @@ PoolCreateCluster OSDMonitor::pool_create_cluster(CrushWrapper& crush)
           << "'plugin' entry in the erasure_code_profile " << profile;
       return -EINVAL;
     }
-    return normalize_profile("", profile, false, ss);
+    return normalize_profile("", profile, true, ss);
   };
   cluster.validate_stretch = [this, &crush](const string& zone,
                                            int64_t num_zones,
