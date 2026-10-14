@@ -103,10 +103,10 @@ class MgrTestCase(CephTestCase):
     # stops, fails and restarts every mgr a second time.
     MODULE_PORTS: List[Tuple[str, str, int]] = []
 
-    # config epoch just after the module ports were assigned: tearDown()
-    # resets the config only this far back, so the mgrs keep their ports
-    # when they respawn
-    _module_ports_epoch = None
+    # config version when the class's first test started: tearDown()
+    # resets the config only this far back, so what setUpClass() set, such
+    # as module ports and settings, is still there when the mgrs respawn
+    _class_conf_epoch = None
 
     @classmethod
     def setup_mgrs(cls):
@@ -138,8 +138,6 @@ class MgrTestCase(CephTestCase):
         for module_name, config_name, min_port in cls.MODULE_PORTS:
             cls._assign_module_ports(ip_addr, module_name, config_name,
                                      min_port)
-        if cls.MODULE_PORTS:
-            cls._save_module_ports_epoch()
 
         # Start all the daemons
         for daemon in cls.mgr_cluster.mgr_daemons.values():
@@ -173,21 +171,23 @@ class MgrTestCase(CephTestCase):
 
     @classmethod
     def tearDownClass(cls):
-        if cls._module_ports_epoch is not None:
-            cls._module_ports_epoch = None
+        if cls._class_conf_epoch is not None:
+            cls._class_conf_epoch = None
             cls.mgr_cluster.mon_manager.raw_cluster_cmd(
                 "config", "reset", str(cls.ctx.conf_epoch))
         super().tearDownClass()
 
-    @classmethod
-    def _save_module_ports_epoch(cls):
-        J = json.loads(cls.mgr_cluster.mon_manager.raw_cluster_cmd(
-            "config", "log", "1", "--format=json"))
-        cls._module_ports_epoch = J[0]["version"]
+    def setUp(self):
+        super().setUp()
+        cls = type(self)
+        if cls._class_conf_epoch is None:
+            J = json.loads(self.mgr_cluster.mon_manager.raw_cluster_cmd(
+                "config", "log", "1", "--format=json"))
+            cls._class_conf_epoch = J[0]["version"]
 
     def _config_reset_epoch(self):
-        if self._module_ports_epoch is not None:
-            return self._module_ports_epoch
+        if self._class_conf_epoch is not None:
+            return self._class_conf_epoch
         return super()._config_reset_epoch()
 
     @classmethod
@@ -305,7 +305,6 @@ class MgrTestCase(CephTestCase):
             cls.mgr_cluster.mgr_fail(mgr_id)
 
         cls._assign_module_ports(ip_addr, module_name, config_name, min_port)
-        cls._save_module_ports_epoch()
 
         for mgr_id in cls.mgr_cluster.mgr_ids:
             cls.mgr_cluster.mgr_restart(mgr_id)
