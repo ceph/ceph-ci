@@ -1932,6 +1932,28 @@ void PeeringState::calc_ec_acting(
   _want->swap(want);
 }
 
+namespace {
+// How well a CRUSH zone can serve a zone block, counted over the block's
+// positions that the zone holds.  Like calc_ec_acting, prefer up[i] and
+// acting[i] to strays.  Compared member by member, in order.  Not local to
+// calc_ec_acting_stretch(): GCC 13 cannot compare a local class with a
+// defaulted operator<=> inside std::pair.
+struct zone_fit_t {
+  unsigned up_or_acting = 0; // positions held by up[i] or acting[i]
+  unsigned up = 0;           // positions held by up[i]
+  unsigned held_if_recoverable = 0; // held, if these shards can recover
+  unsigned held = 0;         // positions held
+  unsigned acting = 0;       // positions held by acting[i]
+
+  auto operator<=>(const zone_fit_t &) const = default;
+  zone_fit_t operator+(const zone_fit_t &o) const {
+    return {up_or_acting + o.up_or_acting, up + o.up,
+            held_if_recoverable + o.held_if_recoverable, held + o.held,
+            acting + o.acting};
+  }
+};
+} // anonymous namespace
+
 void PeeringState::calc_ec_acting_stretch(
   map<pg_shard_t, pg_info_t>::const_iterator auth_log_shard,
   unsigned size,
@@ -2006,23 +2028,6 @@ void PeeringState::calc_ec_acting_stretch(
   // zone that no other block uses.
   const bool one_zone_per_block = pool.info.get_num_zone() > 1;
 
-  // How well a CRUSH zone can serve a zone block, counted over the block's
-  // positions that the zone holds.  Like calc_ec_acting, prefer up[i] and
-  // acting[i] to strays.  Compared member by member, in order.
-  struct zone_fit_t {
-    unsigned up_or_acting = 0; // positions held by up[i] or acting[i]
-    unsigned up = 0;           // positions held by up[i]
-    unsigned held_if_recoverable = 0; // held, if these shards can recover
-    unsigned held = 0;         // positions held
-    unsigned acting = 0;       // positions held by acting[i]
-
-    auto operator<=>(const zone_fit_t &) const = default;
-    zone_fit_t operator+(const zone_fit_t &o) const {
-      return {up_or_acting + o.up_or_acting, up + o.up,
-              held_if_recoverable + o.held_if_recoverable, held + o.held,
-              acting + o.acting};
-    }
-  };
   struct zone_holding_t {
     zone_fit_t fit;
     set<pg_shard_t> shards;
