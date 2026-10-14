@@ -164,16 +164,9 @@ auto create_fast_ec_pool(neorados::RADOS& r,
           co_await r.mon_command(std::move(pool_create), {}, nullptr, nullptr,
                                  asio::deferred);
 
-          // Enable ec_overwrites
-          std::vector<std::string> set_overwrites = {
-            fmt::format(
-              R"({{"prefix": "osd pool set", "pool": "{}", "var": "allow_ec_overwrites", "val": "true"}})",
-              pname)
-          };
-          co_await r.mon_command(std::move(set_overwrites), {}, nullptr, nullptr,
-                                 asio::deferred);
-
-          // Enable ec_optimisations
+          // Enable ec_optimisations. This also enables Crimson's always-on
+          // overwrite-capable EC path; setting allow_ec_overwrites separately
+          // is rejected by some Crimson configurations.
           std::vector<std::string> set_optimisations = {
             fmt::format(
               R"({{"prefix": "osd pool set", "pool": "{}", "var": "allow_ec_optimizations", "val": "true"}})",
