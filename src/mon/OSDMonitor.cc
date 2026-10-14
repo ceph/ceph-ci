@@ -17455,8 +17455,11 @@ void OSDMonitor::try_enable_stretch_mode(stringstream& ss, bool *okay,
         const auto size = g_conf().get_val<uint64_t>("mon_stretch_pool_size");
         pool->size = size;
         pool->replica = size / bucket_count;
-        pool->min_size =
-          g_conf().get_val<uint64_t>("mon_stretch_pool_min_size") / bucket_count;
+        // rounded up, as osd pool stretch set does, and at most replica
+        pool->min_size = std::min<uint64_t>(
+          (g_conf().get_val<uint64_t>("mon_stretch_pool_min_size") +
+           bucket_count - 1) / bucket_count,
+          pool->replica);
       }
     }
     if (!already_enabled) {
