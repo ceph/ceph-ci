@@ -6659,6 +6659,18 @@ struct object_info_t {
     return iter->second;
   }
 
+  /// the version of each shard of an erasure coded pool; the shards of every
+  /// zone have the versions of the first zone's shards
+  std::map<shard_id_t, eversion_t> get_shard_versions(
+    const pg_pool_t& pool) const {
+    std::map<shard_id_t, eversion_t> versions;
+    for (unsigned i = 0; i < pool.get_size(); ++i) {
+      const shard_id_t shard(i);
+      versions[shard] = get_version_for_shard(pool.get_relative_shard(shard));
+    }
+    return versions;
+  }
+
   void encode(ceph::buffer::list& bl, uint64_t features) const;
   void decode(ceph::buffer::list::const_iterator& bl);
   void decode(const ceph::buffer::list& bl) {
