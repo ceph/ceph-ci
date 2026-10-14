@@ -375,6 +375,39 @@ TEST_P(TestECFailoverWithPeering, CrossZoneWriteBytesCounted) {
             test_data.size());
 }
 
+// Async recovery keeps each zone of a stretched pool at its min_size: OSDs
+// of one zone that missed different writes are recovered asynchronously
+// only as far as the zone has shards above min_size.
+TEST_P(TestECFailoverWithPeering, AsyncRecoveryKeepsEachZoneAtMinSize) {
+  if (num_zones != 2) {
+    GTEST_SKIP() << "requires num_zones == 2";
+  }
+  ScopedConfig cfg_async_recovery("osd_async_recovery_min_cost", "0");
+  const pg_pool_t *pool = osdmap->get_pg_pool(pool_id);
+  const int spare = k + m - pool->min_size;
+  ASSERT_GE(spare, 1);
+  const std::vector<int> zone1 = zone_osds(1);
+  const std::string data(stripe_unit * k, 'A');
+
+  // each of spare + 1 OSDs of zone 1 misses a write to its own object
+  for (int i = 0; i <= spare; ++i) {
+    mark_osd_down(zone1[i]);
+    create_and_write_verify("obj" + std::to_string(i), data);
+    mark_osd_up(zone1[i]);
+  }
+
+  PeeringState *ps = get_primary_test_pg()->get_peering_state();
+  ASSERT_TRUE(ps->is_active()) << ps->get_current_state();
+  int async_in_zone1 = 0;
+  for (const pg_shard_t &shard : ps->get_async_recovery_targets()) {
+    if (std::ranges::find(zone1, shard.osd) != zone1.end()) {
+      ++async_in_zone1;
+    }
+  }
+  EXPECT_LE(async_in_zone1, spare);
+  EXPECT_EQ(0u, osdmap->stretch_num_acting_below_min_size(*pool, ps->get_acting()));
+}
+
 TEST_P(TestECFailoverWithPeering, OSDFailureWithPeering) {
   ASSERT_TRUE(all_shards_active()) << "Initial peering must complete";
   
