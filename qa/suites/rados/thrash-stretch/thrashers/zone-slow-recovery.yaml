@@ -10,6 +10,7 @@ overrides:
       - \(PG_DEGRADED\)
       - \(PG_AVAILABILITY\)
       - \(STRETCH_MODE_DEGRADED\)
+      - \(RECOVERING_STRETCH_MODE\)
       - \(MON_DOWN\)
       - \(OSD_DOWN\)
       - Degraded data redundancy
