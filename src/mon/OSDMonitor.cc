@@ -9353,7 +9353,7 @@ int OSDMonitor::prepare_command_pool_set_num_zones(
 
 int OSDMonitor::prepare_command_pool_set_replica(
     int64_t pool, const string& poolstr, int64_t n, const string& val,
-    const string& interr, pg_pool_t& p, stringstream& ss)
+    const string& interr, pg_pool_t& p, stringstream& ss, bool force)
 {
   if (interr.length()) {
     ss << "error parsing int value '" << val << "': " << interr;
@@ -9371,6 +9371,21 @@ int OSDMonitor::prepare_command_pool_set_replica(
   if (num_zones < 1) {
     ss << "replica can only be set when num_zones > 0";
     return -EINVAL;
+  }
+  // the limits of 'osd pool set size'
+  if (p.has_flag(pg_pool_t::FLAG_NOSIZECHANGE)) {
+    ss << "pool size change is disabled; you must unset nosizechange flag for the pool first";
+    return -EPERM;
+  }
+  if (int r = check_pool_replica_copies(n, "replica", &ss); r < 0) {
+    return r;
+  }
+  if (num_zones * n == 1) {
+    if (int r = check_size_one(
+          g_conf().get_val<bool>("mon_allow_pool_size_one"), force, &ss);
+        r < 0) {
+      return r;
+    }
   }
 
   if (n > std::numeric_limits<decltype(p.replica)>::max()) {
@@ -9446,6 +9461,9 @@ int OSDMonitor::prepare_command_pool_set_replica(
   p.crush_rule = new_crush_rule;
   if (num_zones > 1 && replica_changed) {
     // min_size = replica - floor(replica / 2)
+    p.min_size = g_conf().get_osd_pool_default_min_size(p.replica);
+  } else if (p.min_size > n) {
+    // as osd pool set size does
     p.min_size = g_conf().get_osd_pool_default_min_size(p.replica);
   }
   ss << "set replica to " << static_cast<unsigned>(p.replica)
@@ -10154,7 +10172,8 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
     }
   } else if (var == "replica") {
     int r = prepare_command_pool_set_replica(
-        pool, poolstr, n, val, interr, p, ss);
+        pool, poolstr, n, val, interr, p, ss,
+        cmd_getval_or<bool>(cmdmap, "yes_i_really_mean_it", false));
     if (r < 0) {
       return r;
     }
