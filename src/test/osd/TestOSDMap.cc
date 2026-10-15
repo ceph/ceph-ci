@@ -3712,6 +3712,39 @@ TEST_F(OSDMapTest, pgtemp_primaryfirst) {
   }
 }
 
+// The shard of an op from a pre-Tentacle client comes from the client's map,
+// which can be older than the OSD's: of a pool that has since become smaller,
+// for example by osd pool set num_zones, or that has been deleted
+TEST_F(OSDMapTest, undo_pre_tentacle_primaryfirst) {
+  set_up_map();
+
+  pg_pool_t pool = *osdmap.get_pg_pool(my_ec_pool);
+  pool.size = 3;
+  pool.set_flag(pg_pool_t::FLAG_EC_OPTIMIZATIONS);
+  pool.nonprimary_shards = {shard_id_t(1)};
+  pg_t pgid = osdmap.raw_pg_to_pg(pg_t(0, my_ec_pool));
+  {
+    OSDMap::Incremental inc(osdmap.get_epoch() + 1);
+    inc.new_pools[my_ec_pool] = pool;
+    inc.new_pg_temp[pgid] = mempool::osdmap::vector<int>{0, 2, 1};
+    osdmap.apply_incremental(inc);
+  }
+
+  spg_t spgid(pgid, shard_id_t(1));
+  ASSERT_TRUE(osdmap.undo_pre_tentacle_primaryfirst(&spgid));
+  EXPECT_EQ(shard_id_t(2), spgid.shard);
+  spgid = spg_t(pgid, shard_id_t(4));
+  EXPECT_FALSE(osdmap.undo_pre_tentacle_primaryfirst(&spgid));
+
+  {
+    OSDMap::Incremental inc(osdmap.get_epoch() + 1);
+    inc.old_pools.insert(my_ec_pool);
+    osdmap.apply_incremental(inc);
+  }
+  spgid = spg_t(pgid, shard_id_t(1));
+  EXPECT_FALSE(osdmap.undo_pre_tentacle_primaryfirst(&spgid));
+}
+
 // Helper function to test primaryfirst mapping with an OSD-per-shard array
 // (osd_vec[i] is the OSD holding shard i).
 // Verifies forward and reverse mapping consistency

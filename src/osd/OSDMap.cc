@@ -3130,6 +3130,16 @@ shard_id_t OSDMap::pgtemp_undo_primaryfirst(const pg_pool_t& pool,
   ceph_abort("Shard out of range!");
 }
 
+bool OSDMap::undo_pre_tentacle_primaryfirst(spg_t *pgid) const
+{
+  const pg_pool_t *pool = get_pg_pool(pgid->pool());
+  if (!pool || pgid->shard >= pool->size) {
+    return false;
+  }
+  pgid->reset_shard(pgtemp_undo_primaryfirst(*pool, pgid->pgid, pgid->shard));
+  return true;
+}
+
 void OSDMap::_get_temp_osds(const pg_pool_t& pool, pg_t pg,
                             vector<int> *temp_pg, int *temp_primary) const
 {
