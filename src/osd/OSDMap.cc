@@ -3140,6 +3140,17 @@ bool OSDMap::undo_pre_tentacle_primaryfirst(spg_t *pgid) const
   return true;
 }
 
+bool OSDMap::async_recovery_can_shrink(const pg_pool_t& pool,
+                                       const std::vector<int>& candidate_want) const
+{
+  if (pool.is_stretch_pool()) {
+    return stretch_num_acting_below_min_size(pool, candidate_want) == 0 &&
+      pool.stretch_set_can_peer(candidate_want, *this, NULL);
+  }
+  return std::count_if(candidate_want.begin(), candidate_want.end(),
+                       [](int osd) { return osd != CRUSH_ITEM_NONE; }) >= pool.min_size;
+}
+
 void OSDMap::_get_temp_osds(const pg_pool_t& pool, pg_t pg,
                             vector<int> *temp_pg, int *temp_primary) const
 {
