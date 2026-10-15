@@ -1268,7 +1268,7 @@ def _deploy_metrics_push_timer(
         script_path=script_path,
         interval_sec=interval,
         timeout_sec=timeout,
-        randomized_delay_sec=min(60, interval // 10),
+        randomized_delay_sec=min(2, interval // 10),
     )
 
 
