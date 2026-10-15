@@ -18,6 +18,7 @@
 #include "common/config_proxy.h"
 #include "global/global_context.h"
 
+#include <algorithm>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -964,6 +965,33 @@ TEST(CheckSizeOneTest, NotSure) {
   stringstream ss;
   EXPECT_EQ(-EPERM, check_size_one(true, false, &ss));
   EXPECT_NE(string::npos, ss.str().find("--yes-i-really-mean-it"));
+}
+
+// Test the copies of a replicated pool are limited to 1 to
+// MAX_POOL_REPLICA_COPIES
+TEST(CheckPoolReplicaCopiesTest, Limits) {
+  stringstream ss;
+  EXPECT_EQ(0, check_pool_replica_copies(1, "replica", &ss)) << ss.str();
+  EXPECT_EQ(0, check_pool_replica_copies(MAX_POOL_REPLICA_COPIES, "replica",
+                                         &ss)) << ss.str();
+  EXPECT_EQ(-EINVAL, check_pool_replica_copies(0, "pool size", &ss));
+  EXPECT_EQ("pool size must be between 1 and 10", ss.str());
+  ss.str("");
+  EXPECT_EQ(-EINVAL, check_pool_replica_copies(MAX_POOL_REPLICA_COPIES + 1,
+                                               "replica", &ss));
+  EXPECT_EQ("replica must be between 1 and 10", ss.str());
+}
+
+// Test the size and replica options allow the copies the commands allow
+TEST(CheckPoolReplicaCopiesTest, OptionsShareTheLimit) {
+  for (const string name :
+       {"osd_pool_default_size", "osd_pool_default_replica"}) {
+    auto o = std::find_if(ceph_options.begin(), ceph_options.end(),
+                          [&](const Option& o) { return o.name == name; });
+    ASSERT_NE(ceph_options.end(), o) << name;
+    EXPECT_EQ(uint64_t(MAX_POOL_REPLICA_COPIES), std::get<uint64_t>(o->max))
+        << name;
+  }
 }
 
 // Test the written options are unique and use the new replica name
