@@ -388,6 +388,11 @@ void OSDMap::get_stretch_zones(const pg_pool_t& pool,
 bool OSDMap::at_least_one_zone_has_min_size(const pg_pool_t& pool,
                                         const vector<int>& acting) const
 {
+  if (pool.num_zones < 2) {
+    return std::count_if(acting.begin(), acting.end(), [](int osd) {
+      return osd != CRUSH_ITEM_NONE;
+    }) >= pool.min_size;
+  }
   map<int, set<int>> zones;
   get_stretch_zones(pool, &zones);
   for (const auto& [zone, zone_osd_set] : zones) {
@@ -411,8 +416,10 @@ unsigned OSDMap::stretch_num_acting_below_min_size(const pg_pool_t& pool,
   if (!pool.is_stretch_pool()) {
     return 0;
   }
-  // Special case for 3-zone clusters with 2 peering crush buckets
-  if (pool.num_zones == 3 && pool.peering_crush_bucket_count == 2) {
+  // Special case for 3-zone clusters with 2 peering crush buckets, and pools
+  // of one zone (stretch values from an older 'osd pool stretch set')
+  if (pool.num_zones < 2 ||
+      (pool.num_zones == 3 && pool.peering_crush_bucket_count == 2)) {
     const auto cluster_min_size = pool.min_size * pool.num_zones;
     const auto cluster_acting = std::count_if(
       acting.begin(), acting.end(), [](int osd) {
