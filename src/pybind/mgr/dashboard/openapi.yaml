@@ -14541,6 +14541,11 @@ paths:
                 traddr:
                   description: NVMeoF gateway address (deprecated)
                   type: string
+                use_group_config_network_masks:
+                  default: false
+                  description: Automatically create listeners for this subsystem using
+                    the gateway group config's listener network masks
+                  type: boolean
               required:
               - nqn
               type: object
