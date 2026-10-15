@@ -15753,9 +15753,9 @@ void PrimaryLogPG::update_range(
   PoolMigrationInterval *pmi,
   HBHandle *handle)
 {
+  std::string func_name = __func__;
   int local_min = cct->_conf->osd_backfill_scan_min;
   int local_max = cct->_conf->osd_backfill_scan_max;
-  std::string func_name = __func__;
 
   bool is_old = (pmi->version < info.log_tail);
   bool is_empty = (pmi->empty());
@@ -15764,7 +15764,17 @@ void PrimaryLogPG::update_range(
   if (is_old || is_empty || at_end) {
     dout(10) << func_name << ": rescanning local pool_migration_info. is_old: "
              << is_old << ". is_empty: " << is_empty << ". at_end: " << at_end << dendl;
-    pmi->clear();
+
+    if (at_end && pmi->objects.size() >= local_max) {
+      // Temporarily increase scan limit for cases with many migrations in flight, large snapsets etc.
+      local_max += pmi->objects.size();
+      dout(10) << func_name << ": watermark " << pool_migration_watermark
+               << " too far behind last_pool_migration_started "
+               << last_pool_migration_started << ", increasing scan max to "
+               << local_max << dendl;
+    }
+
+    pmi->reset(pool_migration_watermark);
     pmi->version = info.last_update;
     scan_range_migration(local_min, local_max, pmi, handle, pool_migration_watermark);
   }
