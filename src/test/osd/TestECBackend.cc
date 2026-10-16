@@ -368,6 +368,11 @@ struct ECShard0WriteTestOp final : ECCommon::RMWPipeline::Op {
     : Op(rmw_pipeline) {
   }
 
+  std::optional<hobject_t> consider_updating_migration_watermark(
+      ECListener *) override {
+    return std::nullopt;
+  }
+
   void generate_transactions(
       ceph::ErasureCodeInterfaceRef &ec_impl,
       pg_t pgid,
@@ -412,6 +417,11 @@ struct ECShard0WriteTestOp final : ECCommon::RMWPipeline::Op {
 struct ECRollForwardTestOp final : ECCommon::RMWPipeline::Op {
   explicit ECRollForwardTestOp(ECCommon::RMWPipeline &rmw_pipeline)
     : Op(rmw_pipeline) {
+  }
+
+  std::optional<hobject_t> consider_updating_migration_watermark(
+      ECListener *) override {
+    return std::nullopt;
   }
 
   void generate_transactions(
