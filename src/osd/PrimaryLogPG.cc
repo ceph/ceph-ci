@@ -15922,8 +15922,11 @@ struct C_PoolMigrationReservationCallback : public Context {
     if (r != 0) {
       ldpp_dout(pg, 1) << "C_PoolMigrationReservationCallback::finish() ERROR: reservation failed with r=" << r << dendl;
 
-      if (r == -EBUSY) {
-        // Target PG epoch is ahead of ours, try again after a short delay
+      if (r == -EBUSY || r == -ENOENT) {
+        // EBUSY: Target PG epoch is ahead of ours.
+        // ENOENT: Target pool is not yet visible in our local OSDMap (pool
+        // DNE from the objecter's perspective), so the op was never sent.
+        // Both are transient, try again after a short delay.
         pg->pool_migration_reservations_granted_source = false;
         pg->pool_migration_reservation_tid = std::numeric_limits<ceph_tid_t>::max();
         PrimaryLogPGRef pgref = pg;
