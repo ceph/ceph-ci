@@ -2338,14 +2338,20 @@ string rgw_pool::to_str() const
   return esc_name + ":" + esc_ns;
 }
 
-void rgw_raw_obj::decode_from_rgw_obj(bufferlist::const_iterator& bl)
+int rgw_raw_obj::decode_from_rgw_obj(bufferlist::const_iterator& bl)
 {
   using ceph::decode;
   rgw_obj old_obj;
   decode(old_obj, bl);
 
-  get_obj_bucket_and_oid_loc(old_obj, oid, loc);
+  int r = get_obj_bucket_and_oid_loc(old_obj, oid, loc);
+  if (r < 0) {
+    return r;
+  }
+
   pool = old_obj.get_explicit_data_pool();
+
+  return 0;
 }
 
 std::list<rgw_raw_obj> rgw_raw_obj::generate_test_instances()

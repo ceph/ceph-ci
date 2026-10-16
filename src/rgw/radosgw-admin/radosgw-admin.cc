@@ -1476,22 +1476,32 @@ int check_obj_locator_underscore(rgw::sal::Object* obj, bool fix, bool remove_ba
   f->dump_string("instance", obj->get_instance());
   f->close_section();
 
-  string oid;
-  string locator;
+  // declared early to allow goto
+  std::unique_ptr<rgw::sal::Object::ReadOp> read_op;
+  bool needs_fixing = false;
+  std::string status;
 
-  get_obj_bucket_and_oid_loc(obj->get_obj(), oid, locator);
+  std::string oid;
+  std::string locator;
+  int ret = get_obj_bucket_and_oid_loc(obj->get_obj(), oid, locator);
+  if (ret < 0) {
+    cerr <<
+      ": ERROR: call to prepend_bucket_marker returned " << ret <<
+      " likely beause marker or original oid were empty" << std::endl;
+    goto done;
+  }
 
   f->dump_string("oid", oid);
   f->dump_string("locator", locator);
 
-  std::unique_ptr<rgw::sal::Object::ReadOp> read_op = obj->get_read_op();
+  read_op = obj->get_read_op();
 
-  int ret = read_op->prepare(null_yield, dpp());
-  bool needs_fixing = (ret == -ENOENT);
+  ret = read_op->prepare(null_yield, dpp());
+  needs_fixing = (ret == -ENOENT);
 
   f->dump_bool("needs_fixing", needs_fixing);
 
-  string status = (needs_fixing ? "needs_fixing" : "ok");
+  status = (needs_fixing ? "needs_fixing" : "ok");
 
   if ((needs_fixing || remove_bad) && fix) {
     ret = static_cast<rgw::sal::RadosStore*>(driver)->getRados()->fix_head_obj_locator(dpp(), obj->get_bucket()->get_info(), needs_fixing, remove_bad, obj->get_key(), null_yield);

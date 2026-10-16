@@ -2332,27 +2332,36 @@ get_iam_policy_from_attr(CephContext* cct,
                          const std::map<std::string, bufferlist>& attrs,
                          const std::string& tenant);
 
-static inline void prepend_bucket_marker(const rgw_bucket& bucket, const std::string& orig_oid, std::string& oid)
+static inline int prepend_bucket_marker(const rgw_bucket& bucket, const std::string& orig_oid, std::string& oid)
 {
   if (bucket.marker.empty() || orig_oid.empty()) {
-    oid = orig_oid;
+    return -EINVAL;
   } else {
     oid = bucket.marker;
     oid.append("_");
     oid.append(orig_oid);
+    return 0;
   }
 }
 
-static inline void get_obj_bucket_and_oid_loc(const rgw_obj& obj, std::string& oid, std::string& locator)
+static inline int get_obj_bucket_and_oid_loc(const rgw_obj& obj, std::string& oid, std::string& locator)
 {
   const rgw_bucket& bucket = obj.bucket;
-  prepend_bucket_marker(bucket, obj.get_oid(), oid);
+  int r = prepend_bucket_marker(bucket, obj.get_oid(), oid);
+  if (r < 0) {
+    return r;
+  }
   const std::string& loc = obj.key.get_loc();
   if (!loc.empty()) {
-    prepend_bucket_marker(bucket, loc, locator);
+    r = prepend_bucket_marker(bucket, loc, locator);
+    if (r < 0) {
+      return r;
+    }
   } else {
     locator.clear();
   }
+
+  return 0;
 }
 
 /// Truncate a bufferlist to a given length

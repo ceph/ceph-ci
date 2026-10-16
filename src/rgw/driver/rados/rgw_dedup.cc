@@ -671,7 +671,13 @@ namespace rgw::dedup {
     string dummy_locator;
     const rgw_obj_index_key key(p_rec->obj_name, p_rec->instance);
     rgw_obj obj(bucket->get_key(), key);
-    get_obj_bucket_and_oid_loc(obj, *p_oid, dummy_locator);
+    int ret = get_obj_bucket_and_oid_loc(obj, *p_oid, dummy_locator);
+    if (ret < 0) {
+        ldpp_dout(dpp, 0) << __func__ <<
+            ": ERROR: call to get_obj_bucket_and_oid_loc returned " << ret <<
+            " likely beause marker or original oid were empty" << dendl;
+        return ret;
+    }
     RGWBucketInfo& bucket_info = bucket->get_info();
     return store->get_obj_head_ioctx(dpp, bucket_info, obj, p_ioctx);
 

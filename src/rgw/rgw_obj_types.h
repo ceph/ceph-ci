@@ -439,7 +439,7 @@ struct rgw_raw_obj {
     ENCODE_FINISH(bl);
   }
 
-  void decode_from_rgw_obj(bufferlist::const_iterator& bl);
+  int decode_from_rgw_obj(bufferlist::const_iterator& bl);
 
   void decode(bufferlist::const_iterator& bl) {
     unsigned ofs = bl.get_off();

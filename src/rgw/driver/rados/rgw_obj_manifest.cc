@@ -442,7 +442,10 @@ static bool rgw_obj_to_raw(const RGWZoneGroup& zonegroup, const RGWZoneParams& z
                            const rgw_placement_rule& head_placement_rule,
                            const rgw_obj& obj, rgw_raw_obj *raw_obj)
 {
-  get_obj_bucket_and_oid_loc(obj, raw_obj->oid, raw_obj->loc);
+  int r = get_obj_bucket_and_oid_loc(obj, raw_obj->oid, raw_obj->loc);
+  if (r < 0) {
+    return false;
+  }
 
   return rgw_get_obj_data_pool(zonegroup, zone_params, head_placement_rule, obj, &raw_obj->pool);
 }

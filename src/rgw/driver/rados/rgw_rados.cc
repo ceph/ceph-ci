@@ -2737,7 +2737,10 @@ int RGWRados::create_vector_bucket(const DoutPrefixProvider* dpp,
 
 bool RGWRados::obj_to_raw(const rgw_placement_rule& placement_rule, const rgw_obj& obj, rgw_raw_obj *raw_obj)
 {
-  get_obj_bucket_and_oid_loc(obj, raw_obj->oid, raw_obj->loc);
+  int r = get_obj_bucket_and_oid_loc(obj, raw_obj->oid, raw_obj->loc);
+  if (r < 0) {
+    return false;
+  }
 
   return get_obj_data_pool(placement_rule, obj, &raw_obj->pool);
 }
@@ -2755,7 +2758,13 @@ int RGWRados::get_obj_head_ioctx(const DoutPrefixProvider *dpp,
 				 librados::IoCtx *ioctx)
 {
   std::string oid, key;
-  get_obj_bucket_and_oid_loc(obj, oid, key);
+  int r = get_obj_bucket_and_oid_loc(obj, oid, key);
+  if (r < 0) {
+    ldpp_dout(dpp, 0) << __func__ <<
+      ": ERROR: call to prepend_bucket_marker returned " << r <<
+      " likely beause marker or original oid were empty" << dendl;
+    return r;
+  }
 
   rgw_pool pool;
   if (!get_obj_data_pool(bucket_info.placement_rule, obj, &pool)) {
@@ -2764,7 +2773,7 @@ int RGWRados::get_obj_head_ioctx(const DoutPrefixProvider *dpp,
     return -EIO;
   }
 
-  int r = open_pool_ctx(dpp, pool, *ioctx, false, true);
+  r = open_pool_ctx(dpp, pool, *ioctx, false, true);
   if (r < 0) {
     ldpp_dout(dpp, 0) << "ERROR: unable to open data-pool=" << pool.to_str() <<
       " for obj=" << obj << " with error-code=" << r << dendl;
@@ -2782,13 +2791,20 @@ int RGWRados::get_obj_head_ref(const DoutPrefixProvider *dpp,
                                rgw_rados_ref *ref)
 {
   rgw_raw_obj raw;
-  get_obj_bucket_and_oid_loc(obj, raw.oid, raw.loc);
+  int r = get_obj_bucket_and_oid_loc(obj, raw.oid, raw.loc);
+  if (r < 0) {
+    ldpp_dout(dpp, 0) << __func__ <<
+      ": ERROR: call to get_obj_bucket_and_oid_loc returned " << r <<
+      " likely beause marker or original oid were empty" << dendl;
+    return r;
+  }
+
   if (!get_obj_data_pool(target_placement_rule, obj, &raw.pool)) {
     ldpp_dout(dpp, 0) << "ERROR: cannot get data pool for obj=" << obj
 		      << ", probably misconfiguration" << dendl;
     return -EIO;
   }
-  auto r = rgw_get_rados_ref(dpp, get_rados_handle(), raw, ref);
+  r = rgw_get_rados_ref(dpp, get_rados_handle(), raw, ref);
   if (r < 0) {
     ldpp_dout(dpp, 0) << "ERROR: failed opening data pool (pool="
 		      << raw.pool << "); r=" << r << dendl;
@@ -2837,7 +2853,13 @@ int RGWRados::fix_head_obj_locator(const DoutPrefixProvider *dpp, const RGWBucke
 
   rgw_obj obj(bucket, key);
 
-  get_obj_bucket_and_oid_loc(obj, oid, locator);
+  int r = get_obj_bucket_and_oid_loc(obj, oid, locator);
+  if (r < 0) {
+    ldpp_dout(dpp, 0) << __func__ <<
+      ": ERROR: call to get_obj_bucket_and_oid_loc returned " << r <<
+      " likely beause marker or original oid were empty" << dendl;
+    return r;
+  }
 
   if (locator.empty()) {
     ldpp_dout(dpp, 20) << "object does not have a locator, nothing to fix" << dendl;
@@ -3027,7 +3049,14 @@ int RGWRados::fix_tail_obj_locator(const DoutPrefixProvider *dpp,
 
       auto& ioctx = ref.ioctx;
 
-      get_obj_bucket_and_oid_loc(loc, oid, locator);
+      int r = get_obj_bucket_and_oid_loc(loc, oid, locator);
+      if (r < 0) {
+        ldpp_dout(dpp, 0) << __func__ <<
+          ": ERROR: call to get_obj_bucket_and_oid_loc returned " << r <<
+          " likely beause marker or original oid were empty" << dendl;
+        return r;
+      }
+
       ref.ioctx.locator_set_key(locator);
 
       ldpp_dout(dpp, 20) << __func__ << ": key=" << key << " oid=" << oid << " locator=" << locator << dendl;
@@ -3038,7 +3067,15 @@ int RGWRados::fix_tail_obj_locator(const DoutPrefixProvider *dpp,
       }
 
       string bad_loc;
-      prepend_bucket_marker(bucket, loc.key.name, bad_loc);
+      r = prepend_bucket_marker(bucket, loc.key.name, bad_loc);
+      if (r < 0) {
+        ldpp_dout(dpp, 0) << __func__ <<
+          ": call to prepend_bucket_marker returned " << r <<
+          " with bucket.marker=\"" << bucket.marker <<
+          "\" and loc.key.name=\"" << loc.key.name << "\"" <<
+          dendl;
+        return r;
+      }
 
       /* create a new ioctx with the bad locator */
       librados::IoCtx src_ioctx;
@@ -7339,10 +7376,16 @@ int RGWRados::delete_obj_index(const rgw_obj& obj, ceph::real_time mtime,
 			       const DoutPrefixProvider *dpp, optional_yield y)
 {
   std::string oid, key;
-  get_obj_bucket_and_oid_loc(obj, oid, key);
+  int ret = get_obj_bucket_and_oid_loc(obj, oid, key);
+  if (ret < 0) {
+    ldpp_dout(dpp, 0) << __func__ <<
+      ": ERROR: call to get_obj_bucket_and_oid_loc returned " << ret <<
+      " likely beause marker or original oid were empty" << dendl;
+    return ret;
+  }
 
   RGWBucketInfo bucket_info;
-  int ret = get_bucket_instance_info(obj.bucket, bucket_info, NULL, NULL, y, dpp);
+  ret = get_bucket_instance_info(obj.bucket, bucket_info, NULL, NULL, y, dpp);
   if (ret < 0) {
     ldpp_dout(dpp, 0) << "ERROR: " << __func__ << "() get_bucket_instance_info(bucket=" << obj.bucket << ") returned ret=" << ret << dendl;
     return ret;
@@ -7703,9 +7746,15 @@ int RGWRados::Object::Stat::stat_async(const DoutPrefixProvider *dpp)
 
   string oid;
   string loc;
-  get_obj_bucket_and_oid_loc(obj, oid, loc);
+  int r = get_obj_bucket_and_oid_loc(obj, oid, loc);
+  if (r < 0) {
+    ldpp_dout(dpp, 0) << __func__ <<
+      ": ERROR: call to get_obj_bucket_and_oid_loc returned " << r <<
+      " likely beause marker or original oid were empty" << dendl;
+    return r;
+  }
 
-  int r = store->get_obj_head_ioctx(dpp, source->get_bucket_info(), obj, &state.io_ctx);
+  r = store->get_obj_head_ioctx(dpp, source->get_bucket_info(), obj, &state.io_ctx);
   if (r < 0) {
     return r;
   }
@@ -12203,7 +12252,13 @@ int RGWRados::check_disk_state(const DoutPrefixProvider *dpp,
   }
 
   string oid;
-  get_obj_bucket_and_oid_loc(obj, oid, loc);
+  int r = get_obj_bucket_and_oid_loc(obj, oid, loc);
+  if (r < 0) {
+    ldpp_dout(dpp, 0) << __func__ <<
+      ": ERROR: call to get_obj_bucket_and_oid_loc returned " << r <<
+      " likely beause marker or original oid were empty" << dendl;
+    return r;
+  }
 
   if (loc != list_state.locator) {
     ldpp_dout(dpp, 0) << "WARNING: generated locator (" << loc << ") is different from listed locator (" << list_state.locator << ")" << dendl;
@@ -12212,7 +12267,7 @@ int RGWRados::check_disk_state(const DoutPrefixProvider *dpp,
   RGWObjState *astate = NULL;
   RGWObjManifest *manifest = nullptr;
   RGWObjectCtx octx(this->driver);
-  int r = get_obj_state(dpp, &octx, bucket_info, obj, &astate, &manifest, false, y);
+  r = get_obj_state(dpp, &octx, bucket_info, obj, &astate, &manifest, false, y);
   if (r < 0)
     return r;
 
