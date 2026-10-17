@@ -108,6 +108,25 @@ will be a single attempt at the read; should this attempt fail, the I/O
 operation will be failed back to the client without further retries at this
 layer.
 
+The exception is a read error on the shard itself (``EIO``: a checksum or
+media error). The shard has nothing to reconstruct the data from, so it
+bounces the read with ``EAGAIN``, as it does for a missing object, and the
+Objecter reissues it to the primary as a normal read, which decodes the data
+from the other shards. Each such bounce is written to the cluster log and
+counted in the ``ec_direct_read_redirect_eio`` OSD perf counter.
+
+The bounce does not repair the shard. The primary's read around the shard
+meets the same ``EIO``. Unless ``osd_ec_repair_on_read`` is off, the primary
+then marks the object missing on that shard and recovers it from the other
+shards. It logs each such shard to the cluster log and counts it in the
+``ec_read_repair`` OSD perf counter. The PG goes through recovery with
+``repair`` set. The pushes count as repairs on the OSDs that take them,
+toward ``OSD_TOO_MANY_REPAIRS``. The primary repairs only in an active and
+clean PG with no scrub running and no write holding the object. It also needs
+k+1 shards that the read did not find damaged to hold the object. A pool with
+m=1 therefore never repairs this way. In other cases, the next read of the
+object or a deep scrub finds the damaged shard again.
+
 Missing objects
 ---------------
 
