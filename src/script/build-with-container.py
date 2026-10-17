@@ -673,6 +673,8 @@ class Context:
             suffix = f".{variant}{suffix}"
         if self.cli.with_cuobj:
             suffix = f".cuobj{suffix}"
+        if self.cli.with_oob_ofi:
+            suffix = f".oob-ofi{suffix}"
         return f"{branch}.{self.cli.distro}{suffix}"
 
     def base_branch(self):
@@ -866,6 +868,7 @@ def build_container(ctx):
         f"--label=io.ceph.build-with-container.src={_hash_sources()}",
         f"--label=io.ceph.build-with-container.image-variant={ctx.variant()}",
         f"--label=io.ceph.build-with-container.cuobj={int(ctx.cli.with_cuobj)}",
+        f"--label=io.ceph.build-with-container.oob-ofi={int(ctx.cli.with_oob_ofi)}",
         f"--build-arg=CEPH_BASE_BRANCH={ctx.base_branch()}",
     ]
     if ctx.cli.distro:
@@ -891,6 +894,8 @@ def build_container(ctx):
         cmd.extend([f"--build-arg={v}" for v in ctx.cli.build_args])
     if ctx.cli.with_cuobj:
         cmd.append("--build-arg=WITH_RADOSGW_CUOBJ=ON")
+    if ctx.cli.with_oob_ofi:
+        cmd.append("--build-arg=WITH_OOB_OFI=ON")
     cmd += ["-f", ctx.cli.containerfile, ctx.cli.containerdir]
     with ctx.user_command():
         _run(cmd, check=True, ctx=ctx)
@@ -922,7 +927,10 @@ def _check_cached_image(ctx):
     cuobj_ok = labels.get("io.ceph.build-with-container.cuobj", "0") == str(
         int(ctx.cli.with_cuobj)
     )
-    if saved_hash == curr_hash and cuobj_ok:
+    oob_ofi_ok = labels.get("io.ceph.build-with-container.oob-ofi", "0") == str(
+        int(ctx.cli.with_oob_ofi)
+    )
+    if saved_hash == curr_hash and cuobj_ok and oob_ofi_ok:
         log.info("Container passes source check")
         return True, True
     log.info("Container sources or cuObject setting do not match: %s", curr_hash)
@@ -968,6 +976,8 @@ def bc_configure(ctx):
     ctx.build.wants(Steps.CONTAINER, ctx)
     ctx.build.wants(Steps.NPM_CACHE, ctx)
     cuobj_arg = " -DWITH_RADOSGW_CUOBJ=ON" if ctx.cli.with_cuobj else ""
+    if ctx.cli.with_oob_ofi:
+        cuobj_arg += " -DWITH_OOB_OFI=ON"
     cmd = _container_cmd(
         ctx,
         [
@@ -1170,6 +1180,8 @@ def bc_build_rpm(ctx):
     ] + list(ctx.cli.rpmbuild_arg or [])
     if ctx.cli.with_cuobj:
         rpmbuild_args.append('--with=cuobj')
+    if ctx.cli.with_oob_ofi:
+        rpmbuild_args.append('--with=oob_ofi')
     rpmbuild_args.append(str(srpm_path))
     rpmbuild_cmd = ' '.join(shlex.quote(cmd) for cmd in rpmbuild_args)
     cmd = _container_cmd(
@@ -1320,6 +1332,15 @@ def parse_cli(build_step_names):
         help=(
             "Enable RGW cuObject support and install its server dependencies"
             " in the build image (EL9/EL10, x86_64/aarch64). Disabled by default."
+        ),
+    )
+    g_basic.add_argument(
+        "--with-oob-ofi",
+        action="store_true",
+        help=(
+            "Build out-of-band delivery over libfabric (WITH_OOB_OFI) and"
+            " install libfabric 1.20 or later in the build image. Disabled"
+            " by default."
         ),
     )
 
