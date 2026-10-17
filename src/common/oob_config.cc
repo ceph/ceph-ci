@@ -26,6 +26,7 @@
 #include "common/config.h"
 #include "common/errno.h"
 #include "common/pick_address.h"
+#include "msg/msg_types.h"
 #include "include/ipaddr.h"
 #include "include/scope_guard.h"
 #include "include/str_list.h"
@@ -513,6 +514,12 @@ bool osd_keeps_net_raw(CephContext* cct)
     cct->get_module_type() == CEPH_ENTITY_TYPE_OSD &&
     !cct->_conf.get_val<bool>("set_keepcaps") &&
     needs_net_raw(read_transports(cct).ofi_provider);
+}
+
+std::string public_ip(CephContext* cct)
+{
+  const auto a = cct->_conf.get_val<entity_addr_t>("public_addr");
+  return a.is_blank_ip() ? std::string{} : a.ip_only_to_str();
 }
 
 ceph::rdma::oob_transports read_transports(CephContext* cct)

@@ -20,6 +20,7 @@
 #include <string>
 
 #include "common/async/context_pool.h"
+#include "common/oob_arena.h"
 
 #include "rgw_common.h"
 #include "rgw_rest.h"
@@ -115,6 +116,9 @@ class AppMain {
   std::unique_ptr<rgw::auth::ImplicitTenants> implicit_tenant_context;
   std::unique_ptr<rgw::dmclock::SchedulerCtx> sched_ctx;
   std::unique_ptr<ActiveRateLimiter> ratelimiter;
+  /// the memory the cuObject server registers for out-of-band
+  /// transfers (oob_memory); null when it does not run
+  std::shared_ptr<ceph::oob::Arena> oob_arena;
   std::map<std::string, std::string> service_map_meta;
   // wow, realm reloader has a lot of parts
   std::unique_ptr<RGWRealmReloader> reloader;
