@@ -1772,6 +1772,7 @@ void OSDService::queue_for_snap_trim(PG *pg, uint64_t cost_per_object)
        * dev team)
        */
       return cct->_conf->osd_snap_trim_cost;
+      // FIXME Need core review.
     }
   }();
 
