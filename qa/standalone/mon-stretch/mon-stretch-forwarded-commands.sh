@@ -44,6 +44,7 @@ function peon_addr() {
 function run_three_mons() {
     local dir=$1
 
+    CEPH_ARGS="$BASE_CEPH_ARGS --mon-host=$CEPH_MON_A"
     run_mon $dir a --public-addr $CEPH_MON_A || return 1
     wait_for_quorum 300 1 || return 1
     run_mon $dir b --public-addr $CEPH_MON_B || return 1
