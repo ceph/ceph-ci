@@ -61,7 +61,7 @@ on_exit() {
         return 0
     fi
     echo
-    echo "❌ CONTROLLER GET IO STATISTICS TEST FAILED (exit code $rc)"
+    echo "[nvmeof.io_stats] ❌ CONTROLLER GET IO STATISTICS TEST FAILED (exit code $rc)"
     echo
     sudo nvme list-subsys || true
     sudo nvme list || true
@@ -73,32 +73,28 @@ cli_name() {
     if [ "$1" = native ]; then echo "ceph nvmeof"; else echo "nvmeof-cli"; fi
 }
 
-# Print the command line a CLI invocation runs, for logging.
-cli_display_cmd() {
-    local mode="$1"
-    shift
-    if [ "$mode" = native ]; then
-        echo "ceph nvmeof --server-address $NVMEOF_DEFAULT_GATEWAY_IP_ADDRESS $*"
-    else
-        echo "sudo podman run -it $NVMEOF_CLI_IMAGE" \
-            "--server-address $NVMEOF_DEFAULT_GATEWAY_IP_ADDRESS" \
-            "--server-port $NVMEOF_SRPORT --output stdio $*"
-    fi
-}
-
+# Build the command line for a CLI invocation into the CLI_CMD array. Logging
+# and execution both go through this, so the command shown in the log cannot
+# drift from the one that actually ran.
+#
 # "--output stdio" is required for the container CLI: it defaults to
 # "--output log", which writes the command output to stderr through the logger
 # instead of to stdout.
-cli_run() {
+build_cli_cmd() {
     local mode="$1"
     shift
     if [ "$mode" = native ]; then
-        ceph nvmeof --server-address $NVMEOF_DEFAULT_GATEWAY_IP_ADDRESS "$@"
+        CLI_CMD=(ceph nvmeof --server-address $NVMEOF_DEFAULT_GATEWAY_IP_ADDRESS "$@")
     else
-        sudo podman run -it $NVMEOF_CLI_IMAGE \
-            --server-address $NVMEOF_DEFAULT_GATEWAY_IP_ADDRESS \
-            --server-port $NVMEOF_SRPORT --output stdio "$@"
+        CLI_CMD=(sudo podman run -it $NVMEOF_CLI_IMAGE
+                 --server-address $NVMEOF_DEFAULT_GATEWAY_IP_ADDRESS
+                 --server-port $NVMEOF_SRPORT --output stdio "$@")
     fi
+}
+
+cli_run() {
+    build_cli_cmd "$@"
+    "${CLI_CMD[@]}"
 }
 
 # Build the IO statistics subcommand for a CLI into the IO_STATS_ARGS array.
@@ -136,24 +132,6 @@ build_io_stats_args() {
     return 0
 }
 
-# Cut the JSON payload out of a `ceph` response: `ceph` can print unrelated text
-# (cluster warnings, for instance) ahead of the payload. Each line is tried in
-# turn as the start of the payload until one decodes; scanning rather than
-# cutting at the first '{' or '[' matters because a warning like
-# "cluster [WRN] ..." puts a '[' ahead of the real payload.
-json_payload() {
-    local text="$1" total line candidate
-    total=$(printf '%s\n' "$text" | wc -l)
-    for (( line = 1; line <= total; line++ )); do
-        candidate=$(printf '%s\n' "$text" | tail -n +"$line")
-        if printf '%s' "$candidate" | jq -e . >/dev/null 2>&1; then
-            printf '%s' "$candidate"
-            return 0
-        fi
-    done
-    return 1
-}
-
 # Redraw a table with ASCII characters. The container CLI frames its tables with
 # Unicode box-drawing characters, which teuthology's log capture mangles into
 # sequences like "â•’â•" - the UTF-8 bytes of "╒═" read back as cp1252. Only the
@@ -183,8 +161,8 @@ print_cli_output() {
         echo "(no output)"
     else
         if [ -n "$(printf '%s' "$stdout" | tr -d '[:space:]')" ]; then
-            if [ "$mode" = native ] && payload=$(json_payload "$stdout"); then
-                echo "$payload" | jq .
+            if [ "$mode" = native ] && payload=$(echo "$stdout" | jq -e . 2>/dev/null); then
+                echo "$payload"
             else
                 echo "$stdout" | ascii_table
             fi
@@ -226,8 +204,10 @@ split_text_io_stats() {
 split_json_io_stats() {
     local output="$1" description="$2" payload status error_message
 
-    if ! payload=$(json_payload "$output"); then
-        echo "$description: expected JSON output from 'ceph nvmeof' but could not decode any" \
+    # `ceph` writes its warnings to stderr, which run_io_stats_cli keeps apart,
+    # so stdout is the JSON payload on its own.
+    if ! payload=$(echo "$output" | jq -e . 2>/dev/null); then
+        echo "$description: expected JSON output from 'ceph nvmeof' but could not decode it" \
              "— see the output above"
         return 1
     fi
@@ -245,29 +225,40 @@ split_json_io_stats() {
         jq '[.statistics_entries // [] | .[] | select(((.buckets // []) | length) == 0)] | length')
 }
 
-# Execute a connection IO statistics command and assert the per-connection
-# expectations.
+# Build a connection IO statistics command, run it and assert the
+# per-connection expectations. Takes the same filter arguments as
+# build_io_stats_args, so a call reads as the test step it performs.
 #   $1: CLI mode - "container" or "native"
-#   $2: expectation - "stats" (at least one connection must report statistics),
+#   $2: action - "get" or "reset"
+#   $3: subsystem NQN to filter on, empty for all subsystems
+#   $4: host NQN to filter on, empty for all hosts
+#   $5: "true" to add the verbose flag - ignored for "reset", which has no
+#       verbose variant
+#   $6: expectation - "stats" (at least one connection must report statistics),
 #       "no_stats" (no connection may report statistics) or "none" (no assertion
 #       on the output)
-#   $3: description of the step/command, for logging and assert messages
-#   $4..: the CLI subcommand and its arguments
+#   $7: step label for the log and assert messages, e.g. "Part 1"
 run_io_stats_cli() {
-    local mode="$1" expect="$2" description="$3"
-    shift 3
+    local mode="$1" action="$2" nqn="$3" host="$4" verbose="$5" expect="$6" label="$7"
+    local description
 
-    echo
+    build_io_stats_args "$mode" "$action" "$nqn" "$host" "$verbose"
+    description="[nvmeof.io_stats] $label: $(cli_name "$mode") ${IO_STATS_ARGS[*]}"
+    if [ "$expect" = no_stats ]; then
+        description="$description — expect no stats"
+    fi
+
     echo
     echo "$description"
     echo "$LINE_SIGN"
-    cli_display_cmd "$mode" "$@"
+    build_cli_cmd "$mode" "${IO_STATS_ARGS[@]}"
+    echo "${CLI_CMD[*]}"
     echo "$LINE_SIGN"
 
     local stdout stderr combined rc err_file
     err_file=$(mktemp -t nvmeof-io-stats-err-XXXX)
     set +e
-    stdout=$(cli_run "$mode" "$@" 2>"$err_file")
+    stdout=$(cli_run "$mode" "${IO_STATS_ARGS[@]}" 2>"$err_file")
     rc=$?
     set -e
     stderr=$(cat "$err_file")
@@ -283,7 +274,6 @@ run_io_stats_cli() {
     print_cli_output "$mode" "$stdout" "$stderr"
 
     if [ "$expect" = none ]; then
-        echo
         echo
         return 0
     fi
@@ -322,7 +312,7 @@ run_io_stats_cli() {
             if [ "$NO_STATS_COUNT" -gt 0 ]; then
                 idle_note=" ($NO_STATS_COUNT idle connection(s) reported no statistics)"
             fi
-            echo "✅ Verified: statistics present for $STATS_COUNT connection(s)$idle_note"
+            echo "[nvmeof.io_stats] ✅ Verified: statistics present for $STATS_COUNT connection(s)$idle_note"
             ;;
         no_stats)
             if [ "$mode" != native ] && [ "$NO_STATS_COUNT" -lt 1 ]; then
@@ -339,14 +329,13 @@ run_io_stats_cli() {
                 return 1
             fi
             if [ "$NO_STATS_COUNT" -gt 0 ]; then
-                echo "✅ Verified: no statistics for all $NO_STATS_COUNT connection(s)"
+                echo "[nvmeof.io_stats] ✅ Verified: no statistics for all $NO_STATS_COUNT connection(s)"
             else
-                echo "✅ Verified: no connection reports statistics"
+                echo "[nvmeof.io_stats] ✅ Verified: no connection reports statistics"
             fi
             ;;
     esac
 
-    echo
     echo
 }
 
@@ -357,16 +346,13 @@ run_io_stats_cli() {
 #   - subsystem filter <NQN> --host-nqn <NQN> [verbose]
 verify_all_get_io_statistics() {
     local part_num="$1" mode="$2"
-    local i nqn host verbose name
-    name=$(cli_name "$mode")
+    local i nqn host verbose
     for i in "${!FILTER_NQNS[@]}"; do
         nqn="${FILTER_NQNS[$i]}"
         host="${FILTER_HOSTS[$i]}"
         for verbose in false true; do
-            build_io_stats_args "$mode" get "$nqn" "$host" "$verbose"
-            run_io_stats_cli "$mode" stats \
-                "Part $part_num: $name ${IO_STATS_ARGS[*]}" \
-                "${IO_STATS_ARGS[@]}"
+            run_io_stats_cli "$mode" get "$nqn" "$host" "$verbose" \
+                stats "Part $part_num"
         done
     done
 }
@@ -379,21 +365,15 @@ verify_all_get_io_statistics() {
 #   - subsystem filter <NQN> --host-nqn <NQN>
 reset_and_verify_io_statistics() {
     local mode="$1"
-    local i nqn host name
-    name=$(cli_name "$mode")
+    local i nqn host
     for i in "${!FILTER_NQNS[@]}"; do
         nqn="${FILTER_NQNS[$i]}"
         host="${FILTER_HOSTS[$i]}"
 
-        build_io_stats_args "$mode" reset "$nqn" "$host" false
-        run_io_stats_cli "$mode" none \
-            "Part 2: $name ${IO_STATS_ARGS[*]}" \
-            "${IO_STATS_ARGS[@]}"
-
-        build_io_stats_args "$mode" get "$nqn" "$host" false
-        run_io_stats_cli "$mode" no_stats \
-            "Part 2 verify: $name ${IO_STATS_ARGS[*]} — expect no stats" \
-            "${IO_STATS_ARGS[@]}"
+        run_io_stats_cli "$mode" reset "$nqn" "$host" false \
+            none "Part 2"
+        run_io_stats_cli "$mode" get "$nqn" "$host" false \
+            no_stats "Part 2 verify"
     done
 }
 
@@ -498,16 +478,16 @@ done
 
 echo
 echo "$LINE_SIGN"
-echo "CONTROLLER GET IO STATISTICS TEST"
+echo "[nvmeof.io_stats] CONTROLLER GET IO STATISTICS TEST"
 echo "$LINE_SIGN"
-echo "Found $nqns_count subsystem(s): [$nqns_list]"
-echo "Host NQN: $host_nqn"
-echo "CLIs under test: ${CLI_MODES[*]}"
+echo "[nvmeof.io_stats] Found $nqns_count subsystem(s): [$nqns_list]"
+echo "[nvmeof.io_stats] Host NQN: $host_nqn"
+echo "[nvmeof.io_stats] CLIs under test: ${CLI_MODES[*]}"
 
 # Generate the IO the part 1 statistics are collected from
 echo
 echo "$LINE_SIGN"
-echo "RUNNING FIO (generating IO statistics)"
+echo "[nvmeof.io_stats] RUNNING FIO (generating IO statistics)"
 echo "$LINE_SIGN"
 run_fio
 
@@ -515,7 +495,7 @@ run_fio
 for mode in "${CLI_MODES[@]}"; do
     echo
     echo "$LINE_SIGN"
-    echo "PART 1 [$(cli_name "$mode")]: GET IO STATISTICS BEFORE RESET"
+    echo "[nvmeof.io_stats] PART 1 [$(cli_name "$mode")]: GET IO STATISTICS BEFORE RESET"
     echo "$LINE_SIGN"
     verify_all_get_io_statistics 1 "$mode"
 done
@@ -529,13 +509,13 @@ for i in "${!CLI_MODES[@]}"; do
     if [ "$i" -gt 0 ]; then
         echo
         echo "$LINE_SIGN"
-        echo "RE-RUNNING FIO (repopulating statistics for the next CLI's reset)"
+        echo "[nvmeof.io_stats] RE-RUNNING FIO (repopulating statistics for the next CLI's reset)"
         echo "$LINE_SIGN"
         run_fio
     fi
     echo
     echo "$LINE_SIGN"
-    echo "PART 2 [$(cli_name "$mode")]: RESET IO STATISTICS"
+    echo "[nvmeof.io_stats] PART 2 [$(cli_name "$mode")]: RESET IO STATISTICS"
     echo "$LINE_SIGN"
     reset_and_verify_io_statistics "$mode"
 done
@@ -543,7 +523,7 @@ done
 # Step 4: Re-run fio
 echo
 echo "$LINE_SIGN"
-echo "RE-RUNNING FIO"
+echo "[nvmeof.io_stats] RE-RUNNING FIO"
 echo "$LINE_SIGN"
 run_fio
 
@@ -551,13 +531,13 @@ run_fio
 for mode in "${CLI_MODES[@]}"; do
     echo
     echo "$LINE_SIGN"
-    echo "PART 3 [$(cli_name "$mode")]: GET IO STATISTICS AFTER RESET"
+    echo "[nvmeof.io_stats] PART 3 [$(cli_name "$mode")]: GET IO STATISTICS AFTER RESET"
     echo "$LINE_SIGN"
     verify_all_get_io_statistics 3 "$mode"
 done
 
 echo
 echo "$LINE_SIGN"
-echo "✅ CONTROLLER GET IO STATISTICS TEST PASSED"
+echo "[nvmeof.io_stats] ✅ CONTROLLER GET IO STATISTICS TEST PASSED"
 echo "$LINE_SIGN"
 echo
