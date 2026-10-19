@@ -2,6 +2,7 @@
 
 import functools
 import logging
+import time
 from typing import Annotated, Any, Callable, Dict, Generator, List, \
     NamedTuple, Optional, Type, get_args, get_origin
 
@@ -125,18 +126,40 @@ else:
         -32603: 500,  # Internal Error
     }
 
+    # The gRPC client intermittently fails to establish the connection to the
+    # gateway (e.g. "failed to connect to all addresses; last error: UNKNOWN:
+    # Invalid argument"). This happens before anything is sent, so the call
+    # can be safely retried on a new channel, even for non-idempotent requests.
+    CONNECT_FAILURE_MSG = "failed to connect to all addresses"
+    CONNECT_RETRIES = 3
+    CONNECT_RETRY_DELAY = 0.2
+
+    def _is_connect_failure(err) -> bool:
+        return CONNECT_FAILURE_MSG in (err.details() or "")
+
     def handle_nvmeof_error(func: Callable[..., Message]) -> Callable[..., Message]:
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> Message:
-            try:
-                response = func(*args, **kwargs)
-            except grpc._channel._InactiveRpcError as e:  # pylint: disable=protected-access
-                raise DashboardException(
-                    msg=e.details(),
-                    code=e.code(),
-                    http_status_code=504,
-                    component="nvmeof",
-                )
+            attempt = 0
+            while True:
+                attempt += 1
+                try:
+                    response = func(*args, **kwargs)
+                    break
+                except grpc._channel._InactiveRpcError as e:  # pylint: disable=protected-access
+                    logger.warning(
+                        "nvmeof gRPC call %s failed (attempt %d/%d): code=%s details=%s debug=%s",
+                        func.__name__, attempt, CONNECT_RETRIES, e.code(), e.details(),
+                        e.debug_error_string() if hasattr(e, 'debug_error_string') else None)
+                    if _is_connect_failure(e) and attempt < CONNECT_RETRIES:
+                        time.sleep(CONNECT_RETRY_DELAY * attempt)
+                        continue
+                    raise DashboardException(
+                        msg=e.details(),
+                        code=e.code(),
+                        http_status_code=504,
+                        component="nvmeof",
+                    )
 
             status = getattr(response, "status", None)
             error_message = getattr(response, "error_message", None)

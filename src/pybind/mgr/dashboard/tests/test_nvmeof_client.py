@@ -637,6 +637,84 @@ class TestHandleNvmeofError:
             assert exc_info.value.component == "nvmeof"
             assert "Connection failed" in str(exc_info.value)
 
+    @staticmethod
+    def _make_rpc_error_cls():
+        class MockInactiveRpcError(Exception):
+            def __init__(self, details_msg, code_val):
+                super().__init__(details_msg)
+                self._details = details_msg
+                self._code = code_val
+
+            def details(self):
+                return self._details
+
+            def code(self):
+                return self._code
+
+        return MockInactiveRpcError
+
+    def test_connect_failure_is_retried(self):
+        err_cls = self._make_rpc_error_cls()
+        calls = []
+
+        with patch('dashboard.services.nvmeof_client.grpc') as mock_grpc, \
+                patch('dashboard.services.nvmeof_client.time.sleep'):
+            # pylint: disable=protected-access
+            mock_grpc._channel._InactiveRpcError = err_cls
+
+            @handle_nvmeof_error
+            def mock_function():
+                calls.append(1)
+                if len(calls) < 3:
+                    raise err_cls("failed to connect to all addresses; last error: "
+                                  "UNKNOWN: Invalid argument", "UNAVAILABLE")
+                response = MagicMock()
+                response.status = 0
+                return response
+
+            result = mock_function()
+            assert result.status == 0
+            assert len(calls) == 3
+
+    def test_connect_failure_gives_up_after_retries(self):
+        err_cls = self._make_rpc_error_cls()
+        calls = []
+
+        with patch('dashboard.services.nvmeof_client.grpc') as mock_grpc, \
+                patch('dashboard.services.nvmeof_client.time.sleep'):
+            # pylint: disable=protected-access
+            mock_grpc._channel._InactiveRpcError = err_cls
+
+            @handle_nvmeof_error
+            def mock_function():
+                calls.append(1)
+                raise err_cls("failed to connect to all addresses", "UNAVAILABLE")
+
+            with pytest.raises(DashboardException) as exc_info:
+                mock_function()
+
+            assert exc_info.value.status == 504
+            assert len(calls) == 3
+
+    def test_other_grpc_errors_are_not_retried(self):
+        err_cls = self._make_rpc_error_cls()
+        calls = []
+
+        with patch('dashboard.services.nvmeof_client.grpc') as mock_grpc, \
+                patch('dashboard.services.nvmeof_client.time.sleep'):
+            # pylint: disable=protected-access
+            mock_grpc._channel._InactiveRpcError = err_cls
+
+            @handle_nvmeof_error
+            def mock_function():
+                calls.append(1)
+                raise err_cls("Deadline Exceeded", "DEADLINE_EXCEEDED")
+
+            with pytest.raises(DashboardException):
+                mock_function()
+
+            assert len(calls) == 1
+
     def test_response_without_status_attribute(self):
         @handle_nvmeof_error
         def mock_function():
