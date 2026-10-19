@@ -113,8 +113,9 @@
 %bcond_with system_qat
 %endif
 %bcond_with system_rdkafka
-# out-of-band delivery over libfabric, which needs libfabric 1.20 or later
-%bcond_with oob_ofi
+# out-of-band delivery over libfabric, which needs libfabric 1.20 or later.
+# On for the test builds of this branch
+%bcond_without oob_ofi
 %if 0%{?fedora} || 0%{?suse_version} || 0%{?rhel} || 0%{?openEuler}
 %global weak_deps 1
 %endif
