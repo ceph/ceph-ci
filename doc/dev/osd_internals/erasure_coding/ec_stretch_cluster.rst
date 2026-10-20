@@ -894,9 +894,10 @@ Rules can also be built by hand:
 ``create-erasure`` builds an erasure rule from the profile's keys alone (``default`` if no
 profile is given), so with ``num_zones`` greater than 1 its zone type is the profile's
 ``crush-zone-failure-domain``, not ``osd_pool_default_zone_failure_domain``.
-``create-stretch-replicated`` builds a replicated rule over zones. Its defaults are its own
-(``stretch_replica_rule``, ``default``, ``osd_pool_default_zone_failure_domain``, ``host``, 2,
-2), and ``--force`` skips the checks of the zone count and of the OSD failure domains in each
+``create-stretch-replicated`` builds a replicated rule over zones. Its root and failure domains
+default to ``osd_pool_default_root``, ``osd_pool_default_zone_failure_domain`` and
+``osd_pool_default_osd_failure_domain``; its other defaults are its own
+(``stretch_replica_rule``, 2 zones, 2 replicas per zone), and ``--force`` skips the checks of the zone count and of the OSD failure domains in each
 zone.
 
 *Later Release*: while there are stretched pools, adding or moving a CRUSH bucket in a way that

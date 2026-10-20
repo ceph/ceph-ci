@@ -797,19 +797,19 @@ For details on this command's parameters, see the following:
    :Description: The name of the CRUSH bucket under which data is to be placed.
    :Type: String
    :Required: No
-   :Default: ``default``
+   :Default: ``osd_pool_default_root`` (``default``)
 
 ``zone-failure-domain``
    :Description: The CRUSH bucket type used for the top-level distribution (zones).
    :Type: String
    :Required: No
-   :Default: ``datacenter``
+   :Default: ``osd_pool_default_zone_failure_domain`` (``datacenter``)
 
 ``osd-failure-domain``
    :Description: The CRUSH bucket type used for the second-level distribution within each zone.
    :Type: String
    :Required: No
-   :Default: ``host``
+   :Default: ``osd_pool_default_osd_failure_domain`` (``host``)
 
 ``zones``
    :Description: The number of zones expected in the root.
