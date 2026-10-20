@@ -3,6 +3,7 @@ import ipaddress
 import hashlib
 import json
 import logging
+import time
 import uuid
 import os
 from collections import defaultdict
@@ -48,6 +49,12 @@ logger = logging.getLogger(__name__)
 REQUIRES_POST_ACTIONS = ['grafana', 'iscsi', 'prometheus', 'alertmanager', 'rgw', 'nvmeof', 'mgmt-gateway']
 # Daemons not systemd-enabled on deploy, mgr start them when not user stopped
 DISABLED_SERVICES = ['nfs', 'keepalived']
+
+# osd ok-to-stop judges from the PG stats in the mgr, which show an OSD
+# restart only a few report periods later. So after cephadm redeploys or
+# restarts an OSD, the next autonomous OSD redeploy waits this long, and
+# a serve loop that deferred an OSD action sleeps this long at first.
+OSD_RESTART_SETTLE_TIME = 30
 
 CEPHADM_EXE = ssh.RemoteExecutable('/usr/bin/cephadm')
 
@@ -184,6 +191,9 @@ class CephadmServe:
             # agent-down detection on its own thread.
             down_mult = max(self.mgr.agent_down_multiplier, 1.5)
             candidates.append(int(down_mult * self.mgr.agent_refresh_rate))
+        if self.mgr.osd_retry_interval:
+            # _check_daemons deferred an OSD action: retry it sooner
+            candidates.append(self.mgr.osd_retry_interval)
         sleep_interval = max(30, min(candidates))
         self.log.debug('Sleeping for %d seconds', sleep_interval)
         self.mgr.event.wait(sleep_interval)
@@ -1211,6 +1221,9 @@ class CephadmServe:
         self.log.debug('_check_daemons')
         daemons = self.mgr.cache.get_daemons()
         daemons_post: Dict[str, List[orchestrator.DaemonDescription]] = defaultdict(list)
+        osd_deferred = False
+        osd_settling = False
+        osd_restarted = False
         for dd in daemons:
             # orphan?
             spec = self.mgr.spec_store.active_specs.get(dd.service_name(), None)
@@ -1269,6 +1282,10 @@ class CephadmServe:
             )
             skip_restart_for_reconfig = False
             send_signal_to_daemon = None
+            # the args branches below update dd before the action runs. A
+            # deferred OSD action restores them, or the next serve loop
+            # would not see the change until the next daemon refresh.
+            prev_args = (dd.extra_container_args, dd.extra_entrypoint_args)
             if not last_config:
                 self.log.info('Reconfiguring %s (unknown last config time)...' % (
                     dd.name()))
@@ -1355,18 +1372,38 @@ class CephadmServe:
                 # it when the cluster cannot afford to lose that OSD risks data
                 # unavailability.  If the OSD is not safe to stop right now,
                 # defer the action to the next serve-loop iteration.
+                # A redeploy also waits until OSD_RESTART_SETTLE_TIME has
+                # passed since cephadm last restarted an OSD, because until
+                # then ok-to-stop can count that OSD as a live copy.
                 if (
                     dd.daemon_type == 'osd'
                     and action in ('redeploy', 'reconfig')
                     and not scheduled_action
                 ):
-                    r = svc_obj.ok_to_stop([dd.daemon_id])
-                    if r.retval:
-                        self.log.info(
-                            'Skipping %s of %s (not ok-to-stop: %s); '
-                            'will retry next serve loop',
-                            action, dd.name(), r.stderr,
+                    skip_reason = None
+                    last = self.mgr.last_osd_restart
+                    since = None if last is None else time.monotonic() - last
+                    if (
+                        action == 'redeploy'
+                        and since is not None
+                        and since < OSD_RESTART_SETTLE_TIME
+                    ):
+                        skip_reason = (
+                            f'an OSD restarted {since:.0f}s ago, '
+                            'its PG stats may not show it yet'
                         )
+                        osd_settling = True
+                    else:
+                        r = svc_obj.ok_to_stop([dd.daemon_id])
+                        if r.retval:
+                            skip_reason = f'not ok-to-stop: {r.stderr}'
+                    if skip_reason:
+                        self.log.info(
+                            'Skipping %s of %s (%s); will retry next serve loop',
+                            action, dd.name(), skip_reason,
+                        )
+                        dd.extra_container_args, dd.extra_entrypoint_args = prev_args
+                        osd_deferred = True
                         continue
                 try:
                     daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(dd)
@@ -1375,7 +1412,13 @@ class CephadmServe:
                         reconfig_extras['skip_restart_for_reconfig'] = True
                     if send_signal_to_daemon:
                         reconfig_extras['send_signal_to_daemon'] = send_signal_to_daemon
-                    self.mgr._daemon_action(daemon_spec, action=action, **reconfig_extras)
+                    try:
+                        self.mgr._daemon_action(daemon_spec, action=action, **reconfig_extras)
+                    finally:
+                        # a failed redeploy can have stopped the OSD too
+                        if dd.daemon_type == 'osd' and action in ('redeploy', 'restart'):
+                            self.mgr.last_osd_restart = time.monotonic()
+                            osd_restarted = True
 
                     if self.mgr.cache.rm_scheduled_daemon_action(dd.hostname, dd.name()):
                         self.mgr.cache.save_host(dd.hostname)
@@ -1391,6 +1434,16 @@ class CephadmServe:
                     if dd.daemon_type in daemons_post:
                         del daemons_post[dd.daemon_type]
                     # continue...
+
+        # Retry a deferred OSD action after OSD_RESTART_SETTLE_TIME. While
+        # ok-to-stop refuses and no OSD restarts, double the wait each time,
+        # up to the usual serve loop sleep.
+        if not osd_deferred:
+            self.mgr.osd_retry_interval = None
+        elif osd_restarted or osd_settling or not self.mgr.osd_retry_interval:
+            self.mgr.osd_retry_interval = OSD_RESTART_SETTLE_TIME
+        else:
+            self.mgr.osd_retry_interval *= 2
 
         # do daemon post actions
         for daemon_type, daemon_descs in daemons_post.items():

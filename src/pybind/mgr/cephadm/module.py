@@ -605,6 +605,10 @@ class CephadmOrchestrator(orchestrator.Orchestrator, MgrModule):
         # for serve()
         self.run = True
         self.event = Event()
+        # time.monotonic() when serve() last redeployed or restarted an
+        # OSD, and how soon to retry the OSD actions that it deferred
+        self.last_osd_restart: Optional[float] = None
+        self.osd_retry_interval: Optional[int] = None
         self.ssh = ssh.SSHManager(self)
 
         if self.get_store('pause'):

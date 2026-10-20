@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 
 from contextlib import contextmanager
 
@@ -728,6 +729,187 @@ class TestCephadm(object):
                 mock_ok_to_stop.assert_not_called()
                 # the daemon action must still have run
                 mock_daemon_action.assert_called_once()
+
+    @staticmethod
+    def _osd_redeploy_next_action(action, daemon_type, name, mgr, last_config):
+        # an autonomous redeploy, as a change of the OSD spec's deps gives
+        return 'redeploy' if daemon_type == 'osd' else action
+
+    @mock.patch("cephadm.serve.CephadmServe._run_cephadm")
+    def test_osd_check_daemons_defers_redeploy_after_osd_restart(
+        self, _run_cephadm, cephadm_module: CephadmOrchestrator
+    ):
+        """Right after cephadm restarted an OSD, the mgr's PG stats may still
+        count it as a live copy, so ok-to-stop can wrongly pass. An
+        autonomous redeploy must wait OSD_RESTART_SETTLE_TIME, and the serve
+        loop must retry it after that time, not after its usual sleep."""
+        from cephadm.serve import OSD_RESTART_SETTLE_TIME
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test'):
+            with with_osd_daemon(cephadm_module, _run_cephadm, 'test', 1):
+                cephadm_module.last_osd_restart = time.monotonic()
+                with mock.patch('cephadm.serve._ceph_service_next_action',
+                                side_effect=self._osd_redeploy_next_action), \
+                        mock.patch.object(cephadm_module.osd_service,
+                                          'ok_to_stop') as mock_ok_to_stop, \
+                        mock.patch.object(cephadm_module,
+                                          '_daemon_action') as mock_daemon_action:
+                    CephadmServe(cephadm_module)._check_daemons()
+
+                mock_ok_to_stop.assert_not_called()
+                mock_daemon_action.assert_not_called()
+                assert cephadm_module.osd_retry_interval == OSD_RESTART_SETTLE_TIME
+
+                # the serve loop can run again at once, for example after
+                # _apply_all_services changed something. Waiting for the
+                # settle time is not a refusal, so the wait must not double.
+                with mock.patch('cephadm.serve._ceph_service_next_action',
+                                side_effect=self._osd_redeploy_next_action), \
+                        mock.patch.object(cephadm_module,
+                                          '_daemon_action') as mock_daemon_action:
+                    CephadmServe(cephadm_module)._check_daemons()
+                mock_daemon_action.assert_not_called()
+                assert cephadm_module.osd_retry_interval == OSD_RESTART_SETTLE_TIME
+
+                with mock.patch.object(cephadm_module.event, 'wait') as mock_wait:
+                    CephadmServe(cephadm_module)._serve_sleep()
+                mock_wait.assert_called_once_with(OSD_RESTART_SETTLE_TIME)
+
+    @mock.patch("cephadm.serve.CephadmServe._run_cephadm")
+    def test_osd_check_daemons_redeploys_after_settle_time(
+        self, _run_cephadm, cephadm_module: CephadmOrchestrator
+    ):
+        """Once OSD_RESTART_SETTLE_TIME has passed, the redeploy checks
+        ok-to-stop and runs, and it records the new restart time."""
+        from mgr_module import HandleCommandResult
+        from cephadm.serve import OSD_RESTART_SETTLE_TIME
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test'):
+            with with_osd_daemon(cephadm_module, _run_cephadm, 'test', 1):
+                before = time.monotonic() - OSD_RESTART_SETTLE_TIME - 1
+                cephadm_module.last_osd_restart = before
+                cephadm_module.osd_retry_interval = OSD_RESTART_SETTLE_TIME
+                ok = HandleCommandResult(retval=0, stdout='osd.1 is safe to restart', stderr='')
+                with mock.patch('cephadm.serve._ceph_service_next_action',
+                                side_effect=self._osd_redeploy_next_action), \
+                        mock.patch.object(cephadm_module.osd_service, 'ok_to_stop',
+                                          return_value=ok) as mock_ok_to_stop, \
+                        mock.patch.object(cephadm_module,
+                                          '_daemon_action') as mock_daemon_action:
+                    CephadmServe(cephadm_module)._check_daemons()
+
+                mock_ok_to_stop.assert_called_once_with(['1'])
+                mock_daemon_action.assert_called_once()
+                assert cephadm_module.last_osd_restart > before
+                assert cephadm_module.osd_retry_interval is None
+
+    @mock.patch("cephadm.serve.CephadmServe._run_cephadm")
+    def test_osd_check_daemons_reconfig_does_not_wait_for_settle_time(
+        self, _run_cephadm, cephadm_module: CephadmOrchestrator
+    ):
+        """A reconfig does not restart a Ceph daemon, so it must not wait for
+        OSD_RESTART_SETTLE_TIME. Otherwise a monmap change would reconfigure
+        one OSD per serve loop."""
+        from mgr_module import HandleCommandResult
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test'):
+            with with_osd_daemon(cephadm_module, _run_cephadm, 'test', 1):
+                cephadm_module.last_osd_restart = time.monotonic()
+                cephadm_module._set_extra_ceph_conf('[osd]\ndebug_osd=5')
+                with mock.patch.object(
+                    cephadm_module.osd_service, 'ok_to_stop',
+                    return_value=HandleCommandResult(
+                        retval=0, stdout='osd.1 is safe to restart', stderr='')
+                ) as mock_ok_to_stop, \
+                        mock.patch.object(cephadm_module,
+                                          '_daemon_action') as mock_daemon_action:
+                    CephadmServe(cephadm_module)._check_daemons()
+
+                mock_ok_to_stop.assert_called_once_with(['1'])
+                mock_daemon_action.assert_called_once()
+
+    @mock.patch("cephadm.serve.CephadmServe._run_cephadm")
+    def test_osd_check_daemons_not_ok_to_stop_backs_off(
+        self, _run_cephadm, cephadm_module: CephadmOrchestrator
+    ):
+        """While ok-to-stop keeps refusing and no OSD restarts, the retry
+        interval doubles from OSD_RESTART_SETTLE_TIME, and the serve loop
+        never sleeps longer than its usual sleep."""
+        from mgr_module import HandleCommandResult
+        from cephadm.serve import OSD_RESTART_SETTLE_TIME
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test'):
+            with with_osd_daemon(cephadm_module, _run_cephadm, 'test', 1):
+                busy = HandleCommandResult(retval=-16, stdout='', stderr='not safe to stop osd.1')
+                with mock.patch('cephadm.serve._ceph_service_next_action',
+                                side_effect=self._osd_redeploy_next_action), \
+                        mock.patch.object(cephadm_module.osd_service, 'ok_to_stop',
+                                          return_value=busy), \
+                        mock.patch.object(cephadm_module,
+                                          '_daemon_action') as mock_daemon_action:
+                    intervals = []
+                    for _ in range(6):
+                        CephadmServe(cephadm_module)._check_daemons()
+                        intervals.append(cephadm_module.osd_retry_interval)
+
+                mock_daemon_action.assert_not_called()
+                assert intervals == [OSD_RESTART_SETTLE_TIME * 2 ** i for i in range(6)]
+                with mock.patch.object(cephadm_module.event, 'wait') as mock_wait:
+                    CephadmServe(cephadm_module)._serve_sleep()
+                usual = min(cephadm_module.host_check_interval,
+                            cephadm_module.facts_cache_timeout,
+                            cephadm_module.daemon_cache_timeout,
+                            cephadm_module.device_cache_timeout,
+                            cephadm_module.stray_daemon_check_interval)
+                mock_wait.assert_called_once_with(max(30, min(usual, intervals[-1])))
+
+    @mock.patch("cephadm.serve.CephadmServe._run_cephadm")
+    def test_osd_check_daemons_deferred_redeploy_keeps_args_change(
+        self, _run_cephadm, cephadm_module: CephadmOrchestrator
+    ):
+        """A change of extra_container_args redeploys the OSD. If the
+        redeploy waits, the daemon in the cache must keep its old args, so
+        that the next serve loop still sees the change."""
+        from cephadm.serve import OSD_RESTART_SETTLE_TIME
+        _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
+
+        with with_host(cephadm_module, 'test'):
+            with with_osd_daemon(cephadm_module, _run_cephadm, 'test', 1) as dd:
+                spec = DriveGroupSpec(
+                    service_id='foo',
+                    placement=PlacementSpec(host_pattern='test'),
+                    data_devices=DeviceSelection(all=True),
+                    extra_container_args=['--env=FOO=1'],
+                )
+                specs = {dd.service_name(): spec}
+                old_args = dd.extra_container_args
+                assert old_args != spec.extra_container_args
+                cephadm_module.last_osd_restart = time.monotonic()
+                with mock.patch.object(type(cephadm_module.spec_store), 'active_specs',
+                                       new_callable=mock.PropertyMock,
+                                       return_value=specs), \
+                        mock.patch.object(cephadm_module,
+                                          '_daemon_action') as mock_daemon_action:
+                    CephadmServe(cephadm_module)._check_daemons()
+                    mock_daemon_action.assert_not_called()
+                    assert cephadm_module.cache.get_daemon(
+                        dd.name()).extra_container_args == old_args
+                    assert cephadm_module.osd_retry_interval == OSD_RESTART_SETTLE_TIME
+
+                    # once the settle time has passed, the redeploy runs
+                    cephadm_module.last_osd_restart -= OSD_RESTART_SETTLE_TIME
+                    from mgr_module import HandleCommandResult
+                    with mock.patch.object(
+                        cephadm_module.osd_service, 'ok_to_stop',
+                        return_value=HandleCommandResult(retval=0, stdout='', stderr='')
+                    ):
+                        CephadmServe(cephadm_module)._check_daemons()
+                    mock_daemon_action.assert_called_once()
+                    assert mock_daemon_action.call_args.kwargs['action'] == 'redeploy'
 
     @mock.patch("cephadm.serve.CephadmServe._run_cephadm")
     def test_daemon_check_extra_config(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
