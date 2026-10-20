@@ -673,7 +673,7 @@ Without a named profile, the Monitor builds the contents of the pool's profile:
    - ``--class`` as ``crush-device-class``
 
 4. The plugin normalizes the contents. This fills in unset keys (``crush-root=default``,
-   ``crush-zone-failure-domain=datacenter``, ``crush-failure-domain=host`` and so on) and can
+   ``crush-failure-domain=host`` and so on, but not ``crush-zone-failure-domain``) and can
    rewrite others (ISA switches ``reed_sol_van`` to ``cauchy`` for some ``k`` and ``m``). If
    normalization fails, the command fails and nothing is proposed.
 
@@ -745,9 +745,10 @@ Profile Commands and Changes
 
 * ``ceph osd erasure-code-profile set`` is unchanged apart from the wait in :ref:`Profile Lifetime
   <ecsc-profile-lifetime>`. The keys not given come from ``osd_pool_default_erasure_code_profile``
-  (a different ``plugin`` discards them). Normalization now also adds ``crush-zone-failure-domain``
-  (default ``datacenter``), which ``get`` therefore shows. Like ``crush-osd-failure-domain``, that
-  key is not checked here: a bad value fails when a pool over zones is created with the profile
+  (a different ``plugin`` discards them). A profile has ``crush-zone-failure-domain`` only if it
+  is given: normalization does not add it, as the Monitor resolves the zone type (:ref:`Placement
+  Options <ecsc-placement-options>`). Like ``crush-osd-failure-domain``, that key is not checked
+  here: a bad value fails when a pool over zones is created with the profile
   ("'<type>' is not a CRUSH bucket type") or when a rule is built from it ("unknown type <type>").
   Setting an existing profile to identical contents succeeds without a change; different contents
   need ``--force`` and ``--yes-i-really-mean-it``.
@@ -813,9 +814,10 @@ pool or stretch mode command generates a rule for a pool.
   do not apply to erasure coded pools.
 * **Erasure coded pool, zone type**: ``--zone_failure_domain``, else, at pool creation only, the
   ``crush-zone-failure-domain`` of a profile named with ``--erasure_code_profile``, else
-  ``osd_pool_default_zone_failure_domain``. A generated profile records the zone type only when
-  ``--zone_failure_domain`` is given; otherwise its ``crush-zone-failure-domain``, copied from
-  ``default`` or filled in as ``datacenter`` by normalization, is not used.
+  ``osd_pool_default_zone_failure_domain``. Normalization does not fill the key in, so a profile
+  has it only when it is given. A generated profile records the zone type only when
+  ``--zone_failure_domain`` is given; otherwise a ``crush-zone-failure-domain`` copied from
+  ``default`` is not used.
 
 This applies to ``ceph osd pool create``, to ``ceph osd pool set <pool> num_zones 2``
 (:ref:`num_zones <ecsc-num-zones>`) and to ``ceph mon enable_stretch_mode``, which gives its
@@ -891,9 +893,10 @@ Rules can also be built by hand:
         [<zone_failure_domain>] [<osd_failure_domain>] [<num_zones>]
         [<num_replica_per_zone>] [--force] [<class>]
 
-``create-erasure`` builds an erasure rule from the profile's keys alone (``default`` if no
-profile is given), so with ``num_zones`` greater than 1 its zone type is the profile's
-``crush-zone-failure-domain``, not ``osd_pool_default_zone_failure_domain``.
+``create-erasure`` builds an erasure rule from the profile's keys (``default`` if no profile is
+given). With ``num_zones`` greater than 1 its zone type is the profile's
+``crush-zone-failure-domain`` if the profile has one, else ``osd_pool_default_zone_failure_domain``,
+as for a pool created with the profile.
 ``create-stretch-replicated`` builds a replicated rule over zones. Its root and failure domains
 default to ``osd_pool_default_root``, ``osd_pool_default_zone_failure_domain`` and
 ``osd_pool_default_osd_failure_domain``; its other defaults are its own
@@ -2870,9 +2873,7 @@ require-osd-release <release>'".
   is deleted with its last pool (:ref:`Profile Lifetime <ecsc-profile-lifetime>`); an unused rule is
   removed on ``ceph osd pool delete``, ``ceph osd pool set <pool> crush_rule`` and ``replica``, and
   ``stretch set`` and ``unset``, and a failed command removes the rules it generated (:ref:`Rule
-  Lifetime <ecsc-rule-lifetime>`); normalization adds ``crush-zone-failure-domain`` (:ref:`Profile
-  Commands and Changes <ecsc-profile-commands-and-changes>`); and commands wait for a pending
-  profile or rule removal.
+  Lifetime <ecsc-rule-lifetime>`); and commands wait for a pending profile or rule removal.
 * In degraded stretch mode, the PGs of a pool whose rule takes its zones with a device class can now
   go active (:ref:`Stretch Set Validation <ecsc-stretch-set-validation>`). An earlier-release OSD
   does not treat such an interval as one that may have accepted writes.
