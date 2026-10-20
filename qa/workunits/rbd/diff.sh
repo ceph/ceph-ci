@@ -53,11 +53,12 @@ function test_by_snap_name() {
 function test_by_snap_id() {
     prepare
     rbd clone --rbd-default-clone-format 2 foo@two foo.clone.two
-    rbdd snap rm --snap two foo
-    rbd export-diff foo@two --from-snap three foo.diff && exit 1 || true  # wrong snap order
+    rbd snap rm --snap two foo
+    snap_ids=( `rbd snap ls -a foo --format json|jq -r .[].id` )
+    rbd export-diff foo --snap-id ${snap_ids[0]} --from-snap-id ${snap_ids[1]} foo.diff && exit 1 || true  # wrong snap order
     rm -f foo.diff
 
-    rbd export-diff foo@three --from-snap two foo.diff
+    rbd export-diff foo --snap-id ${snap_ids[1]} --from-snap-id ${snap_ids[0]} foo.diff
     rbd import-diff foo.diff foo.copy
     rbd import-diff foo.diff foo.copy && exit 1 || true   # this should fail with EEXIST on the end snap
     rbd snap ls foo.copy | grep three
