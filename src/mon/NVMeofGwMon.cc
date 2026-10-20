@@ -14,8 +14,11 @@
 #include <boost/tokenizer.hpp>
 #include "include/stringify.h"
 #include "NVMeofGwMon.h"
+#include "Monitor.h"
+#include "common/cmdparse.h"
 #include "messages/MNVMeofGwBeacon.h"
 #include "messages/MNVMeofGwMap.h"
+#include "messages/MMonCommand.h"
 
 #define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_mon
@@ -23,6 +26,10 @@
 #define dout_prefix *_dout << "nvmeofgw " << __PRETTY_FUNCTION__ << " "
 
 using std::string;
+using ceph::common::bad_cmd_get;
+using ceph::common::cmd_getval;
+using ceph::common::cmd_getval_or;
+using ceph::common::cmdmap_from_json;
 
 void NVMeofGwMon::init()
 {
@@ -244,9 +251,8 @@ void NVMeofGwMon::encode_pending(MonitorDBStore::TransactionRef t)
   put_last_committed(t, pending_map.epoch);
 
   //health
-  health_check_map_t checks;
+  auto& checks = get_health_checks_pending_writeable();
   pending_map.get_health_checks(&checks);
-  encode_health(checks, t);
 }
 
 void NVMeofGwMon::update_from_paxos(bool *need_bootstrap)
@@ -259,7 +265,6 @@ void NVMeofGwMon::update_from_paxos(bool *need_bootstrap)
     bufferlist bl;
     int err = get_version(version, bl);
     ceph_assert(err == 0);
-    load_health();
 
     auto p = bl.cbegin();
     map.decode(p);
