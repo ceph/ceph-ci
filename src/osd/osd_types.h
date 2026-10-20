@@ -1733,7 +1733,7 @@ public:
 
   uint8_t get_ec_data_shard_count() const {
     return ec_data_shard_count.value_or(
-      nonprimary_shards.size() / get_num_zone() + 1);
+      nonprimary_shards.size() / get_num_zones() + 1);
   }
 
   void set_snap_seq(snapid_t s) { snap_seq = s; }
@@ -1915,12 +1915,6 @@ public:
     } else {
       return shard_id_t::NO_SHARD;
     }
-  }
-
-  /// Deprecated: use get_num_zones() instead
-  /// Kept for backward compatibility
-  int get_num_zone() const {
-    return get_num_zones();
   }
 
   int get_zone_size() const {

@@ -1978,7 +1978,7 @@ void PeeringState::calc_ec_acting_stretch(
 
   // With more than one zone, each zone block is served from a single CRUSH
   // zone that no other block uses.
-  const bool one_zone_per_block = pool.info.get_num_zone() > 1;
+  const bool one_zone_per_block = pool.info.get_num_zones() > 1;
 
   struct zone_holding_t {
     zone_fit_t fit;
@@ -3028,7 +3028,7 @@ bool PeeringState::choose_acting(pg_shard_t &get_log_shard_id,
         backfill_target_shard_id_set.insert(i.shard);
       }
     }
-    if (pool.info.is_erasure() && pool.info.get_num_zone() > 1) {
+    if (pool.info.is_erasure() && pool.info.get_num_zones() > 1) {
       for (const auto &t : want_backfill) {
         const auto ti = all_info.find(t);
         if (ti != all_info.end() && !ti->second.is_incomplete() &&

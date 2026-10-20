@@ -320,7 +320,7 @@ shard_id_t ECSplitOp::choose_read_shard(
   if (localize) {
     if (!local_zone) {
       local_zone = local_zone_for_acting_set(
-          target.acting, pi->get_num_zone(), pi->get_zone_size(),
+          target.acting, pi->get_num_zones(), pi->get_zone_size(),
           objecter.osdmap->crush.get(), cct, objecter.crush_location);
     }
     return readable(*local_zone) ? pi->get_abs_shard(shard, *local_zone)
@@ -328,7 +328,7 @@ shard_id_t ECSplitOp::choose_read_shard(
   }
 
   std::vector<int> zones;
-  for (int zone = 0; zone < pi->get_num_zone(); ++zone) {
+  for (int zone = 0; std::cmp_less(zone, pi->get_num_zones()); ++zone) {
     if (readable(zone)) {
       zones.push_back(zone);
     }
@@ -360,7 +360,7 @@ void ReplicaSplitOp::init_reference_sub_read() {
   // available the split is aborted and the op goes to the nearest replica.
   //
   // For BALANCE_READS (localize=false) we use all available replicas.
-  if (localize && pi->is_stretch_pool() && pi->get_num_zone() > 1) {
+  if (localize && pi->is_stretch_pool() && pi->get_num_zones() > 1) {
     // A replicated acting set is not ordered by zone: the local zone is that
     // of the replica nearest the client.
     CrushWrapper *crush = objecter.osdmap->crush.get();
@@ -1375,7 +1375,7 @@ bool SplitOp::validate_flags(const pg_pool_t *pi, int flags, CephContext *cct) {
   // Only a multi-zone pool splits a localized read; other localized reads go
   // to the nearest replica, chosen by _calc_target().
   bool localize = (flags & CEPH_OSD_FLAG_LOCALIZE_READS) &&
-                  pi->get_num_zone() > 1;
+                  pi->get_num_zones() > 1;
   if (!(flags & CEPH_OSD_FLAG_BALANCE_READS) && !localize) {
     ldout(cct, DBG_LVL) << __func__ << " REJECT: Neither BALANCE_READS nor "
                         << "multi-zone LOCALIZE_READS set" << dendl;

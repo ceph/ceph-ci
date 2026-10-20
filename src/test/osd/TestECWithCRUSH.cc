@@ -335,7 +335,7 @@ TEST_F(TestLocalZoneForActingSet, ValidateFlagsAcceptsLocalizeReadsRegardlessOfE
   // validate_flags() or zone routing actually do.  Its comment also
   // asserted a "guard...in init_read" for FLAG_EC_OPTIMIZATIONS that does
   // not exist: grep over SplitOp.cc finds no reference to
-  // FLAG_EC_OPTIMIZATIONS at all, and get_num_zone() (osd_types.h), which
+  // FLAG_EC_OPTIMIZATIONS at all, and get_num_zones() (osd_types.h), which
   // drives zone routing in ECSplitOp::init_read(), is unconditional on that
   // flag. So "non-fast-EC pools bypass zone routing" is not a property this
   // module implements today, and cannot honestly be tested here.
