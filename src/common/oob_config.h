@@ -144,9 +144,9 @@ int with_net_raw(const std::function<void()>& fn, std::string* err);
 /**
  * Whether an OSD that switches from root to cct's uid in global_init()
  * keeps CAP_NET_RAW, and only it: when uet is the provider of its
- * endpoint, and set_keepcaps does not keep every capability already.
- * cct holds only ceph.conf, the environment and the command line then:
- * the mon config arrives after the switch.
+ * endpoint or oob_keep_net_raw is set, and set_keepcaps does not keep
+ * every capability already. cct holds only ceph.conf, the environment
+ * and the command line then: the mon config arrives after the switch.
  */
 bool osd_keeps_net_raw(CephContext* cct);
 

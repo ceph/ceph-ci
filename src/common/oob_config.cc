@@ -556,7 +556,8 @@ bool osd_keeps_net_raw(CephContext* cct)
   return cct->get_set_uid() != 0 &&
     cct->get_module_type() == CEPH_ENTITY_TYPE_OSD &&
     !cct->_conf.get_val<bool>("set_keepcaps") &&
-    needs_net_raw(read_transports(cct).ofi_provider);
+    (cct->_conf.get_val<bool>("oob_keep_net_raw") ||
+     needs_net_raw(read_transports(cct).ofi_provider));
 }
 
 bool rgw_keeps_net_raw(CephContext* cct)

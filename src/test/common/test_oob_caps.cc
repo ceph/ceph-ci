@@ -227,9 +227,22 @@ TEST(OobCaps, OsdKeepsNetRaw)
   conf.set_val("oob_client_transports", "");
   conf.set_val("oob_cluster_transport", "");
   EXPECT_FALSE(osd_keeps_net_raw(cct.get()));
+  // transports that only the mon config selects: oob_keep_net_raw
+  // keeps it all the same, unless set_keepcaps keeps everything
+  conf.set_val("oob_keep_net_raw", "true");
+  EXPECT_TRUE(osd_keeps_net_raw(cct.get()));
+  conf.set_val("set_keepcaps", "true");
+  EXPECT_FALSE(osd_keeps_net_raw(cct.get()));
+  conf.set_val("set_keepcaps", "false");
+  cct->set_uid_gid(0, 0);
+  EXPECT_FALSE(osd_keeps_net_raw(cct.get()));
+  cct->set_uid_gid(167, 167);
+  conf.set_val("oob_keep_net_raw", "false");
   // another daemon
   auto other = context(CEPH_ENTITY_TYPE_CLIENT, 167);
   other->_conf.set_val("oob_cluster_transport", "uet");
+  EXPECT_FALSE(osd_keeps_net_raw(other.get()));
+  other->_conf.set_val("oob_keep_net_raw", "true");
   EXPECT_FALSE(osd_keeps_net_raw(other.get()));
 }
 
