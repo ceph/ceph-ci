@@ -269,7 +269,8 @@ int SplitOp::local_zone_for_acting_set(
     CephContext* cct,
     const std::multimap<std::string, std::string>& crush_location)
 {
-  if (num_zones < 2 || zone_size <= 0 || !crush || crush_location.empty()) {
+  ceph_assert(zone_size > 0);
+  if (num_zones < 2 || !crush || crush_location.empty()) {
     return 0;
   }
   if ((int)acting.size() < num_zones * zone_size) {

@@ -494,16 +494,6 @@ TEST_F(TestLocalZoneGuards, SingleZoneReturnsZero)
     /*crush=*/nullptr, cct, loc));
 }
 
-// zone_size <= 0 → always zone 0.
-TEST_F(TestLocalZoneGuards, ZeroZoneSizeReturnsZero)
-{
-  auto acting = make_acting(6);
-  auto loc    = make_loc("dc0");
-  EXPECT_EQ(0, SplitOp::local_zone_for_acting_set(
-    acting, /*num_zones=*/2, /*zone_size=*/0,
-    /*crush=*/nullptr, cct, loc));
-}
-
 // crush == nullptr → always zone 0.
 TEST_F(TestLocalZoneGuards, NullCrushReturnsZero)
 {
