@@ -314,7 +314,7 @@ class SplitOp {
   virtual bool legacy_version_mismatch() const = 0;
   virtual bool version_mismatch_v2() const = 0;
   virtual void init_reference_sub_read() = 0;
-  virtual void init(OSDOp &op, int ops_index, bool single_op);
+  void init(OSDOp &op, int ops_index, bool single_op);
 
   Objecter::Op *orig_op;
   Objecter &objecter;

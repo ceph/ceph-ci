@@ -46,7 +46,7 @@ void ECSplitOp::init_reference_sub_read() {
   for (size_t i = 0; i < target.acting.size(); i++) {
     if (shard_id_t(i) == primary_abs_shard) {
       reference_sub_read = pg_shard_t(target.acting[i], primary_abs_shard);
-      reference_sub_read_key = (int)primary_abs_shard;
+      reference_sub_read_key = i;
       ldout(cct, DBG_LVL) << __func__ << " set reference_sub_read=" << reference_sub_read
                           << " for primary_abs_shard=" << (int)primary_abs_shard << dendl;
       return;
