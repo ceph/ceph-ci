@@ -1313,29 +1313,14 @@ OSDMonitor::update_pending_pgs(const OSDMap::Incremental& inc,
       // this mirrors PG::start_peering_interval()
       pg_t pgid = i.first;
 
-      const pg_pool_t *pool = nextmap.get_pg_pool(pgid.pool());
       // this is a bit imprecise, but sufficient?
       struct min_size_predicate_t : public IsPGRecoverablePredicate {
 	const pg_pool_t *pi;
 	bool operator()(const set<pg_shard_t> &have) const {
-          return pi && have.size() >= pi->min_size;
+	  return have.size() >= pi->min_size;
 	}
 	explicit min_size_predicate_t(const pg_pool_t *i) : pi(i) {}
-      } min_size_predicate(pool);
-      struct stretch_ec_min_size_predicate_t : public IsPGRecoverablePredicate {
-        const pg_pool_t *pi;
-        const OSDMap *osdmap;
-        
-        bool operator()(const set<pg_shard_t> &have) const {
-          vector<int> acting;
-          for (const auto& shard : have) {
-            acting.push_back(shard.osd);
-          }
-          return pi && osdmap->at_least_one_zone_has_min_size(*pi, acting);
-        }
-        explicit stretch_ec_min_size_predicate_t(const pg_pool_t *i, const OSDMap *m)
-          : pi(i), osdmap(m) {}
-      } stretch_ec_min_size_predicate(pool, &nextmap);
+      } min_size_predicate(nextmap.get_pg_pool(pgid.pool()));
 
       vector<int> up, acting;
       int up_primary, acting_primary;
@@ -1359,9 +1344,6 @@ OSDMonitor::update_pending_pgs(const OSDMap::Incremental& inc,
 		 << dendl;
      } else {
 	std::stringstream debug;
-        const auto& recoverable_predicate = (pool->is_erasure() && pool->is_stretch_pool())
-          ? static_cast<const IsPGRecoverablePredicate&>(stretch_ec_min_size_predicate)
-          : static_cast<const IsPGRecoverablePredicate&>(min_size_predicate);
 	if (PastIntervals::check_new_interval(
 	      i.second.acting_primary, acting_primary,
 	      i.second.acting, acting,
@@ -1372,7 +1354,7 @@ OSDMonitor::update_pending_pgs(const OSDMap::Incremental& inc,
 	      &nextmap,
 	      &osdmap,
 	      pgid,
-              recoverable_predicate,
+	      min_size_predicate,
 	      &i.second.past_intervals,
 	      &debug)) {
 	  epoch_t e = inc.epoch;

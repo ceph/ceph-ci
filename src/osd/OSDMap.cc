@@ -554,31 +554,6 @@ void OSDMap::get_stretch_zones(const pg_pool_t& pool,
   }
 }
 
-bool OSDMap::at_least_one_zone_has_min_size(const pg_pool_t& pool,
-                                        const vector<int>& acting) const
-{
-  if (pool.num_zones < 2) {
-    return std::count_if(acting.begin(), acting.end(), [](int osd) {
-      return osd != CRUSH_ITEM_NONE;
-    }) >= pool.min_size;
-  }
-  map<int, set<int>> zones;
-  get_stretch_zones(pool, &zones);
-  for (const auto& [zone, zone_osd_set] : zones) {
-    unsigned zone_acting = 0;
-    for (int osd : acting) {
-      if (osd != CRUSH_ITEM_NONE && zone_osd_set.find(osd) != zone_osd_set.end()) {
-        ++zone_acting;
-      }
-    }
-
-    if (zone_acting >= pool.min_size) {
-      return true;
-    }
-  }
-  return false;
-}                                      
-
 unsigned OSDMap::stretch_num_acting_below_min_size(const pg_pool_t& pool,
                                         const vector<int>& acting) const
 {

@@ -19,11 +19,8 @@
  */
 
 /**
- * Unit tests for two per-zone min_size helpers on OSDMap:
- *
- *   at_least_one_zone_has_min_size(pool, acting)
- *     Returns true if ANY zone in the CRUSH topology has >= pool.min_size
- *     acting OSDs.
+ * Unit tests for the per-zone min_size helper on OSDMap, and the past
+ * intervals that use it:
  *
  *   stretch_num_acting_below_min_size(pool, acting)
  *     Returns the total per-zone deficit: sum over all zones of
@@ -170,6 +167,47 @@ protected:
     return rule_id;
   }
 
+  // Whether PastIntervals::check_new_interval() marks the interval that
+  // ends with old_acting as maybe_went_rw, with interval_pool as the pool
+  // of that interval's map and the primary up through the interval.
+  bool interval_maybe_went_rw(const pg_pool_t &interval_pool,
+                              const vector<int> &old_acting) {
+    int primary = -1;
+    for (int osd : old_acting) {
+      if (osd != CRUSH_ITEM_NONE) {
+        primary = osd;
+        break;
+      }
+    }
+    auto lastmap = std::make_shared<OSDMap>();
+    lastmap->deepish_copy_from(*osdmap);
+    OSDMap::Incremental inc(lastmap->get_epoch() + 1);
+    inc.fsid = lastmap->get_fsid();
+    inc.new_pools[1] = interval_pool;
+    if (primary >= 0) {
+      inc.new_up_thru[primary] = inc.epoch;
+    }
+    lastmap->apply_incremental(inc);
+    auto newmap = std::make_shared<OSDMap>();
+    newmap->deepish_copy_from(*lastmap);
+    OSDMap::Incremental next(newmap->get_epoch() + 1);
+    next.fsid = newmap->get_fsid();
+    newmap->apply_incremental(next);
+
+    struct : IsPGRecoverablePredicate {
+      bool operator()(const set<pg_shard_t> &) const override { return true; }
+    } recoverable;
+    // a new interval: osd.7 alone, which no old_acting here is
+    vector<int> new_acting(old_acting.size(), CRUSH_ITEM_NONE);
+    new_acting[0] = 7;
+    PastIntervals past;
+    EXPECT_TRUE(PastIntervals::check_new_interval(
+      primary, 7, old_acting, new_acting, primary, 7, old_acting, new_acting,
+      lastmap->get_epoch(), 0, newmap.get(), lastmap.get(), pg_t(0, 1),
+      recoverable, &past));
+    return past.size() == 1;
+  }
+
   void add_empty_datacenter(const std::string &name) {
     modify_crush([&](CrushWrapper &crush) {
       int dc = 0;
@@ -183,48 +221,6 @@ protected:
     });
   }
 };
-
-  // ===========================================================================
-  // at_least_one_zone_has_min_size
-  // ===========================================================================
-
-// Both zones fully populated - both exceed min_size
-TEST_F(StretchECMinSizeTest, ZoneHasMinSize_BothZonesHealthy)
-{
-  vector<int> acting = {0, 1, 2, 3, 4, 5}; // dc0: 3 OSDs, dc1: 3 OSDs
-  EXPECT_TRUE(osdmap->at_least_one_zone_has_min_size(*pool, acting));
-}
-
-// dc0 full, dc1 completely absent - at least one zone qualifies
-TEST_F(StretchECMinSizeTest, ZoneHasMinSize_OnlyOneDCPresent)
-{
-  vector<int> acting = {0, 1, 2,
-                        CRUSH_ITEM_NONE, CRUSH_ITEM_NONE, CRUSH_ITEM_NONE};
-  EXPECT_TRUE(osdmap->at_least_one_zone_has_min_size(*pool, acting));
-}
-
-// dc0 exactly at min_size (2), dc1 has only 1 - dc0 still qualifies
-TEST_F(StretchECMinSizeTest, ZoneHasMinSize_OneZoneExactlyAtMinSize)
-{
-  vector<int> acting = {0, 1, CRUSH_ITEM_NONE,   // dc0: 2 = min_size
-                        3, CRUSH_ITEM_NONE, CRUSH_ITEM_NONE}; // dc1: 1 < min_size
-  EXPECT_TRUE(osdmap->at_least_one_zone_has_min_size(*pool, acting));
-}
-
-// Both zones have only 1 OSD each (< min_size=2)
-TEST_F(StretchECMinSizeTest, ZoneHasMinSize_BothZonesBelowMinSize)
-{
-  vector<int> acting = {0, CRUSH_ITEM_NONE, CRUSH_ITEM_NONE,
-                        3, CRUSH_ITEM_NONE, CRUSH_ITEM_NONE};
-  EXPECT_FALSE(osdmap->at_least_one_zone_has_min_size(*pool, acting));
-}
-
-// Completely empty acting set - no zone qualifies
-TEST_F(StretchECMinSizeTest, ZoneHasMinSize_EmptyActingSet)
-{
-  vector<int> acting(6, CRUSH_ITEM_NONE);
-  EXPECT_FALSE(osdmap->at_least_one_zone_has_min_size(*pool, acting));
-}
 
 // ===========================================================================
 // stretch_num_acting_below_min_size
@@ -298,11 +294,10 @@ TEST_F(StretchECMinSizeTest, OneZonePoolWithStretchValues_WholeActingSetCounts)
   one_zone.size = 3;
   vector<int> acting = {0, 1, 3}; // dc0: 2, dc1: 1
   EXPECT_EQ(0u, osdmap->stretch_num_acting_below_min_size(one_zone, acting));
-  EXPECT_TRUE(osdmap->at_least_one_zone_has_min_size(one_zone, acting));
   acting = {0, CRUSH_ITEM_NONE, CRUSH_ITEM_NONE};
   EXPECT_EQ(1u, osdmap->stretch_num_acting_below_min_size(one_zone, acting));
   acting = {0, CRUSH_ITEM_NONE, 3};
-  EXPECT_TRUE(osdmap->at_least_one_zone_has_min_size(one_zone, acting));
+  EXPECT_EQ(0u, osdmap->stretch_num_acting_below_min_size(one_zone, acting));
 }
 
 // Non-stretch pool - always 0
@@ -371,6 +366,68 @@ TEST_F(StretchECMinSizeTest, NumActingBelowMinSize_MandatoryMemberOnlyCountsThat
     degraded, {N, N, N, 3, 4, 5}));
 }
 
+// ===========================================================================
+// Past intervals: an interval could have taken writes only if the PG could
+// write in it, as PeeringState::acting_set_writeable() decides: min_size in
+// every zone or, in degraded stretch mode, in the zone that was then the
+// mandatory member, which the interval's own map gives.
+// ===========================================================================
+
+TEST_F(StretchECMinSizeTest, PastInterval_BothZonesHealthy)
+{
+  EXPECT_TRUE(interval_maybe_went_rw(*pool, {0, 1, 2, 3, 4, 5}));
+}
+
+// Healthy stretch mode needs min_size in both zones: with dc1 absent or below
+// min_size, the PG was only peered.
+TEST_F(StretchECMinSizeTest, PastInterval_OneZoneBelowMinSize)
+{
+  const int N = CRUSH_ITEM_NONE;
+  EXPECT_FALSE(interval_maybe_went_rw(*pool, {0, 1, 2, N, N, N}));
+  EXPECT_FALSE(interval_maybe_went_rw(*pool, {0, 1, N, 3, N, N}));
+}
+
+TEST_F(StretchECMinSizeTest, PastInterval_BothZonesBelowMinSize)
+{
+  const int N = CRUSH_ITEM_NONE;
+  EXPECT_FALSE(interval_maybe_went_rw(*pool, {0, N, N, 3, N, N}));
+}
+
+TEST_F(StretchECMinSizeTest, PastInterval_EmptyActingSet)
+{
+  const int N = CRUSH_ITEM_NONE;
+  EXPECT_FALSE(interval_maybe_went_rw(*pool, {N, N, N, N, N, N}));
+}
+
+// Degraded stretch mode counts only the mandatory member: min_size elsewhere
+// does not let the PG write.
+TEST_F(StretchECMinSizeTest, PastInterval_DegradedCountsOnlyMandatoryMember)
+{
+  const int N = CRUSH_ITEM_NONE;
+  pg_pool_t degraded = *pool;
+  degraded.peering_crush_bucket_count = 1;
+  degraded.peering_crush_mandatory_member = osdmap->crush->get_item_id("dc1");
+  EXPECT_TRUE(interval_maybe_went_rw(degraded, {N, N, N, 3, 4, N}));
+  EXPECT_FALSE(interval_maybe_went_rw(degraded, {0, 1, 2, 3, N, N}));
+  EXPECT_FALSE(interval_maybe_went_rw(degraded, {0, 1, 2, N, N, N}));
+  EXPECT_FALSE(interval_maybe_went_rw(degraded, {0, 1, N, 3, N, N}));
+
+  degraded.peering_crush_mandatory_member = osdmap->crush->get_item_id("dc0");
+  EXPECT_TRUE(interval_maybe_went_rw(degraded, {0, 1, 2, N, N, N}));
+  EXPECT_TRUE(interval_maybe_went_rw(degraded, {0, 1, N, 3, N, N}));
+}
+
+// An individual stretch pool counts min_size over all its copies.
+TEST_F(StretchECMinSizeTest, PastInterval_OneZonePool)
+{
+  const int N = CRUSH_ITEM_NONE;
+  pg_pool_t one_zone = *pool;
+  one_zone.num_zones = 1;
+  one_zone.size = 3;
+  EXPECT_TRUE(interval_maybe_went_rw(one_zone, {0, N, 3}));
+  EXPECT_FALSE(interval_maybe_went_rw(one_zone, {0, N, N}));
+}
+
 // A rule with one TAKE per datacenter finds the same zones as a root TAKE.
 TEST_F(StretchECMinSizeTest, PerDatacenterTakeRule_FindsBothZones)
 {
@@ -399,8 +456,6 @@ TEST_F(StretchECMinSizeTest, PerDatacenterTakeRule_FindsBothZones)
     per_dc, {0, 1, 2, 3, N, N}));
   EXPECT_EQ(2u, osdmap->stretch_num_acting_below_min_size(
     per_dc, {N, N, N, 3, 4, 5}));
-  EXPECT_TRUE(osdmap->at_least_one_zone_has_min_size(per_dc, {N, N, N, 3, 4, N}));
-  EXPECT_FALSE(osdmap->at_least_one_zone_has_min_size(per_dc, {0, N, N, 3, N, N}));
 }
 
 // stretch_set_can_peer skips NONE entries and honors the mandatory member.
@@ -429,7 +484,6 @@ TEST_F(StretchECMinSizeTest, DeviceClassRule_ShadowZonesCounted)
   const int N = CRUSH_ITEM_NONE;
   EXPECT_EQ(2u, osdmap->stretch_num_acting_below_min_size(
     hdd, {0, 1, 2, N, N, N}));
-  EXPECT_TRUE(osdmap->at_least_one_zone_has_min_size(hdd, {0, 1, 2, 3, 4, 5}));
 
   // The mon stores the degraded-mode mandatory member as the normal bucket id
   hdd.peering_crush_bucket_count = 1;
