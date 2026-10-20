@@ -235,7 +235,7 @@ if(WITH_EVENTTRACE)
   add_dependencies(rbd_internal eventtrace_tp)
 endif()
 target_link_libraries(rbd_internal PRIVATE
-  osdc rbd_types
+  osdc rbd_types cls_lock_client
   OpenSSL::SSL)
 target_include_directories(rbd_internal PRIVATE ${OPENSSL_INCLUDE_DIR})
 if(LINUX AND HAVE_LIBCRYPTSETUP)
