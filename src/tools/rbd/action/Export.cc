@@ -154,6 +154,28 @@ int encode_trash_namespace(
   return r;
 }
 
+int encode_snaps(
+  librbd::Image &image,
+  librbd::snap_namespace_type_t snap_ns_type,
+  const char *snapname,
+  uint64_t snap_id,
+  int export_format,
+  bufferlist &bl)
+{
+  encode(snap_ns_type, bl);
+  std::string sname(snapname);
+  if (export_format == 2) {
+    size_t len = sname.length() + 4;
+    encode(len, bl);
+  }
+  encode(sname, bl);
+  if (snap_ns_type ==
+        librbd::snap_namespace_type_t::RBD_SNAP_NAMESPACE_TYPE_TRASH) {
+    return encode_trash_namespace(image, snap_id, export_format, bl);
+  }
+  return 0;
+}
+
 int do_export_diff_fd(librbd::Image& image, const char *fromsnapname,
                       const char *endsnapname, uint64_t from_snap_id,
                       uint64_t snap_id,
@@ -182,32 +204,32 @@ int do_export_diff_fd(librbd::Image& image, const char *fromsnapname,
     if (fromsnapname) {
       tag = RBD_DIFF_FROM_SNAP;
       encode(tag, bl);
-      encode(from_snap_ns_type, bl);
-      std::string from(fromsnapname);
-      if (export_format == 2) {
-	len = from.length() + 4;
-	encode(len, bl);
-      }
-      encode(from, bl);
-      if (from_snap_ns_type ==
-            librbd::snap_namespace_type_t::RBD_SNAP_NAMESPACE_TYPE_TRASH) {
-        encode_trash_namespace(image, from_snap_id, export_format, bl);
+      r = encode_snaps(
+        image,
+        from_snap_ns_type,
+        fromsnapname,
+        from_snap_id,
+        export_format,
+        bl);
+      if (r < 0) {
+        std::cerr << "failed to encode fromsnapname" << std::endl;
+        return r;
       }
     }
 
     if (endsnapname) {
       tag = RBD_DIFF_TO_SNAP;
       encode(tag, bl);
-      encode(snap_ns_type, bl);
-      std::string to(endsnapname);
-      if (export_format == 2) {
-        len = to.length() + 4;
-        encode(len, bl);
-      }
-      encode(to, bl);
-      if (snap_ns_type ==
-            librbd::snap_namespace_type_t::RBD_SNAP_NAMESPACE_TYPE_TRASH) {
-        encode_trash_namespace(image, snap_id, export_format, bl);
+      r = encode_snaps(
+        image,
+        snap_ns_type,
+        endsnapname,
+        snap_id,
+        export_format,
+        bl);
+      if (r < 0) {
+        std::cerr << "failed to encode endsnapname" << std::endl;
+        return r;
       }
     }
 
