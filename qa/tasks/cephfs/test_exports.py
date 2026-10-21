@@ -450,6 +450,84 @@ done
         self.assertGreaterEqual(len(rank1)/nsubtrees, 0.15)
         self.assertGreaterEqual(len(rank2)/nsubtrees, 0.15)
 
+    def test_ephemeral_pin_dist_grow_mds_resplit(self):
+        """
+        That increasing max_mds splits all dirfrags of an ephemerally
+        distributed pinned directory to the new minimum depth, including a
+        directory none of whose dirfrags migrates due to the change.
+        """
+
+        # A directory none of whose dirfrags migrates is not requeued by the
+        # max_mds change on any rank. (Otherwise, the dirfrags split and
+        # migrated by the requeued ranks get the other ranks to requeue it
+        # too.) Use as few dirfrags as possible to make that likely: with this
+        # factor and split bits, a pinned directory is split into 2^1 dirfrags
+        # with 2 active ranks and into 2^2 dirfrags with 3 active ranks.
+        factor = 1
+        split_bits = 1
+        old_bits = 1
+        new_bits = 2
+        # Each dirfrag stays on its rank when growing from 2 to 3 ranks with
+        # a probability of 2/3, so (2/3)^2 of the directories have no dirfrag
+        # migrating; with 16 directories, at least one does in >99.9% of runs.
+        ndirs = 16
+        nfrags = 1 << old_bits
+
+        config = {
+            'mds_export_ephemeral_distributed_factor': factor,
+            'mds_bal_split_bits': split_bits,
+        }
+        for key, value in config.items():
+            self.config_set('mds', key, value)
+        def _config_applied():
+            for key, value in config.items():
+                out = self.fs.ranks_tell(["config", "get", key], status=self.status)
+                if not all(float(o[key]) == value for _, o in out):
+                    return False
+            return True
+        self.wait_until_true(_config_applied, timeout=30)
+        # the minimum split depth is recomputed on MDSMap updates
+        self.fs.set_max_mds(2)
+        self.status = self.fs.wait_for_daemons()
+
+        # enough entries for every dirfrag to be non-empty, as empty dirfrags
+        # are not exported
+        self.mount_a.run_shell_payload(f"""
+set -e
+for ((d = 0; d < {ndirs}; d++)); do
+    mkdir -p grow/$d
+    setfattr -n ceph.dir.pin.distributed -v 1 grow/$d
+    (cd grow/$d && seq -f 'file_%g' 1 {16 * nfrags} | xargs touch)
+done
+""")
+
+        def _frag_bits(subtree):
+            # e.g. 0x10000000000.01*
+            return len(subtree['dir']['dirfrag'].split('.')[-1].rstrip('*'))
+
+        subtrees = self._wait_distributed_subtrees(ndirs * nfrags, status=self.status,
+                                                   rank="all", path="/grow/")
+        self.assertTrue(all(_frag_bits(s) == old_bits for s in subtrees))
+
+        # An imported dirfrag leaves its directory in the importer's export
+        # pin queue until the next tick. If max_mds changes before then, the
+        # directory is reprocessed against the new minimum split depth
+        # regardless. Let the queues drain so that the max_mds change alone
+        # decides which directories get requeued.
+        tick = float(self.fs.get_config("mds_tick_interval", service_type="mds"))
+        time.sleep(tick * 2)
+
+        self.fs.set_max_mds(3)
+        self.status = self.fs.wait_for_daemons()
+
+        def _resplit():
+            subtrees = self._get_subtrees(status=self.status, rank="all", path="/grow/")
+            shallow = [(s['dir']['dirfrag'], s['auth_first']) for s in subtrees
+                       if _frag_bits(s) < new_bits]
+            log.info(f"{len(shallow)} dirfrags below {new_bits} bits: {shallow}")
+            return len(shallow) == 0
+        self.wait_until_true(_resplit, timeout=120)
+
 
     def test_ephemeral_random(self):
         """
