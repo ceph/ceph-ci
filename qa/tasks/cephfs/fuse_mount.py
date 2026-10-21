@@ -363,6 +363,58 @@ class FuseMountBase(CephFSMountBase):
         if cleanup:
             self.cleanup()
 
+    def _dump_fuse_holders(self, conn):
+        """
+        Debug aid: after fusermount -u, list every mount namespace that still
+        holds the ceph-fuse superblock (and the owning process/container),
+        whether the fuse connection is still alive and the running containers.
+        Lines are prefixed with "fuse-holders:" for grepping.
+        """
+        script = dedent("""
+            conn="$1"; mnt="$2"
+            p=fuse-holders:
+            echo "$p mntpt=$mnt conn=$conn"
+            if grep -qF " $mnt " /proc/1/mountinfo; then
+                grep -F " $mnt " /proc/1/mountinfo | sed "s/^/$p host: /"
+            else
+                echo "$p not in host mount table"
+            fi
+            if [ -n "$conn" ] && [ -d /sys/fs/fuse/connections/$conn ]; then
+                echo "$p connection $conn alive, waiting=$(cat /sys/fs/fuse/connections/$conn/waiting)"
+            else
+                echo "$p connection $conn gone"
+            fi
+            declare -A seen
+            for d in /proc/[0-9]*; do
+                pid=${d#/proc/}
+                ns=$(readlink $d/ns/mnt 2>/dev/null) || continue
+                [ -n "${seen[$ns]}" ] && continue
+                seen[$ns]=1
+                if [ -n "$conn" ]; then
+                    lines=$(awk -v dev="0:$conn" '$3 == dev' $d/mountinfo 2>/dev/null)
+                else
+                    lines=$(grep -F ' - fuse.ceph-fuse ' $d/mountinfo 2>/dev/null)
+                fi
+                [ -z "$lines" ] && continue
+                echo "$p holder mntns=$ns pid=$pid comm=$(cat $d/comm 2>/dev/null) cmdline=$(tr '\\0' ' ' < $d/cmdline 2>/dev/null | cut -c1-200)"
+                echo "$p   cgroup=$(tr '\\n' ' ' < $d/cgroup 2>/dev/null)"
+                echo "$lines" | sed "s/^/$p   /"
+            done
+            echo "$p containers:"
+            ids=$(podman ps -q 2>/dev/null)
+            [ -n "$ids" ] && podman inspect --format \\
+                '{{.Id}} {{.Name}} pid={{.State.Pid}} started={{.State.StartedAt}}' \\
+                $ids 2>&1 | sed "s/^/$p   /"
+            true
+            """)
+        try:
+            self.client_remote.run(
+                args=['sudo', 'bash', '-c', script, 'fuse-holders',
+                      str(conn) if conn else '', self.hostfs_mntpt],
+                check_status=False, timeout=120, omit_sudo=False)
+        except Exception:
+            log.exception('failed to dump fuse mount holders')
+
     def umount_wait(self, force=False, require_clean=False,
                     timeout=UMOUNT_TIMEOUT):
         """
@@ -395,7 +447,9 @@ class FuseMountBase(CephFSMountBase):
 
         # cleanup is set to to fail since clieanup must happen after umount is
         # complete; otherwise following call to run.wait hangs.
+        conn = self._fuse_conn  # umount() resets it
         self.umount(cleanup=False)
+        self._dump_fuse_holders(conn)
 
         try:
             # Permit a timeout, so that we do not block forever
@@ -404,6 +458,7 @@ class FuseMountBase(CephFSMountBase):
         except MaxWhileTries:
             log.error("process failed to terminate after unmount. This probably"
                       " indicates a bug within ceph-fuse.")
+            self._dump_fuse_holders(conn)
             raise
         except CommandFailedError:
             if require_clean:
