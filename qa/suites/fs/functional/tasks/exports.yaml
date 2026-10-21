@@ -6,4 +6,4 @@ tasks:
 - cephfs_test_runner:
     fail_on_skip: false
     modules:
-      - tasks.cephfs.test_exports
+      - tasks.cephfs.test_exports.TestEphemeralPins.test_ephemeral_pin_dist_grow_mds_resplit
