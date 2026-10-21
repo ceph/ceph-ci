@@ -3503,6 +3503,7 @@ bool Server::check_access(const MDRequestRef& mdr, CInode *in, unsigned mask)
     std::string_view fs_name = mds->mdsmap->get_fs_name();
     bool check_qtine = in->is_under_quarantine()
                        && mdr->session->info.has_feature(CEPHFS_FEATURE_QUARANTINE);
+
     int r = mdr->session->check_access(
       fs_name, in, mask,
       mdr->client_request->get_caller_uid(),
@@ -5745,8 +5746,8 @@ void Server::handle_client_setattr(const MDRequestRef& mdr)
     }
   }
 
-  bool allow_all = mdr->session->auth_caps.allow_all();
-  if (mask & (CEPH_SETATTR_FSCRYPT_FILE|CEPH_SETATTR_FSCRYPT_AUTH) && !allow_all) {
+  bool allow_encryption = mdr->session->auth_caps.allow_encryption();
+  if (mask & (CEPH_SETATTR_FSCRYPT_FILE|CEPH_SETATTR_FSCRYPT_AUTH) && !allow_encryption) {
     respond_to_request(mdr, -EACCES);
     return;
   }
