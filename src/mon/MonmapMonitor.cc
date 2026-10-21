@@ -125,7 +125,9 @@ void MonmapMonitor::update_from_paxos(bool *need_bootstrap)
 			   stringify(ceph_release()));
   }
 
-  mon.notify_new_monmap(true);
+  // The bootstrap that follows runs the election; calling one here would
+  // reset all services before post_refresh() acks this commit's waiters.
+  mon.notify_new_monmap(false);
 }
 
 void MonmapMonitor::init()
