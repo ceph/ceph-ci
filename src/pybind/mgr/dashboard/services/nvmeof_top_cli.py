@@ -503,7 +503,14 @@ else:
             self.delay = (now - self.timestamp)
             self.timestamp = now
 
-            self.client = next(iter(self.clients.values()))
+            if self.client is None:
+                if tool.args.get('server_address'):
+                    # pinned to a single gateway, no failover
+                    self.client = next(iter(self.clients.values()))
+                else:
+                    # group wide client: NVMeoFClient fails over between the
+                    # gateways of the group on its own
+                    self.client = NVMeoFClient(self.group)
 
             if self.gw_info is None:
                 self.gw_info = self._fetch_gateway_info(self.client)
