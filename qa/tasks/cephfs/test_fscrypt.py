@@ -21,7 +21,7 @@ class FSCryptTestCase(CephFSTestCase):
 
         self.get_ceph_cmd_result(
                 'auth', 'caps', "client.0",
-                'mds', 'allow *',
+                'mds', 'allow rwe',
                 'mon', 'allow *',
                  'osd', 'allow *')
         self.mount_a.umount_wait()
@@ -377,7 +377,7 @@ class TestFSCryptVolumes(CephFSTestCase):
 
         self.get_ceph_cmd_result(
                 'auth', 'caps', "client.0",
-                'mds', 'allow *',
+                'mds', 'allow  rwe',
                 'mon', 'allow *',
                  'osd', 'allow *')
         self.mount_a.umount_wait()
