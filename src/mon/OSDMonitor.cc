@@ -8835,6 +8835,7 @@ int OSDMonitor::prepare_pool_migration_names(int64_t source,
   const bool own_profile = !src_profile.empty() && src_profile != "default" &&
     !(params.is_given("erasure_code_profile") && is_erasure &&
       erasure_code_profile == src_profile) &&
+    !(preparing_op && preparing_op->renamed_ec_profiles.contains(src_profile)) &&
     !used_by_other_pool([&src_profile](const pg_pool_t &p) {
       return p.is_erasure() && p.erasure_code_profile == src_profile;
     });
@@ -8916,6 +8917,36 @@ int OSDMonitor::prepare_pool_migration_names(int64_t source,
       pending_inc.old_erasure_code_profiles.push_back(src_profile);
     }
     p.last_change = pending_inc.epoch;
+  }
+  return 0;
+}
+
+// The source pool's own erasure code profile takes suffix, and its name gets
+// target_profile, the contents of the target's profile, in an update before
+// the target is created: creating a pool reads only committed profiles.
+int OSDMonitor::prepare_pool_migration_profile_rename(
+  int64_t source, const string &suffix,
+  const map<string,string> &target_profile, ostream *ss)
+{
+  const string name =
+    std::as_const(*this).get_pg_pool(source).erasure_code_profile;
+  const string renamed = name + suffix;
+  if (osdmap.has_erasure_code_profile(renamed) ||
+      pending_inc.has_erasure_code_profile(renamed)) {
+    *ss << "erasure code profile '" << renamed << "' already exists";
+    return -EEXIST;
+  }
+  if (pending_inc.has_erasure_code_profile(name)) {
+    return -EAGAIN;
+  }
+  pending_inc.set_erasure_code_profile(
+    renamed, osdmap.get_erasure_code_profile(name));
+  pending_inc.set_erasure_code_profile(name, target_profile);
+  pg_pool_t &p = get_pg_pool(source);
+  p.erasure_code_profile = renamed;
+  p.last_change = pending_inc.epoch;
+  if (preparing_op) {
+    preparing_op->renamed_ec_profiles[renamed] = name;
   }
   return 0;
 }
@@ -9918,6 +9949,31 @@ bool OSDMonitor::remove_what_failed_op_created(MonOpRequestRef op)
     removed = true;
   }
   op->created_ec_profiles.clear();
+  for (const auto& [renamed, name] : op->renamed_ec_profiles) {
+    if (!osdmap.has_erasure_code_profile(renamed) ||
+        pending_inc.has_erasure_code_profile(name) ||
+        other_pool(-1, [&name](const pg_pool_t& p) {
+          return p.is_erasure() && p.erasure_code_profile == name;
+        })) {
+      continue;
+    }
+    dout(10) << __func__ << " renaming erasure code profile " << renamed
+             << " back to " << name << " for a failed command" << dendl;
+    pending_inc.set_erasure_code_profile(
+      name, osdmap.get_erasure_code_profile(renamed));
+    for (const auto& [id, p] : osdmap.get_pools()) {
+      if (have_pg_pool(id) &&
+          std::as_const(*this).get_pg_pool(id).erasure_code_profile ==
+            renamed) {
+        pg_pool_t& pending = get_pg_pool(id);
+        pending.erasure_code_profile = name;
+        pending.last_change = pending_inc.epoch;
+      }
+    }
+    pending_inc.old_erasure_code_profiles.push_back(renamed);
+    removed = true;
+  }
+  op->renamed_ec_profiles.clear();
   return removed;
 }
 
@@ -16488,6 +16544,19 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
         const string name =
           poolstr + "-k" + stringify(k) + "-m" + stringify(m);
         if (osdmap.has_erasure_code_profile(name)) {
+          if (osdmap.get_erasure_code_profile(name) != profile_map &&
+              is_migrate && source_pool->is_erasure() &&
+              source_pool->erasure_code_profile == name &&
+              !other_pool(migrate_pool_id, [&name](const pg_pool_t& p) {
+                return p.is_erasure() && p.erasure_code_profile == name;
+              })) {
+            err = prepare_pool_migration_profile_rename(
+              migrate_pool_id, source_pool_name, profile_map, &ss);
+            if (err && err != -EAGAIN) {
+              goto reply_no_propose;
+            }
+            goto wait;
+          }
           if (osdmap.get_erasure_code_profile(name) != profile_map) {
             ss << "EC profile '" << name << "' already exists with different "
                << "contents; remove it with ceph osd erasure-code-profile rm "

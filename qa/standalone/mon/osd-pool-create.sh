@@ -715,6 +715,35 @@ function TEST_pool_migrate_name_clash() {
     ! ceph osd erasure-code-profile ls | grep -q '^mclash-' || return 1
 }
 
+function TEST_pool_migrate_changes_profile_contents() {
+    local dir=$1
+    run_mon_for_pool_migration $dir || return 1
+    ceph osd pool create mec erasure --k 2 --m 1 --osd_failure_domain osd || return 1
+    local before=$(ceph osd erasure-code-profile get mec-k2-m1 -f json | jq -cS .)
+
+    # the target's profile has the name of the source's, with other contents
+    ceph osd pool migrate mec --pool_type erasure --k 2 --m 1 --osd_failure_domain host \
+        --enable_ec_optimizations || return 1
+    test "$(profile_of mec)" = mec-k2-m1 || return 1
+    ceph osd erasure-code-profile get mec-k2-m1 | grep -q 'failure-domain=host' || return 1
+    ceph osd crush rule dump mec -f json | jq -e '[.steps[] | select(.type == "host")] | length > 0' || return 1
+    test "$(profile_of .migrate-1)" = mec-k2-m1.migrate-1 || return 1
+    test "$(ceph osd erasure-code-profile get mec-k2-m1.migrate-1 -f json | jq -cS .)" = "$before" || return 1
+    test "$(rule_of .migrate-1)" = mec.migrate-1 || return 1
+
+    # a failure once the source's profile has its new name gives it back the old one
+    ceph osd pool create mundo erasure --k 2 --m 1 --osd_failure_domain osd || return 1
+    before=$(ceph osd erasure-code-profile get mundo-k2-m1 -f json | jq -cS .)
+    ceph osd crush rule create-replicated mundo.migrate-2 default osd || return 1
+    expect_failure $dir "EEXIST.*rule 'mundo.migrate-2'" \
+        ceph osd pool migrate mundo --pool_type erasure --k 2 --m 1 --osd_failure_domain host \
+        --enable_ec_optimizations || return 1
+    ceph osd pool ls | grep -qx mundo || return 1
+    test "$(profile_of mundo)" = mundo-k2-m1 || return 1
+    test "$(ceph osd erasure-code-profile get mundo-k2-m1 -f json | jq -cS .)" = "$before" || return 1
+    ! ceph osd erasure-code-profile ls | grep -q '^mundo-k2-m1.migrate' || return 1
+}
+
 main osd-pool-create "$@"
 
 # Local Variables:

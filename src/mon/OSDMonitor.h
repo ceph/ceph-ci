@@ -581,6 +581,10 @@ private:
                                    bool copy_rule,
                                    int *crush_rule,
                                    std::ostream *ss);
+  int prepare_pool_migration_profile_rename(
+    int64_t source, const std::string &suffix,
+    const std::map<std::string,std::string> &target_profile,
+    std::ostream *ss);
   int crush_rule_create_erasure(const std::string &name,
                                 int64_t num_zones,
                                 const std::string &root,
