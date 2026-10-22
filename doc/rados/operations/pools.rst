@@ -384,6 +384,12 @@ are not explicitly specified in the command. This can be used to perform
 non-disruptive configuration changes that would not otherwise be possible, 
 such as moving all objects from a replicated pool to an erasure coded pool.
 
+``ceph osd pool migrate`` takes the options of ``ceph osd pool create``,
+including ``--num_zones`` and the other options of pools over several zones.
+A migration with no options keeps the source pool's ``num_zones`` and
+``replica``.
+
+
 .. _associate-pool-to-application:
 
 Associating a Pool with an Application
