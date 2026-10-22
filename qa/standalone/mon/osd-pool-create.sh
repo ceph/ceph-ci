@@ -521,6 +521,67 @@ function TEST_enable_ec_optimizations() {
   pool_field migrated flags_names | grep -q split_reads || return 1
 }
 
+function run_mon_for_pool_migration() {
+    local dir=$1
+    run_mon $dir a || return 1
+    ceph config set global enable_experimental_unrecoverable_data_corrupting_features poolmigration || return 1
+    ceph osd set-require-min-compat-client umbrella || return 1
+}
+
+function rule_of() {
+    ceph osd pool get $1 crush_rule -f json | jq -r .crush_rule
+}
+
+function profile_of() {
+    ceph osd pool get $1 erasure_code_profile -f json | jq -r .erasure_code_profile
+}
+
+function TEST_pool_migrate_copies_pool() {
+    local dir=$1
+    run_mon_for_pool_migration $dir || return 1
+    ceph osd erasure-code-profile set mprofile k=2 m=1 crush-failure-domain=osd || return 1
+    ceph osd pool create mec 8 8 erasure mprofile || return 1
+    ceph osd pool create mrep 4 4 replicated || return 1
+    ceph osd pool set mrep size 2 || return 1
+
+    # --inherit-params takes no pool option, the zone options among them
+    expect_failure $dir "cannot be combined" \
+        ceph osd pool migrate mec --inherit-params --num_zones 1 || return 1
+    ceph osd pool ls | grep -qx mec || return 1
+    ! ceph osd pool ls --show-all | grep -q 'migrate-' || return 1
+
+    ceph osd pool migrate mec --inherit-params || return 1
+    test "$(pool_field mec type)" = 3 || return 1
+    test "$(pool_field mec pg_num)" = 8 || return 1
+    test "$(pool_field mec size)" = 3 || return 1
+    test "$(pool_field mec num_zones)" = 1 || return 1
+    test "$(pool_field .migrate-1 migration_target)" = "$(pool_field mec pool)" || return 1
+
+    ceph osd pool migrate mrep --inherit-params || return 1
+    test "$(pool_field mrep type)" = 1 || return 1
+    test "$(pool_field mrep pg_num)" = 4 || return 1
+    test "$(pool_field mrep size)" = 2 || return 1
+}
+
+function TEST_pool_migrate_takes_create_arguments() {
+    local dir=$1
+    run_mon_for_pool_migration $dir || return 1
+    ceph osd pool create mec erasure --k 2 --m 1 --osd_failure_domain osd || return 1
+    ceph osd pool create mrep 4 4 replicated || return 1
+
+    ceph osd pool migrate mec --pool_type erasure --k 4 --m 2 --osd_failure_domain osd \
+        --enable_ec_optimizations || return 1
+    test "$(profile_of mec)" = mec-k4-m2 || return 1
+    test "$(pool_field mec size)" = 6 || return 1
+
+    # a migration that the checks of osd pool create refuse changes nothing
+    expect_failure $dir "num_zones must be from 1 to" \
+        ceph osd pool migrate mrep --num_zones 3 || return 1
+    ceph osd pool create later 4 4 replicated || return 1
+    ceph osd pool ls | grep -qx mrep || return 1
+    test "$(ceph osd pool ls --show-all | grep -c 'migrate-')" = 1 || return 1
+}
+
 main osd-pool-create "$@"
 
 # Local Variables:

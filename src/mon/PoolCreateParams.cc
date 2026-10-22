@@ -184,6 +184,45 @@ void apply_command_line(PoolCreateParams& p, const cmdmap_t& cmdmap)
   cmd_getval(cmdmap, "yes_i_really_mean_it", p.yes_i_really_mean_it);
 }
 
+PoolCreateParams pool_create_params_of(const PoolCreateParams& defaults,
+                                       const pg_pool_t& p,
+                                       const CrushWrapper& crush,
+                                       const std::map<string, string>& profile)
+{
+  PoolCreateParams c = defaults;
+  c.pool_type = p.get_type();
+  c.num_zones = p.get_num_zones();
+  c.given = {"pool_type", "num_zones", "rule", "pg_num", "pgp_num",
+             "autoscale_mode", "bulk", "crimson"};
+  if (p.is_erasure()) {
+    c.erasure_code_profile = p.erasure_code_profile;
+    c.profile = profile;
+    c.given.insert("erasure_code_profile");
+  } else if (p.get_num_zones() > 1) {
+    c.replica = p.get_replica();
+    c.given.insert("replica");
+  } else {
+    c.size = p.get_size();
+    c.given.insert("size");
+  }
+  // not given: the rule places the pool, and a rule and a CRUSH parameter
+  // are not given together
+  if (p.get_num_zones() > 1) {
+    if (const char *zone = crush.get_type_name(p.peering_crush_bucket_barrier)) {
+      c.zone_failure_domain = zone;
+    }
+  }
+  if (const char *rule = crush.get_rule_name(p.get_crush_rule())) {
+    c.rule = rule;
+  }
+  c.pg_num = p.get_pg_num();
+  c.pgp_num = p.get_pg_num();
+  c.autoscale_mode = pg_pool_t::get_pg_autoscale_mode_name(p.pg_autoscale_mode);
+  c.bulk = p.is_bulk();
+  c.crimson = p.is_crimson();
+  return c;
+}
+
 int check_command_line(const PoolCreateParams& p, PoolCommand command,
                        std::ostream* ss)
 {

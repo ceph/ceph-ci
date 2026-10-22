@@ -467,6 +467,13 @@ fail:
 - Without ``--inherit-params``, it succeeds without changing anything if it asks for
   the settings that the pool is being migrated to, and fails otherwise.
 
+``ceph osd pool migrate`` takes the options of ``ceph osd pool create``,
+including ``--num_zones`` and the other options of pools over several zones.
+With ``--inherit-params``, the target keeps the source pool's ``num_zones``
+and ``replica``; the zone options are pool options that ``--inherit-params``
+cannot be combined with.
+
+
 .. _associate-pool-to-application:
 
 Associating a Pool with an Application
