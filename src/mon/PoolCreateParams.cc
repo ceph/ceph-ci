@@ -192,12 +192,12 @@ PoolCreateParams pool_create_params_of(const PoolCreateParams& defaults,
   PoolCreateParams c = defaults;
   c.pool_type = p.get_type();
   c.num_zones = p.get_num_zones();
-  c.given = {"pool_type", "num_zones", "rule", "pg_num", "pgp_num",
-             "autoscale_mode", "bulk", "crimson"};
+  c.given = {"pool_type", "num_zones", "pg_num", "pgp_num", "autoscale_mode",
+             "bulk", "crimson"};
   if (p.is_erasure()) {
-    c.erasure_code_profile = p.erasure_code_profile;
+    // the profile's contents, for a profile of the copy's own
     c.profile = profile;
-    c.given.insert("erasure_code_profile");
+    c.given.insert({"k", "m"});
   } else if (p.get_num_zones() > 1) {
     c.replica = p.get_replica();
     c.given.insert("replica");
@@ -205,15 +205,11 @@ PoolCreateParams pool_create_params_of(const PoolCreateParams& defaults,
     c.size = p.get_size();
     c.given.insert("size");
   }
-  // not given: the rule places the pool, and a rule and a CRUSH parameter
-  // are not given together
+  // not given: the copy of the rule places the pool
   if (p.get_num_zones() > 1) {
     if (const char *zone = crush.get_type_name(p.peering_crush_bucket_barrier)) {
       c.zone_failure_domain = zone;
     }
-  }
-  if (const char *rule = crush.get_rule_name(p.get_crush_rule())) {
-    c.rule = rule;
   }
   c.pg_num = p.get_pg_num();
   c.pgp_num = p.get_pg_num();

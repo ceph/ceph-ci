@@ -536,6 +536,11 @@ function profile_of() {
     ceph osd pool get $1 erasure_code_profile -f json | jq -r .erasure_code_profile
 }
 
+# the OSDs create the PGs of a pool only while it has the creating flag
+function creating() {
+    pool_field $1 flags_names | tr , '\n' | grep -qx creating
+}
+
 function TEST_pool_migrate_copies_pool() {
     local dir=$1
     run_mon_for_pool_migration $dir || return 1
@@ -580,6 +585,134 @@ function TEST_pool_migrate_takes_create_arguments() {
     ceph osd pool create later 4 4 replicated || return 1
     ceph osd pool ls | grep -qx mrep || return 1
     test "$(ceph osd pool ls --show-all | grep -c 'migrate-')" = 1 || return 1
+}
+
+function TEST_pool_migrate_gives_target_own_rule_and_profile() {
+    local dir=$1
+    run_mon_for_pool_migration $dir || return 1
+    ceph osd erasure-code-profile set pcopy k=2 m=1 crush-failure-domain=osd || return 1
+    ceph osd pool create mcopy 4 4 erasure pcopy || return 1
+    test "$(rule_of mcopy)" = mcopy || return 1
+    local rule=$(pool_field mcopy crush_rule)
+    local steps=$(ceph osd crush rule dump mcopy -f json | jq -c 'del(.rule_id, .rule_name)')
+
+    # the source keeps its rule and profile under new names, and the target
+    # has copies named after it
+    ceph osd pool migrate mcopy --inherit-params || return 1
+    creating mcopy || return 1
+    test "$(pool_field .migrate-1 crush_rule)" = $rule || return 1
+    test "$(rule_of .migrate-1)" = mcopy.migrate-1 || return 1
+    test "$(profile_of .migrate-1)" = pcopy.migrate-1 || return 1
+    test "$(pool_field mcopy crush_rule)" != $rule || return 1
+    test "$(rule_of mcopy)" = mcopy || return 1
+    test "$(profile_of mcopy)" = mcopy-k2-m1 || return 1
+    test "$(ceph osd crush rule dump mcopy -f json | jq -c 'del(.rule_id, .rule_name)')" = "$steps" || return 1
+    test "$(ceph osd erasure-code-profile get mcopy-k2-m1 -f json | jq -cS .)" = \
+        "$(ceph osd erasure-code-profile get pcopy.migrate-1 -f json | jq -cS .)" || return 1
+    ! ceph osd erasure-code-profile ls | grep -qx pcopy || return 1
+
+    # a new profile needs a new rule
+    ceph osd pool create mnew erasure --k 2 --m 1 --osd_failure_domain osd || return 1
+    rule=$(pool_field mnew crush_rule)
+    ceph osd pool migrate mnew --pool_type erasure --k 3 --m 1 --osd_failure_domain osd \
+        --enable_ec_optimizations || return 1
+    creating mnew || return 1
+    test "$(rule_of mnew)" = mnew || return 1
+    test "$(profile_of mnew)" = mnew-k3-m1 || return 1
+    test "$(pool_field mnew crush_rule)" != $rule || return 1
+    test "$(pool_field .migrate-2 crush_rule)" = $rule || return 1
+    test "$(rule_of .migrate-2)" = mnew.migrate-2 || return 1
+    test "$(profile_of .migrate-2)" = mnew-k2-m1.migrate-2 || return 1
+
+    ceph osd crush rule create-replicated myrule default osd || return 1
+    ceph osd pool create mrep 4 4 replicated myrule || return 1
+    rule=$(pool_field mrep crush_rule)
+    ceph osd pool migrate mrep --inherit-params || return 1
+    creating mrep || return 1
+    test "$(rule_of mrep)" = mrep || return 1
+    test "$(pool_field .migrate-3 crush_rule)" = $rule || return 1
+    test "$(rule_of .migrate-3)" = myrule.migrate-3 || return 1
+}
+
+function TEST_pool_migrate_keeps_shared_rule_and_profile() {
+    local dir=$1
+    run_mon_for_pool_migration $dir || return 1
+    ceph osd erasure-code-profile set pshared k=2 m=1 crush-failure-domain=osd || return 1
+    ceph osd crush rule create-erasure rshared pshared || return 1
+    ceph osd pool create mshared 4 4 erasure pshared rshared || return 1
+    ceph osd pool create other 4 4 erasure pshared rshared || return 1
+    ceph osd pool create mdefault 4 4 replicated || return 1
+    local default_rule=$(rule_of mdefault)
+    local steps=$(ceph osd crush rule dump $default_rule -f json | jq -c 'del(.rule_id, .rule_name)')
+
+    # the target has copies of the rules and profiles that keep their names
+    ceph osd pool migrate mshared --inherit-params || return 1
+    test "$(rule_of .migrate-1)" = rshared || return 1
+    test "$(profile_of .migrate-1)" = pshared || return 1
+    test "$(rule_of mshared)" = mshared || return 1
+    test "$(profile_of mshared)" = mshared-k2-m1 || return 1
+    ceph osd pool migrate mdefault --inherit-params || return 1
+    test "$(rule_of .migrate-2)" = $default_rule || return 1
+    test "$(rule_of mdefault)" = mdefault || return 1
+    test "$(ceph osd crush rule dump mdefault -f json | jq -c 'del(.rule_id, .rule_name)')" = "$steps" || return 1
+
+    # and of the defaults for a new pool type
+    ceph osd pool create mtoec 4 4 replicated || return 1
+    ceph osd pool migrate mtoec --pool_type erasure --enable_ec_optimizations || return 1
+    test "$(rule_of mtoec)" = mtoec || return 1
+    profile_of mtoec | grep -qx 'mtoec-k[0-9]*-m[0-9]*' || return 1
+    ceph osd pool create mtorep 4 4 erasure pshared rshared || return 1
+    ceph osd pool migrate mtorep --pool_type replicated || return 1
+    test "$(rule_of mtorep)" = mtorep || return 1
+
+    # a rule or profile that the command names is shared, and keeps its name
+    ceph osd erasure-code-profile set pown k=2 m=1 crush-failure-domain=osd || return 1
+    ceph osd pool create mown 4 4 erasure pown || return 1
+    ceph osd pool migrate mown --pool_type erasure --erasure_code_profile pown --rule mown \
+        --enable_ec_optimizations || return 1
+    for pool in mown .migrate-5 ; do
+        test "$(rule_of $pool)" = mown || return 1
+        test "$(profile_of $pool)" = pown || return 1
+    done
+    ! ceph osd crush rule ls | grep -q migrate || return 1
+    ! ceph osd erasure-code-profile ls | grep -q migrate || return 1
+}
+
+function TEST_pool_migrate_name_clash() {
+    local dir=$1
+    run_mon_for_pool_migration $dir || return 1
+    ceph osd erasure-code-profile set pclash k=2 m=1 crush-failure-domain=osd || return 1
+    ceph osd pool create mclash 4 4 erasure pclash || return 1
+
+    # the name for the source's rule is taken
+    ceph osd crush rule create-erasure mclash.migrate-1 pclash || return 1
+    expect_failure $dir "EEXIST.*rule 'mclash.migrate-1'" \
+        ceph osd pool migrate mclash --inherit-params || return 1
+    ceph osd crush rule rm mclash.migrate-1 || return 1
+    # the name for the source's profile is taken
+    ceph osd erasure-code-profile set pclash.migrate-1 k=2 m=1 crush-failure-domain=osd || return 1
+    expect_failure $dir "EEXIST.*profile 'pclash.migrate-1'" \
+        ceph osd pool migrate mclash --inherit-params || return 1
+    ceph osd erasure-code-profile rm pclash.migrate-1 || return 1
+    # the name for the target's profile is taken, with other contents
+    ceph osd erasure-code-profile set mclash-k2-m1 k=2 m=1 crush-failure-domain=host || return 1
+    expect_failure $dir "EEXIST.*'mclash-k2-m1'" \
+        ceph osd pool migrate mclash --inherit-params || return 1
+    ceph osd erasure-code-profile rm mclash-k2-m1 || return 1
+    # the name for the target's rule is another pool's rule
+    ceph osd pool create mrep 4 4 replicated || return 1
+    ceph osd crush rule create-erasure mrep pclash || return 1
+    ceph osd pool create other 4 4 erasure pclash mrep || return 1
+    expect_failure $dir "EEXIST.*rule 'mrep'" \
+        ceph osd pool migrate mrep --inherit-params || return 1
+
+    # the failures renamed nothing, and left nothing behind
+    ceph osd pool create later 4 4 replicated || return 1
+    ! ceph osd pool ls --show-all | grep -q migrate || return 1
+    test "$(rule_of mclash)" = mclash || return 1
+    test "$(profile_of mclash)" = pclash || return 1
+    test "$(rule_of mrep)" = "$(rule_of later)" || return 1
+    ! ceph osd erasure-code-profile ls | grep -q '^mclash-' || return 1
 }
 
 main osd-pool-create "$@"

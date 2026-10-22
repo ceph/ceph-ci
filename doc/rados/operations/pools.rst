@@ -473,6 +473,16 @@ With ``--inherit-params``, the target keeps the source pool's ``num_zones``
 and ``replica``; the zone options are pool options that ``--inherit-params``
 cannot be combined with.
 
+The new pool shares a CRUSH rule or erasure code profile only if the command
+names it. Otherwise the new pool gets its own rule, named ``{pool-name}``: a
+copy of the source pool's rule for a migration with ``--inherit-params``, or a new rule.
+An erasure coded pool also gets its own profile, ``{pool-name}-k{k}-m{m}``, as
+``ceph osd pool create`` gives one. The source pool's own rule and profile take
+the same suffix as the source pool, for example ``myrule.migrate-1``, unless
+another pool uses them or they are the default replicated rule or the
+``default`` profile. If a name that the migration needs is taken, the command
+fails with ``EEXIST`` and changes nothing.
+
 
 .. _associate-pool-to-application:
 
