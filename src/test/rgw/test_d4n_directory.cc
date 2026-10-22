@@ -324,18 +324,18 @@ TEST_F(ObjectDirectoryFixture, ListVersions)
     ASSERT_EQ(0, dir->add_version(env->dpp, yield, obj->bucketName, obj->objName, version, time, ver_params, std::nullopt));
     auto version_next = "test_version_next";
     ver_params.version = version_next; 
-    ASSERT_EQ(0, dir->add_version(env->dpp, yield, obj->bucketName, obj->objName, version, time, ver_params, std::nullopt));
+    ASSERT_EQ(0, dir->add_version(env->dpp, yield, obj->bucketName, obj->objName, version_next, time, ver_params, std::nullopt));
 
-	std::vector<rgw::d4n::CacheObjectVersion> obj_versions;
-	std::string continuation_token;
+    std::vector<rgw::d4n::CacheObjectVersion> obj_versions;
+    std::string continuation_token;
     ASSERT_EQ(0, dir->list_versions(env->dpp, yield, obj->bucketName, obj->objName, "", 2, obj_versions, continuation_token, std::nullopt));
-	auto out = rgw::d4n::CacheObjectVersion{
+    auto out = rgw::d4n::CacheObjectVersion{
       .objName = obj->objName,
       .bucketId = obj->bucketName,
       .version = version_next,
       .user_id = "",
       .display_name = ""};
-	EXPECT_EQ(obj_versions[0], out); 
+    EXPECT_EQ(obj_versions[0], out); 
     out.version = version;
     EXPECT_EQ(obj_versions[1], out);
 

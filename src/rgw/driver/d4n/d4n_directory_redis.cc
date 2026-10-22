@@ -1589,10 +1589,9 @@ int RedisObjectDirectory::zrank(const DoutPrefixProvider* dpp, optional_yield y,
 
 int RedisObjectDirectory::add_version(const DoutPrefixProvider* dpp, optional_yield y, const std::string& bucket_id, const std::string& obj_name, const std::string& version, ceph::real_time& creation_time, std::optional<CacheObjectVersion> params, std::optional<std::reference_wrapper<Transaction>> txn)
 {
-  // Redis sorted-set scores are doubles; use microseconds for precision within double's exact-integer range (~9e15)
+  // Redis sorted-set scores are doubles; use microseconds
   auto score = static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(
-      creation_time.time_since_epoch()).count());
-  ldpp_dout(dpp, 10) << "RedisObjectDirectory::" << __func__ << "(): Score of object name: "<< obj_name << " version: " << version << " is: "  << score << dendl;
+									creation_time.time_since_epoch()).count());
   return zadd(dpp, y, bucket_id, obj_name, score, version, txn);
 }
 
@@ -1603,9 +1602,9 @@ int RedisObjectDirectory::remove_version(const DoutPrefixProvider* dpp, optional
 
 int RedisObjectDirectory::remove_version_by_creation_time(const DoutPrefixProvider* dpp, optional_yield y, const std::string& bucket_id, const std::string& obj_name, ceph::real_time creation_time, std::optional<std::reference_wrapper<Transaction>> txn)
 {
-  auto min = ceph::real_clock::to_double(creation_time);
-  auto max = ceph::real_clock::to_double(creation_time);
-  return zremrangebyscore(dpp, y, bucket_id, obj_name, min, max, txn);
+  auto score = static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(
+									creation_time.time_since_epoch()).count());
+  return zremrangebyscore(dpp, y, bucket_id, obj_name, score, score, txn);
 }
 
 int RedisObjectDirectory::list_versions(const DoutPrefixProvider* dpp, optional_yield y, const std::string& bucket_id, const std::string& obj_name, const std::string& marker_version, uint64_t count, std::vector<CacheObjectVersion>& obj_versions, std::string& continuation_token, std::optional<std::reference_wrapper<Transaction>> txn)
