@@ -1230,6 +1230,44 @@ def test_version_suspended_incremental_sync():
     log.debug('created null version id=%s', resp3.get('VersionId', 'null'))
     zonegroup_bucket_checkpoint(zonegroup_conns, bucket.name)
 
+def test_version_suspended_null_version_full_sync():
+    # a null overwrite on a key that already has an OLH, then a full sync
+    # list of that bucket. sync stays disabled until both puts are done so
+    # this list is the one that has to catch up.
+    zonegroup = realm.master_zonegroup()
+    zonegroup_conns = ZonegroupConns(zonegroup)
+    zone = zonegroup_conns.rw_zones[0]
+
+    bucket = zone.create_bucket(gen_bucket_name())
+    log.debug('created bucket=%s', bucket.name)
+    zonegroup_meta_checkpoint(zonegroup)
+
+    zone.s3_client.put_bucket_versioning(
+        Bucket=bucket.name,
+        VersioningConfiguration={'Status': 'Enabled'}
+    )
+    zonegroup_meta_checkpoint(zonegroup)
+
+    disable_bucket_sync(realm.meta_master_zone(), bucket.name)
+    zonegroup_meta_checkpoint(zonegroup)
+
+    resp = zone.s3_client.put_object(Bucket=bucket.name, Key='obj', Body='versioned')
+    log.debug('created version id=%s', resp['VersionId'])
+
+    zone.s3_client.put_bucket_versioning(
+        Bucket=bucket.name,
+        VersioningConfiguration={'Status': 'Suspended'}
+    )
+    zonegroup_meta_checkpoint(zonegroup)
+
+    resp = zone.s3_client.put_object(Bucket=bucket.name, Key='obj', Body='null')
+    log.debug('created null version id=%s', resp.get('VersionId', 'null'))
+
+    enable_bucket_sync(realm.meta_master_zone(), bucket.name)
+    zonegroup_meta_checkpoint(zonegroup)
+
+    zonegroup_bucket_checkpoint(zonegroup_conns, bucket.name)
+
 def test_delete_marker_full_sync():
     zonegroup = realm.master_zonegroup()
     zonegroup_conns = ZonegroupConns(zonegroup)
