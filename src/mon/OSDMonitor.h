@@ -550,6 +550,37 @@ private:
                                 bool force,
                                 int *rule,
                                 std::ostream *ss);
+  int add_replica_rule(CrushWrapper &crush,
+                       const std::string &name,
+                       const std::string &root,
+                       int64_t num_zones,
+                       int num_replica_per_zone,
+                       const std::string &zone_failure_domain,
+                       const std::string &osd_failure_domain,
+                       const std::string &device_class,
+                       bool force,
+                       std::ostream *ss);
+  int add_erasure_rule(CrushWrapper &crush,
+                       const std::string &name,
+                       int64_t num_zones,
+                       const std::string &root,
+                       const std::string &zone_failure_domain,
+                       const std::string &osd_failure_domain,
+                       const std::string &device_class,
+                       const std::string &profile,
+                       std::ostream *ss);
+  int prepare_pool_migration_names(int64_t source,
+                                   const std::string &suffix,
+                                   const std::string &target,
+                                   const PoolCreateParams &params,
+                                   const std::string &erasure_code_profile,
+                                   const std::string &zone_failure_domain,
+                                   const std::string &root,
+                                   const std::string &osd_failure_domain,
+                                   const std::string &device_class,
+                                   bool copy_rule,
+                                   int *crush_rule,
+                                   std::ostream *ss);
   int crush_rule_create_erasure(const std::string &name,
                                 int64_t num_zones,
                                 const std::string &root,
@@ -779,6 +810,7 @@ protected:
     const mempool::osdmap::map<int64_t,pg_pool_t>& pools,
     const mempool::osdmap::set<int64_t>& removed_pools,
     utime_t modified,
+    const CrushWrapper& crush,
     creating_pgs_t* creating_pgs) const;
   std::pair<int32_t, pg_t> get_parent_pg(pg_t pgid) const;
   void update_creating_pgs();

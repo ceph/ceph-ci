@@ -83,9 +83,10 @@ int use_profile(PoolCreateParams& p, const std::string& name,
 void apply_command_line(PoolCreateParams& p, const cmdmap_t& cmdmap);
 
 // The parameters of a copy of pool p, as ceph osd pool migrate
-// --inherit-params makes it, given as if on the command line over defaults: p's
-// type, zones, copies, PG settings, rule and erasure code profile, whose
-// contents are profile. The copy's min_size is the default for its size.
+// --inherit-params makes it, given as if on the command line over defaults:
+// p's type, zones, copies and PG settings, and for its own erasure code
+// profile the contents of p's, profile. The copy's min_size is the default
+// for its size, and it gets its own copy of p's rule.
 PoolCreateParams pool_create_params_of(
   const PoolCreateParams& defaults, const pg_pool_t& p,
   const CrushWrapper& crush,

@@ -330,10 +330,10 @@ TEST_F(PoolParamsTest, CopiesPerZone) {
   EXPECT_EQ(2, with({{"replica", int64_t(2)}}).copies_per_zone());
 }
 
-// A copy of a pool, as ceph osd pool migrate with no arguments makes it
+// A copy of a pool, as ceph osd pool migrate --inherit-params makes it
 
-// Test a copy of a replicated pool of one zone has its size, rule and PG
-// settings, and the default min_size
+// Test a copy of a replicated pool of one zone has its size and PG settings,
+// the default min_size and no rule, for a copy of the rule of its own
 TEST_F(PoolParamsTest, CopyOfReplicatedPool) {
   const int rule = crush.add_simple_rule("r", "default", "host", "", "firstn",
                                          REPLICATED, &ss);
@@ -354,7 +354,7 @@ TEST_F(PoolParamsTest, CopyOfReplicatedPool) {
   EXPECT_TRUE(p.is_given("size"));
   EXPECT_EQ(2, p.size);
   EXPECT_FALSE(p.is_given("replica"));
-  EXPECT_EQ("r", p.rule);
+  EXPECT_FALSE(p.is_given("rule"));
   EXPECT_EQ(16, p.pg_num);
   EXPECT_EQ(16, p.pgp_num);
   EXPECT_EQ("warn", p.autoscale_mode);
@@ -389,12 +389,12 @@ TEST_F(PoolParamsTest, CopyOfTwoZoneReplicatedPool) {
   EXPECT_EQ("zone", p.zone_failure_domain);
   EXPECT_FALSE(p.crush_params_given());
   EXPECT_EQ("zone", effective_zone_failure_domain(p));
-  EXPECT_EQ("r2", p.rule);
   EXPECT_EQ(0, check_line(p, PoolCommand::CREATE)) << ss.str();
   EXPECT_EQ(0, check(p)) << ss.str();
 }
 
-// Test a copy of an erasure coded pool names its profile and rule
+// Test a copy of an erasure coded pool has the contents of its profile, for
+// a profile of its own, and gives their k and m
 TEST_F(PoolParamsTest, CopyOfErasurePool) {
   const int rule = crush.add_simple_rule("e", "default", "host", "", "indep",
                                          ERASURE, &ss);
@@ -408,13 +408,13 @@ TEST_F(PoolParamsTest, CopyOfErasurePool) {
   const PoolCreateParams p =
     pool_create_params_of(defaults(), pool, crush, named_profile);
   EXPECT_EQ(ERASURE, p.pool_type);
-  EXPECT_EQ("p42", p.erasure_code_profile);
-  EXPECT_TRUE(p.is_given("erasure_code_profile"));
+  EXPECT_EQ("", p.erasure_code_profile);
+  EXPECT_FALSE(p.is_given("erasure_code_profile"));
   EXPECT_EQ(named_profile, p.profile);
   EXPECT_EQ(4, p.k());
   EXPECT_EQ(2, p.m());
-  EXPECT_FALSE(p.ec_params_given());
-  EXPECT_EQ("e", p.rule);
+  EXPECT_TRUE(p.ec_params_given());
+  EXPECT_FALSE(p.is_given("rule"));
   EXPECT_EQ(0, check_line(p, PoolCommand::CREATE)) << ss.str();
 }
 
