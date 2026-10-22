@@ -198,6 +198,11 @@ class NFSService(CephService):
                 )
         if nfs_spec.mem_stats_disable:
             deps.append(f'mem_stats_disable: {nfs_spec.mem_stats_disable}')
+        # log_to_file: query at the client.nfs section level to detect
+        # global or section-wide config changes
+        log_to_file = cls._get_log_to_file(mgr, 'nfs')
+        if log_to_file:
+            deps.append(f'log_to_file: {bool(log_to_file)}')
 
         return sorted(deps)
 
@@ -480,11 +485,27 @@ class NFSService(CephService):
                 'keyring': rgw_keyring,
             }
             config['enable_rdma'] = nfs_spec.enable_rdma
+            config['log_to_file'] = self._get_log_to_file(self.mgr, daemon_type)
             logger.debug('Generated cephadm config-json: %s' % config)
             return config
 
         return get_cephadm_config(), self.get_dependencies(
             self.mgr, nfs_spec, daemon_spec.daemon_type)
+
+    @classmethod
+    def _get_log_to_file(cls, mgr: "CephadmOrchestrator", daemon_type: str) -> bool:
+        """Check if log_to_file is enabled for NFS daemons.
+
+        Queries at the service section level (client.nfs) to stay consistent
+        with get_dependencies() and to pick up both section-wide and global
+        config settings.
+        """
+        entity = utils.name_to_config_section(daemon_type)
+        try:
+            log_to_file = mgr.get_foreign_ceph_option(entity, 'log_to_file')
+            return bool(log_to_file)
+        except Exception:
+            return False
 
     def pre_daemon_service_config(self, spec: ServiceSpec) -> None:
         nfs_spec = cast(NFSServiceSpec, spec)
