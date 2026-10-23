@@ -644,11 +644,47 @@ function TEST_pool_migrate_twice_in_one_update() {
     timeout 60 ceph osd pool migrate mtwice --pool_type replicated &
     local pid=$!
     sleep 1
-    timeout 60 ceph osd pool migrate mtwice --pool_type replicated
+    timeout 60 ceph osd pool migrate mtwice --pool_type replicated || return 1
     wait $pid || return 1
     ceph osd pool ls detail --show-all
     test "$(ceph osd dump -f json | jq '[.pools[] | select(.pool_name == "mtwice")] | length')" = 1 || return 1
     test "$(ceph osd pool ls --show-all | grep -c 'migrate-')" = 1 || return 1
+}
+
+# A migration to the layout that a pool has, or is migrating to, succeeds and
+# changes nothing: the monitors run a command again after an election
+function TEST_pool_migrate_is_idempotent() {
+    local dir=$1
+    run_mon_for_pool_migration $dir || return 1
+    ceph osd pool create mrep 4 4 replicated || return 1
+    ceph osd pool create mec 4 4 erasure --k 2 --m 1 --osd_failure_domain osd \
+        --enable_ec_optimizations || return 1
+
+    ceph osd pool migrate mrep 4 4 --pool_type replicated --size "$(pool_field mrep size)" || return 1
+    ceph osd pool migrate mec 4 4 --pool_type erasure --k 2 --m 1 --osd_failure_domain osd \
+        --enable_ec_optimizations || return 1
+    ! ceph osd pool ls --show-all | grep -q 'migrate-' || return 1
+
+    ceph osd pool migrate mrep --pool_type replicated --size 2 || return 1
+    local target=$(pool_field mrep pool)
+    ceph osd pool migrate mrep --pool_type replicated --size 2 || return 1
+    ceph osd pool migrate mrep || return 1
+    test "$(pool_field mrep pool)" = $target || return 1
+    expect_failure $dir "ongoing migration" \
+        ceph osd pool migrate mrep --pool_type replicated --size 3 || return 1
+    expect_failure $dir "ongoing migration" \
+        ceph osd pool migrate .migrate-1 --pool_type replicated --size 2 || return 1
+
+    ceph osd pool migrate mec --pool_type erasure --k 4 --m 2 --osd_failure_domain osd \
+        --enable_ec_optimizations || return 1
+    target=$(pool_field mec pool)
+    ceph osd pool migrate mec --pool_type erasure --k 4 --m 2 --osd_failure_domain osd \
+        --enable_ec_optimizations || return 1
+    test "$(pool_field mec pool)" = $target || return 1
+    expect_failure $dir "ongoing migration" \
+        ceph osd pool migrate mec --pool_type erasure --k 4 --m 2 --osd_failure_domain host \
+        --enable_ec_optimizations || return 1
+    test "$(ceph osd pool ls --show-all | grep -c 'migrate-')" = 2 || return 1
 }
 
 main osd-pool-create "$@"

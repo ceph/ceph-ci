@@ -399,6 +399,19 @@ another pool uses them or they are the default replicated rule or the
 ``default`` profile. If a name that the migration needs is taken, the command
 fails with ``EEXIST`` and changes nothing.
 
+A migration to the layout that the pool already has, or is being migrated to,
+succeeds and changes nothing, so the command can safely be run again. The
+monitors themselves run a command again after an election. The layout is what
+the command's options and the defaults give: the pool type, ``num_zones``,
+size, erasure code profile, EC optimizations and the steps of the CRUSH rule,
+and any of ``--pg_num``, ``--pgp_num``, ``--min_size``, ``--autoscale_mode``
+and ``--bulk`` that the command gives. Any other option counts as a change.
+
+While a pool is being migrated, a migration of it to another layout fails with
+``EINVAL``, as does a migration of its source pool. A migration with no
+options copies the pool and needs ``--yes-i-really-mean-it``; for a pool that
+is being migrated already, it changes nothing.
+
 
 .. _associate-pool-to-application:
 
