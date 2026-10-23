@@ -9865,10 +9865,7 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
       }
     }
     p.size = n;
-    // Only adjust min_size if it becomes invalid (exceeds new size)
-    if (p.min_size > n) {
-      p.min_size = g_conf().get_osd_pool_default_min_size(p.size);
-    }
+    p.min_size = g_conf().get_osd_pool_default_min_size(p.size);
     // When setting size directly (legacy) in a single zone, update replica to match size.
     p.replica = n;
   } else if (var == "min_size") {
