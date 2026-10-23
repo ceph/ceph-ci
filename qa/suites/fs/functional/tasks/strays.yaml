@@ -1,4 +1,4 @@
 tasks:
   - cephfs_test_runner:
       modules:
-        - tasks.cephfs.test_strays
+        - tasks.cephfs.test_strays.TestStrays.test_stale_snap_remote_dentry_purging_stray
