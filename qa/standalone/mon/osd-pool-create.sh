@@ -630,6 +630,27 @@ function TEST_pool_migrate_changes_profile_contents() {
     ! ceph osd erasure-code-profile ls | grep -q '^mundo-k2-m1.migrate' || return 1
 }
 
+# A second migration of a pool prepared in the update of the first must not
+# rename the pool again: that left two pools of its name
+function TEST_pool_migrate_twice_in_one_update() {
+    local dir=$1
+    run_mon_for_pool_migration $dir || return 1
+    ceph osd pool create mtwice 4 4 replicated || return 1
+    ceph osd pool set mtwice size 2 || return 1
+    ceph tell mon.\* config set paxos_propose_interval 5 || return 1
+    # an OSDMap change just committed delays the next proposal
+    ceph osd set noout || return 1
+
+    timeout 60 ceph osd pool migrate mtwice --pool_type replicated &
+    local pid=$!
+    sleep 1
+    timeout 60 ceph osd pool migrate mtwice --pool_type replicated
+    wait $pid || return 1
+    ceph osd pool ls detail --show-all
+    test "$(ceph osd dump -f json | jq '[.pools[] | select(.pool_name == "mtwice")] | length')" = 1 || return 1
+    test "$(ceph osd pool ls --show-all | grep -c 'migrate-')" = 1 || return 1
+}
+
 main osd-pool-create "$@"
 
 # Local Variables:
