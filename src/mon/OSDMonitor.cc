@@ -8784,6 +8784,82 @@ int OSDMonitor::prepare_pool_crush_rule(const unsigned pool_type,
   return 0;
 }
 
+// Adds to crush the rule, named name, that a migration's target gets: a copy
+// of rule copy_from unless it is -1, a copy of the default rule for a
+// replicated pool of one zone, else one built from params. Returns its id.
+int OSDMonitor::add_target_rule(CrushWrapper &crush,
+                                const string &name,
+                                int copy_from,
+                                const PoolCreateParams &params,
+                                const string &erasure_code_profile,
+                                const string &zone_failure_domain,
+                                const string &root,
+                                const string &osd_failure_domain,
+                                const string &device_class,
+                                ostream *ss)
+{
+  const bool is_erasure = params.pool_type == pg_pool_t::TYPE_ERASURE;
+  if (copy_from >= 0 || (!is_erasure && params.num_zones == 1)) {
+    // a copy of the source's rule, or of the default rule
+    const int from = copy_from >= 0 ? copy_from :
+      osdmap.crush->get_osd_pool_default_crush_replicated_rule(cct);
+    if (!crush.rule_exists(from)) {
+      *ss << "No suitable CRUSH rule exists, check "
+          << "'osd pool default crush *' config options";
+      return -ENOENT;
+    }
+    const int len = crush.get_rule_len(from);
+    const int id = crush.add_rule(-1, len, crush.get_rule_type(from));
+    if (id < 0) {
+      *ss << "cannot copy rule '" << crush.get_rule_name(from) << "'";
+      return id;
+    }
+    for (int step = 0; step < len; ++step) {
+      crush.set_rule_step(id, step, crush.get_rule_op(from, step),
+                          crush.get_rule_arg1(from, step),
+                          crush.get_rule_arg2(from, step));
+    }
+    crush.set_rule_name(id, name);
+    return id;
+  } else if (is_erasure) {
+    return add_erasure_rule(crush, name, params.num_zones, root,
+                            zone_failure_domain, osd_failure_domain,
+                            device_class, erasure_code_profile, ss);
+  } else {
+    return add_replica_rule(crush, name, root, params.num_zones,
+                            params.replica, zone_failure_domain,
+                            osd_failure_domain, device_class, false, ss);
+  }
+}
+
+// The erasure code profile of its own that a pool gets with params: the
+// default profile with k, m and the CRUSH parameters given, normalized.
+int OSDMonitor::pool_own_profile(const string &pool,
+                                 const PoolCreateParams &params,
+                                 const string &root,
+                                 const string &osd_failure_domain,
+                                 const string &device_class,
+                                 map<string,string> *profile,
+                                 ostream *ss)
+{
+  *profile = params.profile;
+  if (!root.empty())
+    (*profile)["crush-root"] = root;
+  if (params.is_given("zone_failure_domain"))
+    (*profile)["crush-zone-failure-domain"] = params.zone_failure_domain;
+  if (!osd_failure_domain.empty()) {
+    // ErasureCode::init() prefers the new key if present.
+    if (profile->contains("crush-osd-failure-domain"))
+      (*profile)["crush-osd-failure-domain"] = osd_failure_domain;
+    else
+      (*profile)["crush-failure-domain"] = osd_failure_domain;
+  }
+  if (!device_class.empty())
+    (*profile)["crush-device-class"] = device_class;
+  // check_pool_params() has checked the stripe unit
+  return normalize_profile(pool, *profile, true, ss);
+}
+
 // A migration's target gets its own rule, named after it, unless the command
 // names one, and the source pool's own rule and erasure code profile take
 // suffix unless another pool uses them. erasure_code_profile is the target's
@@ -8868,36 +8944,10 @@ int OSDMonitor::prepare_pool_migration_names(int64_t source,
     }
   }
   if (!rule_named) {
-    int id;
-    if (copy_rule || (!is_erasure && params.num_zones == 1)) {
-      // a copy of the source's rule, or of the default rule
-      const int from = copy_rule ? src_rule : default_rule;
-      if (!newcrush.rule_exists(from)) {
-        *ss << "No suitable CRUSH rule exists, check "
-            << "'osd pool default crush *' config options";
-        return -ENOENT;
-      }
-      const int len = newcrush.get_rule_len(from);
-      id = newcrush.add_rule(-1, len, newcrush.get_rule_type(from));
-      if (id < 0) {
-        *ss << "cannot copy rule '" << newcrush.get_rule_name(from) << "'";
-        return id;
-      }
-      for (int step = 0; step < len; ++step) {
-        newcrush.set_rule_step(id, step, newcrush.get_rule_op(from, step),
-                               newcrush.get_rule_arg1(from, step),
-                               newcrush.get_rule_arg2(from, step));
-      }
-      newcrush.set_rule_name(id, target);
-    } else if (is_erasure) {
-      id = add_erasure_rule(newcrush, target, params.num_zones, root,
-                            zone_failure_domain, osd_failure_domain,
-                            device_class, erasure_code_profile, ss);
-    } else {
-      id = add_replica_rule(newcrush, target, root, params.num_zones,
-                            params.replica, zone_failure_domain,
-                            osd_failure_domain, device_class, false, ss);
-    }
+    const int id = add_target_rule(newcrush, target, copy_rule ? src_rule : -1,
+                                   params, erasure_code_profile,
+                                   zone_failure_domain, root,
+                                   osd_failure_domain, device_class, ss);
     if (id < 0) {
       return id;
     }
@@ -16517,24 +16567,9 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       }
       // otherwise a pool that names no profile gets one of its own
       if (erasure_code_profile.empty()) {
-        // the default profile with k, m and the crush parameters given
-        map<string,string> profile_map = params.profile;
-        if (!root.empty())
-          profile_map["crush-root"] = root;
-        if (params.is_given("zone_failure_domain"))
-          profile_map["crush-zone-failure-domain"] = params.zone_failure_domain;
-        if (!osd_failure_domain.empty()) {
-          // ErasureCode::init() prefers the new key if present.
-          if (profile_map.contains("crush-osd-failure-domain"))
-            profile_map["crush-osd-failure-domain"] = osd_failure_domain;
-          else
-            profile_map["crush-failure-domain"] = osd_failure_domain;
-        }
-        if (!device_class.empty())
-          profile_map["crush-device-class"] = device_class;
-
-        // check_pool_params() has checked the stripe unit
-        err = normalize_profile(poolstr, profile_map, true, &ss);
+        map<string,string> profile_map;
+        err = pool_own_profile(poolstr, params, root, osd_failure_domain,
+                               device_class, &profile_map, &ss);
         if (err)
           goto reply_no_propose;
         unsigned k = 0, m = 0;
