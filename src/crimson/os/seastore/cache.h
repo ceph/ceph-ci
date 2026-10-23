@@ -804,30 +804,32 @@ public:
     if (it == laddr_index.end()) {
       return CachedExtentRef();
     }
-    CachedExtentRef extent = it->second;
-    if (!extent->is_valid()) {
+    LogicalCachedExtent &extent = *it;
+    if (!extent.is_valid()) {
       laddr_index_unlink(it);
       return CachedExtentRef();
     }
-    assert(extent->get_type() == type);
-    if (!extent->is_stable() ||
-        (len && extent->get_length() != len) ||
-        !extent->is_fully_loaded() ||
+    assert(extent.get_type() == type);
+    // Pending extents are transaction-local and must never be in the shared
+    // index; insert/replace only link stable (CLEAN/DIRTY) extents.
+    assert(extent.is_stable());
+    // Indexed types (onode/coll/log) are never partially loaded.
+    assert(extent.is_fully_loaded());
+    if ((len && extent.get_length() != len) ||
         // t retired it
-        !extent->maybe_get_transactional_view(t)) {
+        !extent.maybe_get_transactional_view(t)) {
       return CachedExtentRef();
     }
     ++get_by_ext(get_by_src(stats.laddr_index_hits_by_src_ext, t.get_src()), type);
-    return extent;
+    return CachedExtentRef(&extent);
   }
 
-  // Called after a lookup miss. That miss does not mean the slot is empty:
-  // lookup only unlinks invalid extents, and returns null without unlinking
-  // when the entry is unstable, wrong-length, not fully loaded, or not
-  // visible to t. So insert must keep back-pointers consistent if this
-  // extent is already indexed or if another extent still occupies laddr.
+  // Called after a lookup miss. Mutations update the index via
+  // laddr_index_replace; retires via laddr_index_erase. So a miss either
+  // means an empty slot or this extent is already linked (soft miss when
+  // wrong-length / not visible to t) — never a different occupant.
   //
-  // Invariant: while an extent is in the index, its map key is get_laddr().
+  // Invariant: while an extent is linked into the index, its key is get_laddr().
   void laddr_index_insert(laddr_t laddr, CachedExtentRef extent) {
     if (!is_laddr_indexed(extent->get_type()) ||
         !extent->is_valid() ||
@@ -836,35 +838,31 @@ public:
     }
     auto &lext = static_cast<LogicalCachedExtent&>(*extent);
     assert(lext.get_laddr() == laddr);
-    if (lext.laddr_index) {
-      assert(laddr_index.find(laddr)->second == &lext);
+    if (lext.laddr_index_hook.is_linked()) {
+      assert(&*laddr_index.find(laddr) == &lext);
       return;
     }
-    auto [it, inserted] = laddr_index.try_emplace(laddr, &lext);
-    if (!inserted) {
-      it->second->laddr_index = nullptr;
-      it->second = &lext;
-    }
-    lext.laddr_index = &laddr_index;
+    [[maybe_unused]] auto [it, inserted] = laddr_index.insert(lext);
+    // A different extent at this laddr would mean replace/erase was skipped.
+    assert(inserted);
   }
 
-  // On mutation commit: if prev is in the index, point the entry at next.
+  // On mutation commit: point the index entry from prev to next.
+  // An is_laddr_indexed extent only reaches commit_replace_extent after being
+  // read via read_extent, which links the stable extent into the index on an
+  // LBA-walk miss. So prev is always linked here.
   void laddr_index_replace(CachedExtentRef next, CachedExtentRef prev) {
     if (!is_laddr_indexed(prev->get_type())) {
       return;
     }
     auto &lprev = static_cast<LogicalCachedExtent&>(*prev);
-    if (!lprev.laddr_index) {
-      return;
-    }
+    assert(lprev.laddr_index_hook.is_linked());
     auto &lnext = static_cast<LogicalCachedExtent&>(*next);
-    assert(!lnext.laddr_index);
+    assert(!lnext.laddr_index_hook.is_linked());
     assert(lnext.get_laddr() == lprev.get_laddr());
-    auto it = laddr_index.find(lprev.get_laddr());
-    assert(it != laddr_index.end() && it->second == &lprev);
-    it->second = &lnext;
-    lnext.laddr_index = &laddr_index;
-    lprev.laddr_index = nullptr;
+    lprev.laddr_index_hook.unlink();
+    [[maybe_unused]] auto [it, ok] = laddr_index.insert(lnext);
+    assert(ok);
   }
 
   // On retire commit: the extent is no longer reachable by laddr.
@@ -873,15 +871,13 @@ public:
       return;
     }
     auto &lref = static_cast<LogicalCachedExtent&>(*ref);
-    if (lref.laddr_index) {
-      laddr_index_unlink(laddr_index.find(lref.get_laddr()));
-    }
+    assert(lref.laddr_index_hook.is_linked());
+    // O(1), no laddr re-hash
+    lref.laddr_index_hook.unlink();
   }
 
   void laddr_index_clear() {
-    for (auto &[laddr, extent] : laddr_index) {
-      extent->laddr_index = nullptr;
-    }
+    // auto_unlink hooks: clear() resets each entry's hook to unlinked.
     laddr_index.clear();
   }
 
@@ -1926,15 +1922,19 @@ private:
 
   const bool force_backref = false;
 
-  // doesn't hold refs, so it never keeps an evicted extent alive,
-  // see ~LogicalCachedExtent()
+  // Fixed bucket array backing laddr_index. The intrusive set never rehashes,
+  // so this is sized generously; if the index outgrows it, lookups just get
+  // slower (longer chains), never incorrect. Each bucket is one pointer.
+  static constexpr std::size_t LADDR_INDEX_BUCKETS = 8192; // power of 2
+  laddr_extent_index_t::bucket_type laddr_index_buckets[LADDR_INDEX_BUCKETS];
+
+  // doesn't hold refs, so it never keeps an evicted extent alive; evicted
+  // extents self-unlink via their auto_unlink hook, see ~LogicalCachedExtent()
   laddr_extent_index_t laddr_index;
 
   // drops the entry, the extent stays alive
   void laddr_index_unlink(laddr_extent_index_t::iterator it) {
     assert(it != laddr_index.end());
-    assert(it->first == it->second->get_laddr());
-    it->second->laddr_index = nullptr;
     laddr_index.erase(it);
   }
 
