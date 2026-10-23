@@ -230,11 +230,28 @@ function TEST_pool_replica_limits() {
     grep 'yes-i-really-mean-it' "$dir/error.txt" || return 1
     ceph osd pool set single replica 1 --yes-i-really-mean-it || return 1
     test "$(ceph osd pool get single size | awk '{print $2}')" = 1 || return 1
-    # as with size, a min_size above the new size is reset
+    # as with size, min_size is reset to its default for the new size
     test "$(ceph osd pool get single min_size | awk '{print $2}')" = 1 || return 1
     # the reply's parts are separated
     ceph osd pool set single replica 2 > "$dir/out.txt" 2>&1 || return 1
     grep -F "size set to 2; set pool" "$dir/out.txt" || return 1
+}
+
+# Setting size, or replica, resets min_size to its default for the new size,
+# as setting size does on main
+function TEST_pool_size_resets_min_size() {
+    local dir=$1
+
+    run_mon $dir a --public-addr "$CEPH_MON_A" || return 1
+    wait_for_quorum 300 1 || return 1
+
+    ceph osd pool create single 8 8 replicated || return 1
+    ceph osd pool set single min_size 1 || return 1
+    ceph osd pool set single size 4 || return 1
+    test "$(ceph osd pool get single min_size | awk '{print $2}')" = 2 || return 1
+    ceph osd pool set single min_size 1 || return 1
+    ceph osd pool set single replica 5 || return 1
+    test "$(ceph osd pool get single min_size | awk '{print $2}')" = 3 || return 1
 }
 
 # The options of num_zones are refused with other variables, which would
