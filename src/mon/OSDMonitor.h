@@ -585,6 +585,23 @@ private:
     int64_t source, const std::string &suffix,
     const std::map<std::string,std::string> &target_profile,
     std::ostream *ss);
+  int add_target_rule(CrushWrapper &crush,
+                      const std::string &name,
+                      int copy_from,
+                      const PoolCreateParams &params,
+                      const std::string &erasure_code_profile,
+                      const std::string &zone_failure_domain,
+                      const std::string &root,
+                      const std::string &osd_failure_domain,
+                      const std::string &device_class,
+                      std::ostream *ss);
+  int pool_own_profile(const std::string &pool,
+                       const PoolCreateParams &params,
+                       const std::string &root,
+                       const std::string &osd_failure_domain,
+                       const std::string &device_class,
+                       std::map<std::string,std::string> *profile,
+                       std::ostream *ss);
   int crush_rule_create_erasure(const std::string &name,
                                 int64_t num_zones,
                                 const std::string &root,
