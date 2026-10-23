@@ -215,7 +215,8 @@ function TEST_num_zones_during_migration() {
     write_objects $dir ec obj 60 || return 1
 
     slow_migration || return 1
-    ceph osd pool migrate ec --pool_type erasure --k 2 --m 1 --enable_ec_optimizations || return 1
+    ceph osd pool migrate ec 32 32 --pool_type erasure --k 2 --m 1 \
+        --enable_ec_optimizations || return 1
     ! migration_done ec || return 1
     ceph osd pool set ec num_zones 2 --zone_failure_domain datacenter || return 1
     ceph osd pool set .migrate-1 num_zones 2 --zone_failure_domain datacenter || return 1
