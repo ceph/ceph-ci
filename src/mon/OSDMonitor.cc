@@ -9724,10 +9724,8 @@ int OSDMonitor::prepare_command_pool_set_replica(
   p.replica = n;
   p.size = new_size;
   p.crush_rule = new_crush_rule;
-  if ((num_zones > 1 && replica_changed) || p.min_size > n) {
-    // min_size = replica - floor(replica / 2)
-    p.min_size = g_conf().get_osd_pool_default_min_size(p.replica);
-  }
+  // as ceph osd pool set <pool> size does
+  p.min_size = g_conf().get_osd_pool_default_min_size(p.replica);
   ss << "set replica to " << static_cast<unsigned>(p.replica)
      << ", size set to " << static_cast<unsigned>(p.size) << "; ";
   if (new_crush_rule != old_crush_rule) {
