@@ -1099,6 +1099,7 @@ private:
   double cache_data_ratio = 0;   ///< cache ratio dedicated to object data
   bool cache_autotune = false;   ///< cache autotune setting
   double cache_age_bin_interval = 0; ///< time to wait between cache age bin rotations
+  std::atomic<bool> cache_data_shard_weighted = {false}; ///< size data cache shards by the bytes they hold
   double cache_autotune_interval = 0; ///< time to wait between cache rebalancing
   std::vector<uint64_t> kv_bins; ///< kv autotune bins
   std::vector<uint64_t> kv_onode_bins; ///< kv onode autotune bins
