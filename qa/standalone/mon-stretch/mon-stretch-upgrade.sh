@@ -153,7 +153,17 @@ function TEST_legacy_stretch_mode_then_commit() {
         ceph mon enable_stretch_mode c stretch_rule zone || return 1
     ceph osd pool rm ec ec --yes-i-really-really-mean-it || return 1
 
+    # unlike main, an individual stretch pool is not taken over
+    ceph osd pool create ind 8 8 replicated || return 1
+    ceph osd pool stretch set ind 2 2 zone replicated_rule 4 2 || return 1
+    expect_failure $dir "legacy individual stretch pool" \
+        ceph mon enable_stretch_mode c stretch_rule zone || return 1
+    test "$(pool_num_zones ind)" = 1 || return 1
+    test "$(ceph mon dump -f json | jq .stretch_mode)" = false || return 1
+    ceph osd pool stretch unset ind replicated_rule 3 2 || return 1
+
     ceph mon enable_stretch_mode c stretch_rule zone || return 1
+    test "$(pool_field ind size)" = 4 || return 1
     test "$(pool_field rep size)" = 4 || return 1
     test "$(pool_field rep crush_rule)" = 1 || return 1
     test "$(ceph mon dump -f json | jq .stretch_mode)" = true || return 1
