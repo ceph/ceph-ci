@@ -839,6 +839,12 @@ public:
   // Recompute the shards of a FastEC pool that cannot become a primary, for
   // its num_zones.
   int update_nonprimary_shards(pg_pool_t& p, std::ostream *ss);
+  // The zone failure domain that ceph osd pool set num_zones gives pool p:
+  // --zone_failure_domain, else for an erasure coded pool its profile's, else
+  // dflt.
+  static std::string num_zones_zone_failure_domain(
+    const cmdmap_t& cmdmap, const pg_pool_t& p,
+    const ErasureCodeProfile& profile, const std::string& dflt);
   int prepare_num_zones_crush_rule(const cmdmap_t& cmdmap,
                                    const std::string& poolstr,
                                    int64_t n,

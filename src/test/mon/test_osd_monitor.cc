@@ -1299,3 +1299,27 @@ TEST_F(OSDMonitorSizeChangeMappingsTest, DecreaseTruncatesPendingUpmap) {
   EXPECT_EQ((mempool::osdmap::vector<int32_t>{5, 4}),
             pending.new_pg_upmap[pg_t(2, pool)]);
 }
+
+// Test the zone failure domain that ceph osd pool set num_zones gives a pool:
+// an erasure coded pool takes its profile's, as ceph osd pool create does
+TEST(OSDMonitorNumZonesZoneFailureDomainTest, FromCommandProfileOrDefault) {
+  pg_pool_t ec;
+  ec.type = pg_pool_t::TYPE_ERASURE;
+  pg_pool_t rep;
+  rep.type = pg_pool_t::TYPE_REPLICATED;
+  const ErasureCodeProfile profile = {{"crush-zone-failure-domain", "zone"}};
+  const cmdmap_t none;
+  cmdmap_t rack;
+  rack["zone_failure_domain"] = string("rack");
+
+  EXPECT_EQ("zone", OSDMonitor::num_zones_zone_failure_domain(
+                      none, ec, profile, "datacenter"));
+  EXPECT_EQ("rack", OSDMonitor::num_zones_zone_failure_domain(
+                      rack, ec, profile, "datacenter"));
+  EXPECT_EQ("datacenter", OSDMonitor::num_zones_zone_failure_domain(
+                            none, ec, {}, "datacenter"));
+  EXPECT_EQ("datacenter", OSDMonitor::num_zones_zone_failure_domain(
+                            none, rep, profile, "datacenter"));
+  EXPECT_EQ("rack", OSDMonitor::num_zones_zone_failure_domain(
+                      rack, rep, profile, "datacenter"));
+}

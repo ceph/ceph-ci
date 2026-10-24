@@ -9194,6 +9194,15 @@ int OSDMonitor::update_nonprimary_shards(pg_pool_t& p, ostream *ss)
   return 0;
 }
 
+string OSDMonitor::num_zones_zone_failure_domain(
+    const cmdmap_t& cmdmap, const pg_pool_t& p,
+    const ErasureCodeProfile& profile, const string& dflt)
+{
+  return cmd_getval_or<string>(
+    cmdmap, "zone_failure_domain",
+    p.is_erasure() ? profile_zone_failure_domain(profile, dflt) : dflt);
+}
+
 int OSDMonitor::prepare_num_zones_crush_rule(
     const cmdmap_t& cmdmap, const string& poolstr, int64_t n,
     const pg_pool_t& p, int *crush_rule, ostream *ss)
@@ -9212,8 +9221,9 @@ int OSDMonitor::prepare_num_zones_crush_rule(
         p.get_type(), poolstr, p.erasure_code_profile, rule_name, 1, root,
         0, "", "", "", crush_rule, ss);
   }
-  const string zone_failure_domain = cmd_getval_or<string>(
-      cmdmap, "zone_failure_domain", d.zone_failure_domain);
+  const string zone_failure_domain = num_zones_zone_failure_domain(
+      cmdmap, p, osdmap.get_erasure_code_profile(p.erasure_code_profile),
+      d.zone_failure_domain);
   if (p.is_replicated()) {
     return prepare_pool_crush_rule(
         p.get_type(), poolstr, "", "", n,
@@ -9438,8 +9448,9 @@ int OSDMonitor::prepare_command_pool_set_num_zones(
       return -EAGAIN;
     }
     const PoolCreateParams d = load_pool_defaults(g_conf());
-    const string zone_failure_domain = cmd_getval_or<string>(
-        cmdmap, "zone_failure_domain", d.zone_failure_domain);
+    const string zone_failure_domain = num_zones_zone_failure_domain(
+        cmdmap, p, osdmap.get_erasure_code_profile(p.erasure_code_profile),
+        d.zone_failure_domain);
     int crush_rule = -1;
 
     if (p.type == pg_pool_t::TYPE_REPLICATED) {
