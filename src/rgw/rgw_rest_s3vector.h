@@ -20,3 +20,13 @@ public:
   int postauth_init(optional_yield y) override;
   int read_permissions(RGWOp* op, optional_yield y) override { return 0; }
 };
+
+class RGWRESTMgr_S3Vector : public RGWRESTMgr {
+public:
+  RGWHandler_REST* get_handler(rgw::sal::Driver* driver, req_state* s,
+                               const rgw::auth::StrategyRegistry& auth_registry,
+                               const std::string& frontend_prefix) override {
+    // the payload is read when the handler is initialized
+    return new RGWHandler_REST_s3Vector(auth_registry);
+  }
+};

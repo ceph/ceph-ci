@@ -41,9 +41,6 @@
 #include "rgw_rest_s3control.h"
 #include "rgw_rest_s3website.h"
 #include "rgw_rest_pubsub.h"
-#ifdef WITH_RADOSGW_LANCEDB
-#include "rgw_rest_s3vector.h"
-#endif
 #include "rgw_auth_s3.h"
 #include "rgw_acl.h"
 #include "rgw_policy_s3.h"
@@ -6112,12 +6109,12 @@ RGWRESTMgr_S3::RGWRESTMgr_S3(bool enable_s3control,
                              bool _enable_sts,
                              bool _enable_iam,
                              bool _enable_pubsub,
-                             bool _enable_s3vector)
+                             std::unique_ptr<RGWRESTMgr> _s3vector)
   : enable_sts(_enable_sts),
     enable_iam(_enable_iam),
     enable_pubsub(_enable_pubsub)
 #ifdef WITH_RADOSGW_LANCEDB
-    , enable_s3vector(_enable_s3vector)
+    , s3vector(std::move(_s3vector))
 #endif
 {
   if (enable_s3control) {
@@ -6213,10 +6210,9 @@ RGWHandler_REST* RGWRESTMgr_S3::get_handler(rgw::sal::Driver* driver,
   }
   // has bucket
 #ifdef WITH_RADOSGW_LANCEDB
-  if (enable_s3vector && is_s3vector_op(s)) {
+  if (s3vector && is_s3vector_op(s)) {
     ldpp_dout(s, 20) << "INFO: s3vector op: " << s->init_state.url_bucket << dendl;
-    // the payload is read when the handler is initialized
-    return new RGWHandler_REST_s3Vector(auth_registry);
+    return s3vector->get_handler(driver, s, auth_registry, frontend_prefix);
   }
 #endif // WITH_RADOSGW_LANCEDB
   return new RGWHandler_REST_Bucket_S3(auth_registry, enable_pubsub);
