@@ -610,7 +610,7 @@ option(WITH_RADOSGW_SELECT_PARQUET "Support for s3 select on parquet objects" ON
 option(WITH_RADOSGW_ARROW_FLIGHT "Build arrow flight when not using system-provided arrow" OFF)
 option(WITH_RADOSGW_BACKTRACE_LOGGING "Enable backtraces in rgw logs" OFF)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64|aarch64|arm64|ARM64|loongarch64)$")
-  set(WITH_RADOSGW_LANCEDB_DEFAULT ON)
+  set(WITH_RADOSGW_LANCEDB_DEFAULT OFF)
 else()
   set(WITH_RADOSGW_LANCEDB_DEFAULT OFF)
 endif()
