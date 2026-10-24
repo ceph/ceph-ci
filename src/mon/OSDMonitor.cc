@@ -17146,6 +17146,15 @@ int OSDMonitor::validate_joining_pool(CrushWrapper& crush, int crush_rule,
     pools, zone_failure_domain, ss);
 }
 
+static int refuse_legacy_individual_stretch_pool(const string& name,
+                                                 ostream& ss)
+{
+  ss << "pool '" << name << "' is a legacy individual stretch pool; legacy "
+     << "individual stretch pools and stretch mode cannot be combined, so "
+     << "unstretch it first with 'ceph osd pool stretch unset'";
+  return -EINVAL;
+}
+
 int OSDMonitor::check_no_legacy_individual_stretch_pools(int64_t skip_pool,
                                                          ostream *ss) const
 {
@@ -17165,10 +17174,7 @@ int OSDMonitor::check_no_legacy_individual_stretch_pools(int64_t skip_pool,
   } else if (osdmap.have_pg_pool(*pool)) {
     name = osdmap.get_pool_name(*pool);
   }
-  *ss << "pool '" << name << "' is a legacy individual stretch pool; legacy "
-      << "individual stretch pools and stretch mode cannot be combined, so "
-      << "unstretch it first with 'ceph osd pool stretch unset'";
-  return -EINVAL;
+  return refuse_legacy_individual_stretch_pool(name, *ss);
 }
 
 int OSDMonitor::_prepare_remove_pool(
@@ -17541,6 +17547,13 @@ void OSDMonitor::validate_stretch_mode_pools(
     int64_t poolid = pooli.first;
     const pg_pool_t& p = pooli.second;
 
+    // stretch mode is not engaged yet, so a stretched pool is an individual
+    // stretch pool
+    if (p.is_stretch_pool()) {
+      *errcode = refuse_legacy_individual_stretch_pool(pool_names.at(poolid),
+                                                       ss);
+      return;
+    }
     if (!p.is_replicated()) {
       ss << "stretched pools must be replicated; '" << pool_names.at(poolid)
          << "' is erasure-coded";

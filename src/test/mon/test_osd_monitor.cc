@@ -281,6 +281,28 @@ TEST_F(OSDMonitorStretchTest, ECPoolFails) {
             ss.str());
 }
 
+// Test failure when an individual stretch pool exists, which earlier releases
+// took over
+TEST_F(OSDMonitorStretchTest, IndividualStretchPoolFails) {
+  create_replicated_pool(1, "test_pool", 3, 2, 0);
+  pools[1].peering_crush_bucket_count = 2;
+  pools[1].peering_crush_bucket_target = 3;
+  pools[1].peering_crush_bucket_barrier = 1;
+
+  bool okay = false;
+  int errcode = 0;
+  stringstream ss;
+
+  validate_pools("replicated_rule", &okay, &errcode, ss);
+
+  EXPECT_FALSE(okay);
+  EXPECT_EQ(errcode, -EINVAL);
+  EXPECT_EQ("pool 'test_pool' is a legacy individual stretch pool; legacy "
+            "individual stretch pools and stretch mode cannot be combined, so "
+            "unstretch it first with 'ceph osd pool stretch unset'",
+            ss.str());
+}
+
 // Test failure when specified CRUSH rule does not exist
 TEST_F(OSDMonitorStretchTest, NonexistentCrushRuleFails) {
   create_replicated_pool(1, "test_pool", 3, 2, 0);
