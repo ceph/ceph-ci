@@ -165,7 +165,7 @@ list(APPEND librgw_common_srcs
 # the s3vectors API is implemented on top of lancedb, and is compiled out
 # together with it
 if(WITH_RADOSGW_LANCEDB)
-  list(APPEND librgw_common_srcs
+  set(librgw_s3vector_srcs
     rgw_sal_wrapper.cc
     rgw_rest_s3vector.cc
     rgw_s3vector.cc
@@ -465,6 +465,7 @@ endif()
 if(WITH_RADOSGW_STANDALONE)
   add_library(rgw_common_standalone STATIC
     ${librgw_common_srcs}
+    ${librgw_s3vector_srcs}
     ${librgw_driver_standalone_srcs})
 
   include(CheckCXXCompilerFlag)
@@ -625,34 +626,43 @@ if(WITH_RADOSGW_LANCEDB)
         "overflows -- install lld or build with -DWITH_RADOSGW_LANCEDB=OFF")
     endif()
   endif()
+  # only the binaries that serve or remove vector buckets link this, after
+  # rgw_libs since rgw_appmain.cc calls into it
+  add_library(rgw_s3vector STATIC ${librgw_s3vector_srcs})
+  target_link_libraries(rgw_s3vector
+    PRIVATE
+      legacy-option-headers
+      dmclock::dmclock
+      ${ARROW_LIBRARIES}
+    PUBLIC
+      rgw_common)
   # librgw_lancedb.a references the rgw_sal_wrapper_* symbols defined in
-  # rgw_common (rgw_sal_wrapper.cc) while rgw_common calls the C API
+  # rgw_s3vector (rgw_sal_wrapper.cc) while rgw_s3vector calls the C API
   # exported by the archive.  Nothing in the C++ code references the
   # wrapper symbols directly, so force the linker to pull in the wrapper
   # object before the archive is scanned, letting both directions of the
   # cycle resolve in a single pass.
-  target_link_options(rgw_common PUBLIC
+  target_link_options(rgw_s3vector PUBLIC
     "LINKER:--undefined=rgw_sal_wrapper_version"
   )
   # Keep the archive's Rust runtime symbols (std, tokio, ...) out of the
   # dynamic symbol table of the linked executables and shared libraries.
-  target_link_options(rgw_common PUBLIC
+  target_link_options(rgw_s3vector PUBLIC
     "LINKER:--exclude-libs,librgw_lancedb.a"
   )
   if(RGW_LANCEDB_LINKER_OPTIONS)
-    target_link_options(rgw_common PUBLIC ${RGW_LANCEDB_LINKER_OPTIONS})
+    target_link_options(rgw_s3vector PUBLIC ${RGW_LANCEDB_LINKER_OPTIONS})
   endif()
-  target_link_libraries(rgw_common PUBLIC rgw_lancedb)
-  target_include_directories(rgw_common PRIVATE
+  target_link_libraries(rgw_s3vector PUBLIC rgw_lancedb)
+  target_include_directories(rgw_s3vector PRIVATE
     ${CMAKE_SOURCE_DIR}/src/rgw
     ${CMAKE_SOURCE_DIR}/src/rgw/lancedb-rgw-store/include
   )
-  add_dependencies(rgw_common rgw-lancedb)
+  add_dependencies(rgw_s3vector rgw-lancedb)
 
   if(WITH_RADOSGW_STANDALONE)
-    # rgw_s3vector.cc and rgw_sal_wrapper.cc are part of librgw_common_srcs,
-    # so rgw_common_standalone needs the same archive, link options and
-    # include paths as rgw_common.
+    # rgw_common_standalone builds the s3vector sources itself, so it needs
+    # the same archive, link options and include paths as rgw_s3vector.
     target_link_options(rgw_common_standalone PUBLIC
       "LINKER:--undefined=rgw_sal_wrapper_version"
     )
@@ -879,6 +889,10 @@ target_link_libraries(radosgw PRIVATE
   ${rgw_libs}
   ${ALLOC_LIBS})
 
+if(WITH_RADOSGW_LANCEDB)
+  target_link_libraries(radosgw PRIVATE rgw_s3vector)
+endif()
+
 if(WITH_RADOSGW_FDB)
  message("FoundationDB support is active (experimental)")
 
@@ -976,6 +990,10 @@ if(WITH_RADOSGW_RADOS)
   if(WITH_RADOSGW_ARROW_FLIGHT)
     target_link_libraries(radosgw-admin ${ARROW_LIBRARIES} ${ARROW_FLIGHT_LIBRARIES})
   endif(WITH_RADOSGW_ARROW_FLIGHT)
+
+  if(WITH_RADOSGW_LANCEDB)
+    target_link_libraries(radosgw-admin rgw_s3vector)
+  endif()
 
   target_compile_OPTIONS(radosgw-admin PUBLIC "-DWITH_RADOSGW_RADOS")
 
@@ -1110,6 +1128,10 @@ endif()
 
 if(WITH_RADOSGW_KAFKA_ENDPOINT)
   target_link_libraries(rgw PRIVATE RDKafka::RDKafka)
+endif()
+
+if(WITH_RADOSGW_LANCEDB)
+  target_link_libraries(rgw PRIVATE rgw_s3vector)
 endif()
 
 set_target_properties(rgw PROPERTIES OUTPUT_NAME rgw VERSION 2.0.0

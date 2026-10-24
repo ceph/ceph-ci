@@ -133,6 +133,9 @@ add_executable(unittest_rgw_frontend_type
   $<TARGET_OBJECTS:unit-main>)
 add_ceph_unittest(unittest_rgw_frontend_type)
 target_link_libraries(unittest_rgw_frontend_type ${rgw_libs} heap_profiler)
+if(WITH_RADOSGW_LANCEDB)
+  target_link_libraries(unittest_rgw_frontend_type rgw_s3vector)
+endif()
 
 
 # unittest_rgw_bucket_sync_cache
@@ -577,7 +580,7 @@ endif()
 if(WITH_RADOSGW_LANCEDB)
 add_executable(unittest_rgw_s3vector test_rgw_s3vector.cc)
 add_ceph_unittest(unittest_rgw_s3vector)
-target_link_libraries(unittest_rgw_s3vector ${rgw_libs} ${UNITTEST_LIBS})
+target_link_libraries(unittest_rgw_s3vector ${rgw_libs} rgw_s3vector ${UNITTEST_LIBS})
 if(WITH_SYSTEM_ARROW)
   target_include_directories(unittest_rgw_s3vector PRIVATE ${ARROW_INCLUDE_DIR})
 else()
@@ -586,19 +589,19 @@ endif()
 
 add_executable(ceph_test_rgw_sal_wrapper test_rgw_sal_wrapper.cc)
 target_link_libraries(ceph_test_rgw_sal_wrapper
-  rgw_common
   ${rgw_libs}
+  rgw_s3vector
   ${UNITTEST_LIBS})
 install(TARGETS ceph_test_rgw_sal_wrapper DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # libtest (used by the LanceDB ObjectStore cargo tests) owns main(), so the
 # ceph context and SAL driver are brought up in this shared library instead.
-# Linking rgw_common also makes it re-export the rgw_sal_wrapper API, so the
+# Linking rgw_s3vector also makes it re-export the rgw_sal_wrapper API, so the
 # cargo test binary links this one .so rather than the full RGW link line.
 add_library(ceph_rgw_sal_test_env SHARED rgw_sal_test_env.cc)
 target_link_libraries(ceph_rgw_sal_test_env
-  rgw_common
-  ${rgw_libs})
+  ${rgw_libs}
+  rgw_s3vector)
 target_include_directories(ceph_rgw_sal_test_env PRIVATE
   ${CMAKE_SOURCE_DIR}/src/rgw)
 install(TARGETS ceph_rgw_sal_test_env DESTINATION ${CMAKE_INSTALL_LIBDIR})
