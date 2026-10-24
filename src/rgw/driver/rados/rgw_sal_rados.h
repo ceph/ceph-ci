@@ -838,6 +838,12 @@ class RadosVectorBucket : public RadosBucket {
     using RadosBucket::RadosBucket; // inherit RadosBucket's constructors
     ~RadosVectorBucket() override = default;
 
+#ifdef WITH_RADOSGW_LANCEDB
+    // set by the binaries that link the s3vector backend; remove() fails without it
+    static inline int (*remove_indexes)(const DoutPrefixProvider* dpp, Driver* driver,
+                                        const RGWBucketInfo& info, bool delete_indexes,
+                                        optional_yield y) = nullptr;
+#endif
     int remove(const DoutPrefixProvider* dpp, bool delete_children, optional_yield y) override;
     int create(const DoutPrefixProvider* dpp, const CreateParams& params,
                optional_yield y) override;

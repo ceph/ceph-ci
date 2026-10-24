@@ -85,7 +85,9 @@
 #include "rgw_lua_background.h"
 #include "services/svc_zone.h"
 #ifdef WITH_RADOSGW_LANCEDB
+#include "driver/rados/rgw_sal_rados.h"
 #include "rgw_rest_s3vector.h"
+#include "rgw_s3vector.h"
 #include "rgw_s3vector_background.h"
 #endif
 
@@ -458,6 +460,8 @@ void rgw::AppMain::cond_init_apis()
         apis_set.contains("pubsub") || apis_set.contains("notifications");
     std::unique_ptr<RGWRESTMgr> s3vector_mgr;
 #ifdef WITH_RADOSGW_LANCEDB
+    // the admin and s3vector apis remove vector buckets
+    rgw::sal::RadosVectorBucket::remove_indexes = s3vector::remove_bucket_indexes;
     if (apis_set.contains("s3vectors")) {
       s3vector_mgr = std::make_unique<RGWRESTMgr_S3Vector>();
     }

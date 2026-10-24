@@ -8,6 +8,8 @@
 #include "rgw/rgw_sal_config.h"
 #include "rgw/rgw_bucket.h"
 #include "rgw/rgw_zone.h"
+#include "rgw/rgw_s3vector.h"
+#include "rgw/driver/rados/rgw_sal_rados.h"
 #include "common/ceph_argparse.h"
 #include "common/dout.h"
 #include "common/async/context_pool.h"
@@ -1465,6 +1467,7 @@ int main(int argc, char** argv) {
     std::cerr << "ERROR: failed to initialize SAL driver" << std::endl;
     return 1;
   }
+  rgw::sal::RadosVectorBucket::remove_indexes = rgw::s3vector::remove_bucket_indexes;
 
   // Create one bucket in each namespace with native object storage.
   int ret = 0;

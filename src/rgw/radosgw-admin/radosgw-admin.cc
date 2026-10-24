@@ -106,6 +106,9 @@ extern "C" {
 #ifdef WITH_RADOSGW_RADOS
 #include "driver/rados/rgw_sal_rados.h"
 #endif
+#ifdef WITH_RADOSGW_LANCEDB
+#include "rgw_s3vector.h"
+#endif
 #include "driver/rados/rgw_bl_rados.h"
 
 #include <iomanip>
@@ -4500,6 +4503,10 @@ int main(int argc, const char **argv)
     bool need_cache = readonly_ops_list.find(opt_cmd) == readonly_ops_list.end();
     bool need_gc = (gc_ops_list.find(opt_cmd) != gc_ops_list.end()) && !bypass_gc;
 
+#ifdef WITH_RADOSGW_LANCEDB
+    // user rm and account rm with --purge-data remove vector buckets
+    rgw::sal::RadosVectorBucket::remove_indexes = rgw::s3vector::remove_bucket_indexes;
+#endif
     DriverManager::Config cfg = DriverManager::get_config(true, g_ceph_context);
 
     auto config_store_type = g_conf().get_val<std::string>("rgw_config_store");

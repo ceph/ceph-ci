@@ -21,6 +21,7 @@ class Formatter;
 class JSONObj;
 class JSONParser;
 class DoutPrefixProvider;
+struct RGWBucketInfo;
 
 namespace rgw::sal {
 class Bucket;
@@ -705,6 +706,8 @@ int create_index(const VectorBucketConfig<create_index_t>& operation, rgw::sal::
 int create_vector_bucket(const VectorBucketConfig<create_vector_bucket_t>& operation, rgw::sal::Driver* driver, const bucket_namespace_t& ns, DoutPrefixProvider* dpp, optional_yield y);
 int delete_index(const VectorBucketConfig<delete_index_t>& operation, rgw::sal::Driver* driver, const bucket_namespace_t& ns, DoutPrefixProvider* dpp, optional_yield y);
 int remove_indexes(const DoutPrefixProvider* dpp, rgw::sal::Driver* driver, const bucket_namespace_t& ns, const std::string& vector_bucket_name, bool delete_indexes, optional_yield y);
+// remove the indexes of a vector bucket that is being removed, and its cached session
+int remove_bucket_indexes(const DoutPrefixProvider* dpp, rgw::sal::Driver* driver, const RGWBucketInfo& info, bool delete_indexes, optional_yield y);
 int delete_vector_bucket_policy(const delete_vector_bucket_policy_t& configuration, DoutPrefixProvider* dpp, optional_yield y);
 int put_vectors(const VectorBucketConfig<put_vectors_t>& operation, rgw::sal::Driver* driver, const bucket_namespace_t& ns, DoutPrefixProvider* dpp, optional_yield y, std::vector<validation_error_t>& errors);
 int get_vectors(const VectorBucketConfig<get_vectors_t>& operation, rgw::sal::Driver* driver, const bucket_namespace_t& ns, DoutPrefixProvider* dpp, optional_yield y, get_vectors_reply_t& reply);

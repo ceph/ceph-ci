@@ -1448,6 +1448,44 @@ namespace rgw::s3vector {
     return ctx.result;
   }
 
+  int remove_bucket_indexes(const DoutPrefixProvider* dpp, rgw::sal::Driver* driver,
+      const RGWBucketInfo& info, bool delete_indexes, optional_yield y) {
+    // the namespace of the vector bucket takes the place of the tenant in its key
+    bucket_namespace_t ns;
+    if (const auto* account_id = std::get_if<rgw_account_id>(&info.owner); account_id) {
+      // the tenant of the vector bucket is the one of the account that owns it
+      RGWAccountInfo account;
+      rgw::sal::Attrs account_attrs;
+      RGWObjVersionTracker account_objv;
+      if (const int r = driver->load_account_by_id(dpp, y, *account_id, account,
+                                                   account_attrs, account_objv); r < 0) {
+        ldpp_dout(dpp, 1) << "ERROR: failed to load account " << *account_id <<
+          " of s3vector bucket " << info.bucket << ". error: " << r << dendl;
+        return r;
+      }
+      ns.account = *account_id;
+      ns.tenant = account.tenant;
+    } else {
+      ns.tenant = info.bucket.tenant;
+    }
+    // the indexes hold the data of a vector bucket, like the objects of an ordinary
+    // one: they are removed only when the caller asks for it, and prevent the removal
+    // of the vector bucket otherwise
+    const int r = remove_indexes(dpp, driver, ns, info.bucket.name, delete_indexes, y);
+    if (r == -ENOENT) {
+      // the backend of the vector bucket does not exist. this happens when the bucket
+      // was created, but its backend was never initialized. the metadata should still
+      // be removed, so that the bucket does not stay around forever
+      ldpp_dout(dpp, 5) << "WARNING: s3vector bucket " << info.bucket <<
+        " has no backend. removing its metadata" << dendl;
+    } else if (r < 0) {
+      return r;
+    }
+    // the data of the vector bucket is gone, and so should be its cached session
+    notify_session_delete(dpp, ns, info.bucket.name);
+    return 0;
+  }
+
   // delete vector bucket policy
 
   void delete_vector_bucket_policy_t::dump(ceph::Formatter* f) const {

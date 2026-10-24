@@ -15,6 +15,8 @@
 #include "rgw/rgw_sal_config.h"
 #include "rgw/rgw_bucket.h"
 #include "rgw/rgw_zone.h"
+#include "rgw/rgw_s3vector.h"
+#include "rgw/driver/rados/rgw_sal_rados.h"
 #include "common/ceph_argparse.h"
 #include "common/dout.h"
 #include "common/async/context_pool.h"
@@ -178,6 +180,7 @@ void env_init()
     g_init_ret = -EIO;
     return;
   }
+  rgw::sal::RadosVectorBucket::remove_indexes = rgw::s3vector::remove_bucket_indexes;
 
   // libtest has no global teardown, so run cleanup from atexit().  It is
   // registered after all static ctors, so it fires before their dtors -- the
