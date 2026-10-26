@@ -160,6 +160,34 @@ function TEST_enable_stretches_every_pool() {
     wait_for_clean || return 1
 }
 
+# Test Rook's pool create in a stretch cluster: the stretch rule and --size 4,
+# before and after enable_stretch_mode, whatever osd_pool_default_size is
+function TEST_size_of_defaults_in_stretch_mode() {
+    local dir=$1
+    setup_zones $dir || return 1
+    setup_osds $dir || return 1
+    ceph osd pool create before 8 replicated stretch_rule --size 4 || return 1
+    test "$(pool_field before size)" = 4 || return 1
+
+    ceph mon enable_stretch_mode c stretch_rule zone || return 1
+    test "$(pool_num_zones before)" = 2 || return 1
+    ceph osd pool create rook 8 replicated stretch_rule --size 4 || return 1
+    test "$(pool_num_zones rook)" = 2 || return 1
+    test "$(pool_field rook size)" = 4 || return 1
+    test "$(pool_field rook crush_rule)" = 1 || return 1
+    # Rook re-applies a user's osd_pool_default_size on every reconcile
+    ceph config set global osd_pool_default_size 3 || return 1
+    ceph osd pool create rook2 8 replicated stretch_rule --size 4 || return 1
+    test "$(pool_field rook2 size)" = 4 || return 1
+    test "$(pool_field rook2 replica)" = 2 || return 1
+    expect_failure $dir "unless it is a multiple of num_zones 2" \
+        ceph osd pool create other 8 replicated stretch_rule --size 5 || return 1
+    expect_failure $dir "cannot specify 'size' with num_zones > 1" \
+        ceph osd pool create other 8 replicated stretch_rule --size 4 \
+        --num_zones 2 || return 1
+    wait_for_clean || return 1
+}
+
 # Test a pool created through librados takes the pool creation defaults, as
 # ceph osd pool create <pool> does: in stretch mode it is stretched
 function TEST_librados_pool_takes_defaults() {
