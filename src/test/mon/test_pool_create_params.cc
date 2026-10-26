@@ -545,12 +545,61 @@ TEST_F(PoolParamsTest, SizeWithTwoZonesFails) {
             "instead", ss.str());
 }
 
-// Test failure when the legacy size is given while the default is two zones
+// Test a legacy size over the default two zones gives size / 2 replicas,
+// whatever osd_pool_default_size is, as Rook passes --size 4 in stretch mode
+TEST_F(PoolParamsTest, SizeOverDefaultTwoZonesIsReplica) {
+  set("osd_pool_default_num_zones", "2");
+  for (const char *dflt : {"2", "3"}) {
+    set("osd_pool_default_size", dflt);
+    PoolCreateParams p = with({{"size", int64_t(4)}});
+    size_over_default_zones_as_replica(p);
+    EXPECT_FALSE(p.is_given("size")) << dflt;
+    EXPECT_TRUE(p.is_given("replica")) << dflt;
+    EXPECT_EQ(2, p.copies_per_zone()) << dflt;
+    EXPECT_EQ(0, check(p)) << ss.str();
+  }
+}
+
+// Test failure when a legacy size that is not a multiple of the default two
+// zones is given
 TEST_F(PoolParamsTest, SizeWithDefaultTwoZonesFails) {
   set("osd_pool_default_num_zones", "2");
-  EXPECT_EQ(-EINVAL, check(with({{"size", int64_t(4)}})));
-  EXPECT_EQ("cannot specify 'size' with num_zones > 1; use 'replica' parameter "
-            "instead (osd_pool_default_num_zones)", ss.str());
+  PoolCreateParams p = with({{"size", int64_t(5)}});
+  size_over_default_zones_as_replica(p);
+  EXPECT_EQ(-EINVAL, check(p));
+  EXPECT_EQ("cannot specify 'size' with num_zones > 1 unless it is a multiple "
+            "of num_zones 2 (osd_pool_default_num_zones); use 'replica' "
+            "parameter instead", ss.str());
+}
+
+// Test a legacy size over the default zones keeps its limit of 10
+TEST_F(PoolParamsTest, SizeOverDefaultTwoZonesKeepsItsLimit) {
+  set("osd_pool_default_num_zones", "2");
+  PoolCreateParams p = with({{"size", int64_t(12)}});
+  size_over_default_zones_as_replica(p);
+  EXPECT_EQ(-EINVAL, check(p));
+  EXPECT_EQ("pool size must be between 1 and 10", ss.str());
+}
+
+// Test a legacy size is kept, and fails, with a given num_zones
+TEST_F(PoolParamsTest, SizeWithTwoZonesGivenIsKept) {
+  PoolCreateParams p = with({{"size", int64_t(4)},
+                             {"num_zones", int64_t(2)}});
+  size_over_default_zones_as_replica(p);
+  EXPECT_TRUE(p.is_given("size"));
+  EXPECT_EQ(-EINVAL, check(p));
+}
+
+// Test a legacy size is kept for a single-zone pool and for an erasure coded
+// pool, which ignores it
+TEST_F(PoolParamsTest, SizeKeptOtherwise) {
+  PoolCreateParams p = with({{"size", int64_t(4)}});
+  size_over_default_zones_as_replica(p);
+  EXPECT_TRUE(p.is_given("size"));
+  set("osd_pool_default_num_zones", "2");
+  PoolCreateParams e = with({{"size", int64_t(4)}}, ERASURE);
+  size_over_default_zones_as_replica(e);
+  EXPECT_TRUE(e.is_given("size"));
 }
 
 // Test success when an EC pool gets the legacy size, which it ignores

@@ -89,6 +89,11 @@ enum class PoolCommand { CREATE, DEFAULT_SET };
 int check_command_line(const PoolCreateParams& p, PoolCommand command,
                        std::ostream* ss);
 
+// A legacy size of a replicated pool over the default zones, as Rook passes
+// in stretch mode, gives the pool size / num_zones replicas when it is a
+// multiple of num_zones.
+void size_over_default_zones_as_replica(PoolCreateParams& p);
+
 // The most OSDs a pool can have: each shard id must fit in a shard_id_t.
 constexpr int64_t MAX_POOL_SIZE = 128;
 

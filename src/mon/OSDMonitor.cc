@@ -15423,6 +15423,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     if (err) {
       goto reply_no_propose;
     }
+    size_over_default_zones_as_replica(params);
     if (!num_zones_supported() && params.num_zones != 1) {
       ss << "a pool with num_zones " << params.num_zones
          << " cannot be created until " << num_zones_upgrade_hint();

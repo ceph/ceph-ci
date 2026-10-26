@@ -234,6 +234,19 @@ int check_command_line(const PoolCreateParams& p, PoolCommand command,
   return 0;
 }
 
+void size_over_default_zones_as_replica(PoolCreateParams& p)
+{
+  if (p.pool_type == pg_pool_t::TYPE_REPLICATED && p.is_given("size") &&
+      !p.is_given("num_zones") && !p.is_given("replica") &&
+      p.num_zones > 1 && p.size > 0 && p.size <= MAX_POOL_REPLICA_COPIES &&
+      p.size % p.num_zones == 0) {
+    p.replica = p.size / p.num_zones;
+    p.given.insert("replica");
+    p.given.erase("size");
+    p.size = 0;
+  }
+}
+
 string effective_zone_failure_domain(const PoolCreateParams& p)
 {
   if (!p.is_given("zone_failure_domain") &&
@@ -308,8 +321,12 @@ int check_pool_params(const PoolCreateParams& p,
       return -EINVAL;
     }
     if (p.is_given("size") && p.num_zones > 1) {
-      *ss << "cannot specify 'size' with num_zones > 1; use 'replica' parameter "
-             "instead" << p.from_default("num_zones");
+      *ss << "cannot specify 'size' with num_zones > 1";
+      if (!p.is_given("num_zones")) {
+        *ss << " unless it is a multiple of num_zones " << p.num_zones
+            << " (osd_pool_default_num_zones)";
+      }
+      *ss << "; use 'replica' parameter instead";
       return -EINVAL;
     }
     if (!p.is_given("size") &&
