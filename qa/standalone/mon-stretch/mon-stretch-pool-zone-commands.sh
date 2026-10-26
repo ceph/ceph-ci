@@ -251,7 +251,7 @@ function TEST_rule_errors_name_defaults() {
     local dir=$1
     two_zone_cluster $dir 2 || return 1
 
-    expect_failure $dir "requires at least 3 hosts (osd_pool_default_replica, osd_pool_default_zone_failure_domain, osd_pool_default_osd_failure_domain, osd_pool_default_root)" \
+    expect_failure $dir "requires at least 3 hosts (osd_pool_default_size, osd_pool_default_zone_failure_domain, osd_pool_default_osd_failure_domain, osd_pool_default_root)" \
         ceph osd pool create p --num_zones 2 || return 1
     expect_failure $dir "requires at least 3 hosts (osd_pool_default_zone_failure_domain, osd_pool_default_osd_failure_domain, osd_pool_default_root)" \
         ceph osd pool create p --num_zones 2 --replica 3 || return 1
