@@ -174,7 +174,7 @@ function TEST_legacy_stretch_mode_then_commit() {
 
     ceph osd require-osd-release umbrella || return 1
     test "$(ceph config get mon osd_pool_default_num_zones)" = 2 || return 1
-    test "$(ceph config get mon osd_pool_default_replica)" = 2 || return 1
+    test "$(ceph config get mon osd_pool_default_size)" = 2 || return 1
     test "$(ceph config get mon osd_pool_default_zone_failure_domain)" = zone || return 1
     test "$(pool_num_zones rep)" = 2 || return 1
     test "$(pool_field rep size)" = 4 || return 1
@@ -191,7 +191,7 @@ function TEST_legacy_stretch_mode_then_commit() {
     test "$(pool_num_zones rep)" = 1 || return 1
     test "$(pool_field rep size)" = 3 || return 1
     test "$(ceph config get mon osd_pool_default_num_zones)" = 1 || return 1
-    test "$(ceph config get mon osd_pool_default_replica)" = 3 || return 1
+    test "$(ceph config get mon osd_pool_default_size)" = 3 || return 1
     wait_for_clean || return 1
 }
 
