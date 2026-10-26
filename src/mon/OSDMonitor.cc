@@ -8161,7 +8161,7 @@ int OSDMonitor::prepare_pool_size(const unsigned pool_type,
             : g_conf().get_osd_pool_default_min_size(*size);
     } else { // Use size parameter (legacy)
       if (repl_size == 0) {
-        repl_size = g_conf().get_osd_pool_default_replica();
+        repl_size = g_conf().get_val<uint64_t>("osd_pool_default_size");
       }
       *size = repl_size;
       if (!set_min_size)

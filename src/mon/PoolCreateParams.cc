@@ -77,7 +77,7 @@ PoolCreateParams load_pool_defaults(const ConfigProxy& conf)
   p.pool_type = conf.get_val<string>("osd_pool_default_type") == "erasure"
     ? pg_pool_t::TYPE_ERASURE : pg_pool_t::TYPE_REPLICATED;
   p.num_zones = conf.get_val<int64_t>("osd_pool_default_num_zones");
-  p.replica = conf.get_osd_pool_default_replica();
+  p.replica = conf.get_val<uint64_t>("osd_pool_default_size");
   p.min_size = conf.get_val<uint64_t>("osd_pool_default_min_size");
   std::ostringstream err;
   get_json_str_map(conf.get_val<string>("osd_pool_default_erasure_code_profile"),
@@ -220,6 +220,10 @@ int check_command_line(const PoolCreateParams& p, PoolCommand command,
   if (create && replicated && p.num_zones == 1 && p.crush_params_given()) {
     *ss << CRUSH_PARAMS << " require num_zones > 1 for a replicated pool"
         << p.from_default("num_zones");
+    return -EINVAL;
+  }
+  if (!create && p.is_given("size")) {
+    *ss << "the pool defaults take 'replica', not 'size'";
     return -EINVAL;
   }
   if (p.is_given("size") && p.is_given("replica")) {
@@ -466,7 +470,7 @@ int check_pool_defaults(const PoolCreateParams& p,
   if (p.ec_params_given() || p.is_given("erasure_code_profile")) {
     types.insert(pg_pool_t::TYPE_ERASURE);
   }
-  if (p.is_given("replica") || p.is_given("size")) {
+  if (p.is_given("replica")) {
     types.insert(pg_pool_t::TYPE_REPLICATED);
   }
   for (int type : types) {
@@ -493,8 +497,7 @@ const std::map<string, string>& pool_default_options()
     {"osd_failure_domain", "osd_pool_default_osd_failure_domain"},
     {"root", "osd_pool_default_root"},
     {"class", "osd_pool_default_class"},
-    {"replica", "osd_pool_default_replica"},
-    {"size", "osd_pool_default_replica"},
+    {"replica", "osd_pool_default_size"},
     {"min_size", "osd_pool_default_min_size"},
     {"pg_num", "osd_pool_default_pg_num"},
     {"pgp_num", "osd_pool_default_pgp_num"},
