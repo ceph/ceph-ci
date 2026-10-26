@@ -736,6 +736,7 @@ class TestNVMeoFClientFailover:
              patch('dashboard.services.nvmeof_client.grpc') as mock_grpc, \
              patch('dashboard.services.nvmeof_client.pb2_grpc') as mock_pb2_grpc:
             mock_grpc.RpcError = self.FakeRpcError
+            mock_grpc.FutureTimeoutError = TimeoutError
             mock_grpc.StatusCode.UNAVAILABLE = 'UNAVAILABLE'
             mock_grpc.insecure_channel.side_effect = make_channel
             mock_pb2_grpc.GatewayStub.side_effect = make_stub
@@ -769,6 +770,35 @@ class TestNVMeoFClientFailover:
             self.FakeRpcError('UNAVAILABLE')
         with pytest.raises(self.FakeRpcError):
             client.stub.get_gateway_info('req')
+        assert client.gateway_addr == self._GW1_ADDR
+
+    def test_failover_when_gateway_connect_times_out(self, failover_env):
+        # a stopped host drops packets: no RPC error, the connection just never
+        # completes, so the client must give up on it and use the next gateway
+        client = NVMeoFClient()
+        failover_env.setdefault(self._GW2_ADDR, MagicMock()).get_gateway_info.return_value = 'ok'
+
+        def ready_future(channel):
+            fut = MagicMock()
+            if channel == self._GW1_ADDR:
+                fut.result.side_effect = TimeoutError()
+            return fut
+
+        with patch('dashboard.services.nvmeof_client.grpc.channel_ready_future',
+                   side_effect=ready_future):
+            assert client.stub.get_gateway_info('req') == 'ok'
+        failover_env[self._GW1_ADDR].get_gateway_info.assert_not_called()
+        assert client.gateway_addr == self._GW2_ADDR
+
+    def test_all_gateways_unreachable_raises(self, failover_env):
+        client = NVMeoFClient()
+        fut = MagicMock()
+        fut.result.side_effect = TimeoutError()
+        with patch('dashboard.services.nvmeof_client.grpc.channel_ready_future',
+                   return_value=fut):
+            with pytest.raises(DashboardException) as exc_info:
+                client.stub.get_gateway_info('req')
+        assert exc_info.value.code == 'gateway_unavailable'
         assert client.gateway_addr == self._GW1_ADDR
 
     def test_no_failover_with_server_address(self, failover_env):

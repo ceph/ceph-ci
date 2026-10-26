@@ -31,6 +31,11 @@ except ImportError:
     grpc = None
 else:
 
+    # How long to wait for a gateway connection before trying the next one.
+    # Without it, gRPC retries a silently dropped address (e.g. a stopped host)
+    # for ~20 seconds before reporting UNAVAILABLE.
+    GATEWAY_CONNECT_TIMEOUT = 5
+
     class _FailoverStub(object):
         """
         Proxy for the gateway gRPC stub. Every RPC is sent to the current
@@ -151,6 +156,16 @@ else:
                 self._stubs[gateway_addr] = pb2_grpc.GatewayStub(channel)
             return self._stubs[gateway_addr]
 
+        def _is_reachable(self, gateway_addr: str) -> bool:
+            """Return True if the channel connects within the timeout (instant if connected)."""
+            ready = grpc.channel_ready_future(self._channels[gateway_addr])
+            try:
+                ready.result(timeout=GATEWAY_CONNECT_TIMEOUT)
+                return True
+            except grpc.FutureTimeoutError:
+                ready.cancel()
+                return False
+
         def _invoke(self, method_name: str, *args, **kwargs):
             targets = [(self.gateway_addr, self.daemon_name)] + [
                 (gw['service_url'], gw.get('daemon_name')) for gw in self._fallbacks
@@ -159,6 +174,12 @@ else:
             for gateway_addr, daemon_name in targets:
                 stub = self._get_stub(gateway_addr, daemon_name)
                 if stub is None:
+                    continue
+                # Only probe when there is somewhere to fail over to; a single
+                # gateway keeps the original behaviour.
+                if self._fallbacks and not self._is_reachable(gateway_addr):
+                    logger.warning("Gateway %s is not reachable (timeout %ss) for %s",
+                                   gateway_addr, GATEWAY_CONNECT_TIMEOUT, method_name)
                     continue
                 try:
                     response = getattr(stub, method_name)(*args, **kwargs)
@@ -179,7 +200,9 @@ else:
             if last_exc is not None:
                 raise last_exc
             raise DashboardException(
-                msg=f"No usable NVMe-oF gateway found for service {self.service_name}",
+                msg=f"No reachable NVMe-oF gateway found for service {self.service_name}",
+                code='gateway_unavailable',
+                http_status_code=504,
                 component="nvmeof",
             )
 
