@@ -2539,7 +2539,7 @@ void MDSRankDispatcher::handle_mds_map(
 	}
       }
       // Retry OP_WEAK that was skipped while this peer was still in
-      // resolve/reconnect. See https://tracker.ceph.com/issues/54840
+      // resolve/reconnect.
       if (send_rejoins)
 	mdcache->rejoin_send_rejoins();
     }

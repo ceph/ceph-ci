@@ -4566,8 +4566,7 @@ void MDCache::handle_cache_rejoin_weak(const cref_t<MMDSCacheRejoin> &weak)
     encode(imported_caps, ack->imported_caps);
   } else if (!mds->is_rejoin()) {
     // A delayed OP_WEAK can arrive while we are still in resolve/reconnect.
-    // Defer until rejoin_start() rather than asserting. See
-    // https://tracker.ceph.com/issues/54840
+    // Defer until rejoin_start() rather than asserting.
     dout(7) << "handle_cache_rejoin_weak from mds." << from
 	    << " while in " << ceph_mds_state_name(mds->get_state())
 	    << ", waiting for rejoin" << dendl;
