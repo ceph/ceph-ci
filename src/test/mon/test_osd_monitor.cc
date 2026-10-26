@@ -979,7 +979,7 @@ TEST_F(OSDMonitorCommitDefaultsTest, NoStretchModeNoDefaults) {
 TEST_F(OSDMonitorCommitDefaultsTest, StretchModeDefaults) {
   const map<string, string> expected = {
     {"osd_pool_default_num_zones", "2"},
-    {"osd_pool_default_replica", "2"},
+    {"osd_pool_default_size", "2"},
     {"osd_pool_default_zone_failure_domain", "zone"}};
   EXPECT_EQ(expected, defaults(true, crush.get_type_id("zone")));
 }
@@ -994,13 +994,13 @@ TEST_F(OSDMonitorCommitDefaultsTest, DatacenterStretchBucket) {
 // Test a stretch pool size of 6 gives 3 replicas per zone
 TEST_F(OSDMonitorCommitDefaultsTest, StretchPoolSizeSix) {
   EXPECT_EQ("3", defaults(true, crush.get_type_id("zone"), 6)
-                   .at("osd_pool_default_replica"));
+                   .at("osd_pool_default_size"));
 }
 
 // Test an odd stretch pool size rounds the replicas per zone down
 TEST_F(OSDMonitorCommitDefaultsTest, StretchPoolSizeFive) {
   EXPECT_EQ("2", defaults(true, crush.get_type_id("zone"), 5)
-                   .at("osd_pool_default_replica"));
+                   .at("osd_pool_default_size"));
 }
 
 // Test an unknown stretch bucket type leaves the zone failure domain alone
@@ -1014,7 +1014,7 @@ TEST_F(OSDMonitorCommitDefaultsTest, UnknownBucketTypeKeepsZoneDefault) {
 TEST(OSDMonitorStretchPoolDefaultsTest, TwoZones) {
   const map<string, string> expected = {
     {"osd_pool_default_num_zones", "2"},
-    {"osd_pool_default_replica", "2"},
+    {"osd_pool_default_size", "2"},
     {"osd_pool_default_zone_failure_domain", "datacenter"}};
   EXPECT_EQ(expected, OSDMonitor::stretch_pool_defaults(2, 2, "datacenter"));
 }
@@ -1023,7 +1023,7 @@ TEST(OSDMonitorStretchPoolDefaultsTest, TwoZones) {
 TEST(OSDMonitorStretchPoolDefaultsTest, OneZone) {
   const map<string, string> expected = {
     {"osd_pool_default_num_zones", "1"},
-    {"osd_pool_default_replica", "3"}};
+    {"osd_pool_default_size", "3"}};
   EXPECT_EQ(expected, OSDMonitor::stretch_pool_defaults(1, 3, ""));
 }
 
