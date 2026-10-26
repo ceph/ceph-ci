@@ -618,10 +618,11 @@ else()
   set(WITH_RADOSGW_LANCEDB_DEFAULT OFF)
 endif()
 option(WITH_RADOSGW_LANCEDB "Enable lancedb support in RADOS Gateway" ${WITH_RADOSGW_LANCEDB_DEFAULT})
-# See doc/radosgw/s3rdma.rst for build and runtime requirements.
-option(WITH_RADOSGW_CUOBJ "cuObject RDMA support for RADOS Gateway (experimental)" OFF)
+# See doc/radosgw/s3rdma.rst for runtime requirements. The NVIDIA cuObject SDK
+# is not needed to build: libcuobjserver is loaded with dlopen() at runtime and
+# S3 RDMA requests fail with HTTP 500 if it is not installed.
+option(WITH_RADOSGW_CUOBJ "cuObject RDMA support for RADOS Gateway (experimental, loaded at runtime)" ON)
 if(WITH_RADOSGW_CUOBJ)
-  find_library(CUOBJSERVER_LIBRARY cuobjserver REQUIRED)
   message(STATUS "cuObject RDMA support for RADOS Gateway is enabled (experimental)")
 endif()
 

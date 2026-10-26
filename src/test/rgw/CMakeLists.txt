@@ -624,7 +624,7 @@ add_rgw_cargo_test_binary(
   DEPENDS   ceph_rgw_sal_test_env)
 endif()
 
-# cuObject tests require the SDK at build time, but no RDMA hardware or cluster.
+# cuObject tests need neither the SDK nor RDMA hardware or a cluster.
 if(WITH_RADOSGW_CUOBJ)
   add_executable(unittest_rgw_cuobj
     test_rgw_cuobj.cc

@@ -909,8 +909,6 @@ def build_container(ctx):
     if ctx.cli.custom_image_build_commands:
         joined = "\n".join(ctx.cli.custom_image_build_commands)
         cmd.append(f"--build-arg=CUSTOM_IMAGE_COMMANDS={joined}")
-    if ctx.cli.with_cuobj:
-        cmd.append("--build-arg=WITH_RADOSGW_CUOBJ=ON")
     cmd += ["-f", ctx.cli.containerfile, ctx.cli.containerdir]
     with ctx.user_command():
         _run(cmd, check=True, ctx=ctx)
@@ -1338,9 +1336,8 @@ def parse_cli(build_step_names):
         "--with-cuobj",
         action="store_true",
         help=(
-            "Enable experimental RGW cuObject support and install its server"
-            " dependencies in the build image (EL9/EL10, x86_64/aarch64)."
-            " Disabled by default."
+            "Explicitly enable experimental RGW cuObject support."
+            " Enabled by default for CMake source builds and RPM builds."
         ),
     )
 

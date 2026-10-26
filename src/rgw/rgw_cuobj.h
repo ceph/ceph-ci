@@ -10,8 +10,50 @@
 
 #include "common/dout.h"
 
+// Opaque handle owned by the cuObject library. RGW never dereferences it, so
+// the NVIDIA headers are not needed to build RGW.
 struct rdma_buffer;
-class cuObjServer;
+
+// Thin abstraction over the cuObject server library. The only production
+// implementation binds the library with dlopen() at runtime (see
+// rgw_cuobj_dl.cc), so RGW builds without the NVIDIA SDK and uses RDMA only
+// when the library is present on the host.
+class RGWCuObjTransport {
+public:
+  virtual ~RGWCuObjTransport() = default;
+
+  virtual bool is_connected() = 0;
+  virtual void* alloc_host_buffer(size_t size) = 0;
+  virtual rdma_buffer* register_buffer(void* ptr, size_t size) = 0;
+  virtual void deregister_buffer(rdma_buffer* handle) = 0;
+  virtual uint16_t allocate_channel_id() = 0;
+  virtual void free_channel_id(uint16_t channel) = 0;
+
+  // RDMA_READ from the client into the registered buffer.
+  virtual ssize_t put_object(const std::string& key, rdma_buffer* handle,
+                             uint64_t remote_addr, size_t size,
+                             const std::string& rdma_descr, uint16_t channel,
+                             uint64_t local_offset, int* wc_status) = 0;
+  // RDMA_WRITE from the registered buffer to the client.
+  virtual ssize_t get_object(const std::string& key, rdma_buffer* handle,
+                             uint64_t remote_addr, size_t size,
+                             const std::string& rdma_descr, uint16_t channel,
+                             uint64_t local_offset) = 0;
+
+  struct Params {
+    // soname (or path) passed to dlopen(); cuObject server major version 2
+    std::string library = "libcuobjserver.so.2";
+    std::string rdma_ip;
+    unsigned short rdma_port = 0;
+    int num_dcis = 0;
+    std::string log_level; // off, error, info, debug
+  };
+
+  // Load the library and connect. Returns nullptr and sets 'err' (negative
+  // errno) when the library is absent, incompatible, or fails to connect.
+  static std::unique_ptr<RGWCuObjTransport> create(
+      const DoutPrefixProvider* dpp, const Params& params, int& err);
+};
 
 class RGWCuObjServer : public DoutPrefixProvider {
 public:
@@ -33,6 +75,14 @@ public:
   static int init(CephContext* cct);
   static void shutdown();
   static RGWCuObjServer* get_instance();
+
+  // True when RDMA transfers can be served: the library was loaded and the
+  // server is connected. S3 requests carrying an RDMA token fail with 500
+  // when this is false.
+  static bool available() {
+    auto* server = get_instance();
+    return server && server->is_available();
+  }
 
   bool is_available() const;
 
@@ -64,7 +114,7 @@ private:
   int do_init(CephContext* cct);
   void do_shutdown();
 
-  std::unique_ptr<cuObjServer> m_server;
+  std::unique_ptr<RGWCuObjTransport> m_server;
   size_t m_buf_count = 0;
   std::unique_ptr<RDMABufEntry[]> m_buffer_pool;
   CephContext* m_cct = nullptr;
