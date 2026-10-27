@@ -502,6 +502,9 @@ private:
     const std::function<bool(const pg_pool_t&)>& pred) const;
   // whether stretch mode is enabled, or enabled by the pending changes
   bool stretch_mode_enabled_or_pending() const;
+  // also true while only the MonMap is in stretch mode, as enable_stretch_mode
+  // leaves a cluster with no pools until a pool has two zones
+  bool cluster_stretch_mode_or_pending() const;
   // legacy individual stretch pools ('osd pool stretch set' while stretch
   // mode is off) and stretch mode cannot be combined
   int check_no_legacy_individual_stretch_pools(int64_t skip_pool,
@@ -1007,6 +1010,12 @@ public:
   int validate_joining_pool(CrushWrapper& crush, int crush_rule,
                             const std::string& zone_failure_domain,
                             int64_t pool, std::ostream *ss) const;
+  // Whether the Monitors can divide the cluster by zone for a pool that puts
+  // it in stretch mode: with the tiebreaker they would choose, or with theirs
+  // while only the MonMap is in stretch mode, as enable_stretch_mode leaves a
+  // cluster with no pools
+  int validate_monitor_stretch(const std::string& zone,
+                               const CrushWrapper& crush, std::ostream *ss);
 
   // The release that ships per-pool num_zones. Until require_osd_release
   // reaches it the monitors keep the behavior of earlier releases.

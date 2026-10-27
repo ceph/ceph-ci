@@ -9543,17 +9543,9 @@ int OSDMonitor::prepare_command_pool_set_num_zones(
       stringstream monmap_ss;
       bool monmap_okay = false;
       int monmap_errcode = 0;
-      if (!pending_monmap_stretch_enabled) {
-        mon.monmon()->try_enable_stretch_mode(
-            monmap_ss, &monmap_okay, &monmap_errcode, false, "",
-            zone_failure_domain, pending_crush);
-        if (!monmap_okay) {
-          ss << "Failed to validate monitor stretch mode: " << monmap_ss.str();
-          return monmap_errcode;
-        }
-      } else {
-        dout(20) << __func__ << " monmap stretch mode enabled currently committing"
-                 << dendl;
+      if (int r = validate_monitor_stretch(zone_failure_domain, pending_crush,
+                                           &ss); r) {
+        return r;
       }
       set<pg_pool_t*> pools_to_configure;
       pools_to_configure.insert(&p);
@@ -10689,7 +10681,7 @@ static bool refuse_in_stretch_mode(bool stretch_mode_enabled,
 int OSDMonitor::prepare_command_pool_stretch_set(const cmdmap_t& cmdmap,
                                                     stringstream& ss)
 {
-  if (refuse_in_stretch_mode(stretch_mode_enabled_or_pending(), "osd pool stretch set", ss)) {
+  if (refuse_in_stretch_mode(cluster_stretch_mode_or_pending(), "osd pool stretch set", ss)) {
     return -EINVAL;
   }
 
@@ -10856,7 +10848,7 @@ int OSDMonitor::prepare_command_pool_stretch_unset(const cmdmap_t& cmdmap,
   * Command syntax:
   *   ceph osd pool stretch unset <pool>
   */
-  if (refuse_in_stretch_mode(stretch_mode_enabled_or_pending(), "osd pool stretch unset", ss)) {
+  if (refuse_in_stretch_mode(cluster_stretch_mode_or_pending(), "osd pool stretch unset", ss)) {
     return -EINVAL;
   }
 
@@ -17138,6 +17130,33 @@ bool OSDMonitor::stretch_mode_enabled_or_pending() const
                                          : osdmap.stretch_mode_enabled;
 }
 
+bool OSDMonitor::cluster_stretch_mode_or_pending() const
+{
+  return stretch_mode_enabled_or_pending() ||
+    mon.monmon()->pending_map.stretch_mode_enabled;
+}
+
+int OSDMonitor::validate_monitor_stretch(const string& zone,
+                                         const CrushWrapper& crush,
+                                         ostream *ss)
+{
+  const MonMap& monmap = mon.monmon()->pending_map;
+  if (monmap.stretch_mode_enabled && stretch_mode_enabled_or_pending()) {
+    return 0;
+  }
+  stringstream mss;
+  bool okay = false;
+  int errcode = 0;
+  mon.monmon()->try_enable_stretch_mode(
+    mss, &okay, &errcode, false,
+    monmap.stretch_mode_enabled ? monmap.tiebreaker_mon : "", zone, crush);
+  if (!okay) {
+    *ss << "Failed to validate monitor stretch mode: " << mss.str();
+    return errcode;
+  }
+  return 0;
+}
+
 int OSDMonitor::validate_joining_pool(CrushWrapper& crush, int crush_rule,
                                       const string& zone_failure_domain,
                                       int64_t pool, ostream *ss) const
@@ -17859,17 +17878,11 @@ PoolCreateCluster OSDMonitor::pool_create_cluster(CrushWrapper& crush)
     if (num_zones != 2) {
       return 0;
     }
+    if (int r = validate_monitor_stretch(zone, crush, ss); r) {
+      return r;
+    }
     bool okay = false;
     int errcode = 0;
-    if (!mon.monmon()->pending_map.stretch_mode_enabled) {
-      stringstream mss;
-      mon.monmon()->try_enable_stretch_mode(mss, &okay, &errcode, false, "",
-                                            zone, crush);
-      if (!okay) {
-        *ss << "Failed to validate monitor stretch mode: " << mss.str();
-        return errcode;
-      }
-    }
     stringstream oss;
     try_enable_stretch_mode(oss, &okay, &errcode, false, zone, num_zones, {},
                             "", crush, false);
