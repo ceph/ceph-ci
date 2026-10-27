@@ -164,6 +164,50 @@ function TEST_enable_stretches_every_pool() {
     wait_for_clean || return 1
 }
 
+function pool_rule_name() {
+    ceph osd pool get $1 crush_rule -f json | jq -r .crush_rule
+}
+
+# Test enabling without a CRUSH rule gives each pool a rule generated for it,
+# and that disabling removes those rules
+function TEST_enable_generates_rules() {
+    local dir=$1
+    setup_zones $dir || return 1
+    setup_osds $dir || return 1
+    ceph osd pool create rep 8 8 replicated --num_zones 1 || return 1
+    ceph osd erasure-code-profile set ec21 plugin=isa k=2 m=1 \
+        crush-failure-domain=osd || return 1
+    ceph osd pool create ec 8 8 erasure ec21 || return 1
+    ceph osd pool set ec allow_ec_optimizations true || return 1
+    # over two zones already, with another replica count
+    ceph osd pool create two 8 8 replicated --num_zones 2 --replica 1 \
+        --zone_failure_domain zone || return 1
+
+    ceph mon enable_stretch_mode --dividing_bucket zone || return 1
+    test "$(pool_num_zones rep)" = 2 || return 1
+    test "$(pool_field rep size)" = 4 || return 1
+    test "$(pool_rule_name rep)" = rep || return 1
+    ceph osd crush rule dump rep | \
+        jq -e '[.steps[] | select(.op == "choose_firstn") | .type] == ["zone"]' || return 1
+    test "$(pool_field ec size)" = 6 || return 1
+    test "$(pool_rule_name ec)" = ec-stretch || return 1
+    test "$(pool_field two size)" = 4 || return 1
+    test "$(pool_rule_name two)" = two-replica-2 || return 1
+    wait_for_clean || return 1
+
+    # a rule given to the command is still given to the replicated pools
+    ceph osd pool create later 8 8 replicated --num_zones 1 || return 1
+    ceph mon enable_stretch_mode c stretch_rule zone || return 1
+    test "$(pool_rule_name later)" = stretch_rule || return 1
+
+    ceph mon disable_stretch_mode --yes-i-really-mean-it || return 1
+    local rule
+    for rule in rep ec-stretch two-replica-2; do
+        ! ceph osd crush rule ls | grep -qx $rule || return 1
+    done
+    wait_for_clean || return 1
+}
+
 # Test enabling with no pools enters stretch mode in the MonMap and sets the
 # defaults, and the first pool over two zones sets the cluster stretch flags
 function TEST_enable_without_pools() {
