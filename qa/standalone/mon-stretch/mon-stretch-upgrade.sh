@@ -168,8 +168,8 @@ function TEST_legacy_stretch_mode_then_commit() {
     test "$(pool_field rep crush_rule)" = 1 || return 1
     test "$(ceph mon dump -f json | jq .stretch_mode)" = true || return 1
     test "$(ceph osd dump -f json | jq .stretch_mode.stretch_mode_enabled)" = true || return 1
-    expect_failure $dir "already engaged" \
-        ceph mon enable_stretch_mode c stretch_rule zone || return 1
+    ceph mon enable_stretch_mode c stretch_rule zone > $dir/out 2>&1 || return 1
+    grep -q "already engaged" $dir/out || return 1
     wait_for_clean || return 1
 
     ceph osd require-osd-release umbrella || return 1
