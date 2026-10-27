@@ -90,10 +90,14 @@ EOF
 }
 
 # three OSDs in each zone
+# six OSDs, and a Manager unless the second argument is nomgr
 function setup_osds() {
     local dir=$1
+    local mgr=${2:-mgr}
 
-    run_mgr $dir x || return 1
+    if [ "$mgr" = mgr ]; then
+        run_mgr $dir x || return 1
+    fi
     local osd
     for osd in 0 1 2 3 4 5; do
         run_osd $dir $osd || return 1
@@ -157,6 +161,64 @@ function TEST_enable_stretches_every_pool() {
     ceph osd pool create newrep2 8 8 || return 1
     test "$(pool_num_zones newrep2)" = 2 || return 1
     test "$(pool_field newrep2 crush_rule)" = 1 || return 1
+    wait_for_clean || return 1
+}
+
+# Test enabling with no pools enters stretch mode in the MonMap and sets the
+# defaults, and the first pool over two zones sets the cluster stretch flags
+function TEST_enable_without_pools() {
+    local dir=$1
+    setup_zones $dir || return 1
+    test -z "$(ceph osd pool ls)" || return 1
+
+    ceph mon enable_stretch_mode c stretch_rule zone || return 1
+    test "$(ceph mon dump -f json | jq .stretch_mode)" = true || return 1
+    test "$(ceph mon dump -f json | jq -r .tiebreaker_mon)" = c || return 1
+    test "$(ceph osd dump -f json | jq .stretch_mode.stretch_mode_enabled)" = false || return 1
+    test "$(default_value num_zones)" = 2 || return 1
+    test "$(default_value zone_failure_domain)" = zone || return 1
+
+    # no individual stretch pool meanwhile
+    ceph osd pool create one 8 8 replicated --num_zones 1 || return 1
+    expect_failure $dir "cannot be used while stretch mode is enabled" \
+        ceph osd pool stretch set one 2 2 zone replicated_rule 4 2 || return 1
+    ceph osd pool rm one one --yes-i-really-really-mean-it || return 1
+
+    # disabling and enabling again work while no pool has two zones
+    ceph mon disable_stretch_mode --yes-i-really-mean-it || return 1
+    test "$(ceph mon dump -f json | jq .stretch_mode)" = false || return 1
+    test "$(default_value num_zones)" = 1 || return 1
+    ceph mon enable_stretch_mode c stretch_rule zone || return 1
+    ceph mon enable_stretch_mode c stretch_rule zone || return 1
+    test "$(ceph mon dump -f json | jq .stretch_mode)" = true || return 1
+    test "$(ceph osd dump -f json | jq .stretch_mode.stretch_mode_enabled)" = false || return 1
+
+    # the first pool over two zones must divide them as the tiebreaker was
+    # chosen for: two regions hold the zones, but no Monitor is in one, so
+    # stretch mode by region would crash the Monitors. No Manager yet, which
+    # would create .mgr over the zones first.
+    setup_osds $dir nomgr || return 1
+    local region
+    for region in 1 2; do
+        ceph osd crush add-bucket region$region region || return 1
+        ceph osd crush move region$region root=default || return 1
+    done
+    ceph osd crush move iris region=region1 || return 1
+    ceph osd crush move pze region=region2 || return 1
+    expect_failure $dir "monitor stretch mode" \
+        ceph osd pool create other 8 8 replicated \
+        --zone_failure_domain region || return 1
+    test "$(ceph osd dump -f json | jq .stretch_mode.stretch_mode_enabled)" = false || return 1
+
+    # the first pool over two zones sets the cluster stretch flags
+    ceph osd pool create rep 8 8 replicated || return 1
+    test "$(pool_num_zones rep)" = 2 || return 1
+    test "$(ceph osd dump -f json | jq .stretch_mode.stretch_mode_enabled)" = true || return 1
+    test "$(ceph osd dump -f json | jq .stretch_mode.stretch_bucket_count)" = 2 || return 1
+    local zone_type=$(ceph osd crush dump | jq '.types[] | select(.name == "zone") | .type_id')
+    test "$(ceph osd dump -f json | jq .stretch_mode.stretch_mode_bucket)" = "$zone_type" || return 1
+    test "$(ceph mon dump -f json | jq -r .tiebreaker_mon)" = c || return 1
+    run_mgr $dir x || return 1
     wait_for_clean || return 1
 }
 
