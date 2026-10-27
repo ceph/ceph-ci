@@ -14474,6 +14474,16 @@ void PrimaryLogPG::on_change(ObjectStore::Transaction &t)
        ++i) {
     requeue_op(*i, OpWaitingList::IN_PROGRESS);
   }
+  // The source PG's reservation request is not resent by the Objecter, so
+  // reply -EBUSY rather than dropping it silently. The source treats this as
+  // transient and retries against the new interval.
+  for (auto& op : pending_pool_migration_reservation_ops) {
+    MOSDOp *m = static_cast<MOSDOp*>(op->get_nonconst_req());
+    MOSDOpReply *reply = new MOSDOpReply(m, -EBUSY, get_osdmap_epoch(),
+                                         CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK, false);
+    reply->claim_op_out_data(m->ops);
+    osd->send_message_osd_client(reply, m->get_connection());
+  }
   pending_pool_migration_reservation_ops.clear();
   pool_migration_reservations_granted_source = false;
   cancel_pool_migration_reservation_op();
