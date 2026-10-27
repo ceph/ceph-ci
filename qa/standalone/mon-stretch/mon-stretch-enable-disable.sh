@@ -340,9 +340,7 @@ function TEST_enable_checks_rule_of_pools_over_zones() {
     ceph osd crush move osd.4 host=node-4 || return 1
     ceph osd crush move osd.5 host=node-5 || return 1
     ceph osd crush remove $(hostname -s) || return 1
-    ceph osd crush rule create-stretch-replicated --rule_name three_per_zone \
-        --zone_failure_domain zone --osd_failure_domain osd \
-        --num_replica_per_zone 3 || return 1
+    add_stretch_rule $dir three_per_zone default zone 2 osd 3 || return 1
     ceph osd pool create rep3 --num_zones 2 --replica 3 \
         --zone_failure_domain zone --osd_failure_domain osd || return 1
     local rule=$(pool_field rep3 crush_rule)

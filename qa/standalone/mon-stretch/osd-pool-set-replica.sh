@@ -141,10 +141,7 @@ function TEST_pool_replica_crush_rule_name() {
     assert_pool_rule "$poolname" "$poolname" 2 1 || return 1
 
     # Exercise reuse of a committed rule, rather than only rule creation.
-    ceph osd crush rule create-stretch-replicated \
-        --rule_name "$poolname-replica-3" --root default \
-        --zone_failure_domain zone --osd_failure_domain host \
-        --num_zones 2 --num_replica_per_zone 3 || return 1
+    add_stretch_rule $dir "$poolname-replica-3" default zone 2 host 3 || return 1
     ceph osd pool set "$poolname" replica 3 || return 1
     assert_pool_rule "$poolname" "$poolname-replica-3" 3 2 || return 1
 
