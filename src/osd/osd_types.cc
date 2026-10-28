@@ -2671,8 +2671,14 @@ void pg_pool_t::print(ostream& out, const CrushWrapper *crush) const
         << static_cast<unsigned int>(p.ec_coding_shard_count.value_or(0));
   }
   const int rule_id = p.get_crush_rule();
-  out << " size " << p.get_size()
-      << " min_size " << p.get_min_size()
+  out << " size " << p.get_size();
+  if (p.get_num_zones() > 1) {
+    out << " num_zones " << p.get_num_zones();
+    if (p.is_replicated()) {
+      out << " replica " << p.get_replica();
+    }
+  }
+  out << " min_size " << p.get_min_size()
       << " crush_rule ";
   if (crush && crush->rule_exists(rule_id)) {
     out << crush->get_rule_name(rule_id);

@@ -2059,6 +2059,31 @@ TEST(pg_pool_t_test, get_random_pg_position) {
   }
 }
 
+// min_size counts the copies in each zone, so the pool line shows the zones
+// and copies in each zone before it; a pool in one zone prints as before
+TEST_F(PgPoolStretchEncodingTest, PrintShowsZonesBeforeMinSize) {
+  auto printed = [](const pg_pool_t& p) {
+    ostringstream out;
+    p.print(out);
+    return out.str();
+  };
+  EXPECT_NE(std::string::npos,
+            printed(make_stretch_pool(2, 2, 1)).find(
+              " size 4 num_zones 2 replica 2 min_size 1 crush_rule 1 "))
+    << printed(make_stretch_pool(2, 2, 1));
+
+  pg_pool_t ec = make_stretch_pool(2, 6, 5);
+  ec.type = pg_pool_t::TYPE_ERASURE;
+  EXPECT_NE(std::string::npos,
+            printed(ec).find(" size 12 num_zones 2 min_size 5 crush_rule 1 "))
+    << printed(ec);
+
+  EXPECT_NE(std::string::npos,
+            printed(make_local_pool(3, 2)).find(
+              " size 3 min_size 2 crush_rule 0 "))
+    << printed(make_local_pool(3, 2));
+}
+
 // Without ec_data_shard_count, k comes from the nonprimary shards, which a
 // num_zones > 1 pool repeats in every zone.
 TEST(pg_pool_t_test, get_ec_data_shard_count_multi_zone_fallback) {
