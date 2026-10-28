@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Per-pool num_zones before and at the upgrade commit: until
-# require_osd_release reaches umbrella, whose update sets the OSDMap flag
+# require_osd_release reaches vampire, whose update sets the OSDMap flag
 # stretch_zones, the monitors keep the behavior of earlier releases; the commit
 # converts the pools and pool creation defaults of a cluster in stretch mode.
 
@@ -18,7 +18,7 @@ function run() {
     export CEPH_ARGS
     CEPH_ARGS+="--fsid=$(uuidgen) --auth_cluster_required=none --auth_service_required=none --auth_client_required=none "
     CEPH_ARGS+="--mon-host=$CEPH_MON_A,$CEPH_MON_B,$CEPH_MON_C "
-    CEPH_ARGS+="--mon-debug-no-require-umbrella "
+    CEPH_ARGS+="--mon-debug-no-require-vampire "
 
     local funcs=${@:-$(set | sed -n -e 's/^\(TEST_[0-9a-z_]*\) .*/\1/p')}
     for func in $funcs ; do
@@ -104,7 +104,7 @@ function run_mons() {
     run_mon $dir b --public-addr $CEPH_MON_B "$@" || return 1
     run_mon $dir c --public-addr $CEPH_MON_C "$@" || return 1
     wait_for_quorum 300 3 || return 1
-    test "$(ceph osd dump -f json | jq -r .require_osd_release)" = tentacle || return 1
+    test "$(ceph osd dump -f json | jq -r .require_osd_release)" = umbrella || return 1
 }
 
 # Test what waits for the commit: what earlier releases cannot express
@@ -119,19 +119,19 @@ function TEST_commands_wait_for_commit() {
     test "$(pool_field rados_early size)" = 3 || return 1
     # the defaults can always be shown
     ceph osd pool default get || return 1
-    expect_failure $dir "require-osd-release umbrella" \
+    expect_failure $dir "require-osd-release vampire" \
         ceph osd pool default set --replica 2 || return 1
 
     expect_failure $dir "cannot be created until" \
         ceph osd pool create early2 8 8 --num_zones 2 --zone_failure_domain host || return 1
-    expect_failure $dir "require-osd-release umbrella" \
+    expect_failure $dir "require-osd-release vampire" \
         ceph osd pool set early num_zones 1 || return 1
     ceph osd erasure-code-profile set ec21 plugin=isa k=2 m=1 || return 1
     ceph osd pool create ecearly 8 8 erasure ec21 || return 1
     expect_failure $dir "not supported for EC pools" \
         ceph osd pool stretch set ecearly 2 2 host replicated_rule 6 2 || return 1
 
-    ceph osd require-osd-release umbrella --yes-i-really-mean-it || return 1
+    ceph osd require-osd-release vampire --yes-i-really-mean-it || return 1
     committed || return 1
     ceph osd pool create late 8 8 || return 1
     ceph osd pool default get || return 1
@@ -241,7 +241,7 @@ function TEST_legacy_stretch_mode_then_commit() {
     rados -p rep put obj $dir/crushmap.bin || return 1
     local resend=$(pool_field rep last_force_op_resend | tr -d '"')
 
-    ceph osd require-osd-release umbrella || return 1
+    ceph osd require-osd-release vampire || return 1
     committed || return 1
     test "$(ceph config get mon osd_pool_default_num_zones)" = 2 || return 1
     test "$(ceph config get mon osd_pool_default_size)" = 2 || return 1
@@ -284,7 +284,7 @@ function TEST_librados_pool_before_commit() {
     librados_create_pool $dir early || return 1
     expect_pool early 1 4 4 2 || return 1
 
-    ceph osd require-osd-release umbrella || return 1
+    ceph osd require-osd-release vampire || return 1
     expect_pool early 2 2 4 1 || return 1
     librados_create_pool $dir late || return 1
     test "$(pool_num_zones late)" = 2 || return 1
@@ -298,7 +298,7 @@ function TEST_commit_copies_default_profile() {
 
     ceph osd pool create ecdefault 8 8 erasure || return 1
     test "$(pool_field ecdefault erasure_code_profile)" = '"default"' || return 1
-    ceph osd require-osd-release umbrella --yes-i-really-mean-it || return 1
+    ceph osd require-osd-release vampire --yes-i-really-mean-it || return 1
     test "$(pool_field ecdefault erasure_code_profile)" = '"ecdefault-k2-m2"' || return 1
     test "$(ceph osd erasure-code-profile get ecdefault-k2-m2 -f json)" = \
         "$(ceph osd erasure-code-profile get default -f json)" || return 1
@@ -318,7 +318,7 @@ function TEST_commit_copies_default_profile_in_its_update() {
     ceph osd pool create fresh 8 8 erasure &
     local pid_fresh=$!
     sleep 1
-    ceph osd require-osd-release umbrella --yes-i-really-mean-it &
+    ceph osd require-osd-release vampire --yes-i-really-mean-it &
     local pid_commit=$!
     sleep 1
     ceph osd pool create late 8 8 erasure || return 1
@@ -342,7 +342,7 @@ function TEST_legacy_stretch_mode_min_size_rounds_up() {
 
     ceph mon enable_stretch_mode c stretch_rule zone || return 1
     expect_pool rep 1 4 4 3 || return 1
-    ceph osd require-osd-release umbrella || return 1
+    ceph osd require-osd-release vampire || return 1
     expect_pool rep 2 2 4 2 || return 1
 }
 
@@ -367,7 +367,7 @@ function TEST_degraded_commit() {
     expect_pool early 1 4 4 1 || return 1
     test "$(pool_field early peering_crush_bucket_count)" = 1 || return 1
 
-    ceph osd require-osd-release umbrella || return 1
+    ceph osd require-osd-release vampire || return 1
     local iris=$(ceph osd crush dump -f json | jq '.buckets[]|select(.name=="iris")|.id')
     for pool in rep early; do
         expect_pool $pool 2 2 4 1 || return 1
@@ -396,7 +396,7 @@ function TEST_commit_without_stretch_mode() {
     local dir=$1
     run_mons $dir || return 1
 
-    ceph osd require-osd-release umbrella --yes-i-really-mean-it || return 1
+    ceph osd require-osd-release vampire --yes-i-really-mean-it || return 1
     test "$(ceph osd pool default get -f json | jq -r .num_zones.source)" = default || return 1
     test "$(ceph osd pool default get -f json | jq -r .replica.source)" = default || return 1
 }
