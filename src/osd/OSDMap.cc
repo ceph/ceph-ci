@@ -3296,6 +3296,30 @@ bool OSDMap::undo_pre_tentacle_primaryfirst(spg_t *pgid) const
   return true;
 }
 
+bool OSDMap::undo_pre_stretch_zones_primaryfirst(spg_t *pgid) const
+{
+  const pg_pool_t *pool = get_pg_pool(pgid->pool());
+  if (!pool || pgid->shard >= pool->size) {
+    return false;
+  }
+  if (pool->get_num_zones() < 2 ||
+      pgid->shard == shard_id_t::NO_SHARD ||
+      pgid->shard == shard_id_t(0) ||
+      !pool->allows_ecoptimizations() ||
+      !has_pgtemp(pool->raw_pg_to_pg(pgid->pgid))) {
+    return true;
+  }
+  // the client gave position p, after the primary, the shard p - parity, and
+  // a parity position the shard p + size - parity - 1
+  const int size = pool->size;
+  const int parity = size - pool->nonprimary_shards.size() - 1;
+  const int shard = pgid->shard.id;
+  const int pos = shard >= size - parity ? shard - size + parity + 1
+                                         : shard + parity;
+  pgid->reset_shard(pgtemp_undo_primaryfirst(*pool, pgid->pgid, shard_id_t(pos)));
+  return true;
+}
+
 bool OSDMap::async_recovery_can_shrink(const pg_pool_t& pool,
                                        const std::vector<int>& candidate_want) const
 {
