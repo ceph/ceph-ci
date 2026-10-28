@@ -2486,7 +2486,10 @@ void PeeringState::calc_replicated_acting_stretch(
       osd,
       pool.info.peering_crush_bucket_barrier,
       pool.info.crush_rule);
-    return &ancestors[osdmap->crush->get_non_shadow_id(ancestor)];
+    // as pg_pool_t::stretch_set_can_peer() counts buckets
+    return &ancestors[osdmap->stretch_zones()
+                      ? osdmap->crush->get_non_shadow_id(ancestor)
+                      : ancestor];
   };
 
   unsigned bucket_max = pool.info.size / pool.info.peering_crush_bucket_target;

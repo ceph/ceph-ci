@@ -2548,13 +2548,18 @@ bool pg_pool_t::stretch_set_can_peer(const set<int>& want, const OSDMap& osdmap,
   const uint32_t barrier_count = peering_crush_bucket_count;
   set<int> ancestors;
   const shared_ptr<CrushWrapper>& crush = osdmap.crush;
+  // Earlier releases count a hole in an EC acting set, and the shadow
+  // bucket of each device class, as buckets. Both releases peer the same
+  // PGs until the upgrade is committed, so they must count alike.
+  const bool stretch_zones = osdmap.stretch_zones();
   for (int osdid : want) {
-    if (osdid == CRUSH_ITEM_NONE) {
+    if (stretch_zones && osdid == CRUSH_ITEM_NONE) {
       continue;
     }
     int ancestor = crush->get_parent_of_type(osdid, barrier_id,
 					     crush_rule);
-    ancestors.insert(crush->get_non_shadow_id(ancestor));
+    ancestors.insert(stretch_zones ? crush->get_non_shadow_id(ancestor)
+                                   : ancestor);
   }
   if (ancestors.size() < barrier_count) {
     if (out) {
@@ -4770,6 +4775,13 @@ bool PastIntervals::is_new_interval(
   const pg_pool_t *pi = osdmap->get_pg_pool(pgid.pool());
   if (!pi) {
     return true;  // pool was deleted this epoch -> (final!) interval change
+  }
+  // the rules that judge a stretch pool change at the upgrade commit, and
+  // what min_size counts changes with num_zones
+  if (plast->num_zones != pi->num_zones ||
+      ((plast->is_stretch_pool() || pi->is_stretch_pool()) &&
+       lastmap->stretch_zones() != osdmap->stretch_zones())) {
+    return true;
   }
   return
     is_new_interval(old_acting_primary,
