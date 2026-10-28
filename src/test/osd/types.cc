@@ -135,11 +135,11 @@ TEST(pg_pool_t, encodeDecode)
 
 class PgPoolStretchEncodingTest : public ::testing::Test {
 protected:
-  // the release before stretch zones lacks SERVER_UMBRELLA and writes the
-  // older format, without num_zones and replica
+  // a peer without OSD_STRETCH_ZONES (an earlier release, or any peer before
+  // the upgrade commit) gets the older format, without num_zones and replica
   static constexpr uint64_t full_features = CEPH_FEATURES_ALL;
   static constexpr uint64_t older_features =
-    CEPH_FEATURES_ALL & ~CEPH_FEATURE_SERVER_UMBRELLA;
+    CEPH_FEATURES_ALL & ~CEPH_FEATURE_OSD_STRETCH_ZONES;
 
   static pg_pool_t make_stretch_pool(unsigned zones, unsigned replica,
                                      unsigned min_size_per_zone) {
@@ -172,23 +172,21 @@ protected:
     return p;
   }
 
+  // a pool of global stretch mode as earlier releases have it: one zone and
+  // min_size over all its copies
+  static pg_pool_t make_one_zone_stretch_pool(unsigned size, unsigned min_size) {
+    pg_pool_t p = make_stretch_pool(2, size / 2, min_size);
+    p.num_zones = 1;
+    p.replica = size;
+    return p;
+  }
+
   static pg_pool_t round_trip(const pg_pool_t& in, uint64_t features) {
     bufferlist bl;
     in.encode(bl, features);
     auto it = bl.cbegin();
     pg_pool_t out;
     out.decode(it);
-    return out;
-  }
-
-  // an older-format round trip, settled as OSDMap settles a map in global
-  // stretch mode (or not)
-  static pg_pool_t older_round_trip(const pg_pool_t& in, bool stretch_mode) {
-    pg_pool_t out = round_trip(in, older_features);
-    if (out.legacy_stretch && stretch_mode) {
-      out.convert_legacy_stretch_zones();
-    }
-    out.legacy_stretch = false;
     return out;
   }
 
@@ -204,9 +202,12 @@ TEST_F(PgPoolStretchEncodingTest, FullFeaturesEncodeVersion34) {
   EXPECT_EQ(34u, encoded_struct_v(make_stretch_pool(2, 2, 1), full_features));
 }
 
-// Test the release before stretch zones gets a version without num_zones
+// Test a peer without OSD_STRETCH_ZONES gets Umbrella's version, and an
+// earlier release its own
 TEST_F(PgPoolStretchEncodingTest, OlderFeaturesEncodeBeforeVersion34) {
-  EXPECT_LT(encoded_struct_v(make_stretch_pool(2, 2, 1), older_features), 34u);
+  EXPECT_EQ(33u, encoded_struct_v(make_stretch_pool(2, 2, 1), older_features));
+  EXPECT_EQ(32u, encoded_struct_v(make_stretch_pool(2, 2, 1),
+                                  older_features & ~CEPH_FEATURE_SERVER_UMBRELLA));
 }
 
 // Test the full format keeps num_zones, replica and the per-zone min_size
@@ -218,34 +219,35 @@ TEST_F(PgPoolStretchEncodingTest, FullFormatRoundTrip) {
   EXPECT_EQ(1u, out.get_min_size());
 }
 
-// Test the older format round trip of a pool of global stretch mode keeps the
-// per-zone min_size
-TEST_F(PgPoolStretchEncodingTest, OlderFormatRoundTripKeepsMinSize) {
-  const pg_pool_t out = older_round_trip(make_stretch_pool(2, 2, 1), true);
-  EXPECT_EQ(2u, out.get_num_zones());
-  EXPECT_EQ(2u, out.get_replica());
-  EXPECT_EQ(4u, out.get_size());
-  EXPECT_EQ(1u, out.get_min_size());
+// Test a pool over zones reads, in the older format, as one zone with
+// min_size over all its copies, as an older reader understands it
+TEST_F(PgPoolStretchEncodingTest, OlderFormatReadsAsOneZone) {
+  const pg_pool_t out = round_trip(make_stretch_pool(2, 3, 2), older_features);
+  EXPECT_EQ(1u, out.get_num_zones());
+  EXPECT_EQ(6u, out.get_replica());
+  EXPECT_EQ(6u, out.get_size());
+  EXPECT_EQ(4u, out.get_min_size());
 }
 
-// Test the older format writes min_size as the total over all zones
-TEST_F(PgPoolStretchEncodingTest, OlderFormatWritesTotalMinSize) {
-  // decode divides the older format's min_size by num_zones, so getting the
-  // per-zone 2 back means 4 was written, as an older release expects
-  const pg_pool_t out = older_round_trip(make_stretch_pool(2, 3, 2), true);
-  EXPECT_EQ(2u, out.get_min_size());
-}
-
-// Test repeated older format round trips do not halve min_size each time
-TEST_F(PgPoolStretchEncodingTest, OlderFormatRepeatedRoundTripsAreStable) {
-  pg_pool_t p = make_stretch_pool(2, 3, 2);
-  for (int i = 0; i < 5; ++i) {
-    p = older_round_trip(p, true);
+// Test a pool of global stretch mode before the commit keeps one zone and its
+// min_size over repeated older format round trips, healthy, with an odd
+// min_size, and halved in degraded stretch mode
+TEST_F(PgPoolStretchEncodingTest, OlderFormatOneZonePoolIsUnchanged) {
+  for (unsigned min_size : {1u, 2u, 3u}) {
+    SCOPED_TRACE("min_size " + std::to_string(min_size));
+    pg_pool_t p = make_one_zone_stretch_pool(4, min_size);
+    if (min_size == 1) {
+      p.peering_crush_bucket_count = 1;
+    }
+    for (int i = 0; i < 5; ++i) {
+      p = round_trip(p, older_features);
+    }
+    EXPECT_TRUE(p.is_stretch_pool());
+    EXPECT_EQ(1u, p.get_num_zones());
+    EXPECT_EQ(4u, p.get_replica());
+    EXPECT_EQ(4u, p.get_size());
+    EXPECT_EQ(min_size, p.get_min_size());
   }
-  EXPECT_EQ(2u, p.get_min_size());
-  EXPECT_EQ(2u, p.get_num_zones());
-  EXPECT_EQ(3u, p.get_replica());
-  EXPECT_EQ(6u, p.get_size());
 }
 
 // Test an individual stretch pool over three zones from an earlier release
@@ -256,38 +258,12 @@ TEST_F(PgPoolStretchEncodingTest, OlderFormatIndividualStretchPoolKeepsMinSize) 
   in.peering_crush_bucket_target = 3;
   in.peering_crush_bucket_barrier = 8;
   in.peering_crush_mandatory_member = CRUSH_ITEM_NONE;
-  const pg_pool_t decoded = round_trip(in, older_features);
-  EXPECT_TRUE(decoded.legacy_stretch);
-  const pg_pool_t out = older_round_trip(in, false);
+  const pg_pool_t out = round_trip(in, older_features);
   EXPECT_TRUE(out.is_stretch_pool());
   EXPECT_EQ(1u, out.get_num_zones());
   EXPECT_EQ(3u, out.get_replica());
   EXPECT_EQ(3u, out.get_size());
   EXPECT_EQ(2u, out.get_min_size());
-}
-
-// Test num_zones comes from bucket_target, not the degraded bucket_count
-TEST_F(PgPoolStretchEncodingTest, OlderFormatUsesBucketTargetWhenDegraded) {
-  pg_pool_t in = make_stretch_pool(2, 2, 1);
-  in.peering_crush_bucket_count = 1;
-  const pg_pool_t out = older_round_trip(in, true);
-  EXPECT_EQ(2u, out.get_num_zones());
-  EXPECT_EQ(1u, out.get_min_size());
-}
-
-// Test an older release's total min_size that does not divide by the zones
-// rounds up per zone: degraded stretch mode halved min_size 2 to 1, and an
-// operator can set 3 on a size 4 pool. num_zones 1 makes the encoder write
-// min_size unchanged, as the older release's total.
-TEST_F(PgPoolStretchEncodingTest, OlderFormatMinSizeRoundsUpPerZone) {
-  pg_pool_t in = make_stretch_pool(2, 2, 1);
-  in.num_zones = 1;
-  in.peering_crush_bucket_count = 1;
-  EXPECT_EQ(1u, older_round_trip(in, true).get_min_size());
-
-  in = make_stretch_pool(2, 2, 3);
-  in.num_zones = 1;
-  EXPECT_EQ(2u, older_round_trip(in, true).get_min_size());
 }
 
 // Test an EC pool that an older release's stretch set gave stretch values,
@@ -318,14 +294,16 @@ TEST_F(PgPoolStretchEncodingTest, LocalPoolUnchangedByEitherFormat) {
   }
 }
 
-// Test switching from the older to the full format keeps the pool
+// Test the switch from the older to the full format at the commit does not
+// convert a pool: the commit's own update does
 TEST_F(PgPoolStretchEncodingTest, OlderThenFullFormatKeepsPool) {
-  const pg_pool_t older = older_round_trip(make_stretch_pool(2, 2, 1), true);
+  const pg_pool_t older =
+    round_trip(make_one_zone_stretch_pool(4, 2), older_features);
   const pg_pool_t full = round_trip(older, full_features);
-  EXPECT_EQ(2u, full.get_num_zones());
-  EXPECT_EQ(2u, full.get_replica());
+  EXPECT_EQ(1u, full.get_num_zones());
+  EXPECT_EQ(4u, full.get_replica());
   EXPECT_EQ(4u, full.get_size());
-  EXPECT_EQ(1u, full.get_min_size());
+  EXPECT_EQ(2u, full.get_min_size());
 }
 
 TEST(hobject, prefixes0)
