@@ -284,6 +284,7 @@ class OSDThrasher(Thrasher):
         if self.noscrub_toggle_delay:
             self.noscrub_toggle_thread = gevent.spawn(self.do_noscrub_toggle)
         self.paused_backfills = {}
+        self.paused_backfills_lock = threading.Lock()
 
     def log(self, msg, *args, **kwargs):
         self.logger.info(msg, *args, **kwargs)
@@ -646,6 +647,8 @@ class OSDThrasher(Thrasher):
         """
         self.ceph_manager.raw_cluster_cmd(
             'osd', 'pool', 'set', str(pool), 'nobackfill', 'false')
+        with self.paused_backfills_lock:
+            self.paused_backfills.pop(pool)
 
     def pause_backfill(self):
         """
@@ -654,12 +657,14 @@ class OSDThrasher(Thrasher):
         pool = self.ceph_manager.get_pool()
         if not pool:
             return
-        if pool in self.paused_backfills:
-            return
+        with self.paused_backfills_lock:
+            if pool in self.paused_backfills:
+                return
         self.ceph_manager.raw_cluster_cmd(
             'osd', 'pool', 'set', str(pool), 'nobackfill', 'true')
         self.paused_backfills[pool] = threading.Timer(
-            20.0, self.resume_backfill, args=(pool))
+            20.0, self.resume_backfill, args=(pool,))
+        self.paused_backfills[pool].start()
 
     def reweight_osd_or_by_util(self, osd=None):
         """
