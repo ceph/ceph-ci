@@ -1221,13 +1221,26 @@ public:
    * Update each pool that is stretched once inc is applied, including
    * pools that inc creates or changes, for a stretch mode transition:
    * force an op resend and, if bucket_count is non-zero, set the peering
-   * bucket count and mandatory member.
+   * bucket count and mandatory member. A pool of one zone, whose min_size
+   * counts all its copies as in earlier releases, also has min_size halved
+   * when a zone is lost and set to mon_stretch_pool_min_size once healthy,
+   * as earlier releases did.
    */
   static void apply_stretch_transition_to_pools(
       const mempool::osdmap::map<int64_t, pg_pool_t>& pools,
       OSDMap::Incremental& inc,
       uint32_t bucket_count = 0,
       int mandatory_member = CRUSH_ITEM_NONE);
+  /**
+   * In the update that commits the upgrade, with tmp the OSDMap once inc
+   * is applied: give each pool of global stretch mode that has its copies
+   * evenly in its two zones two zones and min_size per zone, and force an
+   * op resend on every stretch pool, as the peering rules change.
+   */
+  static void convert_stretch_pools_at_commit(
+      const OSDMap& tmp,
+      OSDMap::Incremental& inc,
+      unsigned stretch_pool_min_size);
   /**
    * Obtain the crush rule being used for stretch pools.
    * Note that right now this is heuristic and simply selects the

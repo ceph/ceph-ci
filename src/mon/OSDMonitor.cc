@@ -17800,7 +17800,7 @@ void OSDMonitor::try_enable_stretch_mode(stringstream& ss, bool *okay,
       pool->peering_crush_bucket_target = bucket_count;
       pool->peering_crush_bucket_barrier = dividing_id;
       pool->peering_crush_mandatory_member = CRUSH_ITEM_NONE;
-      pool->num_zones = bucket_count;
+      pool->num_zones = legacy ? 1 : bucket_count;
       const uint32_t degraded = pending_inc.change_stretch_mode
         ? pending_inc.new_degraded_stretch_mode
         : osdmap.degraded_stretch_mode;
@@ -17809,16 +17809,13 @@ void OSDMonitor::try_enable_stretch_mode(stringstream& ss, bool *okay,
         pool->peering_crush_mandatory_member =
           degraded_stretch_mandatory_member(osdmap, pending_inc, degraded);
       }
-      // as earlier releases did, with min_size counted per zone
+      // before the upgrade commit, as earlier releases do: one zone and
+      // min_size over all copies, which the commit converts
       if (legacy) {
-        const auto size = g_conf().get_val<uint64_t>("mon_stretch_pool_size");
-        pool->size = size;
-        pool->replica = size / bucket_count;
-        // rounded up, as osd pool stretch set does, and at most replica
-        pool->min_size = std::min<uint64_t>(
-          (g_conf().get_val<uint64_t>("mon_stretch_pool_min_size") +
-           bucket_count - 1) / bucket_count,
-          pool->replica);
+        pool->size = g_conf().get_val<uint64_t>("mon_stretch_pool_size");
+        pool->replica = pool->size;
+        pool->min_size =
+          g_conf().get_val<uint64_t>("mon_stretch_pool_min_size");
       }
     }
     if (!already_enabled) {
@@ -18672,6 +18669,11 @@ void OSDMonitor::apply_stretch_transition_to_pools(
     if (bucket_count) {
       p.peering_crush_bucket_count = bucket_count;
       p.peering_crush_mandatory_member = mandatory_member;
+      if (p.get_num_zones() == 1) {
+        p.min_size = mandatory_member != CRUSH_ITEM_NONE
+          ? p.min_size / 2
+          : g_conf().get_val<uint64_t>("mon_stretch_pool_min_size");
+      }
     }
     p.set_last_force_op_resend(inc.epoch);
   };
@@ -18685,5 +18687,43 @@ void OSDMonitor::apply_stretch_transition_to_pools(
         !inc.old_pools.contains(id)) {
       apply(*inc.get_new_pool(id, &p));
     }
+  }
+}
+
+void OSDMonitor::convert_stretch_pools_at_commit(
+  const OSDMap& tmp,
+  OSDMap::Incremental& inc,
+  unsigned stretch_pool_min_size)
+{
+  const uint32_t degraded =
+    tmp.stretch_mode_enabled ? tmp.degraded_stretch_mode : 0;
+  const int surviving_zone = degraded
+    ? degraded_stretch_mandatory_member(tmp, inc, degraded)
+    : CRUSH_ITEM_NONE;
+  for (const auto& [id, committed] : tmp.get_pools()) {
+    if (!committed.is_stretch_pool() || inc.old_pools.contains(id)) {
+      continue;
+    }
+    // the pending pool can hold changes made after tmp was built
+    pg_pool_t& p = *inc.get_new_pool(id, &committed);
+    if (tmp.stretch_mode_enabled && p.is_replicated() &&
+        p.get_num_zones() == 1 && p.size % 2 == 0 &&
+        p.peering_crush_bucket_target == 2 &&
+        (int)p.peering_crush_bucket_barrier == tmp.stretch_mode_bucket &&
+        rule_items_per_zone(*tmp.crush, p.crush_rule,
+                            p.peering_crush_bucket_barrier,
+                            p.size) == p.size / 2) {
+      p.num_zones = 2;
+      p.replica = p.size / 2;
+      // never fewer copies than before: a degraded pool's min_size was
+      // halved, and becoming healthy no longer restores it
+      const unsigned total = degraded ? stretch_pool_min_size : p.min_size;
+      p.min_size = std::clamp<unsigned>((total + 1) / 2, 1, p.replica);
+      if (degraded &&
+          p.peering_crush_mandatory_member == CRUSH_ITEM_NONE) {
+        p.peering_crush_mandatory_member = surviving_zone;
+      }
+    }
+    p.set_last_force_op_resend(inc.epoch);
   }
 }
