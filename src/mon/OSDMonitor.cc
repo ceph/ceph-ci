@@ -9852,6 +9852,10 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
       return -ENOTSUP;
     }
     if (p.get_num_zones() > 1) {
+      // tools that apply a pool's settings again set the size it has
+      if (!interr.length() && n == p.get_size()) {
+        return 0;
+      }
       ss << "cannot set 'size' for stretch pools (num_zones=" << p.get_num_zones()
          << "); use 'replica' parameter instead";
       return -EINVAL;
