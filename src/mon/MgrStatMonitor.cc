@@ -216,7 +216,7 @@ void MgrStatMonitor::calc_pool_availability()
                               __func__, poolid) << dendl;
         avail.is_avail        = true;
         avail.last_uptime     = now;
-        avail.uptime         += now - avail.last_downtime;
+        avail.downtime       += now - avail.last_downtime;
       } else {                           // Unavailable to Unavailable
         dout(20) << fmt::format("{}: Pool {} status: Unavailable to Unavailable",
                               __func__, poolid) << dendl;
