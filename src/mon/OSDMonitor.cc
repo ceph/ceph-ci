@@ -714,6 +714,11 @@ void OSDMonitor::create_initial()
   } else {
     newmap.require_osd_release = ceph_release_t::vampire;
   }
+  if (newmap.require_osd_release >= NUM_ZONES_RELEASE) {
+    newmap.set_flag(CEPH_OSDMAP_STRETCH_ZONES);
+  } else {
+    newmap.flags &= ~CEPH_OSDMAP_STRETCH_ZONES;
+  }
 
   ceph_release_t r = ceph_release_from_name(g_conf()->mon_osd_initial_require_min_compat_client);
   if (!r) {
@@ -2026,6 +2031,31 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
           pending_inc.new_pools[pool_id] = p;
           dout(10) << __func__ << " replicated pool " << pool_id
                    << " has OMAP support auto-enabled" << dendl;
+        }
+      }
+    }
+
+    // after the blocks above, which may replace pending pools
+    if (!osdmap.stretch_zones() &&
+        osdmap.require_osd_release < NUM_ZONES_RELEASE &&
+        tmp.require_osd_release >= NUM_ZONES_RELEASE) {
+      dout(10) << __func__ << " upgrade to pools over zones committed"
+               << dendl;
+      pending_inc.new_flags = tmp.get_flags() | CEPH_OSDMAP_STRETCH_ZONES;
+      convert_stretch_pools_at_commit(
+        tmp, pending_inc,
+        g_conf().get_val<uint64_t>("mon_stretch_pool_min_size"));
+      // an OSD of an earlier release would judge the stretch pools by its
+      // rules, and is refused from this epoch
+      for (int osd = 0; osd < osdmap.get_max_osd(); ++osd) {
+        if (osdmap.is_up(osd) &&
+            !HAVE_FEATURE(osdmap.get_xinfo(osd).features,
+                          OSD_STRETCH_ZONES) &&
+            !(pending_inc.new_state[osd] & CEPH_OSD_UP)) {
+          mon.clog->info() << "marking osd." << osd << " down: the upgrade "
+                           << "to pools over zones is committed and it "
+                           << "lacks support";
+          pending_inc.new_state[osd] |= CEPH_OSD_UP;
         }
       }
     }
@@ -3629,6 +3659,14 @@ bool OSDMonitor::preprocess_boot(MonOpRequestRef op)
 		      << " because stretch mode is on and OSD lacks support";
     goto ignore;
   }
+  if (osdmap.stretch_zones() &&
+      !HAVE_FEATURE(m->osd_features, OSD_STRETCH_ZONES)) {
+    mon.clog->info() << "disallowing boot of OSD "
+                     << m->get_orig_source_inst()
+                     << " because the upgrade to pools over zones is "
+                     << "committed and the OSD lacks support";
+    goto ignore;
+  }
 
   // already booted?
   if (osdmap.is_up(from) &&
@@ -3689,6 +3727,13 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
 
   ceph_assert(m->get_orig_source().is_osd());
   int from = m->get_orig_source().num();
+
+  if ((num_zones_supported() || num_zones_commit_pending()) &&
+      !HAVE_FEATURE(m->osd_features, OSD_STRETCH_ZONES)) {
+    dout(1) << "boot from osd." << from << " lacks OSD_STRETCH_ZONES, which"
+            << " the upgrade commit requires" << dendl;
+    return false;
+  }
 
   // does this osd exist?
   if (from >= osdmap.get_max_osd()) {
@@ -4684,10 +4729,27 @@ MOSDMap *OSDMonitor::build_incremental(epoch_t from, epoch_t to, uint64_t featur
   return m;
 }
 
+bool OSDMonitor::withhold_maps(const MonSession *session,
+                               uint64_t features) const
+{
+  // An OSD of an earlier release would judge the intervals of these maps
+  // by its rules and keep them on disk, even while its boot is refused.
+  if (osdmap.stretch_zones() && session->name.is_osd() &&
+      !HAVE_FEATURE(features, OSD_STRETCH_ZONES)) {
+    dout(1) << "not sending osdmaps to " << session->name
+            << ", which lacks OSD_STRETCH_ZONES" << dendl;
+    return true;
+  }
+  return false;
+}
+
 void OSDMonitor::send_full(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
   dout(5) << "send_full to " << op->get_req()->get_orig_source_inst() << dendl;
+  if (withhold_maps(op->get_session(), op->get_session()->con_features)) {
+    return;
+  }
   mon.send_reply(op, build_latest_full(op->get_session()->con_features));
 }
 
@@ -4724,6 +4786,9 @@ void OSDMonitor::send_incremental(epoch_t first,
   // use quorum_con_features, if it's an anonymous connection.
   uint64_t features = session->con_features ? session->con_features :
     mon.get_quorum_con_features();
+  if (withhold_maps(session, features)) {
+    return;
+  }
 
   if (first <= session->osd_epoch) {
     dout(10) << __func__ << " " << session->name << " should already have epoch "
@@ -8603,6 +8668,27 @@ int OSDMonitor::prepare_new_pool(string& name,
              << " waiting for monmap to enable stretch mode" << dendl;
     return -EAGAIN;
   }
+  // Before the upgrade is committed a pool in stretch mode is created as
+  // earlier releases create it, so their OSDs read it alike: on the
+  // stretch rule, with mon_stretch_pool_size copies and min_size over all
+  // of them. The commit gives it its zones.
+  const bool earlier_stretch_pool =
+    !num_zones_supported() && osdmap.stretch_mode_enabled;
+  if (earlier_stretch_pool) {
+    if (pool_type != pg_pool_t::TYPE_REPLICATED) {
+      *ss << "we are in stretch mode; cannot create EC pools until "
+          << num_zones_upgrade_hint();
+      return -EINVAL;
+    }
+    if (crush_rule < 0 && crush_rule_name.empty()) {
+      crush_rule = get_replicated_stretch_crush_rule();
+      if (crush_rule < 0) {
+        *ss << "No suitable CRUSH rule exists, check "
+            << "'osd pool default crush *' config options";
+        return -ENOENT;
+      }
+    }
+  }
   r = prepare_pool_crush_rule(pool_type, name, erasure_code_profile,
                                  crush_rule_name, num_zones, root, num_replica_per_zone, zone_failure_domain, osd_failure_domain, device_class, &crush_rule, ss);
   if (r) {
@@ -8631,6 +8717,18 @@ int OSDMonitor::prepare_new_pool(string& name,
   if (r) {
     dout(10) << "prepare_pool_size returns " << r << dendl;
     return r;
+  }
+  if (earlier_stretch_pool) {
+    const unsigned stretch_size =
+      g_conf().get_val<uint64_t>("mon_stretch_pool_size");
+    if (repl_size && repl_size != stretch_size) {
+      *ss << "we are in stretch mode but size " << repl_size
+          << " does not match mon_stretch_pool_size " << stretch_size;
+      return -EINVAL;
+    }
+    size = stretch_size;
+    replica = size;
+    min_size = g_conf().get_val<uint64_t>("mon_stretch_pool_min_size");
   }
   if (requested_min_size > 0) {
     min_size = requested_min_size;
@@ -8772,6 +8870,16 @@ int OSDMonitor::prepare_new_pool(string& name,
   pi->crush_rule = crush_rule;
   pi->expected_num_objects = expected_num_objects;
   pi->object_hash = CEPH_STR_HASH_RJENKINS;
+  if (earlier_stretch_pool) {
+    pi->peering_crush_bucket_count = osdmap.stretch_bucket_count;
+    pi->peering_crush_bucket_target = osdmap.stretch_bucket_count;
+    pi->peering_crush_bucket_barrier = osdmap.stretch_mode_bucket;
+    pi->peering_crush_mandatory_member = CRUSH_ITEM_NONE;
+    if (osdmap.degraded_stretch_mode) {
+      pi->peering_crush_bucket_count = osdmap.degraded_stretch_mode;
+      pi->min_size = pi->min_size / 2;
+    }
+  }
   // enabled only once every check has passed, so a failed create changes nothing
   bool stretch_mons = false;
   bool stretch_pool = false;
@@ -13787,6 +13895,16 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       goto reply_no_propose;
     }
     if (rel >= NUM_ZONES_RELEASE && !num_zones_supported()) {
+      if (!HAVE_FEATURE(osdmap.get_up_osd_features(), OSD_STRETCH_ZONES) &&
+          !sure) {
+        ss << "not all up OSDs have CEPH_FEATURE_OSD_STRETCH_ZONES feature";
+        err = -EPERM;
+        goto reply_no_propose;
+      }
+      // an OSD that boots in the pending update would escape these checks
+      if (!pending_inc.new_up_client.empty()) {
+        goto wait;
+      }
       const auto defaults = stretch_mode_defaults_at_commit(
         osdmap.stretch_mode_enabled, *osdmap.crush, osdmap.stretch_mode_bucket,
         g_conf().get_val<uint64_t>("mon_stretch_pool_size"));
@@ -15313,12 +15431,6 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       goto reply_no_propose;
     }
 
-    if (!num_zones_supported() &&
-        !g_conf().get_val<bool>("mon_debug_allow_pool_create_before_commit")) {
-      ss << "pool creation is refused until " << num_zones_upgrade_hint();
-      err = -EPERM;
-      goto reply_no_propose;
-    }
     // the commit converts only the pools before it in its update
     if (num_zones_commit_pending()) {
       goto wait;
@@ -16719,15 +16831,6 @@ bool OSDMonitor::preprocess_pool_op_create(MonOpRequestRef op)
   int64_t pool = osdmap.lookup_pg_pool_name(m->name.c_str());
   if (pool >= 0) {
     _pool_op_reply(op, 0, osdmap.get_epoch());
-    return true;
-  }
-  // in stretch mode a pool needs the defaults that stretch it, which exist
-  // only once the upgrade is committed
-  if (!num_zones_supported() && osdmap.stretch_mode_enabled &&
-      !g_conf().get_val<bool>("mon_debug_allow_pool_create_before_commit")) {
-    dout(10) << __func__ << " pool creation in stretch mode is refused until "
-             << num_zones_upgrade_hint() << dendl;
-    _pool_op_reply(op, -EPERM, osdmap.get_epoch());
     return true;
   }
 

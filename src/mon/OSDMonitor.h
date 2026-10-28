@@ -424,6 +424,8 @@ private:
   // ...
   MOSDMap *build_latest_full(uint64_t features);
   MOSDMap *build_incremental(epoch_t first, epoch_t last, uint64_t features);
+  // whether session, with these features, must not get osdmaps
+  bool withhold_maps(const MonSession *session, uint64_t features) const;
   void send_full(MonOpRequestRef op);
   void send_incremental(MonOpRequestRef op, epoch_t first);
 
@@ -1033,6 +1035,7 @@ public:
   // the pending update commits the upgrade
   bool num_zones_commit_pending() const {
     return !num_zones_supported() &&
+           osdmap.require_osd_release < NUM_ZONES_RELEASE &&
            pending_inc.new_require_osd_release >= NUM_ZONES_RELEASE;
   }
   // What check_pool_params() needs from this cluster, with crush as its
