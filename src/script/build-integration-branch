@@ -23,7 +23,7 @@ import sys
 import time
 import netrc
 
-from subprocess import call, check_output
+from subprocess import DEVNULL, call, check_output
 from urllib.parse import urljoin
 
 TIME_FORMAT = '%Y-%m-%d-%H%M'
@@ -42,6 +42,11 @@ def get_postfix():
         postfix += '-' + current_branch
         print(f"Adding current branch name '-{current_branch}' as a postfix")
     return postfix
+
+
+def merge_in_progress():
+    return call(['git', 'rev-parse', '-q', '--verify', 'MERGE_HEAD'],
+                stdout=DEVNULL) == 0
 
 
 def parse_args():
@@ -168,6 +173,10 @@ def main():
             r = call(['git', 'pull', '--no-ff', '--no-edit', pr_url, pr_ref])
             if r == 0:
                 break
+            elif merge_in_progress():
+                print(f'--- conflict while merging PR#{pr_number}')
+                print('    resolve the conflict and `git commit --no-edit`')
+                sys.exit(1)
             elif r == 1:
                 print(f'Unable to access {pr_url}, retrying..')
             elif r == 128:
