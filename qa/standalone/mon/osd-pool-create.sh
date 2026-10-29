@@ -331,7 +331,9 @@ function TEST_pool_migrate_inherit_params() {
   ceph osd pool migrate defaulted || return 1
 
   ceph config set mon osd_pool_default_flag_ec_optimizations true || return 1
-  ceph osd pool create inherited 4 4 erasure ec-prof || return 1
+  # the migration of defaulted renamed its own profile
+  ceph osd erasure-code-profile set inh-prof plugin=isa k=2 m=1 crush-failure-domain=osd || return 1
+  ceph osd pool create inherited 4 4 erasure inh-prof || return 1
   ceph config set mon osd_pool_default_flag_ec_optimizations false || return 1
   ceph osd pool set inherited allow_ec_overwrites true || return 1
   ceph osd pool set inherited min_size 2 || return 1
@@ -350,12 +352,18 @@ function TEST_pool_migrate_inherit_params() {
     jq -S ".pools[] | select(.pool_name == \"$1\") |
       del(.pool, .pool_name, .create_time, .last_change, .migration_src,
           .migration_target, .migration_root, .migrating_pgs,
-          .lowest_migrated_pg, .flags, .pg_autoscale_mode) |
+          .lowest_migrated_pg, .flags, .pg_autoscale_mode,
+          .crush_rule, .erasure_code_profile) |
       .flags_names |= (split(\",\") - [\"nopgchange\"] | join(\",\"))" $dir/osdmap.json
   }
   test "$(pool_settings defaulted | jq .type)" = 1 || return 1
-  test "$(pool_settings inherited | jq -r .erasure_code_profile)" = ec-prof || return 1
   diff <(pool_settings .migrate-2) <(pool_settings inherited) || return 1
+  # the target has its own copy of the source's profile
+  local src_prof=$(jq -r '.pools[] | select(.pool_name == ".migrate-2") | .erasure_code_profile' $dir/osdmap.json)
+  local tgt_prof=$(jq -r '.pools[] | select(.pool_name == "inherited") | .erasure_code_profile' $dir/osdmap.json)
+  test "$tgt_prof" = inherited-k2-m1 || return 1
+  diff <(ceph osd erasure-code-profile get $src_prof) \
+       <(ceph osd erasure-code-profile get $tgt_prof) || return 1
 }
 
 # A second migration of a pool prepared in the update of the first must not
