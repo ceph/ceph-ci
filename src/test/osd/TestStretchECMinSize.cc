@@ -54,6 +54,8 @@ static std::shared_ptr<OSDMap> make_stretch_ec_osdmap()
     osdmap->set_state(i, CEPH_OSD_EXISTS | CEPH_OSD_UP);
   }
   osdmap->set_epoch(1);
+  // a cluster that has committed the upgrade to pools over zones
+  osdmap->set_flag(CEPH_OSDMAP_STRETCH_ZONES);
 
   CrushWrapper crush;
   crush.create();
@@ -540,4 +542,333 @@ TEST_F(StretchECMinSizeTest, DeviceClassRule_DatacenterWithoutClassOsdsNoDeficit
     hdd, {0, 1, 2, 3, 4, 5}));
   EXPECT_EQ(2u, osdmap->stretch_num_acting_below_min_size(
     hdd, {0, 1, 2, N, N, N}));
+}
+
+// ===========================================================================
+// Before the upgrade is committed OSDs of the earlier release peer with OSDs
+// of this release, so a stretch pool must mean what it meant there. The
+// expected answers are the earlier release's.
+// ===========================================================================
+
+class StretchPreCommitTest : public StretchECMinSizeTest {
+protected:
+  static constexpr int N = CRUSH_ITEM_NONE;
+  int dc0 = 0;
+  int root_rule = -1;
+
+  void SetUp() override {
+    StretchECMinSizeTest::SetUp();
+    dc0 = osdmap->crush->get_item_id("dc0");
+    root_rule = add_replicated_stretch_rule("rep_stretch_rule", {"default"}, 2);
+  }
+
+  // A rule as stretch mode documents it: for each TAKE, two datacenters and
+  // per_dc hosts in each
+  int add_replicated_stretch_rule(const std::string &name,
+                                  const vector<std::string> &takes,
+                                  int per_dc) {
+    int rule_id = -1;
+    modify_crush([&](CrushWrapper &crush) {
+      crush_rule *rule = crush_make_rule(4 * takes.size(),
+                                         pg_pool_t::TYPE_REPLICATED);
+      int step = 0;
+      for (const auto &take : takes) {
+        crush_rule_set_step(rule, step++, CRUSH_RULE_TAKE,
+                            crush.get_item_id(take), 0);
+        crush_rule_set_step(rule, step++, CRUSH_RULE_CHOOSE_FIRSTN, 2, 9);
+        crush_rule_set_step(rule, step++, CRUSH_RULE_CHOOSELEAF_FIRSTN,
+                            per_dc, 1);
+        crush_rule_set_step(rule, step++, CRUSH_RULE_EMIT, 0, 0);
+      }
+      rule_id = crush_add_rule(crush.get_crush_map(), rule, -1);
+      ceph_assert(rule_id >= 0);
+      crush.set_rule_name(rule_id, name);
+    });
+    return rule_id;
+  }
+
+  void set_device_classes(const map<int, std::string> &classes) {
+    modify_crush([&](CrushWrapper &crush) {
+      for (const auto &[osd, cls] : classes) {
+        std::ostringstream ss;
+        int r = crush.update_device_class(osd, cls,
+                                          "osd." + std::to_string(osd), &ss);
+        ceph_assert(r >= 0);
+      }
+    });
+  }
+
+  // A replicated pool of global stretch mode as the earlier release has it:
+  // size 4, two copies in each datacenter, min_size over all four
+  pg_pool_t legacy_pool(unsigned min_size, int rule) const {
+    pg_pool_t p;
+    p.type = pg_pool_t::TYPE_REPLICATED;
+    p.size = 4;
+    p.min_size = min_size;
+    p.num_zones = 1;
+    p.replica = 4;
+    p.crush_rule = rule;
+    p.set_pg_num(8);
+    p.set_pgp_num(8);
+    p.peering_crush_bucket_barrier = 9;
+    p.peering_crush_bucket_target = 2;
+    p.peering_crush_bucket_count = 2;
+    p.peering_crush_mandatory_member = CRUSH_ITEM_NONE;
+    return p;
+  }
+
+  // As the earlier release's monitor leaves it when dc1 is lost; min_size is
+  // given already halved
+  pg_pool_t degraded(pg_pool_t p) const {
+    p.peering_crush_bucket_count = 1;
+    p.peering_crush_mandatory_member = dc0;
+    return p;
+  }
+
+  // The map before the commit (or, if committed, after it) with pool as
+  // pool 1, in global stretch mode (degraded if the pool is) or not, with
+  // primary up through it, as an OSD of this release decodes it from the
+  // format the monitor writes then
+  std::shared_ptr<OSDMap> pre_commit_map(const pg_pool_t &pool,
+                                         bool stretch_mode,
+                                         int primary = -1,
+                                         bool committed = false) {
+    OSDMap m;
+    m.deepish_copy_from(*osdmap);
+    OSDMap::Incremental inc(m.get_epoch() + 1);
+    inc.fsid = m.get_fsid();
+    inc.new_require_osd_release =
+      committed ? ceph_release_t::umbrella : ceph_release_t::tentacle;
+    inc.new_flags = committed
+      ? m.get_flags() | CEPH_OSDMAP_STRETCH_ZONES
+      : m.get_flags() & ~CEPH_OSDMAP_STRETCH_ZONES;
+    if (stretch_mode) {
+      inc.change_stretch_mode = true;
+      inc.stretch_mode_enabled = true;
+      inc.new_stretch_bucket_count = 2;
+      inc.new_degraded_stretch_mode =
+        pool.peering_crush_bucket_count < 2 ? 1 : 0;
+      inc.new_recovering_stretch_mode = 0;
+      inc.new_stretch_mode_bucket = 9;
+    }
+    inc.new_pools[1] = pool;
+    if (primary >= 0) {
+      inc.new_up_thru[primary] = inc.epoch;
+    }
+    EXPECT_EQ(0, m.apply_incremental(inc));
+    bufferlist bl;
+    m.encode(bl, m.get_encoding_features() | CEPH_FEATURE_RESERVED);
+    auto decoded = std::make_shared<OSDMap>();
+    decoded->decode(bl);
+    return decoded;
+  }
+
+  bool pre_commit_maybe_went_rw(const pg_pool_t &pool, bool stretch_mode,
+                                const vector<int> &acting,
+                                bool committed = false) {
+    int primary = -1;
+    for (int osd : acting) {
+      if (osd != N) {
+        primary = osd;
+        break;
+      }
+    }
+    auto lastmap = pre_commit_map(pool, stretch_mode, primary, committed);
+    auto newmap = std::make_shared<OSDMap>();
+    newmap->deepish_copy_from(*lastmap);
+    OSDMap::Incremental next(newmap->get_epoch() + 1);
+    next.fsid = newmap->get_fsid();
+    newmap->apply_incremental(next);
+
+    struct : IsPGRecoverablePredicate {
+      bool operator()(const set<pg_shard_t> &) const override { return true; }
+    } recoverable;
+    const vector<int> new_acting = {7};
+    PastIntervals past;
+    EXPECT_TRUE(PastIntervals::check_new_interval(
+      primary, 7, acting, new_acting, primary, 7, acting, new_acting,
+      lastmap->get_epoch(), 0, newmap.get(), lastmap.get(), pg_t(0, 1),
+      recoverable, &past));
+    return past.size() == 1;
+  }
+
+  bool pre_commit_can_peer(const pg_pool_t &pool, bool stretch_mode,
+                           const vector<int> &acting,
+                           bool committed = false) {
+    auto m = pre_commit_map(pool, stretch_mode, -1, committed);
+    return m->get_pg_pool(1)->stretch_set_can_peer(acting, *m, nullptr);
+  }
+};
+
+// Healthy stretch mode: min_size copies over both datacenters, so with
+// mon_stretch_pool_min_size 3 on a size 4 pool two copies in one datacenter
+// and one in the other write
+TEST_F(StretchPreCommitTest, HealthyMinSizeIsATotal)
+{
+  pg_pool_t p = legacy_pool(2, root_rule);
+  EXPECT_TRUE(pre_commit_maybe_went_rw(p, true, {0, 3}));
+  EXPECT_FALSE(pre_commit_maybe_went_rw(p, true, {0, 1}));
+
+  p = legacy_pool(3, root_rule);
+  EXPECT_TRUE(pre_commit_maybe_went_rw(p, true, {0, 1, 3}));
+  EXPECT_TRUE(pre_commit_maybe_went_rw(p, true, {0, 1, 3, 4}));
+  EXPECT_FALSE(pre_commit_maybe_went_rw(p, true, {0, 1}));
+}
+
+// Degraded stretch mode with min_size 4 halved to 2: two copies in all, one
+// in the surviving datacenter, and one copy alone cannot write
+TEST_F(StretchPreCommitTest, DegradedHalvedMinSizeIsATotal)
+{
+  const pg_pool_t p = degraded(legacy_pool(2, root_rule));
+  EXPECT_FALSE(pre_commit_maybe_went_rw(p, true, {0}));
+  EXPECT_TRUE(pre_commit_maybe_went_rw(p, true, {0, 1}));
+  EXPECT_TRUE(pre_commit_maybe_went_rw(p, true, {0, 3}));
+  EXPECT_FALSE(pre_commit_maybe_went_rw(p, true, {3, 4}));
+}
+
+// The earlier release compares the mandatory member, the surviving
+// datacenter's bucket, with the shadow buckets that a device-class rule
+// finds, so such a pool never writes in degraded stretch mode
+TEST_F(StretchPreCommitTest, DeviceClassRuleNeverWritesDegraded)
+{
+  set_device_classes({{0, "hdd"}, {1, "hdd"}, {2, "hdd"}, {6, "hdd"},
+                      {3, "hdd"}, {4, "hdd"}, {5, "hdd"}, {7, "hdd"}});
+  const int rule = add_replicated_stretch_rule("hdd_rule", {"default~hdd"}, 2);
+  const pg_pool_t p = degraded(legacy_pool(1, rule));
+  EXPECT_FALSE(pre_commit_can_peer(p, true, {0, 1}));
+  EXPECT_FALSE(pre_commit_maybe_went_rw(p, true, {0, 1}));
+  EXPECT_FALSE(pre_commit_maybe_went_rw(p, true, {0}));
+
+  // healthy, the shadow datacenters are two buckets as before
+  const pg_pool_t healthy = legacy_pool(2, rule);
+  EXPECT_TRUE(pre_commit_maybe_went_rw(healthy, true, {0, 3}));
+  EXPECT_FALSE(pre_commit_maybe_went_rw(healthy, true, {0, 1}));
+}
+
+// A rule taking two device classes finds each datacenter twice, once per
+// class, and the earlier release counts these as two buckets, in global
+// stretch mode and in an individual stretch pool
+TEST_F(StretchPreCommitTest, TwoClassesInOneDatacenterAreTwoBuckets)
+{
+  set_device_classes({{0, "hdd"}, {1, "hdd"}, {2, "ssd"}, {6, "ssd"},
+                      {3, "hdd"}, {4, "hdd"}, {5, "ssd"}, {7, "ssd"}});
+  const int rule = add_replicated_stretch_rule(
+    "hybrid_rule", {"default~hdd", "default~ssd"}, 1);
+  for (bool stretch_mode : {true, false}) {
+    SCOPED_TRACE(stretch_mode ? "global stretch mode"
+                              : "individual stretch pool");
+    const pg_pool_t p = legacy_pool(2, rule);
+    EXPECT_TRUE(pre_commit_can_peer(p, stretch_mode, {0, 2}));
+    EXPECT_TRUE(pre_commit_maybe_went_rw(p, stretch_mode, {0, 2}));
+    EXPECT_TRUE(pre_commit_maybe_went_rw(p, stretch_mode, {0, 1, 3, 4}));
+    EXPECT_FALSE(pre_commit_maybe_went_rw(p, stretch_mode, {0, 1}));
+  }
+}
+
+// An EC pool that the earlier release's 'osd pool stretch set' stretched
+// counts a hole in the acting set as a bucket: CRUSH finds no datacenter for
+// it and gives 0, which differs from the datacenters
+TEST_F(StretchPreCommitTest, IndividualStretchErasurePoolCountsHoleAsBucket)
+{
+  pg_pool_t p = *pool;
+  p.size = 4;
+  p.min_size = 3;
+  p.num_zones = 1;
+  p.replica = 4;
+  EXPECT_TRUE(pre_commit_can_peer(p, false, {0, 1, 2, N}));
+  EXPECT_TRUE(pre_commit_maybe_went_rw(p, false, {0, 1, 2, N}));
+  EXPECT_FALSE(pre_commit_maybe_went_rw(p, false, {0, 1, N, N}));
+}
+
+// The commit gives a pool of global stretch mode two zones. With min_size 1
+// in both meanings and the peering values unchanged, nothing else marks the
+// change of meaning, so num_zones must start a new interval
+TEST_F(StretchPreCommitTest, NumZonesChangeStartsNewInterval)
+{
+  const pg_pool_t before = legacy_pool(1, root_rule);
+  pg_pool_t after = before;
+  after.num_zones = 2;
+  after.replica = 2;
+  auto with_pool = [&](const pg_pool_t &p) {
+    auto m = std::make_shared<OSDMap>();
+    m->deepish_copy_from(*osdmap);
+    OSDMap::Incremental inc(m->get_epoch() + 1);
+    inc.fsid = m->get_fsid();
+    inc.new_pools[1] = p;
+    m->apply_incremental(inc);
+    return m;
+  };
+  auto lastmap = with_pool(before);
+  auto newmap = with_pool(after);
+  const vector<int> acting = {0, 1, 3, 4};
+  EXPECT_TRUE(PastIntervals::is_new_interval(
+    0, 0, acting, acting, 0, 0, acting, acting, newmap.get(), lastmap.get(),
+    pg_t(0, 1)));
+}
+
+// ===========================================================================
+// From the commit on, every OSD runs this release, and the same pools are
+// judged by its rules: real buckets for device classes and no hole as a
+// bucket. The commit starts a new interval for every stretch pool.
+// ===========================================================================
+
+// The surviving datacenter is found through the shadow buckets of a
+// device-class rule, so a pool over zones writes in degraded stretch mode
+TEST_F(StretchPreCommitTest, AfterCommitDeviceClassRuleWritesDegraded)
+{
+  set_device_classes({{0, "hdd"}, {1, "hdd"}, {2, "hdd"}, {6, "hdd"},
+                      {3, "hdd"}, {4, "hdd"}, {5, "hdd"}, {7, "hdd"}});
+  const int rule = add_replicated_stretch_rule("hdd_rule", {"default~hdd"}, 2);
+  pg_pool_t p = degraded(legacy_pool(1, rule));
+  p.num_zones = 2;
+  p.replica = 2;
+  EXPECT_TRUE(pre_commit_can_peer(p, true, {0, 1}, true));
+  EXPECT_TRUE(pre_commit_maybe_went_rw(p, true, {0, 1}, true));
+  EXPECT_TRUE(pre_commit_maybe_went_rw(p, true, {0}, true));
+}
+
+// Two device classes in one datacenter are one bucket
+TEST_F(StretchPreCommitTest, AfterCommitTwoClassesInOneDatacenterAreOneBucket)
+{
+  set_device_classes({{0, "hdd"}, {1, "hdd"}, {2, "ssd"}, {6, "ssd"},
+                      {3, "hdd"}, {4, "hdd"}, {5, "ssd"}, {7, "ssd"}});
+  const int rule = add_replicated_stretch_rule(
+    "hybrid_rule", {"default~hdd", "default~ssd"}, 1);
+  const pg_pool_t p = legacy_pool(2, rule);
+  EXPECT_FALSE(pre_commit_can_peer(p, false, {0, 2}, true));
+  EXPECT_FALSE(pre_commit_maybe_went_rw(p, false, {0, 2}, true));
+  EXPECT_TRUE(pre_commit_maybe_went_rw(p, false, {0, 2, 3}, true));
+}
+
+// A hole in an EC acting set is not a bucket
+TEST_F(StretchPreCommitTest, AfterCommitHoleIsNotABucket)
+{
+  pg_pool_t p = *pool;
+  p.size = 4;
+  p.min_size = 3;
+  p.num_zones = 1;
+  p.replica = 4;
+  EXPECT_FALSE(pre_commit_can_peer(p, false, {0, 1, 2, N}, true));
+  EXPECT_FALSE(pre_commit_maybe_went_rw(p, false, {0, 1, 2, N}, true));
+}
+
+// The rules change at the commit for a stretch pool with nothing else
+// changing; a pool that is not stretched keeps its interval
+TEST_F(StretchPreCommitTest, CommitStartsNewIntervalForStretchPools)
+{
+  const vector<int> acting = {0, 1, 3, 4};
+  pg_pool_t plain = legacy_pool(2, root_rule);
+  plain.peering_crush_bucket_count = 0;
+  plain.peering_crush_bucket_target = 0;
+  plain.peering_crush_bucket_barrier = 0;
+  for (const auto &[p, stretched] :
+         {std::make_pair(legacy_pool(2, root_rule), true),
+          std::make_pair(plain, false)}) {
+    SCOPED_TRACE(stretched ? "stretch pool" : "plain pool");
+    auto lastmap = pre_commit_map(p, stretched);
+    auto newmap = pre_commit_map(p, stretched, -1, true);
+    EXPECT_EQ(stretched, PastIntervals::is_new_interval(
+      0, 0, acting, acting, 0, 0, acting, acting, newmap.get(), lastmap.get(),
+      pg_t(0, 1)));
+  }
 }
