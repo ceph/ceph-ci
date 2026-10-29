@@ -100,7 +100,7 @@ zone-loss-sequence:
       - ceph orch upgrade start --image quay.ceph.io/ceph-ci/ceph:$sha1 --daemon-types mon --hosts $(ceph osd metadata 0 -f json | jq -r .hostname)
       - while ceph orch upgrade status | jq '.in_progress' | grep true && ! ceph orch upgrade status | jq '.message' | grep Error ; do ceph orch ps ; ceph versions ; sleep 30 ; done
 
-      - echo dc2 lost while the mons are mixed; min_size is halved as before
+      - echo dc2 lost while the mons are mixed - min_size is halved as before
       - ceph orch daemon stop mon.b
       - for o in 4 5 6 7 ; do ceph orch daemon stop osd.$o ; done
       - timeout 900 bash -c 'until ceph osd dump -f json | jq -e ".stretch_mode.degraded_stretch_mode == 1" ; do sleep 10 ; done'
