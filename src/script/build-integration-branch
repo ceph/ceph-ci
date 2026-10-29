@@ -44,6 +44,19 @@ def get_postfix():
     return postfix
 
 
+def current_branch():
+    return (
+        check_output(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
+        .strip()
+        .decode()
+    )
+
+
+def is_merged(sha):
+    return call(['git', 'merge-base', '--is-ancestor', sha, 'HEAD'],
+                stderr=DEVNULL) == 0
+
+
 def merge_in_progress():
     return call(['git', 'rev-parse', '-q', '--verify', 'MERGE_HEAD'],
                 stdout=DEVNULL) == 0
@@ -56,6 +69,13 @@ def parse_args():
         "--no-postfix",
         action="store_true",
         help="Don't add `{postfix}` to the branch name.",
+    )
+    parser.add_argument(
+        "--continue",
+        dest="resume",
+        action="store_true",
+        help=("Continue on the current branch after resolving a merge "
+              "conflict, skipping PRs that are already merged."),
     )
     parser.add_argument(
         "--trailer",
@@ -98,7 +118,17 @@ def parse_args():
 
 def main():
     cli = parse_args()
-    if cli.no_date:
+    if cli.resume:
+        if merge_in_progress():
+            print('A merge is still in progress; resolve it and '
+                  '`git commit --no-edit` before using --continue')
+            sys.exit(1)
+        branch = current_branch()
+        if not branch.startswith(cli.label):
+            print(f"Current branch '{branch}' does not match label "
+                  f"'{cli.label}'; refusing to continue on it")
+            sys.exit(1)
+    elif cli.no_date:
         branch = cli.label
     else:
         branch = cli.label + get_postfix()
@@ -160,14 +190,20 @@ def main():
     print("branch %s" % branch)
 
     # assemble
-    print('--- creating branch %s' % branch)
-    r = call(['git', 'branch', '-D', branch])
-    r = call(['git', 'checkout', '-b', branch])
-    assert not r
+    if cli.resume:
+        print('--- continuing on branch %s' % branch)
+    else:
+        print('--- creating branch %s' % branch)
+        r = call(['git', 'branch', '-D', branch])
+        r = call(['git', 'checkout', '-b', branch])
+        assert not r
     for pr in prs:
         pr_number = pr['number']
         pr_url = pr['head']['repo']['clone_url']
         pr_ref = pr['head']['ref']
+        if cli.resume and is_merged(pr['head']['sha']):
+            print(f'--- pr {pr_number} --- already merged, skipping')
+            continue
         print(f'--- pr {pr_number} --- pulling {pr_url} branch {pr_ref}')
         while True:
             r = call(['git', 'pull', '--no-ff', '--no-edit', pr_url, pr_ref])
@@ -175,7 +211,8 @@ def main():
                 break
             elif merge_in_progress():
                 print(f'--- conflict while merging PR#{pr_number}')
-                print('    resolve the conflict and `git commit --no-edit`')
+                print('    resolve the conflict, `git commit --no-edit`, then '
+                      're-run with --continue')
                 sys.exit(1)
             elif r == 1:
                 print(f'Unable to access {pr_url}, retrying..')
