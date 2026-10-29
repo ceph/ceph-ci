@@ -354,6 +354,11 @@ zones, and new pools get the same. Daemons of the earlier and of this release
 then treat every pool alike, so the upgrade needs no operator action, also
 through a zone outage.
 
+Until the upgrade is committed every pool has one zone, so
+``ceph osd pool set {pool-name} replica`` sets the total number of replicas of
+a stretch pool, as ``size`` does, not the number in each zone: ``replica 2``
+leaves two replicas in all, not two in each zone.
+
 When the upgrade is committed on a cluster in stretch mode, the Monitors give
 each of its pools two zones, with half its replicas in each, and a
 ``min_size`` per zone of half its ``min_size``, rounded up; in degraded stretch
