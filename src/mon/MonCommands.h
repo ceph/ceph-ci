@@ -910,7 +910,7 @@ COMMAND("osd erasure-code-profile set "
 	"name=profile,type=CephString,n=N,req=false "
 	"name=force,type=CephBool,req=false "
 	"name=yes_i_really_mean_it,type=CephBool,req=false",
-	"create erasure code profile <name> with [<key[=value]> ...] pairs. Add a --force at the end to override an existing profile (VERY DANGEROUS)",
+	"create erasure code profile <name> with [<key[=value]> ...] pairs. Add --force to allow a stripe_unit that is not a multiple of 4096. Changing a profile that a pool uses needs --yes-i-really-mean-it (VERY DANGEROUS)",
 	"osd", "rw")
 COMMAND("osd erasure-code-profile get "
 	"name=name,type=CephString,goodchars=[A-Za-z0-9-_.]",

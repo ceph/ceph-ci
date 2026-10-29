@@ -602,6 +602,35 @@ TEST_F(PoolParamsTest, SizeKeptOtherwise) {
   EXPECT_TRUE(e.is_given("size"));
 }
 
+// Test a pool is created in one zone before the commit over the default two
+// zones, and a legacy size then stays the pool's size
+TEST_F(PoolParamsTest, OneZoneOverDefaultTwoZones) {
+  set("osd_pool_default_num_zones", "2");
+  PoolCreateParams p = defaults();
+  EXPECT_TRUE(create_in_one_zone(p));
+  EXPECT_EQ(1, p.num_zones);
+  EXPECT_EQ(0, check(p)) << ss.str();
+  PoolCreateParams s = with({{"size", int64_t(4)}});
+  EXPECT_TRUE(create_in_one_zone(s));
+  size_over_default_zones_as_replica(s);
+  EXPECT_EQ(1, s.num_zones);
+  EXPECT_TRUE(s.is_given("size"));
+  EXPECT_EQ(4, s.copies_per_zone());
+  EXPECT_EQ(0, check(s)) << ss.str();
+}
+
+// Test a num_zones of 2 given on the command line is not created in one zone
+// before the commit, and a given num_zones of 1 is
+TEST_F(PoolParamsTest, OneZoneRefusesGivenTwoZones) {
+  PoolCreateParams p = with({{"num_zones", int64_t(2)}});
+  EXPECT_FALSE(create_in_one_zone(p));
+  EXPECT_EQ(2, p.num_zones);
+  set("osd_pool_default_num_zones", "2");
+  PoolCreateParams one = with({{"num_zones", int64_t(1)}});
+  EXPECT_TRUE(create_in_one_zone(one));
+  EXPECT_EQ(1, one.num_zones);
+}
+
 // Test success when an EC pool gets the legacy size, which it ignores
 TEST_F(PoolParamsTest, ErasureIgnoresSize) {
   EXPECT_EQ(0, check(with({{"size", int64_t(4)}, {"num_zones", int64_t(2)}},
