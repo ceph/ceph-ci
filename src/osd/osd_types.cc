@@ -2173,7 +2173,9 @@ void pg_pool_t::encode(ceph::buffer::list& bl, uint64_t features) const
   uint8_t v = 34;
   // NOTE: any new encoding dependencies must be reflected by
   // SIGNIFICANT_FEATURES
-  // v34 (num_zones, replica) belongs to the release that ships stretch zones
+  if (!HAVE_SIGNIFICANT_FEATURE(features, OSD_STRETCH_ZONES)) {
+    v = 33;
+  }
   if (!HAVE_SIGNIFICANT_FEATURE(features, SERVER_UMBRELLA)) {
     v = 32;
   }
@@ -2527,17 +2529,11 @@ void pg_pool_t::decode(ceph::buffer::list::const_iterator& bl)
   if (struct_v >= 34) {
     decode(replica, bl);
     decode(num_zones, bl);
-    legacy_stretch = false;
   } else {
-    // An earlier release's pool has one zone and a min_size over all its
-    // copies. A replicated stretch pool keeps them if it is an individual
-    // stretch pool; if it belongs to global stretch mode, the OSDMap gives it
-    // the zones of stretch mode (OSDMap::settle_legacy_stretch_pools()). An
-    // earlier 'osd pool stretch set' also accepted EC pools, which keep one zone.
+    // an earlier release's pool, or one before the upgrade commit: one
+    // zone and a min_size over all its copies
     num_zones = 1;
     replica = size;
-    legacy_stretch = is_stretch_pool() && !is_erasure() &&
-                     peering_crush_bucket_target > 1;
   }
   DECODE_FINISH(bl);
   calc_pg_masks();
@@ -2671,8 +2667,14 @@ void pg_pool_t::print(ostream& out, const CrushWrapper *crush) const
         << static_cast<unsigned int>(p.ec_coding_shard_count.value_or(0));
   }
   const int rule_id = p.get_crush_rule();
-  out << " size " << p.get_size()
-      << " min_size " << p.get_min_size()
+  out << " size " << p.get_size();
+  if (p.get_num_zones() > 1) {
+    out << " num_zones " << p.get_num_zones();
+    if (p.is_replicated()) {
+      out << " replica " << p.get_replica();
+    }
+  }
+  out << " min_size " << p.get_min_size()
       << " crush_rule ";
   if (crush && crush->rule_exists(rule_id)) {
     out << crush->get_rule_name(rule_id);

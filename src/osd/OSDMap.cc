@@ -2068,6 +2068,11 @@ uint64_t OSDMap::get_features(int entity_type, uint64_t *pmask) const
       features |= CEPH_FEATUREMASK_STRETCH_MODE;
       mask |= CEPH_FEATUREMASK_STRETCH_MODE;
     }
+    // an OSD of an earlier release would judge stretch pools by its rules
+    if (stretch_zones()) {
+      features |= CEPH_FEATUREMASK_OSD_STRETCH_ZONES;
+    }
+    mask |= CEPH_FEATUREMASK_OSD_STRETCH_ZONES;
   }
 
   if (require_min_compat_client >= ceph_release_t::nautilus) {
@@ -2934,7 +2939,6 @@ int OSDMap::apply_incremental(const Incremental &inc)
     break;
   }
 
-  settle_legacy_stretch_pools();
   calc_num_osds();
   _calc_up_osd_features();
   return 0;
@@ -3546,6 +3550,9 @@ bool OSDMap::primary_changed_broken(
 uint64_t OSDMap::get_encoding_features() const
 {
   uint64_t f = SIGNIFICANT_FEATURES;
+  if (!stretch_zones()) {
+    f &= ~CEPH_FEATURE_OSD_STRETCH_ZONES;
+  }
   if (require_osd_release < ceph_release_t::vampire) {
     f &= ~CEPH_FEATURE_SERVER_VAMPIRE;
   }
@@ -4307,23 +4314,8 @@ void OSDMap::decode(ceph::buffer::list::const_iterator& bl)
   post_decode();
 }
 
-void OSDMap::settle_legacy_stretch_pools()
-{
-  for (auto& [pool_id, pool] : pools) {
-    if (!pool.legacy_stretch) {
-      continue;
-    }
-    if (stretch_mode_enabled) {
-      pool.convert_legacy_stretch_zones();
-    } else {
-      pool.legacy_stretch = false;
-    }
-  }
-}
-
 void OSDMap::post_decode()
 {
-  settle_legacy_stretch_pools();
   // index pool names
   name_pool.clear();
   for (const auto &pname : pool_name) {
@@ -4743,6 +4735,8 @@ string OSDMap::get_flag_string(unsigned f)
     s += ",pglog_hardlimit";
   if (f & CEPH_OSDMAP_NOAUTOSCALE)
     s += ",noautoscale";
+  if (f & CEPH_OSDMAP_STRETCH_ZONES)
+    s += ",stretch_zones";
   if (s.length())
     s.erase(0, 1);
   return s;
@@ -5148,6 +5142,8 @@ int OSDMap::build_simple_optioned(CephContext *cct, epoch_t e, uuid_d &fsid,
 		 << " osds" << dendl;
   epoch = e;
   set_fsid(fsid);
+  // a cluster of this release, unless the monitor creates it for an upgrade
+  set_flag(CEPH_OSDMAP_STRETCH_ZONES);
   created = modified = ceph_clock_now();
 
   if (nosd >=  0) {
@@ -8573,7 +8569,7 @@ float OSDMap::pool_raw_used_rate(int64_t poolid) const
       int mk = m + k;
       ceph_assert(mk != 0);
       ceph_assert(k != 0);
-      return (float)mk / k;
+      return (float)mk * pool->get_num_zones() / k;
     } else {
       return 0.0;
     }
