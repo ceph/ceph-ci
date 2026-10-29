@@ -197,17 +197,29 @@ protected:
   }
 };
 
-// Test the full format is version 34
-TEST_F(PgPoolStretchEncodingTest, FullFeaturesEncodeVersion34) {
-  EXPECT_EQ(34u, encoded_struct_v(make_stretch_pool(2, 2, 1), full_features));
+// Test the full format is version 35
+TEST_F(PgPoolStretchEncodingTest, FullFeaturesEncodeVersion35) {
+  EXPECT_EQ(35u, encoded_struct_v(make_stretch_pool(2, 2, 1), full_features));
 }
 
-// Test a peer without OSD_STRETCH_ZONES gets Umbrella's version, and an
-// earlier release its own
-TEST_F(PgPoolStretchEncodingTest, OlderFeaturesEncodeBeforeVersion34) {
-  EXPECT_EQ(33u, encoded_struct_v(make_stretch_pool(2, 2, 1), older_features));
+// Test a peer without OSD_STRETCH_ZONES gets the version of pool migration,
+// and an earlier release its own
+TEST_F(PgPoolStretchEncodingTest, OlderFeaturesEncodeBeforeVersion35) {
+  EXPECT_EQ(34u, encoded_struct_v(make_stretch_pool(2, 2, 1), older_features));
   EXPECT_EQ(32u, encoded_struct_v(make_stretch_pool(2, 2, 1),
                                   older_features & ~CEPH_FEATURE_SERVER_UMBRELLA));
+}
+
+// Test a peer without OSD_STRETCH_ZONES keeps a pool's migration
+TEST_F(PgPoolStretchEncodingTest, OlderFormatKeepsMigration) {
+  pg_pool_t in = make_local_pool(3, 2);
+  in.migration_src = 4;
+  in.migration_root = 4;
+  in.lowest_migrated_pg = 2;
+  const pg_pool_t out = round_trip(in, older_features);
+  EXPECT_EQ(in.migration_src, out.migration_src);
+  EXPECT_EQ(in.migration_root, out.migration_root);
+  EXPECT_EQ(2u, out.lowest_migrated_pg);
 }
 
 // Test the full format keeps num_zones, replica and the per-zone min_size

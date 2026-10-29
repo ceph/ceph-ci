@@ -2204,11 +2204,11 @@ void pg_pool_t::encode(ceph::buffer::list& bl, uint64_t features) const
     return;
   }
 
-  uint8_t v = 34;
+  uint8_t v = 35;
   // NOTE: any new encoding dependencies must be reflected by
   // SIGNIFICANT_FEATURES
   if (!HAVE_SIGNIFICANT_FEATURE(features, OSD_STRETCH_ZONES)) {
-    v = 33;
+    v = 34;
   }
   // TODO: the v34 migration fields currently piggy-back on SERVER_UMBRELLA.
   // Pool migration ships in VAMPIRE, so once SERVER_VAMPIRE is introduced,
@@ -2263,8 +2263,8 @@ void pg_pool_t::encode(ceph::buffer::list& bl, uint64_t features) const
     encode(tmp, bl);
   }
   encode((uint32_t)0, bl); // crash_replay_interval
-  // before v34, min_size counts every zone
-  const __u8 encoded_min_size = v >= 34 ? min_size : min_size * num_zones;
+  // before v35, min_size counts every zone
+  const __u8 encoded_min_size = v >= 35 ? min_size : min_size * num_zones;
   encode(encoded_min_size, bl);
   encode(quota_max_bytes, bl);
   encode(quota_max_objects, bl);
@@ -2354,7 +2354,7 @@ void pg_pool_t::encode(ceph::buffer::list& bl, uint64_t features) const
     encode(lowest_migrated_pg, bl);
     encode(migration_root, bl);
   }
-  if (v >= 34) {
+  if (v >= 35) {
     encode(replica, bl);
     encode(num_zones, bl);
   }
@@ -2363,7 +2363,7 @@ void pg_pool_t::encode(ceph::buffer::list& bl, uint64_t features) const
 
 void pg_pool_t::decode(ceph::buffer::list::const_iterator& bl)
 {
-  DECODE_START_LEGACY_COMPAT_LEN(34, 5, 5, bl);
+  DECODE_START_LEGACY_COMPAT_LEN(35, 5, 5, bl);
   decode(type, bl);
   decode(size, bl);
   decode(crush_rule, bl);
@@ -2581,7 +2581,7 @@ void pg_pool_t::decode(ceph::buffer::list::const_iterator& bl)
     lowest_migrated_pg = 0;
     migration_root.reset();
   }
-  if (struct_v >= 34) {
+  if (struct_v >= 35) {
     decode(replica, bl);
     decode(num_zones, bl);
   } else {
