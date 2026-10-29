@@ -12730,16 +12730,16 @@ bool Server::build_snap_diff(
   auto await_pending_snapflushes = [&]() -> bool {
     auto file_rdlock_target = [&](CInode *in) -> SimpleLock* {
       SimpleLock *lock = &in->filelock;
-      // Same lock rdlock_start() follows when the snap inode is LOCK_SNAP_SYNC.
+      // A snap inode's filelock in LOCK_SNAP_SYNC does not gather client caps.
+      // Kick the head filelock while it still holds them.
       if (!in->is_head() && in->is_auth() &&
 	  lock->get_state() == LOCK_SNAP_SYNC) {
 	CInode *head = mdcache->get_inode(in->ino());
 	if (head) {
-	  SimpleLock *hlock = head->get_lock(CEPH_LOCK_IFILE);
-	  if (hlock->get_state() == LOCK_SYNC)
-	    hlock = head->get_lock(lock->get_type());
-	  if (hlock->get_state() != LOCK_SYNC)
+	  SimpleLock *hlock = &head->filelock;
+	  if (hlock->get_state() != LOCK_SYNC) {
 	    lock = hlock;
+	  }
 	}
       }
       return lock;
@@ -12750,50 +12750,62 @@ bool Server::build_snap_diff(
     int visited = 0;
     const int hb_grace = mds->heartbeat_reset_grace();
     for (auto jit = it; jit != dir->end(); ++jit) {
-      if (hb_grace > 0 && (++visited % hb_grace) == 0)
+      if (hb_grace > 0 && (++visited % hb_grace) == 0) {
 	mds->heartbeat_reset();
+      }
 
       CDentry *dn = jit->second;
-      if (dn->state_test(CDentry::STATE_PURGING))
+      if (dn->state_test(CDentry::STATE_PURGING)) {
 	continue;
-      if (dn->last < snapid_prev || dn->first > snapid)
+      }
+      if (dn->last < snapid_prev || dn->first > snapid) {
 	continue;
+      }
 
       bool dnp = dn->use_projected(client, mdr);
       CDentry::linkage_t *dnl =
 	dnp ? dn->get_projected_linkage() : dn->get_linkage();
-      if (dnl->is_null())
+      if (dnl->is_null()) {
 	continue;
+      }
 
       CInode *in = dnl->get_inode();
-      if (!in && dnl->is_remote())
+      if (!in && dnl->is_remote()) {
 	in = mdcache->get_inode(dnl->get_remote_ino());
-      if (!in || in->is_dir() || in->ino() == CEPH_INO_CEPH)
+      }
+      if (!in || in->is_dir() || in->ino() == CEPH_INO_CEPH) {
 	continue;
-      if (!snapflush_pending(in))
+      }
+      if (!snapflush_pending(in)) {
 	continue;
+      }
 
       SimpleLock *lock = file_rdlock_target(in);
-      if (!seen.insert(lock).second)
+      if (!seen.insert(lock).second) {
 	continue;
+      }
       pending_locks.push_back(lock);
     }
 
-    if (pending_locks.empty())
+    if (pending_locks.empty()) {
       return true;
+    }
 
     MDSGatherBuilder gather(g_ceph_context);
     visited = 0;
     for (SimpleLock *lock : pending_locks) {
-      if (hb_grace > 0 && (++visited % hb_grace) == 0)
+      if (hb_grace > 0 && (++visited % hb_grace) == 0) {
 	mds->heartbeat_reset();
+      }
 
       const client_t anon = -1;
-      if (lock->can_rdlock(anon))
+      if (lock->can_rdlock(anon)) {
 	continue;
+      }
       mds->locker->_rdlock_kick(lock, true);
-      if (lock->can_rdlock(anon))
+      if (lock->can_rdlock(anon)) {
 	continue;
+      }
 
       const int wait_on =
 	(lock->get_parent()->is_auth() && lock->is_stable()) ?
@@ -12802,8 +12814,9 @@ bool Server::build_snap_diff(
       lock->add_waiter(wait_on, gather.new_sub());
     }
 
-    if (!gather.has_subs())
+    if (!gather.has_subs()) {
       return true;
+    }
 
     if (gather.num_subs_remaining() == 0) {
       gather.set_finisher(new C_MDSInternalNoop);
@@ -12839,8 +12852,9 @@ bool Server::build_snap_diff(
     return false;
   };
 
-  if (!await_pending_snapflushes())
+  if (!await_pending_snapflushes()) {
     return false;
+  }
 
   while(it != dir->end()) {
     CDentry* dn = it->second;
