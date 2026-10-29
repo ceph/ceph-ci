@@ -602,6 +602,17 @@ private:
                        const std::string &device_class,
                        std::map<std::string,std::string> *profile,
                        std::ostream *ss);
+  bool pool_has_layout(const pg_pool_t &p,
+                       const std::string &pool,
+                       const PoolCreateParams &params,
+                       const cmdmap_t &args,
+                       bool enable_ec_optimizations,
+                       const std::string &zone_failure_domain,
+                       const std::string &root,
+                       const std::string &osd_failure_domain,
+                       const std::string &device_class,
+                       int64_t repl_size,
+                       int replica);
   int crush_rule_create_erasure(const std::string &name,
                                 int64_t num_zones,
                                 const std::string &root,
@@ -691,8 +702,6 @@ private:
                        std::ostream *ss,
                        const std::string& rule_defaults = {});
   int prepare_new_pool(MonOpRequestRef op);
-  bool pool_has_settings(const pg_pool_t &p, const std::string &pool,
-                         const cmdmap_t &cmdmap);
 
   void set_pool_flags(int64_t pool_id, uint64_t flags);
   void clear_pool_flags(int64_t pool_id, uint64_t flags);

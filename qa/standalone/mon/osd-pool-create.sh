@@ -744,6 +744,36 @@ function TEST_pool_migrate_changes_profile_contents() {
     ! ceph osd erasure-code-profile ls | grep -q '^mundo-k2-m1.migrate' || return 1
 }
 
+# The monitors run a command again after an election: a migration of a pool
+# that is being migrated to the layout it asks for changes nothing, also when
+# its options give the target its own rule and erasure code profile
+function TEST_pool_migrate_again_to_layout() {
+    local dir=$1
+    run_mon_for_pool_migration $dir || return 1
+    ceph osd pool create mrep 4 4 replicated || return 1
+    ceph osd pool create mec 4 4 erasure --k 2 --m 1 --osd_failure_domain osd \
+        --enable_ec_optimizations || return 1
+
+    ceph osd pool migrate mrep --pool_type replicated --size 2 || return 1
+    local target=$(pool_field mrep pool)
+    ceph osd pool migrate mrep --pool_type replicated --size 2 || return 1
+    test "$(pool_field mrep pool)" = $target || return 1
+    expect_failure $dir "ongoing migration" \
+        ceph osd pool migrate mrep --pool_type replicated --size 3 || return 1
+    expect_failure $dir "ongoing migration" \
+        ceph osd pool migrate .migrate-1 --pool_type replicated --size 2 || return 1
+
+    ceph osd pool migrate mec --pool_type erasure --k 4 --m 2 --osd_failure_domain osd \
+        --enable_ec_optimizations || return 1
+    target=$(pool_field mec pool)
+    ceph osd pool migrate mec --pool_type erasure --k 4 --m 2 --osd_failure_domain osd \
+        --enable_ec_optimizations || return 1
+    test "$(pool_field mec pool)" = $target || return 1
+    expect_failure $dir "ongoing migration" \
+        ceph osd pool migrate mec --pool_type erasure --k 4 --m 2 --osd_failure_domain host \
+        --enable_ec_optimizations || return 1
+    test "$(ceph osd pool ls --show-all | grep -c 'migrate-')" = 2 || return 1
+}
 main osd-pool-create "$@"
 
 # Local Variables:
