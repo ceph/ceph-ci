@@ -10173,6 +10173,8 @@ int RGWRados::apply_olh_log(const DoutPrefixProvider *dpp,
          liter != remove_instances.end(); ++liter) {
       const cls_rgw_obj_key& key = *liter;
       rgw_obj obj_instance(bucket, key);
+      // mark object as atomic so delete_obj will guard the head removal with the ID tag
+      obj_ctx.set_atomic(obj_instance, true);
       int ret = delete_obj(dpp, obj_ctx, bucket_info, obj_instance, 0, y,
 			   null_verid, RGW_BILOG_FLAG_VERSIONED_OP,
 			   ceph::real_time(), zones_trace, log_op, force, true /* skip_olh_obj_update */);
@@ -10327,6 +10329,8 @@ int RGWRados::update_olh(const DoutPrefixProvider* dpp,
   const rgw_bucket& bucket = obj.bucket;
   for (const auto& key : deferred_removals) {
     rgw_obj obj_instance(bucket, key);
+    // mark object as atomic so delete_obj will guard the head removal with the ID tag
+    obj_ctx.set_atomic(obj_instance, true);
     int ret = delete_obj(dpp, obj_ctx, bucket_info, obj_instance, 0, y,
 			 null_verid, RGW_BILOG_FLAG_VERSIONED_OP,
 			 ceph::real_time(), zones_trace, log_op, force, true /* skip_olh_obj_update */);
