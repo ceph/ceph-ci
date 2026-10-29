@@ -509,6 +509,55 @@ TEST_F(StretchECMinSizeTest, DeviceClassRule_StretchSetCanPeerMandatoryMember)
   EXPECT_FALSE(hdd.stretch_set_can_peer(vector<int>{N, N, N, 3, 4, 5}, *osdmap, nullptr));
 }
 
+// A hand-written rule can put a copy of each of two device classes in each
+// datacenter. The zones are still the datacenters, not dc0~ssd and dc0~hdd.
+TEST_F(StretchECMinSizeTest, TwoDeviceClassRule_ZonesAreDatacenters)
+{
+  int rule_id = -1;
+  modify_crush([&](CrushWrapper &crush) {
+    for (int osd = 0; osd < 8; ++osd) {
+      const char *device_class =
+        (osd == 0 || osd == 1 || osd == 3 || osd == 4) ? "ssd" : "hdd";
+      std::ostringstream ss;
+      int r = crush.update_device_class(osd, device_class,
+                                        "osd." + std::to_string(osd), &ss);
+      ceph_assert(r >= 0);
+    }
+    crush_rule *rule = crush_make_rule(8, pg_pool_t::TYPE_REPLICATED);
+    int step = 0;
+    for (const char *root : {"default~ssd", "default~hdd"}) {
+      crush_rule_set_step(rule, step++, CRUSH_RULE_TAKE,
+                          crush.get_item_id(root), 0);
+      crush_rule_set_step(rule, step++, CRUSH_RULE_CHOOSE_FIRSTN, 2, 9);
+      crush_rule_set_step(rule, step++, CRUSH_RULE_CHOOSELEAF_FIRSTN, 1, 1);
+      crush_rule_set_step(rule, step++, CRUSH_RULE_EMIT, 0, 0);
+    }
+    rule_id = crush_add_rule(crush.get_crush_map(), rule, -1);
+    ceph_assert(rule_id >= 0);
+    crush.set_rule_name(rule_id, "ssd_and_hdd_rule");
+  });
+  pg_pool_t two_class = *pool;
+  two_class.type = pg_pool_t::TYPE_REPLICATED;
+  two_class.unset_flag(pg_pool_t::FLAG_EC_OVERWRITES);
+  two_class.size = 4;
+  two_class.replica = 2;
+  two_class.min_size = 2;
+  two_class.crush_rule = rule_id;
+  const int N = CRUSH_ITEM_NONE;
+  // osd.0 and osd.2 are in dc0, osd.3 and osd.5 in dc1
+  EXPECT_EQ(0u, osdmap->stretch_num_acting_below_min_size(
+    two_class, {0, 3, 2, 5}));
+  EXPECT_EQ(1u, osdmap->stretch_num_acting_below_min_size(
+    two_class, {0, 3, N, 5}));
+  EXPECT_EQ(2u, osdmap->stretch_num_acting_below_min_size(
+    two_class, {0, N, 2, N}));
+
+  two_class.peering_crush_bucket_count = 1;
+  two_class.peering_crush_mandatory_member = osdmap->crush->get_item_id("dc0");
+  EXPECT_EQ(0u, osdmap->stretch_num_acting_below_min_size(
+    two_class, {0, N, 2, N}));
+}
+
 // A datacenter with no OSDs, e.g. a site still being built, cannot hold any
 // of the pool and must not add a deficit.
 TEST_F(StretchECMinSizeTest, EmptyDatacenterUnderRoot_NoDeficit)

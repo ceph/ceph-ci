@@ -546,9 +546,11 @@ void OSDMap::get_stretch_zones(const pg_pool_t& pool,
     for (int zone : zones) {
       vector<int> osds;
       crush->get_children_of_type(zone, 0, &osds);
-      // A zone with no OSDs the rule can use cannot hold any of the pool
+      // A zone with no OSDs the rule can use cannot hold any of the pool.
+      // A rule can take a zone with several device classes.
       if (!osds.empty()) {
-        (*zone_osds)[zone].insert(osds.begin(), osds.end());
+        (*zone_osds)[crush->get_non_shadow_id(zone)].insert(osds.begin(),
+                                                            osds.end());
       }
     }
   }
@@ -579,7 +581,7 @@ unsigned OSDMap::stretch_num_acting_below_min_size(const pg_pool_t& pool,
     int deficit = 0;
     for (const auto& [zone, zone_osd_set] : zones) {
       if (pool.peering_crush_mandatory_member != CRUSH_ITEM_NONE &&
-          crush->get_non_shadow_id(zone) != (int)pool.peering_crush_mandatory_member) {
+          zone != (int)pool.peering_crush_mandatory_member) {
         continue;
       }
       unsigned zone_acting = 0;
