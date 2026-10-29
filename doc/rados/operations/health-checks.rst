@@ -2290,6 +2290,24 @@ We encourage you to fix this by making sure the CRUSH locations of all Monitors,
 with the exception of a tiebreaker Monitor,
 belong to the dividing buckets. For more information, see :ref:`stretch_mode`.
 
+STRETCH_MODE_POOL_NOT_CONVERTED
+_______________________________
+
+When an upgrade is committed with ``ceph osd require-osd-release`` on a cluster
+in stretch mode, the Monitors give each stretch pool two zones, with half of its
+replicas in each. Only a replicated pool whose CRUSH rule places half of an even
+number of replicas in each zone can be split this way. Any other stretch pool
+keeps one zone and the rules of earlier releases.
+
+Before the commit, this warning names the stretch pools that the commit will
+leave with one zone. Change them so that it can split them, for example with
+``ceph osd pool set {pool-name} size 4`` if their rule places two replicas in
+each zone.
+
+After the commit, this warning names the stretch pools that kept one zone. They
+still serve I/O, but ``ceph mon disable_stretch_mode`` leaves them stretched.
+For more information, see :ref:`stretch_mode`.
+
 NVMeoF Gateway
 --------------
 

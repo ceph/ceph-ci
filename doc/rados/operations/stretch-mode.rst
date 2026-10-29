@@ -359,7 +359,13 @@ each of its pools two zones, with half its replicas in each, and a
 ``min_size`` per zone of half its ``min_size``, rounded up; in degraded stretch
 mode, half of ``mon_stretch_pool_min_size``, rounded up. A pool with 4
 replicas and ``min_size`` 2 therefore has 2 replicas and ``min_size`` 1 in each
-zone. They also set the pool creation defaults to what stretch mode gave new
+zone. Only a replicated pool whose CRUSH rule places half of an even number of
+replicas in each zone can be split this way. Any other pool, for example one
+whose ``size`` was set to 3, keeps one zone and the rules of earlier releases,
+and ``ceph mon disable_stretch_mode`` leaves it stretched.
+``STRETCH_MODE_POOL_NOT_CONVERTED`` names such pools before the commit, while
+they can still be changed, and after it. They also set the pool creation
+defaults to what stretch mode gave new
 pools before:
 :confval:`osd_pool_default_num_zones` to ``2``,
 :confval:`osd_pool_default_zone_failure_domain` to the dividing bucket type,
