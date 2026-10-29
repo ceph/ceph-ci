@@ -3888,6 +3888,68 @@ TEST_F(OSDMapTest, LegacyStretchPoolDecode) {
   }
 }
 
+// A client without OSD_STRETCH_ZONES works out the shard of an op to an
+// optimized EC pool with pg_temp from the primary's position in primary-first
+// order as if the pool had one zone; the OSD finds the shard that position
+// stands for
+TEST_F(OSDMapTest, UndoPreStretchZonesPrimaryFirst) {
+  set_up_map(18);
+  int64_t pool_id = 100;
+  for (int num_zones : {1, 2, 3}) {
+    for (auto [k, m] : {std::pair{2, 1}, std::pair{4, 2}, std::pair{3, 3}}) {
+      const int size = (k + m) * num_zones;
+      if (size > 18) {
+        continue;
+      }
+      SCOPED_TRACE(::testing::Message() << "k=" << k << " m=" << m
+                                        << " num_zones=" << num_zones);
+      pg_pool_t p;
+      p.type = pg_pool_t::TYPE_ERASURE;
+      p.size = size;
+      p.min_size = k;
+      p.num_zones = num_zones;
+      p.set_flag(pg_pool_t::FLAG_EC_OPTIMIZATIONS);
+      p.set_pg_num(8);
+      p.set_pgp_num(8);
+      for (int z = 0; z < num_zones; ++z) {
+        for (int i = 1; i < k; ++i) {
+          p.nonprimary_shards.insert(shard_id_t(i + (k + m) * z));
+        }
+      }
+      ++pool_id;
+      const pg_t with_temp(0, pool_id);
+      const pg_t without_temp(1, pool_id);
+      OSDMap::Incremental inc(osdmap.get_epoch() + 1);
+      inc.fsid = osdmap.get_fsid();
+      inc.new_pools[pool_id] = p;
+      inc.new_pool_names[pool_id] = "ec" + std::to_string(pool_id);
+      vector<int> temp(size);
+      std::iota(temp.begin(), temp.end(), 0);
+      inc.new_pg_temp[with_temp] =
+        mempool::osdmap::vector<int>(temp.begin(), temp.end());
+      ASSERT_EQ(0, osdmap.apply_incremental(inc));
+      const pg_pool_t *pool = osdmap.get_pg_pool(pool_id);
+      ASSERT_TRUE(pool);
+
+      const int parity = size - p.nonprimary_shards.size() - 1;
+      for (int pos = 1; pos < size; ++pos) {
+        // as an earlier release's Objecter computes it
+        const int sent = pos > parity ? pos - parity : pos + size - parity - 1;
+        spg_t spg(with_temp, shard_id_t(sent));
+        ASSERT_TRUE(osdmap.undo_pre_stretch_zones_primaryfirst(&spg));
+        EXPECT_EQ(osdmap.pgtemp_undo_primaryfirst(*pool, with_temp,
+                                                  shard_id_t(pos)),
+                  spg.shard) << "position " << pos;
+        spg_t untouched(without_temp, shard_id_t(sent));
+        ASSERT_TRUE(osdmap.undo_pre_stretch_zones_primaryfirst(&untouched));
+        EXPECT_EQ(shard_id_t(sent), untouched.shard);
+      }
+      spg_t out_of_range(with_temp, shard_id_t(size));
+      EXPECT_FALSE(osdmap.undo_pre_stretch_zones_primaryfirst(&out_of_range));
+    }
+  }
+}
+
 // The full map is written in the format without num_zones until the commit
 // sets stretch_zones, so before it every OSD reads the same pools
 TEST_F(OSDMapTest, EncodingFollowsStretchZonesFlag) {
