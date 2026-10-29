@@ -1795,6 +1795,8 @@ void pg_pool_t::dump(Formatter *f, const CrushWrapper *crush,
   f->dump_int("type", get_type());
   f->dump_int("size", get_size());
   f->dump_int("min_size", get_min_size());
+  f->dump_int("num_zones", get_num_zones());
+  f->dump_int("replica", get_replica());
   const int rule_id = get_crush_rule();
   f->dump_int("crush_rule", rule_id);
   if (show_rule_names && crush && crush->rule_exists(rule_id)) {
@@ -2205,6 +2207,9 @@ void pg_pool_t::encode(ceph::buffer::list& bl, uint64_t features) const
   uint8_t v = 34;
   // NOTE: any new encoding dependencies must be reflected by
   // SIGNIFICANT_FEATURES
+  if (!HAVE_SIGNIFICANT_FEATURE(features, OSD_STRETCH_ZONES)) {
+    v = 33;
+  }
   // TODO: the v34 migration fields currently piggy-back on SERVER_UMBRELLA.
   // Pool migration ships in VAMPIRE, so once SERVER_VAMPIRE is introduced,
   // gate v = 34 on SERVER_VAMPIRE instead of reusing SERVER_UMBRELLA.
@@ -2258,7 +2263,9 @@ void pg_pool_t::encode(ceph::buffer::list& bl, uint64_t features) const
     encode(tmp, bl);
   }
   encode((uint32_t)0, bl); // crash_replay_interval
-  encode(min_size, bl);
+  // before v34, min_size counts every zone
+  const __u8 encoded_min_size = v >= 34 ? min_size : min_size * num_zones;
+  encode(encoded_min_size, bl);
   encode(quota_max_bytes, bl);
   encode(quota_max_objects, bl);
   encode(tiers, bl);
@@ -2346,6 +2353,10 @@ void pg_pool_t::encode(ceph::buffer::list& bl, uint64_t features) const
     encode(migrating_pgs, bl);
     encode(lowest_migrated_pg, bl);
     encode(migration_root, bl);
+  }
+  if (v >= 34) {
+    encode(replica, bl);
+    encode(num_zones, bl);
   }
   ENCODE_FINISH(bl);
 }
@@ -2570,6 +2581,15 @@ void pg_pool_t::decode(ceph::buffer::list::const_iterator& bl)
     lowest_migrated_pg = 0;
     migration_root.reset();
   }
+  if (struct_v >= 34) {
+    decode(replica, bl);
+    decode(num_zones, bl);
+  } else {
+    // an earlier release's pool, or one before the upgrade commit: one
+    // zone and a min_size over all its copies
+    num_zones = 1;
+    replica = size;
+  }
   DECODE_FINISH(bl);
   calc_pg_masks();
   calc_grade_table();
@@ -2583,10 +2603,18 @@ bool pg_pool_t::stretch_set_can_peer(const set<int>& want, const OSDMap& osdmap,
   const uint32_t barrier_count = peering_crush_bucket_count;
   set<int> ancestors;
   const shared_ptr<CrushWrapper>& crush = osdmap.crush;
+  // Earlier releases count a hole in an EC acting set, and the shadow
+  // bucket of each device class, as buckets. Both releases peer the same
+  // PGs until the upgrade is committed, so they must count alike.
+  const bool stretch_zones = osdmap.stretch_zones();
   for (int osdid : want) {
+    if (stretch_zones && osdid == CRUSH_ITEM_NONE) {
+      continue;
+    }
     int ancestor = crush->get_parent_of_type(osdid, barrier_id,
 					     crush_rule);
-    ancestors.insert(ancestor);
+    ancestors.insert(stretch_zones ? crush->get_non_shadow_id(ancestor)
+                                   : ancestor);
   }
   if (ancestors.size() < barrier_count) {
     if (out) {
@@ -2705,8 +2733,14 @@ void pg_pool_t::print(ostream& out, const CrushWrapper *crush) const
         << static_cast<unsigned int>(p.ec_coding_shard_count.value_or(0));
   }
   const int rule_id = p.get_crush_rule();
-  out << " size " << p.get_size()
-      << " min_size " << p.get_min_size()
+  out << " size " << p.get_size();
+  if (p.get_num_zones() > 1) {
+    out << " num_zones " << p.get_num_zones();
+    if (p.is_replicated()) {
+      out << " replica " << p.get_replica();
+    }
+  }
+  out << " min_size " << p.get_min_size()
       << " crush_rule ";
   if (crush && crush->rule_exists(rule_id)) {
     out << crush->get_rule_name(rule_id);
@@ -4824,6 +4858,13 @@ bool PastIntervals::is_new_interval(
   if (!pi) {
     return true;  // pool was deleted this epoch -> (final!) interval change
   }
+  // the rules that judge a stretch pool change at the upgrade commit, and
+  // what min_size counts changes with num_zones
+  if (plast->num_zones != pi->num_zones ||
+      ((plast->is_stretch_pool() || pi->is_stretch_pool()) &&
+       lastmap->stretch_zones() != osdmap->stretch_zones())) {
+    return true;
+  }
   return
     is_new_interval(old_acting_primary,
 		    new_acting_primary,
@@ -4954,7 +4995,9 @@ bool PastIntervals::check_new_interval(
 	i.primary != -1 &&
 	num_acting >= old_pg_pool.min_size &&
 	(!old_pg_pool.is_stretch_pool() ||
-	 old_pg_pool.stretch_set_can_peer(old_acting, *lastmap, out)) &&
+         // as PeeringState::acting_set_writeable(), with the interval's pool
+         (old_pg_pool.stretch_set_can_peer(old_acting, *lastmap, out) &&
+          !lastmap->stretch_num_acting_below_min_size(old_pg_pool, old_acting))) &&
         could_have_gone_active(old_acting_shards)) {
       if (out)
 	*out << __func__ << " " << i

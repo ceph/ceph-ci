@@ -242,6 +242,7 @@ public:
   std::optional<std::string> migration_ec_profile;
   int initial_migration_delay;
   std::thread pool_migration_thread;
+  std::string crush_location;
 
   RadosTestContext(const std::string &pool_name,
      int max_in_flight,
@@ -265,6 +266,7 @@ public:
      std::optional<std::string> migration_ec_profile,
      int initial_migration_delay,
      uint64_t min_split_size = UINT64_MAX,
+     std::string crush_location = "",
      const char *id = 0) :
     pool_obj_cont(),
     current_snap(0),
@@ -293,7 +295,8 @@ public:
     migration_interval(migration_interval),
     migration_pg_num(migration_pg_num),
     migration_ec_profile(migration_ec_profile),
-    initial_migration_delay(initial_migration_delay)
+    initial_migration_delay(initial_migration_delay),
+    crush_location(std::move(crush_location))
     {
       timestamp = _timestamp;
     }
@@ -314,6 +317,14 @@ public:
                          std::to_string(min_split_size).c_str());
       if (r < 0)
         return r;
+    }
+    if (!crush_location.empty()) {
+      r = rados.conf_set("crush_location", crush_location.c_str());
+      if (r < 0) {
+        std::cerr << "Warning: failed to set crush_location '"
+                  << crush_location << "': " << cpp_strerror(r) << std::endl;
+        // Non-fatal: zone filtering will be disabled (index stays -1).
+      }
     }
     r = rados.connect();
     if (r < 0)
