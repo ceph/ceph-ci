@@ -183,6 +183,23 @@ function TEST_replicated_pool() {
         grep 'cannot change to type erasure' || return 1
 }
 
+# A create resent before the first one is committed replies once the pool
+# exists
+function TEST_replicated_pool_create_resent() {
+    local dir=$1
+    run_mon $dir a || return 1
+    ceph tell mon.\* config set paxos_propose_interval 5 || return 1
+    # an OSDMap change just committed delays the next proposal
+    ceph osd set noout || return 1
+
+    timeout 60 ceph osd pool create resent 4 4 replicated &
+    local pid=$!
+    sleep 1
+    timeout 60 ceph osd pool create resent 4 4 replicated || return 1
+    ceph osd pool get resent size || return 1
+    wait $pid || return 1
+}
+
 function TEST_no_pool_delete() {
     local dir=$1
     run_mon $dir a || return 1
@@ -299,6 +316,210 @@ function TEST_pool_both_prio_no_pos() {
    check_pool_priority $dir 20 "2 - 36" "-10 -9 -8 -8 -7 -7 -6 -6 -5 -5 -4 -3 -3 -2 -2 -1 -1 0 0 2 4" || return 1
 }
 
+# A migrate with no options creates the pool that a create with no options
+# would; --inherit-params keeps every setting of the source and takes no
+# other options
+function TEST_pool_migrate_inherit_params() {
+  local dir=$1
+
+  run_mon $dir a || return 1
+  ceph osd erasure-code-profile set ec-prof plugin=isa k=2 m=1 crush-failure-domain=osd || return 1
+  ceph config set global enable_experimental_unrecoverable_data_corrupting_features poolmigration || return 1
+  ceph osd set-require-min-compat-client umbrella || return 1
+
+  ceph osd pool create defaulted 4 4 erasure ec-prof || return 1
+  ceph osd pool migrate defaulted || return 1
+
+  ceph config set mon osd_pool_default_flag_ec_optimizations true || return 1
+  ceph osd pool create inherited 4 4 erasure ec-prof || return 1
+  ceph config set mon osd_pool_default_flag_ec_optimizations false || return 1
+  ceph osd pool set inherited allow_ec_overwrites true || return 1
+  ceph osd pool set inherited min_size 2 || return 1
+  ceph osd pool set inherited nodelete true || return 1
+  ceph osd pool set inherited noscrub true || return 1
+  ceph osd pool set inherited compression_mode aggressive || return 1
+  ceph osd pool application enable inherited rbd || return 1
+  ceph osd pool set-quota inherited max_objects 1000 || return 1
+  expect_failure $dir "cannot be combined" \
+    ceph osd pool migrate inherited --inherit-params --size 2 || return 1
+  ceph osd pool migrate inherited --inherit-params || return 1
+
+  ceph osd dump --format=json > $dir/osdmap.json || return 1
+  # the source's pg_num freeze during the migration is not a setting
+  pool_settings() {
+    jq -S ".pools[] | select(.pool_name == \"$1\") |
+      del(.pool, .pool_name, .create_time, .last_change, .migration_src,
+          .migration_target, .migration_root, .migrating_pgs,
+          .lowest_migrated_pg, .flags, .pg_autoscale_mode) |
+      .flags_names |= (split(\",\") - [\"nopgchange\"] | join(\",\"))" $dir/osdmap.json
+  }
+  test "$(pool_settings defaulted | jq .type)" = 1 || return 1
+  test "$(pool_settings inherited | jq -r .erasure_code_profile)" = ec-prof || return 1
+  diff <(pool_settings .migrate-2) <(pool_settings inherited) || return 1
+}
+
+# A second migration of a pool prepared in the update of the first must not
+# rename the pool again: that left two pools of its name
+function TEST_pool_migrate_twice_in_one_update() {
+  local dir=$1
+
+  run_mon $dir a || return 1
+  ceph config set global enable_experimental_unrecoverable_data_corrupting_features poolmigration || return 1
+  ceph osd set-require-min-compat-client umbrella || return 1
+  ceph osd pool create mtwice 4 4 replicated || return 1
+  ceph tell mon.\* config set paxos_propose_interval 5 || return 1
+  # an OSDMap change just committed delays the next proposal
+  ceph osd set noout || return 1
+
+  timeout 60 ceph osd pool migrate mtwice --pool_type replicated &
+  local pid=$!
+  sleep 1
+  timeout 60 ceph osd pool migrate mtwice --pool_type replicated || return 1
+  wait $pid || return 1
+  ceph osd dump --format=json > $dir/osdmap.json || return 1
+  test "$(jq '[.pools[] | select(.pool_name == "mtwice")] | length' $dir/osdmap.json)" = 1 || return 1
+  test "$(jq '[.pools[] | select(.pool_name | startswith(".migrate-"))] | length' $dir/osdmap.json)" = 1 || return 1
+}
+
+# The monitors run a command again after an election: a migration of a pool
+# that is migrating to what it asks for succeeds and changes nothing
+function TEST_pool_migrate_again() {
+  local dir=$1
+
+  run_mon $dir a || return 1
+  ceph osd erasure-code-profile set ec-prof plugin=isa k=2 m=1 crush-failure-domain=osd || return 1
+  ceph config set global enable_experimental_unrecoverable_data_corrupting_features poolmigration || return 1
+  ceph osd set-require-min-compat-client umbrella || return 1
+
+  ceph osd pool create again 4 4 replicated || return 1
+  local to_ec="--pool_type erasure --erasure_code_profile ec-prof --enable_ec_optimizations"
+  ceph osd pool migrate again $to_ec --pg_num 8 || return 1
+  ceph osd pool migrate again $to_ec --pg_num 8 || return 1
+  expect_failure $dir "ongoing migration" ceph osd pool migrate again $to_ec --pg_num 16 || return 1
+  expect_failure $dir "ongoing migration" ceph osd pool migrate again || return 1
+  ceph osd pool migrate again --inherit-params || return 1
+
+  ceph osd pool create copied 4 4 erasure ec-prof || return 1
+  ceph osd pool migrate copied --inherit-params || return 1
+  ceph osd pool migrate copied --inherit-params || return 1
+  expect_failure $dir "cannot be combined" \
+    ceph osd pool migrate copied --inherit-params --size 2 || return 1
+  expect_failure $dir "ongoing migration" \
+    ceph osd pool migrate copied --pool_type replicated || return 1
+
+  test "$(ceph osd dump --format=json | jq '[.pools[] | select(.pool_name | startswith(".migrate-"))] | length')" = 2 || return 1
+}
+
+function TEST_osd_pool_create_migrate_from() {
+  local dir=$1
+
+  setup $dir || return 1
+  run_mon $dir a || return 1
+  run_mgr $dir x || return 1
+  for id in $(seq 0 2); do
+    run_osd $dir $id || return 1
+  done
+  create_rbd_pool || return 1
+  wait_for_clean || return 1
+
+  SRC_POOL_NAME="ecpool"
+  REPPOOL_NAME="metadatapool"
+
+  #setup the cluster 
+  #create an erasure code profile
+  ceph osd erasure-code-profile set ec-prof plugin=isa k=2 m=1 crush-failure-domain=osd
+
+  #create an erasure coded pool
+  ceph osd pool create $SRC_POOL_NAME erasure ec-prof || return 1
+  ceph osd pool set $SRC_POOL_NAME allow_ec_overwrites true || return 1
+  #rbd pool init $SRC_POOL_NAME || return 1
+  ceph osd pool application enable $SRC_POOL_NAME rbd || return 1
+
+  #create a replicated pool
+  ceph osd pool create $REPPOOL_NAME replicated || return 1
+  rbd pool init $REPPOOL_NAME || return 1
+
+  #create an rbd image with data pool set to the erasure coded pool
+  rbd create -s 10G --data-pool $SRC_POOL_NAME $REPPOOL_NAME/vol0 || return 1
+
+  #write some data to the image
+  rbd bench -p $REPPOOL_NAME --image vol0 --io-size 1K --io-threads 1 --io-total 10000K --io-pattern rand --io-type write || return 1
+
+  #pool migration is experimental and needs min compat client umbrella
+  ceph config set global enable_experimental_unrecoverable_data_corrupting_features poolmigration || return 1
+  ceph osd set-require-min-compat-client umbrella || return 1
+
+  #disable autoscaling
+  ceph osd pool set noautoscale || return 1
+
+  #resize the ec pool to have small number of pgs
+  ceph osd pool set $SRC_POOL_NAME pg_num 2 || return 1
+
+  #wait for the merge to finish: a pool cannot start migrating while its
+  #pg_num is changing
+  local i
+  for ((i = 0; i < 600; i++)); do
+    test "$(ceph osd dump --format=json | jq ".pools[] | select(.pool_name == \"$SRC_POOL_NAME\") |
+      .pg_num == 2 and .pg_num_pending == 2")" = true && break
+    sleep 1
+  done
+  test $i -lt 600 || return 1
+
+  #migrate the pool, the new pool takes over the name and the old pool is
+  #renamed to .migrate-1
+  ceph osd pool migrate $SRC_POOL_NAME --inherit-params || return 1
+  TGT_POOL_NAME=$SRC_POOL_NAME
+  SRC_POOL_NAME=".migrate-1"
+   
+  #reenable autoscaling
+  ceph osd pool unset noautoscale || return 1
+
+  #check that changing the pg_num on either pool is blocked
+  expect_failure $dir "while the pool is migrating" ceph osd pool set $SRC_POOL_NAME pg_num 10 || return 1
+  expect_failure $dir "while the pool is migrating" ceph osd pool set $TGT_POOL_NAME pg_num 10 || return 1
+
+  #check that the daemonServer was blocked from changing the pg_num on the
+  #source pool
+  #(the plain osd dump does not list the source of a migration)
+  SRC_POOL_ID=$(ceph osd dump --format=json | jq ".pools[] | select(.pool_name == \"$SRC_POOL_NAME\") | .pool")
+  TGT_POOL_ID=$(ceph osd dump --format=json | jq ".pools[] | select(.pool_name == \"$TGT_POOL_NAME\") | .pool")
+  echo "Source pool id: $SRC_POOL_ID"
+  echo "Target pool id: $TGT_POOL_ID"
+  
+  grep "Pool $SRC_POOL_ID has the flag NOPGCHANGE so will be skipped" $dir/mgr.x.log || return 1
+
+  teardown $dir || return 1
+}
+
+function pool_field() {
+  local pool=$1
+  local field=$2
+  ceph osd dump --format=json | jq -r ".pools[] | select(.pool_name == \"$pool\") | .$field"
+}
+
+# --enable_ec_optimizations must give a pool what osd_pool_default_flag_ec_optimizations does
+function TEST_enable_ec_optimizations() {
+  local dir=$1
+
+  run_mon $dir a || return 1
+  ceph osd erasure-code-profile set ec-prof plugin=isa k=2 m=1 crush-failure-domain=osd || return 1
+
+  ceph config set mon osd_pool_default_flag_ec_optimizations true || return 1
+  ceph osd pool create default_opt 4 4 erasure ec-prof || return 1
+  ceph config set mon osd_pool_default_flag_ec_optimizations false || return 1
+  local stripe_width=$(pool_field default_opt stripe_width)
+
+  ceph osd pool create requested_opt 4 4 erasure ec-prof --enable_ec_optimizations || return 1
+  test "$(pool_field requested_opt stripe_width)" = "$stripe_width" || return 1
+  pool_field requested_opt flags_names | grep -q split_reads || return 1
+
+  ceph config set global enable_experimental_unrecoverable_data_corrupting_features poolmigration || return 1
+  ceph osd set-require-min-compat-client umbrella || return 1
+  ceph osd pool create migrated 4 4 erasure ec-prof || return 1
+  ceph osd pool migrate migrated --pool_type erasure --erasure_code_profile ec-prof --enable_ec_optimizations || return 1
+  test "$(pool_field migrated stripe_width)" = "$stripe_width" || return 1
+  pool_field migrated flags_names | grep -q split_reads || return 1
+}
 
 main osd-pool-create "$@"
 

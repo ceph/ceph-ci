@@ -85,6 +85,8 @@ def task(ctx, config):
           ec_pool: use an ec pool
           erasure_code_profile: profile to use with the erasure coded pool
           erasure_code_crush: crush rule configuration for erasure coded pool
+          migration_erasure_code_profile: with migrate_pool, profile that the pool
+                                          is migrated to and back from, alternately
           fast_read: enable ec_pool's fast_read
           min_size: set the min_size of created pool
           pool_snaps: use pool snapshots instead of selfmanaged snapshots
@@ -296,6 +298,18 @@ def task(ctx, config):
         args.extend(['--localize-reads'])
     if config.get('max_attr_len', None):
         args.extend(['--max-attr-len', str(config.get('max_attr_len'))])
+    if config.get('migrate_pool', False):
+        args.extend(['--migrate-pool'])
+    if config.get('migration_enable_ec_optimizations', False):
+        args.extend(['--migration-enable-ec-optimizations'])
+    migration_interval = config.get('migration_interval')
+    if migration_interval is not None:
+        args.extend(['--migration-interval', str(migration_interval)])
+    migration_profile = config.get('migration_erasure_code_profile')
+    if migration_profile:
+        migration_profile_name = migration_profile.get('name', 'teuthologymigrationprofile')
+        args.extend(['--migration-erasure-code-profile', migration_profile_name])
+
     args.extend([
         '--max-ops', str(config.get('ops', 10000)),
         '--objects', str(config.get('objects', 500)),
@@ -370,6 +384,9 @@ def task(ctx, config):
             if crush_prof:
                 crush_name = crush_prof.get('name', 'teuthologycrush')
                 manager.create_erasure_code_crush_rule(crush_name, crush_prof)
+            if migration_profile:
+                manager.create_erasure_code_profile(migration_profile_name,
+                                                    migration_profile)
 
         else:
             profile_name = None
