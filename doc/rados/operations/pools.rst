@@ -477,49 +477,152 @@ To remove a snapshot of a pool, run a command of the following form:
 Pool Creation Defaults
 ======================
 
-``ceph osd pool create`` takes most parameters that it is not given from an
-``osd_pool_default_*`` configuration option. To show the defaults that it
-would use now, and where each comes from, run:
+``ceph osd pool create`` takes every parameter that it is not given from a pool
+creation default, an ``osd_pool_default_*`` configuration option.
+``ceph osd pool default get`` shows the defaults, and
+``ceph osd pool default set`` changes them after checking them.
+
+Showing the Defaults
+--------------------
 
 .. prompt:: bash $
 
    ceph osd pool default get
 
-To set defaults, run ``ceph osd pool default set`` with the parameters of
-``ceph osd pool create`` that you want to change, for example:
+The command shows every default that ``ceph osd pool create`` would use now,
+with the option that holds it and where its value comes from. Add ``-f json``
+for machine-readable output. ``k`` and ``m`` come from the ``default`` erasure
+code profile.
+
+Setting the Defaults
+--------------------
+
+``ceph osd pool default set`` takes the parameters of ``ceph osd pool create``,
+so one command sets several defaults and checks them together:
+
+.. prompt:: bash $
+
+   ceph osd pool default set [--pool_type {replicated|erasure}]
+        [--num_zones {num_zones}]
+        [--rule {rule} |
+         [--zone_failure_domain {type}] [--osd_failure_domain {type}]
+         [--root {crush_root}] [--class {device_class}]]
+        [--replica {replica}] [--min_size {min_size}]
+        [--k {k}] [--m {m}]
+        [--pg_num {pg_num}] [--pgp_num {pgp_num}]
+        [--autoscale_mode {on|off|warn}] [--bulk[=false]] [--crimson[=false]]
+        [--yes-i-really-mean-it]
+
+For example, to stretch every new replicated pool over two data centers, with
+two copies in each:
 
 .. prompt:: bash $
 
    ceph osd pool default set --replica 2 --num_zones 2 --zone_failure_domain datacenter
 
-The command writes each given parameter to the ``global`` section of the
-configuration database. It never changes an existing pool. It is refused until
-an upgrade to this release is committed with ``ceph osd require-osd-release``.
-It makes the checks on the parameters that ``ceph osd pool create`` would make
-with the resulting defaults, and refuses a default that fails them, for
-example ``--num_zones 2`` on a cluster that cannot be stretched. Pool creation
-can still fail with defaults that pass, for example on the PG limit of the
-OSDs, or with two zones while an individual stretch pool exists. It also
-refuses a value that a ``mon`` section of the configuration database or a
-Monitor's local configuration would override. To set such a default, remove
-the overriding value first, as :ref:`pool-default-config-override` describes,
-and then run ``ceph osd pool default set`` again.
+* The command writes each given parameter to its option in the ``global``
+  section of the configuration database. Parameters that are not given keep
+  their values. It never changes an existing pool.
+* It checks the resulting defaults as ``ceph osd pool create`` would, and
+  writes nothing if a check fails, for example ``--num_zones 2`` on a cluster
+  that cannot be stretched. Pool creation can still fail with defaults that
+  pass, for example on the OSDs' PG limit, or with two zones while an
+  individual stretch pool exists.
+* It refuses a value that a ``mon`` or ``mon.<id>`` section of the
+  configuration database, or a Monitor's local configuration, would override.
+  Remove the overriding value first, as :ref:`pool-default-config-override`
+  describes, then run the command again.
+* ``--rule`` names an existing replicated rule and cannot be combined with
+  ``--zone_failure_domain``, ``--osd_failure_domain``, ``--root`` or
+  ``--class``. ``--rule none`` sets :confval:`osd_pool_default_crush_rule`
+  back to ``-1``: a replicated pool in one zone then gets the replicated rule
+  with the lowest ID, and a pool over zones a generated rule.
+* ``--replica 1`` also needs ``mon_allow_pool_size_one`` and
+  ``--yes-i-really-mean-it``.
+* On an upgraded cluster, the command is refused until the upgrade is
+  committed with ``ceph osd require-osd-release``.
 
-``--replica`` is the number of copies in each zone, so a replicated pool with
-two zones and two replicas per zone has a ``size`` of ``4``. It is written to
-:confval:`osd_pool_default_size`, which keeps that name for backward
-compatibility. ``--k`` and ``--m`` are not written to the configuration
-database: they change ``k`` and ``m`` of the ``default`` erasure code profile,
-which new erasure-coded pools copy (see :ref:`erasure-code-profile-lifecycle`).
-``--rule`` names a default CRUSH rule. ``--rule none`` sets
-:confval:`osd_pool_default_crush_rule` back to ``-1``: a replicated pool in one
-zone then gets the replicated rule with the lowest ID, and a pool over zones a
-generated rule.
+Parameters and Options
+----------------------
 
-The parameters have the same names as in ``ceph osd pool create``. Two of them
-are named differently in ``ceph osd pool set`` and ``ceph osd pool get``:
-``--rule`` sets the default of the pool property ``crush_rule``, and
-``--autoscale_mode`` that of ``pg_autoscale_mode``.
+.. list-table::
+   :header-rows: 1
+   :widths: 25 40 35
+
+   * - Parameter
+     - Option
+     - Note
+   * - ``--pool_type``
+     - ``osd_pool_default_type``
+     -
+   * - ``--num_zones``
+     - :confval:`osd_pool_default_num_zones`
+     -
+   * - ``--rule``
+     - :confval:`osd_pool_default_crush_rule`
+     - The pool property ``crush_rule`` in ``ceph osd pool set`` and ``get``
+   * - ``--zone_failure_domain``
+     - :confval:`osd_pool_default_zone_failure_domain`
+     -
+   * - ``--osd_failure_domain``
+     - :confval:`osd_pool_default_osd_failure_domain`
+     -
+   * - ``--root``
+     - :confval:`osd_pool_default_root`
+     -
+   * - ``--class``
+     - :confval:`osd_pool_default_class`
+     -
+   * - ``--replica``
+     - :confval:`osd_pool_default_size`
+     - Copies in each zone; the option keeps its name for backward
+       compatibility
+   * - ``--min_size``
+     - :confval:`osd_pool_default_min_size`
+     -
+   * - ``--k``, ``--m``
+     - None
+     - Change ``k`` and ``m`` of the ``default`` erasure code profile, which
+       new erasure-coded pools copy (see
+       :ref:`erasure-code-profile-lifecycle`)
+   * - ``--pg_num``
+     - :confval:`osd_pool_default_pg_num`
+     -
+   * - ``--pgp_num``
+     - :confval:`osd_pool_default_pgp_num`
+     -
+   * - ``--autoscale_mode``
+     - :confval:`osd_pool_default_pg_autoscale_mode`
+     - The pool property ``pg_autoscale_mode`` in ``ceph osd pool set`` and
+       ``get``
+   * - ``--bulk``
+     - ``osd_pool_default_flag_bulk``
+     -
+   * - ``--crimson``
+     - ``osd_pool_default_crimson``
+     -
+
+.. _pool-creation-defaults-directly:
+
+Setting Pool Creation Defaults Directly
+---------------------------------------
+
+The pool creation defaults are ordinary configuration options, and they can be
+set directly with ``ceph config set global``. This is supported for
+compatibility with orchestration tools that already manage these options. For
+new deployments, use ``ceph osd pool default set`` instead. The options are
+listed in `Parameters and Options`_ above.
+
+Setting the options directly has the following drawbacks:
+
+* The values are not checked. An invalid combination, for example
+  :confval:`osd_pool_default_num_zones` 2 on a cluster that cannot be
+  stretched, is accepted, and later pool creations fail.
+* A value set in a ``mon`` section of the configuration database, or in a
+  Monitor's local configuration, overrides the ``global`` value and raises
+  ``POOL_DEFAULT_CONFIG_OVERRIDE``.
+* ``ceph mon enable_stretch_mode`` and ``ceph mon disable_stretch_mode``
+  replace any earlier value of these options.
 
 .. _setpoolvalues:
 

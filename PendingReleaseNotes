@@ -82,7 +82,8 @@
     degraded stretch mode no longer lowers ``min_size``.
   - Individual stretch pools (``ceph osd pool stretch set``) do not change.
     They keep their earlier behavior, including ``min_size`` counted over all
-    zones, and are still the way to stretch a pool over three or more zones.
+    zones, and are still the way to stretch a replicated pool over three or more
+    zones.
     For a pool over two zones they are a legacy feature: use ``num_zones``
     instead. They still cannot be combined with stretch mode, and
     ``ceph mon enable_stretch_mode`` now fails while one exists, also before

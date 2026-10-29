@@ -788,7 +788,7 @@ If ``{osd_failure_domain}`` is ``osd``, the rule uses ``step choose firstn``
 instead of ``step chooseleaf firstn``.
 
 A rule shared by several pools, or a rule over three or more zones for an
-individual stretch pool (see :ref:`stretch_mode`), is written by hand: get the
+individual stretch pool (see :ref:`individual_stretch_pools`), is written by hand: get the
 CRUSH map with ``ceph osd getcrushmap``, decompile it with ``crushtool -d``, add
 a rule of the form above with an unused ``id``, compile it with ``crushtool
 -c`` and set it with ``ceph osd setcrushmap``.
