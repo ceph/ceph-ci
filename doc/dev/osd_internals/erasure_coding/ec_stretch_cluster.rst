@@ -2731,9 +2731,11 @@ one zone, that is an individual stretch pool, including an erasure coded pool th
 release's ``stretch set`` gave stretch values (:ref:`Pools from Earlier Releases
 <ecsc-pools-from-earlier-releases>`), and a pool over three zones with a
 ``peering_crush_bucket_count`` of 2, for a later release. The zones counted are all
-the buckets of the zone type that have OSDs under the rule's ``take`` roots (shadow buckets of a
-device class included), not only those the acting set uses, so the "exactly ``num_zones`` zone
-buckets" of :ref:`The CRUSH Rule of a Pool <ecsc-the-rule-of-a-pool>` matters for peering too.
+the buckets of the zone type that have OSDs under the rule's ``take`` roots, not only those the
+acting set uses, so the "exactly ``num_zones`` zone buckets" of :ref:`The CRUSH Rule of a Pool
+<ecsc-the-rule-of-a-pool>` matters for peering too. A shadow bucket of a device class counts as
+its zone (``get_non_shadow_id()``), so a rule that takes a zone with two device classes counts
+it once.
 
 
 .. _ecsc-scrub-behavior:
