@@ -121,7 +121,7 @@ zone-loss-sequence:
       - ceph orch daemon stop mon.b
       - for o in 4 5 6 7 ; do ceph orch daemon stop osd.$o ; done
       - timeout 900 bash -c 'until ceph osd dump -f json | jq -e ".stretch_mode.degraded_stretch_mode == 1" ; do sleep 10 ; done'
-      - ceph osd require-osd-release umbrella
+      - ceph osd require-osd-release vampire
       - ceph osd dump -f json | jq -r .flags | grep stretch_zones
       - ceph osd pool ls detail -f json | jq -e '.[] | select(.pool_name == "pool_fields_upgrade") | .num_zones == 2 and .replica == 2 and .min_size == 1'
       - sleep 120
