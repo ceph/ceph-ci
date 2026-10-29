@@ -900,6 +900,8 @@ protected:
     ops[0].op.extent.length = len;
     auto op = new Objecter::Op(object_t("obj"), object_locator_t(pool),
                                std::move(ops), flags, (Context*)nullptr, nullptr);
+    // as _calc_target() routes an op of a pool that is not migrating
+    op->target.target_oloc = op->target.base_oloc;
     op->target.acting = acting;
     op->target.actual_pgid = spg_t(pg_t(0, pool), shard_id_t(primary_shard));
     return op;
