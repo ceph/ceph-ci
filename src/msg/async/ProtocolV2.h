@@ -12,6 +12,8 @@
 #include "frames_v2.h"
 
 #include <deque>
+#include <span>
+#include <utility>
 
 class ProtocolV2 : public Protocol {
 private:
@@ -159,7 +161,10 @@ private:
   void reset_session();
   void prepare_send_message(uint64_t features, const MessageRef& m);
   out_queue_entry_t _get_next_outgoing();
-  ssize_t write_message(const MessageRef& m, bool more);
+  ssize_t write_message(const MessageRef& m);
+  ssize_t send_message_batch(
+    std::span<std::pair<uint64_t, MessageRef>> msgs,
+    bool more = false);
   void handle_message_ack(uint64_t seq);
   void reset_compression();
 

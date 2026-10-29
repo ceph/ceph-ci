@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 sts=2 expandtab
 
 #include <type_traits>
+#include <optional>
 
 #include "ProtocolV2.h"
 #include "AsyncMessenger.h"
@@ -532,7 +533,7 @@ ProtocolV2::out_queue_entry_t ProtocolV2::_get_next_outgoing() {
   return out_entry;
 }
 
-ssize_t ProtocolV2::write_message(const MessageRef& m, bool more) {
+ssize_t ProtocolV2::write_message(const MessageRef& m) {
   FUNCTRACE(cct);
   ceph_assert(connection->center->in_thread());
   m->set_seq(++out_seq);
@@ -563,37 +564,44 @@ ssize_t ProtocolV2::write_message(const MessageRef& m, bool more) {
     return -EILSEQ;
   }
 
-  ldout(cct, 2) << __func__ << " sending message m=" << m
-                << " seq=" << m->get_seq() << " " << *m << dendl;
-
   m->trace.event("async writing message");
-  ldout(cct, 20) << __func__ << " sending m=" << m << " seq=" << m->get_seq()
-                 << " src=" << entity_name_t(messenger->get_myname())
-                 << " off=" << header2.data_off
-                 << dendl;
-  ssize_t total_send_size = connection->outgoing_bl.length();
-  ssize_t rc = connection->_try_send(more);
-  if (rc < 0) {
-    ldout(cct, 1) << __func__ << " error sending " << m << ", "
-                  << cpp_strerror(rc) << dendl;
-  } else {
-    const auto sent_bytes = total_send_size - connection->outgoing_bl.length();
-    connection->logger->inc(l_msgr_send_bytes, sent_bytes);
-    if (session_stream_handlers.tx) {
-      connection->logger->inc(l_msgr_send_encrypted_bytes, sent_bytes);
-    }
-    ldout(cct, 10) << __func__ << " sending " << m
-                   << (rc ? " continuely." : " done.") << dendl;
+  return 0;
+}
+
+// Sends outgoing_bl.  msgs are the messages whose frames it holds, each
+// paired with the outgoing_bl length at the end of its frame.
+ssize_t ProtocolV2::send_message_batch(
+  std::span<std::pair<uint64_t, MessageRef>> msgs, bool more) {
+  for (const auto& [end, m] : msgs) {
+    ldout(cct, 2) << __func__ << " sending message m=" << m
+                  << " seq=" << m->get_seq() << " " << *m << dendl;
+    ldout(cct, 20) << __func__ << " sending m=" << m << " seq=" << m->get_seq()
+                   << " src=" << entity_name_t(messenger->get_myname())
+                   << " off=" << m->get_header().data_off
+                   << dendl;
   }
-
+  const auto queued_bytes = connection->outgoing_bl.length();
+  const auto r = connection->_try_send(more);
+  if (r < 0) {
+    return r;
+  }
+  const auto sent_bytes = queued_bytes - connection->outgoing_bl.length();
+  connection->logger->inc(l_msgr_send_bytes, sent_bytes);
+  if (session_stream_handlers.tx) {
+    connection->logger->inc(l_msgr_send_encrypted_bytes, sent_bytes);
+  }
+  for (auto& [end, m] : msgs) {
+    ldout(cct, 10) << __func__ << " sending " << m
+                   << (end > sent_bytes ? " continuely." : " done.") << dendl;
 #if defined(WITH_EVENTTRACE)
-  if (m->get_type() == CEPH_MSG_OSD_OP)
-    OID_EVENT_TRACE_WITH_MSG(m, "SEND_MSG_OSD_OP_END", false);
-  else if (m->get_type() == CEPH_MSG_OSD_OPREPLY)
-    OID_EVENT_TRACE_WITH_MSG(m, "SEND_MSG_OSD_OPREPLY_END", false);
+    if (m->get_type() == CEPH_MSG_OSD_OP)
+      OID_EVENT_TRACE_WITH_MSG(m, "SEND_MSG_OSD_OP_END", false);
+    else if (m->get_type() == CEPH_MSG_OSD_OPREPLY)
+      OID_EVENT_TRACE_WITH_MSG(m, "SEND_MSG_OSD_OPREPLY_END", false);
 #endif
-
-  return rc;
+    m.reset();
+  }
+  return r;
 }
 
 template <class F>
@@ -649,6 +657,11 @@ void ProtocolV2::reset_compression() {
   session_compression_handlers.tx.reset(nullptr);
 }
 
+// Bound how long the first encoded frame of a batch waits for the
+// sendmsg() that carries it.
+static constexpr unsigned MAX_BATCH_FRAMES = 32;
+static constexpr unsigned MAX_BATCH_BYTES = 64 * 1024;
+
 void ProtocolV2::write_event() {
   ldout(cct, 10) << __func__ << dendl;
   ssize_t r = 0;
@@ -669,10 +682,13 @@ void ProtocolV2::write_event() {
     }
 
     auto start = ceph::mono_clock::now();
+    std::optional<std::array<std::pair<uint64_t, MessageRef>,
+                               MAX_BATCH_FRAMES>> batch;
+    unsigned batch_frames = 0;
     bool more;
     do {
-      if (connection->is_queued()) {
-	if (r = connection->_try_send(); r!= 0) {
+      if (batch_frames == 0 && connection->is_queued()) {
+	if (r = send_message_batch({}); r!= 0) {
 	  // either fails to send or not all queued buffer is sent
 	  break;
 	}
@@ -701,7 +717,25 @@ void ProtocolV2::write_event() {
 				 out_entry.m->queue_start);
       }
 
-      r = write_message(out_entry.m, more);
+      r = write_message(out_entry.m);
+      if (r == 0) {
+        const auto end = connection->outgoing_bl.length();
+        if (batch_frames == 0 && end >= MAX_BATCH_BYTES) {
+          std::pair<uint64_t, MessageRef> frame{
+            end, std::move(out_entry.m)};
+          r = send_message_batch({&frame, 1}, more);
+        } else {
+          if (!batch) {
+            batch.emplace();
+          }
+          (*batch)[batch_frames++] = {end, std::move(out_entry.m)};
+          if (!more || batch_frames == MAX_BATCH_FRAMES ||
+              end >= MAX_BATCH_BYTES) {
+            r = send_message_batch({batch->data(), batch_frames});
+            batch_frames = 0;
+          }
+        }
+      }
 
       connection->write_lock.lock();
       if (r == 0) {
@@ -716,6 +750,10 @@ void ProtocolV2::write_event() {
       }
     } while (can_write);
     write_in_progress = false;
+
+    if (r == 0 && batch_frames) {
+      r = send_message_batch({batch->data(), batch_frames});
+    }
 
     // if r > 0 mean data still lefted, so no need _try_send.
     if (r == 0) {
