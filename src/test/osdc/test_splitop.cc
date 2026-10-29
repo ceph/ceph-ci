@@ -972,7 +972,7 @@ TEST_F(TestSplitOpPoolMigration, ECSourceReplicatedTargetNoDirectRead)
 //
 // An OSD of a migration's source redirects an op on an object that has
 // migrated.  The Objecter has a session per OSD whose connection records the
-// MOSDOps sent on it, and replies are delivered through ms_dispatch2().  PG
+// MOSDOps sent on it, and replies are delivered through ms_fast_dispatch2().  PG
 // 1.0 of a 2+1 EC pool has acting [0,1,2].
 // ===========================================================================
 
@@ -1077,7 +1077,7 @@ protected:
     r->set_tid(op->get_tid());
     r->set_op_returns(std::vector<pg_log_op_return_item_t>(op->ops.size()));
     r->set_connection(cons[osd]);
-    objecter->ms_dispatch2(r);
+    objecter->ms_fast_dispatch2(r);
     poll();
   }
 
@@ -1098,7 +1098,7 @@ protected:
     // encoding marks the reply as a redirect, as sending it does
     r->encode_payload(CEPH_FEATURES_SUPPORTED_DEFAULT);
     r->set_connection(cons[osd]);
-    objecter->ms_dispatch2(r);
+    objecter->ms_fast_dispatch2(r);
     poll();
   }
 };
