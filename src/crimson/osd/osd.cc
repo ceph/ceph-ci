@@ -1433,7 +1433,7 @@ seastar::future<> OSD::committed_osd_maps(
     co_await pg_shard_manager.broadcast_map_to_pgs(osdmap->get_epoch());
   } else {
     if (pg_shard_manager.is_prestop()) {
-      got_stop_ack();
+      got_stop_ack("committed_osd_maps");
     }
   }
 
@@ -1587,7 +1587,7 @@ seastar::future<> OSD::handle_mark_me_down(
 {
   ceph_assert(seastar::this_shard_id() == PRIMARY_CORE);
   if (pg_shard_manager.is_prestop()) {
-    got_stop_ack();
+    got_stop_ack("handle_mark_me_down");
   }
   co_return;
 }
@@ -1895,6 +1895,17 @@ seastar::future<> OSD::check_osdmap_features()
   }
 }
 
+void OSD::got_stop_ack(const char* from)
+{
+  LOG_PREFIX(OSD::got_stop_ack);
+  if (!stop_acked.available()) {
+    INFO("osd.{}: stop acked via {}", whoami, from);
+    stop_acked.set_value();
+  } else {
+    DEBUG("osd.{}: stop already acked, ignoring {}", whoami, from);
+  }
+}
+
 seastar::future<> OSD::prepare_to_stop()
 {
   if (osdmap && osdmap->is_up(whoami)) {
@@ -1914,7 +1925,7 @@ seastar::future<> OSD::prepare_to_stop()
 	    osdmap->get_addrs(whoami),
 	    osdmap->get_epoch(),
 	    true)).then([this] {
-	return stop_acked.get_future();
+	return stop_acked.get_shared_future();
       }));
     } catch (seastar::timed_out_error&) {}
   }
