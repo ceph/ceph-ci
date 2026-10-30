@@ -8263,7 +8263,7 @@ int Client::do_mkdirat(int dirfd, const char *relpath, mode_t mode, const UserPe
   }
 
   walk_dentry_result wdr;
-  if (int rc = path_walk(dirinode, filepath(relpath), &wdr, perm, {.require_target = false}); rc < 0) {
+  if (int rc = path_walk(dirinode, filepath(relpath), &wdr, perm, {.followsym = false, .require_target = false}); rc < 0) {
     return rc;
   }
 
@@ -14342,7 +14342,7 @@ int Client::mksnap(const char *relpath, const char *name, const UserPerm& perm,
       return -EPERM;
   }
   auto snapdir = open_snapdir(wdr.target);
-  if (int rc = path_walk(std::move(snapdir), filepath(name), &wdr, perm, {.require_target = false}); rc < 0) {
+  if (int rc = path_walk(std::move(snapdir), filepath(name), &wdr, perm, {.followsym = false, .require_target = false}); rc < 0) {
     return rc;
   }
   return _mkdir(wdr, mode, perm, nullptr, metadata);
@@ -16016,7 +16016,7 @@ int Client::_mknod(Inode *dir, const char *name, mode_t mode, dev_t rdev,
 		<< ", gid " << perms.gid() << ")" << dendl;
 
   walk_dentry_result wdr;
-  if (int rc = path_walk(dir, filepath(name), &wdr, perms, {.require_target = false}); rc < 0) {
+  if (int rc = path_walk(dir, filepath(name), &wdr, perms, {.followsym = false, .require_target = false}); rc < 0) {
     return rc;
   } else if (rc == 0 && wdr.target) {
     return -EEXIST;
@@ -16340,7 +16340,7 @@ int Client::ll_mkdir(Inode *parent, const char *name, mode_t mode,
   std::scoped_lock lock(client_lock);
 
   walk_dentry_result wdr;
-  if (int rc = path_walk(parent, filepath(name), &wdr, perm, {.require_target = false}); rc < 0) {
+  if (int rc = path_walk(parent, filepath(name), &wdr, perm, {.followsym = false, .require_target = false}); rc < 0) {
     return rc;
   }
 
@@ -16376,7 +16376,7 @@ int Client::ll_mkdirx(Inode *parent, const char *name, mode_t mode, Inode **out,
   std::scoped_lock lock(client_lock);
 
   walk_dentry_result wdr;
-  if (int rc = path_walk(parent, filepath(name), &wdr, perms, {.require_target = false}); rc < 0) {
+  if (int rc = path_walk(parent, filepath(name), &wdr, perms, {.followsym = false, .require_target = false}); rc < 0) {
     return rc;
   }
 
@@ -16405,7 +16405,7 @@ int Client::_symlink(Inode *dir, const char *name, const char *target,
 		<< dendl;
 
   walk_dentry_result wdr;
-  if (int rc = path_walk(dir, filepath(name), &wdr, perms, {.require_target = false}); rc < 0) {
+  if (int rc = path_walk(dir, filepath(name), &wdr, perms, {.followsym = false, .require_target = false}); rc < 0) {
     return rc;
   } else if (rc == 0 && wdr.target) {
     return -EEXIST;
@@ -16843,7 +16843,7 @@ int Client::_link(Inode *diri_from, const char* path_from, Inode* diri_to, const
   }
 
   walk_dentry_result wdr_to;
-  if (int rc = path_walk(diri_to, filepath(path_to), &wdr_to, perm, {}); rc == 0) {
+  if (int rc = path_walk(diri_to, filepath(path_to), &wdr_to, perm, {.followsym = false}); rc == 0) {
     return -EEXIST;
   } else if (rc != -ENOENT) {
     return rc;
