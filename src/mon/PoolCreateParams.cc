@@ -282,15 +282,6 @@ void size_over_default_zones_as_replica(PoolCreateParams& p)
   }
 }
 
-bool create_in_one_zone(PoolCreateParams& p)
-{
-  if (p.is_given("num_zones") && p.num_zones != 1) {
-    return false;
-  }
-  p.num_zones = 1;
-  return true;
-}
-
 string effective_zone_failure_domain(const PoolCreateParams& p)
 {
   if (!p.is_given("zone_failure_domain") &&
@@ -346,6 +337,15 @@ string rule_from_defaults(const PoolCreateParams& p)
     out += (out.size() > 2 ? ", " : "") + option;
   }
   return out + ")";
+}
+
+bool create_in_one_zone(PoolCreateParams& p)
+{
+  if (p.is_given("num_zones") && p.num_zones != 1) {
+    return false;
+  }
+  p.num_zones = 1;
+  return true;
 }
 
 int check_pool_params(const PoolCreateParams& p,
