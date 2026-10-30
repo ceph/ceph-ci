@@ -3294,16 +3294,6 @@ shard_id_t OSDMap::pgtemp_undo_primaryfirst(const pg_pool_t& pool,
   ceph_abort("Shard out of range!");
 }
 
-bool OSDMap::undo_pre_tentacle_primaryfirst(spg_t *pgid) const
-{
-  const pg_pool_t *pool = get_pg_pool(pgid->pool());
-  if (!pool || pgid->shard >= pool->size) {
-    return false;
-  }
-  pgid->reset_shard(pgtemp_undo_primaryfirst(*pool, pgid->pgid, pgid->shard));
-  return true;
-}
-
 bool OSDMap::undo_pre_stretch_zones_primaryfirst(spg_t *pgid) const
 {
   const pg_pool_t *pool = get_pg_pool(pgid->pool());
@@ -3325,6 +3315,16 @@ bool OSDMap::undo_pre_stretch_zones_primaryfirst(spg_t *pgid) const
   const int pos = shard >= size - parity ? shard - size + parity + 1
                                          : shard + parity;
   pgid->reset_shard(pgtemp_undo_primaryfirst(*pool, pgid->pgid, shard_id_t(pos)));
+  return true;
+}
+
+bool OSDMap::undo_pre_tentacle_primaryfirst(spg_t *pgid) const
+{
+  const pg_pool_t *pool = get_pg_pool(pgid->pool());
+  if (!pool || pgid->shard >= pool->size) {
+    return false;
+  }
+  pgid->reset_shard(pgtemp_undo_primaryfirst(*pool, pgid->pgid, pgid->shard));
   return true;
 }
 

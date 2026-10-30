@@ -104,17 +104,17 @@ int check_command_line(const PoolCreateParams& p, PoolCommand command,
 // multiple of num_zones.
 void size_over_default_zones_as_replica(PoolCreateParams& p);
 
-// Before the upgrade is committed a pool is created in one zone, as earlier
-// releases create it, whatever osd_pool_default_num_zones says. Fails, and
-// changes nothing, if the command line gives another num_zones.
-bool create_in_one_zone(PoolCreateParams& p);
-
 // The most OSDs a pool can have: each shard id must fit in a shard_id_t.
 constexpr int64_t MAX_POOL_SIZE = 128;
 
 // The most copies of a replicated pool: its size, or its replica in each
 // zone of a pool over zones.
 constexpr int64_t MAX_POOL_REPLICA_COPIES = 10;
+
+// Before the upgrade is committed a pool is created in one zone, as earlier
+// releases create it, whatever osd_pool_default_num_zones says. Fails, and
+// changes nothing, if the command line gives another num_zones.
+bool create_in_one_zone(PoolCreateParams& p);
 
 // What check_pool_params() needs from the cluster.
 struct PoolCreateCluster {
