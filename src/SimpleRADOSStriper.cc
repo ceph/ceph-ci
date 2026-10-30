@@ -814,34 +814,63 @@ int SimpleRADOSStriper::recover_lock()
 
   const auto ext = get_first_extent();
 
-  if (int rc = get_metadata(); rc < 0) {
+  librados::ObjectReadOperation op;
+  int prval_excl = 0;
+  bufferlist bl_excl;
+
+  op.getxattr(XATTR_EXCL, &bl_excl, &prval_excl);
+  rados::cls::lock::get_lock_info_start(&op, primary);
+
+  bufferlist out_bl;
+  if (int rc = ioctx.operate(ext.soid, &op, &out_bl); rc < 0) {
     if (rc == -ENOENT || rc == -ENODATA) {
       d(20) << "someone else cleaned up?" << dendl;
-      return -EBUSY; /* someone else cleaned up, wait our turn */
+      return -EBUSY;
     } else {
       d(-1) << "could not recover exclusive locker" << dendl;
       return -EIO;
     }
   }
 
+  if (prval_excl < 0 || bl_excl.length() == 0) {
+    return -EBUSY; // Cleaned up
+  }
+  exclusive_holder = bl_excl.to_str();
+
   if (exclusive_holder.empty()) {
     d(5) << "someone else cleaned up" << dendl;
     return -EBUSY;
   }
+  entity_addrvec_t excl_addrv;
+  if (!excl_addrv.parse(exclusive_holder.c_str()) || excl_addrv.v.empty()) {
+    d(-1) << "failed to parse exclusive holder address: " << exclusive_holder << dendl;
+    return -EINVAL;
+  }
 
-  int exclusive;
+  // Decode lock info: skip the getxattr output slice
+  ceph_assert(out_bl.length() >= bl_excl.length());
+  auto it = out_bl.cbegin();
+  it.seek(bl_excl.length());
+
+  std::map<rados::cls::lock::locker_id_t, rados::cls::lock::locker_info_t> lockers;
+  ClsLockType lock_type;
   std::string tag;
-  std::list<librados::locker_t> lockers;
-  if (int rc = ioctx.list_lockers(ext.soid, primary, &exclusive, &tag, &lockers); rc < 0) {
+  if (int rc = rados::cls::lock::get_lock_info_finish(&it, &lockers, &lock_type, &tag); rc < 0) {
+    d(5) << "failed to get lock info: " << cpp_strerror(rc) << dendl;
     return rc;
   }
 
   bool active = false;
-  for (const auto& l : lockers) {
-    d(20) << "locker: " << l.address << dendl;
-    if (exclusive_holder.find(l.address) != std::string::npos || l.address.find(exclusive_holder) != std::string::npos) {
-      d(15) << "  found locker: " << l.address << dendl;
-      active = true;
+  for (const auto& [locker_id, l] : lockers) {
+    d(20) << "locker " << locker_id << ": " << l.addr << dendl;
+    for (const auto& a : excl_addrv.v) {
+      if (l.addr.probably_equals(a)) {
+        d(15) << "  found locker: " << a << dendl;
+        active = true;
+        break;
+      }
+    }
+    if (active) {
       break;
     }
   }
@@ -849,17 +878,15 @@ int SimpleRADOSStriper::recover_lock()
   if (active) {
     d(5) << "exclusive lock holder " << exclusive_holder << " is still active" << dendl;
     return -EBUSY;
-  } else {
-    d(5) << "exclusive lock holder " << exclusive_holder << " is dead, recovering" << dendl;
   }
 
+  d(5) << "exclusive lock holder " << exclusive_holder << " is dead, recovering" << dendl;
+
   if (blocklist_the_dead) {
-    entity_addrvec_t addrv;
-    addrv.parse(exclusive_holder.c_str());
     auto R = librados::Rados(ioctx);
     std::string_view b = "blocklist";
 retry:
-    for (auto& a : addrv.v) {
+    for (auto& a : excl_addrv.v) {
       CachedStackStringStream css;
       *css << "{\"prefix\":\"osd " << b << "\", \"" << b << "op\":\"add\",";
       *css << "\"addr\":\"";
@@ -881,30 +908,28 @@ retry:
     R.wait_for_latest_osdmap();
   }
 
-  {
-    auto tv = ceph::to_timeval(lock_keeper_timeout);
-    if (int rc = ioctx.lock_shared(ext.soid, primary, cookie.to_string(), "", lockdesc, &tv, LIBRADOS_LOCK_FLAG_MAY_RENEW); rc < 0) {
-      return rc;
-    }
-    last_renewal = clock::now();
-    d(5) << "acquired Shared lock" << dendl;
-  }
-
-  d(5) << "cleaning up the lock state" << dendl;
+  d(5) << "attempting to clean up the lock state" << dendl;
   {
     auto op = librados::ObjectWriteOperation();
+    auto tv = ceph::to_timeval(lock_keeper_timeout);
+    utime_t duration; duration.set_from_timeval(&tv);
+    int flags = LOCK_FLAG_MAY_RENEW;
     op.cmpxattr(XATTR_EXCL, LIBRADOS_CMPXATTR_OP_EQ, str2bl(exclusive_holder));
     op.setxattr(XATTR_EXCL, bufferlist());
     op.setxattr(XATTR_STATE, state2bl(LockLevel::Shared));
+    rados::cls::lock::lock(&op, primary, ClsLockType::SHARED, cookie.to_string(), "", lockdesc, duration, flags);
     if (int rc = ioctx.operate(ext.soid, &op); rc < 0) {
       if (rc == -ECANCELED) {
         d(5) << "another client recovered the lock concurrently" << dendl;
         return -ECANCELED;
       } else {
-        d(-1) << "could not set lock owner: " << cpp_strerror(rc) << dendl;
+        d(-1) << "could recover lock: " << cpp_strerror(rc) << dendl;
         return -EIO;
       }
     }
+    last_renewal = clock::now();
+    locked = LockLevel::Shared;
+    d(5) << "cleaned up lock state and acquired Shared lock" << dendl;
   }
 
   return 0;
@@ -986,6 +1011,8 @@ int SimpleRADOSStriper::lock(LockLevel ilock)
       if (ilock >= Exclusive) {
         write_epoch++;
       }
+    } else if (rc != -EBUSY) {
+      d(10) << "lock is busy" << dendl;
     } else if (rc == -ECANCELED) {
       if (locked >= Reserved) {
         blocklisted = true;
@@ -994,34 +1021,39 @@ int SimpleRADOSStriper::lock(LockLevel ilock)
       if (int rc = recover_lock(); rc < 0 && rc != -ECANCELED) {
         return rc;
       }
-    } else if (rc == -EBUSY) {
-      auto now = std::chrono::steady_clock::now();
-      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time);
-
-      if (elapsed >= acquire_timeout) {
-        d(10) << "acquire_timeout exceeded" << dendl;
-        return -EBUSY;
-      }
-
-      if (first_print || std::chrono::duration_cast<std::chrono::milliseconds>(now - last_print_time).count() >= 500) {
-        d(10) << "waiting for locks: ";
-        print_lockers(*_dout);
-        *_dout << dendl;
-        last_print_time = now;
-        first_print = false;
-      }
-
-      l.unlock();
-      std::this_thread::sleep_for(std::chrono::milliseconds(5));
-
-      if (int rc = get_metadata(); rc < 0) {
-        return rc;
-      }
     } else {
       d(-1) << " lock failed: " << cpp_strerror(rc) << dendl;
       if (locked > initial_lock) {
         _unlock(initial_lock);
       }
+      return rc;
+    }
+
+    if (locked == ilock) {
+      /* N.B.: recover_lock may transition to Shared */
+      break;
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time);
+
+    if (elapsed >= acquire_timeout) {
+      d(10) << "acquire_timeout exceeded" << dendl;
+      return -EBUSY;
+    }
+
+    if (first_print || std::chrono::duration_cast<std::chrono::milliseconds>(now - last_print_time).count() >= 500) {
+      d(10) << "waiting for locks: ";
+      print_lockers(*_dout);
+      *_dout << dendl;
+      last_print_time = now;
+      first_print = false;
+    }
+
+    l.unlock();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    if (int rc = get_metadata(); rc < 0) {
       return rc;
     }
   }
