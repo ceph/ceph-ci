@@ -2523,11 +2523,23 @@ function test_wait_background() {
 function flush_pg_stats()
 {
     local timeout=${1:-$TIMEOUT}
+    # An OSD that was just (re)started is marked up by the mon as soon as it
+    # sends its boot message, but it may not accept 'ceph tell' for a short
+    # while; retry for OSDs that the osdmap says are up before skipping them.
+    local tell_retries=${FLUSH_PG_STATS_TELL_RETRIES:-15}
 
     ids=`ceph osd ls`
     seqs=''
     for osd in $ids; do
         seq=$(timeout $timeout ceph tell osd.$osd flush_pg_stats 2>/dev/null) || true
+        local retry=0
+        while test -z "$seq" && test $retry -lt $tell_retries; do
+            # a down OSD is skipped, as before
+            ceph osd dump | grep -q "^osd.$osd up " || break
+            sleep 1
+            seq=$(timeout $timeout ceph tell osd.$osd flush_pg_stats 2>/dev/null) || true
+            retry=$(expr $retry + 1)
+        done
 	    if test -z "$seq"; then
 		    continue
 	    fi
