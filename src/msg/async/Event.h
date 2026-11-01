@@ -160,6 +160,7 @@ class EventCenter {
   pthread_t owner = 0;
   std::mutex external_lock;
   std::atomic_ulong external_num_events;
+  std::atomic_bool sleeping{false};
   std::vector<EventCallbackRef> external_events;
   // Scratch buffers reused across process_events() calls to avoid
   // allocating.  This relies on std::vector::clear() keeping the

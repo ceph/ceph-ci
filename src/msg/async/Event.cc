@@ -410,7 +410,12 @@ int EventCenter::process_events(unsigned timeout_microseconds,  ceph::timespan *
     }
   }
 
-  bool blocking = pollers.empty() && !external_num_events.load();
+  // pairs with the increment and sleeping load in dispatch_event_external()
+  bool blocking = pollers.empty();
+  if (blocking) {
+    sleeping.store(true);
+    blocking = !external_num_events.load();
+  }
   if (!blocking)
     timeout_microseconds = 0;
   tv.tv_sec = timeout_microseconds / 1000000;
@@ -421,6 +426,7 @@ int EventCenter::process_events(unsigned timeout_microseconds,  ceph::timespan *
   // empty.  clear() keeps the capacity from the previous pass.
   fired_events.clear();
   numevents = driver->event_wait(fired_events, &tv);
+  sleeping.store(false, std::memory_order_relaxed);
   auto working_start = ceph::mono_clock::now();
   for (int event_id = 0; event_id < numevents; event_id++) {
     int rfired = 0;
@@ -489,7 +495,7 @@ void EventCenter::dispatch_event_external(EventCallbackRef e)
     external_events.push_back(e);
     num = ++external_num_events;
   }
-  if (num == 1 && !in_thread())
+  if (num == 1 && !in_thread() && sleeping.load())
     wakeup();
 
   ldout(cct, 30) << __func__ << " " << e << " pending " << num << dendl;
