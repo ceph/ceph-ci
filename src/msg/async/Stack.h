@@ -46,6 +46,7 @@ class ConnectedSocketImpl {
   virtual void close() = 0;
   virtual int fd() const = 0;
   virtual void set_priority(int sd, int prio, int domain) = 0;
+  virtual bool short_read_drains() const { return false; }
 };
 
 class ConnectedSocket;
@@ -139,6 +140,10 @@ class ConnectedSocket {
 
   void set_priority(int sd, int prio, int domain) {
     _csi->set_priority(sd, prio, domain);
+  }
+
+  bool short_read_drains() const {
+    return _csi->short_read_drains();
   }
 
   explicit operator bool() const {

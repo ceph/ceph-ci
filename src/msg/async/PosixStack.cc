@@ -74,6 +74,10 @@ class PosixConnectedSocketImpl final : public ConnectedSocketImpl {
     return r;
   }
 
+  bool short_read_drains() const override {
+    return true;
+  }
+
   // return the sent length
   // < 0 means error occurred
   #ifndef _WIN32

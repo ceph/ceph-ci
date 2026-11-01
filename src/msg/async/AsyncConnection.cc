@@ -259,6 +259,9 @@ ssize_t AsyncConnection::read_until(unsigned len, char *p)
       left -= r;
     } while (r > 0);
   } else {
+    if (rx_drained) {
+      return len - state_offset;
+    }
     do {
       r = read_bulk(recv_buf+recv_end, recv_max_prefetch);
       ldout(async_msgr->cct, 25) << __func__ << " read_bulk recv_end is " << recv_end
@@ -268,6 +271,8 @@ ssize_t AsyncConnection::read_until(unsigned len, char *p)
         return -1;
       }
       recv_end += r;
+      rx_drained = r < static_cast<ssize_t>(recv_max_prefetch) &&
+                   cs.short_read_drains();
       if (r >= static_cast<int>(left)) {
         recv_start = len - state_offset;
         memcpy(p+state_offset, recv_buf, recv_start);
@@ -275,7 +280,7 @@ ssize_t AsyncConnection::read_until(unsigned len, char *p)
         return 0;
       }
       left -= r;
-    } while (r > 0);
+    } while (r > 0 && !rx_drained);
     memcpy(p+state_offset, recv_buf, recv_end-recv_start);
     state_offset += (recv_end - recv_start);
     recv_end = recv_start = 0;
@@ -384,6 +389,7 @@ bool AsyncConnection::inject_network_congestion() const {
 
 void AsyncConnection::process() {
   std::lock_guard<std::mutex> l(lock);
+  rx_drained = false;
   last_active = ceph::coarse_mono_clock::now();
   recv_start_time = ceph::mono_clock::now();
 
@@ -661,6 +667,7 @@ void AsyncConnection::shutdown_socket() {
     center->delete_time_event(ack_timer_id);
     ack_timer_id = 0;
   }
+  rx_drained = false;
   if (cs) {
     center->delete_file_event(cs.fd(), EVENT_READABLE | EVENT_WRITABLE);
     cs.shutdown();

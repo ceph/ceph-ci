@@ -200,6 +200,7 @@ private:
   EventCallbackRef tick_handler;
   char *recv_buf;
   uint32_t recv_max_prefetch;
+  bool rx_drained = false;
   uint32_t recv_start;
   uint32_t recv_end;
   std::set<uint64_t> register_time_events; // need to delete it if stop
