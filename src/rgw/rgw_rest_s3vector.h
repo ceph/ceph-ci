@@ -22,13 +22,30 @@ public:
   int read_permissions(RGWOp* op, optional_yield y) override { return 0; }
 };
 
-// Ceph admin REST API for vector-bucket internals, mounted at
-// /admin/vectorbucket. Operator/test-infra facing (not the S3 data path).
-// Dispatches by query parameter; currently serves ?rebuild=true (background
-// rebuild status + event log). Future session ops (?session=true) attach here.
-class RGWHandler_VectorBucket : public RGWHandler_Auth_S3 {
+// GET /admin/vectorbucket/rebuild — background rebuild status + event log.
+class RGWHandler_VectorBucketRebuild : public RGWHandler_Auth_S3 {
 protected:
-  RGWOp *op_get() override;
+  RGWOp* op_get() override;
+public:
+  using RGWHandler_Auth_S3::RGWHandler_Auth_S3;
+  ~RGWHandler_VectorBucketRebuild() override = default;
+  int read_permissions(RGWOp*, optional_yield) override { return 0; }
+};
+
+class RGWRESTMgr_VectorBucketRebuild : public RGWRESTMgr {
+public:
+  RGWHandler_REST* get_handler(rgw::sal::Driver*,
+                               req_state*,
+                               const rgw::auth::StrategyRegistry& auth_registry,
+                               const std::string&) override {
+    return new RGWHandler_VectorBucketRebuild(auth_registry);
+  }
+};
+
+// Ceph admin REST API for vector-bucket internals, mounted at /admin/vectorbucket.
+// Sub-resources:
+//   /admin/vectorbucket/rebuild — background rebuild status + event log
+class RGWHandler_VectorBucket : public RGWHandler_Auth_S3 {
 public:
   using RGWHandler_Auth_S3::RGWHandler_Auth_S3;
   ~RGWHandler_VectorBucket() override = default;
@@ -39,7 +56,9 @@ public:
 
 class RGWRESTMgr_VectorBucket : public RGWRESTMgr {
 public:
-  RGWRESTMgr_VectorBucket() = default;
+  RGWRESTMgr_VectorBucket() {
+    register_resource("rebuild", new RGWRESTMgr_VectorBucketRebuild);
+  }
   ~RGWRESTMgr_VectorBucket() override = default;
 
   RGWHandler_REST* get_handler(rgw::sal::Driver* driver,
