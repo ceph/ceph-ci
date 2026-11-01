@@ -651,6 +651,10 @@ void ProtocolV2::reset_compression() {
 void ProtocolV2::write_event() {
   ldout(cct, 10) << __func__ << dendl;
   ssize_t r = 0;
+  if (connection->ack_timer_id) {
+    connection->center->delete_time_event(connection->ack_timer_id);
+    connection->ack_timer_id = 0;
+  }
 
   connection->write_lock.lock();
   if (can_write) {
@@ -1533,7 +1537,13 @@ CtPtr ProtocolV2::handle_message() {
   bool need_dispatch_writer = false;
   if (!connection->policy.lossy) {
     ack_left++;
-    need_dispatch_writer = true;
+    const uint64_t delay = cct->_conf->ms_ack_delay;
+    if (!delay) {
+      need_dispatch_writer = true;
+    } else if (!connection->ack_timer_id && connection->is_connected()) {
+      connection->ack_timer_id = connection->center->create_time_event(
+        delay, connection->write_handler);
+    }
   }
 
   state = READY;

@@ -657,6 +657,10 @@ void AsyncConnection::shutdown_socket() {
     center->delete_time_event(last_tick_id);
     last_tick_id = 0;
   }
+  if (ack_timer_id) {
+    center->delete_time_event(ack_timer_id);
+    ack_timer_id = 0;
+  }
   if (cs) {
     center->delete_file_event(cs.fd(), EVENT_READABLE | EVENT_WRITABLE);
     cs.shutdown();

@@ -1342,6 +1342,19 @@ options:
   min: 1000
   max: 60000000
   with_legacy: true
+- name: ms_ack_delay
+  type: uint
+  level: dev
+  desc: In microseconds, how long a lossless msgr2 connection may hold the ack
+    for received messages while waiting to piggyback it on an outgoing message.
+    The event loop rounds this up to ms_time_events_min_wait_interval. 0 acks
+    immediately.
+  default: 1000
+  min: 0
+  max: 100000
+  see_also:
+  - ms_time_events_min_wait_interval
+  with_legacy: true
 - name: ms_blackhole_osd
   type: bool
   level: dev

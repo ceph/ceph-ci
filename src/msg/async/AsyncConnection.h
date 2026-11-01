@@ -208,6 +208,7 @@ private:
   ceph::mono_clock::time_point recv_start_time;
   ceph::coarse_mono_clock::time_point shutdown_start;
   uint64_t last_tick_id = 0;
+  uint64_t ack_timer_id = 0;
   const uint64_t connect_timeout_us;
   const uint64_t inactive_timeout_us;
 
