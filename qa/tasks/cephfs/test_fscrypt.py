@@ -532,7 +532,10 @@ class TestFSCryptVolumes(_FSCryptVolumeTestCase):
         for i in range(255):
             long_name += 'a'
 
-        self.mount_a.write_file(long_name, 'contents')
+        # The cloner copies through libcephfs, which records the fscrypt
+        # block size. The kernel client reports that same size when the
+        # payload fills a block.
+        self.mount_a.write_file(long_name, 'c' * 4096)
 
         long_symlink = f'{src_path}/'
         for i in range(255):
