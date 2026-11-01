@@ -289,7 +289,8 @@ int NVMeofGwMap::cfg_admin_state_change(const NvmeGwId &gw_id,
   return 0;
 }
 
-int NVMeofGwMap::is_ok_to_stop(const NvmeGroupKey& group_key)
+int NVMeofGwMap::is_ok_to_stop(const NvmeGroupKey& group_key, const NvmeGwId &gw_id,
+    bool gw_present, bool &propose_pending)
 {
   auto grp_it = created_gws.find(group_key);
   if (grp_it == created_gws.end()) {
@@ -300,13 +301,15 @@ int NVMeofGwMap::is_ok_to_stop(const NvmeGroupKey& group_key)
   uint32_t num_down_gws = 0;
   uint32_t num_avail_gws = 0;
 
-  for (const auto& [gw_id, state] : grp_it->second) {
-    if (state.availability != gw_availability_t::GW_AVAILABLE) {
-      num_down_gws++; // GWs passing redeploy process
-    } else {
-      num_avail_gws++;
+
+    for (const auto& [gw_id, state] : grp_it->second) {
+      if (state.availability != gw_availability_t::GW_AVAILABLE) {
+        num_down_gws++; // GWs passing redeploy process
+      } else {
+        num_avail_gws++;
+      }
     }
-  }
+
   const uint64_t max_down_gws =
       g_conf().get_val<uint64_t>("mon_nvmeofgw_max_down_gws");
 
@@ -316,7 +319,32 @@ int NVMeofGwMap::is_ok_to_stop(const NvmeGroupKey& group_key)
   if (num_avail_gws == 0) {
     return -EBUSY;
   } else if (max_down_gws == 0 || max_down_gws > num_down_gws) {
-    return 0;
+	  if (gw_present) {
+	    if (created_gws[group_key].find(gw_id) == created_gws[group_key].end()) {
+	     dout(1) << "ok to stop not approved: gw not found " << gw_id << dendl;
+	     return -ENOENT;
+	    }
+	    if (created_gws[group_key][gw_id].availability
+	           != gw_availability_t::GW_AVAILABLE) {
+	      dout(1) << "ok to stop not approved: gw is not Available " << gw_id << dendl;
+	      return -EINVAL;
+	    }
+	    if (created_gws[group_key][gw_id].gw_admin_state
+	              == gw_admin_state_t::GW_ADMIN_DISABLED) {
+	     dout(1) << "ok to stop approved: but gw already set to admin disabled "
+	     << gw_id << dendl;
+	     return 0;
+	    }
+	    dout(1) << "ok to stop approved: set gw to admin disabled " << gw_id << dendl;
+	    process_gw_map_gw_down(gw_id, group_key, propose_pending);
+	    created_gws[group_key][gw_id].gw_admin_state
+	             = gw_admin_state_t::GW_ADMIN_DISABLED;
+	    propose_pending = true;
+	    return 0;
+	  } else {
+        dout(10) << "approved" << dendl;
+        return 0;
+	  }
   } else {
     return -EBUSY;
   }
