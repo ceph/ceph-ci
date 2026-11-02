@@ -1974,17 +1974,17 @@ seastar::future<> SeaStore::Shard::do_transaction_no_callbacks(
   assert(store_active);
   ++(shard_stats.io_num);
 
-  auto& coll = static_cast<SeastoreCollection&>(*_ch);
-  auto& entry = coll.pending_txns.emplace_back();
+  auto coll = _get_collection(_ch->get_cid());
+  auto& entry = coll->pending_txns.emplace_back();
   entry.txn = std::move(_t);
   entry.batchable = txn_is_batchable(entry.txn);
   auto fut = entry.pr.get_future();
   DEBUG("enqueue cid={} queue_depth={} in_flight={}",
-        coll.get_cid(), coll.pending_txns.size(), coll.collection_in_flight);
-  if (!coll.collection_in_flight) {
-    coll.collection_in_flight = true;
-    DEBUG("cid={} gate closed, starting dispatch", coll.get_cid());
-    std::ignore = dispatch_collection(_ch);
+        coll->get_cid(), coll->pending_txns.size(), coll->collection_in_flight);
+  if (!coll->collection_in_flight) {
+    coll->collection_in_flight = true;
+    DEBUG("cid={} gate closed, starting dispatch", coll->get_cid());
+    std::ignore = dispatch_collection(coll);
   }
   return fut;
 }
@@ -3308,6 +3308,7 @@ SeaStore::Shard::_remove_collection(
           cid
         ).si_then([this, &ctx, &cmroot, cid] {
           onode_manager->remove_tree(cid);
+          coll_map.erase(cid);
           // param here denotes whether it already existed, probably error
           if (cmroot.must_update()) {
             transaction_manager->write_collection_root(
@@ -3327,7 +3328,11 @@ SeaStore::Shard::_remove_collection(
 boost::intrusive_ptr<SeastoreCollection>
 SeaStore::Shard::_get_collection(const coll_t& cid)
 {
-  return new SeastoreCollection{cid};
+  auto [it, inserted] = coll_map.try_emplace(cid, nullptr);
+  if (inserted || !it->second) {
+    it->second = new SeastoreCollection{cid};
+  }
+  return it->second;
 }
 
 seastar::future<> SeaStore::write_meta(
