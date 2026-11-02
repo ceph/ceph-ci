@@ -1,4 +1,4 @@
 tasks:
   - cephfs_test_runner:
       modules:
-        - tasks.cephfs.test_openfiletable
+        - tasks.cephfs.test_openfiletable.OpenFileTable.test_load_interrupted_shrinking_commit
