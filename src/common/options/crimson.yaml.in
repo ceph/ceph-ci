@@ -452,8 +452,11 @@ options:
   level: dev
   desc: Overwrite the existing data block based on delta if the overwrite size
         is equal to or less than the value, otherwise do overwrite based on
-        remapping, set to 0 to enforce the remap-based overwrite.
-  default: 0
+        remapping, set to 0 to enforce the remap-based overwrite. For use with
+        seastore_data_zero_reservation_chunk_size (RBM), set this to at least
+        the typical overwrite size (e.g. 4K) so in-chunk overwrites stay
+        in-place instead of re-splitting the widened mapping.
+  default: 4096
 - name: seastore_data_zero_reservation_chunk_size
   type: size
   level: dev

@@ -9,6 +9,7 @@
 
 #include "include/buffer.h"
 
+#include "crimson/common/config_proxy.h"
 #include "crimson/common/errorator.h"
 #include "crimson/common/errorator-utils.h"
 #include "crimson/os/seastore/backref_entry.h"
@@ -1907,9 +1908,6 @@ private:
   }
 
   ExtentPlacementManager& epm;
-  // when delta-based overwrite is enabled, RANDOM_BLOCK data extents may be
-  // mutated in place, leaving their LBA-leaf crc stale; see _read_extent().
-  const bool delta_based_overwrite_enabled;
   RootBlockRef root;               ///< ref to current root
   ExtentIndex extents_index;             ///< set of live extents
 
@@ -2216,7 +2214,7 @@ void stage_visibility_handoff(Transaction& t,
   void on_transaction_destruct(Transaction& t);
 
   static void check_full_extent_integrity(
-    uint32_t ref_crc, uint32_t pin_crc);
+    uint32_t ref_crc, uint32_t pin_crc, const CachedExtent &extent);
 
   /// Read the extent in range offset~length,
   /// must be called exclusively for an extent,
@@ -2283,8 +2281,16 @@ void stage_visibility_handoff(Transaction& t,
               // cold read can see the new content against the old leaf crc.
               // such extents are verified via the delta chain instead (see
               // replay_delta()), so skip the leaf-crc check for them.
+              //
+              // Read the conf live: ObjectDataHandler is constructed per write
+              // and picks up conf changes immediately, while Cache is long-
+              // lived. A cached flag set at Cache construction would leave
+              // the skip off after `ceph config set ..._delta_based_overwrite`
+              // (or a late conf apply), so delta writes run but cold reads
+              // still abort on the stale leaf crc.
               bool inplace_delta_overwrite =
-                delta_based_overwrite_enabled &&
+                crimson::common::get_conf<Option::size_t>(
+                  "seastore_data_delta_based_overwrite") > 0 &&
                 extent->get_paddr().is_absolute_random_block() &&
                 can_inplace_rewrite(extent->get_type());
               if (!inplace_delta_overwrite) {
@@ -2295,7 +2301,8 @@ void stage_visibility_handoff(Transaction& t,
                 // crc of non matching extent data.
                 // See: https://tracker.ceph.com/issues/73790
                 assert(extent->is_fully_loaded());
-                check_full_extent_integrity(extent->last_committed_crc, pin_crc);
+                check_full_extent_integrity(
+                  extent->last_committed_crc, pin_crc, *extent);
               }
             }
           } else {

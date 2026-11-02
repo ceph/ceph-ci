@@ -34,9 +34,6 @@ Cache::Cache(
   ExtentPlacementManager &epm,
   store_index_t store_index)
   : epm(epm),
-    delta_based_overwrite_enabled(
-      crimson::common::get_conf<Option::size_t>(
-        "seastore_data_delta_based_overwrite") > 0),
     force_backref(crimson::common::get_conf<bool>(
         "seastore_lbc_test_stress")),
     laddr_index(laddr_extent_index_t::bucket_traits(
@@ -1285,16 +1282,17 @@ void Cache::on_transaction_destruct(Transaction& t)
 }
 
 void Cache::check_full_extent_integrity(
-  uint32_t ref_crc, uint32_t pin_crc)
+  uint32_t ref_crc, uint32_t pin_crc, const CachedExtent &extent)
 {
   LOG_PREFIX(Cache::check_full_extent_integrity);;
   DEBUG("checksum in the lba tree: 0x{:x}, actual checksum: 0x{:x}",
     pin_crc,
     ref_crc);
   if (unlikely(pin_crc != ref_crc)) {
-    ERROR("extent checksum inconsistent, recorded: 0x{:x}, actual: 0x{:x}",
+    ERROR("extent checksum inconsistent, recorded: 0x{:x}, actual: 0x{:x} -- {}",
       pin_crc,
-      ref_crc);
+      ref_crc,
+      extent);
       ceph_abort_msg("extent checksum inconsistent");
   }
 }

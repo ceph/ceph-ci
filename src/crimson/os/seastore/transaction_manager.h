@@ -14,6 +14,7 @@
 #include <boost/smart_ptr/intrusive_ref_counter.hpp>
 
 #include <seastar/core/future.hh>
+#include <seastar/core/lowres_clock.hh>
 #include <seastar/util/defer.hh>
 
 #include "include/ceph_assert.h"
@@ -146,11 +147,21 @@ public:
    */
   get_pin_ret get_containing_pin(
     Transaction &t,
-    laddr_t laddr) {
+    laddr_t laddr,
+    seastar::lowres_clock::duration *cursor_time = nullptr,
+    seastar::lowres_clock::duration *resolve_time = nullptr) {
     LOG_PREFIX(TransactionManager::get_containing_pin);
     SUBDEBUGT(seastore_tm, "{} ...", t, laddr);
+    auto cursor_start = seastar::lowres_clock::now();
     auto cursor = co_await lba_manager->get_cursor(t, laddr, true);
+    if (cursor_time) {
+      *cursor_time += seastar::lowres_clock::now() - cursor_start;
+    }
+    auto resolve_start = seastar::lowres_clock::now();
     auto pin = co_await resolve_cursor_to_mapping(t, std::move(cursor));
+    if (resolve_time) {
+      *resolve_time += seastar::lowres_clock::now() - resolve_start;
+    }
     SUBDEBUGT(seastore_tm, "got {}", t, pin);
     co_return pin;
   }
