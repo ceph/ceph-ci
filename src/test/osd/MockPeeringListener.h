@@ -82,6 +82,7 @@ class MockPeeringListener : public PeeringState::PeeringListener {
                       DoutPrefixProvider *dpp,
                       pg_shard_t pg_whoami) : pg_whoami(pg_whoami) {
     backend_listener = std::make_unique<MockPGBackendListener>(osdmap, pool_id, dpp, pg_whoami);
+    backend_listener->peering_listener = this;
     backend = std::make_unique<MockPGBackend>(g_ceph_context, backend_listener.get(), nullptr, coll, ch);
     recoverystate_perf = build_recoverystate_perf(g_ceph_context);
     g_ceph_context->get_perfcounters_collection()->add(recoverystate_perf);
@@ -101,6 +102,7 @@ class MockPeeringListener : public PeeringState::PeeringListener {
       coll(coll_arg),
       ch(ch_arg)
   {
+    backend_listener->peering_listener = this;
     backend = std::make_unique<MockPGBackend>(
       g_ceph_context, backend_listener.get(), object_store, coll, ch);
     recoverystate_perf = build_recoverystate_perf(g_ceph_context);

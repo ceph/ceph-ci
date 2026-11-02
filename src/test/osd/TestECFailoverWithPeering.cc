@@ -1231,6 +1231,51 @@ TEST_P(TestECFailoverWithPeering, MultiObjectParallelRecoveryCrash) {
 }
 
 /**
+ * Recovering an object to several shards must recompute the PG stats once,
+ * not once per shard: a wide EC PG that has to recover every shard spent
+ * most of its time in update_calc_stats().
+ */
+TEST_P(TestECFailoverWithPeering, RecoveryPublishesStatsOncePerObject) {
+  if (m < 2) {
+    GTEST_SKIP() << "Test requires m >= 2";
+  }
+  ASSERT_TRUE(all_shards_active()) << "Initial peering must complete";
+
+  const std::string one_shard = "missing_on_one_shard";
+  const std::string two_shards = "missing_on_two_shards";
+  const std::string not_recovered = "not_recovered";
+  const std::string pattern_a(k * stripe_unit, 'A');
+  const std::string pattern_b(k * stripe_unit, 'B');
+  for (const auto &obj : {one_shard, two_shards, not_recovered}) {
+    ASSERT_EQ(create_and_write(obj, pattern_a), 0);
+  }
+
+  mark_osd_down(1);
+  ASSERT_EQ(write(one_shard, 0, pattern_b, pattern_b.length()), 0);
+  mark_osd_down(2);
+  ASSERT_EQ(write(two_shards, 0, pattern_b, pattern_b.length()), 0);
+  ASSERT_EQ(write(not_recovered, 0, pattern_b, pattern_b.length()), 0);
+  mark_osd_up(1);
+  mark_osd_up(2);
+
+  // not_recovered stays missing, so the PG does not finish recovery and
+  // publish its stats for that below.
+  MockPeeringListener *pl = get_primary_test_pg()->get_peering_listener();
+  pl->publish_stats_call_count = 0;
+  run_recovery(one_shard, false, pattern_b);
+  const int publishes_one_shard = pl->publish_stats_call_count;
+
+  pl->publish_stats_call_count = 0;
+  run_recovery(two_shards, false, pattern_b);
+  const int publishes_two_shards = pl->publish_stats_call_count;
+  run_recovery(not_recovered, false, pattern_b);
+
+  EXPECT_GT(publishes_one_shard, 0);
+  EXPECT_EQ(publishes_two_shards, publishes_one_shard)
+    << "recovering an object to more shards published the PG stats more often";
+}
+
+/**
  * Test rollback after a sequence of blocked full-stripe and chunk writes.
  * Recreate for tracker https://tracker.ceph.com/issues/75211
  */

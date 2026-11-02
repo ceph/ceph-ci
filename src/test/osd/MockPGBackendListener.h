@@ -51,6 +51,8 @@ public:
   
   // Pointer to PeeringState for tests that use full peering
   PeeringState *peering_state = nullptr;
+  // Set by the MockPeeringListener that owns this listener
+  PeeringState::PeeringListener *peering_listener = nullptr;
   
   shard_id_set acting_recovery_backfill_shard_id_set;
   std::map<pg_shard_t, pg_info_t> shard_info;
@@ -181,6 +183,10 @@ public:
     // Call into PeeringState to mark object as fully recovered
     if (peering_state) {
       peering_state->object_recovered(oid, stat_diff);
+    }
+    // As PrimaryLogPG::on_global_recover()
+    if (peering_listener) {
+      peering_listener->publish_stats_to_osd();
     }
   }
 

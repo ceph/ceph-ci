@@ -5466,7 +5466,6 @@ void PeeringState::on_peer_recover(
   const hobject_t &soid,
   const eversion_t &version)
 {
-  pl->publish_stats_to_osd();
   // done!
   peer_missing[peer].got(soid, version);
   missing_loc.add_location(soid, peer);
