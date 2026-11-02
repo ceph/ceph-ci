@@ -2538,10 +2538,11 @@ void MDSRankDispatcher::handle_mds_map(
 	  send_rejoins = true;
 	}
       }
-      // Retry OP_WEAK that was skipped while this peer was still in
-      // resolve/reconnect.
-      if (send_rejoins)
-	mdcache->rejoin_send_rejoins();
+      // Retry OP_WEAK that was skipped while this peer was still below
+      // rejoin. Only from rejoin, and only if an OP_WEAK was deferred:
+      // an active rank can still be importing/exporting.
+      if (send_rejoins && is_rejoin())
+	mdcache->rejoin_send_rejoins_if_pending();
     }
   }
 

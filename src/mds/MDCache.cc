@@ -4101,8 +4101,9 @@ void MDCache::rejoin_start(MDSContext *rejoin_done_)
  * we start out by sending rejoins to everyone in the recovery set.
  *
  * if we are rejoin, send OP_WEAK for all regions in our cache, but only
- * to peers that have already reached rejoin (or later). peers still in
- * replay/resolve/reconnect are skipped and retried when they catch up.
+ * to peers that have already reached rejoin (or later). peers still below
+ * rejoin (failed, replay, resolve, or reconnect) are skipped and retried
+ * from handle_mds_map once they catch up.
  * if we are active|stopping, send only to nodes that are rejoining.
  */
 void MDCache::rejoin_send_rejoins()
@@ -4139,15 +4140,13 @@ void MDCache::rejoin_send_rejoins()
     if (mds->is_rejoin()) {
       auto st = mds->mdsmap->get_state(rank);
       if (st < MDSMap::STATE_REJOIN) {
-	// Do not send OP_WEAK to replay/resolve/reconnect peers. Failed
-	// (STATE_NULL) ranks are skipped without delaying: they will be
-	// retried after handle_mds_failure() clears rejoin_sent.
-	if (st >= MDSMap::STATE_REPLAY) {
-	  dout(7) << "rejoin_send_rejoins peer mds." << rank
-		  << " not yet rejoin (state "
-		  << ceph_mds_state_name(st) << "), delaying OP_WEAK" << dendl;
-	  delayed = true;
-	}
+	// Still owed an OP_WEAK: failed (STATE_NULL), replay, resolve,
+	// or reconnect. rejoins_pending retries this from handle_mds_map
+	// once the peer reaches rejoin.
+	dout(7) << "rejoin_send_rejoins peer mds." << rank
+		<< " not yet rejoin (state "
+		<< ceph_mds_state_name(st) << "), delaying OP_WEAK" << dendl;
+	delayed = true;
 	continue;
       }
       rejoins[rank] = make_message<MMDSCacheRejoin>(MMDSCacheRejoin::OP_WEAK);
