@@ -11,6 +11,7 @@ tasks:
           - fs/fscrypt_cli_setup.sh
   - cephfs_test_runner:
       fail_on_skip: false
+      failfast: false
       modules:
         - tasks.cephfs.test_fscrypt.TestFSCrypt
         - tasks.cephfs.test_fscrypt.TestFSCryptRecovery
