@@ -5263,7 +5263,7 @@ options:
     ivf_hnsw_pq (IVF with HNSW graph and PQ, optimized for IO-bound workloads),
     ivf_hnsw_sq (IVF with HNSW graph and scalar quantization, higher recall),
     ivf_flat (IVF without compression, highest recall but most memory).
-  default: auto
+  default: ivf_flat
   enum_values:
   - auto
   - ivf_pq

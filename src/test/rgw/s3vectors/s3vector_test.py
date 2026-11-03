@@ -4255,7 +4255,7 @@ def test_put_vectors_must_exist():
 
 def test_background_index_rebuild():
     """Test that vector index is rebuilt in the background when unindexed rows exceed threshold.
-    The default threshold is 256 rows. We insert 500 vectors (above LanceDB's IVF_PQ minimum)
+    The default threshold is 256 rows. We insert 500 vectors (above the minimum required for index creation)
     and wait for the background manager to build the vector index."""
     _grant_admin_caps()
     dimension = 32
@@ -4285,7 +4285,7 @@ def test_background_index_rebuild():
     wait_for_max_concurrent_rebuilds(0)
     try:
         # insert 500 vectors in batches (exceeds default threshold of 256 and
-        # LanceDB's IVF_PQ minimum for reliable index creation)
+        # the minimum required for reliable index creation)
         for batch_start in range(0, total_vectors, batch_size):
             batch_end = min(batch_start + batch_size, total_vectors)
             vectors = generate_vectors(batch_end - batch_start, dimension)
@@ -4350,7 +4350,7 @@ def test_query_consistency_before_and_after_index_build():
       5. Assert:
          - The true nearest neighbour (the stored query vector) is in the ANN top-k.
          - At least 80 % of the brute-force top-k keys appear in the ANN top-k
-           (ANN recall check — LanceDB IVF-PQ is approximate but must be close).
+           (recall check — IVF_FLAT is exact so this should be 100%, threshold is 80%).
     """
     _grant_admin_caps()
     dimension = 32
@@ -4428,8 +4428,8 @@ def test_query_consistency_before_and_after_index_build():
         # ── Step 5: consistency assertions ────────────────────────────────────
         # the query is the stored vector 250, so the brute-force path must
         # return it first; the ANN path must still return it within its top-k.
-        # The exact ORDER of near neighbours is not compared: IVF_PQ ranks by
-        # quantized distances, so adjacent vectors may swap places.
+        # The exact ORDER of near neighbours is not compared: adjacent vectors
+        # may swap places due to floating-point tie-breaking.
         assert brute_force_keys[0] == 'vec-250', (
             f'brute-force top-1 is {brute_force_keys[0]}, expected vec-250 '
             f'(the stored vector used as the query)')
@@ -5727,8 +5727,8 @@ def test_tenant_background_rebuild_isolated():
     behavior), the two tenants' mutation counters would merge, they would share
     one lock, and the rebuild would resolve the wrong (default-tenant) bucket.
 
-    Each tenant inserts a DIFFERENT number of vectors (both above the IVF_PQ
-    minimum), and we assert each index rebuilds to its own row count — proving
+    Each tenant inserts a DIFFERENT number of vectors (both above the minimum
+    required for index creation), and we assert each index rebuilds to its own row count — proving
     no cross-tenant collision."""
     _grant_admin_caps()
     dimension = 32
