@@ -4330,6 +4330,130 @@ def test_background_index_rebuild():
 
 
 
+def test_query_consistency_before_and_after_index_build():
+    """Verify that query_vectors returns consistent nearest-neighbour results
+    whether the vector index has been built (ANN path) or not (brute-force
+    flat-scan path).
+
+    This is the core correctness invariant: the ANN index must agree with the
+    brute-force ground truth on the nearest neighbours.  A bug in distance-
+    metric selection, vector ingestion order, or IVF partition assignment
+    during the build would cause the ANN path to diverge silently — the test
+    suite would not catch it without this check.
+
+    Strategy:
+      1. Pause the rebuild worker, insert 500 vectors, assert numIndexSegments==0
+         so the first query provably uses the brute-force flat scan.
+      2. Query with a fixed vector and record the result (brute-force ground truth).
+      3. Resume the worker and wait for the rebuild (numIndexSegments > 0).
+      4. Query with the exact same vector and record the result (ANN path).
+      5. Assert:
+         - The true nearest neighbour (the stored query vector) is in the ANN top-k.
+         - At least 80 % of the brute-force top-k keys appear in the ANN top-k
+           (ANN recall check — LanceDB IVF-PQ is approximate but must be close).
+    """
+    _grant_admin_caps()
+    dimension = 32
+    total_vectors = 500
+    top_k = 10
+    conn = connection()
+    bucket_name = gen_bucket_name()
+    index_name = 'consistency-test-index'
+    _ensure_s3_bucket_for_vector_bucket(bucket_name)
+    result = conn.create_vector_bucket(vectorBucketName=bucket_name)
+    assert result['ResponseMetadata']['HTTPStatusCode'] == 200
+    result = conn.create_index(vectorBucketName=bucket_name, indexName=index_name,
+                               dataType='float32', dimension=dimension,
+                               distanceMetric='euclidean')
+    assert result['ResponseMetadata']['HTTPStatusCode'] == 200
+
+    # Deterministic, well-separated data: vector N is centred on N in every
+    # dimension (plus a little noise), so its nearest neighbour is unambiguous.
+    # generate_vectors() is not usable here: it restarts the centre at 0 for each
+    # batch, which leaves several keys drawn from the same distribution and makes
+    # the top-1 result random.
+    # The query is the stored vector 250 itself, generated once and reused for
+    # both queries, so the nearest neighbour is vec-250 on both paths.
+    rng = random.Random(1234)
+    all_vectors = [{'key': f'vec-{n}',
+                    'data': {'float32': [n + rng.gauss(0.0, 0.01) for _ in range(dimension)]}}
+                   for n in range(total_vectors)]
+    query_vector = all_vectors[250]['data']
+
+    # pause the worker before inserting so we can assert brute-force path
+    set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 0)
+    wait_for_max_concurrent_rebuilds(0)
+    try:
+        batch_size = 100
+        for batch_start in range(0, total_vectors, batch_size):
+            result = conn.put_vectors(vectorBucketName=bucket_name, indexName=index_name,
+                                      vectors=all_vectors[batch_start:batch_start + batch_size])
+            assert result['ResponseMetadata']['HTTPStatusCode'] == 200
+
+        # ── Step 1: confirm brute-force path (no index) ───────────────────────
+        stats = get_index_stats(conn, bucket_name, index_name)
+        assert stats['numIndexSegments'] == 0, \
+            'index must not exist yet (worker paused) — query will use brute-force'
+        assert stats['numUnindexedRows'] == total_vectors
+
+        # ── Step 2: brute-force query ─────────────────────────────────────────
+        result = conn.query_vectors(vectorBucketName=bucket_name,
+                                    indexName=index_name,
+                                    queryVector=query_vector,
+                                    topK=top_k)
+        assert result['ResponseMetadata']['HTTPStatusCode'] == 200
+        assert len(result['vectors']) == top_k
+        brute_force_keys = [v['key'] for v in result['vectors']]
+        log.info('brute-force top-%d: %s', top_k, brute_force_keys)
+
+        # ── Step 3: rebuild ───────────────────────────────────────────────────
+        set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 4)
+        wait_for_max_concurrent_rebuilds(4)
+        wait_for_index_rebuild(conn, bucket_name, index_name)
+
+        stats = get_index_stats(conn, bucket_name, index_name)
+        assert stats['numIndexSegments'] > 0, 'ANN index must exist after rebuild'
+        log.info('post-rebuild stats: %s', stats)
+
+        # ── Step 4: ANN query ─────────────────────────────────────────────────
+        result = conn.query_vectors(vectorBucketName=bucket_name,
+                                    indexName=index_name,
+                                    queryVector=query_vector,
+                                    topK=top_k)
+        assert result['ResponseMetadata']['HTTPStatusCode'] == 200
+        assert len(result['vectors']) == top_k
+        ann_keys = [v['key'] for v in result['vectors']]
+        log.info('ANN top-%d: %s', top_k, ann_keys)
+
+        # ── Step 5: consistency assertions ────────────────────────────────────
+        # the query is the stored vector 250, so the brute-force path must
+        # return it first; the ANN path must still return it within its top-k.
+        # The exact ORDER of near neighbours is not compared: IVF_PQ ranks by
+        # quantized distances, so adjacent vectors may swap places.
+        assert brute_force_keys[0] == 'vec-250', (
+            f'brute-force top-1 is {brute_force_keys[0]}, expected vec-250 '
+            f'(the stored vector used as the query)')
+        assert 'vec-250' in ann_keys, (
+            f'the true nearest neighbour vec-250 is missing from the ANN top-{top_k}: '
+            f'{ann_keys}. The ANN index disagrees with ground truth.')
+
+        # recall: at least 80 % overlap between the two top-k sets
+        brute_force_set = set(brute_force_keys)
+        ann_set = set(ann_keys)
+        overlap = len(brute_force_set & ann_set)
+        recall = overlap / top_k
+        log.info('ANN recall@%d: %.0f%% (%d/%d keys match brute-force)',
+                 top_k, recall * 100, overlap, top_k)
+        assert recall >= 0.8, (
+            f'ANN recall@{top_k} is {recall:.0%} — too low. '
+            f'Brute-force: {brute_force_keys}, ANN: {ann_keys}')
+
+    finally:
+        set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 4)
+        _clean_s3_objects_for_vector_bucket(bucket_name)
+        _ = _delete_vector_bucket(conn, bucket_name)
+
+
 def test_query_vectors_filter():
     """Test metadata filtering during vector queries."""
     conn = connection()
@@ -5036,68 +5160,146 @@ def wait_for_index_rebuild(conn, bucket_name, index_name, timeout=60, poll_inter
 
 
 def test_delete_vectors_triggers_rebuild():
-    """Test that delete_vectors triggers the background rebuild notification.
-    Insert vectors above threshold, wait for initial build, then delete and re-insert
-    to trigger a second rebuild cycle."""
+    """Verify that deletes alone — with no concurrent inserts — trigger the background
+    index rebuild via the delete-ratio threshold.
+
+    Strategy:
+      Phase 1 – insert 500 vectors and wait for the initial rebuild.  After it
+                completes the index has ~500 indexed rows and 0 unindexed rows.
+      Phase 2 – pause the rebuild worker, delete 110 vectors (22 % ghost ratio >=
+                default delete_rebuild_ratio of 20 %), assert that numUnindexedRows
+                is still 0 (no insert path involved), capture the current FINISH
+                epoch set, then re-enable the worker and wait for a second rebuild
+                driven purely by the delete-ratio check.
+      Assertions – numUnindexedRows stays 0 throughout (insert_rebuild=False), a new
+                   FINISH event appears in the admin log, deleted vectors are absent
+                   from GET, and non-deleted vectors remain queryable.
+    """
+    _grant_admin_caps()
     dimension = 32
+    # 110 deletes out of 500 indexed rows = 22 % > default delete_rebuild_ratio of 20 %
+    num_to_delete = 110
+    delete_batch_size = 20
     conn = connection()
     bucket_name = gen_bucket_name()
     _ensure_s3_bucket_for_vector_bucket(bucket_name)
     result = conn.create_vector_bucket(vectorBucketName=bucket_name)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
     index_name = 'delete-rebuild-index'
-    result = conn.create_index(vectorBucketName=bucket_name, indexName=index_name, dataType='float32', dimension=dimension, distanceMetric='cosine')
+    result = conn.create_index(vectorBucketName=bucket_name, indexName=index_name,
+                               dataType='float32', dimension=dimension, distanceMetric='cosine')
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
 
-    # insert 500 vectors
-    vectors = generate_vectors(500, dimension)
-    result = conn.put_vectors(vectorBucketName=bucket_name, indexName=index_name, vectors=vectors)
-    assert result['ResponseMetadata']['HTTPStatusCode'] == 200
-
-    # poll until initial rebuild completes
-    wait_for_index_rebuild(conn, bucket_name, index_name)
-
-    # wait for rate-limit window to expire so delete/insert notifications are not suppressed
-    time.sleep(6)
-
-    # delete vectors in small batches to avoid deep OR-chain in LanceDB SQL planner
-    delete_batch_size = 20
-    for batch_start in range(0, 100, delete_batch_size):
-        keys_to_delete = [f'vec-{i}' for i in range(batch_start, batch_start + delete_batch_size)]
-        result = conn.delete_vectors(vectorBucketName=bucket_name, indexName=index_name, keys=keys_to_delete)
+    # ── Phase 1: insert-triggered rebuild ────────────────────────────────────
+    # Pause the worker before inserting so the rebuild does not fire mid-load and
+    # before we can pause — same technique as test_background_index_rebuild.
+    set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 0)
+    wait_for_max_concurrent_rebuilds(0)
+    try:
+        vectors = generate_vectors(500, dimension)
+        result = conn.put_vectors(vectorBucketName=bucket_name, indexName=index_name, vectors=vectors)
         assert result['ResponseMetadata']['HTTPStatusCode'] == 200
 
-    # insert new vectors to trigger another rebuild notification
-    new_vectors = []
-    for i in range(500, 800):
-        new_vectors.append({
-            'key': f'vec-{i}',
-            'data': generate_data(dimension, i)
-        })
-    result = conn.put_vectors(vectorBucketName=bucket_name, indexName=index_name, vectors=new_vectors)
+        # resume to let Phase 1 rebuild fire
+        set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 4)
+        wait_for_max_concurrent_rebuilds(4)
+
+        wait_for_index_rebuild(conn, bucket_name, index_name)
+
+        stats_after_phase1 = get_index_stats(conn, bucket_name, index_name)
+        log.info('phase 1 complete: %s', stats_after_phase1)
+        assert stats_after_phase1['numIndexSegments'] > 0, 'index must exist after phase 1'
+        assert stats_after_phase1['numUnindexedRows'] == 0, \
+            'no unindexed rows expected after initial rebuild'
+
+        # ── Phase 2: delete-only rebuild ─────────────────────────────────────
+        # Re-pause immediately after Phase 1 while the worker is idle (no pending
+        # mutations for this bucket).  Pausing here — before any deletes — ensures
+        # the daemon cannot act on delete notifications until we explicitly resume.
+        set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 0)
+        wait_for_max_concurrent_rebuilds(0)
+
+        # wait for the cooldown window to expire so delete notifications will not
+        # be rate-limited when the worker resumes (default cooldown = 5 s)
+        time.sleep(6)
+
+        # delete 110 vectors in small batches (avoids deep OR-chain in LanceDB SQL planner)
+        for batch_start in range(0, num_to_delete, delete_batch_size):
+            batch_end = min(batch_start + delete_batch_size, num_to_delete)
+            keys_to_delete = [f'vec-{i}' for i in range(batch_start, batch_end)]
+            result = conn.delete_vectors(vectorBucketName=bucket_name, indexName=index_name,
+                                         keys=keys_to_delete)
+            assert result['ResponseMetadata']['HTTPStatusCode'] == 200
+
+        # key invariant: numUnindexedRows must still be 0 — only deletes were made.
+        # If a rebuild fires next it can only be via the delete-ratio path.
+        stats_before_rebuild = get_index_stats(conn, bucket_name, index_name)
+        log.info('after deletes, before rebuild (worker paused): %s', stats_before_rebuild)
+        assert stats_before_rebuild['numUnindexedRows'] == 0, \
+            'numUnindexedRows must be 0 before rebuild — only deletes were performed'
+
+        # record wall-clock time just before re-enabling the worker so we can
+        # identify FINISH events that are genuinely new (not Phase 1 leftovers).
+        rebuild_start_time = time.time()
+        log.info('re-enabling worker; rebuild_start_time=%s', rebuild_start_time)
+
+        # re-enable the worker — delete-ratio (22 % >= 20 %) triggers the rebuild
+        set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 4)
+        wait_for_max_concurrent_rebuilds(4)
+
+        # Poll the admin event log until a FINISH event with a timestamp after
+        # rebuild_start_time appears for this bucket.
+        # We cannot reuse wait_for_index_rebuild here: numIndexSegments > 0 is already
+        # true from Phase 1, so it would return immediately without the rebuild firing.
+        deadline = time.time() + 90
+        new_finish_event = None
+        threshold_str = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(rebuild_start_time))
+        while time.time() < deadline:
+            events_now = get_rebuild_admin_status(bucket=bucket_name).get('rebuild_events', [])
+            for e in events_now:
+                if e.get('type') != 'finish':
+                    continue
+                # timestamps are ISO-8601 strings; compare lexicographically —
+                # ISO-8601 in UTC is lexicographically monotone.
+                if e.get('timestamp', '') > threshold_str:
+                    new_finish_event = e
+                    break
+            if new_finish_event:
+                log.info('delete-triggered rebuild confirmed: new FINISH event=%s',
+                         new_finish_event)
+                break
+            time.sleep(2)
+        assert new_finish_event, (
+            f'expected a new FINISH event after delete-triggered rebuild within 90 s '
+            f'(rebuild_start_time={rebuild_start_time})')
+
+    finally:
+        # always restore so a test failure does not leave the worker paused
+        set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 4)
+
+    stats_after_rebuild = get_index_stats(conn, bucket_name, index_name)
+    log.info('after delete-triggered rebuild: %s', stats_after_rebuild)
+
+    # numUnindexedRows must still be 0 — rebuild was delete-ratio driven, not insert driven
+    assert stats_after_rebuild['numUnindexedRows'] == 0, \
+        'numUnindexedRows must remain 0 after delete-only rebuild'
+    log.info('delete-triggered rebuild FINISH event: %s', new_finish_event)
+
+    # deleted vectors must be absent from GET
+    result = conn.get_vectors(vectorBucketName=bucket_name, indexName=index_name,
+                              keys=['vec-0', 'vec-50', 'vec-100'])
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
+    assert len(result['vectors']) == 0, \
+        f'deleted vectors must not be returned, got: {result["vectors"]}'
 
-    # log stats before second rebuild
-    stats = get_index_stats(conn, bucket_name, index_name)
-    log.info('after delete+insert stats (before rebuild): %s', stats)
-
-    # poll until second rebuild completes (longer timeout: rate-limit delay + build time)
-    wait_for_index_rebuild(conn, bucket_name, index_name, timeout=90)
-
-    # verify queries work correctly with the updated index
+    # non-deleted vectors must still be queryable via the rebuilt index
     top_k = 5
-    query_vector = generate_data(dimension, 500)
-    result = conn.query_vectors(vectorBucketName=bucket_name, indexName=index_name, queryVector=query_vector, topK=top_k)
+    query_vector = generate_data(dimension, 200)
+    result = conn.query_vectors(vectorBucketName=bucket_name, indexName=index_name,
+                                queryVector=query_vector, topK=top_k)
     assert result['ResponseMetadata']['HTTPStatusCode'] == 200
-    assert len(result['vectors']) == top_k
-
-    # verify deleted vectors are gone
-    result = conn.get_vectors(vectorBucketName=bucket_name, indexName=index_name, keys=['vec-0', 'vec-50'])
-    assert result['ResponseMetadata']['HTTPStatusCode'] == 200
-    assert len(result['vectors']) == 0
-
-    # verify new vectors are present
-    verify_get_vectors(conn, bucket_name, index_name, ['vec-500', 'vec-600', 'vec-700'], expected_dimension=dimension)
+    assert len(result['vectors']) == top_k, \
+        f'expected {top_k} query results after delete rebuild, got {len(result["vectors"])}'
 
     # cleanup
     _clean_s3_objects_for_vector_bucket(bucket_name)
@@ -7226,6 +7428,7 @@ def test_lock_timestamp_refresh_during_rebuild():
         _ = _delete_vector_bucket(conn, bucket_name)
         set_rgw_config_option('rgw_s3vector_index_lock_ttl_seconds', 120)  # restore default
         set_rgw_config_option('rgw_s3vector_index_rebuild_cooldown', 5)
+
 
 def test_sustained_writes_below_threshold_bounded_spawns():
     """Continuous put_vectors calls while staying below the rebuild threshold

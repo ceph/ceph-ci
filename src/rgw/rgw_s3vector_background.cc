@@ -346,13 +346,17 @@ private:
     const size_t max_events = std::max<uint64_t>(
         1, cct->_conf.get_val<uint64_t>("rgw_s3vector_event_log_size"));
     std::lock_guard lg(event_log_mutex_);
-    // Coalesce repeated events of the same type on the same (bucket, index):
-    // instead of appending a new ring entry (which would evict older SPAWN/FINISH
-    // events), bump the repeat_count of the most recent matching entry and update
-    // its timestamp. This keeps LOCK_REFRESH noise from flooding the ring.
+    // Coalesce repeated events of the same type on the same (tenant, bucket,
+    // index): instead of appending a new ring entry (which would evict older
+    // SPAWN/FINISH events), bump the repeat_count of the most recent matching
+    // entry and update its timestamp. This keeps LOCK_REFRESH noise from
+    // flooding the ring. The tenant is part of the key: two tenants may hold a
+    // bucket/index with the same name, and merging their events would
+    // misattribute them.
     if (!event_log_.empty()) {
       auto& last = event_log_.back();
-      if (last.type == type && last.bucket == bucket && last.index == index) {
+      if (last.type == type && last.tenant == tenant &&
+          last.bucket == bucket && last.index == index) {
         ++last.repeat_count;
         last.timestamp = ev.timestamp;
         return;
