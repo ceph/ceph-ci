@@ -926,7 +926,7 @@ public:
   // dflt.
   static std::string num_zones_zone_failure_domain(
     const cmdmap_t& cmdmap, const pg_pool_t& p,
-    const ErasureCodeProfile& profile, const std::string& dflt);
+    const ceph::ErasureCodeProfile& profile, const std::string& dflt);
   // The rule enable_stretch_mode generates, without a rule of its own, for a
   // replicated pool that already has two zones and another replica count:
   // <pool>-replica-2 over zone_failure_domain, from the pool defaults
@@ -1334,10 +1334,17 @@ public:
       unsigned stretch_pool_min_size);
   // Whether convert_stretch_pools_at_commit() gives pool p two zones
   static bool converts_at_commit(const OSDMap& osdmap, const pg_pool_t& p);
+  // Whether p is a pool of global stretch mode that keeps one zone at the
+  // commit, or kept it
+  static bool keeps_one_zone(const OSDMap& osdmap, const pg_pool_t& p);
+  // Refuse disable_stretch_mode while a pool kept one zone at the commit,
+  // as the disable would leave it stretched
+  static int check_disable_leaves_no_stretch_pool(const OSDMap& osdmap,
+                                                  std::ostream *ss);
   /**
    * Warn about the pools of global stretch mode that keep one zone at the
-   * commit: before it, while they can still be changed, and after it, as
-   * the stretch mode commands do not handle them.
+   * commit: before it, while they can still be changed, and after it, until
+   * they are given two zones.
    */
   static void check_unconverted_stretch_pools(const OSDMap& osdmap,
                                               health_check_map_t* checks);

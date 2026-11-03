@@ -16,7 +16,8 @@ function run() {
     run_stretch_tests "$@"
 }
 
-DOC='"Reducing the Number of Zones" in the Stretch Clusters documentation'
+UNSTRETCH_DOC='"Unstretching an Erasure-Coded Pool Without Migration" in the Stretch Clusters documentation'
+DISABLE_DOC='"Disabling Stretch Mode" in the Stretch Clusters documentation'
 
 # write count objects named prefix<i> to pool, keeping what was written
 function write_objects() {
@@ -127,12 +128,12 @@ function TEST_needs_confirmation() {
     ! ceph osd pool set data0 num_zones 1 > $dir/out 2>&1 || return 1
     cat $dir/out
     grep -q -- "--yes-i-really-mean-it to proceed anyway" $dir/out || return 1
-    grep -qF "$DOC" $dir/out || return 1
+    grep -qF "$UNSTRETCH_DOC" $dir/out || return 1
     grep -q "Pool migration" $dir/out || return 1
     test "$(pool_field data0 num_zones)" = 2 || return 1
     ! ceph osd crush rule ls | grep -qx data0-single-zone || return 1
     ! ceph mon disable_stretch_mode > $dir/out 2>&1 || return 1
-    grep -qF "$DOC" $dir/out || return 1
+    grep -qF "$DISABLE_DOC" $dir/out || return 1
 
     ceph osd pool set data0 num_zones 1 --yes-i-really-mean-it || return 1
     test "$(pool_field data0 num_zones)" = 1 || return 1

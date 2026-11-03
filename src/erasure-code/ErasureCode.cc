@@ -116,10 +116,10 @@ int ErasureCode::create_rule(
   if (rule_osds_per_failure_domain <= 1) {
     return crush.add_simple_rule(
       name,
-      rule_root,
-      rule_osd_failure_domain,
+      root.empty() ? rule_root : root,
+      osd_failure_domain.empty() ? rule_osd_failure_domain : osd_failure_domain,
       rule_num_osd_failure_domains,
-      rule_device_class,
+      device_class.empty() ? rule_device_class : device_class,
       "indep",
       pg_pool_t::TYPE_ERASURE,
       ss);
@@ -133,11 +133,11 @@ int ErasureCode::create_rule(
     }
     return crush.add_indep_multi_osd_per_failure_domain_rule(
       name,
-      rule_root,
-      rule_osd_failure_domain,
+      root.empty() ? rule_root : root,
+      osd_failure_domain.empty() ? rule_osd_failure_domain : osd_failure_domain,
       rule_num_osd_failure_domains,
       rule_osds_per_failure_domain,
-      rule_device_class,
+      device_class.empty() ? rule_device_class : device_class,
       ss);
   }
 }

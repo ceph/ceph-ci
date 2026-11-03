@@ -505,35 +505,73 @@ TEST_F(PoolParamsTest, ErasureCrushParamsWithKMSucceed) {
   EXPECT_EQ(0, check_line(p, PoolCommand::CREATE)) << ss.str();
 }
 
-// Test k and m fail for a replicated pool, but set the EC defaults
+// Test k and m fail for a replicated pool, and for the defaults while the
+// default type is replicated
 TEST_F(PoolParamsTest, KMForReplicated) {
-  const PoolCreateParams p = with({{"k", int64_t(4)}, {"m", int64_t(2)}});
-  EXPECT_EQ(-EINVAL, check_line(p, PoolCommand::CREATE));
-  EXPECT_EQ("cannot specify k/m parameters for replicated pools", ss.str());
-  EXPECT_EQ(0, check_line(p, PoolCommand::DEFAULT_SET)) << ss.str();
+  const PoolCreateParams p = defaults();
+  for (auto command : {PoolCommand::CREATE, PoolCommand::DEFAULT_SET}) {
+    PoolCreateParams line = p;
+    apply_command_line(line, {{"k", int64_t(4)}, {"m", int64_t(2)}});
+    EXPECT_EQ(-EINVAL, check_line(line, command));
+    EXPECT_EQ("cannot specify k/m parameters for replicated pools "
+              "(osd_pool_default_type)", ss.str());
+    apply_command_line(line, {{"pool_type", string("replicated")}});
+    EXPECT_EQ(-EINVAL, check_line(line, command));
+    EXPECT_EQ("cannot specify k/m parameters for replicated pools", ss.str());
+  }
 }
 
-// Test replica fails for an erasure coded pool before anything is created
+// Test replica fails for an erasure coded pool, and for the defaults while
+// the default type is erasure coded
 TEST_F(PoolParamsTest, ReplicaForErasure) {
-  const PoolCreateParams p = with({{"pool_type", string("erasure")},
-                                   {"replica", int64_t(2)}});
-  EXPECT_EQ(-EINVAL, check_line(p, PoolCommand::CREATE));
-  EXPECT_EQ("replica is only applicable to replicated pools", ss.str());
+  set("osd_pool_default_type", "erasure");
+  const PoolCreateParams p = defaults();
+  for (auto command : {PoolCommand::CREATE, PoolCommand::DEFAULT_SET}) {
+    PoolCreateParams line = p;
+    apply_command_line(line, {{"replica", int64_t(2)}});
+    EXPECT_EQ(-EINVAL, check_line(line, command));
+    EXPECT_EQ("replica is only applicable to replicated pools "
+              "(osd_pool_default_type)", ss.str());
+    apply_command_line(line, {{"pool_type", string("erasure")}});
+    EXPECT_EQ(-EINVAL, check_line(line, command));
+    EXPECT_EQ("replica is only applicable to replicated pools", ss.str());
+  }
 }
 
-// Test CRUSH parameters fail for a single-zone replicated pool, naming the
-// option when one zone is the default, but not as defaults
+// A single-zone replicated pool now accepts --root, --osd_failure_domain and
+// --class (it generates a rule for them); only --zone_failure_domain, which is
+// meaningless for one zone, is refused, naming the option when it is a default.
 TEST_F(PoolParamsTest, CrushParamsForSingleZoneReplicated) {
-  const PoolCreateParams p = with({{"root", string("default")}});
-  EXPECT_EQ(-EINVAL, check_line(p, PoolCommand::CREATE));
-  EXPECT_EQ(CRUSH_PARAMS + " require num_zones > 1 for a replicated pool "
+  EXPECT_EQ(0, check_line(with({{"root", string("default")}}),
+                          PoolCommand::CREATE)) << ss.str();
+  EXPECT_EQ(0, check_line(with({{"osd_failure_domain", string("host")}}),
+                          PoolCommand::CREATE)) << ss.str();
+  EXPECT_EQ(0, check_line(with({{"class", string("ssd")}}),
+                          PoolCommand::CREATE)) << ss.str();
+  EXPECT_EQ(0, check_line(with({{"root", string("default")}}),
+                          PoolCommand::DEFAULT_SET)) << ss.str();
+  EXPECT_EQ(-EINVAL, check_line(with({{"zone_failure_domain", string("zone")}}),
+                                PoolCommand::CREATE));
+  EXPECT_EQ("zone_failure_domain requires num_zones > 1 for a replicated pool "
             "(osd_pool_default_num_zones)", ss.str());
-  EXPECT_EQ(0, check_line(p, PoolCommand::DEFAULT_SET)) << ss.str();
-  EXPECT_EQ(-EINVAL, check_line(with({{"root", string("default")},
+  EXPECT_EQ(-EINVAL, check_line(with({{"zone_failure_domain", string("zone")},
                                       {"num_zones", int64_t(1)}}),
                                 PoolCommand::CREATE));
-  EXPECT_EQ(CRUSH_PARAMS + " require num_zones > 1 for a replicated pool",
+  EXPECT_EQ("zone_failure_domain requires num_zones > 1 for a replicated pool",
             ss.str());
+}
+
+// --no-class forces no device class, and is mutually exclusive with --class.
+TEST_F(PoolParamsTest, NoClass) {
+  PoolCreateParams line = defaults();
+  apply_command_line(line, {{"no_class", true}});
+  EXPECT_TRUE(line.no_class);
+  EXPECT_EQ("", line.device_class);
+  EXPECT_EQ(0, check_line(line, PoolCommand::CREATE)) << ss.str();
+  PoolCreateParams both = defaults();
+  apply_command_line(both, {{"class", string("ssd")}, {"no_class", true}});
+  EXPECT_EQ(-EINVAL, check_line(both, PoolCommand::CREATE));
+  EXPECT_EQ("cannot specify both --class and --no-class", ss.str());
 }
 
 // Test success for a two-zone replicated pool with CRUSH parameters

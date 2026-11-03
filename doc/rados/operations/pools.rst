@@ -402,8 +402,10 @@ following:
    Where the CRUSH rule that is generated for the pool places it: the bucket
    that the rule starts from, the bucket type of the zones, the bucket type
    from which each replica or shard in a zone is chosen, and the device class.
-   They cannot be given with a CRUSH rule or an erasure code profile, and a
-   ``replicated`` pool accepts them only with ``num_zones`` greater than 1.
+   They cannot be given with a CRUSH rule or an erasure code profile. A
+   ``replicated`` pool accepts ``--root``, ``--osd_failure_domain`` and
+   ``--class`` with any ``num_zones`` (a one-zone pool gets a rule of its own);
+   ``--zone_failure_domain`` applies only with ``num_zones`` greater than 1.
 
    :Type: String
    :Required: No.
@@ -411,9 +413,19 @@ following:
              :confval:`osd_pool_default_zone_failure_domain`,
              :confval:`osd_pool_default_osd_failure_domain` and
              :confval:`osd_pool_default_class`. An ``erasure`` pool takes
-             the bucket, the bucket type within a zone and the device class
-             from the ``default`` erasure code profile, and the zone type
-             from :confval:`osd_pool_default_zone_failure_domain`.
+             the bucket and the bucket type within a zone from the ``default``
+             erasure code profile, and the zone type from
+             :confval:`osd_pool_default_zone_failure_domain`. Its device class
+             is :confval:`osd_pool_default_class` when the profile sets none.
+
+.. describe:: --no-class
+
+   Gives the pool no device class, overriding a class it would otherwise take
+   from :confval:`osd_pool_default_class` or an erasure code profile. It cannot
+   be given with ``--class``.
+
+   :Type: Boolean
+   :Required: No.
 
 .. describe:: --yes-i-really-mean-it
 
@@ -681,9 +693,10 @@ two copies in each:
   their values. It never changes an existing pool.
 * It checks the resulting defaults as ``ceph osd pool create`` would, and
   writes nothing if a check fails, for example ``--num_zones 2`` on a cluster
-  that cannot be stretched. Pool creation can still fail with defaults that
-  pass, for example on the OSDs' PG limit, or with two zones while an
-  individual stretch pool exists.
+  that cannot be stretched, or ``--k`` and ``--m`` while the default pool type
+  is ``replicated``, or ``--replica`` while it is ``erasure``. Pool creation
+  can still fail with defaults that pass, for example on the OSDs' PG limit,
+  or with two zones while an individual stretch pool exists.
 * It refuses a value that a ``mon`` or ``mon.<id>`` section of the
   configuration database, or a Monitor's local configuration, would override.
   Remove the overriding value first, as :ref:`pool-default-config-override`
@@ -729,6 +742,9 @@ Parameters and Options
    * - ``--class``
      - :confval:`osd_pool_default_class`
      -
+   * - ``--no-class``
+     - clears :confval:`osd_pool_default_class`
+     - Also removes ``crush-device-class`` from the ``default`` erasure code profile
    * - ``--replica``
      - :confval:`osd_pool_default_size`
      - Copies in each zone; the option keeps its name for backward

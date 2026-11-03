@@ -143,6 +143,16 @@ void apply_command_line(PoolCreateParams& p, const cmdmap_t& cmdmap)
       give(param);
     }
   }
+  if (bool nc = false; cmd_getval(cmdmap, "no_class", nc) && nc) {
+    // --no-class forces no device class, and counts as an explicit class
+    // choice, overriding any inherited default or profile class.
+    if (p.is_given("class")) {
+      p.no_class_conflict = true;
+    }
+    p.no_class = true;
+    p.device_class = "";
+    give("class");
+  }
   if (cmd_getval(cmdmap, "replica", n) && n > 0) {
     p.replica = n;
     give("replica");
@@ -227,6 +237,11 @@ int check_command_line(const PoolCreateParams& p, PoolCommand command,
   const bool replicated = p.pool_type == pg_pool_t::TYPE_REPLICATED;
   const bool profile_given = p.is_given("erasure_code_profile");
 
+  if (p.no_class_conflict) {
+    *ss << "cannot specify both --class and --no-class";
+    return -EINVAL;
+  }
+
   // a profile defines k, m and the CRUSH parameters
   if (profile_given && p.ec_params_given()) {
     *ss << "cannot specify both erasure_code_profile and k/m parameters";
@@ -244,16 +259,19 @@ int check_command_line(const PoolCreateParams& p, PoolCommand command,
     *ss << "cannot specify both erasure_code_profile and " << CRUSH_PARAMS;
     return -EINVAL;
   }
-  if (create && replicated && p.ec_params_given()) {
-    *ss << "cannot specify k/m parameters for replicated pools";
+  if (replicated && p.ec_params_given()) {
+    *ss << "cannot specify k/m parameters for replicated pools"
+        << p.from_default("pool_type");
     return -EINVAL;
   }
-  if (create && erasure && p.is_given("replica")) {
-    *ss << "replica is only applicable to replicated pools";
+  if (erasure && p.is_given("replica")) {
+    *ss << "replica is only applicable to replicated pools"
+        << p.from_default("pool_type");
     return -EINVAL;
   }
-  if (create && replicated && p.num_zones == 1 && p.crush_params_given()) {
-    *ss << CRUSH_PARAMS << " require num_zones > 1 for a replicated pool"
+  if (create && replicated && p.num_zones == 1 &&
+      p.is_given("zone_failure_domain")) {
+    *ss << "zone_failure_domain requires num_zones > 1 for a replicated pool"
         << p.from_default("num_zones");
     return -EINVAL;
   }

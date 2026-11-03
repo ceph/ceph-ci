@@ -140,10 +140,14 @@ static const string OSD_PG_CREATING_PREFIX("osd_pg_creating");
 static const string OSD_METADATA_PREFIX("osd_metadata");
 static const string OSD_SNAP_PREFIX("osd_snap");
 
-// where the documentation says when going to fewer zones makes PGs
-// unavailable
-static constexpr std::string_view reducing_num_zones_doc =
-  "\"Reducing the Number of Zones\" in the Stretch Clusters documentation";
+// where the documentation says when going to one zone makes PGs unavailable
+static constexpr std::string_view unstretch_ec_pool_doc =
+  "\"Unstretching an Erasure-Coded Pool Without Migration\" in the Stretch "
+  "Clusters documentation";
+static constexpr std::string_view disable_stretch_mode_doc =
+  "\"Disabling Stretch Mode\" in the Stretch Clusters documentation";
+static constexpr std::string_view pool_not_converted_doc =
+  "STRETCH_MODE_POOL_NOT_CONVERTED in the Health Checks documentation";
 
 /*
 
@@ -8746,6 +8750,23 @@ int OSDMonitor::prepare_pool_crush_rule(const unsigned pool_type,
             int err = crush_rule_create_replica(pool_name, root, num_zones, num_replica_per_zone, zone_failure_domain, osd_failure_domain, device_class, false, crush_rule, ss);
             return handle_crush_rule_creation_result(err, pool_name);
 	  }
+          // A single-zone pool whose placement differs from the cluster
+          // default gets its own generated rule; otherwise the default rule.
+          {
+            const PoolCreateParams dflt = load_pool_defaults(g_conf());
+            const string eff_root = !root.empty() ? root : dflt.root;
+            const string eff_osd_fd =
+              !osd_failure_domain.empty() ? osd_failure_domain
+                                          : dflt.osd_failure_domain;
+            if (eff_root != "default" || eff_osd_fd != "host" ||
+                !device_class.empty()) {
+              int err = crush_rule_create_replica(
+                pool_name + "-single-zone", root, num_zones,
+                num_replica_per_zone, zone_failure_domain, osd_failure_domain,
+                device_class, false, crush_rule, ss);
+              return handle_crush_rule_creation_result(err, pool_name);
+            }
+          }
           // Use default rule
           *crush_rule = osdmap.crush->get_osd_pool_default_crush_replicated_rule(cct);
 	  if (*crush_rule < 0) {
@@ -10165,12 +10186,34 @@ int OSDMonitor::prepare_num_zones_crush_rule(
     return get_crush_rule(given, crush_rule, ss);
   }
   const PoolCreateParams d = load_pool_defaults(g_conf());
+  // --no-class forces no device class and conflicts with an explicit --class
+  const bool no_class = cmd_getval_or<bool>(cmdmap, "no_class", false);
+  if (no_class && !cmd_getval_or<string>(cmdmap, "class", "").empty()) {
+    if (ss) {
+      *ss << "cannot specify both --class and --no-class";
+    }
+    return -EINVAL;
+  }
+  const auto device_class = [&](const string& dflt) -> string {
+    return no_class ? string() : cmd_getval_or<string>(cmdmap, "class", dflt);
+  };
   if (n == 1) {
-    const string rule_name = p.is_erasure() ? poolstr + "-single-zone" : "";
-    const string root = cmd_getval_or<string>(cmdmap, "root", d.root);
+    if (p.is_replicated()) {
+      // no profile: honour the command line over the pool defaults
+      return prepare_pool_crush_rule(
+          p.get_type(), poolstr, "", "", 1,
+          cmd_getval_or<string>(cmdmap, "root", d.root), 0, "",
+          cmd_getval_or<string>(cmdmap, "osd_failure_domain",
+                                d.osd_failure_domain),
+          device_class(d.device_class), crush_rule,
+          ss);
+    }
+    // an EC pool's profile gives the placement the command line does not
     return prepare_pool_crush_rule(
-        p.get_type(), poolstr, p.erasure_code_profile, rule_name, 1, root,
-        0, "", "", "", crush_rule, ss);
+        p.get_type(), poolstr, p.erasure_code_profile, poolstr + "-single-zone",
+        1, cmd_getval_or<string>(cmdmap, "root", ""), 0, "",
+        cmd_getval_or<string>(cmdmap, "osd_failure_domain", ""),
+        device_class(""), crush_rule, ss);
   }
   const string zone_failure_domain = num_zones_zone_failure_domain(
       cmdmap, p, osdmap.get_erasure_code_profile(p.erasure_code_profile),
@@ -10183,7 +10226,7 @@ int OSDMonitor::prepare_num_zones_crush_rule(
         zone_failure_domain,
         cmd_getval_or<string>(cmdmap, "osd_failure_domain",
                               d.osd_failure_domain),
-        cmd_getval_or<string>(cmdmap, "class", d.device_class),
+        device_class(d.device_class),
         crush_rule, ss);
   }
   // an EC pool's profile gives what is not on the command line
@@ -10191,7 +10234,7 @@ int OSDMonitor::prepare_num_zones_crush_rule(
       p.get_type(), poolstr, p.erasure_code_profile, poolstr + "-stretch", n,
       cmd_getval_or<string>(cmdmap, "root", ""), 0, zone_failure_domain,
       cmd_getval_or<string>(cmdmap, "osd_failure_domain", ""),
-      cmd_getval_or<string>(cmdmap, "class", ""), crush_rule, ss);
+      device_class(""), crush_rule, ss);
 }
 
 // The pg_temp, primary_temp and pg_upmap of the pool's PGs name an OSD for
@@ -10268,7 +10311,9 @@ int OSDMonitor::prepare_command_pool_set_num_zones(
   const int64_t old_num_zones = p.get_num_zones();
   const int old_crush_rule = p.crush_rule;
   const unsigned old_size = p.size;
-  if (n == old_num_zones) {
+  // a pool that kept one zone at the commit is still stretched
+  const bool kept_one_zone = keeps_one_zone(osdmap, p);
+  if (n == old_num_zones && !kept_one_zone) {
     return 0;
   }
   if (n > 2) {
@@ -10283,14 +10328,14 @@ int OSDMonitor::prepare_command_pool_set_num_zones(
     return r;
   }
 
-  if (old_num_zones > 1 && n == 1) {
+  if ((old_num_zones > 1 || kept_one_zone) && n == 1) {
     if (p.is_stretch_pool()) {
       // an erasure coded PG keeps only the shards of its first zone
       if (p.is_erasure() &&
           !cmd_getval_or<bool>(cmdmap, "yes_i_really_mean_it", false)) {
         ss << "num_zones 1 takes erasure coded pool '" << poolstr
            << "' out of stretch mode and can leave PGs unavailable; see "
-           << reducing_num_zones_doc << ". Pool migration can move the data "
+           << unstretch_ec_pool_doc << ". Pool migration can move the data "
            << "to a pool in one zone instead. Pass --yes-i-really-mean-it to "
            << "proceed anyway.";
         return -EPERM;
@@ -10320,8 +10365,10 @@ int OSDMonitor::prepare_command_pool_set_num_zones(
       p.peering_crush_bucket_barrier = 0;
       p.peering_crush_mandatory_member = CRUSH_ITEM_NONE;
       if (p.type == pg_pool_t::TYPE_REPLICATED) {
+        // 3, as disable_stretch_mode gives a pool over zones
         const auto size = cmd_getval_or<int64_t>(
-          cmdmap, "replica", load_pool_defaults(g_conf()).replica);
+          cmdmap, "replica",
+          kept_one_zone ? LOCAL_REPLICA : load_pool_defaults(g_conf()).replica);
         if (size < 1 || size > std::numeric_limits<decltype(p.size)>::max()) {
           ss << "default pool size exceeds the supported range";
           return -ERANGE;
@@ -10385,7 +10432,8 @@ int OSDMonitor::prepare_command_pool_set_num_zones(
       return -EINVAL;
     }
   } else if (old_num_zones == 1 && n > 1) {
-    if (p.is_stretch_pool()) {
+    // a pool that kept one zone at the commit gets its zones here
+    if (p.is_stretch_pool() && !kept_one_zone) {
       ss << "Error: num_zones == 1 but pool is already stretched";
       return -EINVAL;
     }
@@ -11141,6 +11189,15 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
       ss << "crush rule " << id << " type does not match pool";
       return -EINVAL;
     }
+    if (keeps_one_zone(osdmap, p)) {
+      ss << "pool '" << poolstr << "' kept one zone when the upgrade was "
+         << "committed and is still stretched, so a new rule alone does not "
+         << "change how it peers; give it two zones with 'ceph osd pool set "
+         << poolstr << " num_zones 2', or one with 'ceph osd pool set "
+         << poolstr << " num_zones 1 --crush_rule " << val << "', see "
+         << pool_not_converted_doc;
+      return -EINVAL;
+    }
     if (p.num_zones > 1 && p.peering_crush_bucket_barrier) {
       const char *zone_type =
         osdmap.crush->get_type_name(p.peering_crush_bucket_barrier);
@@ -11592,40 +11649,44 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
         return -ERANGE;
       }
     }
+
     pool_opts_t::opt_desc_t desc = pool_opts_t::get_opt_desc(var);
     switch (desc.type) {
     case pool_opts_t::STR:
       if (unset) {
-        p.opts.unset(desc.key);
+	p.opts.unset(desc.key);
       } else {
-        p.opts.set(desc.key, static_cast<std::string>(val));
+	p.opts.set(desc.key, static_cast<std::string>(val));
       }
       break;
     case pool_opts_t::INT:
       if (interr.length()) {
-        ss << "error parsing integer value '" << val << "': " << interr;
-        return -EINVAL;
+	ss << "error parsing integer value '" << val << "': " << interr;
+	return -EINVAL;
       }
       if (n == 0) {
-        p.opts.unset(desc.key);
+	p.opts.unset(desc.key);
       } else {
-        p.opts.set(desc.key, static_cast<int64_t>(n));
+	p.opts.set(desc.key, static_cast<int64_t>(n));
       }
       break;
     case pool_opts_t::DOUBLE:
       if (floaterr.length()) {
-        ss << "error parsing floating point value '" << val << "': " << floaterr;
-        return -EINVAL;
+	ss << "error parsing floating point value '" << val << "': " << floaterr;
+	return -EINVAL;
       }
       if (f == 0) {
-        p.opts.unset(desc.key);
+	p.opts.unset(desc.key);
       } else {
-        p.opts.set(desc.key, static_cast<double>(f));
+	p.opts.set(desc.key, static_cast<double>(f));
       }
       break;
     default:
       ceph_assert(!"unknown type");
     }
+  } else {
+    ss << "unrecognized variable '" << var << "'";
+    return -EINVAL;
   }
   if (val != "unset") {
     ss << "set pool " << pool << " " << var << " to " << val;
@@ -16643,8 +16704,15 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     }
 
     if (pool_type == pg_pool_t::TYPE_ERASURE) {
+      // osd_pool_default_class (and --class) reach an EC pool that names no
+      // profile; a named profile's crush-device-class wins, and --class is
+      // refused with a named profile.
+      if (erasure_code_profile.empty()) {
+        device_class = params.device_class;
+      }
       const bool plain = erasure_code_profile.empty() &&
-        !params.ec_params_given() && !params.crush_params_given();
+        !params.ec_params_given() && !params.crush_params_given() &&
+        (params.device_class.empty() || !num_zones_supported());
       if (erasure_code_profile.empty() &&
           !osdmap.has_erasure_code_profile("default")) {
         if (pending_inc.has_erasure_code_profile("default")) {
@@ -17738,7 +17806,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       if (!cmd_getval_or<bool>(cmdmap, "yes_i_really_mean_it", false)) {
         ss << "This command will set every stretched pool to num_zones 1 "
               "and every stretched replicated pool to "
-           << LOCAL_REPLICA << " replicas; see " << reducing_num_zones_doc
+           << LOCAL_REPLICA << " replicas; see " << disable_stretch_mode_doc
            << ". Pass --yes-i-really-mean-it to proceed anyway.";
         err = -EPERM;
         goto reply_no_propose;
@@ -19805,6 +19873,10 @@ int OSDMonitor::disable_stretch_mode(ostream& ss, const string& crush_rule)
   if (r < 0) {
     return r;
   }
+  r = check_disable_leaves_no_stretch_pool(osdmap, &ss);
+  if (r < 0) {
+    return r;
+  }
   const map<string,string> defaults =
     stretch_pool_defaults(1, LOCAL_REPLICA, "");
   {
@@ -20127,17 +20199,41 @@ bool OSDMonitor::converts_at_commit(const OSDMap& osdmap, const pg_pool_t& p)
                         p.size) == p.size / 2;
 }
 
+bool OSDMonitor::keeps_one_zone(const OSDMap& osdmap, const pg_pool_t& p)
+{
+  // individual stretch pools and global stretch mode cannot be combined
+  return osdmap.stretch_mode_enabled && p.is_stretch_pool() &&
+    p.get_num_zones() == 1 &&
+    (osdmap.stretch_zones() || !converts_at_commit(osdmap, p));
+}
+
+int OSDMonitor::check_disable_leaves_no_stretch_pool(const OSDMap& osdmap,
+                                                     ostream *ss)
+{
+  string names;
+  for (const auto& [id, p] : osdmap.get_pools()) {
+    if (keeps_one_zone(osdmap, p)) {
+      names += (names.empty() ? "'" : ", '") + osdmap.get_pool_name(id) + "'";
+    }
+  }
+  if (names.empty()) {
+    return 0;
+  }
+  *ss << "pool(s) " << names << " kept one zone when the upgrade was "
+      << "committed, and disabling stretch mode would leave them stretched; "
+      << "first give each two zones with 'ceph osd pool set <pool> num_zones "
+      << "2', or one with 'ceph osd pool set <pool> num_zones 1', see "
+      << pool_not_converted_doc;
+  return -EBUSY;
+}
+
 void OSDMonitor::check_unconverted_stretch_pools(const OSDMap& osdmap,
                                                  health_check_map_t* checks)
 {
-  if (!osdmap.stretch_mode_enabled) {
-    return;
-  }
   const bool committed = osdmap.stretch_zones();
   list<string> detail;
   for (const auto& [id, p] : osdmap.get_pools()) {
-    if (p.is_stretch_pool() && p.get_num_zones() == 1 &&
-        (committed || !converts_at_commit(osdmap, p))) {
+    if (keeps_one_zone(osdmap, p)) {
       detail.push_back("pool '" + osdmap.get_pool_name(id) + "' has size " +
                        std::to_string(p.size) + " and crush rule '" +
                        osdmap.crush->get_rule_name(p.crush_rule) + "'");

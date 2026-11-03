@@ -831,8 +831,11 @@ pool or stretch mode command generates a rule for a pool.
   the pool's profile (``crush-root``; ``crush-osd-failure-domain``, or ``crush-failure-domain``
   without it; ``crush-device-class``). A generated profile records the options given at creation,
   and normalization fills in the others (:ref:`Generated Profiles <ecsc-generated-profiles>`).
-  ``osd_pool_default_root``, ``osd_pool_default_osd_failure_domain`` and ``osd_pool_default_class``
-  do not apply to erasure coded pools.
+  ``osd_pool_default_root`` and ``osd_pool_default_osd_failure_domain`` do not apply to erasure
+  coded pools, which take the root and OSD failure domain from their profile.
+  ``osd_pool_default_class`` does apply: the device class is ``--class`` or ``--no-class``, else an
+  explicitly named profile's ``crush-device-class``, else ``osd_pool_default_class``, else the
+  ``default`` profile's ``crush-device-class`` (unset in practice), else none.
 * **Erasure coded pool, zone type**: ``--zone_failure_domain``, else the
   ``crush-zone-failure-domain`` of the pool's profile, else
   ``osd_pool_default_zone_failure_domain``. At pool creation only a profile named with
@@ -844,11 +847,14 @@ pool or stretch mode command generates a rule for a pool.
 This applies to ``ceph osd pool create``, to ``ceph osd pool set <pool> num_zones 2``
 (:ref:`num_zones <ecsc-num-zones>`) and to ``ceph mon enable_stretch_mode``, which gives its
 ``dividing_bucket`` as ``--zone_failure_domain`` (:ref:`Global Stretch Mode Commands
-<ecsc-global-stretch-mode-commands>`). A single-zone erasure coded rule, at creation or when a pool
-goes to one zone, is built from the profile's keys alone and has no zone type. A single-zone
-replicated pool does not generate a rule (:ref:`The CRUSH Rule of a Pool
-<ecsc-the-rule-of-a-pool>`), and ``ceph osd pool set <pool> replica`` copies the values of the
-pool's current rule (:ref:`replica <ecsc-replica>`).
+<ecsc-global-stretch-mode-commands>`). A single-zone rule, at creation or when a pool goes to one
+zone, has no zone type but still takes the root, OSD failure domain and device class from the
+Placement Options: a replicated pool from the command line or its default options, an erasure coded
+pool from the command line or its profile. A single-zone replicated pool generates a rule
+``<pool>-single-zone`` only when one of these differs from the cluster default (root ``default``,
+OSD failure domain ``host``, no class); otherwise it takes the default replicated rule (:ref:`The
+CRUSH Rule of a Pool <ecsc-the-rule-of-a-pool>`). ``ceph osd pool set <pool> replica`` copies the
+values of the pool's current rule (:ref:`replica <ecsc-replica>`).
 
 .. _ecsc-the-rule-of-a-pool:
 
@@ -859,7 +865,10 @@ The CRUSH Rule of a Pool
 
 1. **The rule named with** ``--rule``. It must exist ("specified rule <rule> doesn't exist") and
    is used unchanged: ``num_zones`` and the profile's CRUSH keys are not applied to it.
-2. **A single-zone replicated pool** takes the *default replicated rule*: the rule that
+2. **A single-zone replicated pool** takes the *default replicated rule* — unless its placement
+   differs from the cluster default (root ``default``, OSD failure domain ``host``, no class), in
+   which case it generates a rule ``<pool>-single-zone`` from the :ref:`Placement Options
+   <ecsc-placement-options>` instead. The default replicated rule is the rule that
    ``osd_pool_default_crush_rule`` names, or, while that option is -1, the first replicated
    rule. If the option names a rule that no longer exists, there is no default replicated rule,
    and creating a single-zone replicated pool (librados included), ``num_zones 1`` of a
@@ -1203,7 +1212,10 @@ How Pool Creation Uses the Defaults
 same four steps: load the defaults; use the erasure code profile, the named one or ``default``;
 apply the command line; check the values that result. Which parameters may be given together
 differs only where pool creation describes one pool and ``set`` the defaults of every pool:
-``--k`` alone changes the default profile, but a pool needs both ``--k`` and ``--m``.
+``--k`` alone changes the default profile, but a pool needs both ``--k`` and ``--m``. Both refuse
+the parameters of the other pool type, ``--k`` and ``--m`` for a replicated pool and ``--replica``
+for an erasure coded one. For ``set`` that type is the default type, so
+``--pool_type erasure --k 4 --m 2`` also makes every later pool that names no type erasure coded.
 
 Every default has a sensible built-in value, so a cluster needs no ``set`` before its first pool.
 The options can still be changed with ``ceph config set`` and ``rm``, which skip the checks of
@@ -1250,7 +1262,9 @@ Going to two zones:
 * The pool must not be stretched already (an erasure coded pool stretched by an earlier release's
   ``stretch set`` is unstretched first with ``ceph osd pool stretch unset``, :ref:`Individual
   Stretch Pools <ecsc-individual-stretch-pools>`), and it must be able to join stretch mode, or the
-  cluster to enter it (:ref:`Entering Stretch Mode <ecsc-entering-stretch-mode>`).
+  cluster to enter it (:ref:`Entering Stretch Mode <ecsc-entering-stretch-mode>`). The exception
+  is a pool of global stretch mode that kept one zone when the upgrade was committed: this command
+  gives it the two zones that the commit could not.
 * A replicated pool gets ``--replica``, else ``osd_pool_default_size``, copies in each zone,
   from 1 to 10.
 * An erasure coded pool must be a FastEC pool. A legacy EC pool can never be stretched, so the
@@ -1270,13 +1284,15 @@ Going to two zones:
   is enabled if this is the first stretched pool (:ref:`Entering Stretch Mode
   <ecsc-entering-stretch-mode>`).
 
-Going to one zone (only a stretched pool):
+Going to one zone (only a stretched pool, including a pool of global stretch mode that kept one
+zone when the upgrade was committed):
 
 * An erasure coded pool needs ``--yes-i-really-mean-it``, checked before anything is changed or
   created: "num_zones 1 takes erasure coded pool '<pool>' out of stretch mode and can leave PGs
-  unavailable; see "Reducing the Number of Zones" in the Stretch Clusters documentation. Pool
-  migration can move the data to a pool in one zone instead. Pass --yes-i-really-mean-it to
-  proceed anyway." (EPERM). A replicated pool keeps any copy, so it needs no confirmation.
+  unavailable; see "Unstretching an Erasure-Coded Pool Without Migration" in the Stretch Clusters
+  documentation. Pool migration can move the data to a pool in one zone instead. Pass
+  --yes-i-really-mean-it to proceed anyway." (EPERM). A replicated pool keeps any copy, so it
+  needs no confirmation.
 * A replicated PG keeps any of its copies, so a replicated pool behaves as before. An erasure coded
   PG keeps the first ``k+m`` positions, the shards of its first zone, whichever zone that is. The
   Monitor makes no check of where those are: a PG with fewer than the new ``min_size`` of them on
@@ -1292,9 +1308,11 @@ Going to one zone (only a stretched pool):
   ``num_zones 2`` makes the other zone's shards members again, so the PG goes active and
   backfills.
 * A replicated pool gets ``--replica``, else ``osd_pool_default_size``, copies, from 1 to 10,
-  and the default ``min_size`` for them. A single copy needs ``mon_allow_pool_size_one`` and
-  ``--yes-i-really-mean-it``, as ``ceph osd pool set <pool> size 1`` does. Its rule is the one
-  named with ``--crush_rule``, which must exist, else the default replicated rule.
+  and the default ``min_size`` for them. A pool that kept one zone at the commit gets 3 copies
+  unless ``--replica`` is given, as ``disable_stretch_mode`` gives a pool over zones. A single
+  copy needs ``mon_allow_pool_size_one`` and ``--yes-i-really-mean-it``, as ``ceph osd pool set
+  <pool> size 1`` does. Its rule is the one named with ``--crush_rule``, which must exist, else
+  the default replicated rule.
 * An erasure coded pool gets ``size`` ``k+m`` and ``min_size`` ``k + min(1, m-1)``. Its rule is
   the one named with ``--crush_rule``, which must exist, else ``<pool>-single-zone``, built from
   the profile's keys.
@@ -1343,7 +1361,9 @@ Other Pool Settings
   k=<k> and k+m=<k+m> (inclusively)").
 * ``ceph osd pool set <pool> crush_rule`` takes an existing rule of the pool's type. For a pool over
   zones the rule must also pass the placement check of :ref:`The CRUSH Rule of a Pool
-  <ecsc-the-rule-of-a-pool>`, with the pool's zone type.
+  <ecsc-the-rule-of-a-pool>`, with the pool's zone type. It is refused for a pool of global stretch
+  mode that kept one zone at the commit, which still peers over both zones whatever its rule:
+  ``num_zones 2`` or ``num_zones 1`` changes it.
 * ``ceph osd pool stretch set`` and ``unset`` are for individual stretch pools (:ref:`Individual
   Stretch Pools <ecsc-individual-stretch-pools>`).
 * ``ceph osd pool set`` takes ``--replica``, ``--crush_rule`` and the CRUSH options only with
@@ -1765,6 +1785,11 @@ While only the MonMap is in stretch mode:
   <ecsc-num-zones>`); a pool's refusal names the pool.
 * It is refused in recovery stretch mode ("stretch mode is currently recovering and cannot be
   disabled"; run ``ceph osd force_healthy_stretch_mode`` first).
+* It is refused while a pool of global stretch mode kept one zone when the upgrade was committed,
+  as the command would leave that pool stretched: "pool(s) '<pool>' kept one zone when the upgrade
+  was committed, and disabling stretch mode would leave them stretched; first give each two zones
+  with 'ceph osd pool set <pool> num_zones 2', or one with 'ceph osd pool set <pool> num_zones 1',
+  see STRETCH_MODE_POOL_NOT_CONVERTED in the Health Checks documentation".
 * ``crush_rule``, if given, must be a replicated rule that no stretched replicated pool uses.
 
 **Both commands**: erasure coded pools get rules of their own, which are committed in a first OSDMap
@@ -2959,7 +2984,9 @@ first-epoch steps and from the pools they leave pending:
    ``min_size``: individual stretch pools, and pools of global stretch mode with an odd ``size``,
    another bucket target or another placement. ``STRETCH_MODE_POOL_NOT_CONVERTED`` names the
    pools of global stretch mode that keep one zone, before the commit, while they can still be
-   changed, and after it, as ``disable_stretch_mode`` leaves them stretched.
+   changed, and after it, until ``ceph osd pool set <pool> num_zones 2`` gives them two zones, or
+   ``num_zones 1`` makes them ordinary pools in one zone.
+   ``disable_stretch_mode`` is refused while any remains, as it would leave it stretched.
 3. Forces an op resend on every stretch pool, setting all three resend epochs, which the kernel
    client needs. The peering rules change for every stretch pool, so its PGs start a new interval
    that clients cannot see, and replicas drop the reads that clients sent before it.

@@ -1191,6 +1191,7 @@ COMMAND("osd pool create "
         "name=osd_failure_domain,type=CephString,req=false,goodchars=[A-Za-z0-9-_.] "
         "name=replica,type=CephInt,range=1,req=false "
         "name=class,type=CephString,goodchars=" CLASS_GOODCHARS ",req=false "
+        "name=no_class,type=CephBool,req=false "
         "name=min_size,type=CephInt,range=1,req=false",
         "create pool", "osd", "rw")
 COMMAND("osd pool migrate "
@@ -1389,7 +1390,8 @@ COMMAND("osd pool set "
         "name=osd_failure_domain,type=CephString,req=false "
         "name=crush_rule,type=CephString,req=false "
         "name=root,type=CephString,req=false "
-        "name=class,type=CephString,req=false",
+        "name=class,type=CephString,req=false "
+        "name=no_class,type=CephBool,req=false",
 	"set pool parameter <var> to <val>", "osd", "rw")
 // 'val' is a CephString because it can include a unit.  Perhaps
 // there should be a Python type for validation/conversion of strings
@@ -1655,6 +1657,7 @@ COMMAND("osd pool default set "
         "name=osd_failure_domain,type=CephString,req=false,goodchars=[A-Za-z0-9-_.] "
         "name=root,type=CephString,req=false,goodchars=[A-Za-z0-9-_.] "
         "name=class,type=CephString,goodchars=" CLASS_GOODCHARS ",req=false "
+        "name=no_class,type=CephBool,req=false "
         "name=replica,type=CephInt,range=1,req=false "
         "name=min_size,type=CephInt,range=0,req=false "
         "name=k,type=CephInt,range=2,req=false "
