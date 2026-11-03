@@ -119,7 +119,9 @@ does not meet these requirements.
   otherwise. Once the cluster is stretched, a larger difference raises
   ``STRETCH_MODE_BUCKET_WEIGHT_IMBALANCE`` instead. To override this limit,
   see `Overriding the Zone Weight Limit`_.
-* **Five Monitors:** two in each zone, and the tiebreaker at a third site.
+* **Five Monitors:** two in each zone, and the tiebreaker at a third site. The
+  setup commands require at least one Monitor in each zone and, unless
+  ``--tiebreaker_mon`` is given, exactly one outside them.
 
   * The tiebreaker can run on a cloud-hosted VM. Size it like the other
     Monitors; see :ref:`hardware-cpu-memory`.
@@ -249,7 +251,7 @@ Monitor the following health checks:
    * - ``RECOVERING_STRETCH_MODE``
      - The lost zone is back and being recovered
    * - ``INCORRECT_NUM_BUCKETS_STRETCH_MODE``
-     - The CRUSH map no longer has exactly two zones with OSDs
+     - The CRUSH map no longer has exactly two buckets of the zone type
    * - ``STRETCH_MODE_BUCKET_WEIGHT_IMBALANCE``
      - The zones' CRUSH weights differ by more than 10%
    * - ``NONEXISTENT_MON_CRUSH_LOC_STRETCH_MODE``
@@ -497,7 +499,9 @@ The upgrade has three stages:
      of copies, like ``size``: ``replica 2`` leaves two copies in all, not two
      in each zone.
    * A pool whose CRUSH rule picks a device class stops serving I/O while a
-     zone is down, as in the earlier release, until the zone returns.
+     zone is down, as in the earlier release, and stays stopped after the zone
+     returns, which keeps the cluster in recovery mode. Commit the upgrade, or
+     run ``ceph osd force_healthy_stretch_mode --yes-i-really-mean-it``.
 
 #. **The commit:** ``ceph osd require-osd-release vampire``. It is refused
    until every Monitor, and every OSD that is up, runs the new release. In
@@ -517,9 +521,12 @@ The upgrade has three stages:
    Only a replicated pool whose CRUSH rule places half of an even number of
    copies in each zone can be split this way. Any other pool, for example one
    whose ``size`` was set to 3, keeps one zone and the rules of earlier
-   releases, and ``ceph mon disable_stretch_mode`` leaves it stretched.
-   ``STRETCH_MODE_POOL_NOT_CONVERTED`` names such pools before the commit,
-   while they can still be changed, and after it.
+   releases. ``STRETCH_MODE_POOL_NOT_CONVERTED`` names such pools before the
+   commit, while they can still be changed, and after it. After the commit,
+   ``ceph mon disable_stretch_mode`` is refused until each of them is given
+   two zones with ``ceph osd pool set {pool-name} num_zones 2``, or made an
+   ordinary pool in one zone with ``ceph osd pool set {pool-name} num_zones
+   1``.
 
 #. **After the commit,** everything on this page applies. OSDs of the earlier
    release can no longer start, on any cluster, stretched or not: upgrade any
@@ -551,7 +558,8 @@ Required actions by deployment type:
      - Nothing, unless ``STRETCH_MODE_POOL_NOT_CONVERTED`` names a pool:
        change it before the commit, for example with
        ``ceph osd pool set {pool-name} size 4`` if its rule places two copies
-       in each zone. If a Monitor's ``ceph.conf`` or a ``mon`` section sets
+       in each zone, or after it as ``STRETCH_MODE_POOL_NOT_CONVERTED``
+       describes. If a Monitor's ``ceph.conf`` or a ``mon`` section sets
        :confval:`osd_pool_default_size`, remove it after the commit:
        ``POOL_DEFAULT_CONFIG_OVERRIDE`` says so.
      - Mix stretched and one-zone pools; stretch erasure-coded pools
@@ -650,6 +658,11 @@ pool at once:
 * Erasure-coded pools are taken offline during the transition. To keep them
   available, migrate them first (see `For a Single Pool`_).
 * The pool creation defaults are reset to 1 zone with 3 replicas.
+
+The command is refused while ``STRETCH_MODE_POOL_NOT_CONVERTED`` names a pool
+that kept one zone when the upgrade was committed, because it would leave that
+pool stretched. First give the pool two zones, or make it an ordinary pool in
+one zone, as the health check describes.
 
 Afterwards, remove any OSDs that are no longer required.
 
@@ -770,8 +783,9 @@ Other Problems
      - Cause
      - What to do
    * - The cluster stays in recovery mode
-     - Some PGs are not clean yet; recovery mode ends
-       ``mon_stretch_recovery_min_wait`` seconds after every PG is clean
+     - Some PGs are still degraded, inactive or unknown; recovery mode ends
+       once none is, and at least ``mon_stretch_recovery_min_wait`` seconds
+       after it began
      - ``ceph pg stat`` and ``ceph pg ls`` show the PGs still recovering;
        force normal mode only after checking every PG can peer (see
        `Forcing a Stretch Mode`_)
@@ -954,8 +968,8 @@ optional:
 
 To use a custom rule:
 
-* Specify ``--crush_rule {rule}`` on ``ceph osd pool create`` or on
-  ``ceph osd pool set {pool-name} num_zones 2``, or later with
+* Specify ``--rule {rule}`` on ``ceph osd pool create``, ``--crush_rule {rule}``
+  on ``ceph osd pool set {pool-name} num_zones 2``, or later
   ``ceph osd pool set {pool-name} crush_rule {rule}``.
 * ``ceph mon enable_stretch_mode --new_crush_rule {rule}`` gives every
   replicated pool the same rule, which must place 2 copies in each zone.
@@ -1039,8 +1053,10 @@ add ``--tiebreaker_mon`` to ``ceph mon enable_stretch_mode``:
 
    ceph mon enable_stretch_mode --dividing_bucket datacenter --tiebreaker_mon e
 
-Once the cluster is in stretch mode, ``ceph mon set_new_tiebreaker
-mon.{name}`` changes the tiebreaker, for example to replace a failed one.
+``--tiebreaker_mon`` takes effect only when this command starts stretch mode;
+once a pool has two zones, it is ignored without a message. Afterwards,
+``ceph mon set_new_tiebreaker {name}`` changes the tiebreaker, for example to
+replace a failed one.
 
 Tuning Degraded and Recovery Mode
 ---------------------------------
@@ -1065,8 +1081,8 @@ The following Monitor options control the transitions between modes:
        normal mode
    * - ``mon_warn_on_degraded_stretch_mode``
      - ``true``
-     - Whether degraded mode raises the ``DEGRADED_STRETCH_MODE`` health
-       warning
+     - Whether degraded and recovery mode raise the ``DEGRADED_STRETCH_MODE``
+       and ``RECOVERING_STRETCH_MODE`` health warnings
 
 Set them with ``ceph config set mon {option} {value}``.
 
@@ -1078,7 +1094,9 @@ automatically. If a transition does not happen, or must happen early, it can
 be forced.
 
 **Forcing recovery mode.** In degraded mode, the cluster enters recovery mode
-when the lost zone returns. To enter recovery mode before that:
+once the lost zone's Monitors are back in the quorum and more than
+``mon_stretch_cluster_recovery_ratio`` of the OSDs are up. To enter recovery
+mode before enough OSDs are up, once those Monitors are back:
 
 .. prompt:: bash #
 

@@ -2922,9 +2922,8 @@ options:
   level: advanced
   desc: Default CRUSH failure domain within a zone for new pools
   long_desc: The CRUSH bucket type (for example, host or rack) that the copies of a replicated
-    pool over more than one zone are spread over, within each zone. It is used only for the
-    CRUSH rules generated for such pools. Erasure coded pools take it from their profile
-    instead.
+    pool are spread over, within each zone. It is used for the CRUSH rules generated for
+    replicated pools. Erasure coded pools take it from their profile instead.
   default: host
   services:
   - mon
@@ -2936,8 +2935,8 @@ options:
   type: str
   level: advanced
   desc: Default CRUSH root for new pools
-  long_desc: The CRUSH root of the rules generated for replicated pools over more than one
-    zone. Erasure coded pools take it from their profile instead.
+  long_desc: The CRUSH root of the rules generated for replicated pools. Erasure coded pools
+    take it from their profile instead.
   default: default
   services:
   - mon
@@ -2947,9 +2946,9 @@ options:
   type: str
   level: advanced
   desc: Default device class for new pools; empty means any class
-  long_desc: The device class of the rule generated for a replicated pool over more than
-    one zone; empty means any class. Erasure coded pools take it from their profile
-    instead.
+  long_desc: The device class of the rules generated for new pools; empty means any class. It
+    applies to replicated and erasure coded pools, but an erasure code profile's own
+    crush-device-class takes precedence.
   services:
   - mon
   flags:

@@ -174,12 +174,55 @@ function TEST_root_and_class_rules() {
     test "$(rule_takes r-replica-3)" = default~ssd || return 1
 }
 
+# A pool reduced to one zone gets a rule of the placement that num_zones 1
+# is given (--root, --osd_failure_domain, --class), for replicated and
+# erasure coded pools; --no-class drops a default class
+function TEST_shrink_to_one_zone_placement() {
+    local dir=$1
+    two_zone_cluster $dir || return 1
+    ceph osd crush rm-device-class $(seq 0 5) || return 1
+    ceph osd crush set-device-class ssd $(seq 0 5) || return 1
+
+    for pool in r_root r_osd r_cls r_plain; do
+        ceph osd pool create $pool 4 --num_zones 2 --replica 2 || return 1
+    done
+    ceph osd pool set r_root num_zones 1 --root dc1 --yes-i-really-mean-it || return 1
+    test "$(rule_takes r_root-single-zone)" = dc1 || return 1
+    test "$(ceph osd pool get r_root crush_rule -f json | jq -r .crush_rule)" = r_root-single-zone || return 1
+    ceph osd pool set r_osd num_zones 1 --osd_failure_domain osd --yes-i-really-mean-it || return 1
+    ceph osd crush rule dump r_osd-single-zone | grep -q '"type": "osd"' || return 1
+    ceph osd pool set r_cls num_zones 1 --class ssd --yes-i-really-mean-it || return 1
+    test "$(rule_takes r_cls-single-zone)" = default~ssd || return 1
+    # with the cluster's default placement the pool takes the default rule
+    ceph osd pool set r_plain num_zones 1 --yes-i-really-mean-it || return 1
+    ! rule_exists r_plain-single-zone || return 1
+
+    for pool in e_root e_cls; do
+        ceph osd pool create $pool 4 erasure --num_zones 2 --k 2 --m 1 || return 1
+    done
+    ceph osd pool set e_root num_zones 1 --root dc2 --yes-i-really-mean-it || return 1
+    test "$(rule_takes e_root-single-zone)" = dc2 || return 1
+    ceph osd pool set e_cls num_zones 1 --class ssd --yes-i-really-mean-it || return 1
+    test "$(rule_takes e_cls-single-zone)" = default~ssd || return 1
+
+    ceph config set global osd_pool_default_class ssd || return 1
+    for pool in r_nc r_both; do
+        ceph osd pool create $pool 4 --num_zones 2 --replica 2 || return 1
+    done
+    ceph osd pool set r_nc num_zones 1 --no-class --yes-i-really-mean-it || return 1
+    ! rule_exists r_nc-single-zone || return 1
+    expect_failure $dir "cannot specify both --class and --no-class" \
+        ceph osd pool set r_both num_zones 1 --class ssd --no-class --yes-i-really-mean-it || return 1
+    ceph config rm global osd_pool_default_class || return 1
+}
+
 # A rule goes when the change of a pool's rule leaves it unused, and stays
 # while another pool uses it
 function TEST_rule_lifetime_on_pool_changes() {
     local dir=$1
     two_zone_cluster $dir || return 1
-    ceph osd pool default set --k 2 --m 1 || return 1
+    ceph osd pool default set --pool_type erasure --k 2 --m 1 || return 1
+    ceph osd pool default set --pool_type replicated || return 1
 
     for pool in e1 e2; do
         ceph osd pool create $pool erasure || return 1

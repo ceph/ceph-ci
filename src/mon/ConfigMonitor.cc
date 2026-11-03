@@ -1220,8 +1220,13 @@ int ConfigMonitor::prepare_pool_default_set(
       values[pool_default_options().at(param)] = pool_default_value(p, param);
     }
   }
-  if (p.is_given("k") || p.is_given("m")) {
-    *default_profile = p.profile;
+  if (p.is_given("k") || p.is_given("m") || p.no_class) {
+    map<string,string> prof = p.profile;
+    if (p.no_class) {
+      // the default template profile carries no class
+      prof.erase("crush-device-class");
+    }
+    *default_profile = prof;
   }
 
   err = check_pool_default_overrides(values, ss);

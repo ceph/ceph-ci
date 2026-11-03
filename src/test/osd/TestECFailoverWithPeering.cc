@@ -3591,12 +3591,12 @@ TEST_P(TestECFailoverWithPeering, OneZoneRecoversFromItsOwnShards) {
   const std::string obj = "test_one_zone_missed";
   const std::string pattern_b(object_size, 'B');
   create_and_write_verify(obj, std::string(object_size, 'A'));
-  const int failed = 1;
-  mark_osd_down(failed);
+  const int missed_write_osd = 1;
+  mark_osd_down(missed_write_osd);
   write_verify(obj, 0, pattern_b, object_size);
 
   go_to_one_zone();
-  mark_osd_up(failed);
+  mark_osd_up(missed_write_osd);
 
   auto* primary_ps = get_primary_test_pg()->get_peering_state();
   ASSERT_TRUE(primary_ps->is_active()) << primary_ps->get_current_state();

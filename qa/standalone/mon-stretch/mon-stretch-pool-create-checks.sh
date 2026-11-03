@@ -45,8 +45,8 @@ function TEST_pool_create_checks() {
         ceph osd pool create p replicated --k 2 --m 1 || return 1
     expect_refused $dir "cannot specify both 'size' and 'replica' parameters" \
         ceph osd pool create p --size 3 --replica 3 || return 1
-    expect_refused $dir "require num_zones > 1 for a replicated pool" \
-        ceph osd pool create p replicated --osd_failure_domain host || return 1
+    expect_refused $dir "zone_failure_domain requires num_zones > 1 for a replicated pool" \
+        ceph osd pool create p replicated --zone_failure_domain datacenter || return 1
     expect_refused $dir "num_zones must be from 1 to" \
         ceph osd pool create p --num_zones 3 || return 1
     expect_refused $dir "pool size must be between 1 and 10" \

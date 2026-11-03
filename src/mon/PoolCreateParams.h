@@ -40,6 +40,12 @@ struct PoolCreateParams {
   std::string zone_failure_domain;
   std::string osd_failure_domain;
   std::string device_class;
+  // --no-class: the pool takes no device class, overriding any inherited
+  // default or profile class. Forces device_class empty and marks "class"
+  // given so it counts as an explicit placement choice.
+  bool no_class = false;
+  // both --class and --no-class were given, which is contradictory
+  bool no_class_conflict = false;
   int64_t pg_num = 0;
   int64_t pgp_num = 0;  // 0: pg_num
   std::string autoscale_mode;

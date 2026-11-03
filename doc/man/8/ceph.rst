@@ -705,14 +705,18 @@ stretched pool to one zone, as ``ceph osd pool set <pool> num_zones 1`` does.
 Stretched replicated pools get three replicas and <crush_rule>, or the default
 CRUSH rule if <crush_rule> is not supplied. Erasure-coded pools get single-zone
 CRUSH rules of their own; this can make some of their PGs unavailable (see
-"Reducing the Number of Zones" in the Ceph documentation). The command also
+"Unstretching an Erasure-Coded Pool Without Migration" in the Ceph
+documentation). The command also
 sets ``osd_pool_default_num_zones`` to 1 and ``osd_pool_default_size``, the
 replicas in each zone, to 3, replacing any earlier value, as
 ``enable_stretch_mode`` does. Until an upgrade is committed with
 ``ceph osd require-osd-release``, it behaves as in earlier releases. After
 that, stretch mode is also disabled when the last pool with more than one zone
 is deleted or set to one zone; this does not change the pool creation
-defaults.
+defaults. The command is refused while a stretched pool kept one zone when the
+upgrade was committed (``STRETCH_MODE_POOL_NOT_CONVERTED``); first give such a
+pool two zones with ``ceph osd pool set <pool> num_zones 2``, or one with
+``ceph osd pool set <pool> num_zones 1``.
 
 Usage::
 
@@ -1329,7 +1333,7 @@ where <options> are any of::
     {--size <int[0-]>} {--replica <int[1-]>} {--min_size <int[1-]>}
     {--num_zones <int[1-]>} {--k <int[2-]>} {--m <int[1-]>}
     {--root <root>} {--zone_failure_domain <type>}
-    {--osd_failure_domain <type>} {--class <class>}
+    {--osd_failure_domain <type>} {--class <class>} {--no-class}
     {--pg_num_min <int[0-]>} {--pg_num_max <int[0-]>}
     {--autoscale_mode <on|off|warn>} {--bulk}
     {--target_size_bytes <int[0-]>} {--target_size_ratio <float[0.0-]>}
@@ -1356,9 +1360,12 @@ erasure-coded pool that names no profile gets one of its own, made from the
 ``default`` profile, ``--k``, ``--m`` and the CRUSH options given.
 
 ``--root``, ``--zone_failure_domain``, ``--osd_failure_domain`` and ``--class``
-set where the CRUSH rule generated for the pool places it. They cannot be given
-with a CRUSH rule or an erasure code profile, and a replicated pool accepts them
-only with more than one zone.
+set where the CRUSH rule generated for the pool places it. ``--no-class`` gives
+the pool no device class, overriding any it would otherwise inherit, and cannot
+be given with ``--class``. They cannot be given with a CRUSH rule or an erasure
+code profile. A replicated pool accepts ``--root``, ``--osd_failure_domain``,
+``--class`` and ``--no-class`` with any number of zones (a one-zone pool gets a
+rule of its own); ``--zone_failure_domain`` needs more than one zone.
 
 ``--pg_num_min``, ``--pg_num_max``, ``--autoscale_mode``, ``--bulk``,
 ``--target_size_bytes`` and ``--target_size_ratio`` set the pool's PG
@@ -1395,8 +1402,9 @@ name, and writes them to the ``global`` section of the configuration database;
 ``--replica`` is written to ``osd_pool_default_size``, and ``--k`` and ``--m``
 change the ``default`` erasure code profile instead. It never changes an
 existing pool. It refuses defaults that fail the checks that ``osd pool create``
-makes on its parameters, and values that a ``mon`` section of the configuration
-database or a Monitor's local configuration would override. ``--rule`` must
+makes on its parameters, such as ``--k`` and ``--m`` for a replicated default
+type, and values that a ``mon`` section of the configuration database or a
+Monitor's local configuration would override. ``--rule`` must
 name a replicated rule, and ``--rule none`` sets
 ``osd_pool_default_crush_rule`` back to -1. A default of one copy needs
 ``mon_allow_pool_size_one`` and ``--yes-i-really-mean-it``. See "Pool Creation
@@ -1406,7 +1414,7 @@ Usage::
 
     ceph osd pool default set {--pool_type <replicated|erasure>}
     {--num_zones <int[1-]>} {--rule <rule>} {--zone_failure_domain <type>}
-    {--osd_failure_domain <type>} {--root <root>} {--class <class>}
+    {--osd_failure_domain <type>} {--root <root>} {--class <class>} {--no-class}
     {--replica <int[1-]>} {--min_size <int[0-]>}
     {--k <int[2-]>} {--m <int[1-]>} {--pg_num <int[1-]>}
     {--pgp_num <int[0-]>} {--autoscale_mode <on|off|warn>} {--bulk}
@@ -1504,10 +1512,10 @@ Usage::
 Variable ``num_zones`` sets the number of zones (1 or 2) that the pool spans.
 ``--crush_rule`` names the pool's new CRUSH rule. ``--replica`` gives the copies
 in each zone of a replicated pool, and ``--zone_failure_domain``,
-``--osd_failure_domain``, ``--root`` and ``--class`` the CRUSH rule generated
-for the pool; those not given come from the pool creation defaults, or from the
-profile of an erasure-coded pool. These options are accepted only with
-``num_zones``. Setting an erasure-coded pool's ``num_zones`` to 1 needs
+``--osd_failure_domain``, ``--root``, ``--class`` and ``--no-class`` the CRUSH
+rule generated for the pool; those not given come from the pool creation
+defaults, or from the profile of an erasure-coded pool. These options are
+accepted only with ``num_zones``, and apply when setting it to 1 as well as 2. Setting an erasure-coded pool's ``num_zones`` to 1 needs
 ``--yes-i-really-mean-it``. Variable ``replica`` sets the number of copies in
 each zone of a replicated pool. ``size`` cannot be set for a pool with more
 than one zone: set ``replica`` instead. The ``min_size`` of a pool counts the
@@ -1520,7 +1528,7 @@ Usage::
 
     ceph osd pool set <poolname> num_zones 1|2 {--yes-i-really-mean-it}
     {--crush_rule <rule>} {--replica <int[1-]>} {--zone_failure_domain <type>}
-    {--osd_failure_domain <type>} {--root <root>} {--class <class>}
+    {--osd_failure_domain <type>} {--root <root>} {--class <class>} {--no-class}
 
     ceph osd pool set <poolname> replica <int[1-]> {--yes-i-really-mean-it}
 

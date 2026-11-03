@@ -165,11 +165,15 @@ function TEST_set_k_m_in_default_profile() {
     ceph osd pool create named2 --pool_type erasure \
         --erasure_code_profile default || return 1
     local option="$(ceph config get mon osd_pool_default_erasure_code_profile)"
+    # k and m are refused while the default type is replicated
+    expect_failure $dir "cannot specify k/m parameters for replicated pools (osd_pool_default_type)" \
+        ceph osd pool default set --k 4 --m 3 || return 1
     # applied whole or not at all
     expect_failure $dir "'pgp_num' must be greater than 0 and lower or equal than 'pg_num'" \
-        ceph osd pool default set --k 4 --m 3 --pg_num 8 --pgp_num 16 || return 1
+        ceph osd pool default set --pool_type erasure --k 4 --m 3 --pg_num 8 --pgp_num 16 || return 1
     test "$(ceph osd erasure-code-profile get default -f json | jq -r .k)" = 2 || return 1
-    ceph osd pool default set --k 4 --m 3 || return 1
+    test "$(default_field pool_type value)" = replicated || return 1
+    ceph osd pool default set --pool_type erasure --k 4 --m 3 || return 1
     test "$(default_field k value)" = 4 || return 1
     test "$(default_field m value)" = 3 || return 1
     test "$(default_field k source)" = osdmap || return 1
@@ -180,6 +184,9 @@ function TEST_set_k_m_in_default_profile() {
     ceph osd pool default set --k 5 --pg_num 16 || return 1
     test "$(default_field k value)" = 5 || return 1
     test "$(default_field pg_num value)" = 16 || return 1
+    # replica is refused while the default type is erasure coded
+    expect_failure $dir "replica is only applicable to replicated pools (osd_pool_default_type)" \
+        ceph osd pool default set --replica 2 || return 1
 
     # new pools copy the default profile, existing pools keep theirs
     ceph osd pool create after 8 8 erasure || return 1

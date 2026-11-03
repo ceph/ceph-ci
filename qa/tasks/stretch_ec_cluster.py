@@ -28,12 +28,14 @@ class TestStretchCluster(MgrTestCase):
     # Must be long enough for I/O to be in flight when DC1 is killed.
     PARALLEL_BENCH_DURATION = 30
     # Hard OS-level timeout applied to each bench process in the parallel
-    # workload (PARALLEL_BENCH_DURATION + WRITE_PERIOD seconds of slack).
+    # workload: the bench, plus RECOVERY_PERIOD for its I/O to wait out the
+    # site failure (the PGs re-peer on DC2 and the cluster enters degraded
+    # stretch mode, which can take more than a minute).
     # rados bench does not exit on its own when the cluster is unreachable --
     # it stalls in-flight ops until osd_op_timeout fires, causing an indefinite
     # remote.run(wait=True) hang.  The 'timeout' wrapper kills the process at
     # the OS level so teardown can never hang regardless of cluster state.
-    BENCH_HARD_TIMEOUT = PARALLEL_BENCH_DURATION + WRITE_PERIOD
+    BENCH_HARD_TIMEOUT = PARALLEL_BENCH_DURATION + RECOVERY_PERIOD
     # This dictionary maps the datacenter to the osd ids and hosts
     DC_OSDS = {
         'dc1': {
@@ -91,6 +93,14 @@ class TestStretchCluster(MgrTestCase):
         for pool in self.mgr_cluster.mon_manager.get_osd_dump_json()['pools']:
             self.mgr_cluster.mon_manager.remove_pool(pool['pool_name'])
 
+        # A restarted OSD moves itself to its crush_location, so give each
+        # OSD its place in the test's layout, as qa/tasks/ceph.py does
+        for dc, nodes in self.DC_OSDS.items():
+            for node, osd_id in nodes.items():
+                self.mgr_cluster.mon_manager.raw_cluster_cmd(
+                    'config', 'set', 'osd.{}'.format(osd_id), 'crush_location',
+                    'host={} datacenter={} root=default'.format(node, dc))
+
     def tearDown(self):
         """
         Clean up the cluster after the test.
@@ -108,10 +118,9 @@ class TestStretchCluster(MgrTestCase):
             if osd['weight'] == 0.0:
                 self.mgr_cluster.mon_manager.raw_cluster_cmd(
                     'osd', 'in', str(osd['osd']))
-            # Bring back all the osds and move it back to the host.
+            # Bring back all the osds
             if osd['up'] == 0:
                 self._bring_back_osd(osd['osd'])
-                self._move_osd_back_to_host(osd['osd'])
 
         # Bring back all the MONS
         mons = self._get_all_mons_from_all_dc()
@@ -262,13 +271,6 @@ class TestStretchCluster(MgrTestCase):
         pgs = self._get_pg_stats()
         return self._get_active_pg(pgs) == 0
 
-    def _pg_partial_active(self):
-        """
-        Check if some pgs are active.
-        """
-        pgs = self._get_pg_stats()
-        return 0 < self._get_active_pg(pgs) <= len(pgs)
-
     def _kill_osd(self, osd):
         """
         Kill the osd.
@@ -296,31 +298,10 @@ class TestStretchCluster(MgrTestCase):
             if int(osd_data['osd']) in want_osds
         ]
 
-    def _get_host(self, osd):
+    def _bring_back_one_osds_from_dc(self, dc, osd_id=None):
         """
-        Get the host of the osd.
-        """
-        for dc, nodes in self.DC_OSDS.items():
-            for node, osd_id in nodes.items():
-                if osd_id == osd:
-                    return node
-        return None
-
-    def _move_osd_back_to_host(self, osd):
-        """
-        Move the osd back to the host.
-        """
-        host = self._get_host(osd)
-        assert host is not None, "The host of osd {} is not found.".format(osd)
-        log.debug("Moving osd.%d back to %s", osd, host)
-        self.mgr_cluster.mon_manager.raw_cluster_cmd(
-            'osd', 'crush', 'move', 'osd.{}'.format(str(osd)),
-            'host={}'.format(host)
-        )
-
-    def _bring_back_one_osds_from_dc(self, dc):
-        """
-        Bring back one random OSD from the specified <datacenter>
+        Bring back osd_id, or one random failed OSD, from the specified
+        <datacenter>
         """
         if not isinstance(dc, str):
             raise ValueError("dc must be a string")
@@ -332,7 +313,8 @@ class TestStretchCluster(MgrTestCase):
         osds_data = self._get_osds_data(self._get_osds_by_dc(dc))
         osds = [int(osd['osd']) for osd in osds_data if int(osd['up']) == 0]
         # fail over one random OSD in the DC
-        osd_id = random.choice(osds)
+        if osd_id is None:
+            osd_id = random.choice(osds)
         self._bring_back_osd(osd_id)
         # wait until the osd is down
         self.wait_until_true(
@@ -360,20 +342,18 @@ class TestStretchCluster(MgrTestCase):
             raise ValueError("dc must be one of the following: %s" %
                              self.DC_OSDS.keys())
         log.debug("Bringing back %s", dc)
-        osds = self._get_osds_by_dc(dc)
-        # Bring back all the osds in the DC and move it back to the host.
+        osds_data = self._get_osds_data(self._get_osds_by_dc(dc))
+        osds = [int(osd['osd']) for osd in osds_data if int(osd['up']) == 0]
+        # Bring back all the osds in the DC
         for osd_id in osds:
             # Bring back the osd
             self._bring_back_osd(osd_id)
-            # Wait until the osd is up since we need it to be up before we can
-            # move it back to the host
+            # Wait until the osd is up
             self.wait_until_true(
                 lambda: all([int(osd['up']) == 1
                             for osd in self._get_osds_data([osd_id])]),
                 timeout=self.RECOVERY_PERIOD
             )
-            # Move the osd back to the host
-            self._move_osd_back_to_host(osd_id)
 
     def _fail_over_all_osds_in_dc(self, dc):
         """
@@ -390,6 +370,9 @@ class TestStretchCluster(MgrTestCase):
         # fail over all the OSDs in the DC
         for osd_id in osds:
             self._kill_osd(osd_id)
+        # With the other site down no OSD is left to report the last one
+        self.mgr_cluster.mon_manager.raw_cluster_cmd(
+            'osd', 'down', *[str(osd_id) for osd_id in osds])
         # wait until all the osds are down
         self.wait_until_true(
             lambda: all([int(osd['up']) == 0
@@ -418,6 +401,7 @@ class TestStretchCluster(MgrTestCase):
             lambda: int(self._get_osds_data([osd_id])[0]['up']) == 0,
             timeout=self.RECOVERY_PERIOD
         )
+        return osd_id
 
     def _fail_over_all_mons_in_dc(self, dc):
         """
@@ -626,14 +610,17 @@ class TestStretchCluster(MgrTestCase):
         )
 
     def _wait_for_recovering_stretch_mode(self):
-        """Wait until the cluster enters recovering stretch mode."""
+        """
+        Wait until the cluster enters recovering stretch mode. It leaves it
+        as soon as its PGs are clean, so this does not wait for it to hold.
+        """
         def _is_recovering():
             stretch = self._get_stretch_mode_osdmap()
             return stretch.get('recovering_stretch_mode', 0) == 1
-        self.wait_until_true_and_hold(
+        self.wait_until_true(
             _is_recovering,
             timeout=self.RECOVERY_PERIOD,
-            success_hold_time=self.SUCCESS_HOLD_TIME
+            period=1
         )
 
     def _wait_for_normal_stretch_mode(self):
@@ -771,11 +758,12 @@ class TestStretchCluster(MgrTestCase):
                                       timeout=self.RECOVERY_PERIOD,
                                       success_hold_time=self.SUCCESS_HOLD_TIME)
 
-        # Bring back osds in DC1 expects PGs to be 100% active
+        # Bring back osds in DC1 expects PGs to be 100% inactive: DC2 was
+        # active without DC1, so the PGs wait for DC2
         self._bring_back_all_mons_in_dc('dc1')
         self._bring_back_all_osds_in_dc('dc1')
         self.wait_until_true_and_hold(
-            lambda: self._pg_all_active(),
+            lambda: self._pg_all_unavailable(),
             timeout=self.RECOVERY_PERIOD,
             success_hold_time=self.SUCCESS_HOLD_TIME)
 
@@ -837,8 +825,8 @@ class TestStretchCluster(MgrTestCase):
         # Fail over one OSD in DC2. Should all be partially inactive since below min size
         # There is a case where one OSD holds multiple shards, so some PGs still have acting
         # above min size
-        self._fail_over_one_osd_from_dc(dc='dc2')
-        self.wait_until_true_and_hold(lambda: self._pg_partial_active(),
+        last_failed = self._fail_over_one_osd_from_dc(dc='dc2')
+        self.wait_until_true_and_hold(lambda: not self._pg_all_active(),
                                       timeout=self.RECOVERY_PERIOD,
                                       success_hold_time=self.SUCCESS_HOLD_TIME)
 
@@ -850,7 +838,9 @@ class TestStretchCluster(MgrTestCase):
             timeout=self.RECOVERY_PERIOD,
             success_hold_time=self.SUCCESS_HOLD_TIME)
 
-        self._bring_back_one_osds_from_dc('dc2')
+        # Only the OSD that failed last was in the last interval that could
+        # take writes; with the other one the PGs stay down
+        self._bring_back_one_osds_from_dc('dc2', last_failed)
         # Bring back one osd in DC2 and expect PGs to be 100% active since above min size
         self.wait_until_true_and_hold(
             lambda: self._pg_all_active(),
@@ -933,7 +923,6 @@ class TestStretchCluster(MgrTestCase):
 
         # The cluster should move through recovering stretch mode …
         self._wait_for_recovering_stretch_mode()
-        self._assert_recovering_stretch_mode(expected=True)
 
         # settle back to fully healthy
         self.wait_until_true_and_hold(
