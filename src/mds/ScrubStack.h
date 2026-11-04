@@ -118,6 +118,13 @@ public:
   void rollback_prepare_start(const ScrubHeaderRef& header);
   void rollback_prepare_finish(const ScrubHeaderRef& header);
 
+  /**
+   * No stray is purged or reintegrated while a rollback is in progress, so
+   * that an inode the rollback removed, or that it needs again, can be
+   * relinked, and so that primary links stay where the rollback saw them.
+   */
+  void update_purge_hold();
+
   SnapRollback& get_snap_rollback() { return snap_rollback; }
 
   void advance_scrub_status();
@@ -192,6 +199,7 @@ protected:
   std::set<CDir*> rollback_done_dirfrags;
   // number of rollbacks evicting clients before being enqueued
   unsigned rollbacks_preparing = 0;
+  bool purges_held = false;
 
   friend class C_RetryScrub;
   friend class C_RollbackDirfrag;

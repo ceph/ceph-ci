@@ -272,6 +272,8 @@ void ScrubStack::rollback_prepare_start(const ScrubHeaderRef& header)
   ceph_assert(!header->get_rollback_preparing());
   header->set_rollback_preparing(true);
   ++rollbacks_preparing;
+  // before evicting: clients going away trigger stray evaluations
+  update_purge_hold();
 }
 
 void ScrubStack::rollback_prepare_finish(const ScrubHeaderRef& header)
@@ -280,6 +282,22 @@ void ScrubStack::rollback_prepare_finish(const ScrubHeaderRef& header)
     header->set_rollback_preparing(false);
     ceph_assert(rollbacks_preparing > 0);
     --rollbacks_preparing;
+    update_purge_hold();
+  }
+}
+
+void ScrubStack::update_purge_hold()
+{
+  bool hold = is_rollback_in_progress();
+  if (hold == purges_held) {
+    return;
+  }
+  purges_held = hold;
+  dout(10) << __func__ << " " << (hold ? "holding" : "releasing") << dendl;
+  if (hold) {
+    mdcache->hold_stray_purges();
+  } else {
+    mdcache->release_stray_purges();
   }
 }
 
@@ -1454,6 +1472,8 @@ void ScrubStack::advance_scrub_status()
       ++it;
     }
   }
+
+  update_purge_hold();
 
   ++scrub_epoch;
   for (auto& r : up_mds) {
