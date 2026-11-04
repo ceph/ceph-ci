@@ -66,6 +66,13 @@ struct SnapRollback::rollback_op_t {
   inodeno_t data_ino;
   file_layout_t layout;
   SnapContext snapc;
+
+  // has the head backtrace object been looked up?
+  bool head_checked = false;
+  bool head_exists = false;
+
+  int retries = 0;
+  uint64_t purge_progress = 0;
 };
 
 class C_SnapRollback_Next : public MDSInternalContext {
@@ -122,6 +129,27 @@ public:
   }
 };
 
+class C_IO_SnapRollback_Stat : public MDSIOContext {
+  SnapRollback *sr;
+  MDRequestRef mdr;
+public:
+  C_IO_SnapRollback_Stat(SnapRollback *s, const MDRequestRef& r)
+    : MDSIOContext(s->mdcache->mds), sr(s), mdr(r) {}
+  void finish(int r) override {
+    auto op = static_cast<SnapRollback::rollback_op_t*>(mdr->internal_op_private);
+    if (r < 0 && r != -ENOENT) {
+      sr->finish_request(mdr, r);
+      return;
+    }
+    op->head_checked = true;
+    op->head_exists = (r == 0);
+    sr->dispatch(mdr);
+  }
+  void print(std::ostream& out) const override {
+    out << "snap_rollback_stat";
+  }
+};
+
 std::string_view SnapRollback::action_name(action_t action)
 {
   switch (action) {
@@ -129,6 +157,7 @@ std::string_view SnapRollback::action_name(action_t action)
   case ACTION_SKIP: return "skip";
   case ACTION_ROLLBACK: return "rollback";
   case ACTION_REMOVE: return "remove";
+  case ACTION_REINSTATE: return "reinstate";
   }
   return "unknown";
 }
@@ -205,9 +234,89 @@ SnapRollback::action_t SnapRollback::classify(CDir *dir, std::string_view name,
     return ACTION_ROLLBACK;
   }
 
-  // the snapshot inode is not linked at this name
-  *why = "snapshot inode not linked at the name";
-  return ACTION_SKIP;
+  // The snapshot inode is not linked at this name. Decide what can be done
+  // about it before touching the head inode at this name, if any: removing
+  // can't be undone.
+  auto state = get_head_state(sin->ino(), header, why);
+  if (state == HEAD_PINNED) {
+    return ACTION_SKIP;
+  }
+  if (hin) {
+    // the entry is reclassified after the head inode has been removed
+    return ACTION_REMOVE;
+  }
+  return ACTION_REINSTATE;
+}
+
+/*
+ * Find out what happened to the head version of a snapshot inode that
+ * isn't linked at the snapshot's name anymore. An inode that isn't in
+ * cache is reported as gone; head_gone_from_disk() tells whether it is.
+ */
+SnapRollback::head_state_t
+SnapRollback::get_head_state(inodeno_t ino, const ScrubHeaderRef& header,
+                             std::string *why)
+{
+  CInode *in = mdcache->get_inode(ino);
+  if (!in) {
+    return HEAD_GONE;
+  }
+
+  CDentry *pdn = in->get_projected_parent_dn();
+  if (in->state_test(CInode::STATE_PURGING) ||
+      (pdn && pdn->state_test(CDentry::STATE_PURGING))) {
+    return HEAD_PURGING;
+  }
+  // STATE_PURGING is gone once the item is durable in the purge queue. The
+  // item, say a truncate of an inode that stays in stray, runs after that.
+  if (mdcache->mds->purge_queue.is_ino_pending(ino)) {
+    return HEAD_PURGING;
+  }
+  *why = "head inode is still alive";
+  return HEAD_PINNED;
+}
+
+/*
+ * The head version of `sin` isn't in cache: is it really gone? Inode
+ * numbers are never reused, so a head backtrace object means that the
+ * inode is alive and just not loaded. Returns true if the inode is gone,
+ * otherwise the request gets redispatched later. The request must not hold
+ * any locks, loading the inode may have to traverse the directories it
+ * would lock.
+ */
+bool SnapRollback::head_gone_from_disk(const MDRequestRef& mdr,
+                                       rollback_op_t *op, CInode *sin)
+{
+  MDSRank *mds = mdcache->mds;
+
+  if (mds->purge_queue.is_ino_pending(sin->ino())) {
+    wait_for_purge(mdr, op, "purge of head inode pending");
+    return false;
+  }
+  const auto& si = *sin->get_inode();
+  if (!op->head_checked) {
+    object_t oid = CInode::get_object_name(sin->ino(), frag_t(), "");
+    object_locator_t oloc = OSDMap::file_to_object_locator(si.layout);
+    mds->objecter->stat(oid, oloc, CEPH_NOSNAP, nullptr, nullptr, 0,
+                        new C_IO_SnapRollback_Stat(this, mdr));
+    return false;
+  }
+  if (!op->head_exists) {
+    return true;
+  }
+
+  op->head_checked = false;
+  if (++op->retries > max_retries) {
+    dout(5) << __func__ << " " << op->name << ": can't load head inode "
+            << sin->ino() << dendl;
+    finish_request(mdr, -EBUSY);
+    return false;
+  }
+  dout(10) << __func__ << " " << op->name << ": loading head inode "
+           << sin->ino() << dendl;
+  mdcache->open_ino(sin->ino(), si.layout.pool_id,
+                    new C_MDS_RetryRequest(mdcache, mdr), false);
+  return false;
 }
 
 void SnapRollback::rollback_dirfrag(CDir *dir, const ScrubHeaderRef& header,
@@ -305,8 +414,12 @@ void SnapRollback::entry_done(dirfrag_rollback_t *dr, action_t action, int r)
       stats.rolled_back++;
       ++dr->next;
       break;
+    case ACTION_REINSTATE:
+      stats.reinstated++;
+      ++dr->next;
+      break;
     case ACTION_REMOVE:
-      // reclassify -- the name is gone from head now
+      // reclassify -- the snapshot inode may need to be reinstated
       stats.removed++;
       break;
     default:
@@ -351,6 +464,9 @@ void SnapRollback::dispatch(const MDRequestRef& mdr)
   case ACTION_REMOVE:
     remove_inode(mdr, op);
     break;
+  case ACTION_REINSTATE:
+    reinstate_inode(mdr, op);
+    break;
   default:
     ceph_abort();
   }
@@ -359,6 +475,36 @@ void SnapRollback::dispatch(const MDRequestRef& mdr)
 void SnapRollback::finish_request(const MDRequestRef& mdr, int r)
 {
   mdcache->mds->server->respond_to_request(mdr, r);
+}
+
+/*
+ * A purge can't be called back: the item is in the purge queue's journal
+ * and its operations may be on their way to the OSDs. Started before the
+ * rollback (purges are on hold during it), so it just has to finish. A
+ * long queue is fine as long as it moves.
+ */
+void SnapRollback::wait_for_purge(const MDRequestRef& mdr, rollback_op_t *op,
+                                  std::string_view reason)
+{
+  uint64_t progress = mdcache->mds->purge_queue.get_progress();
+  if (progress != op->purge_progress) {
+    op->purge_progress = progress;
+    op->retries = 0;
+  }
+  retry_later(mdr, op, reason, max_purge_stall);
+}
+
+void SnapRollback::retry_later(const MDRequestRef& mdr, rollback_op_t *op,
+                               std::string_view reason, int limit)
+{
+  if (++op->retries > limit) {
+    dout(5) << __func__ << " " << op->name << ": giving up, " << reason << dendl;
+    finish_request(mdr, -EBUSY);
+    return;
+  }
+  dout(10) << __func__ << " " << op->name << ": " << reason << ", retry "
+           << op->retries << dendl;
+  mdcache->mds->timer.add_event_after(1.0, new C_MDS_RetryRequest(mdcache, mdr));
 }
 
 bool SnapRollback::acquire_locks(const MDRequestRef& mdr, rollback_op_t *op,
@@ -593,8 +739,9 @@ CDentry *SnapRollback::prepare_stray_dentry(const MDRequestRef& mdr, CInode *in)
 }
 
 /*
- * The head inode did not exist at the snapshot: unlink it into the stray
- * directory, the same as an unlink(2). Snapshots taken after the rollback snapshot keep
+ * The head inode did not exist at the snapshot (or is a different inode
+ * than the one in the snapshot): unlink it into the stray directory, the
+ * same as an unlink(2). Snapshots taken after the rollback snapshot keep
  * seeing it via the COWed dentry; the stray manager purges the head.
  */
 void SnapRollback::remove_inode(const MDRequestRef& mdr, rollback_op_t *op)
@@ -604,6 +751,15 @@ void SnapRollback::remove_inode(const MDRequestRef& mdr, rollback_op_t *op)
 
   CDentry *dn = dir->lookup(op->name);
   CInode *in = dn->get_projected_linkage()->get_inode();
+
+  // Replaced after the snapshot: classify() can only rule out that the
+  // snapshot inode is unreachable if it's in cache. Find out before removing.
+  CDentry *sdn = dir->lookup(op->name, op->header->get_rollback_snapid());
+  CDentry::linkage_t *sl = sdn ? sdn->get_projected_linkage() : nullptr;
+  if (sl && !sl->is_null() && !mdcache->get_inode(sl->get_inode()->ino()) &&
+      !head_gone_from_disk(mdr, op, sl->get_inode())) {
+    return;
+  }
 
   CDentry *straydn = prepare_stray_dentry(mdr, in);
   if (!straydn) {
@@ -708,4 +864,103 @@ void SnapRollback::_remove_inode_logged(const MDRequestRef& mdr, CDentry *dn,
   if (!straydn->get_projected_linkage()->is_null()) {
     mdcache->notify_stray(straydn);
   }
+}
+
+/*
+ * The name does not exist in head and the head inode is gone (purged):
+ * create the head inode again under its original inode number, so that
+ * the data objects (rolled back from their snapshot clones) are reachable
+ * again.
+ */
+void SnapRollback::reinstate_inode(const MDRequestRef& mdr, rollback_op_t *op)
+{
+  MDSRank *mds = mdcache->mds;
+  CDir *dir = op->dir;
+  snapid_t snapid = op->header->get_rollback_snapid();
+
+  CDentry *sdn = dir->lookup(op->name, snapid);
+  CInode *sin = sdn->get_projected_linkage()->get_inode();
+
+  // A purge in progress; a head inode in any other state means the action
+  // changes (see classify()).
+  if (mdcache->get_inode(sin->ino())) {
+    wait_for_purge(mdr, op, "head inode being purged");
+    return;
+  }
+  if (!head_gone_from_disk(mdr, op, sin)) {
+    return;
+  }
+
+  CDentry *dn = dir->lookup(op->name);
+  if (!dn) {
+    dn = dir->add_null_dentry(op->name, mdcache->get_global_snaprealm()->get_newest_seq() + 1);
+    dn->mark_new();
+  }
+  if (!acquire_locks(mdr, op, dn, nullptr, nullptr)) {
+    return;
+  }
+
+  const auto& si = *sin->get_inode();
+  CInode *diri = dir->get_inode();
+  if (sin->is_file() && !op->data_done) {
+    if (op->num_objs == 0) {
+      op->data_ino = sin->ino();
+      op->layout = si.layout;
+      op->snapc = diri->find_snaprealm()->get_snap_context();
+      op->num_objs = num_data_objects(op->layout, si, si);
+    }
+    rollback_data(mdr, op);
+    return;
+  }
+
+  snapid_t follows = mdcache->get_global_snaprealm()->get_newest_seq();
+  dn->first = follows + 1;
+
+  CInode *in = new CInode(mdcache, true, dn->first, CEPH_NOSNAP);
+  auto _inode = in->_get_inode();
+  *_inode = si;
+  _inode->version = dn->pre_dirty();
+  _inode->nlink = 1;
+  _inode->stray_prior_path.clear();
+  copy_snap_inode(*_inode, si, mdr->get_op_stamp());
+
+  auto xattrs = CInode::allocate_xattr_map();
+  if (auto& sx = sin->get_xattrs(); sx) {
+    *xattrs = *sx;
+  }
+  in->reset_xattrs(std::move(xattrs));
+  in->symlink = sin->symlink;
+
+  mdcache->add_inode(in);
+  dn->push_projected_linkage(in);
+
+  dout(10) << __func__ << " " << *dn << " " << *in << " from " << *sin << dendl;
+
+  MDLog *mdlog = mds->mdlog;
+  mdr->ls = mdlog->get_current_segment();
+  EUpdate *le = new EUpdate(mdlog, "snap_rollback_reinstate");
+
+  mdcache->predirty_journal_parents(mdr, &le->metablob, in, dn->get_dir(),
+                                    PREDIRTY_PRIMARY|PREDIRTY_DIR, 1);
+  le->metablob.add_primary_dentry(dn, in, true, true, true);
+
+  mdr->committing = true;
+  mdlog->submit_entry(le, new C_SnapRollback_Logged(mds, [this, mdr, dn, in]() {
+    _reinstate_inode_logged(mdr, dn, in);
+  }));
+  mdlog->flush();
+}
+
+void SnapRollback::_reinstate_inode_logged(const MDRequestRef& mdr, CDentry *dn,
+                                           CInode *in)
+{
+  dn->pop_projected_linkage();
+
+  in->mark_dirty(mdr->ls);
+  in->mark_dirty_parent(mdr->ls, true);
+
+  mdr->apply();
+
+  mdcache->send_dentry_link(dn, MDRequestRef());
+  finish_request(mdr, 0);
 }
