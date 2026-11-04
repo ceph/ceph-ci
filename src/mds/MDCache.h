@@ -1171,7 +1171,8 @@ private:
    */
   void enqueue_scrub(std::string_view path, std::string_view tag,
                      bool force, bool recursive, bool repair,
-                     bool scrub_mdsdir, Formatter *f, Context *fin);
+                     bool scrub_mdsdir, Formatter *f, Context *fin,
+                     std::string_view rollback_snap={});
   void repair_inode_stats(CInode *diri);
   void repair_dirfrag_stats(CDir *dir);
   void rdlock_dirfrags_stats(CInode *diri, MDSInternalContext *fin);
@@ -1402,6 +1403,8 @@ private:
    * long time)
    */
   void enqueue_scrub_work(const MDRequestRef& mdr);
+  int prepare_scrub_rollback(const MDRequestRef& mdr, CInode *in,
+                             const ScrubHeaderRef& header);
   void repair_inode_stats_work(const MDRequestRef& mdr);
   void repair_dirfrag_stats_work(const MDRequestRef& mdr);
   void rdlock_dirfrags_stats_work(const MDRequestRef& mdr);
