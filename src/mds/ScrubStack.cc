@@ -239,6 +239,21 @@ private:
   MDSCacheObject *obj;
 };
 
+class C_RollbackDirfrag : public MDSInternalContext {
+public:
+  C_RollbackDirfrag(ScrubStack *s, CDir *d) :
+    MDSInternalContext(s->mdcache->mds), stack(s), dir(d) {
+    stack->add_to_waiting(dir);
+  }
+  void finish(int r) override {
+    stack->rollback_done_dirfrags.insert(dir);
+    stack->remove_from_waiting(dir);
+  }
+private:
+  ScrubStack *stack;
+  CDir *dir;
+};
+
 void ScrubStack::kick_off_scrubs()
 {
   ceph_assert(ceph_mutex_is_locked(mdcache->mds->mds_lock));
@@ -514,6 +529,14 @@ void ScrubStack::scrub_dirfrag(CDir *dir, bool *added_children, bool *done)
   }
 
   ScrubHeaderRef header = dir->get_scrub_header();
+  if (header->is_rollback() && !rollback_done_dirfrags.count(dir)) {
+    // roll back the entries first, then scrub the dirfrag
+    snap_rollback.rollback_dirfrag(dir, header, new C_RollbackDirfrag(this, dir));
+    dout(10) << __func__ << " rolling back " << *dir << dendl;
+    return;
+  }
+  rollback_done_dirfrags.erase(dir);
+
   version_t last_scrub = dir->scrub_info()->last_recursive.version;
   if (header->get_recursive()) {
     auto next_seq = mdcache->get_global_snaprealm()->get_newest_seq()+1;
@@ -528,6 +551,16 @@ void ScrubStack::scrub_dirfrag(CDir *dir, bool *added_children, bool *done)
       }
 
       if (dnk.snapid != CEPH_NOSNAP) {
+	continue;
+      }
+
+      if (header->is_rollback()) {
+	// only recurse into directories that exist in the snapshot as the
+	// same inode; non-directory entries have been rolled back.
+	if (SnapRollback::should_recurse(dn, header->get_rollback_snapid())) {
+	  _enqueue(dn->get_linkage()->get_inode(), header, false);
+	  *added_children = true;
+	}
 	continue;
       }
 
@@ -790,6 +823,20 @@ void ScrubStack::scrub_status(Formatter *f) {
     }
 
     f->dump_string("options", optcss->strv());
+    if (header->is_rollback()) {
+      auto& rs = header->get_rollback_stats();
+      f->open_object_section("rollback");
+      f->dump_string("snap_name", header->get_rollback_snap_name());
+      f->dump_unsigned("snapid", header->get_rollback_snapid());
+      f->dump_unsigned("rolled_back", rs.rolled_back);
+      f->dump_unsigned("removed", rs.removed);
+      f->dump_unsigned("reinstated", rs.reinstated);
+      f->dump_unsigned("relinked", rs.relinked);
+      f->dump_unsigned("linked", rs.linked);
+      f->dump_unsigned("skipped", rs.skipped);
+      f->dump_unsigned("failed", rs.failed);
+      f->close_section(); // rollback
+    }
     f->close_section(); // scrub id
   }
   f->close_section(); // scrubs
@@ -824,6 +871,18 @@ void ScrubStack::scrub_status(Formatter *f) {
 	f->dump_int("uninline_passed", passed);
 	f->dump_int("uninline_failed", failed);
 	f->dump_int("uninline_skipped", skipped);
+	if (!ctrs.rollback_snap.empty()) {
+	  f->open_object_section("rollback");
+	  f->dump_string("snap_name", ctrs.rollback_snap);
+	  f->dump_unsigned("rolled_back", ctrs.rollback.rolled_back);
+	  f->dump_unsigned("removed", ctrs.rollback.removed);
+	  f->dump_unsigned("reinstated", ctrs.rollback.reinstated);
+	  f->dump_unsigned("relinked", ctrs.rollback.relinked);
+	  f->dump_unsigned("linked", ctrs.rollback.linked);
+	  f->dump_unsigned("skipped", ctrs.rollback.skipped);
+	  f->dump_unsigned("failed", ctrs.rollback.failed);
+	  f->close_section(); // rollback
+	}
       }
       f->close_section(); // tag
     }
@@ -855,6 +914,7 @@ void ScrubStack::abort_pending_scrubs() {
   stack_size = 0;
   scrub_stack.clear();
   scrub_waiting.clear();
+  rollback_done_dirfrags.clear();
 
   for (auto& p : remote_scrubs)
     remove_from_waiting(p.first, false);
@@ -1348,6 +1408,17 @@ void ScrubStack::advance_scrub_status()
       sc.uninline_passed = header->get_uninline_passed();
       sc.uninline_failed = header->get_uninline_failed();
       sc.uninline_skipped = header->get_uninline_skipped();
+
+      if (header->is_rollback()) {
+	auto& rs = header->get_rollback_stats();
+	sc.rollback_snap = header->get_rollback_snap_name();
+	sc.rollback = rs;
+	clog->info() << "snap rollback of " << sc.origin_path << " to snap "
+		     << sc.rollback_snap << " finished: rolled_back=" << rs.rolled_back
+		     << " removed=" << rs.removed << " reinstated=" << rs.reinstated
+		     << " relinked=" << rs.relinked << " linked=" << rs.linked
+		     << " skipped=" << rs.skipped << " failed=" << rs.failed;
+      }
 
       scrubbing_map.erase(it++);
     } else {
