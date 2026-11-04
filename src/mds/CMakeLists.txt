@@ -27,6 +27,7 @@ set(mds_srcs
   MDSTableClient.cc
   MDSTableServer.cc
   ScrubStack.cc
+  SnapRollback.cc
   DamageTable.cc
   SimpleLock.cc
   SnapRealm.cc
