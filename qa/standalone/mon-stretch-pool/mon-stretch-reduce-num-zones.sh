@@ -393,11 +393,15 @@ function TEST_one_zone_while_monmap_changes() {
     local profile=$(ceph osd pool get data0 erasure_code_profile -f json |
         jq -r .erasure_code_profile)
     ceph osd crush rule create-erasure data0-one-zone $profile || return 1
-    test "$(ceph quorum_status -f json | jq -r .quorum_leader_name)" = a || return 1
-    # mon.a, the leader, cannot commit a change while mon.b is stopped
-    CEPH_ARGS=${CEPH_ARGS/--mon-host=$CEPH_MON /--mon-host=$CEPH_MON_A }
+    # the leader, mon.a or mon.b, cannot commit a change while the other is
+    # stopped
+    local leader=$(ceph quorum_status -f json | jq -r .quorum_leader_name)
+    local peon=a
+    test $leader != a || peon=b
+    local addr=CEPH_MON_${leader^^}
+    CEPH_ARGS=${CEPH_ARGS/--mon-host=$CEPH_MON /--mon-host=${!addr} }
     local epoch=$(ceph mon dump -f json | jq .epoch)
-    kill -STOP $(cat $dir/mon.b.pid) || return 1
+    kill -STOP $(cat $dir/mon.$peon.pid) || return 1
     ceph mon set-weight a 1 &
     local weight=$!
     sleep 1
@@ -406,12 +410,12 @@ function TEST_one_zone_while_monmap_changes() {
         --yes-i-really-mean-it &
     local one_zone=$!
     sleep 2
-    kill -CONT $(cat $dir/mon.b.pid) || return 1
+    kill -CONT $(cat $dir/mon.$peon.pid) || return 1
     wait $weight || return 1
     wait $one_zone || return 1
     test "$(pool_field data0 num_zones)" = 1 || return 1
     test "$(ceph osd dump -f json | jq .stretch_mode.stretch_mode_enabled)" = false || return 1
-    ceph quorum_status -f json | jq -e '.quorum_names | index("a")' || return 1
+    ceph quorum_status -f json | jq -e ".quorum_names | index(\"$leader\")" || return 1
 }
 
 # A command that sets a PG's pg_temp in the same update as num_zones 1 sizes
