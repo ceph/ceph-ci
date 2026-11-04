@@ -214,6 +214,8 @@ function TEST_shrink_to_one_zone_placement() {
     expect_failure $dir "cannot specify both --class and --no-class" \
         ceph osd pool set r_both num_zones 1 --class ssd --no-class --yes-i-really-mean-it || return 1
     # an EC pool whose own profile carries the default class drops it too
+    ceph osd pool default set --pool_type erasure --class ssd || return 1
+    ceph osd pool default set --pool_type replicated || return 1
     ceph osd pool create e_nc 4 erasure --num_zones 2 --k 2 --m 1 || return 1
     ceph osd erasure-code-profile get e_nc-k2-m1 | grep -q 'crush-device-class=ssd' || return 1
     ceph osd pool set e_nc num_zones 1 --no-class --yes-i-really-mean-it || return 1
