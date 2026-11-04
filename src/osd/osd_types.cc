@@ -1287,7 +1287,7 @@ std::string pg_state_string(uint64_t state)
   if (state & PG_STATE_BACKFILL_WAIT)
     *css << "backfill_wait+";
   if (state & PG_STATE_BACKFILL_PAUSED)
-    *css << "backfill_paused";
+    *css << "backfill_paused+";
   if (state & PG_STATE_BACKFILLING)
     *css << "backfilling+";
   if (state & PG_STATE_FORCED_BACKFILL)
