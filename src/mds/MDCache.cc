@@ -13569,6 +13569,13 @@ void MDCache::enqueue_scrub_work(const MDRequestRef& mdr)
   C_MDS_EnqueueScrub *cs = static_cast<C_MDS_EnqueueScrub*>(mdr->internal_op_finish);
   ScrubHeaderRef& header = cs->header;
 
+  auto respond = [this, &mdr, &header](int r) {
+    if (header->is_rollback()) {
+      mds->scrubstack->rollback_prepare_finish(header);
+    }
+    mds->server->respond_to_request(mdr, r);
+  };
+
   CInode *in;
   CF_MDS_RetryRequestFactory cf(this, mdr, true);
   int r = path_traverse(mdr, cf, mdr->get_filepath(),
@@ -13577,20 +13584,22 @@ void MDCache::enqueue_scrub_work(const MDRequestRef& mdr)
   if (r > 0)
     return;
   if (r < 0) {
-    mds->server->respond_to_request(mdr, r);
+    respond(r);
     return;
   }
 
   // Cannot scrub same dentry twice at same time
   if (in->scrub_is_in_progress()) {
-    mds->server->respond_to_request(mdr, -EBUSY);
+    respond(-EBUSY);
     return;
   }
 
   if (header->is_rollback()) {
     r = prepare_scrub_rollback(mdr, in, header);
+    if (r > 0)
+      return; // evicting clients
     if (r < 0) {
-      mds->server->respond_to_request(mdr, r);
+      respond(r);
       return;
     }
   }
@@ -13598,12 +13607,16 @@ void MDCache::enqueue_scrub_work(const MDRequestRef& mdr)
   in->scrub_info();
   r = mds->scrubstack->enqueue(in, header, !header->get_recursive());
 
-  mds->server->respond_to_request(mdr, r);
+  respond(r);
 }
 
 /*
- * Validate a `scrub rollback` request. Returns 0 if the scrub can be
- * enqueued, or an error.
+ * Validate a `scrub rollback` request and evict all client sessions
+ * before the rollback scrub is enqueued. New client sessions are
+ * refused from here until the rollback scrub has finished.
+ *
+ * Returns 1 if the request is waiting for clients to be evicted (it is
+ * redispatched once done), 0 if the scrub can be enqueued, or an error.
  */
 int MDCache::prepare_scrub_rollback(const MDRequestRef& mdr, CInode *in,
                                     const ScrubHeaderRef& header)
@@ -13628,12 +13641,49 @@ int MDCache::prepare_scrub_rollback(const MDRequestRef& mdr, CInode *in,
   }
   header->set_rollback_snapid(snapid);
 
+  if (header->get_clients_evicted()) {
+    return 0;
+  }
+
   // a rollback does not run alongside other scrubs
   if (mds->scrubstack->has_scrubs()) {
     return -EBUSY;
   }
 
-  return 0;
+  dout(5) << __func__ << " rolling back " << *in << " to snap " << snapid
+	  << ", evicting all clients" << dendl;
+
+  mds->locker->drop_locks(mdr.get());
+  mdr->drop_local_auth_pins();
+  mds->scrubstack->rollback_prepare_start(header);
+
+  auto fin = new LambdaContext([this, mdr, header](int r) {
+      header->set_clients_evicted();
+      mds->queue_waiter(new C_MDS_RetryRequest(this, mdr));
+    });
+  std::vector<int64_t> victims;
+  for (const auto& [name, session] : mds->sessionmap.get_sessions()) {
+    if (name.is_client()) {
+      victims.push_back(session->get_client().v);
+    }
+  }
+  if (victims.empty()) {
+    // nothing to evict, and a gather without subs never completes
+    fin->complete(0);
+    return 1;
+  }
+
+  C_GatherBuilder gather(g_ceph_context, fin);
+  for (auto id : victims) {
+    auto sub = gather.new_sub();
+    CachedStackStringStream css;
+    if (!mds->evict_client(id, false, true, *css, sub)) {
+      dout(5) << __func__ << " " << css->strv() << dendl;
+      sub->complete(0);
+    }
+  }
+  gather.activate();
+  return 1;
 }
 
 class C_MDC_DataUninlinedSubmitted : public MDCacheLogContext {
