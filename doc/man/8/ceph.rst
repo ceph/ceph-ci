@@ -1337,7 +1337,7 @@ where <options> are any of::
     {--pg_num_min <int[0-]>} {--pg_num_max <int[0-]>}
     {--autoscale_mode <on|off|warn>} {--bulk}
     {--target_size_bytes <int[0-]>} {--target_size_ratio <float[0.0-]>}
-    {--force_pg_limit} {--crimson} {--yes-i-really-mean-it}
+    {--force-pg-limit} {--crimson} {--yes-i-really-mean-it}
 
 The positional parameters are pg_num, pgp_num and the pool type (default
 ``osd_pool_default_type``), then the CRUSH rule and expected_num_objects for a
@@ -1369,7 +1369,7 @@ rule of its own); ``--zone_failure_domain`` needs more than one zone.
 
 ``--pg_num_min``, ``--pg_num_max``, ``--autoscale_mode``, ``--bulk``,
 ``--target_size_bytes`` and ``--target_size_ratio`` set the pool's PG
-autoscaler properties. ``--force_pg_limit`` creates the pool even if it exceeds
+autoscaler properties. ``--force-pg-limit`` creates the pool even if it exceeds
 ``mon_max_pg_per_osd``. ``--crimson`` creates a pool for Crimson OSDs
 (experimental). ``--yes-i-really-mean-it`` allows a pool name that begins with
 a dot, and an erasure code profile whose ``stripe_unit`` is not a multiple of
@@ -1396,12 +1396,16 @@ Usage::
 
     ceph osd pool default get
 
-Subcommand ``default set`` sets the defaults that ``osd pool create`` uses. It
+Subcommand ``default set`` sets the defaults that ``osd pool create`` uses for
+every pool created afterwards: the ``osd_pool_default_*`` options, and, for
+erasure-coded pools, the ``default`` erasure code profile. It
 takes the parameters of ``osd pool create`` except ``--size``, all given by
 name, and writes them to the ``global`` section of the configuration database;
 ``--replica`` is written to ``osd_pool_default_size``, and ``--k`` and ``--m``
-change the ``default`` erasure code profile instead. It never changes an
-existing pool. It refuses defaults that fail the checks that ``osd pool create``
+change the ``default`` erasure code profile instead. While the default pool type
+is ``erasure``, ``--root``, ``--zone_failure_domain``, ``--osd_failure_domain``,
+``--class`` and ``--no-class`` also change the ``default`` profile. It never
+changes an existing pool. It refuses defaults that fail the checks that ``osd pool create``
 makes on its parameters, such as ``--k`` and ``--m`` for a replicated default
 type, and values that a ``mon`` section of the configuration database or a
 Monitor's local configuration would override. ``--rule`` must

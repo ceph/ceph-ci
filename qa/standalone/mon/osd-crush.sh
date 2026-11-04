@@ -166,17 +166,16 @@ function TEST_erasure_pool_crush_rule_rm() {
     ! ceph osd crush rule ls | grep $pool_name2 || return 1
 
     # crush rule should be deleted when the last pool using it is deleted
-    local default_rule_name=erasure-code
     ceph osd pool create $pool_name-1 12 12 erasure || return 1
-    ceph osd pool create $pool_name-2 12 12 erasure || return 1
-    ceph osd pool create $pool_name-3 12 12 erasure || return 1
-    ceph osd crush rule ls | grep $default_rule_name || return 1
+    ceph osd pool create $pool_name-2 12 12 erasure --rule $pool_name-1 || return 1
+    ceph osd pool create $pool_name-3 12 12 erasure --rule $pool_name-1 || return 1
+    ceph osd crush rule ls | grep -qx $pool_name-1 || return 1
     ceph osd pool delete $pool_name-1 $pool_name-1 --yes-i-really-really-mean-it || return 1
-    ceph osd crush rule ls | grep $default_rule_name || return 1
+    ceph osd crush rule ls | grep -qx $pool_name-1 || return 1
     ceph osd pool delete $pool_name-2 $pool_name-2 --yes-i-really-really-mean-it || return 1
-    ceph osd crush rule ls | grep $default_rule_name || return 1
+    ceph osd crush rule ls | grep -qx $pool_name-1 || return 1
     ceph osd pool delete $pool_name-3 $pool_name-3 --yes-i-really-really-mean-it || return 1
-    ! ceph osd crush rule ls | grep $default_rule_name || return 1
+    ! ceph osd crush rule ls | grep -qx $pool_name-1 || return 1
 }
 
 function TEST_add_rule_failed() {

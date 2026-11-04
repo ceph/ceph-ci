@@ -19,8 +19,8 @@ function zone_steps() {
     ceph osd crush rule dump $1 | jq -c '[.steps[] | select(.type == "datacenter")]'
 }
 
-# A multi-zone EC pool created from the default profile gets a CRUSH rule of
-# its own, and the shared erasure-code rule stays a single-zone rule.
+# Every EC pool created from the default profile gets a CRUSH rule of its
+# own, over zones or in one.
 function TEST_multi_zone_pool_default_profile() {
     local dir=$1
     two_zone_cluster $dir 4 || return 1
@@ -37,11 +37,12 @@ function TEST_multi_zone_pool_default_profile() {
                 jq -r .erasure_code_profile)" = $pool-k2-m2 || return 1
     done
 
-    test "$(rule_of p1)" = erasure-code || return 1
-    test "$(rule_of p2)" = p2 || return 1
-    test "$(rule_of p3)" = p3 || return 1
-    test "$(rule_of p4)" = erasure-code || return 1
-    test "$(zone_steps erasure-code)" = "[]" || return 1
+    for pool in p1 p2 p3 p4; do
+        test "$(rule_of $pool)" = $pool || return 1
+    done
+    ! ceph osd crush rule ls | grep -qx erasure-code || return 1
+    test "$(zone_steps p1)" = "[]" || return 1
+    test "$(zone_steps p4)" = "[]" || return 1
     for rule in p2 p3; do
         test "$(zone_steps $rule)" = \
             '[{"op":"choose_firstn","num":2,"type":"datacenter"}]' || return 1

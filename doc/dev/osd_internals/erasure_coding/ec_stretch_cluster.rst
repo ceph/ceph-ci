@@ -385,8 +385,8 @@ Syntax
         [--target_size_bytes <target_size_bytes>]
         [--target_size_ratio <target_size_ratio>]
         [--crimson]
-        [--force_pg_limit]
-        [--yes_i_really_mean_it]
+        [--force-pg-limit]
+        [--yes-i-really-mean-it]
 
 The legacy positional syntax is kept for backward compatibility:
 
@@ -448,9 +448,9 @@ The other parameters keep their meaning: ``--pg_num``; ``--pgp_num``, kept for b
 compatibility and not to be modified; ``--expected_num_objects``, to pre-split placement groups;
 the autoscaler's ``--autoscale_mode``, ``--pg_num_min``, ``--pg_num_max``, ``--bulk``,
 ``--target_size_bytes`` and ``--target_size_ratio``; ``--crimson``, for Crimson OSDs
-(experimental); ``--force_pg_limit``, to exceed ``mon_max_pg_per_osd``; and
-``--yes_i_really_mean_it``, to allow a pool name that begins with a dot, such as ``.rgw.root``.
-``--yes_i_really_mean_it`` also allows, for a pool in one zone, a profile ``stripe_unit`` that is
+(experimental); ``--force-pg-limit``, to exceed ``mon_max_pg_per_osd``; and
+``--yes-i-really-mean-it``, to allow a pool name that begins with a dot, such as ``.rgw.root``.
+``--yes-i-really-mean-it`` also allows, for a pool in one zone, a profile ``stripe_unit`` that is
 not a multiple of 4096 (:ref:`How a Pool Gets its Profile <ecsc-how-a-pool-gets-its-profile>`).
 
 .. _ecsc-checks:
@@ -623,13 +623,27 @@ The default Profile
 ^^^^^^^^^^^^^^^^^^^
 
 ``default`` holds what a pool gets when it does not name a profile: ``k``, ``m``, the plugin and its
-keys, and the ``crush-*`` keys. It is a template. Pools get copies of it (:ref:`Generated Profiles
-<ecsc-generated-profiles>`), and from the upgrade commit no pool refers to it (:ref:`At the Commit
-<ecsc-at-the-commit>`), so changing it affects only pools created afterwards:
+keys, and the placement. It is the template of erasure coded pools, as the options are of replicated
+pools. Pools get copies of it (:ref:`Generated Profiles <ecsc-generated-profiles>`), and from the
+upgrade commit no pool refers to it (:ref:`At the Commit <ecsc-at-the-commit>`), so changing it
+affects only pools created afterwards.
 
-* ``ceph osd pool default set --k <k> --m <m>`` changes its ``k`` and ``m`` (:ref:`ceph osd pool
-  default set and get <ecsc-ceph-osd-pool-default-set-and-get>`), and ``ceph osd pool default get``
-  shows them.
+From the commit ``default`` always has the four placement keys: ``crush-root``,
+``crush-zone-failure-domain``, ``crush-failure-domain`` (``crush-osd-failure-domain`` if it has that
+key) and ``crush-device-class`` (empty for no class). A key that it lacks, or that is empty other
+than the class, is filled in from ``osd_pool_default_root``,
+``osd_pool_default_zone_failure_domain``, ``osd_pool_default_osd_failure_domain`` or
+``osd_pool_default_class``: when the Monitors create the cluster or re-create ``default``, at the
+commit (after the pools that use ``default`` get their copies, and with the zone type that the
+commit gives a cluster in global stretch mode), and after ``ceph osd erasure-code-profile set
+default``. A key that it has is kept, so the ``crush-failure-domain=osd`` that test clusters give
+``osd_pool_default_erasure_code_profile`` stays. Before the commit ``default`` is left as earlier
+releases have it. Changing the options alone does not change ``default``; these do:
+
+* ``ceph osd pool default set --k <k> --m <m>`` changes its ``k`` and ``m``, and with an
+  ``erasure`` default type its root, zone type, OSD failure domain and class (:ref:`ceph osd pool
+  default set and get <ecsc-ceph-osd-pool-default-set-and-get>`); ``ceph osd pool default get``
+  shows ``k`` and ``m``.
 * ``ceph osd erasure-code-profile set default ...`` replaces it, with no flags since no pool uses
   it: the keys not given come from ``osd_pool_default_erasure_code_profile`` (:ref:`Profile Commands
   and Changes <ecsc-profile-commands-and-changes>`), so every key, ``k`` and ``m`` included, must be
@@ -638,7 +652,7 @@ keys, and the ``crush-*`` keys. It is a template. Pools get copies of it (:ref:`
   the next command that needs it re-creates it from ``osd_pool_default_erasure_code_profile``.
   ``ceph osd pool create`` and ``ceph osd pool default set`` store the option as written;
   ``ceph osd crush rule create-erasure`` stores it normalized, with the ``crush-*`` keys filled
-  in.
+  in. From the commit the placement keys are filled in as above.
 
 .. _ecsc-how-a-pool-gets-its-profile:
 
@@ -685,13 +699,14 @@ Without a named profile, the Monitor builds the contents of the pool's profile:
 
 1. It copies every key of ``default``, re-creating ``default`` first if it does not exist.
 2. It sets ``k`` and ``m`` from ``--k`` and ``--m``, if given.
-3. It records the CRUSH options given on the command line:
+3. It records the CRUSH options given on the command line (:ref:`Placement Options
+   <ecsc-placement-options>`):
 
    - ``--root`` as ``crush-root``
    - ``--zone_failure_domain`` as ``crush-zone-failure-domain``
    - ``--osd_failure_domain`` as ``crush-osd-failure-domain`` if ``default`` has that key,
      otherwise as ``crush-failure-domain``
-   - ``--class`` as ``crush-device-class``
+   - ``--class`` as ``crush-device-class``, and ``--no-class`` as an empty one
 
 4. The plugin normalizes the contents. This fills in unset keys (``crush-root=default``,
    ``crush-failure-domain=host`` and so on, but not ``crush-zone-failure-domain``) and can
@@ -827,22 +842,14 @@ pool or stretch mode command generates a rule for a pool.
   ``--osd_failure_domain``, ``--class``), else its default option (``osd_pool_default_root``,
   ``osd_pool_default_zone_failure_domain``, ``osd_pool_default_osd_failure_domain``,
   ``osd_pool_default_class``).
-* **Erasure coded pool, root, OSD failure domain and device class**: the command-line option, else
-  the pool's profile (``crush-root``; ``crush-osd-failure-domain``, or ``crush-failure-domain``
-  without it; ``crush-device-class``). A generated profile records the options given at creation,
-  and normalization fills in the others (:ref:`Generated Profiles <ecsc-generated-profiles>`).
-  ``osd_pool_default_root`` and ``osd_pool_default_osd_failure_domain`` do not apply to erasure
-  coded pools, which take the root and OSD failure domain from their profile.
-  ``osd_pool_default_class`` does apply: the device class is ``--class`` or ``--no-class``, else an
-  explicitly named profile's ``crush-device-class``, else ``osd_pool_default_class``, else the
-  ``default`` profile's ``crush-device-class`` (unset in practice), else none.
-* **Erasure coded pool, zone type**: ``--zone_failure_domain``, else the
-  ``crush-zone-failure-domain`` of the pool's profile, else
-  ``osd_pool_default_zone_failure_domain``. At pool creation only a profile named with
-  ``--erasure_code_profile`` counts. Normalization does not fill the key in, so a profile has it
-  only when it is given. A generated profile records the zone type only when
-  ``--zone_failure_domain`` is given; otherwise a ``crush-zone-failure-domain`` copied from
-  ``default`` is not used at creation.
+* **Erasure coded pool**: the command-line option (``--no-class`` for no class), else the pool's
+  profile (``crush-root``; ``crush-zone-failure-domain``; ``crush-osd-failure-domain``, or
+  ``crush-failure-domain`` without it; ``crush-device-class``), else the default option. A pool
+  that names no profile takes the keys of ``default``, which always has all four (:ref:`The default
+  Profile <ecsc-the-default-profile>`), in a generated profile that records them (:ref:`Generated
+  Profiles <ecsc-generated-profiles>`); later commands on the pool, such as ``num_zones``, take the
+  values from it. Normalization gives a named profile its root, OSD failure domain and class (empty
+  for none), so only its zone type can come from ``osd_pool_default_zone_failure_domain``.
 
 This applies to ``ceph osd pool create``, to ``ceph osd pool set <pool> num_zones 2``
 (:ref:`num_zones <ecsc-num-zones>`) and to ``ceph mon enable_stretch_mode``, which gives its
@@ -882,12 +889,10 @@ The CRUSH Rule of a Pool
    <ecsc-ceph-osd-pool-default-set-and-get>`), so an erasure coded pool uses the default rule only
    if ``ceph config set`` made it an erasure rule.
 4. **A rule of the generated name**: ``<pool>`` for a replicated pool over zones and for an erasure
-   coded pool. A single-zone erasure coded pool that gives no named profile, ``--k``, ``--m`` or
-   CRUSH option (:ref:`Parameters <ecsc-parameters>`) shares the rule ``erasure-code`` instead, as
-   pools with the ``default`` profile do in earlier releases. The first such pool builds it, so
-   later pools keep that placement even after the ``crush-*`` keys of ``default`` change; a pool
-   that needs the new keys gives ``--rule`` or the CRUSH options. ``k`` and ``m`` do not matter,
-   because a single-zone rule chooses as many OSDs as the pool's size. A committed rule of the
+   coded pool. Every erasure coded pool gets a rule of its own, so that a change of ``default``
+   reaches the pools created afterwards. Before the commit, a single-zone erasure coded pool that
+   gives no named profile, ``--k``, ``--m`` or CRUSH option (:ref:`Parameters <ecsc-parameters>`)
+   shares the rule ``erasure-code`` instead, as in earlier releases. A committed rule of the
    generated name is reused. Otherwise the Monitor builds it in its own OSDMap update and retries
    the command.
 
@@ -1116,7 +1121,7 @@ ceph osd pool default set and get
         [--k <k>] [--m <m>]
         [--pg_num <pg_num>] [--pgp_num <pgp_num>]
         [--autoscale_mode <on|off|warn>] [--bulk[=false]] [--crimson[=false]]
-        [--yes_i_really_mean_it]
+        [--yes-i-really-mean-it]
 
    ceph osd pool default get
 
@@ -1126,6 +1131,12 @@ Two of them differ from the pool properties of ``ceph osd pool set`` and ``get``
 options: ``--rule`` is the property ``crush_rule`` (``osd_pool_default_crush_rule``), and
 ``--autoscale_mode`` is ``pg_autoscale_mode`` (``osd_pool_default_pg_autoscale_mode``).
 ``--replica`` writes ``osd_pool_default_size``. ``get`` shows each parameter with its option.
+
+The defaults are two templates: the options, and, for erasure coded pools, the ``default`` profile
+with their ``k``, ``m``, plugin and placement (:ref:`The default Profile
+<ecsc-the-default-profile>`). ``set`` changes the defaults of the default pool type, so it refuses
+parameters of the other pool type (:ref:`How Pool Creation Uses the Defaults
+<ecsc-how-pool-creation-uses-the-defaults>`).
 
 ``set`` never changes an existing pool, and never enables or disables stretch mode. Every value
 always has a default, so there is nothing to clear: ``set`` replaces a value, also with its
@@ -1140,11 +1151,19 @@ Monitor and need ``config`` capabilities, although ``--k`` and ``--m`` change th
   counts the replicas in each zone.
 * ``--k`` and ``--m`` set ``k`` and ``m`` in the ``default`` profile in the OSDMap, re-creating it
   first if it does not exist, in the same Monitor proposal as the options, so that a ``set`` is
-  applied whole or not at all. ``default`` is not normalized by this. ``set`` has no
-  ``--erasure_code_profile``: a pool that names a profile takes its ``k``, ``m``, plugin keys, root,
-  OSD failure domain and class from the profile, not from the defaults (:ref:`Placement Options
-  <ecsc-placement-options>`), and the other keys of ``default`` are changed with ``ceph osd
-  erasure-code-profile set default`` (:ref:`The default Profile <ecsc-the-default-profile>`).
+  applied whole or not at all. ``default`` is not normalized by this. While the default type is
+  ``erasure``, given or already set, ``--root``, ``--zone_failure_domain``, ``--osd_failure_domain``
+  and ``--class`` are also written to ``default`` (``crush-root``; ``crush-zone-failure-domain``;
+  ``crush-osd-failure-domain`` if ``default`` has that key, otherwise ``crush-failure-domain``;
+  ``crush-device-class``), and ``--no-class`` empties its ``crush-device-class``: erasure coded
+  pools take their placement from ``default`` (:ref:`Placement Options <ecsc-placement-options>`),
+  not from the options. ``default`` is written with the placement keys it lacks filled in
+  (:ref:`The default Profile <ecsc-the-default-profile>`). A replicated default type leaves
+  ``default`` alone. ``set`` has no ``--erasure_code_profile``: a pool that names a profile
+  takes its ``k``, ``m``, plugin keys, root, OSD failure domain and class from the profile, not from
+  the defaults (:ref:`Placement Options <ecsc-placement-options>`), and the other keys of
+  ``default`` are changed with ``ceph osd erasure-code-profile set default`` (:ref:`The default
+  Profile <ecsc-the-default-profile>`).
 * ``--rule`` names an existing replicated rule ("rule '<rule>' is not a replicated rule"), because
   single-zone replicated pools take the default rule without a suitability check (:ref:`The CRUSH
   Rule of a Pool <ecsc-the-rule-of-a-pool>`), and stores the rule's id. It is refused together with
@@ -1187,7 +1206,7 @@ Monitor and need ``config`` capabilities, although ``--k`` and ``--m`` change th
 * ``<pool_name>``, ``--expected_num_objects``, ``--pg_num_min``, ``--pg_num_max``,
   ``--target_size_bytes`` and ``--target_size_ratio`` describe one pool: its name, its expected
   content and its autoscaler bounds. They are not cluster-wide preferences.
-* ``--force_pg_limit`` and ``--yes_i_really_mean_it`` override a check for one command. They are
+* ``--force-pg-limit`` and ``--yes-i-really-mean-it`` override a check for one command. They are
   not settings.
 
 The shape of the command departs from Ceph convention, which suits a command that is rarely used:
@@ -1237,7 +1256,7 @@ num_zones
    ceph osd pool set <pool> num_zones <n> [--replica <n>] [--crush_rule <rule>]
         [--zone_failure_domain <type>] [--root <root>]
         [--osd_failure_domain <type>] [--class <class>]
-        [--yes_i_really_mean_it]
+        [--yes-i-really-mean-it]
 
 This command changes ``num_zones`` between 1 and 2 (see *Changing Per-Pool Zone and Replica Counts*
 in the stretch mode user documentation). ``ceph mon enable_stretch_mode`` and
@@ -1262,9 +1281,7 @@ Going to two zones:
 * The pool must not be stretched already (an erasure coded pool stretched by an earlier release's
   ``stretch set`` is unstretched first with ``ceph osd pool stretch unset``, :ref:`Individual
   Stretch Pools <ecsc-individual-stretch-pools>`), and it must be able to join stretch mode, or the
-  cluster to enter it (:ref:`Entering Stretch Mode <ecsc-entering-stretch-mode>`). The exception
-  is a pool of global stretch mode that kept one zone when the upgrade was committed: this command
-  gives it the two zones that the commit could not.
+  cluster to enter it (:ref:`Entering Stretch Mode <ecsc-entering-stretch-mode>`).
 * A replicated pool gets ``--replica``, else ``osd_pool_default_size``, copies in each zone,
   from 1 to 10.
 * An erasure coded pool must be a FastEC pool. A legacy EC pool can never be stretched, so the
@@ -1284,8 +1301,7 @@ Going to two zones:
   is enabled if this is the first stretched pool (:ref:`Entering Stretch Mode
   <ecsc-entering-stretch-mode>`).
 
-Going to one zone (only a stretched pool, including a pool of global stretch mode that kept one
-zone when the upgrade was committed):
+Going to one zone:
 
 * An erasure coded pool needs ``--yes-i-really-mean-it``, checked before anything is changed or
   created: "num_zones 1 takes erasure coded pool '<pool>' out of stretch mode and can leave PGs
@@ -1308,11 +1324,9 @@ zone when the upgrade was committed):
   ``num_zones 2`` makes the other zone's shards members again, so the PG goes active and
   backfills.
 * A replicated pool gets ``--replica``, else ``osd_pool_default_size``, copies, from 1 to 10,
-  and the default ``min_size`` for them. A pool that kept one zone at the commit gets 3 copies
-  unless ``--replica`` is given, as ``disable_stretch_mode`` gives a pool over zones. A single
-  copy needs ``mon_allow_pool_size_one`` and ``--yes-i-really-mean-it``, as ``ceph osd pool set
-  <pool> size 1`` does. Its rule is the one named with ``--crush_rule``, which must exist, else
-  the default replicated rule.
+  and the default ``min_size`` for them. A single copy needs ``mon_allow_pool_size_one`` and
+  ``--yes-i-really-mean-it``, as ``ceph osd pool set <pool> size 1`` does. Its rule is the one
+  named with ``--crush_rule``, which must exist, else the default replicated rule.
 * An erasure coded pool gets ``size`` ``k+m`` and ``min_size`` ``k + min(1, m-1)``. Its rule is
   the one named with ``--crush_rule``, which must exist, else ``<pool>-single-zone``, built from
   the profile's keys.
@@ -1361,9 +1375,7 @@ Other Pool Settings
   k=<k> and k+m=<k+m> (inclusively)").
 * ``ceph osd pool set <pool> crush_rule`` takes an existing rule of the pool's type. For a pool over
   zones the rule must also pass the placement check of :ref:`The CRUSH Rule of a Pool
-  <ecsc-the-rule-of-a-pool>`, with the pool's zone type. It is refused for a pool of global stretch
-  mode that kept one zone at the commit, which still peers over both zones whatever its rule:
-  ``num_zones 2`` or ``num_zones 1`` changes it.
+  <ecsc-the-rule-of-a-pool>`, with the pool's zone type.
 * ``ceph osd pool stretch set`` and ``unset`` are for individual stretch pools (:ref:`Individual
   Stretch Pools <ecsc-individual-stretch-pools>`).
 * ``ceph osd pool set`` takes ``--replica``, ``--crush_rule`` and the CRUSH options only with
@@ -1785,11 +1797,8 @@ While only the MonMap is in stretch mode:
   <ecsc-num-zones>`); a pool's refusal names the pool.
 * It is refused in recovery stretch mode ("stretch mode is currently recovering and cannot be
   disabled"; run ``ceph osd force_healthy_stretch_mode`` first).
-* It is refused while a pool of global stretch mode kept one zone when the upgrade was committed,
-  as the command would leave that pool stretched: "pool(s) '<pool>' kept one zone when the upgrade
-  was committed, and disabling stretch mode would leave them stretched; first give each two zones
-  with 'ceph osd pool set <pool> num_zones 2', or one with 'ceph osd pool set <pool> num_zones 1',
-  see STRETCH_MODE_POOL_NOT_CONVERTED in the Health Checks documentation".
+* It is refused while a pool of global stretch mode kept one zone at the commit (:ref:`Pools Left in
+  One Zone at the Commit <ecsc-pools-left-in-one-zone>`).
 * ``crush_rule``, if given, must be a replicated rule that no stretched replicated pool uses.
 
 **Both commands**: erasure coded pools get rules of their own, which are committed in a first OSDMap
@@ -2984,9 +2993,7 @@ first-epoch steps and from the pools they leave pending:
    ``min_size``: individual stretch pools, and pools of global stretch mode with an odd ``size``,
    another bucket target or another placement. ``STRETCH_MODE_POOL_NOT_CONVERTED`` names the
    pools of global stretch mode that keep one zone, before the commit, while they can still be
-   changed, and after it, until ``ceph osd pool set <pool> num_zones 2`` gives them two zones, or
-   ``num_zones 1`` makes them ordinary pools in one zone.
-   ``disable_stretch_mode`` is refused while any remains, as it would leave it stretched.
+   changed, and after it (:ref:`Pools Left in One Zone at the Commit <ecsc-pools-left-in-one-zone>`).
 3. Forces an op resend on every stretch pool, setting all three resend epochs, which the kernel
    client needs. The peering rules change for every stretch pool, so its PGs start a new interval
    that clients cannot see, and replicas drop the reads that clients sent before it.
@@ -3028,8 +3035,10 @@ first-epoch steps and from the pools they leave pending:
    instead. If the name already holds other contents, a suffix ``-<n>`` is added; if it holds
    the same contents, that profile is used and shared. The new profile and the pool's new
    ``erasure_code_profile`` are in the same OSDMap update, and the change is logged to the
-   cluster log. ``default`` and ``osd_pool_default_erasure_code_profile`` are not changed, so
-   new pools get what they got before the upgrade.
+   cluster log. Then ``default`` gets the placement keys it lacks from the options, the zone type
+   as step 5 leaves it (:ref:`The default Profile <ecsc-the-default-profile>`). The keys it has,
+   and ``osd_pool_default_erasure_code_profile``, are not changed, so new pools are placed as
+   before the upgrade.
 
    The copy is exactly what the OSDs already use, so it cannot fail and the pool does not
    change: OSDs build the same EC backend from it, and ``size``, ``min_size``, ``stripe_width``,
@@ -3054,6 +3063,28 @@ works out the shard of an op to an optimized erasure coded pool with ``pg_temp``
 one zone, so for a pool over zones the OSD recovers the client's position in primary-first order
 and replaces the shard (``OSDMap::undo_pre_stretch_zones_primaryfirst()``), as it does for clients
 older than Tentacle.
+
+.. _ecsc-pools-left-in-one-zone:
+
+Pools Left in One Zone at the Commit
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A pool of global stretch mode that the commit cannot split over two zones keeps one zone and the
+rules of earlier releases, and still peers over both zones whatever its rule
+(:ref:`At the Commit <ecsc-at-the-commit>`). ``STRETCH_MODE_POOL_NOT_CONVERTED`` names it until it
+is changed:
+
+* ``ceph osd pool set <pool> num_zones 2`` gives it the two zones that the commit could not, although
+  it is already stretched.
+* ``ceph osd pool set <pool> num_zones 1`` makes it an ordinary pool in one zone, with 3 copies
+  unless ``--replica`` is given, as ``disable_stretch_mode`` gives a pool over zones.
+* ``ceph osd pool set <pool> crush_rule`` alone is refused for it, as a new rule would not change
+  how it peers.
+* ``ceph mon disable_stretch_mode`` is refused while any such pool remains, as it would leave the
+  pool stretched: "pool(s) '<pool>' kept one zone when the upgrade was committed, and disabling
+  stretch mode would leave them stretched; first give each two zones with 'ceph osd pool set <pool>
+  num_zones 2', or one with 'ceph osd pool set <pool> num_zones 1', see
+  STRETCH_MODE_POOL_NOT_CONVERTED in the Health Checks documentation".
 
 .. _ecsc-pools-from-earlier-releases:
 

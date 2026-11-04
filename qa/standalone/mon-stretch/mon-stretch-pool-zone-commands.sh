@@ -213,6 +213,19 @@ function TEST_shrink_to_one_zone_placement() {
     ! rule_exists r_nc-single-zone || return 1
     expect_failure $dir "cannot specify both --class and --no-class" \
         ceph osd pool set r_both num_zones 1 --class ssd --no-class --yes-i-really-mean-it || return 1
+    # an EC pool whose own profile carries the default class drops it too
+    ceph osd pool create e_nc 4 erasure --num_zones 2 --k 2 --m 1 || return 1
+    ceph osd erasure-code-profile get e_nc-k2-m1 | grep -q 'crush-device-class=ssd' || return 1
+    ceph osd pool set e_nc num_zones 1 --no-class --yes-i-really-mean-it || return 1
+    test "$(rule_takes e_nc-single-zone)" = default || return 1
+    ceph osd pool create e_both 4 erasure --num_zones 2 --k 2 --m 1 || return 1
+    expect_failure $dir "cannot specify both --class and --no-class" \
+        ceph osd pool set e_both num_zones 1 --class ssd --no-class --yes-i-really-mean-it || return 1
+    # a rule built from a profile still takes the profile's class
+    ceph osd erasure-code-profile set p_ssd k=2 m=1 crush-device-class=ssd \
+        crush-failure-domain=osd || return 1
+    ceph osd crush rule create-erasure r_ssd p_ssd || return 1
+    test "$(rule_takes r_ssd)" = default~ssd || return 1
     ceph config rm global osd_pool_default_class || return 1
 }
 
@@ -224,16 +237,17 @@ function TEST_rule_lifetime_on_pool_changes() {
     ceph osd pool default set --pool_type erasure --k 2 --m 1 || return 1
     ceph osd pool default set --pool_type replicated || return 1
 
+    ceph osd pool create e1 erasure || return 1
+    ceph osd pool create e2 erasure --rule e1 || return 1
     for pool in e1 e2; do
-        ceph osd pool create $pool erasure || return 1
         ceph osd pool set $pool allow_ec_optimizations true || return 1
+        test "$(ceph osd pool get $pool crush_rule -f json | jq -r .crush_rule)" = e1 || return 1
     done
-    test "$(ceph osd pool get e1 crush_rule -f json | jq -r .crush_rule)" = erasure-code || return 1
     ceph osd pool set e1 num_zones 2 || return 1
     rule_exists e1-stretch || return 1
-    rule_exists erasure-code || return 1
+    rule_exists e1 || return 1
     ceph osd pool set e2 num_zones 2 || return 1
-    ! rule_exists erasure-code || return 1
+    ! rule_exists e1 || return 1
     ceph osd pool set e1 num_zones 1 --yes-i-really-mean-it || return 1
     ! rule_exists e1-stretch || return 1
     rule_exists e1-single-zone || return 1

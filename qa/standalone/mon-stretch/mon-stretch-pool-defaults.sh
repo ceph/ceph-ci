@@ -200,6 +200,51 @@ function TEST_set_k_m_in_default_profile() {
         ceph osd pool default set --erasure_code_profile default || return 1
 }
 
+function default_profile_field() {
+    ceph osd erasure-code-profile get default -f json | jq -r ".\"$1\" // empty"
+}
+
+# Test the default profile always has the placement of erasure coded
+# pools, which ceph osd pool default set writes only while the default type
+# is erasure
+function TEST_set_placement_in_default_profile() {
+    local dir=$1
+    run_mon $dir a || return 1
+    test "$(default_profile_field crush-root)" = default || return 1
+    test "$(default_profile_field crush-zone-failure-domain)" = datacenter || return 1
+    test "$(default_profile_field crush-failure-domain)" = host || return 1
+    test "$(ceph osd erasure-code-profile get default -f json | \
+            jq 'has("crush-device-class")')" = true || return 1
+
+    ceph osd crush add-bucket altroot root || return 1
+    ceph osd crush class create ssd || return 1
+    ceph osd erasure-code-profile set default plugin=isa \
+        technique=reed_sol_van k=2 m=2 crush-failure-domain=osd \
+        crush-device-class=ssd || return 1
+    # set fills in what it is not given
+    test "$(default_profile_field crush-zone-failure-domain)" = datacenter || return 1
+
+    # a replicated default type leaves the default profile alone
+    ceph osd pool default set --root altroot --osd_failure_domain rack \
+        --zone_failure_domain host --no-class || return 1
+    test "$(default_profile_field crush-failure-domain)" = osd || return 1
+    test "$(default_profile_field crush-device-class)" = ssd || return 1
+    test "$(default_profile_field crush-root)" = default || return 1
+    test "$(default_profile_field crush-zone-failure-domain)" = datacenter || return 1
+
+    # an erasure default type writes it, the built-in values too
+    ceph osd pool default set --pool_type erasure --root altroot \
+        --osd_failure_domain host --zone_failure_domain rack --no-class \
+        || return 1
+    test "$(default_profile_field crush-root)" = altroot || return 1
+    test "$(default_profile_field crush-zone-failure-domain)" = rack || return 1
+    test "$(default_profile_field crush-failure-domain)" = host || return 1
+    test "$(ceph osd erasure-code-profile get default -f json | \
+            jq -r '."crush-device-class"')" = "" || return 1
+    ceph osd pool default set --class ssd || return 1
+    test "$(default_profile_field crush-device-class)" = ssd || return 1
+}
+
 # Test values that another source overrides are refused
 function TEST_set_refuses_overridden_values() {
     local dir=$1

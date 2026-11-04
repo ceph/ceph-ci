@@ -26,10 +26,6 @@ function run() {
     done
 }
 
-function pool_field() {
-    ceph osd pool ls detail -f json | jq --arg p $1 ".[]|select(.pool_name==\$p)|.$2"
-}
-
 # the EC shards that cannot become primary, raw shards 1 to k-1 in each zone
 function pool_nonprimary_shards() {
     ceph osd pool ls detail -f json | jq -r --arg p $1 ".[]|select(.pool_name==\$p)|.nonprimary_shards"

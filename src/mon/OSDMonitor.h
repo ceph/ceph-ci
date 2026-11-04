@@ -618,7 +618,7 @@ private:
                                 const std::string &root,
                                 const std::string &zone_failure_domain,
                                 const std::string &osd_failure_domain,
-                                const std::string &device_class,
+                                const std::optional<std::string> &device_class,
                                 const std::string &profile,
                                 int *rule,
                                 std::ostream *ss);
@@ -637,7 +637,7 @@ private:
                               int num_replica_per_zone,
                               const std::string &zone_failure_domain,
                               const std::string &osd_failure_domain,
-                              const std::string &device_class,
+                              const std::optional<std::string> &device_class,
                               int *crush_rule,
                               std::ostream *ss);
   bool erasure_code_profile_in_use(
