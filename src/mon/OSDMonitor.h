@@ -566,7 +566,7 @@ private:
                        const std::string &root,
                        const std::string &zone_failure_domain,
                        const std::string &osd_failure_domain,
-                       const std::string &device_class,
+                       const std::optional<std::string> &device_class,
                        const std::string &profile,
                        std::ostream *ss);
   int prepare_pool_migration_names(int64_t source,

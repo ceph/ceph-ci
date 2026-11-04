@@ -8296,7 +8296,7 @@ int OSDMonitor::add_erasure_rule(CrushWrapper &crush,
                                  const string &root,
                                  const string &zone_failure_domain,
                                  const string &osd_failure_domain,
-                                 const string &device_class,
+                                 const std::optional<string> &device_class,
                                  const string &profile,
                                  ostream *ss)
 {
@@ -8855,9 +8855,12 @@ int OSDMonitor::add_target_rule(CrushWrapper &crush,
     crush.set_rule_name(id, name);
     return id;
   } else if (is_erasure) {
+    // as at create, no class inherits the profile's class
     return add_erasure_rule(crush, name, params.num_zones, root,
                             zone_failure_domain, osd_failure_domain,
-                            device_class, erasure_code_profile, ss);
+                            device_class.empty() ? std::nullopt :
+                              std::optional<string>(device_class),
+                            erasure_code_profile, ss);
   } else {
     return add_replica_rule(crush, name, root, params.num_zones,
                             params.replica, zone_failure_domain,
