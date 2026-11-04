@@ -523,6 +523,9 @@ class MDSRank {
     void command_scrub_start(Formatter *f,
                              std::string_view path, std::string_view tag,
                              const std::vector<std::string>& scrubop_vec, Context *on_finish);
+    void command_scrub_rollback(Formatter *f, std::string_view path,
+                                std::string_view snap_name,
+                                std::string_view tag, Context *on_finish);
     void command_tag_path(Formatter *f, std::string_view path,
                           std::string_view tag);
     // scrub control commands

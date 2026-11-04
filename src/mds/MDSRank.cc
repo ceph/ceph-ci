@@ -2948,6 +2948,42 @@ void MDSRankDispatcher::handle_asok_command(
 	      }));
 	}));
     return;
+  } else if (command == "scrub rollback") {
+    if (!is_active()) {
+      *css << "MDS is not active";
+      r = -EINVAL;
+      goto out;
+    }
+    else if (whoami != 0) {
+      *css << "Not rank 0";
+      r = -EXDEV;
+      goto out;
+    }
+
+    string path;
+    string snap_name;
+    string tag;
+    cmd_getval(cmdmap, "path", path);
+    cmd_getval(cmdmap, "snap_name", snap_name);
+    cmd_getval(cmdmap, "tag", tag);
+    if (snap_name.empty()) {
+      *css << "snap_name is required";
+      r = -EINVAL;
+      goto out;
+    }
+
+    finisher->queue(
+      new LambdaContext(
+	[this, on_finish, f, path, snap_name, tag](int r) {
+	  command_scrub_rollback(
+	    f, path, snap_name, tag,
+	    new LambdaContext(
+	      [on_finish](int r) {
+		bufferlist outbl;
+		on_finish(r, {}, outbl);
+	      }));
+	}));
+    return;
   } else if (command == "scrub abort") {
     if (!is_active()) {
       *css << "MDS is not active";
@@ -3274,6 +3310,15 @@ void MDSRank::command_scrub_start(Formatter *f,
   mdcache->enqueue_scrub(path, tag, force, recursive, repair, scrub_mdsdir,
                          f, on_finish);
   // scrub_dentry() finishers will dump the data for us; we're done!
+}
+
+void MDSRank::command_scrub_rollback(Formatter *f, std::string_view path,
+                                     std::string_view snap_name,
+                                     std::string_view tag, Context *on_finish)
+{
+  std::lock_guard l(mds_lock);
+  mdcache->enqueue_scrub(path, tag, true, true, false, false, f, on_finish,
+                         snap_name);
 }
 
 void MDSRank::command_tag_path(Formatter *f,

@@ -365,6 +365,13 @@ void MDSDaemon::set_up_admin_socket()
 				     asok_hook,
 				     "scrub and inode and output results");
   ceph_assert(r == 0);
+  r = admin_socket->register_command("scrub rollback "
+				     "name=path,type=CephString "
+				     "name=snap_name,type=CephString "
+				     "name=tag,type=CephString,req=false",
+				     asok_hook,
+				     "roll back a directory to a snapshot (evicts all clients)");
+  ceph_assert(r == 0);
   r = admin_socket->register_command("scrub abort",
                                      asok_hook,
                                      "Abort in progress scrub operations(s)");
