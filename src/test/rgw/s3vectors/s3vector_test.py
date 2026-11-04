@@ -4336,11 +4336,11 @@ def test_background_index_rebuild():
     # (numIndexSegments==0, numUnindexedRows==total) are racy: the FIRST rebuild
     # of a table is not gated by the cooldown, so on a fast cluster the worker
     # fires the moment the row count crosses the threshold, mid-load.
-    set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 0)
-    # block until the daemon has actually applied it (config push is async); the
-    # admin API reports the same cct value the worker's scan reads.
-    wait_for_max_concurrent_rebuilds(0)
     try:
+        set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 0)
+        # block until the daemon has actually applied it (config push is async); the
+        # admin API reports the same cct value the worker's scan reads.
+        wait_for_max_concurrent_rebuilds(0)
         # insert 500 vectors in batches (exceeds default threshold of 256 and
         # the minimum required for reliable index creation)
         for batch_start in range(0, total_vectors, batch_size):
@@ -4366,24 +4366,25 @@ def test_background_index_rebuild():
         # poll until background rebuild completes (unindexed ratio below threshold)
         stats = wait_for_index_rebuild(conn, bucket_name, index_name)
         assert stats['numIndexedRows'] >= total_vectors * 0.9
+
+        # verify query works after rebuild — just check the response is valid
+        top_k = 10
+        query_vector = generate_data(dimension, 42)
+        result = conn.query_vectors(vectorBucketName=bucket_name, indexName=index_name, queryVector=query_vector, topK=top_k)
+        assert result['ResponseMetadata']['HTTPStatusCode'] == 200
+        assert len(result['vectors']) == top_k
+
+        # verify we can get specific vectors
+        verify_get_vectors(conn, bucket_name, index_name, ['vec-0', 'vec-250', 'vec-499'], expected_dimension=dimension)
     finally:
         # always resume so a failure above doesn't leave the worker paused for
-        # subsequent tests in the suite
-        set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 4)
-
-    # verify query works after rebuild — just check the response is valid
-    top_k = 10
-    query_vector = generate_data(dimension, 42)
-    result = conn.query_vectors(vectorBucketName=bucket_name, indexName=index_name, queryVector=query_vector, topK=top_k)
-    assert result['ResponseMetadata']['HTTPStatusCode'] == 200
-    assert len(result['vectors']) == top_k
-
-    # verify we can get specific vectors
-    verify_get_vectors(conn, bucket_name, index_name, ['vec-0', 'vec-250', 'vec-499'], expected_dimension=dimension)
-
-    # cleanup
-    _clean_s3_objects_for_vector_bucket(bucket_name)
-    _ = _delete_vector_bucket(conn, bucket_name)
+        # subsequent tests in the suite, and always delete the bucket so it does
+        # not show up in the listings of the tests that follow. the "try" variant
+        # is used so that a failure to restore the option does not skip the
+        # deletion of the bucket
+        try_set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 4)
+        _clean_s3_objects_for_vector_bucket(bucket_name)
+        _ = _delete_vector_bucket(conn, bucket_name)
 
 
 
@@ -4437,10 +4438,10 @@ def test_query_consistency_before_and_after_index_build():
                    for n in range(total_vectors)]
     query_vector = all_vectors[250]['data']
 
-    # pause the worker before inserting so we can assert brute-force path
-    set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 0)
-    wait_for_max_concurrent_rebuilds(0)
     try:
+        # pause the worker before inserting so we can assert brute-force path
+        set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 0)
+        wait_for_max_concurrent_rebuilds(0)
         batch_size = 100
         for batch_start in range(0, total_vectors, batch_size):
             result = conn.put_vectors(vectorBucketName=bucket_name, indexName=index_name,
@@ -4506,7 +4507,9 @@ def test_query_consistency_before_and_after_index_build():
             f'Brute-force: {brute_force_keys}, ANN: {ann_keys}')
 
     finally:
-        set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 4)
+        # the "try" variant is used so that a failure to restore the option does
+        # not skip the deletion of the bucket
+        try_set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 4)
         _clean_s3_objects_for_vector_bucket(bucket_name)
         _ = _delete_vector_bucket(conn, bucket_name)
 
@@ -5250,9 +5253,9 @@ def test_delete_vectors_triggers_rebuild():
     # ── Phase 1: insert-triggered rebuild ────────────────────────────────────
     # Pause the worker before inserting so the rebuild does not fire mid-load and
     # before we can pause — same technique as test_background_index_rebuild.
-    set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 0)
-    wait_for_max_concurrent_rebuilds(0)
     try:
+        set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 0)
+        wait_for_max_concurrent_rebuilds(0)
         vectors = generate_vectors(500, dimension)
         result = conn.put_vectors(vectorBucketName=bucket_name, indexName=index_name, vectors=vectors)
         assert result['ResponseMetadata']['HTTPStatusCode'] == 200
@@ -5330,37 +5333,38 @@ def test_delete_vectors_triggers_rebuild():
             f'expected a new FINISH event after delete-triggered rebuild within 90 s '
             f'(rebuild_start_time={rebuild_start_time})')
 
+        stats_after_rebuild = get_index_stats(conn, bucket_name, index_name)
+        log.info('after delete-triggered rebuild: %s', stats_after_rebuild)
+
+        # numUnindexedRows must still be 0 — rebuild was delete-ratio driven, not insert driven
+        assert stats_after_rebuild['numUnindexedRows'] == 0, \
+            'numUnindexedRows must remain 0 after delete-only rebuild'
+        log.info('delete-triggered rebuild FINISH event: %s', new_finish_event)
+
+        # deleted vectors must be absent from GET
+        result = conn.get_vectors(vectorBucketName=bucket_name, indexName=index_name,
+                                  keys=['vec-0', 'vec-50', 'vec-100'])
+        assert result['ResponseMetadata']['HTTPStatusCode'] == 200
+        assert len(result['vectors']) == 0, \
+            f'deleted vectors must not be returned, got: {result["vectors"]}'
+
+        # non-deleted vectors must still be queryable via the rebuilt index
+        top_k = 5
+        query_vector = generate_data(dimension, 200)
+        result = conn.query_vectors(vectorBucketName=bucket_name, indexName=index_name,
+                                    queryVector=query_vector, topK=top_k)
+        assert result['ResponseMetadata']['HTTPStatusCode'] == 200
+        assert len(result['vectors']) == top_k, \
+            f'expected {top_k} query results after delete rebuild, got {len(result["vectors"])}'
+
     finally:
-        # always restore so a test failure does not leave the worker paused
-        set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 4)
-
-    stats_after_rebuild = get_index_stats(conn, bucket_name, index_name)
-    log.info('after delete-triggered rebuild: %s', stats_after_rebuild)
-
-    # numUnindexedRows must still be 0 — rebuild was delete-ratio driven, not insert driven
-    assert stats_after_rebuild['numUnindexedRows'] == 0, \
-        'numUnindexedRows must remain 0 after delete-only rebuild'
-    log.info('delete-triggered rebuild FINISH event: %s', new_finish_event)
-
-    # deleted vectors must be absent from GET
-    result = conn.get_vectors(vectorBucketName=bucket_name, indexName=index_name,
-                              keys=['vec-0', 'vec-50', 'vec-100'])
-    assert result['ResponseMetadata']['HTTPStatusCode'] == 200
-    assert len(result['vectors']) == 0, \
-        f'deleted vectors must not be returned, got: {result["vectors"]}'
-
-    # non-deleted vectors must still be queryable via the rebuilt index
-    top_k = 5
-    query_vector = generate_data(dimension, 200)
-    result = conn.query_vectors(vectorBucketName=bucket_name, indexName=index_name,
-                                queryVector=query_vector, topK=top_k)
-    assert result['ResponseMetadata']['HTTPStatusCode'] == 200
-    assert len(result['vectors']) == top_k, \
-        f'expected {top_k} query results after delete rebuild, got {len(result["vectors"])}'
-
-    # cleanup
-    _clean_s3_objects_for_vector_bucket(bucket_name)
-    _ = _delete_vector_bucket(conn, bucket_name)
+        # always restore so a test failure does not leave the worker paused, and
+        # always delete the bucket so it does not show up in the listings of the
+        # tests that follow. the "try" variant is used so that a failure to
+        # restore the option does not skip the deletion of the bucket
+        try_set_rgw_config_option('rgw_s3vector_max_concurrent_rebuilds', 4)
+        _clean_s3_objects_for_vector_bucket(bucket_name)
+        _ = _delete_vector_bucket(conn, bucket_name)
 
 
 @pytest.mark.vector_bucket_test
