@@ -178,6 +178,7 @@ class MDSRank {
     friend class MDCache;
     friend class Locker;
     friend class CInode;
+    friend class SnapRollback;
 
     CephContext *cct;
 

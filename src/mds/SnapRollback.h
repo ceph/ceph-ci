@@ -47,7 +47,18 @@ public:
     ACTION_NONE = 0,      // nothing to do
     ACTION_SKIP,          // unsupported (directory, hardlink, ...)
     ACTION_ROLLBACK,      // same inode in snapshot and head
-    ACTION_REMOVE,        // remove head inode (created after snapshot)
+    ACTION_REMOVE,        // remove head inode (created/replaced after snapshot)
+    ACTION_REINSTATE,     // recreate head inode from snapshot (head inode is gone)
+  };
+
+  /**
+   * Where the head version of the inode that a name refers to in the
+   * snapshot is, when it is not linked at that name.
+   */
+  enum head_state_t {
+    HEAD_GONE = 0,        // not in cache
+    HEAD_PURGING,         // being purged; gone once the purge finishes
+    HEAD_PINNED,          // alive, so it can't be recreated
   };
 
   explicit SnapRollback(MDCache *mdc) : mdcache(mdc) {}
@@ -80,9 +91,14 @@ private:
   friend class C_SnapRollback_EntryDone;
   friend class C_SnapRollback_Logged;
   friend class C_IO_SnapRollback_Data;
+  friend class C_IO_SnapRollback_Stat;
 
   action_t classify(CDir *dir, std::string_view name,
                     const ScrubHeaderRef& header, std::string *why);
+  head_state_t get_head_state(inodeno_t ino, const ScrubHeaderRef& header,
+                              std::string *why);
+  bool head_gone_from_disk(const MDRequestRef& mdr, rollback_op_t *op,
+                           CInode *sin);
 
   void next_entry(dirfrag_rollback_t *dr);
   void entry_done(dirfrag_rollback_t *dr, action_t action, int r);
@@ -93,10 +109,13 @@ private:
 
   void rollback_inode(const MDRequestRef& mdr, rollback_op_t *op);
   void remove_inode(const MDRequestRef& mdr, rollback_op_t *op);
+  void reinstate_inode(const MDRequestRef& mdr, rollback_op_t *op);
 
   void _rollback_inode_logged(const MDRequestRef& mdr);
   void _remove_inode_logged(const MDRequestRef& mdr, CDentry *dn,
                             CDentry *straydn, version_t dnpv);
+  void _reinstate_inode_logged(const MDRequestRef& mdr, CDentry *dn,
+                               CInode *in);
 
   /**
    * Issue CEPH_OSD_OP_ROLLBACK for the data objects of an inode, in
@@ -106,9 +125,16 @@ private:
   void rollback_data(const MDRequestRef& mdr, rollback_op_t *op);
   void _rollback_data_window_done(const MDRequestRef& mdr, int r);
 
+  void retry_later(const MDRequestRef& mdr, rollback_op_t *op,
+                   std::string_view reason, int limit = max_retries);
+  void wait_for_purge(const MDRequestRef& mdr, rollback_op_t *op,
+                      std::string_view reason);
   void finish_request(const MDRequestRef& mdr, int r);
 
   static constexpr uint64_t max_inflight = 64;
+  static constexpr int max_retries = 60;
+  // seconds without the purge queue completing anything
+  static constexpr int max_purge_stall = 600;
   static constexpr int max_reclassify = 8;
 
   MDCache *mdcache;
