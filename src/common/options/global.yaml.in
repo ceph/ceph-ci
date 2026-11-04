@@ -2908,8 +2908,9 @@ options:
   desc: Default CRUSH zone failure domain for pools over zones
   long_desc: Sets the default CRUSH failure domain type (such as datacenter) used to separate
     zones when a pool gets more than one zone (num_zones > 1) and no explicit zone failure
-    domain is provided. An erasure coded pool uses the crush-zone-failure-domain of its
-    profile first, if the profile sets one.
+    domain is provided. Erasure coded pools take it from their erasure code profile; the default
+    profile gets it when it is created and at the upgrade commit, and ceph osd pool default
+    set writes it there while the default pool type is erasure.
   default: datacenter
   services:
   - mon
@@ -2923,7 +2924,9 @@ options:
   desc: Default CRUSH failure domain within a zone for new pools
   long_desc: The CRUSH bucket type (for example, host or rack) that the copies of a replicated
     pool are spread over, within each zone. It is used for the CRUSH rules generated for
-    replicated pools. Erasure coded pools take it from their profile instead.
+    replicated pools. Erasure coded pools take it from their erasure code profile; the default
+    profile gets it when it is created and at the upgrade commit, and ceph osd pool default
+    set writes it there while the default pool type is erasure.
   default: host
   services:
   - mon
@@ -2936,7 +2939,9 @@ options:
   level: advanced
   desc: Default CRUSH root for new pools
   long_desc: The CRUSH root of the rules generated for replicated pools. Erasure coded pools
-    take it from their profile instead.
+    take it from their erasure code profile; the default profile gets it when it is created and
+    at the upgrade commit, and ceph osd pool default set writes it there while the default pool
+    type is erasure.
   default: default
   services:
   - mon
@@ -2946,9 +2951,10 @@ options:
   type: str
   level: advanced
   desc: Default device class for new pools; empty means any class
-  long_desc: The device class of the rules generated for new pools; empty means any class. It
-    applies to replicated and erasure coded pools, but an erasure code profile's own
-    crush-device-class takes precedence.
+  long_desc: The device class of the rules generated for replicated pools; empty means any
+    class. Erasure coded pools take it from their erasure code profile; the default
+    profile gets it when it is created and at the upgrade commit, and ceph osd pool default
+    set writes it there while the default pool type is erasure.
   services:
   - mon
   flags:

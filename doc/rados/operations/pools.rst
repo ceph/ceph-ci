@@ -207,8 +207,9 @@ or:
 
 ``[options]`` are named options such as ``--autoscale_mode=<on,off,warn>`` and
 the options described below. Most parameters that are not given take their
-values from an ``osd_pool_default_*`` option, and ``--k`` and ``--m`` from the
-``default`` erasure code profile (see :ref:`pool-creation-defaults`). Until an
+values from an ``osd_pool_default_*`` option; for an ``erasure`` pool, ``--k``,
+``--m`` and the placement come from the ``default`` erasure code profile (see
+:ref:`pool-creation-defaults`). Until an
 upgrade to this release is committed with ``ceph osd require-osd-release``,
 ``ceph osd pool create`` is refused.
 
@@ -264,7 +265,8 @@ following:
 
   :Type: String
   :Required: No.
-  :Default: replicated
+  :Default: ``osd_pool_default_type``, which is ``replicated`` unless it is
+            changed, for example with ``ceph osd pool default set --pool_type``.
 
 .. describe:: [crush-rule-name]
 
@@ -276,19 +278,17 @@ following:
 
    :Type: String
    :Required: No.
-   :Default: For ``replicated`` pools, it is by default the rule specified by
-             the :confval:`osd_pool_default_crush_rule` configuration option.
-             This rule must exist. A replicated pool with ``num_zones`` greater
-             than 1 gets the ``{pool-name}`` rule instead, unless
-             :confval:`osd_pool_default_crush_rule` names a rule, for example
-             one set with ``ceph osd pool default set --rule``, that places
-             the pool in its zones as described above. For ``erasure`` pools,
-             it is the ``erasure-code`` rule if neither an :ref:`erasure code
-             profile <erasure-code-profiles>` nor ``--k``, ``--m`` or a CRUSH
-             option (``--root``, ``--zone_failure_domain``,
-             ``--osd_failure_domain`` or ``--class``) is given and
-             ``num_zones`` is 1, or the ``{pool-name}`` rule if not. This rule
-             will be created implicitly if it doesn't already exist.
+   :Default: The first of these:
+
+             1. The rule that :confval:`osd_pool_default_crush_rule` names, for
+                example one set with ``ceph osd pool default set --rule``, when
+                no CRUSH option below is given: as it is for a ``replicated``
+                pool in one zone, and for other pools only if it places them as
+                their other parameters describe.
+             2. A rule that places the pool as its other parameters describe:
+                its zones, the CRUSH options below and, for an ``erasure``
+                pool, its erasure code profile. Ceph creates the rule if it
+                does not exist.
 
 .. describe:: [erasure-code-profile=profile]
 
@@ -296,7 +296,7 @@ following:
    code profile <erasure-code-profiles>`. This profile must be an existing profile as defined via
    the dashboard or invoking ``osd erasure-code-profile set``. Without a
    profile, or with ``default``, a per-pool profile is created from
-   the ``default`` profile and ``--k`` and ``--m``, if given (see
+   the ``default`` profile, ``--k``, ``--m`` and the CRUSH options given (see
    :ref:`erasure-code-profile-lifecycle`). A profile whose ``stripe_unit``
    is not a multiple of 4096 bytes is refused unless ``--yes-i-really-mean-it``
    is given, and always for a pool over zones, which is a FastEC pool.  Note that
@@ -412,11 +412,12 @@ following:
    :Default: For a ``replicated`` pool, :confval:`osd_pool_default_root`,
              :confval:`osd_pool_default_zone_failure_domain`,
              :confval:`osd_pool_default_osd_failure_domain` and
-             :confval:`osd_pool_default_class`. An ``erasure`` pool takes
-             the bucket and the bucket type within a zone from the ``default``
-             erasure code profile, and the zone type from
-             :confval:`osd_pool_default_zone_failure_domain`. Its device class
-             is :confval:`osd_pool_default_class` when the profile sets none.
+             :confval:`osd_pool_default_class`.
+
+             For an ``erasure`` pool, the value in its erasure code profile
+             if the profile sets it, else the same options. The ``default``
+             profile always sets them. See ``[erasure-code-profile=profile]``
+             above for the profile that a pool uses.
 
 .. describe:: --no-class
 
@@ -646,9 +647,13 @@ Pool Creation Defaults
 ======================
 
 ``ceph osd pool create`` takes every parameter that it is not given from a pool
-creation default, an ``osd_pool_default_*`` configuration option.
-``ceph osd pool default get`` shows the defaults, and
-``ceph osd pool default set`` changes them after checking them.
+creation default. The defaults are two templates: the ``osd_pool_default_*``
+configuration options, and, for ``erasure`` pools, the ``default`` erasure code
+profile, which holds their K, M, plugin and placement (root, zone and OSD
+failure domains, and device class). ``ceph osd pool default get`` shows the
+defaults, and ``ceph osd pool default set`` changes them after checking them.
+While the default pool type is ``erasure``, it writes the placement into the
+``default`` profile as well as into the options.
 
 Showing the Defaults
 --------------------
@@ -732,19 +737,24 @@ Parameters and Options
      - The pool property ``crush_rule`` in ``ceph osd pool set`` and ``get``
    * - ``--zone_failure_domain``
      - :confval:`osd_pool_default_zone_failure_domain`
-     -
+     - With an ``erasure`` default type, also written to the ``default``
+       erasure code profile
    * - ``--osd_failure_domain``
      - :confval:`osd_pool_default_osd_failure_domain`
-     -
+     - With an ``erasure`` default type, also written to the ``default``
+       erasure code profile
    * - ``--root``
      - :confval:`osd_pool_default_root`
-     -
+     - With an ``erasure`` default type, also written to the ``default``
+       erasure code profile
    * - ``--class``
      - :confval:`osd_pool_default_class`
-     -
+     - With an ``erasure`` default type, also written to the ``default``
+       erasure code profile
    * - ``--no-class``
      - clears :confval:`osd_pool_default_class`
-     - Also removes ``crush-device-class`` from the ``default`` erasure code profile
+     - With an ``erasure`` default type, also empties ``crush-device-class``
+       in the ``default`` erasure code profile
    * - ``--replica``
      - :confval:`osd_pool_default_size`
      - Copies in each zone; the option keeps its name for backward

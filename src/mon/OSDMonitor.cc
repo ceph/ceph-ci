@@ -722,6 +722,11 @@ void OSDMonitor::create_initial()
   }
   if (newmap.require_osd_release >= NUM_ZONES_RELEASE) {
     newmap.set_flag(CEPH_OSDMAP_STRETCH_ZONES);
+    if (newmap.has_erasure_code_profile("default")) {
+      auto profile = newmap.get_erasure_code_profile("default");
+      fill_default_profile(&profile, load_pool_defaults(g_conf()));
+      newmap.set_erasure_code_profile("default", profile);
+    }
   } else {
     newmap.flags &= ~CEPH_OSDMAP_STRETCH_ZONES;
   }
@@ -8325,7 +8330,7 @@ int OSDMonitor::crush_rule_create_erasure(const string &name,
                                           const std::string &root,
                                           const std::string &zone_failure_domain,
                                           const std::string &osd_failure_domain,
-                                          const std::string &device_class,
+                                          const std::optional<std::string> &device_class,
                                           const string &profile,
                                           int *rule,
                                           ostream *ss)
@@ -8725,7 +8730,7 @@ int OSDMonitor::prepare_pool_crush_rule(const unsigned pool_type,
                                         int num_replica_per_zone,
                                         const string &zone_failure_domain,
                                         const string &osd_failure_domain,
-                                        const string &device_class,
+                                        const std::optional<std::string> &device_class,
                                         int *crush_rule,
                                         ostream *ss)
 {
@@ -8740,14 +8745,17 @@ int OSDMonitor::prepare_pool_crush_rule(const unsigned pool_type,
        << " num_replica_per_zone " << num_replica_per_zone
        << " zone_failure_domain '" << zone_failure_domain << "'"
        << " osd_failure_domain '" << osd_failure_domain << "'"
-       << " device_class '" << device_class << "'"
+       << " device_class '" << device_class.value_or("(inherit)") << "'"
        << dendl;
     switch (pool_type) {
     case pg_pool_t::TYPE_REPLICATED:
       {
+	// A replicated rule carries the class itself (there is no profile to
+	// inherit from), so an unset class is simply no class.
+	const std::string rep_class = device_class.value_or("");
 	if (rule_name == "") {
           if (num_zones > 1) {
-            int err = crush_rule_create_replica(pool_name, root, num_zones, num_replica_per_zone, zone_failure_domain, osd_failure_domain, device_class, false, crush_rule, ss);
+            int err = crush_rule_create_replica(pool_name, root, num_zones, num_replica_per_zone, zone_failure_domain, osd_failure_domain, rep_class, false, crush_rule, ss);
             return handle_crush_rule_creation_result(err, pool_name);
 	  }
           // A single-zone pool whose placement differs from the cluster
@@ -8759,11 +8767,11 @@ int OSDMonitor::prepare_pool_crush_rule(const unsigned pool_type,
               !osd_failure_domain.empty() ? osd_failure_domain
                                           : dflt.osd_failure_domain;
             if (eff_root != "default" || eff_osd_fd != "host" ||
-                !device_class.empty()) {
+                !rep_class.empty()) {
               int err = crush_rule_create_replica(
                 pool_name + "-single-zone", root, num_zones,
                 num_replica_per_zone, zone_failure_domain, osd_failure_domain,
-                device_class, false, crush_rule, ss);
+                rep_class, false, crush_rule, ss);
               return handle_crush_rule_creation_result(err, pool_name);
             }
           }
@@ -8879,8 +8887,8 @@ int OSDMonitor::pool_own_profile(const string &pool,
     else
       (*profile)["crush-failure-domain"] = osd_failure_domain;
   }
-  if (!device_class.empty())
-    (*profile)["crush-device-class"] = device_class;
+  if (params.is_given("class"))
+    (*profile)["crush-device-class"] = device_class;  // or --no-class
   // check_pool_params() has checked the stripe unit
   return normalize_profile(pool, *profile, true, ss);
 }
@@ -9409,8 +9417,13 @@ int OSDMonitor::prepare_new_pool(string& name,
       }
     }
   }
+  // At create an empty class means none was requested: an EC pool then
+  // inherits its profile's class (std::nullopt), a replicated pool gets no
+  // class. A given class is used verbatim.
+  const std::optional<std::string> rule_device_class =
+    device_class.empty() ? std::nullopt : std::optional<std::string>(device_class);
   r = prepare_pool_crush_rule(pool_type, name, erasure_code_profile,
-                                 crush_rule_name, num_zones, root, num_replica_per_zone, zone_failure_domain, osd_failure_domain, device_class, &crush_rule, ss);
+                                 crush_rule_name, num_zones, root, num_replica_per_zone, zone_failure_domain, osd_failure_domain, rule_device_class, &crush_rule, ss);
   if (r) {
     dout(10) << "prepare_pool_crush_rule returns " << r << dendl;
     if (r != -EAGAIN) {
@@ -10188,15 +10201,24 @@ int OSDMonitor::prepare_num_zones_crush_rule(
   const PoolCreateParams d = load_pool_defaults(g_conf());
   // --no-class forces no device class and conflicts with an explicit --class
   const bool no_class = cmd_getval_or<bool>(cmdmap, "no_class", false);
-  if (no_class && !cmd_getval_or<string>(cmdmap, "class", "").empty()) {
+  const string class_arg = cmd_getval_or<string>(cmdmap, "class", "");
+  if (no_class && !class_arg.empty()) {
     if (ss) {
       *ss << "cannot specify both --class and --no-class";
     }
     return -EINVAL;
   }
-  const auto device_class = [&](const string& dflt) -> string {
-    return no_class ? string() : cmd_getval_or<string>(cmdmap, "class", dflt);
-  };
+  // The device class of the generated rule: std::nullopt means none was given
+  // (an EC pool then inherits its profile's crush-device-class), --no-class
+  // forces no class (an empty string, used verbatim), and --class names one.
+  const std::optional<std::string> device_class =
+    no_class ? std::optional<std::string>("")
+             : (class_arg.empty() ? std::nullopt
+                                  : std::optional<std::string>(class_arg));
+  // A replicated rule has no profile to inherit from, so an unset class falls
+  // back to the pool default (osd_pool_default_class).
+  const std::optional<std::string> replicated_class(
+    device_class.value_or(d.device_class));
   if (n == 1) {
     if (p.is_replicated()) {
       // no profile: honour the command line over the pool defaults
@@ -10205,7 +10227,7 @@ int OSDMonitor::prepare_num_zones_crush_rule(
           cmd_getval_or<string>(cmdmap, "root", d.root), 0, "",
           cmd_getval_or<string>(cmdmap, "osd_failure_domain",
                                 d.osd_failure_domain),
-          device_class(d.device_class), crush_rule,
+          replicated_class, crush_rule,
           ss);
     }
     // an EC pool's profile gives the placement the command line does not
@@ -10213,7 +10235,7 @@ int OSDMonitor::prepare_num_zones_crush_rule(
         p.get_type(), poolstr, p.erasure_code_profile, poolstr + "-single-zone",
         1, cmd_getval_or<string>(cmdmap, "root", ""), 0, "",
         cmd_getval_or<string>(cmdmap, "osd_failure_domain", ""),
-        device_class(""), crush_rule, ss);
+        device_class, crush_rule, ss);
   }
   const string zone_failure_domain = num_zones_zone_failure_domain(
       cmdmap, p, osdmap.get_erasure_code_profile(p.erasure_code_profile),
@@ -10226,7 +10248,7 @@ int OSDMonitor::prepare_num_zones_crush_rule(
         zone_failure_domain,
         cmd_getval_or<string>(cmdmap, "osd_failure_domain",
                               d.osd_failure_domain),
-        device_class(d.device_class),
+        replicated_class,
         crush_rule, ss);
   }
   // an EC pool's profile gives what is not on the command line
@@ -10234,7 +10256,7 @@ int OSDMonitor::prepare_num_zones_crush_rule(
       p.get_type(), poolstr, p.erasure_code_profile, poolstr + "-stretch", n,
       cmd_getval_or<string>(cmdmap, "root", ""), 0, zone_failure_domain,
       cmd_getval_or<string>(cmdmap, "osd_failure_domain", ""),
-      device_class(""), crush_rule, ss);
+      device_class, crush_rule, ss);
 }
 
 // The pg_temp, primary_temp and pg_upmap of the pool's PGs name an OSD for
@@ -14312,6 +14334,9 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       err = normalize_profile(name, profile_map, force, &ss);
       if (err)
 	goto reply_no_propose;
+      if (name == "default" && num_zones_supported()) {
+        fill_default_profile(&profile_map, load_pool_defaults(g_conf()));
+      }
 
       if (osdmap.has_erasure_code_profile(name)) {
 	ErasureCodeProfile existing_profile_map =
@@ -14380,6 +14405,9 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 	err = normalize_profile(name, profile_map, true, &ss);
 	if (err)
 	  goto reply_no_propose;
+	if (num_zones_supported()) {
+	  fill_default_profile(&profile_map, load_pool_defaults(g_conf()));
+	}
 	dout(20) << "erasure code profile set " << profile << "="
 		 << profile_map << dendl;
 	pending_inc.set_erasure_code_profile(profile, profile_map);
@@ -14398,8 +14426,9 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       zone_failure_domain = effective_zone_failure_domain(params);
     }
     int rule;
+    // std::nullopt: this rule inherits the profile's crush-device-class.
     err = crush_rule_create_erasure(name, num_zones, "", zone_failure_domain, "",
-                                    "", profile, &rule, &ss);
+                                    std::nullopt, profile, &rule, &ss);
     if (err < 0) {
       switch(err) {
       case -EEXIST: // return immediately
@@ -14842,6 +14871,24 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
                                                 "osd require-osd-release");
       }
       copy_default_profile_to_pools();
+      // the default profile, now no pool's, gets the placement of the
+      // erasure coded pools it is the template of
+      const auto& new_profiles = pending_inc.new_erasure_code_profiles;
+      const auto i = new_profiles.find("default");
+      const map<string, string>* dflt = i != new_profiles.end() ? &i->second
+        : osdmap.has_erasure_code_profile("default")
+          ? &osdmap.get_erasure_code_profile("default") : nullptr;
+      if (dflt) {
+        PoolCreateParams d = load_pool_defaults(g_conf());
+        if (auto z = defaults.find(
+              pool_default_options().at("zone_failure_domain"));
+            z != defaults.end()) {
+          d.zone_failure_domain = z->second;
+        }
+        auto profile = *dflt;
+        fill_default_profile(&profile, d);
+        pending_inc.set_erasure_code_profile("default", profile);
+      }
     }
     pending_inc.new_require_osd_release = rel;
     goto update;
@@ -16704,15 +16751,10 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     }
 
     if (pool_type == pg_pool_t::TYPE_ERASURE) {
-      // osd_pool_default_class (and --class) reach an EC pool that names no
-      // profile; a named profile's crush-device-class wins, and --class is
-      // refused with a named profile.
-      if (erasure_code_profile.empty()) {
-        device_class = params.device_class;
-      }
+      // in earlier releases a plain pool uses the default profile and shares
+      // the rule "erasure-code"
       const bool plain = erasure_code_profile.empty() &&
-        !params.ec_params_given() && !params.crush_params_given() &&
-        (params.device_class.empty() || !num_zones_supported());
+        !params.ec_params_given() && !params.crush_params_given();
       if (erasure_code_profile.empty() &&
           !osdmap.has_erasure_code_profile("default")) {
         if (pending_inc.has_erasure_code_profile("default")) {
@@ -16722,6 +16764,9 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
         err = osdmap.get_erasure_code_profile_default(cct, profile_map, &ss);
         if (err)
           goto reply_no_propose;
+        if (num_zones_supported()) {
+          fill_default_profile(&profile_map, load_pool_defaults(g_conf()));
+        }
         pending_inc.set_erasure_code_profile("default", profile_map);
         goto wait;
       }
@@ -16785,7 +16830,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       }
       if (rule_name == "") {
 	implicit_rule_creation = true;
-        if (plain && num_zones == 1) {
+        if (plain && !num_zones_supported()) {
 	  rule_name = "erasure-code";
 	} else {
 	  dout(1) << "implicitly use rule named after the pool: "

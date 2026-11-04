@@ -306,10 +306,15 @@ the command line from the defaults, so with two zones as the default, each
 new pool is stretched without extra options, including pools that Rook or
 other tools create.
 
-Change the defaults with ``ceph osd pool default set``. The command takes the
-same parameters as ``ceph osd pool create``, and it checks that a pool created
-with the resulting defaults would be a valid configuration, refusing defaults
-that fail.
+Change the defaults with ``ceph osd pool default set``. The defaults apply to
+every pool created afterwards, not only the next one: after ``ceph osd pool
+default set --pool_type erasure``, for example, every pool created without
+``--pool_type`` is erasure-coded. Erasure-coded pools take K, M and their
+placement from the ``default`` erasure code profile, which the command also
+changes while the default pool type is ``erasure``. The command takes the same
+parameters as ``ceph osd pool create``, and it checks that a pool created with
+the resulting defaults would be a valid configuration, refusing defaults that
+fail.
 
 For erasure-coded pools:
 
@@ -365,8 +370,8 @@ To stretch an existing pool, set its ``num_zones`` to 2:
   ``--osd_failure_domain``, ``--root`` and ``--class`` when they are given,
   and otherwise from the pool creation defaults set with
   ``ceph osd pool default set`` (see :ref:`pool-creation-defaults`), not from
-  the pool's previous rule. An erasure-coded pool takes its root, OSD failure
-  domain and device class from its erasure code profile instead. The previous
+  the pool's previous rule. An erasure-coded pool takes its zone type, root,
+  OSD failure domain and device class from its erasure code profile instead. The previous
   rule is removed if no other pool uses it, even if it was written by hand. To
   use a custom rule, give it with ``--crush_rule``.
 * Setting the pool's current ``num_zones`` again leaves the pool unchanged.
@@ -516,7 +521,9 @@ The upgrade has three stages:
    configuration database: :confval:`osd_pool_default_num_zones` to ``2``,
    :confval:`osd_pool_default_zone_failure_domain` to the dividing bucket
    type, and :confval:`osd_pool_default_size` to half of
-   ``mon_stretch_pool_size``.
+   ``mon_stretch_pool_size``. The ``default`` erasure code profile gets the
+   placement keys it lacks from these options, so new erasure-coded pools
+   are placed as before.
 
    Only a replicated pool whose CRUSH rule places half of an even number of
    copies in each zone can be split this way. Any other pool, for example one
@@ -658,11 +665,6 @@ pool at once:
 * Erasure-coded pools are taken offline during the transition. To keep them
   available, migrate them first (see `For a Single Pool`_).
 * The pool creation defaults are reset to 1 zone with 3 replicas.
-
-The command is refused while ``STRETCH_MODE_POOL_NOT_CONVERTED`` names a pool
-that kept one zone when the upgrade was committed, because it would leave that
-pool stretched. First give the pool two zones, or make it an ordinary pool in
-one zone, as the health check describes.
 
 Afterwards, remove any OSDs that are no longer required.
 
@@ -1030,13 +1032,15 @@ By default, zones are CRUSH buckets of type ``datacenter``, as set by
 for example ``room`` or ``rack``:
 
 * For all new pools, set the pool creation default with
-  ``ceph osd pool default set --zone_failure_domain {type}``.
+  ``ceph osd pool default set --zone_failure_domain {type}``. For
+  erasure-coded pools this changes the ``default`` erasure code profile, so
+  set it while the default pool type is ``erasure``.
 * For one pool, pass ``--zone_failure_domain {type}`` to
   ``ceph osd pool create`` or to
   ``ceph osd pool set {pool-name} num_zones 2``.
 * For an erasure-coded pool, ``--zone_failure_domain`` takes precedence, then
-  the erasure code profile's ``crush-zone-failure-domain``, then the pool
-  creation default.
+  the erasure code profile's ``crush-zone-failure-domain``, which the
+  ``default`` profile always has, then the pool creation default.
 
 The Monitors' CRUSH locations must use the same bucket type. Changing the
 failure domain of a pool that is already stretched requires a hand-written

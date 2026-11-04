@@ -993,6 +993,14 @@ TEST_F(PoolParamsTest, SingleZoneIgnoresCrushDefaults) {
   EXPECT_EQ(0, check(with({}))) << ss.str();
 }
 
+// Test an erasure coded pool does not use the CRUSH defaults: its profile
+// has its placement
+TEST_F(PoolParamsTest, ErasureIgnoresCrushDefaults) {
+  set("osd_pool_default_root", "dc1");
+  set("osd_pool_default_osd_failure_domain", "chassis");
+  EXPECT_EQ(0, check(with({}, ERASURE))) << ss.str();
+}
+
 // Test a given rule replaces the CRUSH defaults of a stretched pool
 TEST_F(PoolParamsTest, RuleSkipsCrushDefaults) {
   set("osd_pool_default_root", "dc1");
@@ -1055,11 +1063,14 @@ TEST_F(PoolParamsTest, RuleErrorsNameDefaults) {
                                          {"replica", int64_t(2)},
                                          {"zone_failure_domain", string("zone")},
                                          {"rule", string("r")}})));
-  // an erasure coded pool's rule comes from the default profile
+  // an erasure coded pool's rule comes from its profile, and the zone type
+  // from the default when the profile has none
   EXPECT_EQ(" (osd_pool_default_zone_failure_domain, "
-            "osd_pool_default_osd_failure_domain, osd_pool_default_root, "
-            "osd_pool_default_class, erasure code profile 'default')",
+            "erasure code profile 'default')",
             rule_from_defaults(with({{"num_zones", int64_t(2)}}, ERASURE)));
+  PoolCreateParams p = with({{"num_zones", int64_t(2)}}, ERASURE);
+  ASSERT_EQ(0, use_profile(p, "", &named_profile, &ss));
+  EXPECT_EQ(" (erasure code profile 'default')", rule_from_defaults(p));
 }
 
 // Test one zone does not validate stretch mode
@@ -1142,9 +1153,10 @@ TEST_F(PoolParamsTest, EffectiveZoneFailureDomain) {
   EXPECT_EQ("zone", effective_zone_failure_domain(p));
   p.pool_type = REPLICATED;
   EXPECT_EQ("datacenter", effective_zone_failure_domain(p));
+  // the default profile counts as the pool's profile
   PoolCreateParams q = with({}, ERASURE);
   ASSERT_EQ(0, use_profile(q, "", &named_profile, &ss));
-  EXPECT_EQ("datacenter", effective_zone_failure_domain(q));
+  EXPECT_EQ("zone", effective_zone_failure_domain(q));
 }
 
 // Test the option named for a value that came from a default
@@ -1153,6 +1165,67 @@ TEST_F(PoolParamsTest, FromDefault) {
   EXPECT_EQ("", with({{"replica", int64_t(2)}}).from_default("replica"));
   EXPECT_EQ(" (erasure code profile 'default')",
             with({}, ERASURE).from_default("k"));
+}
+
+// Test ceph osd pool default set leaves the default profile unchanged
+// without k, m, or placement for an erasure default type
+TEST_F(PoolParamsTest, DefaultSetKeepsDefaultProfile) {
+  EXPECT_FALSE(default_profile_after_set(with({})));
+  EXPECT_FALSE(default_profile_after_set(with({}, ERASURE)));
+  EXPECT_FALSE(default_profile_after_set(
+    with({{"root", string("dc1")}, {"osd_failure_domain", string("osd")},
+          {"class", string("ssd")}})));
+  EXPECT_FALSE(default_profile_after_set(with({{"no_class", true}})));
+}
+
+// Test ceph osd pool default set writes k, m, and for an erasure default type
+// the placement, into the default profile, which it leaves complete
+TEST_F(PoolParamsTest, DefaultSetWritesDefaultProfile) {
+  auto profile = default_profile_after_set(
+    with({{"k", int64_t(4)}, {"m", int64_t(2)}}, ERASURE));
+  ASSERT_TRUE(profile);
+  EXPECT_EQ("4", profile->at("k"));
+  EXPECT_EQ("default", profile->at("crush-root"));
+  profile = default_profile_after_set(
+    with({{"root", string("dc1")}, {"zone_failure_domain", string("zone")},
+          {"osd_failure_domain", string("osd")}, {"class", string("ssd")}},
+         ERASURE));
+  ASSERT_TRUE(profile);
+  EXPECT_EQ("isa", profile->at("plugin"));
+  EXPECT_EQ("dc1", profile->at("crush-root"));
+  EXPECT_EQ("zone", profile->at("crush-zone-failure-domain"));
+  EXPECT_EQ("osd", profile->at("crush-failure-domain"));
+  EXPECT_EQ("ssd", profile->at("crush-device-class"));
+  PoolCreateParams p = with({}, ERASURE);
+  p.profile["crush-osd-failure-domain"] = "host";
+  p.profile["crush-device-class"] = "ssd";
+  apply_command_line(p, {{"osd_failure_domain", string("rack")},
+                         {"no_class", true}});
+  profile = default_profile_after_set(p);
+  ASSERT_TRUE(profile);
+  EXPECT_EQ("rack", profile->at("crush-osd-failure-domain"));
+  EXPECT_FALSE(profile->contains("crush-failure-domain"));
+  EXPECT_EQ("", profile->at("crush-device-class"));
+}
+
+// Test the default profile gets the placement it lacks from the defaults,
+// and keeps what it has
+TEST_F(PoolParamsTest, FillDefaultProfile) {
+  set("osd_pool_default_class", "ssd");
+  map<string, string> profile = {{"plugin", "isa"}, {"crush-root", ""},
+                                 {"crush-failure-domain", "osd"}};
+  fill_default_profile(&profile, defaults());
+  EXPECT_EQ((map<string, string>{{"plugin", "isa"},
+                                 {"crush-root", "default"},
+                                 {"crush-zone-failure-domain", "datacenter"},
+                                 {"crush-failure-domain", "osd"},
+                                 {"crush-device-class", "ssd"}}), profile);
+  profile = {{"crush-osd-failure-domain", "rack"},
+             {"crush-device-class", ""}};
+  fill_default_profile(&profile, defaults());
+  EXPECT_EQ("rack", profile.at("crush-osd-failure-domain"));
+  EXPECT_FALSE(profile.contains("crush-failure-domain"));
+  EXPECT_EQ("", profile.at("crush-device-class"));
 }
 
 // Test every parameter of ceph osd pool default set maps to an option

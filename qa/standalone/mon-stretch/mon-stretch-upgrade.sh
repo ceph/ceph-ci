@@ -28,10 +28,6 @@ function run() {
     done
 }
 
-function pool_field() {
-    ceph osd pool ls detail -f json | jq --arg p $1 ".[]|select(.pool_name==\$p)|.$2"
-}
-
 function pool_num_zones() {
     ceph osd pool get $1 num_zones -f json | jq .num_zones
 }
@@ -48,52 +44,6 @@ function expect_pool() {
         echo "pool $1: [num_zones,replica,size,min_size] is $got, expected [$2,$3,$4,$5]"
         return 1
     fi
-}
-
-# start an existing monitor again, as run_mon does after --mkfs
-function restart_mon() {
-    local dir=$1
-    local id=$2
-    shift 2
-
-    ceph-mon \
-        --id $id \
-        --osd-failsafe-full-ratio=.99 \
-        --mon-osd-full-ratio=.99 \
-        --mon-data-avail-crit=1 \
-        --mon-data-avail-warn=5 \
-        --paxos-propose-interval=0.1 \
-        --osd-crush-chooseleaf-type=0 \
-        $EXTRA_OPTS \
-        --debug-mon 20 \
-        --debug-ms 20 \
-        --debug-paxos 20 \
-        --chdir= \
-        --mon-data=$dir/$id \
-        --log-file=$dir/\$name.log \
-        --admin-socket=$(get_asok_path) \
-        --mon-cluster-log-file=$dir/log \
-        --run-dir=$dir \
-        --pid-file=$dir/\$name.pid \
-        --mon-allow-pool-delete \
-        --mon-allow-pool-size-one \
-        --osd-pool-default-pg-autoscale-mode off \
-        --mon-osd-backfillfull-ratio .99 \
-        --mon-warn-on-insecure-global-id-reclaim-allowed=false \
-        "$@" || return 1
-}
-
-function wait_for_stretch_state() {
-    local degraded=$1
-    local recovering=$2
-    for i in $(seq 1 120); do
-        local s=$(ceph osd dump -f json | jq -c '.stretch_mode|[.degraded_stretch_mode,.recovering_stretch_mode]')
-        if [ "$s" == "[$degraded,$recovering]" ]; then
-            return 0
-        fi
-        sleep 2
-    done
-    return 1
 }
 
 function run_mons() {
@@ -138,8 +88,14 @@ function TEST_commands_wait_for_commit() {
     expect_failure $dir "not supported for EC pools" \
         ceph osd pool stretch set ecearly 2 2 host replicated_rule 6 2 || return 1
 
+    # the default profile gets the placement of erasure coded pools at the
+    # commit
+    ! ceph osd erasure-code-profile get default | grep -q crush-zone-failure-domain || return 1
     ceph osd require-osd-release vampire --yes-i-really-mean-it || return 1
     committed || return 1
+    ceph osd erasure-code-profile get default | \
+        grep -qx crush-zone-failure-domain=datacenter || return 1
+    ceph osd erasure-code-profile get default | grep -qx crush-root=default || return 1
     ceph osd pool create late 8 8 || return 1
     ceph osd pool default get || return 1
     ceph osd pool set late num_zones 1 || return 1
@@ -253,6 +209,8 @@ function TEST_legacy_stretch_mode_then_commit() {
     test "$(ceph config get mon osd_pool_default_num_zones)" = 2 || return 1
     test "$(ceph config get mon osd_pool_default_size)" = 2 || return 1
     test "$(ceph config get mon osd_pool_default_zone_failure_domain)" = zone || return 1
+    ceph osd erasure-code-profile get default | \
+        grep -qx crush-zone-failure-domain=zone || return 1
     expect_pool rep 2 2 4 1 || return 1
     expect_pool early 2 2 4 1 || return 1
     # clients resend, as the peering rules change
@@ -298,17 +256,21 @@ function TEST_librados_pool_before_commit() {
     test "$(pool_field late size)" = 4 || return 1
 }
 
-# Test the commit gives a pool that uses the default profile a copy of it
+# Test the commit gives a pool that uses the default profile a copy of it,
+# as it was, and then fills in the placement that the default profile lacks
 function TEST_commit_copies_default_profile() {
     local dir=$1
     run_mons $dir || return 1
 
     ceph osd pool create ecdefault 8 8 erasure || return 1
     test "$(pool_field ecdefault erasure_code_profile)" = '"default"' || return 1
+    local before="$(ceph osd erasure-code-profile get default -f json)"
     ceph osd require-osd-release vampire --yes-i-really-mean-it || return 1
     test "$(pool_field ecdefault erasure_code_profile)" = '"ecdefault-k2-m2"' || return 1
     test "$(ceph osd erasure-code-profile get ecdefault-k2-m2 -f json)" = \
-        "$(ceph osd erasure-code-profile get default -f json)" || return 1
+        "$before" || return 1
+    test "$(ceph osd erasure-code-profile get default -f json | \
+            jq -r '."crush-zone-failure-domain"')" = datacenter || return 1
 }
 
 # Test the commit's copies of the default profile follow the pools of its
@@ -367,7 +329,7 @@ function TEST_degraded_commit() {
     kill_daemons $dir KILL mon.b || return 1
     kill_daemons $dir KILL osd.2 || return 1
     kill_daemons $dir KILL osd.3 || return 1
-    ceph osd down osd.2 osd.3
+    ceph osd down osd.2 osd.3 || return 1
     wait_for_stretch_state 1 0 || return 1
     expect_pool rep 1 4 4 1 || return 1
     ceph osd pool create early 8 8 || return 1
@@ -382,7 +344,7 @@ function TEST_degraded_commit() {
         timeout 120 rados -p $pool put obj $dir/crushmap.bin || return 1
     done
 
-    restart_mon $dir b --public-addr $CEPH_MON_B || return 1
+    activate_mon $dir b --public-addr $CEPH_MON_B || return 1
     wait_for_quorum 300 3 || return 1
     activate_osd $dir 2 || return 1
     activate_osd $dir 3 || return 1

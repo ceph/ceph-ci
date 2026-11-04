@@ -4,6 +4,7 @@
 #include "mon/PoolCreateParams.h"
 
 #include <limits>
+#include <tuple>
 #include <vector>
 #include <sstream>
 
@@ -302,8 +303,9 @@ void size_over_default_zones_as_replica(PoolCreateParams& p)
 
 string effective_zone_failure_domain(const PoolCreateParams& p)
 {
+  // an erasure coded pool takes it from its profile, named or the default
   if (!p.is_given("zone_failure_domain") &&
-      p.pool_type == pg_pool_t::TYPE_ERASURE && !p.erasure_code_profile.empty()) {
+      p.pool_type == pg_pool_t::TYPE_ERASURE) {
     return profile_zone_failure_domain(p.profile, p.zone_failure_domain);
   }
   return p.zone_failure_domain;
@@ -329,10 +331,11 @@ string rule_from_defaults(const PoolCreateParams& p)
   if (!erasure && !p.is_given("size")) {
     params.push_back("replica");
   }
-  if (!named_profile) {
+  // an erasure coded pool takes the placement its profile has from there
+  if (!erasure || !p.profile.contains("crush-zone-failure-domain")) {
     params.push_back("zone_failure_domain");
   }
-  if (generated && !named_profile) {
+  if (generated && !erasure) {
     params.insert(params.end(), {"osd_failure_domain", "root"});
     if (!p.device_class.empty()) {
       params.push_back("class");
@@ -640,6 +643,58 @@ int check_pool_replica_copies(int64_t n, std::string_view what,
     return -EINVAL;
   }
   return 0;
+}
+
+namespace {
+// ErasureCode::init() prefers the new key if present
+const char *osd_failure_domain_key(const std::map<string, string>& profile)
+{
+  return profile.contains("crush-osd-failure-domain")
+    ? "crush-osd-failure-domain" : "crush-failure-domain";
+}
+}
+
+void fill_default_profile(std::map<string, string>* profile,
+                          const PoolCreateParams& d)
+{
+  auto fill = [profile](const string& key, const string& value) {
+    if (auto i = profile->find(key); i == profile->end() || i->second.empty()) {
+      (*profile)[key] = value;
+    }
+  };
+  fill("crush-root", d.root);
+  fill("crush-zone-failure-domain", d.zone_failure_domain);
+  fill(osd_failure_domain_key(*profile), d.osd_failure_domain);
+  // an empty class is no class
+  profile->try_emplace("crush-device-class", d.device_class);
+}
+
+std::optional<std::map<string, string>> default_profile_after_set(
+    const PoolCreateParams& p)
+{
+  std::map<string, string> profile = p.profile;
+  bool changed = p.ec_params_given();
+  // the default profile is the template of erasure coded pools, so it
+  // follows the placement defaults while the default type is erasure
+  if (p.pool_type == pg_pool_t::TYPE_ERASURE) {
+    for (auto [param, key, value] :
+           {std::tuple{"root", "crush-root", &p.root},
+            std::tuple{"zone_failure_domain", "crush-zone-failure-domain",
+                       &p.zone_failure_domain},
+            std::tuple{"osd_failure_domain", osd_failure_domain_key(profile),
+                       &p.osd_failure_domain},
+            std::tuple{"class", "crush-device-class", &p.device_class}}) {
+      if (p.is_given(param)) {
+        profile[key] = *value;  // --no-class gives an empty class
+        changed = true;
+      }
+    }
+  }
+  if (!changed) {
+    return std::nullopt;
+  }
+  fill_default_profile(&profile, p);
+  return profile;
 }
 
 string pool_default_value(const PoolCreateParams& p, const string& param)

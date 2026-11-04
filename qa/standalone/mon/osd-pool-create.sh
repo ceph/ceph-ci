@@ -111,7 +111,7 @@ function TEST_failed_pool_create_removes_its_rule() {
     # the PG limit is checked with the rule
     ! ceph osd pool create bigec 1024 1024 erasure > $dir/out 2>&1 || return 1
     grep "exceeds the" $dir/out || return 1
-    ! ceph osd crush rule ls | grep -qx erasure-code || return 1
+    ! ceph osd crush rule ls | grep -qx bigec || return 1
     ! ceph osd erasure-code-profile ls | grep -q '^bigec-' || return 1
 }
 
@@ -232,7 +232,7 @@ function TEST_erasure_code_pool() {
     ceph --format json osd dump | tee $dir/osd.json
     ! grep '"erasure_code_profile":"default"' $dir/osd.json || return 1
     test "$(ceph osd pool get erasurecodes crush_rule -f json | jq -r .crush_rule)" = \
-        erasure-code || return 1
+        erasurecodes || return 1
 
     ceph osd pool create erasurecodes 12 12 erasure 2>&1 | \
         grep 'already exists' || return 1
