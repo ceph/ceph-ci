@@ -542,6 +542,10 @@ public:
     std::chrono::steady_clock::duration prepare_enter{0};   // enter(prepare) pipeline stage
     std::chrono::steady_clock::duration prepare_record{0};  // prepare_record
     std::chrono::steady_clock::duration journal{0};         // journal->submit_record (post-lock)
+    std::chrono::steady_clock::duration ool_enter{0};       // enter(ool_writes_and_lba_updates)
+    std::chrono::steady_clock::duration lock_mutated{0};    // lock_mutated_nodes
+    std::chrono::steady_clock::duration complete{0};        // handle.complete()
+    std::chrono::steady_clock::duration submit_total_steady{0}; // whole submit_transaction
   };
   phase_durations_t &get_phase_durations() {
     return phase_durations;
