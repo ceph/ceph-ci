@@ -236,6 +236,10 @@ void SeaStore::Shard::register_metrics(store_index_t store_index)
     {txn_stage_t::SUBMIT_PREPARE_ENTER,  sm::label_instance("stage", "submit_prepare_enter")},
     {txn_stage_t::SUBMIT_PREPARE_RECORD, sm::label_instance("stage", "submit_prepare_record")},
     {txn_stage_t::SUBMIT_JOURNAL,        sm::label_instance("stage", "submit_journal")},
+    {txn_stage_t::SUBMIT_OOL_ENTER,      sm::label_instance("stage", "submit_ool_enter")},
+    {txn_stage_t::SUBMIT_LOCK_MUTATED,   sm::label_instance("stage", "submit_lock_mutated")},
+    {txn_stage_t::SUBMIT_COMPLETE,       sm::label_instance("stage", "submit_complete")},
+    {txn_stage_t::SUBMIT_TOTAL_STEADY,   sm::label_instance("stage", "submit_total_steady")},
   };
   // Three tiers of the same per-stage histograms
   std::pair<std::array<seastar::metrics::histogram, STAGE_MAX>*, const char*>
@@ -2094,8 +2098,11 @@ seastar::future<> SeaStore::Shard::run_one_batch(
       DEBUGT("completed all {} ops for cid={}",
              t, total_ops, ctx.ch->get_cid());
       auto submit_start = seastar::lowres_clock::now();
+      auto submit_steady_start = std::chrono::steady_clock::now();
       co_await transaction_manager->submit_transaction(*ctx.transaction);
       ctx.submit_time += seastar::lowres_clock::now() - submit_start;
+      ctx.transaction->get_phase_durations().submit_total_steady +=
+        std::chrono::steady_clock::now() - submit_steady_start;
     })
   ).handle_error(
     crimson::ct_error::all_same_way([FNAME, &ctx](auto e) {
@@ -2126,6 +2133,10 @@ seastar::future<> SeaStore::Shard::run_one_batch(
         {txn_stage_t::SUBMIT_PREPARE_ENTER,  pd.prepare_enter},
         {txn_stage_t::SUBMIT_PREPARE_RECORD, pd.prepare_record},
         {txn_stage_t::SUBMIT_JOURNAL,        pd.journal},
+        {txn_stage_t::SUBMIT_OOL_ENTER,      pd.ool_enter},
+        {txn_stage_t::SUBMIT_LOCK_MUTATED,   pd.lock_mutated},
+        {txn_stage_t::SUBMIT_COMPLETE,       pd.complete},
+        {txn_stage_t::SUBMIT_TOTAL_STEADY,   pd.submit_total_steady},
       }};
 
     for (auto& [stage, dur] : stage_samples) {

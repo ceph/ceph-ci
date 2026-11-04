@@ -61,6 +61,10 @@ enum class txn_stage_t : uint8_t {
     SUBMIT_PREPARE_ENTER,  // enter(prepare) pipeline stage (global OrderedExclusive wait)
     SUBMIT_PREPARE_RECORD, // prepare_record (record encoding)
     SUBMIT_JOURNAL,        // journal->submit_record -- POST-lock (not part of the hold)
+    SUBMIT_OOL_ENTER,      // enter(ool_writes_and_lba_updates) pipeline stage wait
+    SUBMIT_LOCK_MUTATED,   // lock_mutated_nodes wait
+    SUBMIT_COMPLETE,       // handle.complete() after the journal write
+    SUBMIT_TOTAL_STEADY,   // SUBMIT_TOTAL measured with steady_clock, not lowres_clock
     MAX
 };
 

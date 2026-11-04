@@ -827,9 +827,12 @@ TransactionManager::do_submit_transaction(
 {
   LOG_PREFIX(TransactionManager::do_submit_transaction);
   SUBDEBUGT(seastore_t, "start, entering ool_writes", tref);
+  auto ool_enter_start = std::chrono::steady_clock::now();
   co_await trans_intr::make_interruptible(
     tref.get_handle().enter(write_pipeline.ool_writes_and_lba_updates)
   );
+  tref.get_phase_durations().ool_enter +=
+    std::chrono::steady_clock::now() - ool_enter_start;
 
   SUBTRACET(seastore_t, "write delayed ool extents", tref);
   auto ool_start = std::chrono::steady_clock::now();
@@ -854,8 +857,11 @@ TransactionManager::do_submit_transaction(
   // In the future, when no_conflict transactions may also modify
   // logical extents, we should add something like "lock_logical_mutated_extents"
   // and invoke it before writing ool extents.
+  auto lock_start = std::chrono::steady_clock::now();
   auto locker = co_await trans_intr::make_interruptible(
     lock_mutated_nodes(tref));
+  tref.get_phase_durations().lock_mutated +=
+    std::chrono::steady_clock::now() - lock_start;
 
   auto num_extents = allocated_extents.size();
   SUBTRACET(seastore_t, "process {} allocated extents", tref, num_extents);
@@ -927,9 +933,12 @@ TransactionManager::do_submit_transaction(
   tref.get_phase_durations().journal +=
     std::chrono::steady_clock::now() - journal_start;
 
+  auto complete_start = std::chrono::steady_clock::now();
   co_await trans_intr::make_interruptible(
     tref.get_handle().complete()
   );
+  tref.get_phase_durations().complete +=
+    std::chrono::steady_clock::now() - complete_start;
 }
 
 seastar::future<> TransactionManager::flush(OrderingHandle &handle)
