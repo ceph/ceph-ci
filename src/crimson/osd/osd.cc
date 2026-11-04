@@ -923,6 +923,7 @@ seastar::future<> OSD::start_asok_admin()
     asok->register_command(make_asok_hook<pg::ScheduleScrubCommand<true>>(*this,
                                                                           std::string_view{"schedule-deep-scrub"}));
     asok->register_command(make_asok_hook<pg::ScrubMetricsCommand>(*this));
+    asok->register_command(make_asok_hook<pg::ScrubDebugCommand>(*this));
     // ops commands
     asok->register_command(
       make_asok_hook<DumpInFlightOpsHook>(
@@ -1200,6 +1201,7 @@ std::vector<std::string> OSD::get_tracked_keys() const noexcept
     "osd_scrub_max_interval"s,
     "osd_scrub_interval_randomize_ratio"s,
     "osd_deep_scrub_interval"s,
+    "osd_deep_scrub_interval_cv"s,
     "osd_scrub_begin_hour"s,
     "osd_scrub_end_hour"s,
     "osd_scrub_begin_week_day"s,
@@ -1224,6 +1226,7 @@ void OSD::handle_conf_change(
     "osd_scrub_max_interval",
     "osd_scrub_interval_randomize_ratio",
     "osd_deep_scrub_interval",
+    "osd_deep_scrub_interval_cv",
     "osd_scrub_begin_hour",
     "osd_scrub_end_hour",
     "osd_scrub_begin_week_day",
@@ -1235,7 +1238,9 @@ void OSD::handle_conf_change(
     if (changed.contains(config)) {
       INFO("Scrub config changed: {}, updating scrub schedules", config);
       if (shard_services.local_is_initialized()) {
-        get_shard_services().get_scrub_scheduler().on_config_change();
+        (void)shard_services.invoke_on_all([](auto &local_service) {
+          local_service.get_scrub_scheduler().on_config_change();
+        });
       }
       break;
     }
