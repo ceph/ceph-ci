@@ -318,6 +318,17 @@ class MDCache {
     stray_manager.eval_remote(dn);
   }
 
+  void hold_stray_purges()
+  {
+    stray_manager.set_purge_hold(true);
+  }
+
+  void release_stray_purges()
+  {
+    stray_manager.set_purge_hold(false);
+    scan_stray_dir();
+  }
+
   void _send_discover(discover_info_t& dis);
   discover_info_t& _create_discover(mds_rank_t mds) {
     ceph_tid_t t = ++discover_last_tid;

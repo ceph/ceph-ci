@@ -59,6 +59,13 @@ public:
   uint64_t get_num_strays() const { return num_strays; }
 
   /**
+   * While set, no purge, truncate or reintegration of a stray is started.
+   * Strays that would have been are not remembered: scan the stray
+   * directories after clearing this.
+   */
+  void set_purge_hold(bool hold) { purge_hold = hold; }
+
+  /**
    * Queue dentry for later evaluation. (evaluate it while not in the
    * middle of another metadata operation)
    */
@@ -202,6 +209,7 @@ protected:
   PerfCounters *logger = nullptr;
 
   bool started = false;
+  bool purge_hold = false;
 
   // Stray dentries for this rank (including those not in cache)
   uint64_t num_strays = 0;

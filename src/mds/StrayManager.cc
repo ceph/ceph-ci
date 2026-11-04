@@ -514,6 +514,10 @@ bool StrayManager::_eval_stray(CDentry *dn)
 	}
       }
     }
+    if (purge_hold) {
+      dout(20) << " purges on hold" << dendl;
+      return false;
+    }
     if (dn->is_replicated()) {
       dout(20) << " replicated" << dendl;
       return false;
@@ -637,6 +641,11 @@ void StrayManager::_eval_stray_remote(CDentry *stray_dn, CDentry *remote_dn)
   ceph_assert(stray_dnl->is_primary());
   CInode *stray_in = stray_dnl->get_inode();
   ceph_assert(stray_in->last == CEPH_NOSNAP);
+
+  if (purge_hold) {
+    dout(20) << __func__ << ": not reintegrating (on hold)" << dendl;
+    return;
+  }
 
   if (stray_in->get_inode()->nlink <= 0) {
     /*
