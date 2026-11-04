@@ -16577,12 +16577,6 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       }
     }
 
-    if (!num_zones_supported() &&
-        !g_conf().get_val<bool>("mon_debug_allow_pool_create_before_commit")) {
-      ss << "pool creation is refused until " << num_zones_upgrade_hint();
-      err = -EPERM;
-      goto reply_no_propose;
-    }
     // the commit converts only the pools before it in its update
     if (num_zones_commit_pending()) {
       goto wait;
