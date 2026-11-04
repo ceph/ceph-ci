@@ -19,6 +19,7 @@
 #include "CInode.h"
 #include "MDSCacheObject.h"
 #include "ScrubHeader.h"
+#include "SnapRollback.h"
 
 #include "common/LogClient.h"
 #include "common/ceph_time.h"
@@ -39,7 +40,8 @@ public:
     clog(clog),
     finisher(finisher_),
     scrub_stack(member_offset(MDSCacheObject, item_scrub)),
-    scrub_waiting(member_offset(MDSCacheObject, item_scrub)) {
+    scrub_waiting(member_offset(MDSCacheObject, item_scrub)),
+    snap_rollback(mdc) {
       _mds_scrub_stats_review_period = g_conf().get_val<uint64_t>("mds_scrub_stats_review_period");
     }
   ~ScrubStack() {
@@ -100,6 +102,16 @@ public:
 
   bool is_scrubbing() const { return !scrub_stack.empty(); }
 
+  /**
+   * Are there scrubs queued, running or not yet reaped?
+   */
+  bool has_scrubs() const {
+    return !scrub_stack.empty() || !scrub_waiting.empty() ||
+           !scrubbing_map.empty();
+  }
+
+  SnapRollback& get_snap_rollback() { return snap_rollback; }
+
   void advance_scrub_status();
 
   void handle_mds_failure(mds_rank_t mds);
@@ -152,6 +164,8 @@ protected:
     uint64_t uninline_passed = 0;
     uint64_t uninline_failed = 0;
     uint64_t uninline_skipped = 0;
+    std::string rollback_snap;
+    rollback_stats_t rollback;
   };
   struct scrub_stat_t {
     unsigned epoch_acked = 0;
@@ -165,7 +179,12 @@ protected:
 
   std::map<std::string, ScrubHeaderRef> scrubbing_map;
 
+  SnapRollback snap_rollback;
+  // dirfrags whose entries have been rolled back, pending final scrub
+  std::set<CDir*> rollback_done_dirfrags;
+
   friend class C_RetryScrub;
+  friend class C_RollbackDirfrag;
 private:
   // scrub abort is _not_ a state, rather it's an operation that's
   // performed after in-progress scrubs are finished.

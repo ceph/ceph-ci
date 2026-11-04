@@ -10237,6 +10237,9 @@ void MDCache::dispatch_request(const MDRequestRef& mdr)
     case CEPH_MDS_OP_QUARANTINEDIR_WORK:
       quarantine_work(mdr);
       break;
+    case CEPH_MDS_OP_SNAP_ROLLBACK:
+      mds->scrubstack->get_snap_rollback().dispatch(mdr);
+      break;
     default:
       ceph_abort();
     }
@@ -13506,7 +13509,8 @@ void MDCache::enqueue_scrub(
     std::string_view path,
     std::string_view tag,
     bool force, bool recursive, bool repair,
-    bool scrub_mdsdir, Formatter *f, Context *fin)
+    bool scrub_mdsdir, Formatter *f, Context *fin,
+    std::string_view rollback_snap)
 {
   dout(10) << __func__ << " " << path << dendl;
 
@@ -13542,6 +13546,9 @@ void MDCache::enqueue_scrub(
   C_MDS_EnqueueScrub *cs = new C_MDS_EnqueueScrub(tag_str, f, fin);
   cs->header = std::make_shared<ScrubHeader>(tag_str, is_internal, force,
                                              recursive, repair, scrub_mdsdir);
+  if (!rollback_snap.empty()) {
+    cs->header->set_rollback(rollback_snap);
+  }
 
   mdr->internal_op_finish = cs;
   enqueue_scrub_work(mdr);
@@ -13549,6 +13556,9 @@ void MDCache::enqueue_scrub(
 
 void MDCache::enqueue_scrub_work(const MDRequestRef& mdr)
 {
+  C_MDS_EnqueueScrub *cs = static_cast<C_MDS_EnqueueScrub*>(mdr->internal_op_finish);
+  ScrubHeaderRef& header = cs->header;
+
   CInode *in;
   CF_MDS_RetryRequestFactory cf(this, mdr, true);
   int r = path_traverse(mdr, cf, mdr->get_filepath(),
@@ -13565,16 +13575,55 @@ void MDCache::enqueue_scrub_work(const MDRequestRef& mdr)
   if (in->scrub_is_in_progress()) {
     mds->server->respond_to_request(mdr, -EBUSY);
     return;
-  } else {
-    in->scrub_info();
   }
 
-  C_MDS_EnqueueScrub *cs = static_cast<C_MDS_EnqueueScrub*>(mdr->internal_op_finish);
-  ScrubHeaderRef& header = cs->header;
+  if (header->is_rollback()) {
+    r = prepare_scrub_rollback(mdr, in, header);
+    if (r < 0) {
+      mds->server->respond_to_request(mdr, r);
+      return;
+    }
+  }
 
+  in->scrub_info();
   r = mds->scrubstack->enqueue(in, header, !header->get_recursive());
 
   mds->server->respond_to_request(mdr, r);
+}
+
+/*
+ * Validate a `scrub rollback` request. Returns 0 if the scrub can be
+ * enqueued, or an error.
+ */
+int MDCache::prepare_scrub_rollback(const MDRequestRef& mdr, CInode *in,
+                                    const ScrubHeaderRef& header)
+{
+  if (!in->is_dir()) {
+    return -ENOTDIR;
+  }
+  if (in->is_mdsdir() || in->is_stray()) {
+    return -EINVAL;
+  }
+  if (mds->mdsmap->get_num_in_mds() > 1) {
+    dout(5) << __func__ << " not supported with multiple active MDSs" << dendl;
+    return -EOPNOTSUPP;
+  }
+
+  snapid_t snapid = in->find_snaprealm()->resolve_snapname(
+    header->get_rollback_snap_name(), in->ino());
+  if (!snapid) {
+    dout(5) << __func__ << " snapshot " << header->get_rollback_snap_name()
+	    << " not found on " << *in << dendl;
+    return -ENOENT;
+  }
+  header->set_rollback_snapid(snapid);
+
+  // a rollback does not run alongside other scrubs
+  if (mds->scrubstack->has_scrubs()) {
+    return -EBUSY;
+  }
+
+  return 0;
 }
 
 class C_MDC_DataUninlinedSubmitted : public MDCacheLogContext {
