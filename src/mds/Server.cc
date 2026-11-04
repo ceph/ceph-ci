@@ -38,6 +38,7 @@
 #include "SnapClient.h"
 #include "SnapRealm.h"
 #include "Mutation.h"
+#include "ScrubStack.h"
 #include "MetricsHandler.h"
 #include "cephfs_features.h"
 #include "MDSContext.h"
@@ -650,6 +651,15 @@ void Server::handle_client_session(const cref_t<MClientSession> &m)
       reply->metadata["error_string"] = "new sessions are not permitted,"
                                         " enable again via `ceph fs set"
                                         " <fs_name> refuse_client_session false`";
+      mds->send_message(reply, m->get_connection());
+      return;
+    }
+    if (mds->scrubstack->is_rollback_in_progress()) {
+      dout(0) << "new sessions are not permitted while a snapshot rollback"
+                 " is in progress" << dendl;
+      auto reply = make_message<MClientSession>(CEPH_SESSION_REJECT);
+      reply->metadata["error_string"] = "new sessions are not permitted while"
+                                        " a snapshot rollback is in progress";
       mds->send_message(reply, m->get_connection());
       return;
     }
