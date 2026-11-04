@@ -269,6 +269,7 @@ void PurgeQueue::open(Context *completion)
       }
 
       journaler.set_writeable();
+      untracked_pos = journaler.get_write_pos();
       recovered = true;
       finish_contexts(g_ceph_context, waiting_for_recovery);
     } else {
@@ -320,6 +321,7 @@ void PurgeQueue::_recover()
       auto&& last_committed = journaler.get_last_committed();
       journaler.set_read_pos(last_committed.expire_pos);
       journaler.set_writeable();
+      untracked_pos = journaler.get_write_pos();
       recovered = true;
       finish_contexts(g_ceph_context, waiting_for_recovery);
       return;
@@ -370,6 +372,8 @@ void PurgeQueue::push(const PurgeItem &pi, Context *completion)
 
   // Callers should have waited for open() before using us
   ceph_assert(!journaler.is_readonly());
+
+  ++pending_inos[pi.ino];
 
   bufferlist bl;
 
@@ -634,6 +638,10 @@ void PurgeQueue::_execute_item(
 {
   ceph_assert(ceph_mutex_is_locked_by_me(lock));
 
+  if (expire_to <= untracked_pos) {
+    ++pending_inos[item.ino];
+  }
+
   in_flight[expire_to] = item;
   logger->set(l_pq_executing, in_flight.size());
   files_high_water = std::max<uint64_t>(files_high_water,
@@ -698,6 +706,9 @@ void PurgeQueue::_execute_item(
   } else {
     derr << "Invalid item (action=" << item.action << ") in purge queue, "
             "dropping it" << dendl;
+    if (auto p = pending_inos.find(item.ino); p != pending_inos.end() && --p->second == 0) {
+      pending_inos.erase(p);
+    }
     ops_in_flight -= ops;
     logger->set(l_pq_executing_ops, ops_in_flight);
     ops_high_water = std::max(ops_high_water, ops_in_flight);
@@ -757,6 +768,16 @@ void PurgeQueue::_execute_item_complete(
 
   dout(10) << "completed item for ino " << iter->second.ino << dendl;
 
+  ++items_executed;
+  auto pino = pending_inos.find(iter->second.ino);
+  ceph_assert(pino != pending_inos.end());
+  if (--pino->second == 0) {
+    pending_inos.erase(pino);
+  }
+  unexpired_items[expire_to] = iter->second.ino;
+  unexpired_items.erase(unexpired_items.begin(),
+                        unexpired_items.upper_bound(journaler.get_last_committed().expire_pos));
+
   in_flight.erase(iter);
   logger->set(l_pq_executing, in_flight.size());
   files_high_water = std::max<uint64_t>(files_high_water,
@@ -777,6 +798,42 @@ void PurgeQueue::_execute_item_complete(
   logger->set(l_pq_item_in_journal, item_num);
   logger->inc(l_pq_executed_ops, executed_ops);
   logger->inc(l_pq_executed);
+}
+
+bool PurgeQueue::is_ino_pending(inodeno_t ino)
+{
+  std::lock_guard l(lock);
+
+  if (!recovered || readonly) {
+    return true;
+  }
+  if (journaler.get_read_pos() < untracked_pos || pending_inos.count(ino)) {
+    return true;
+  }
+
+  unexpired_items.erase(unexpired_items.begin(),
+                        unexpired_items.upper_bound(journaler.get_last_committed().expire_pos));
+  uint64_t expire_pos = journaler.get_expire_pos();
+  bool pending = false;
+  bool write_head = false;
+  for (const auto& [expire_to, i] : unexpired_items) {
+    if (i == ino) {
+      pending = true;
+      // otherwise an older item is still executing, the head is written
+      // again when asked next time.
+      write_head = write_head || expire_to <= expire_pos;
+    }
+  }
+  if (write_head) {
+    journaler.write_head(nullptr);
+  }
+  return pending;
+}
+
+uint64_t PurgeQueue::get_progress()
+{
+  std::lock_guard l(lock);
+  return items_executed + journaler.get_last_committed().expire_pos;
 }
 
 void PurgeQueue::update_op_limit(const MDSMap &mds_map)
