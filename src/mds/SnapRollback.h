@@ -49,6 +49,7 @@ public:
     ACTION_ROLLBACK,      // same inode in snapshot and head
     ACTION_REMOVE,        // remove head inode (created/replaced after snapshot)
     ACTION_REINSTATE,     // recreate head inode from snapshot (head inode is gone)
+    ACTION_RELINK,        // move live head inode back to this name
   };
 
   /**
@@ -58,7 +59,8 @@ public:
   enum head_state_t {
     HEAD_GONE = 0,        // not in cache
     HEAD_PURGING,         // being purged; gone once the purge finishes
-    HEAD_PINNED,          // alive, so it can't be recreated
+    HEAD_RELINKABLE,      // can be moved back to the name
+    HEAD_PINNED,          // alive, but can't be moved (other links, ...)
   };
 
   explicit SnapRollback(MDCache *mdc) : mdcache(mdc) {}
@@ -110,12 +112,15 @@ private:
   void rollback_inode(const MDRequestRef& mdr, rollback_op_t *op);
   void remove_inode(const MDRequestRef& mdr, rollback_op_t *op);
   void reinstate_inode(const MDRequestRef& mdr, rollback_op_t *op);
+  void relink_inode(const MDRequestRef& mdr, rollback_op_t *op);
 
   void _rollback_inode_logged(const MDRequestRef& mdr);
   void _remove_inode_logged(const MDRequestRef& mdr, CDentry *dn,
                             CDentry *straydn, version_t dnpv);
   void _reinstate_inode_logged(const MDRequestRef& mdr, CDentry *dn,
                                CInode *in);
+  void _relink_inode_logged(const MDRequestRef& mdr, CDentry *srcdn,
+                            CDentry *destdn, CInode *in);
 
   /**
    * Issue CEPH_OSD_OP_ROLLBACK for the data objects of an inode, in

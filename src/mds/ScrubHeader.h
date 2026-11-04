@@ -39,6 +39,7 @@ struct rollback_stats_t {
   uint64_t rolled_back = 0;
   uint64_t removed = 0;
   uint64_t reinstated = 0;
+  uint64_t relinked = 0;
   uint64_t skipped = 0;
   uint64_t failed = 0;
 };
