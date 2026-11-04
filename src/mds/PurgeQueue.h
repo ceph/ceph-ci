@@ -161,6 +161,22 @@ public:
   bool is_idle() const;
 
   /**
+   * Can a purge of this inode still touch its objects? That is the case
+   * until any purge item for it has finished and the journal's expire
+   * position is persisted past the item: an item that is not expired on
+   * disk is executed again after a restart. Items already in the journal
+   * when it was opened are only known once read, so until then this returns
+   * true for any inode.
+   */
+  bool is_ino_pending(inodeno_t ino);
+
+  /**
+   * Changes whenever the queue makes progress, to tell a queue that's slow
+   * from a queue that is stuck (paused, readonly).
+   */
+  uint64_t get_progress();
+
+  /**
    * Signal to the PurgeQueue that you would like it to hurry up and
    * finish consuming everything in the queue.  Provides progress
    * feedback.
@@ -243,6 +259,15 @@ private:
   std::vector<Context*> waiting_for_recovery;
 
   size_t purge_item_journal_size;
+
+  // Inodes with items that are queued or executing
+  std::map<inodeno_t, unsigned> pending_inos;
+  // Executed items not known to be expired on disk: expire_to -> ino
+  std::map<uint64_t, inodeno_t> unexpired_items;
+  // Items before this offset were in the journal when it was opened, they
+  // are not in pending_inos until they are read.
+  uint64_t untracked_pos = 0;
+  uint64_t items_executed = 0;
 
   uint64_t ops_high_water = 0;
   uint64_t files_high_water = 0;
