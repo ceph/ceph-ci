@@ -47,6 +47,7 @@ public:
     ACTION_NONE = 0,      // nothing to do
     ACTION_SKIP,          // unsupported (directory, hardlink, ...)
     ACTION_ROLLBACK,      // same inode in snapshot and head
+    ACTION_REMOVE,        // remove head inode (created after snapshot)
   };
 
   explicit SnapRollback(MDCache *mdc) : mdcache(mdc) {}
@@ -88,10 +89,14 @@ private:
 
   bool acquire_locks(const MDRequestRef& mdr, rollback_op_t *op,
                      CDentry *dn, CInode *in, CDentry *straydn);
+  CDentry *prepare_stray_dentry(const MDRequestRef& mdr, CInode *in);
 
   void rollback_inode(const MDRequestRef& mdr, rollback_op_t *op);
+  void remove_inode(const MDRequestRef& mdr, rollback_op_t *op);
 
   void _rollback_inode_logged(const MDRequestRef& mdr);
+  void _remove_inode_logged(const MDRequestRef& mdr, CDentry *dn,
+                            CDentry *straydn, version_t dnpv);
 
   /**
    * Issue CEPH_OSD_OP_ROLLBACK for the data objects of an inode, in

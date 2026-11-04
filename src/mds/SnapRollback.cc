@@ -128,6 +128,7 @@ std::string_view SnapRollback::action_name(action_t action)
   case ACTION_NONE: return "none";
   case ACTION_SKIP: return "skip";
   case ACTION_ROLLBACK: return "rollback";
+  case ACTION_REMOVE: return "remove";
   }
   return "unknown";
 }
@@ -192,8 +193,8 @@ SnapRollback::action_t SnapRollback::classify(CDir *dir, std::string_view name,
   }
 
   if (!sin) {
-    *why = "created after the snapshot";
-    return ACTION_SKIP;
+    // created after the snapshot
+    return ACTION_REMOVE;
   }
   if (hin && hin->ino() == sin->ino()) {
     if (hin == sin && hin->is_any_old_inodes()) {
@@ -304,6 +305,10 @@ void SnapRollback::entry_done(dirfrag_rollback_t *dr, action_t action, int r)
       stats.rolled_back++;
       ++dr->next;
       break;
+    case ACTION_REMOVE:
+      // reclassify -- the name is gone from head now
+      stats.removed++;
+      break;
     default:
       ceph_abort();
     }
@@ -342,6 +347,9 @@ void SnapRollback::dispatch(const MDRequestRef& mdr)
   switch (op->action) {
   case ACTION_ROLLBACK:
     rollback_inode(mdr, op);
+    break;
+  case ACTION_REMOVE:
+    remove_inode(mdr, op);
     break;
   default:
     ceph_abort();
@@ -550,4 +558,154 @@ void SnapRollback::_rollback_inode_logged(const MDRequestRef& mdr)
 {
   mdr->apply();
   finish_request(mdr, 0);
+}
+
+CDentry *SnapRollback::prepare_stray_dentry(const MDRequestRef& mdr, CInode *in)
+{
+  std::string straydname;
+  in->name_stray_dentry(straydname);
+
+  if (mdr->straydn) {
+    ceph_assert(mdr->straydn->get_name() == straydname);
+    return mdr->straydn;
+  }
+
+  CDir *straydir = mdcache->get_stray_dir(in);
+  CDentry *straydn = straydir->lookup(straydname);
+  if (!straydn) {
+    if (straydir->is_frozen_dir()) {
+      dout(10) << __func__ << ": " << *straydir << " is frozen, waiting" << dendl;
+      mdcache->mds->locker->drop_locks(mdr.get());
+      mdr->drop_local_auth_pins();
+      straydir->add_waiter(CDir::WAIT_UNFREEZE, new C_MDS_RetryRequest(mdcache, mdr));
+      return nullptr;
+    }
+    straydn = straydir->add_null_dentry(straydname);
+    straydn->mark_new();
+  } else {
+    ceph_assert(straydn->get_projected_linkage()->is_null());
+  }
+
+  straydn->state_set(CDentry::STATE_STRAY);
+  mdr->straydn = straydn;
+  mdr->pin(straydn);
+  return straydn;
+}
+
+/*
+ * The head inode did not exist at the snapshot: unlink it into the stray
+ * directory, the same as an unlink(2). Snapshots taken after the rollback snapshot keep
+ * seeing it via the COWed dentry; the stray manager purges the head.
+ */
+void SnapRollback::remove_inode(const MDRequestRef& mdr, rollback_op_t *op)
+{
+  MDSRank *mds = mdcache->mds;
+  CDir *dir = op->dir;
+
+  CDentry *dn = dir->lookup(op->name);
+  CInode *in = dn->get_projected_linkage()->get_inode();
+
+  CDentry *straydn = prepare_stray_dentry(mdr, in);
+  if (!straydn) {
+    return;
+  }
+  if (!acquire_locks(mdr, op, dn, in, straydn)) {
+    return;
+  }
+
+  dout(10) << __func__ << " " << *dn << " " << *in << dendl;
+
+  straydn->first = mdcache->get_global_snaprealm()->get_newest_seq() + 1;
+
+  if (!mdr->more()->desti_srnode) {
+    SnapRealm *realm = in->find_snaprealm();
+    snapid_t follows = realm->get_newest_seq();
+    if (in->snaprealm || follows + 1 > in->get_oldest_snap()) {
+      sr_t *new_srnode = in->prepare_new_srnode(follows);
+      in->record_snaprealm_past_parent(new_srnode, straydn->get_dir()->inode->find_snaprealm());
+      mdr->more()->desti_srnode = new_srnode;
+    }
+  }
+
+  MDLog *mdlog = mds->mdlog;
+  mdr->ls = mdlog->get_current_segment();
+  EUpdate *le = new EUpdate(mdlog, "snap_rollback_remove");
+
+  straydn->push_projected_linkage(in);
+  dn->pre_dirty();
+
+  auto pi = in->project_inode(mdr);
+  {
+    std::string t;
+    dn->make_path_string(t, true);
+    pi.inode->stray_prior_path = std::move(t);
+  }
+  pi.inode->version = in->pre_dirty();
+  pi.inode->ctime = mdr->get_op_stamp();
+  if (mdr->get_op_stamp() > pi.inode->rstat.rctime) {
+    pi.inode->rstat.rctime = mdr->get_op_stamp();
+  }
+  pi.inode->change_attr++;
+  pi.inode->nlink--;
+  if (pi.inode->nlink == 0) {
+    in->state_set(CInode::STATE_ORPHAN);
+  }
+
+  if (mdr->more()->desti_srnode) {
+    auto& desti_srnode = mdr->more()->desti_srnode;
+    in->project_snaprealm(desti_srnode);
+    desti_srnode = NULL;
+  }
+
+  mdcache->predirty_journal_parents(mdr, &le->metablob, in, dn->get_dir(),
+                                    PREDIRTY_PRIMARY|PREDIRTY_DIR, -1);
+  mdcache->predirty_journal_parents(mdr, &le->metablob, in, straydn->get_dir(),
+                                    PREDIRTY_PRIMARY|PREDIRTY_DIR, 1);
+
+  pi.inode->update_backtrace();
+  le->metablob.add_primary_dentry(straydn, in, true, true);
+
+  mdcache->journal_cow_dentry(mdr.get(), &le->metablob, dn);
+  le->metablob.add_null_dentry(dn, true);
+
+  dn->push_projected_linkage();
+
+  ceph_assert(in->first <= straydn->first);
+  in->first = straydn->first;
+
+  version_t dnpv = dn->get_projected_version();
+  mdr->committing = true;
+  mdlog->submit_entry(le, new C_SnapRollback_Logged(mds, [this, mdr, dn, straydn, dnpv]() {
+    _remove_inode_logged(mdr, dn, straydn, dnpv);
+  }));
+  mdlog->flush();
+}
+
+void SnapRollback::_remove_inode_logged(const MDRequestRef& mdr, CDentry *dn,
+                                        CDentry *straydn, version_t dnpv)
+{
+  CInode *strayin = dn->get_linkage()->get_inode();
+  bool hadrealm = strayin->snaprealm ? true : false;
+  strayin->early_pop_projected_snaprealm();
+
+  dn->get_dir()->unlink_inode(dn);
+  dn->pop_projected_linkage();
+  dn->mark_dirty(dnpv, mdr->ls);
+
+  straydn->pop_projected_linkage();
+  mdcache->touch_dentry_bottom(straydn);
+
+  mdr->apply();
+
+  mdcache->send_dentry_unlink(dn, straydn, mdr);
+  if (strayin->snaprealm && !hadrealm) {
+    mdcache->do_realm_invalidate_and_update_notify(strayin, CEPH_SNAP_OP_SPLIT, false);
+  }
+
+  finish_request(mdr, 0);
+
+  dn->get_dir()->try_remove_unlinked_dn(dn);
+  if (!straydn->get_projected_linkage()->is_null()) {
+    mdcache->notify_stray(straydn);
+  }
 }
