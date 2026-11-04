@@ -1,0 +1,13 @@
+overrides:
+  ceph:
+    log-ignorelist:
+      - Evicting \(and blocklisting\) client session
+      - evicting unresponsive client
+      - snap rollback
+      - overall HEALTH_
+      - \(MDS_CLIENTS_LAGGY\)
+tasks:
+- cephfs_test_runner:
+    fail_on_skip: false
+    modules:
+      - tasks.cephfs.test_snap_rollback
