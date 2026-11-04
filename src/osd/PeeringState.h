@@ -937,11 +937,15 @@ public:
     typedef boost::mpl::list<
       boost::statechart::transition< DoRecovery, WaitLocalRecoveryReserved >,
       boost::statechart::custom_reaction<SetForceRecovery>,
-      boost::statechart::custom_reaction<SetForceBackfill>
+      boost::statechart::custom_reaction<SetForceBackfill>,
+      boost::statechart::custom_reaction<RequestBackfill>
     > reactions;
     explicit Clean(my_context ctx);
     void exit();
     boost::statechart::result react(const boost::statechart::event_base&) {
+      return discard_event();
+    }
+    boost::statechart::result react(const RequestBackfill &) {
       return discard_event();
     }
   };
@@ -950,13 +954,17 @@ public:
     typedef boost::mpl::list<
       boost::statechart::transition< GoClean, Clean >,
       boost::statechart::transition< DoRecovery, WaitLocalRecoveryReserved >,
-      boost::statechart::custom_reaction< AllReplicasActivated >
+      boost::statechart::custom_reaction< AllReplicasActivated >,
+      boost::statechart::custom_reaction< RequestBackfill >
     > reactions;
     explicit Recovered(my_context ctx);
     void exit();
     boost::statechart::result react(const AllReplicasActivated&) {
       post_event(GoClean());
       return forward_event();
+    }
+    boost::statechart::result react(const RequestBackfill &) {
+      return discard_event();
     }
   };
 
@@ -968,7 +976,8 @@ public:
       boost::statechart::custom_reaction< RemoteReservationRejectedTooFull >,
       boost::statechart::custom_reaction< RemoteReservationRevokedTooFull>,
       boost::statechart::custom_reaction< RemoteReservationRevoked>,
-      boost::statechart::custom_reaction< PauseBackfill >
+      boost::statechart::custom_reaction< PauseBackfill >,
+      boost::statechart::custom_reaction< RequestBackfill >
       > reactions;
     explicit Backfilling(my_context ctx);
     boost::statechart::result react(const RemoteReservationRejectedTooFull& evt) {
@@ -982,6 +991,9 @@ public:
     boost::statechart::result react(const DeferBackfill& evt);
     boost::statechart::result react(const UnfoundBackfill& evt);
     boost::statechart::result react(const PauseBackfill& evt);
+    boost::statechart::result react(const RequestBackfill &) {
+      return discard_event();
+    }
     void exit();
   };
 
@@ -991,7 +1003,8 @@ public:
       boost::statechart::custom_reaction< RemoteReservationRejectedTooFull >,
       boost::statechart::custom_reaction< RemoteReservationRevoked >,
       boost::statechart::transition< AllBackfillsReserved, Backfilling >,
-      boost::statechart::custom_reaction< PauseBackfill >
+      boost::statechart::custom_reaction< PauseBackfill >,
+      boost::statechart::custom_reaction< RequestBackfill >
       > reactions;
     std::set<pg_shard_t>::const_iterator backfill_osd_it;
     explicit WaitRemoteBackfillReserved(my_context ctx);
@@ -1001,13 +1014,17 @@ public:
     boost::statechart::result react(const RemoteReservationRejectedTooFull& evt);
     boost::statechart::result react(const RemoteReservationRevoked& evt);
     boost::statechart::result react(const PauseBackfill &evt);
+    boost::statechart::result react(const RequestBackfill &) {
+      return discard_event();
+    }
   };
 
   struct WaitLocalBackfillReserved : boost::statechart::state< WaitLocalBackfillReserved, Active >, NamedState {
     typedef boost::mpl::list<
       boost::statechart::transition< LocalBackfillReserved, WaitRemoteBackfillReserved >,
       boost::statechart::custom_reaction< RemoteBackfillReserved >,
-      boost::statechart::custom_reaction< PauseBackfill >
+      boost::statechart::custom_reaction< PauseBackfill >,
+      boost::statechart::custom_reaction< RequestBackfill >
       > reactions;
     explicit WaitLocalBackfillReserved(my_context ctx);
     boost::statechart::result react(const RemoteBackfillReserved& evt) {
@@ -1015,6 +1032,9 @@ public:
       return discard_event();
     }
     boost::statechart::result react(const PauseBackfill &evt);
+    boost::statechart::result react(const RequestBackfill &) {
+      return discard_event();
+    }
     void exit();
   };
 
