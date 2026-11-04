@@ -26,6 +26,7 @@
 
 #include "include/ceph_assert.h"
 #include "include/fs_types.h" // for inodeno_t
+#include "include/object.h"
 
 namespace ceph {
 class Formatter;
@@ -33,6 +34,12 @@ class Formatter;
 
 class CInode;
 class MDCache;
+
+struct rollback_stats_t {
+  uint64_t rolled_back = 0;
+  uint64_t skipped = 0;
+  uint64_t failed = 0;
+};
 
 /**
  * Externally input parameters for a scrub, associated with the root
@@ -112,6 +119,20 @@ public:
     return uninline_skipped;
   }
 
+  // snapshot rollback (`scrub rollback`)
+  void set_rollback(std::string_view snap_name) {
+    rollback_snap_name = snap_name;
+  }
+  bool is_rollback() const { return !rollback_snap_name.empty(); }
+  const std::string& get_rollback_snap_name() const {
+    return rollback_snap_name;
+  }
+  void set_rollback_snapid(snapid_t snapid) { rollback_snapid = snapid; }
+  snapid_t get_rollback_snapid() const { return rollback_snapid; }
+
+  rollback_stats_t& get_rollback_stats() { return rollback_stats; }
+  const rollback_stats_t& get_rollback_stats() const { return rollback_stats; }
+
 protected:
   const std::string tag;
   bool is_tag_internal;
@@ -133,6 +154,10 @@ protected:
   uint64_t uninline_passed = 0;
   uint64_t uninline_failed = 0;
   uint64_t uninline_skipped = 0;
+
+  std::string rollback_snap_name;
+  snapid_t rollback_snapid = CEPH_NOSNAP;
+  rollback_stats_t rollback_stats;
 };
 
 typedef std::shared_ptr<ScrubHeader> ScrubHeaderRef;
