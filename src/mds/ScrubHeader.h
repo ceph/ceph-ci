@@ -135,6 +135,14 @@ public:
   void set_rollback_snapid(snapid_t snapid) { rollback_snapid = snapid; }
   snapid_t get_rollback_snapid() const { return rollback_snapid; }
 
+  // set once all client sessions have been evicted
+  void set_clients_evicted() { clients_evicted = true; }
+  bool get_clients_evicted() const { return clients_evicted; }
+
+  // set while new client sessions are refused on behalf of this rollback
+  void set_rollback_preparing(bool v) { rollback_preparing = v; }
+  bool get_rollback_preparing() const { return rollback_preparing; }
+
   // Inodes with more than one link are rolled back when the first of
   // their links is reached.
   void set_rollback_done(inodeno_t ino) { rollback_done_inos.insert(ino); }
@@ -169,6 +177,8 @@ protected:
 
   std::string rollback_snap_name;
   snapid_t rollback_snapid = CEPH_NOSNAP;
+  bool clients_evicted = false;
+  bool rollback_preparing = false;
   rollback_stats_t rollback_stats;
   std::set<inodeno_t> rollback_done_inos;
 };

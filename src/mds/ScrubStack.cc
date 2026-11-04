@@ -254,6 +254,35 @@ private:
   CDir *dir;
 };
 
+bool ScrubStack::is_rollback_in_progress() const
+{
+  if (rollbacks_preparing) {
+    return true;
+  }
+  for (auto& [tag, header] : scrubbing_map) {
+    if (header->is_rollback()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void ScrubStack::rollback_prepare_start(const ScrubHeaderRef& header)
+{
+  ceph_assert(!header->get_rollback_preparing());
+  header->set_rollback_preparing(true);
+  ++rollbacks_preparing;
+}
+
+void ScrubStack::rollback_prepare_finish(const ScrubHeaderRef& header)
+{
+  if (header->get_rollback_preparing()) {
+    header->set_rollback_preparing(false);
+    ceph_assert(rollbacks_preparing > 0);
+    --rollbacks_preparing;
+  }
+}
+
 void ScrubStack::kick_off_scrubs()
 {
   ceph_assert(ceph_mutex_is_locked(mdcache->mds->mds_lock));

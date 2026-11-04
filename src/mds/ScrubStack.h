@@ -110,6 +110,14 @@ public:
            !scrubbing_map.empty();
   }
 
+  /**
+   * Is a snapshot rollback being prepared (clients being evicted) or
+   * running? New client sessions are refused during this time.
+   */
+  bool is_rollback_in_progress() const;
+  void rollback_prepare_start(const ScrubHeaderRef& header);
+  void rollback_prepare_finish(const ScrubHeaderRef& header);
+
   SnapRollback& get_snap_rollback() { return snap_rollback; }
 
   void advance_scrub_status();
@@ -182,6 +190,8 @@ protected:
   SnapRollback snap_rollback;
   // dirfrags whose entries have been rolled back, pending final scrub
   std::set<CDir*> rollback_done_dirfrags;
+  // number of rollbacks evicting clients before being enqueued
+  unsigned rollbacks_preparing = 0;
 
   friend class C_RetryScrub;
   friend class C_RollbackDirfrag;
