@@ -792,7 +792,9 @@ void MDLog::trim()
       break;
     }
 
-    unsigned num_remaining_segments = (segments.size() - expired_segments.size() - expiring_segments.size());
+    // Expired segments are removed only once a major segment past them is
+    // also expired. Until then they still occupy the journal, so count them.
+    unsigned num_remaining_segments = (segments.size() - expiring_segments.size());
     dout(10) << __func__ << ": new_expiring_segments=" << new_expiring_segments
 	     << ", num_remaining_segments=" << num_remaining_segments
 	     << ", max_segments=" << max_segments << dendl;
