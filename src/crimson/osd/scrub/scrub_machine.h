@@ -582,7 +582,7 @@ public:
 
   using reactions = boost::mpl::list<
     sc::transition<events::reset_t, Inactive>,
-    sc::transition<events::abort_t, AwaitScrub>,
+    sc::custom_reaction<events::abort_t>,
     sc::custom_reaction<events::primary_activate_t>,
     sc::custom_reaction<events::start_scrub_t>,
     sc::custom_reaction<events::op_stats_t>,
@@ -611,6 +611,16 @@ public:
     sc::transition< boost::statechart::event_base, Crash >
     >;
 
+  sc::result react(const events::abort_t &) {
+    // Only reached when no Scrubbing subtree is active (i.e. we are sitting
+    // in AwaitScrub), because Scrubbing handles abort_t itself.  There is
+    // nothing to abort, and transitioning to AwaitScrub from here would exit
+    // and reconstruct PrimaryActive - running do_cleanup()/
+    // rm_from_osd_scrubbing() and then re-registering the scrub job, which
+    // recomputes the schedule from last_scrub_stamp and discards the delay
+    // the abort path had just applied.
+    return discard_event();
+  }
   sc::result react(const events::primary_activate_t &) {
     return discard_event();
   }
@@ -717,6 +727,13 @@ struct Scrubbing : ScrubState<Scrubbing, PrimaryActive, ReservingReplicas> {
   }
 
   using reactions = boost::mpl::list<
+    // Handle abort_t here rather than letting it propagate to PrimaryActive.
+    // Scrubbing and AwaitScrub are siblings, so their innermost common
+    // context is PrimaryActive and only the Scrubbing subtree is torn down.
+    // Declared on PrimaryActive the source would be PrimaryActive itself,
+    // whose innermost common context with its own inner state AwaitScrub is
+    // ScrubMachine - which would exit and reconstruct PrimaryActive.
+    sc::transition<events::abort_t, AwaitScrub>,
     sc::custom_reaction<internal_events::set_deep_t>,
     sc::custom_reaction<events::op_stats_t>
     >;
