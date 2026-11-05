@@ -529,17 +529,18 @@ PGBackend::write_iertr::future<> PGBackend::_writefull(
       os.oi.size - bl.length());
   }
   if (bl.length()) {
-    // Compute data digest for writefull (always writes whole object from offset 0)
-    bool skip_data_digest = local_conf().get_val<bool>("osd_skip_data_digest");
-    if (!skip_data_digest) {
-      os.oi.set_data_digest(bl.crc32c(-1));
-    } else {
-      os.oi.clear_data_digest();
-    }
-
     txn.write(
       coll->get_cid(), ghobject_t{os.oi.soid}, 0, bl.length(),
       bl, flags);
+  }
+  // writefull always rewrites the whole object from offset 0, so the digest
+  // must be refreshed even for a zero-length write (which truncates the
+  // object to 0).  Matches PrimaryLogPG's CEPH_OSD_OP_WRITEFULL, where this
+  // is done outside the length check.
+  if (!local_conf().get_val<bool>("osd_skip_data_digest")) {
+    os.oi.set_data_digest(bl.crc32c(-1));
+  } else {
+    os.oi.clear_data_digest();
   }
   osd_op_params.clean_regions.mark_data_region_dirty(
     0,
