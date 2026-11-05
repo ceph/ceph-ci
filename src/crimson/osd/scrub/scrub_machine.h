@@ -510,6 +510,14 @@ struct Inactive : ScrubState<Inactive, ScrubMachine> {
     return discard_event();
   }
   sc::result react(const ScrubContext::reserve_range_complete_t &) {
+    // By the time ScrubReserveRange posts this event it has already taken
+    // pg.background_process_lock and installed scrubber.blocked, and its
+    // finally() block deliberately does not unlock once that happened.
+    // Simply discarding the event would therefore leak the lock: every
+    // client write landing in the reserved range would block in wait_scrub()
+    // forever, and the next scrub would trip ceph_assert(!scrubber.blocked).
+    // Release the range here, where we know the event is being dropped.
+    get_scrub_context().release_range();
     return discard_event();
   }
   sc::result react(const ScrubContext::await_update_complete_t &) {
@@ -640,6 +648,14 @@ public:
     return discard_event();
   }
   sc::result react(const ScrubContext::reserve_range_complete_t &) {
+    // By the time ScrubReserveRange posts this event it has already taken
+    // pg.background_process_lock and installed scrubber.blocked, and its
+    // finally() block deliberately does not unlock once that happened.
+    // Simply discarding the event would therefore leak the lock: every
+    // client write landing in the reserved range would block in wait_scrub()
+    // forever, and the next scrub would trip ceph_assert(!scrubber.blocked).
+    // Release the range here, where we know the event is being dropped.
+    get_scrub_context().release_range();
     return discard_event();
   }
   sc::result react(const ScrubContext::await_update_complete_t &) {
