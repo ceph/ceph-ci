@@ -8,6 +8,7 @@
 
 #include <boost/intrusive_ptr.hpp>
 #include <seastar/core/future.hh>
+#include <seastar/core/gate.hh>
 #include <seastar/core/metrics.hh>
 
 #include "include/common_fwd.h"
@@ -411,6 +412,10 @@ class ShardServices : public OSDMapService,
   uint32_t store_shard_nums = 0;
 
   seastar::timer<seastar::lowres_clock> scrub_timer;
+  /// Keeps prepare_scrub() alive across stop(): it is a coroutine capturing
+  /// this and suspending on cross-shard calls, so the timer alone cannot
+  /// guarantee it has finished before *this is destroyed.
+  seastar::gate scrub_gate;
   ScrubScheduler scrub_scheduler;
 
   std::array<uint64_t,
@@ -541,12 +546,27 @@ public:
       pg_to_shard_mapping(pg_to_shard_mapping),
       store_shard_nums(store_shard_nums),
       scrub_timer{[this] {
-        std::ignore = prepare_scrub();
+        if (!scrub_gate.is_closed()) {
+          std::ignore = seastar::with_gate(scrub_gate, [this] {
+            return prepare_scrub();
+          }).handle_exception([](std::exception_ptr) {
+            // gate closed underneath us, or prepare_scrub() failed; the next
+            // tick retries.  Consumed so it is not reported as an ignored
+            // exceptional future.
+          });
+        }
         scrub_timer.arm(std::chrono::seconds(SCRUB_TICK_INTERVAL));
       }},
       scrub_scheduler(*this) {
         scrub_timer.arm(std::chrono::seconds(SCRUB_TICK_INTERVAL));
         register_metrics();
+  }
+  /// Called by seastar::sharded<ShardServices>::stop() before the instances
+  /// are destroyed, so an in-flight prepare_scrub() cannot resume into a
+  /// destroyed ShardServices.
+  seastar::future<> stop() {
+    scrub_timer.cancel();
+    return scrub_gate.close();
   }
   ~ShardServices() {
     scrub_timer.cancel();
