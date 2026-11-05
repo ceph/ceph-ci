@@ -181,7 +181,13 @@ OSD::OSD(int id, uint32_t nonce,
   clog->set_log_to_monitors(true);
 }
 
-OSD::~OSD() = default;
+OSD::~OSD()
+{
+  // Balances the add_observer() in the constructor: the config proxy keeps a
+  // raw pointer to the observer, so leaving it registered lets a later config
+  // change dereference a destroyed OSD.
+  crimson::common::local_conf().remove_observer(this);
+}
 
 namespace {
 // Initial features in new superblock.
