@@ -120,11 +120,24 @@ public:
   bool get_write_greedy(OpRequestRef& op) {
     return get_write(op, true);
   }
+  void snaptrimmer_set_write_marker() {
+    rwstate.snaptrimmer_set_write_marker();
+  }
   bool get_snaptrimmer_write(bool mark_if_unsuccessful) {
     return rwstate.get_snaptrimmer_write(mark_if_unsuccessful);
   }
   bool get_recovery_read() {
     return rwstate.get_recovery_read();
+  }
+  bool get_pool_migration_write(std::optional<OpRequestRef>&& op) {
+    if (rwstate.get_pool_migration_write()) {
+      return true;
+    } // else
+    if (op.has_value()) {
+      waiters.emplace_back(*op);
+      rwstate.inc_waiters();
+    }
+    return false;
   }
   bool try_get_read_lock() {
     return rwstate.get_read_lock();
@@ -138,7 +151,8 @@ public:
     RWState::State type,
     std::list<OpRequestRef> *to_wake,
     bool *requeue_recovery,
-    bool *requeue_snaptrimmer) {
+    bool *requeue_snaptrimmer,
+    bool *requeue_pool_migration) {
     switch (type) {
     case RWState::RWWRITE:
       put_write(to_wake);
@@ -159,6 +173,10 @@ public:
     if (rwstate.empty() && rwstate.snaptrimmer_write_marker) {
       rwstate.snaptrimmer_write_marker = false;
       *requeue_snaptrimmer = true;
+    }
+    if (rwstate.empty() && rwstate.pool_migration_write_marker) {
+      rwstate.pool_migration_write_marker = false;
+      *requeue_pool_migration = true;
     }
   }
   bool is_request_pending() {
@@ -251,6 +269,12 @@ public:
       return false;
     }
   }
+  /// Flag that trimmer needs kicking when write lock is released
+  void snaptrimmer_set_write_marker(ObjectContextRef obc, bool mark_if_unsuccessful) {
+    if (mark_if_unsuccessful) {
+      obc->snaptrimmer_set_write_marker();
+    }
+  }
   /// Get write lock for snap trim
   bool get_snaptrimmer_write(
     const hobject_t &hoid,
@@ -258,6 +282,21 @@ public:
     bool mark_if_unsuccessful) {
     ceph_assert(locks.find(hoid) == locks.end());
     if (obc->get_snaptrimmer_write(mark_if_unsuccessful)) {
+      locks.insert(
+	std::make_pair(
+	  hoid, ObjectLockState(obc, RWState::RWWRITE)));
+      return true;
+    } else {
+      return false;
+    }
+  }
+  /// Get write lock for pool migration
+  bool get_pool_migration_write(
+    const hobject_t &hoid,
+    ObjectContextRef obc,
+    std::optional<OpRequestRef>&& op) {
+    ceph_assert(locks.find(hoid) == locks.end());
+    if (obc->get_pool_migration_write(std::move(op))) {
       locks.insert(
 	std::make_pair(
 	  hoid, ObjectLockState(obc, RWState::RWWRITE)));
@@ -301,14 +340,16 @@ public:
   void put_locks(
     std::list<std::pair<ObjectContextRef, std::list<OpRequestRef> > > *to_requeue,
     bool *requeue_recovery,
-    bool *requeue_snaptrimmer) {
+    bool *requeue_snaptrimmer,
+    bool *requeue_pool_migration) {
     for (auto& p: locks) {
       std::list<OpRequestRef> _to_requeue;
       p.second.obc->put_lock_type(
 	p.second.type,
 	&_to_requeue,
 	requeue_recovery,
-	requeue_snaptrimmer);
+        requeue_snaptrimmer,
+        requeue_pool_migration);
       if (to_requeue) {
         // We can safely std::move here as the whole `locks` is going
         // to die just after the loop.
