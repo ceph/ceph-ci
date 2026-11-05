@@ -16304,6 +16304,12 @@ void PrimaryLogPG::handle_pool_migration_quiesce_complete()
       // _on_activate_committed(); SUSPEND is the only resuming path that must
       // do it here.
       last_pool_migration_started = pool_migration_watermark;
+      if (recovery_state.is_migrating()) {
+        // A DoPoolMigration retry re-entered MigratingSource during the drain
+        dout(10) << __func__ << " drain complete, migration restarted, resuming" << dendl;
+        queue_recovery();
+        break;
+      }
       dout(10) << __func__ << " drain complete, completing suspension" << dendl;
       on_pool_migration_source_suspended();
       break;
