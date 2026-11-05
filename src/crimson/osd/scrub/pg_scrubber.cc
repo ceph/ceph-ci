@@ -1679,19 +1679,38 @@ void PGScrubber::log_object_errors(const inconsistent_obj_wrapper& obj_error,
   }
 }
 
-void PGScrubber::log_snapset_errors(const inconsistent_snapset_wrapper& snapset_error)
+void PGScrubber::log_snapset_errors(
+  const inconsistent_snapset_wrapper& snapset_error,
+  const std::map<hobject_t, hobject_t>& object_hoids)
 {
   LOG_PREFIX(PGScrubber::log_snapset_errors);
   const auto pgid = pg.get_pgid();
   const char* prefix = m_is_deep ? "deep-scrub" : "scrub";
 
-  // Build the hobject_t from the object_id fields.
+  // Prefer the real hobject_t recorded by the validator: inconsistent_snapset_t
+  // only carries name/locator/nspace/snap, so a hobject_t rebuilt from it has
+  // hash 0 and every cluster-log line below would name a bogus object
+  // (1:00000000:::obj:head).  Fall back to the rebuilt one if the lookup
+  // fails, which is still better than dropping the message.
+  auto hoid_it = std::find_if(
+    object_hoids.begin(), object_hoids.end(),
+    [&snapset_error](const auto& kv) {
+      return kv.first.oid.name == snapset_error.object.name &&
+             kv.first.snap == snapid_t{snapset_error.object.snap} &&
+             kv.first.nspace == snapset_error.object.nspace &&
+             kv.first.get_key() == snapset_error.object.locator;
+    });
+
   hobject_t hoid;
-  hoid.oid.name = snapset_error.object.name;
-  hoid.set_key(snapset_error.object.locator);
-  hoid.nspace = snapset_error.object.nspace;
-  hoid.snap = snapid_t{snapset_error.object.snap};
-  hoid.pool = pgid.pgid.pool();
+  if (hoid_it != object_hoids.end()) {
+    hoid = hoid_it->second;
+  } else {
+    hoid.oid.name = snapset_error.object.name;
+    hoid.set_key(snapset_error.object.locator);
+    hoid.nspace = snapset_error.object.nspace;
+    hoid.snap = snapid_t{snapset_error.object.snap};
+    hoid.pool = pgid.pgid.pool();
+  }
 
   // "no 'snapset' attr" — head with SNAPSET_MISSING.
   // Classic: "scrub {pgid} {head_hoid} : no 'snapset' attr"
@@ -1717,12 +1736,11 @@ void PGScrubber::log_snapset_errors(const inconsistent_snapset_wrapper& snapset_
   //   (b) orphan headless clones (head absent from object_set); their
   //       snapset_error entry is a clone entry with headless() set.
   for (const auto& clone_snap : snapset_error.clones) {
-    hobject_t clone_obj;
-    clone_obj.oid.name = snapset_error.object.name;
-    clone_obj.set_key(snapset_error.object.locator);
-    clone_obj.nspace = snapset_error.object.nspace;
+    // A clone shares everything with its head but the snap id - including the
+    // hash - so derive it from the head rather than rebuilding from the
+    // wrapper, which would leave the hash at 0.
+    hobject_t clone_obj = hoid;
     clone_obj.snap = clone_snap;
-    clone_obj.pool = pgid.pgid.pool();
 
     auto errorstr = fmt::format("scrub {} {} : is an unexpected clone",
                                 pgid, clone_obj);
@@ -1800,11 +1818,11 @@ void PGScrubber::emit_chunk_result(
 
     // Log snapset errors (primary-shard errors, stored + counted)
     for (const auto& snapset_error : result.snapset_errors) {
-      log_snapset_errors(snapset_error);
+      log_snapset_errors(snapset_error, result.object_hoids);
     }
     // Log replica-shard snapset errors (logged only, not stored)
     for (const auto& snapset_error : result.replica_snapset_errors) {
-      log_snapset_errors(snapset_error);
+      log_snapset_errors(snapset_error, result.object_hoids);
     }
 
     // Store errors for retrieval by rados list-inconsistent-obj

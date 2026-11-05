@@ -403,7 +403,9 @@ private:
    *
    * @param snapset_error The inconsistent snapset with error details
    */
-  void log_snapset_errors(const inconsistent_snapset_wrapper& snapset_error);
+  void log_snapset_errors(
+    const inconsistent_snapset_wrapper& snapset_error,
+    const std::map<hobject_t, hobject_t>& object_hoids);
 
   /**
    * scrub_process_inconsistent

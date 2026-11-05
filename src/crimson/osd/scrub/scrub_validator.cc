@@ -1368,12 +1368,25 @@ chunk_result_t validate_chunk(
             dest_head.size(),
             dest_head);
           head_seen.insert(oid.oid.name);
+          // Record the real hobject so pg_scrubber can log the object with
+          // its hash; the wrapper only carries name/nspace/locator/snap.
+          ret.object_hoids[oid] = oid;
         }
       }
       for (auto *ce : emittable_clones) {
         auto key = std::make_pair(ce->object.name, uint64_t{ce->object.snap});
         if (clone_seen.find(key) == clone_seen.end()) {
           clone_seen.insert(key);
+          auto ce_hoid = std::find_if(
+            object_set.begin(), object_set.end(),
+            [ce](const hobject_t &h) {
+              return h.oid.name == ce->object.name &&
+                     h.snap == snapid_t{ce->object.snap} &&
+                     h.nspace == ce->object.nspace;
+            });
+          if (ce_hoid != object_set.end()) {
+            ret.object_hoids[*ce_hoid] = *ce_hoid;
+          }
           dest_clone.push_back(std::move(*ce));
         }
       }
@@ -1398,6 +1411,7 @@ chunk_result_t validate_chunk(
       clone_error.set_info_missing();
     }
     clone_error.set_headless();
+    ret.object_hoids[oid] = oid;
     ret.snapset_errors.push_back(clone_error);
   }
 
