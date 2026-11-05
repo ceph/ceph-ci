@@ -1,6 +1,7 @@
 // -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:nil -*-
 // vim: ts=8 sw=2 sts=2 expandtab expandtab
 
+#include <cmath>
 #include <algorithm>
 #include <fmt/ranges.h>
 #include <seastar/core/sleep.hh>
@@ -920,7 +921,7 @@ void PGScrubber::handle_schedule_scrub(bool deep, int64_t offset)
     if (deep) {
       // For deep: interval + 3*sigma + 10
       const double sdv = cnf.deep_interval * cnf.deep_randomize_ratio;
-      guaranteed_offset = cnf.deep_interval + abs(3 * sdv) + 10.0;
+      guaranteed_offset = cnf.deep_interval + std::fabs(3 * sdv) + 10.0;
     } else {
       // For shallow: interval * (2.0 + randomize_ratio)
       guaranteed_offset = cnf.shallow_interval * (2.0 + cnf.interval_randomize_ratio);
