@@ -1603,12 +1603,10 @@ void PGScrubber::log_object_errors(const inconsistent_obj_wrapper& obj_error,
   if (obj_error.has_attr_value_mismatch() || obj_error.has_attr_name_mismatch()) {
     // Identify the auth shard and the candidate shard.
     const librados::shard_info_t* auth_si_ptr = nullptr;
-    const librados::shard_info_t* cand_si_ptr = nullptr;
     for (const auto& [shard_id, shard_info] : obj_error.shards) {
       if (shard_info.selected_oi) {
         auth_si_ptr = &shard_info;
-      } else {
-        cand_si_ptr = &shard_info;
+        break;
       }
     }
 
@@ -1617,33 +1615,64 @@ void PGScrubber::log_object_errors(const inconsistent_obj_wrapper& obj_error,
       return k == OI_ATTR || k == SS_ATTR || k == "omap_header";
     };
 
+    // Compare every non-authoritative shard against the auth shard.  Classic
+    // calls compare_candidate_to_authoritative() once per candidate, so a
+    // mismatch on any replica has to be reported; examining only one shard
+    // silently dropped the message whenever the damaged replica was not the
+    // one that happened to sort last.
+    //
+    // Order matters: the test scripts grep for the classic sequence (value
+    // mismatches, then auth-only names, then candidate-only names), so keep
+    // insertion order and use a separate set only to suppress duplicates
+    // contributed by several replicas.
+    std::vector<std::string> attr_error_list;
+    std::set<std::string> attr_error_seen;
+    auto add_attr_error = [&attr_error_list, &attr_error_seen](std::string e) {
+      if (attr_error_seen.insert(e).second) {
+        attr_error_list.push_back(std::move(e));
+      }
+    };
+    if (auth_si_ptr) {
+      for (const auto& [shard_id, cand_si] : obj_error.shards) {
+        if (cand_si.selected_oi) continue;
+        // obj_error.shards carries every evaluated shard, including ones that
+        // do not hold the object at all, whose attrs map is simply empty.
+        // Comparing those would synthesise an "attr name mismatch" for every
+        // user attr on the auth shard.  Skip them, as
+        // compare_candidate_to_authoritative() does.
+        if (cand_si.has_shard_missing() ||
+            cand_si.has_stat_error() ||
+            cand_si.has_read_error()) {
+          continue;
+        }
+        // Value mismatches: same key, different value.
+        for (const auto& [k, av] : auth_si_ptr->attrs) {
+          if (is_sys(k)) continue;
+          auto cit = cand_si.attrs.find(k);
+          if (cit != cand_si.attrs.end() && !av.contents_equal(cit->second)) {
+            add_attr_error("attr value mismatch '" + k + "'");
+          }
+        }
+        // Name mismatches: key in auth but not in cand.
+        for (const auto& [k, av] : auth_si_ptr->attrs) {
+          if (is_sys(k)) continue;
+          if (cand_si.attrs.find(k) == cand_si.attrs.end()) {
+            add_attr_error("attr name mismatch '" + k + "'");
+          }
+        }
+        // Name mismatches: key in cand but not in auth.
+        for (const auto& [k, cv] : cand_si.attrs) {
+          if (is_sys(k)) continue;
+          if (auth_si_ptr->attrs.find(k) == auth_si_ptr->attrs.end()) {
+            add_attr_error("attr name mismatch '" + k + "'");
+          }
+        }
+      }
+    }
     std::string attr_errors;
-    if (auth_si_ptr && cand_si_ptr) {
-      // Value mismatches: same key, different value.
-      for (const auto& [k, av] : auth_si_ptr->attrs) {
-        if (is_sys(k)) continue;
-        auto cit = cand_si_ptr->attrs.find(k);
-        if (cit != cand_si_ptr->attrs.end() && !av.contents_equal(cit->second)) {
-          if (!attr_errors.empty()) attr_errors += ", ";
-          attr_errors += "attr value mismatch '" + k + "'";
-        }
-      }
-      // Name mismatches: key in auth but not in cand.
-      for (const auto& [k, av] : auth_si_ptr->attrs) {
-        if (is_sys(k)) continue;
-        if (cand_si_ptr->attrs.find(k) == cand_si_ptr->attrs.end()) {
-          if (!attr_errors.empty()) attr_errors += ", ";
-          attr_errors += "attr name mismatch '" + k + "'";
-        }
-      }
-      // Name mismatches: key in cand but not in auth.
-      for (const auto& [k, cv] : cand_si_ptr->attrs) {
-        if (is_sys(k)) continue;
-        if (auth_si_ptr->attrs.find(k) == auth_si_ptr->attrs.end()) {
-          if (!attr_errors.empty()) attr_errors += ", ";
-          attr_errors += "attr name mismatch '" + k + "'";
-        }
-      }
+    for (const auto& e : attr_error_list) {
+      if (!attr_errors.empty()) attr_errors += ", ";
+      attr_errors += e;
     }
 
     if (!attr_errors.empty()) {
