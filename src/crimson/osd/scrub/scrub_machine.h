@@ -579,8 +579,6 @@ private:
   }
 
 public:
-  bool local_reservation_held = false;
-  std::set<pg_shard_t> remote_reservations_held;
   reservation_nonce_t last_request_sent_nonce{1};
 
   using reactions = boost::mpl::list<
