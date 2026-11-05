@@ -622,37 +622,16 @@ Profiles, Pool References and the Option
 The default Profile
 ^^^^^^^^^^^^^^^^^^^
 
-``default`` holds what a pool gets when it does not name a profile: ``k``, ``m``, the plugin and its
-keys, and the placement. It is the template of erasure coded pools, as the options are of replicated
-pools. Pools get copies of it (:ref:`Generated Profiles <ecsc-generated-profiles>`), and from the
-upgrade commit no pool refers to it (:ref:`At the Commit <ecsc-at-the-commit>`), so changing it
-affects only pools created afterwards.
-
-From the commit ``default`` always has the four placement keys: ``crush-root``,
-``crush-zone-failure-domain``, ``crush-failure-domain`` (``crush-osd-failure-domain`` if it has that
-key) and ``crush-device-class`` (empty for no class). A key that it lacks, or that is empty other
-than the class, is filled in from ``osd_pool_default_root``,
-``osd_pool_default_zone_failure_domain``, ``osd_pool_default_osd_failure_domain`` or
-``osd_pool_default_class``: when the Monitors create the cluster or re-create ``default``, at the
-commit (after the pools that use ``default`` get their copies, and with the zone type that the
-commit gives a cluster in global stretch mode), and after ``ceph osd erasure-code-profile set
-default``. A key that it has is kept, so the ``crush-failure-domain=osd`` that test clusters give
-``osd_pool_default_erasure_code_profile`` stays. Before the commit ``default`` is left as earlier
-releases have it. Changing the options alone does not change ``default``; these do:
-
-* ``ceph osd pool default set --k <k> --m <m>`` changes its ``k`` and ``m``, and with an
-  ``erasure`` default type its root, zone type, OSD failure domain and class (:ref:`ceph osd pool
-  default set and get <ecsc-ceph-osd-pool-default-set-and-get>`); ``ceph osd pool default get``
-  shows ``k`` and ``m``.
-* ``ceph osd erasure-code-profile set default ...`` replaces it, with no flags since no pool uses
-  it: the keys not given come from ``osd_pool_default_erasure_code_profile`` (:ref:`Profile Commands
-  and Changes <ecsc-profile-commands-and-changes>`), so every key, ``k`` and ``m`` included, must be
-  given again.
-* If ``default`` does not exist, for example after ``ceph osd erasure-code-profile rm default``,
-  the next command that needs it re-creates it from ``osd_pool_default_erasure_code_profile``.
-  ``ceph osd pool create`` and ``ceph osd pool default set`` store the option as written;
-  ``ceph osd crush rule create-erasure`` stores it normalized, with the ``crush-*`` keys filled
-  in. From the commit the placement keys are filled in as above.
+``default`` holds what an erasure coded pool gets when it names no profile: ``k``, ``m``, the plugin
+and its keys, and the placement (``crush-root``, ``crush-zone-failure-domain``,
+``crush-failure-domain`` and ``crush-device-class``). It always has the placement: a key that it
+lacks is filled in from the matching ``osd_pool_default_*`` option. Pools get copies of it
+(:ref:`Generated Profiles <ecsc-generated-profiles>`), so changing it affects only pools created
+afterwards. ``ceph osd pool default set`` changes it (:ref:`ceph osd pool default set and get
+<ecsc-ceph-osd-pool-default-set-and-get>`), and ``ceph osd erasure-code-profile set default``
+replaces it (:ref:`Profile Commands and Changes <ecsc-profile-commands-and-changes>`). If it does
+not exist, the next command that needs it re-creates it from
+``osd_pool_default_erasure_code_profile``.
 
 .. _ecsc-how-a-pool-gets-its-profile:
 
@@ -834,34 +813,28 @@ CRUSH Placement
 Placement Options
 ^^^^^^^^^^^^^^^^^
 
-A generated CRUSH rule uses four placement values: the root, the zone type, the OSD failure
-domain within a zone, and the device class. This is the one rule for where they come from when a
-pool or stretch mode command generates a rule for a pool.
+A generated CRUSH rule uses four placement values:
 
-* **Replicated pool**: the command-line option (``--root``, ``--zone_failure_domain``,
-  ``--osd_failure_domain``, ``--class``), else its default option (``osd_pool_default_root``,
-  ``osd_pool_default_zone_failure_domain``, ``osd_pool_default_osd_failure_domain``,
-  ``osd_pool_default_class``).
-* **Erasure coded pool**: the command-line option (``--no-class`` for no class), else the pool's
-  profile (``crush-root``; ``crush-zone-failure-domain``; ``crush-osd-failure-domain``, or
-  ``crush-failure-domain`` without it; ``crush-device-class``), else the default option. A pool
-  that names no profile takes the keys of ``default``, which always has all four (:ref:`The default
-  Profile <ecsc-the-default-profile>`), in a generated profile that records them (:ref:`Generated
-  Profiles <ecsc-generated-profiles>`); later commands on the pool, such as ``num_zones``, take the
-  values from it. Normalization gives a named profile its root, OSD failure domain and class (empty
-  for none), so only its zone type can come from ``osd_pool_default_zone_failure_domain``.
+* **Root** (``--root``): the CRUSH bucket that the rule starts from.
+* **Zone type** (``--zone_failure_domain``): the bucket type of the zones of a pool over zones. A
+  single-zone rule has none.
+* **OSD failure domain** (``--osd_failure_domain``): the bucket type that the copies or shards of a
+  zone are spread over, one in each.
+* **Device class** (``--class``, or ``--no-class`` for none): the class of the OSDs that the rule
+  takes.
 
-This applies to ``ceph osd pool create``, to ``ceph osd pool set <pool> num_zones 2``
-(:ref:`num_zones <ecsc-num-zones>`) and to ``ceph mon enable_stretch_mode``, which gives its
-``dividing_bucket`` as ``--zone_failure_domain`` (:ref:`Global Stretch Mode Commands
-<ecsc-global-stretch-mode-commands>`). A single-zone rule, at creation or when a pool goes to one
-zone, has no zone type but still takes the root, OSD failure domain and device class from the
-Placement Options: a replicated pool from the command line or its default options, an erasure coded
-pool from the command line or its profile. A single-zone replicated pool generates a rule
-``<pool>-single-zone`` only when one of these differs from the cluster default (root ``default``,
-OSD failure domain ``host``, no class); otherwise it takes the default replicated rule (:ref:`The
-CRUSH Rule of a Pool <ecsc-the-rule-of-a-pool>`). ``ceph osd pool set <pool> replica`` copies the
-values of the pool's current rule (:ref:`replica <ecsc-replica>`).
+An erasure coded pool's profile holds them as ``crush-root``, ``crush-zone-failure-domain``,
+``crush-osd-failure-domain`` (or ``crush-failure-domain`` without it) and ``crush-device-class``.
+``ceph osd pool create`` takes the values that it does not give from the defaults (:ref:`How Pool
+Creation Uses the Defaults <ecsc-how-pool-creation-uses-the-defaults>`). A change of an existing
+pool keeps the placement of the pool's current rule, read as in :ref:`The CRUSH Rule of a Pool
+<ecsc-the-rule-of-a-pool>`: ``ceph osd pool set <pool> num_zones`` (:ref:`num_zones
+<ecsc-num-zones>`) and ``ceph mon enable_stretch_mode``, which gives its ``dividing_bucket`` as
+``--zone_failure_domain`` (:ref:`Global Stretch Mode Commands
+<ecsc-global-stretch-mode-commands>`), take the values that they do not give from it, and ``ceph
+osd pool set <pool> replica`` (:ref:`replica <ecsc-replica>`) copies them all. They read neither
+the defaults nor an erasure coded pool's profile, except ``osd_pool_default_zone_failure_domain``
+for the zone type of a pool going from one zone to two when it is not given.
 
 .. _ecsc-the-rule-of-a-pool:
 
@@ -871,30 +844,18 @@ The CRUSH Rule of a Pool
 ``ceph osd pool create`` gives a pool the first of these that applies:
 
 1. **The rule named with** ``--rule``. It must exist ("specified rule <rule> doesn't exist") and
-   is used unchanged: ``num_zones`` and the profile's CRUSH keys are not applied to it.
-2. **A single-zone replicated pool** takes the *default replicated rule* — unless its placement
-   differs from the cluster default (root ``default``, OSD failure domain ``host``, no class), in
-   which case it generates a rule ``<pool>-single-zone`` from the :ref:`Placement Options
-   <ecsc-placement-options>` instead. The default replicated rule is the rule that
-   ``osd_pool_default_crush_rule`` names, or, while that option is -1, the first replicated
-   rule. If the option names a rule that no longer exists, there is no default replicated rule,
-   and creating a single-zone replicated pool (librados included), ``num_zones 1`` of a
-   replicated pool and ``disable_stretch_mode`` fail with "No suitable CRUSH rule exists, check
-   'osd pool default crush \*' config options". The rule is not checked further, so a
-   non-replicated rule set with ``ceph config set`` makes the creation fail.
-3. **For any other pool, the default rule** ``osd_pool_default_crush_rule``, when no CRUSH option is
-   given and the rule suits the pool: it is of the pool's type and, for a pool over zones, places
-   the pool as described below. A default rule that does not suit is skipped, not refused. ``ceph
-   osd pool default set`` accepts only a replicated rule (:ref:`ceph osd pool default set and get
-   <ecsc-ceph-osd-pool-default-set-and-get>`), so an erasure coded pool uses the default rule only
-   if ``ceph config set`` made it an erasure rule.
-4. **A rule of the generated name**: ``<pool>`` for a replicated pool over zones and for an erasure
-   coded pool. Every erasure coded pool gets a rule of its own, so that a change of ``default``
-   reaches the pools created afterwards. Before the commit, a single-zone erasure coded pool that
-   gives no named profile, ``--k``, ``--m`` or CRUSH option (:ref:`Parameters <ecsc-parameters>`)
-   shares the rule ``erasure-code`` instead, as in earlier releases. A committed rule of the
-   generated name is reused. Otherwise the Monitor builds it in its own OSDMap update and retries
-   the command.
+   is used unchanged.
+2. **The default rule, if it suits the pool**: ``osd_pool_default_crush_rule``, or, for a
+   single-zone replicated pool while that is -1, the first replicated rule. It suits the pool when
+   no CRUSH option is given and it is of the pool's type and places the pool in its zones. A
+   single-zone replicated pool takes it unless its root, OSD failure domain or class differ from
+   the cluster default (``default``, ``host``, none). ``ceph osd pool default set`` accepts only a
+   replicated rule (:ref:`ceph osd pool default set and get
+   <ecsc-ceph-osd-pool-default-set-and-get>`).
+3. **A generated rule**, from the :ref:`Placement Options <ecsc-placement-options>` and named after
+   the pool: ``<pool>``, or ``<pool>-single-zone`` for a single-zone replicated pool. Every erasure
+   coded pool gets one of its own. A committed rule of that name is reused; otherwise the Monitor
+   builds it in its own OSDMap update and retries the command.
 
 A generated rule over zones takes the root, chooses ``num_zones`` buckets of the zone type (``choose
 firstn``) and in each ``replica`` (``chooseleaf firstn``) or ``k+m`` (``chooseleaf indep``) OSD
@@ -907,6 +868,19 @@ least ``replica`` or ``k+m`` OSD failure domains that contain an OSD ("number of
 ``crush-num-failure-domains``, ``crush-num-osd-failure-domains`` and
 ``crush-osds-per-failure-domain`` apply only to single-zone rules, which are built from the
 profile's keys as in earlier releases.
+
+**The placement of a rule.** ``CrushWrapper::get_rule_placement()`` reads the placement values
+of a rule of the shapes that generated rules have: any ``set_*`` steps, a ``take`` of the root, a
+``choose`` of the zones in a rule over zones, then the OSD failure domain, with ``chooseleaf``, a
+``choose`` of OSDs, or a ``choose`` of buckets and of one OSD in each, and ``emit``. A rule over
+zones may instead take each zone in turn, with the same steps after each, as rules for global
+stretch mode may: the zones' parent is then the root and their bucket type the zone type. A
+``take`` of a class's shadow bucket gives the class. A rule is read as over zones if its pool is
+(``num_zones`` 2, or a pool that kept one zone at the commit), as the steps alone do not tell a
+``choose`` of zones with one OSD in each from a ``choose`` of the OSD failure domain. Other rules,
+MSR rules among them, cannot be read ("rule '<rule>' does not take the root and choose zones, or
+take each zone, then choose OSDs", or "... does not take the root and choose OSDs" in one zone).
+It is the one place that reads a rule's placement.
 
 **Placement check.** Whenever a pool over zones gets a rule, the rule (given, default, or an
 existing rule of the generated name) must be of the pool's type ("crush rule <id> type does not
@@ -1132,38 +1106,32 @@ options: ``--rule`` is the property ``crush_rule`` (``osd_pool_default_crush_rul
 ``--autoscale_mode`` is ``pg_autoscale_mode`` (``osd_pool_default_pg_autoscale_mode``).
 ``--replica`` writes ``osd_pool_default_size``. ``get`` shows each parameter with its option.
 
-The defaults are two templates: the options, and, for erasure coded pools, the ``default`` profile
-with their ``k``, ``m``, plugin and placement (:ref:`The default Profile
-<ecsc-the-default-profile>`). ``set`` changes the defaults of the default pool type, so it refuses
-parameters of the other pool type (:ref:`How Pool Creation Uses the Defaults
-<ecsc-how-pool-creation-uses-the-defaults>`).
+The defaults are one template for every later pool, so ``set`` refuses parameters of the other pool
+type (:ref:`How Pool Creation Uses the Defaults <ecsc-how-pool-creation-uses-the-defaults>`).
 
-``set`` never changes an existing pool, and never enables or disables stretch mode. Every value
-always has a default, so there is nothing to clear: ``set`` replaces a value, also with its
-built-in value. One built-in value cannot be given: the empty device class (any class); ``ceph
-config rm global osd_pool_default_class`` restores it. Parameters that
-are not given are left as they are. ``set`` and ``get`` are commands of the configuration
-Monitor and need ``config`` capabilities, although ``--k`` and ``--m`` change the OSDMap.
+``set`` never changes an existing pool, and never enables or disables stretch mode. It replaces the
+values that it is given and leaves the others as they are; some defaults are empty, such as the
+device class, which ``--no-class`` sets back to none. ``set`` and ``get`` are commands of the
+configuration Monitor and need ``config`` capabilities, although ``set`` can also change the
+``default`` profile in the OSDMap, in the same Monitor proposal, so that a ``set`` is applied whole
+or not at all.
 
-* ``set`` writes each given parameter to its option (:ref:`Configuration Options
-  <ecsc-configuration-options>`) in the ``global`` section of the configuration database. There is
-  no ``--size``: the command is new, and ``--replica`` writes ``osd_pool_default_size``, which
-  counts the replicas in each zone.
-* ``--k`` and ``--m`` set ``k`` and ``m`` in the ``default`` profile in the OSDMap, re-creating it
-  first if it does not exist, in the same Monitor proposal as the options, so that a ``set`` is
-  applied whole or not at all. ``default`` is not normalized by this. While the default type is
-  ``erasure``, given or already set, ``--root``, ``--zone_failure_domain``, ``--osd_failure_domain``
-  and ``--class`` are also written to ``default`` (``crush-root``; ``crush-zone-failure-domain``;
-  ``crush-osd-failure-domain`` if ``default`` has that key, otherwise ``crush-failure-domain``;
-  ``crush-device-class``), and ``--no-class`` empties its ``crush-device-class``: erasure coded
-  pools take their placement from ``default`` (:ref:`Placement Options <ecsc-placement-options>`),
-  not from the options. ``default`` is written with the placement keys it lacks filled in
-  (:ref:`The default Profile <ecsc-the-default-profile>`). A replicated default type leaves
-  ``default`` alone. ``set`` has no ``--erasure_code_profile``: a pool that names a profile
-  takes its ``k``, ``m``, plugin keys, root, OSD failure domain and class from the profile, not from
-  the defaults (:ref:`Placement Options <ecsc-placement-options>`), and the other keys of
-  ``default`` are changed with ``ceph osd erasure-code-profile set default`` (:ref:`The default
-  Profile <ecsc-the-default-profile>`).
+* Replicated and common parameters, except the placement, are written to their options
+  (:ref:`Configuration Options <ecsc-configuration-options>`) in the ``global`` section of the
+  configuration database. ``--replica`` writes ``osd_pool_default_size``, the replicas in each
+  zone.
+* Erasure coded parameters, ``--k`` and ``--m``, are written only to the ``default`` profile,
+  which is re-created first if it does not exist, and is not normalized by this.
+* The placement (``--root``, ``--zone_failure_domain``, ``--osd_failure_domain``, ``--class`` and
+  ``--no-class``) is kept twice: with a replicated default type it is written to the options, with
+  an erasure default type to ``default`` (``crush-root``, ``crush-zone-failure-domain``,
+  ``crush-osd-failure-domain`` if ``default`` has that key, otherwise ``crush-failure-domain``, and
+  ``crush-device-class``, empty for ``--no-class``). Erasure coded pools take their placement from
+  their profile (:ref:`How Pool Creation Uses the Defaults
+  <ecsc-how-pool-creation-uses-the-defaults>`).
+* ``set`` has no ``--erasure_code_profile``. A pool that names a profile takes its ``k``, ``m``,
+  plugin keys and placement from it, and the other keys of ``default`` are changed with ``ceph osd
+  erasure-code-profile set default`` (:ref:`The default Profile <ecsc-the-default-profile>`).
 * ``--rule`` names an existing replicated rule ("rule '<rule>' is not a replicated rule"), because
   single-zone replicated pools take the default rule without a suitability check (:ref:`The CRUSH
   Rule of a Pool <ecsc-the-rule-of-a-pool>`), and stores the rule's id. It is refused together with
@@ -1236,6 +1204,13 @@ the parameters of the other pool type, ``--k`` and ``--m`` for a replicated pool
 for an erasure coded one. For ``set`` that type is the default type, so
 ``--pool_type erasure --k 4 --m 2`` also makes every later pool that names no type erasure coded.
 
+The :ref:`Placement Options <ecsc-placement-options>` that the command line does not give come, for
+a replicated pool, from ``osd_pool_default_root``, ``osd_pool_default_zone_failure_domain``,
+``osd_pool_default_osd_failure_domain`` and ``osd_pool_default_class``. An erasure coded pool takes
+them from its profile, the named one or a copy of ``default``, which always has all four
+(:ref:`The default Profile <ecsc-the-default-profile>`), and the zone type from
+``osd_pool_default_zone_failure_domain`` if a named profile has none.
+
 Every default has a sensible built-in value, so a cluster needs no ``set`` before its first pool.
 The options can still be changed with ``ceph config set`` and ``rm``, which skip the checks of
 ``set``. Pool creation therefore checks the defaults that it uses as it checks given parameters, and
@@ -1255,15 +1230,21 @@ num_zones
 
    ceph osd pool set <pool> num_zones <n> [--replica <n>] [--crush_rule <rule>]
         [--zone_failure_domain <type>] [--root <root>]
-        [--osd_failure_domain <type>] [--class <class>]
+        [--osd_failure_domain <type>] [--class <class> | --no-class]
         [--yes-i-really-mean-it]
 
 This command changes ``num_zones`` between 1 and 2 (see *Changing Per-Pool Zone and Replica Counts*
 in the stretch mode user documentation). ``ceph mon enable_stretch_mode`` and
 ``disable_stretch_mode`` run it on the pools they change (:ref:`Global Stretch Mode Commands
-<ecsc-global-stretch-mode-commands>`). None of the parameters is required: one that is not given
-takes its default. They are refused with every other ``ceph osd pool set`` variable ("--<option> is
-only for 'ceph osd pool set <pool> num_zones'"), which would ignore them. With the pool's current
+<ecsc-global-stretch-mode-commands>`). None of the parameters is required: ``--replica`` takes its
+default, and a placement value that is not given is that of the pool's current rule
+(:ref:`Placement Options <ecsc-placement-options>`). If that rule's placement cannot be read, and
+the command gives neither ``--crush_rule`` nor all of ``--root``, ``--osd_failure_domain`` and
+``--class`` or ``--no-class``, it is refused: "pool '<pool>': cannot read the placement of its CRUSH
+rule: <reason>; give 'ceph osd pool set <pool> num_zones' the new rule with --crush_rule, or its
+placement with --root, --osd_failure_domain and --class or --no-class". The parameters are refused
+with every other ``ceph osd pool set`` variable ("--<option> is only for 'ceph osd pool set <pool>
+num_zones'"), which would ignore them. With the pool's current
 ``num_zones`` the command does nothing and succeeds, whatever else is given. Otherwise it is refused
 while the pool has the ``nosizechange`` flag ("pool size change is disabled; you must unset
 nosizechange flag for the pool first"). The standard recovery process then performs all the
@@ -1293,7 +1274,8 @@ Going to two zones:
   pool, whose placement values follow :ref:`Placement Options <ecsc-placement-options>`. Unlike pool
   creation, ``num_zones`` does not use ``osd_pool_default_crush_rule``. The rule, given or
   generated, must pass the placement check of :ref:`The CRUSH Rule of a Pool
-  <ecsc-the-rule-of-a-pool>`.
+  <ecsc-the-rule-of-a-pool>`. The pool's zone type is ``--zone_failure_domain``, else that of the
+  rule, else ``osd_pool_default_zone_failure_domain``.
 * ``size`` becomes ``2 × replica`` or ``2 × (k+m)``, at most 128 OSDs, and ``min_size`` is reset to
   its per-zone default (:ref:`Configuration Options <ecsc-configuration-options>`).
 * The ``peering_crush_bucket_*`` fields are set (:ref:`peering_crush_bucket Values
@@ -1326,12 +1308,13 @@ Going to one zone:
 * A replicated pool gets ``--replica``, else ``osd_pool_default_size``, copies, from 1 to 10,
   and the default ``min_size`` for them. A single copy needs ``mon_allow_pool_size_one`` and
   ``--yes-i-really-mean-it``, as ``ceph osd pool set <pool> size 1`` does. Its rule is the one
-  named with ``--crush_rule``, which must exist, else the default replicated rule.
+  named with ``--crush_rule``, which must exist, else the default replicated rule if its
+  placement is that of the cluster default (``default``, ``host``, no class), else a generated
+  ``<pool>-single-zone``.
 * An erasure coded pool gets ``size`` ``k+m`` and ``min_size`` ``k + min(1, m-1)``. Its rule is
   the one named with ``--crush_rule``, which must exist, else ``<pool>-single-zone``, built from
-  the profile's keys.
-* ``--root``, ``--zone_failure_domain``, ``--osd_failure_domain`` and ``--class`` are accepted
-  but not used.
+  the placement and the profile's other CRUSH keys.
+* ``--zone_failure_domain`` is accepted but not used.
 * The ``peering_crush_*`` fields are cleared, with no mandatory member (``CRUSH_ITEM_NONE``), and
   the ``nonprimary_shards`` are recomputed. If this is the last stretched pool and stretch mode is
   enabled, stretch mode is disabled (:ref:`Leaving Stretch Mode <ecsc-leaving-stretch-mode>`).
@@ -1352,12 +1335,11 @@ and its ``size`` to ``num_zones × n``. It has the limits of ``ceph osd pool set
 default for ``n``. An erasure coded pool refuses it ("replica is only applicable to replicated
 pools").
 
-On a two-zone pool a new ``n`` gives the pool a rule named ``<pool>-replica-<n>``, built with
-the root, zone type and OSD failure domain of its current rule. A device class is kept because a
-rule with a class takes the class's shadow root. The current rule must take one root, or each
-zone in turn under a common parent, as the rule in the stretch mode user documentation does;
-the parent is then the root and the zones' bucket type the zone type ("pool CRUSH rule must take
-one root, or each zone under one root, to change replica" otherwise).
+On a two-zone pool a new ``n`` gives the pool a rule named ``<pool>-replica-<n>``, with the
+placement of its current rule (:ref:`The CRUSH Rule of a Pool <ecsc-the-rule-of-a-pool>`), as
+the count of each zone is part of the rule. A rule that takes each zone in turn becomes one that
+chooses the zones. The command is refused if the current rule cannot be read as a rule over zones
+("pool '<pool>': cannot read the placement of its CRUSH rule to change its replica: <reason>").
 
 .. _ecsc-other-pool-settings:
 
@@ -1740,10 +1722,11 @@ Default                                     ``enable_stretch_mode``    ``disable
   gets a generated ``<pool>-stretch`` rule with ``dividing_bucket`` as its zone type, so its
   ``size`` doubles and its ``min_size`` is reset.
 * A replicated pool with ``num_zones`` 2 and other than 2 replicas per zone gets 2 replicas,
-  ``new_crush_rule``, or without it a generated ``<pool>-replica-2`` rule over ``dividing_bucket``
-  with the root, OSD failure domain and class of the pool defaults, and the default ``min_size``
-  for 2. As with ``num_zones``, it is refused while the pool has ``nosizechange``, and the rule must
-  pass the placement check of :ref:`The CRUSH Rule of a Pool <ecsc-the-rule-of-a-pool>` for it.
+  ``new_crush_rule``, or without it a generated ``<pool>-replica-2`` rule with the placement of its
+  current rule, as ``replica`` generates one (:ref:`replica <ecsc-replica>`), and the default
+  ``min_size`` for 2. As with ``num_zones``, it is refused while the pool has ``nosizechange``,
+  and the rule must pass the placement check of :ref:`The CRUSH Rule of a Pool
+  <ecsc-the-rule-of-a-pool>` for it.
 
 It is refused unless:
 
@@ -1784,7 +1767,9 @@ While only the MonMap is in stretch mode:
 **disable_stretch_mode** changes the pools with ``num_zones`` greater than 1 to one zone
 (:ref:`num_zones <ecsc-num-zones>`). These are all the pools that stretch mode stretched.
 
-* A replicated pool gets 3 replicas and ``crush_rule`` if given, else the default replicated rule.
+* A replicated pool gets 3 replicas and ``crush_rule`` if given, else the rule that ``num_zones``
+  gives it: the default replicated rule, or a generated ``<pool>-single-zone`` rule if the
+  placement of its rule is not the cluster default.
 * An erasure coded pool gets a generated ``<pool>-single-zone`` rule, ``size`` ``k+m`` and the
   default ``min_size``.
 * Pools with one zone are not changed, individual stretch pools and erasure coded pools with
@@ -1801,8 +1786,8 @@ While only the MonMap is in stretch mode:
   One Zone at the Commit <ecsc-pools-left-in-one-zone>`).
 * ``crush_rule``, if given, must be a replicated rule that no stretched replicated pool uses.
 
-**Both commands**: erasure coded pools get rules of their own, which are committed in a first OSDMap
-update before the command is retried. Then the pool, MonMap and configuration changes commit
+**Both commands**: the pools that get rules of their own, erasure coded pools and replicated pools
+without a given rule, have them committed in a first OSDMap update before the command is retried. Then the pool, MonMap and configuration changes commit
 together in one Paxos round, all pools or none. A command that fails removes the rules it generated
 (:ref:`Rule Lifetime <ecsc-rule-lifetime>`).
 
@@ -2957,6 +2942,10 @@ last until the commit are ``EPERM``, with messages that end "until the upgrade i
   <ecsc-degraded-recovery-and-healthy>`).
 * ``ceph osd pool stretch set`` and ``unset`` follow :ref:`Individual Stretch Pools
   <ecsc-individual-stretch-pools>`.
+* ``default`` is left as earlier releases have it, without the placement keys that it gets at the
+  commit (:ref:`The default Profile <ecsc-the-default-profile>`). A single-zone erasure coded pool
+  that gives no named profile, ``--k``, ``--m`` or CRUSH option (:ref:`Parameters
+  <ecsc-parameters>`) uses ``default`` and shares the rule ``erasure-code``, as in earlier releases.
 * These are not gated on the release, so an earlier-release Monitor behaves differently: a profile
   is deleted with its last pool (:ref:`Profile Lifetime <ecsc-profile-lifetime>`); an unused rule is
   removed on ``ceph osd pool delete``, ``ceph osd pool set <pool> crush_rule`` and ``replica``, and

@@ -74,22 +74,19 @@ gets when it names no profile, including its placement: ``crush-root``,
 four: a key it lacks is filled in from :confval:`osd_pool_default_root`,
 :confval:`osd_pool_default_zone_failure_domain`,
 :confval:`osd_pool_default_osd_failure_domain` or
-:confval:`osd_pool_default_class` when the cluster is created, when the
-upgrade is committed, and when the profile is set again.
+:confval:`osd_pool_default_class` when the profile is created or set again.
 ``ceph osd pool default set --k {k} --m {m}``
 changes its ``k`` and ``m`` and keeps its other keys. While the default pool
-type is ``erasure``, ``ceph osd pool default set`` also writes ``--root``,
+type is ``erasure``, ``ceph osd pool default set`` writes ``--root``,
 ``--zone_failure_domain``, ``--osd_failure_domain``, ``--class`` and
-``--no-class`` into it. It refuses ``--k`` and
+``--no-class`` into it, instead of into the options. It refuses ``--k`` and
 ``--m`` while the default pool type is ``replicated``, unless it is also given
 ``--pool_type erasure``, which makes every later pool that names no type an
 erasure-coded pool.
 ``ceph osd erasure-code-profile set default ...`` replaces the whole profile:
 with ``osd_pool_default_erasure_code_profile`` and the keys given, or with only
 the keys given if they name another plugin. Pools created before the change
-keep their own copies. When an upgrade to this release is committed with
-``ceph osd require-osd-release``, each pool that used ``default`` gets a copy
-of its own.
+keep their own copies.
 
 When the last pool that uses a profile is deleted, the profile is deleted as
 well, however it was created. The ``default`` profile is never deleted in this
@@ -99,12 +96,6 @@ pool that uses it is deleted.
 
 To create another pool with a profile whose last pool has been deleted, set the
 profile again first.
-
-.. note:: In earlier releases, a profile created with ``ceph osd
-   erasure-code-profile set`` remained until it was removed with ``ceph osd
-   erasure-code-profile rm``, and could be used for any number of pools over
-   time. Scripts that create a profile once and reuse it after deleting the
-   pools that use it must now set the profile again before each reuse.
 
 osd erasure-code-profile set
 ============================

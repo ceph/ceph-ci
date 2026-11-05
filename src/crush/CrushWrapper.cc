@@ -345,6 +345,153 @@ void CrushWrapper::find_takes_by_rule(int rule, set<int> *roots) const
   }
 }
 
+// What the chooses after a take pick: the zones if zone, then the OSD failure
+// domain, with chooseleaf, a choose of OSDs, or a choose of buckets and of one
+// OSD in each
+static bool read_chooses(const vector<crush_rule_step>& chooses, bool zone,
+                         CrushWrapper::rule_placement_t *placement)
+{
+  const auto of_buckets = [](const crush_rule_step& s) {
+    return (s.op == CRUSH_RULE_CHOOSE_FIRSTN ||
+            s.op == CRUSH_RULE_CHOOSE_INDEP) && s.arg2 != 0;
+  };
+  size_t i = 0;
+  if (zone) {
+    if (chooses.empty() || !of_buckets(chooses[0])) {
+      return false;
+    }
+    placement->zone_type = chooses[0].arg2;
+    placement->num_zones = chooses[0].arg1;
+    i = 1;
+  }
+  const bool leaf = chooses.size() == i + 1 && !of_buckets(chooses[i]);
+  const bool one_osd_each = chooses.size() == i + 2 &&
+    of_buckets(chooses[i]) && chooses[i + 1].arg2 == 0 &&
+    chooses[i + 1].arg1 == 1;
+  if (!leaf && !one_osd_each) {
+    return false;
+  }
+  placement->osd_type = chooses[i].arg2;
+  placement->per_zone = chooses[i].arg1;
+  return true;
+}
+
+int CrushWrapper::get_rule_placement(int rule, bool zones,
+                                     rule_placement_t *placement,
+                                     ostream *ss) const
+{
+  if (rule < 0 || !rule_exists(rule)) {
+    *ss << "rule " << rule << " does not exist";
+    return -ENOENT;
+  }
+  const auto fail = [&](std::string_view why) {
+    const char *name = get_rule_name(rule);
+    *ss << "rule '" << (name ? name : stringify(rule)) << "' " << why;
+    return -EINVAL;
+  };
+  const std::string_view shape = zones ?
+    "does not take the root and choose zones, or take each zone, then "
+    "choose OSDs" :
+    "does not take the root and choose OSDs";
+
+  // each take, with the chooses after it
+  vector<pair<int, vector<crush_rule_step>>> takes;
+  bool emitted = true;
+  const crush_rule *r = crush->rules[rule];
+  for (unsigned i = 0; i < r->len; ++i) {
+    const crush_rule_step& s = r->steps[i];
+    switch (s.op) {
+    case CRUSH_RULE_NOOP:
+    case CRUSH_RULE_SET_CHOOSE_TRIES:
+    case CRUSH_RULE_SET_CHOOSELEAF_TRIES:
+    case CRUSH_RULE_SET_CHOOSE_LOCAL_TRIES:
+    case CRUSH_RULE_SET_CHOOSE_LOCAL_FALLBACK_TRIES:
+    case CRUSH_RULE_SET_CHOOSELEAF_VARY_R:
+    case CRUSH_RULE_SET_CHOOSELEAF_STABLE:
+      break;
+    case CRUSH_RULE_TAKE:
+      if (!emitted) {
+        return fail(shape);
+      }
+      takes.emplace_back(s.arg1, vector<crush_rule_step>{});
+      emitted = false;
+      break;
+    case CRUSH_RULE_CHOOSE_FIRSTN:
+    case CRUSH_RULE_CHOOSE_INDEP:
+    case CRUSH_RULE_CHOOSELEAF_FIRSTN:
+    case CRUSH_RULE_CHOOSELEAF_INDEP:
+      if (emitted) {
+        return fail(shape);
+      }
+      takes.back().second.push_back(s);
+      break;
+    case CRUSH_RULE_EMIT:
+      if (emitted) {
+        return fail(shape);
+      }
+      emitted = true;
+      break;
+    default:
+      return fail(shape);
+    }
+  }
+  if (takes.empty() || !emitted) {
+    return fail(shape);
+  }
+
+  // the bucket that a take names, without its device class
+  const auto bucket_of = [this](int take, int *id, string *device_class) {
+    int class_id = -1;
+    if (take >= 0 || split_id_class(take, id, &class_id) < 0) {
+      return false;
+    }
+    *device_class = class_id < 0 ? "" : get_class_name(class_id);
+    return true;
+  };
+  rule_placement_t p;
+  if (!bucket_of(takes.front().first, &p.root, &p.device_class)) {
+    return fail("does not take a bucket");
+  }
+  if (takes.size() == 1) {
+    if (!read_chooses(takes.front().second, zones, &p)) {
+      return fail(shape);
+    }
+  } else {
+    // each take is a zone
+    constexpr std::string_view zones_shape =
+      "takes buckets that are not alike zones under one root";
+    if (!zones) {
+      return fail(shape);
+    }
+    p.zone_type = get_bucket_type(p.root);
+    p.num_zones = takes.size();
+    if (!read_chooses(takes.front().second, false, &p) ||
+        get_immediate_parent_id(p.root, &p.root) < 0) {
+      return fail(zones_shape);
+    }
+    set<int> zone_ids;
+    for (const auto& [take, chooses] : takes) {
+      rule_placement_t chosen;
+      int id, parent;
+      string device_class;
+      if (!read_chooses(chooses, false, &chosen) ||
+          chosen.osd_type != p.osd_type || chosen.per_zone != p.per_zone ||
+          !bucket_of(take, &id, &device_class) ||
+          device_class != p.device_class || !zone_ids.insert(id).second ||
+          get_bucket_type(id) != p.zone_type ||
+          get_immediate_parent_id(id, &parent) < 0 || parent != p.root) {
+        return fail(zones_shape);
+      }
+    }
+  }
+  if (!get_type_name(p.osd_type) ||
+      (p.zone_type >= 0 && !get_type_name(p.zone_type))) {
+    return fail("chooses a type that does not exist");
+  }
+  *placement = p;
+  return 0;
+}
+
 void CrushWrapper::find_roots(set<int> *roots) const
 {
   for (int i = 0; i < crush->max_buckets; i++) {

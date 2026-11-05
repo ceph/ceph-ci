@@ -1214,12 +1214,7 @@ int ConfigMonitor::prepare_pool_default_set(
   if (p.is_given("rule")) {
     p.default_rule = rule_id;
   }
-  map<string,string> values;
-  for (const auto& param : p.given) {
-    if (param != "k" && param != "m") {
-      values[pool_default_options().at(param)] = pool_default_value(p, param);
-    }
-  }
+  map<string,string> values = pool_default_values(p);
   *default_profile = default_profile_after_set(p);
 
   err = check_pool_default_overrides(values, ss);

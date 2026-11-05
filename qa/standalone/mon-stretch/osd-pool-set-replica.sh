@@ -264,7 +264,7 @@ function TEST_pool_set_num_zones_options_only() {
     local opt
     for opt in "--replica 2" "--crush_rule replicated_rule" \
                "--zone_failure_domain host" "--osd_failure_domain osd" \
-               "--root default" "--class ssd"; do
+               "--root default" "--class ssd" "--no-class"; do
         ! ceph osd pool set single size 2 $opt > "$dir/error.txt" 2>&1 || return 1
         grep "only for 'ceph osd pool set <pool> num_zones'" "$dir/error.txt" || return 1
     done
@@ -274,7 +274,8 @@ function TEST_pool_set_num_zones_options_only() {
 }
 
 # A pool over two zones on a rule that takes each zone in turn, as the rules
-# of global stretch mode do, can change its replicas too
+# of global stretch mode do, can change its replicas too, unless the zones
+# are not chosen alike
 function TEST_pool_replica_two_take_rule() {
     local dir=$1
 
@@ -318,6 +319,16 @@ rule two_take {
         step chooseleaf firstn 2 type host
         step emit
 }
+rule unlike_zones {
+        id 2
+        type replicated
+        step take zone-a
+        step chooseleaf firstn 2 type host
+        step emit
+        step take zone-b
+        step chooseleaf firstn 2 type osd
+        step emit
+}
 
 # end crush map
 EOF
@@ -329,6 +340,14 @@ EOF
 
     ceph osd pool set p replica 1 || return 1
     assert_pool_rule p p-replica-1 1 1 || return 1
+
+    ceph osd pool create q 8 8 replicated || return 1
+    ceph osd pool set q num_zones 2 --crush_rule unlike_zones --replica 2 \
+        --zone_failure_domain zone || return 1
+    ! ceph osd pool set q replica 1 > "$dir/error.txt" 2>&1 || return 1
+    grep "pool 'q': cannot read the placement of its CRUSH rule to change its replica" \
+        "$dir/error.txt" || return 1
+    test "$(ceph osd pool get q size | awk '{print $2}')" = 4 || return 1
 }
 
 main osd-pool-set-replica "$@"

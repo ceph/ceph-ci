@@ -1178,6 +1178,30 @@ TEST_F(PoolParamsTest, DefaultSetKeepsDefaultProfile) {
   EXPECT_FALSE(default_profile_after_set(with({{"no_class", true}})));
 }
 
+// Test ceph osd pool default set writes the replicated and common defaults to
+// their options, and for an erasure default type not the placement or k and m,
+// which go to the default profile
+TEST_F(PoolParamsTest, DefaultSetWritesOptions) {
+  const cmdmap_t placement = {{"root", string("dc1")},
+                              {"zone_failure_domain", string("zone")},
+                              {"osd_failure_domain", string("osd")},
+                              {"class", string("ssd")},
+                              {"num_zones", int64_t(2)}};
+  EXPECT_EQ((map<string, string>{
+              {"osd_pool_default_root", "dc1"},
+              {"osd_pool_default_zone_failure_domain", "zone"},
+              {"osd_pool_default_osd_failure_domain", "osd"},
+              {"osd_pool_default_class", "ssd"},
+              {"osd_pool_default_num_zones", "2"}}),
+            pool_default_values(with(placement)));
+  PoolCreateParams p = with(placement, ERASURE);
+  apply_command_line(p, {{"pool_type", string("erasure")},
+                         {"k", int64_t(4)}, {"m", int64_t(2)}});
+  EXPECT_EQ((map<string, string>{{"osd_pool_default_type", "erasure"},
+                                 {"osd_pool_default_num_zones", "2"}}),
+            pool_default_values(p));
+}
+
 // Test ceph osd pool default set writes k, m, and for an erasure default type
 // the placement, into the default profile, which it leaves complete
 TEST_F(PoolParamsTest, DefaultSetWritesDefaultProfile) {

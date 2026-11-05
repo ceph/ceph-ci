@@ -10164,29 +10164,87 @@ int OSDMonitor::update_nonprimary_shards(pg_pool_t& p, ostream *ss)
   return 0;
 }
 
-string OSDMonitor::num_zones_zone_failure_domain(
-    const cmdmap_t& cmdmap, const pg_pool_t& p,
-    const ErasureCodeProfile& profile, const string& dflt)
+// The zone failure domain of a pool going to zones with CRUSH rule rule:
+// --zone_failure_domain, else the rule's, else dflt
+static string num_zones_zone_failure_domain(
+    const cmdmap_t& cmdmap, const CrushWrapper& crush, int rule,
+    const string& dflt)
 {
-  return cmd_getval_or<string>(
-    cmdmap, "zone_failure_domain",
-    p.is_erasure() ? profile_zone_failure_domain(profile, dflt) : dflt);
+  if (string given; cmd_getval(cmdmap, "zone_failure_domain", given)) {
+    return given;
+  }
+  CrushWrapper::rule_placement_t placement;
+  ostringstream ignored;
+  if (crush.get_rule_placement(rule, true, &placement, &ignored) == 0) {
+    return crush.get_type_name(placement.zone_type);
+  }
+  return dflt;
 }
 
-static string stretch_replica_rule_name(const string& poolstr)
-{
-  return poolstr + "-replica-" + stringify(OSDMonitor::STRETCH_MODE_REPLICA);
-}
-
-int OSDMonitor::prepare_stretch_replica_crush_rule(
-    const string& poolstr, const string& zone_failure_domain, int *crush_rule,
+int OSDMonitor::num_zones_placement(
+    const cmdmap_t& cmdmap, const CrushWrapper& crush, const pg_pool_t& p,
+    const string& dflt_zone_failure_domain, NumZonesPlacement *placement,
     ostream *ss)
 {
-  const PoolCreateParams d = load_pool_defaults(g_conf());
-  const string name = stretch_replica_rule_name(poolstr);
+  const bool no_class = cmd_getval_or<bool>(cmdmap, "no_class", false);
+  // a pool that kept one zone at the commit has a rule over zones
+  const bool zones = p.is_stretch_pool() || p.get_num_zones() > 1;
+  CrushWrapper::rule_placement_t from_rule;
+  ostringstream why;
+  placement->zone_failure_domain = dflt_zone_failure_domain;
+  if (crush.get_rule_placement(p.crush_rule, zones, &from_rule, &why) == 0) {
+    placement->root = crush.get_item_name(from_rule.root);
+    if (zones) {
+      placement->zone_failure_domain =
+        crush.get_type_name(from_rule.zone_type);
+    }
+    placement->osd_failure_domain = crush.get_type_name(from_rule.osd_type);
+    placement->device_class = from_rule.device_class;
+  } else if (!cmdmap.contains("root") ||
+             !cmdmap.contains("osd_failure_domain") ||
+             (!cmdmap.contains("class") && !no_class)) {
+    *ss << "cannot read the placement of its CRUSH rule: " << why.str()
+        << "; give 'ceph osd pool set <pool> num_zones' the new rule with "
+        << "--crush_rule, or its placement with --root, --osd_failure_domain "
+        << "and --class or --no-class";
+    return -EINVAL;
+  }
+  cmd_getval(cmdmap, "root", placement->root);
+  cmd_getval(cmdmap, "zone_failure_domain", placement->zone_failure_domain);
+  cmd_getval(cmdmap, "osd_failure_domain", placement->osd_failure_domain);
+  cmd_getval(cmdmap, "class", placement->device_class);
+  if (no_class) {
+    placement->device_class.clear();
+  }
+  return 0;
+}
+
+static string replica_rule_name(const string& poolstr, int64_t replica)
+{
+  return poolstr + "-replica-" + stringify(replica);
+}
+
+int OSDMonitor::prepare_replica_crush_rule(
+    const string& poolstr, const pg_pool_t& p, int64_t replica,
+    int *crush_rule, ostream *ss)
+{
+  // the copies in each zone are in the rule: a new rule, of the same
+  // placement
+  CrushWrapper crush = _get_pending_crush();
+  CrushWrapper::rule_placement_t placement;
+  ostringstream why;
+  if (int r = crush.get_rule_placement(p.crush_rule, true, &placement, &why);
+      r < 0) {
+    *ss << "pool '" << poolstr << "': cannot read the placement of its CRUSH "
+        << "rule to change its replica: " << why.str();
+    return r;
+  }
+  const string name = replica_rule_name(poolstr, replica);
   const int err = crush_rule_create_replica(
-    name, d.root, 2, STRETCH_MODE_REPLICA, zone_failure_domain,
-    d.osd_failure_domain, d.device_class, false, crush_rule, ss);
+    name, crush.get_item_name(placement.root), p.get_num_zones(), replica,
+    crush.get_type_name(placement.zone_type),
+    crush.get_type_name(placement.osd_type), placement.device_class, false,
+    crush_rule, ss);
   return handle_crush_rule_creation_result(err, name);
 }
 
@@ -10200,65 +10258,29 @@ int OSDMonitor::prepare_num_zones_crush_rule(
       !given.empty()) {
     return get_crush_rule(given, crush_rule, ss);
   }
-  const PoolCreateParams d = load_pool_defaults(g_conf());
-  // --no-class forces no device class and conflicts with an explicit --class
-  const bool no_class = cmd_getval_or<bool>(cmdmap, "no_class", false);
-  const string class_arg = cmd_getval_or<string>(cmdmap, "class", "");
-  if (no_class && !class_arg.empty()) {
-    if (ss) {
-      *ss << "cannot specify both --class and --no-class";
-    }
+  if (cmd_getval_or<bool>(cmdmap, "no_class", false) &&
+      cmdmap.contains("class")) {
+    *ss << "cannot specify both --class and --no-class";
     return -EINVAL;
   }
-  // The device class of the generated rule: std::nullopt means none was given
-  // (an EC pool then inherits its profile's crush-device-class), --no-class
-  // forces no class (an empty string, used verbatim), and --class names one.
-  const std::optional<std::string> device_class =
-    no_class ? std::optional<std::string>("")
-             : (class_arg.empty() ? std::nullopt
-                                  : std::optional<std::string>(class_arg));
-  // A replicated rule has no profile to inherit from, so an unset class falls
-  // back to the pool default (osd_pool_default_class).
-  const std::optional<std::string> replicated_class(
-    device_class.value_or(d.device_class));
-  if (n == 1) {
-    if (p.is_replicated()) {
-      // no profile: honour the command line over the pool defaults
-      return prepare_pool_crush_rule(
-          p.get_type(), poolstr, "", "", 1,
-          cmd_getval_or<string>(cmdmap, "root", d.root), 0, "",
-          cmd_getval_or<string>(cmdmap, "osd_failure_domain",
-                                d.osd_failure_domain),
-          replicated_class, crush_rule,
-          ss);
-    }
-    // an EC pool's profile gives the placement the command line does not
-    return prepare_pool_crush_rule(
-        p.get_type(), poolstr, p.erasure_code_profile, poolstr + "-single-zone",
-        1, cmd_getval_or<string>(cmdmap, "root", ""), 0, "",
-        cmd_getval_or<string>(cmdmap, "osd_failure_domain", ""),
-        device_class, crush_rule, ss);
+  const PoolCreateParams d = load_pool_defaults(g_conf());
+  NumZonesPlacement placement;
+  ostringstream why;
+  if (int r = num_zones_placement(cmdmap, _get_pending_crush(), p,
+                                  d.zone_failure_domain, &placement, &why);
+      r < 0) {
+    *ss << "pool '" << poolstr << "': " << why.str();
+    return r;
   }
-  const string zone_failure_domain = num_zones_zone_failure_domain(
-      cmdmap, p, osdmap.get_erasure_code_profile(p.erasure_code_profile),
-      d.zone_failure_domain);
-  if (p.is_replicated()) {
-    return prepare_pool_crush_rule(
-        p.get_type(), poolstr, "", "", n,
-        cmd_getval_or<string>(cmdmap, "root", d.root),
-        cmd_getval_or<int64_t>(cmdmap, "replica", d.replica),
-        zone_failure_domain,
-        cmd_getval_or<string>(cmdmap, "osd_failure_domain",
-                              d.osd_failure_domain),
-        replicated_class,
-        crush_rule, ss);
-  }
-  // an EC pool's profile gives what is not on the command line
+  const bool erasure = p.is_erasure();
+  const bool zones = n > 1;
   return prepare_pool_crush_rule(
-      p.get_type(), poolstr, p.erasure_code_profile, poolstr + "-stretch", n,
-      cmd_getval_or<string>(cmdmap, "root", ""), 0, zone_failure_domain,
-      cmd_getval_or<string>(cmdmap, "osd_failure_domain", ""),
-      device_class, crush_rule, ss);
+    p.get_type(), poolstr, erasure ? p.erasure_code_profile : "",
+    erasure ? poolstr + (zones ? "-stretch" : "-single-zone") : "", n,
+    placement.root,
+    zones ? cmd_getval_or<int64_t>(cmdmap, "replica", d.replica) : 0,
+    zones ? placement.zone_failure_domain : "", placement.osd_failure_domain,
+    placement.device_class, crush_rule, ss);
 }
 
 // The pg_temp, primary_temp and pg_upmap of the pool's PGs name an OSD for
@@ -10471,9 +10493,6 @@ int OSDMonitor::prepare_command_pool_set_num_zones(
       return -EAGAIN;
     }
     const PoolCreateParams d = load_pool_defaults(g_conf());
-    const string zone_failure_domain = num_zones_zone_failure_domain(
-        cmdmap, p, osdmap.get_erasure_code_profile(p.erasure_code_profile),
-        d.zone_failure_domain);
     int crush_rule = -1;
 
     if (p.type == pg_pool_t::TYPE_REPLICATED) {
@@ -10515,6 +10534,8 @@ int OSDMonitor::prepare_command_pool_set_num_zones(
     }
 
     CrushWrapper& crush = _get_stable_crush();
+    const string zone_failure_domain = num_zones_zone_failure_domain(
+      cmdmap, crush, crush_rule, d.zone_failure_domain);
     int barrier_id = crush.get_type_id(zone_failure_domain);
     if (barrier_id < 0) {
       ss << "zone_failure_domain '" << zone_failure_domain << "' is not valid";
@@ -10624,67 +10645,6 @@ int OSDMonitor::prepare_command_pool_set_num_zones(
   return 0;
 }
 
-int OSDMonitor::stretch_replicated_rule_layout(
-  const CrushWrapper& crush, int rule, int64_t num_zones,
-  int *root, int *zone_type, int *osd_type, std::ostream *ss)
-{
-  if (!crush.rule_exists(rule)) {
-    *ss << "pool CRUSH rule " << rule << " does not exist";
-    return -ENOENT;
-  }
-
-  set<int> roots;
-  crush.find_takes_by_rule(rule, &roots);
-  *zone_type = -1;
-  *root = CRUSH_ITEM_NONE;
-  if (roots.size() == 1) {
-    *root = *roots.begin();
-  } else if (std::ssize(roots) == num_zones) {
-    // a rule that takes each zone in turn, as global stretch mode's rules
-    // may: the zones' common parent is the root
-    for (int zone : roots) {
-      int parent = CRUSH_ITEM_NONE;
-      if (zone >= 0 || crush.get_immediate_parent_id(zone, &parent) < 0 ||
-          (*root != CRUSH_ITEM_NONE && parent != *root) ||
-          (*zone_type >= 0 && crush.get_bucket_type(zone) != *zone_type)) {
-        *root = CRUSH_ITEM_NONE;
-        break;
-      }
-      *root = parent;
-      *zone_type = crush.get_bucket_type(zone);
-    }
-  }
-  if (*root == CRUSH_ITEM_NONE) {
-    *ss << "pool CRUSH rule must take one root, or each zone under one root, "
-        << "to change replica";
-    return -EINVAL;
-  }
-  if (!crush.get_item_name(*root)) {
-    *ss << "pool CRUSH rule references an unnamed root";
-    return -EINVAL;
-  }
-
-  // the first choose picks the zones, unless the rule takes each zone; the
-  // next step picks the OSD failure domain, with chooseleaf, or with choose
-  // when it is the OSD itself
-  *osd_type = -1;
-  const int rule_len = crush.get_rule_len(rule);
-  for (int step = 0; step < rule_len && *osd_type < 0; ++step) {
-    const int op = crush.get_rule_op(rule, step);
-    if (op == CRUSH_RULE_CHOOSE_FIRSTN && *zone_type < 0) {
-      *zone_type = crush.get_rule_arg2(rule, step);
-    } else if (op == CRUSH_RULE_CHOOSE_FIRSTN ||
-               op == CRUSH_RULE_CHOOSELEAF_FIRSTN) {
-      *osd_type = crush.get_rule_arg2(rule, step);
-    }
-  }
-  if (!crush.get_type_name(*zone_type) || !crush.get_type_name(*osd_type)) {
-    *ss << "pool CRUSH rule is not a stretch replicated rule";
-    return -EINVAL;
-  }
-  return 0;
-}
-
 int OSDMonitor::prepare_command_pool_set_replica(
     int64_t pool, const string& poolstr, int64_t n, const string& val,
     const string& interr, pg_pool_t& p, stringstream& ss, bool force)
@@ -10737,22 +10697,9 @@ int OSDMonitor::prepare_command_pool_set_replica(
   const bool replica_changed = n != p.replica;
 
   if (num_zones > 1 && replica_changed) {
-    CrushWrapper crush = _get_pending_crush();
-    int root, zone_type, osd_type;
-    if (int r = stretch_replicated_rule_layout(crush, old_crush_rule,
-                                               num_zones, &root, &zone_type,
-                                               &osd_type, &ss);
-        r < 0) {
+    if (int r = prepare_replica_crush_rule(poolstr, p, n, &new_crush_rule,
+                                           &ss); r) {
       return r;
-    }
-    const string new_rule_name = poolstr + "-replica-" + stringify(n);
-    int err = crush_rule_create_replica(
-        new_rule_name, crush.get_item_name(root), num_zones,
-        static_cast<int>(n), crush.get_type_name(zone_type),
-        crush.get_type_name(osd_type), "", false, &new_crush_rule, &ss);
-    err = handle_crush_rule_creation_result(err, new_rule_name);
-    if (err) {
-      return err;
     }
   }
 
@@ -10799,9 +10746,10 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
   cmd_getval(cmdmap, "var", var);
   if (var != "num_zones") {
     for (const char *opt : {"replica", "crush_rule", "zone_failure_domain",
-                            "osd_failure_domain", "root", "class"}) {
+                            "osd_failure_domain", "root", "class",
+                            "no_class"}) {
       if (cmdmap.count(opt)) {
-        ss << "--" << opt
+        ss << "--" << (opt == "no_class"sv ? "no-class" : opt)
            << " is only for 'ceph osd pool set <pool> num_zones'";
         return -EINVAL;
       }
@@ -19798,8 +19746,8 @@ int OSDMonitor::enable_stretch_mode(ostream& ss,
         p.is_erasure() ? ec_cmdmap : replicated_cmdmap,
         osdmap.pool_name.at(id), 2, p, &rule, &ss);
     } else {
-      r = prepare_stretch_replica_crush_rule(osdmap.pool_name.at(id),
-                                             dividing_bucket, &rule, &ss);
+      r = prepare_replica_crush_rule(osdmap.pool_name.at(id), p,
+                                     STRETCH_MODE_REPLICA, &rule, &ss);
     }
     if (r == -EAGAIN) {
       created = true;
@@ -19845,7 +19793,8 @@ int OSDMonitor::enable_stretch_mode(ostream& ss,
     } else {
       const int old_rule = p.crush_rule;
       const int rule = new_crush_rule.empty()
-        ? crush.get_rule_id(stretch_replica_rule_name(name)) : new_rule;
+        ? crush.get_rule_id(replica_rule_name(name, STRETCH_MODE_REPLICA))
+        : new_rule;
       const unsigned size = p.get_num_zones() * STRETCH_MODE_REPLICA;
       r = check_size_change(p, &pss);
       if (r == 0) {
@@ -19931,11 +19880,13 @@ int OSDMonitor::disable_stretch_mode(ostream& ss, const string& crush_rule)
     }
   }
 
-  // the EC pools get single-zone rules of their own, committed first
+  // the EC pools, and without crush_rule the replicated pools whose
+  // placement is not the default, get single-zone rules of their own,
+  // committed first
   bool created = false;
   for (const auto& [id, change] : plan) {
     const pg_pool_t& p = osdmap.pools.at(id);
-    if (!p.is_erasure()) {
+    if (p.is_replicated() && !crush_rule.empty()) {
       continue;
     }
     int rule = -1;

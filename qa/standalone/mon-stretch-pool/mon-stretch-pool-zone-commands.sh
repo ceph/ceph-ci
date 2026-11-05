@@ -119,6 +119,11 @@ function rule_zone_type() {
         jq -r '[.steps[]|select(.op=="choose_firstn")|.type]|join(",")'
 }
 
+function rule_leaf_type() {
+    ceph osd crush rule dump $1 |
+        jq -r '[.steps[]|select(.op|startswith("choose"))|.type]|last'
+}
+
 # create-erasure takes the zone type of a rule over zones from the profile,
 # else from osd_pool_default_zone_failure_domain, as pool creation does: a
 # profile has crush-zone-failure-domain only if it is given
@@ -143,19 +148,85 @@ function TEST_create_erasure_zone_type() {
     test "$(rule_zone_type by_profile)" = datacenter || return 1
 }
 
-# num_zones takes the zone type of an erasure coded pool from its profile,
-# as pool creation does
+# num_zones takes the zone type of a pool in one zone from
+# --zone_failure_domain, else from osd_pool_default_zone_failure_domain, not
+# from an erasure coded pool's profile
 function TEST_set_num_zones_erasure_zone_type() {
     local dir=$1
     two_zone_cluster $dir || return 1
 
-    ceph osd erasure-code-profile set dcs plugin=isa k=2 m=1 \
-        crush-failure-domain=osd crush-zone-failure-domain=datacenter || return 1
-    ceph config set mon osd_pool_default_zone_failure_domain host || return 1
-    ceph osd pool create e erasure dcs || return 1
+    ceph osd erasure-code-profile set hosts plugin=isa k=2 m=1 \
+        crush-failure-domain=osd crush-zone-failure-domain=host || return 1
+    ceph osd pool create e erasure hosts || return 1
     ceph osd pool set e allow_ec_optimizations true || return 1
     ceph osd pool set e num_zones 2 || return 1
     test "$(rule_zone_type e-stretch)" = datacenter || return 1
+}
+
+# num_zones keeps the placement of the pool's rule, not that of the defaults
+# or of an erasure coded pool's profile; the command line changes it
+function TEST_num_zones_placement_from_rule() {
+    local dir=$1
+    two_zone_cluster $dir || return 1
+    ceph osd crush rm-device-class $(seq 0 5) || return 1
+    ceph osd crush set-device-class ssd $(seq 0 5) || return 1
+
+    ceph osd pool create r 4 --class ssd --osd_failure_domain osd || return 1
+    ceph osd pool set r num_zones 2 --replica 2 || return 1
+    test "$(rule_takes r)" = default~ssd || return 1
+    test "$(rule_zone_type r)" = datacenter,osd || return 1
+    ceph osd pool set r num_zones 1 --root dc1 || return 1
+    test "$(rule_takes r-single-zone)" = dc1~ssd || return 1
+    test "$(rule_leaf_type r-single-zone)" = osd || return 1
+
+    ceph osd erasure-code-profile set plain plugin=isa k=2 m=1 \
+        crush-failure-domain=host || return 1
+    ceph osd erasure-code-profile set ssds plugin=isa k=2 m=1 \
+        crush-failure-domain=osd crush-device-class=ssd || return 1
+    ceph osd crush rule create-erasure ssd_osds ssds || return 1
+    ceph osd pool create e 4 4 erasure plain ssd_osds || return 1
+    ceph osd pool set e allow_ec_optimizations true || return 1
+    ceph osd pool set e num_zones 2 || return 1
+    test "$(rule_takes e-stretch)" = default~ssd || return 1
+    test "$(rule_leaf_type e-stretch)" = osd || return 1
+    ceph osd pool set e num_zones 1 --no-class --yes-i-really-mean-it || return 1
+    test "$(rule_takes e-single-zone)" = default || return 1
+    test "$(rule_leaf_type e-single-zone)" = osd || return 1
+}
+
+# A pool whose rule's placement cannot be read changes num_zones only with
+# --crush_rule, or with all of --root, --osd_failure_domain and --class or
+# --no-class
+function TEST_num_zones_rule_not_read() {
+    local dir=$1
+    two_zone_cluster $dir || return 1
+    ceph osd getcrushmap > $dir/crushmap || return 1
+    crushtool --decompile $dir/crushmap > $dir/crushmap.txt || return 1
+    cat >> $dir/crushmap.txt << EOF
+rule two_per_host {
+        id 10
+        type replicated
+        step take default
+        step choose firstn 0 type host
+        step chooseleaf firstn 2 type osd
+        step emit
+}
+EOF
+    crushtool --compile $dir/crushmap.txt -o $dir/crushmap.bin || return 1
+    ceph osd setcrushmap -i $dir/crushmap.bin || return 1
+    ceph osd pool create r 4 --rule two_per_host || return 1
+    ceph osd pool create r2 4 --rule two_per_host || return 1
+
+    expect_failure $dir "pool 'r': cannot read the placement of its CRUSH rule: rule 'two_per_host' does not take the root and choose OSDs" \
+        ceph osd pool set r num_zones 2 --replica 2 --root default \
+        --osd_failure_domain host || return 1
+    test "$(pool_field r num_zones)" = 1 || return 1
+    ceph osd pool set r num_zones 2 --replica 2 --root default \
+        --osd_failure_domain host --no-class || return 1
+    test "$(rule_takes r)" = default || return 1
+    test "$(rule_leaf_type r)" = host || return 1
+    ceph osd pool set r2 num_zones 2 --replica 2 --crush_rule r || return 1
+    test "$(ceph osd pool get r2 crush_rule -f json | jq -r .crush_rule)" = r || return 1
 }
 
 # --root confines a pool to a subtree, and --class to a device class, also
