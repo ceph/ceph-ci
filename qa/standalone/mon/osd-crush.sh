@@ -61,7 +61,8 @@ function TEST_crush_rule_create_replicated_reports_id() {
     run_mon $dir a || return 1
 
     local out
-    out=$(ceph osd crush rule create-replicated rep0 default host 2>&1) || return 1
+    # a repeated command (CEPH_CLI_TEST_DUP_COMMAND) replies "already exists"
+    out=$(unset CEPH_CLI_TEST_DUP_COMMAND; ceph osd crush rule create-replicated rep0 default host 2>&1) || return 1
     local id=$(ceph osd crush rule dump rep0 --format json | jq '.rule_id')
     echo "$out" | grep "created rule rep0 at $id" || return 1
 }
