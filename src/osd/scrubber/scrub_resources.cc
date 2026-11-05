@@ -52,13 +52,13 @@ std::unique_ptr<LocalResourceWrapper> ScrubResources::inc_scrubs_local(
   if (is_high_priority || scrubs_total < crimson::common::local_conf().get_val<int64_t>("osd_max_scrubs")) {
     ++scrubs_local;
     DEBUG(
-          "{} -> {} (max {})", "", (scrubs_local - 1),
+          "{} -> {} (max {})", (scrubs_local - 1),
           scrubs_local,
           crimson::common::local_conf().get_val<int64_t>("osd_max_scrubs"));
     return std::make_unique<LocalResourceWrapper>(*this);
   } else {
     DEBUG(
-          "Cannot add local scrubs. Current counter ({}) >= max ({})", "",
+          "Cannot add local scrubs. Current counter ({}) >= max ({})",
           scrubs_total,
           crimson::common::local_conf().get_val<int64_t>("osd_max_scrubs"));
     return nullptr;
@@ -103,7 +103,7 @@ void ScrubResources::dec_scrubs_local()
 #else
   LOG_PREFIX(ScrubResources::dec_scrubs_local);
   DEBUG(
-      "{} -> {} (max {})", "", scrubs_local,
+      "{} -> {} (max {})", scrubs_local,
       (scrubs_local - 1),
       crimson::common::local_conf().get_val<int64_t>("osd_max_scrubs"));
 #endif
