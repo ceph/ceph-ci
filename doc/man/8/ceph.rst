@@ -667,10 +667,7 @@ defaults ``osd_pool_default_num_zones`` to 2, ``osd_pool_default_size`` to 2
 and ``osd_pool_default_zone_failure_domain`` to <dividing_bucket>, so that new
 pools are stretched too. It fails, and changes nothing, if a legacy
 erasure-coded pool or an individual stretch pool (see ``osd pool stretch set``)
-exists. Until an upgrade is committed with ``ceph osd require-osd-release``, it
-behaves as in earlier releases, except that it fails while an individual
-stretch pool exists and the ``min_size`` that it gives each pool applies to
-each zone. On a cluster with no pools, it puts only the Monitors in stretch
+exists. On a cluster with no pools, it puts only the Monitors in stretch
 mode and sets the defaults; the OSDMap follows when the first pool with two
 zones is created. See "Stretch Clusters" in the Ceph documentation.
 
@@ -687,9 +684,9 @@ This will typically be ``datacenter`` or other CRUSH hierarchy bucket type that
 denotes physically or logically distant subdivisions.
 
 <new_crush_rule> will be set as CRUSH rule for all replicated pools, which get
-two replicas in each zone. Once an upgrade is committed it is optional: without
-it, each replicated pool gets a CRUSH rule generated for it over
-<dividing_bucket>. Erasure-coded pools get CRUSH rules of their own.
+two replicas in each zone. It is optional: without it, each replicated pool
+gets a CRUSH rule generated for it over <dividing_bucket>. Erasure-coded pools
+get CRUSH rules of their own.
 A pool that already has two zones is left unchanged, unless it is a replicated
 pool without two replicas in each zone.
 
@@ -709,14 +706,9 @@ CRUSH rules of their own; this can make some of their PGs unavailable (see
 documentation). The command also
 sets ``osd_pool_default_num_zones`` to 1 and ``osd_pool_default_size``, the
 replicas in each zone, to 3, replacing any earlier value, as
-``enable_stretch_mode`` does. Until an upgrade is committed with
-``ceph osd require-osd-release``, it behaves as in earlier releases. After
-that, stretch mode is also disabled when the last pool with more than one zone
-is deleted or set to one zone; this does not change the pool creation
-defaults. The command is refused while a stretched pool kept one zone when the
-upgrade was committed (``STRETCH_MODE_POOL_NOT_CONVERTED``); first give such a
-pool two zones with ``ceph osd pool set <pool> num_zones 2``, or one with
-``ceph osd pool set <pool> num_zones 1``.
+``enable_stretch_mode`` does. Stretch mode is also disabled when the last pool
+with more than one zone is deleted or set to one zone; this does not change the
+pool creation defaults.
 
 Usage::
 
@@ -1396,15 +1388,14 @@ Usage::
 
     ceph osd pool default get
 
-Subcommand ``default set`` sets the defaults that ``osd pool create`` uses for
-every pool created afterwards: the ``osd_pool_default_*`` options, and, for
-erasure-coded pools, the ``default`` erasure code profile. It
+Subcommand ``default set`` sets the template that ``osd pool create`` uses for
+every pool created afterwards. It
 takes the parameters of ``osd pool create`` except ``--size``, all given by
 name, and writes them to the ``global`` section of the configuration database;
 ``--replica`` is written to ``osd_pool_default_size``, and ``--k`` and ``--m``
 change the ``default`` erasure code profile instead. While the default pool type
 is ``erasure``, ``--root``, ``--zone_failure_domain``, ``--osd_failure_domain``,
-``--class`` and ``--no-class`` also change the ``default`` profile. It never
+``--class`` and ``--no-class`` change the ``default`` profile instead. It never
 changes an existing pool. It refuses defaults that fail the checks that ``osd pool create``
 makes on its parameters, such as ``--k`` and ``--m`` for a replicated default
 type, and values that a ``mon`` section of the configuration database or a
@@ -1427,8 +1418,8 @@ Usage::
 Subcommand ``delete`` deletes pool. It also deletes the pool's CRUSH rule if no
 other pool uses it, unless it is the default replicated rule, and the erasure
 code profile of an erasure-coded pool if no other pool uses it, unless it is
-``default``. Once an upgrade is committed, deleting the last pool with more than
-one zone disables stretch mode, but does not change the pool creation defaults.
+``default``. Deleting the last pool with more than one zone disables stretch
+mode, but does not change the pool creation defaults.
 
 Usage::
 
@@ -1515,12 +1506,16 @@ Usage::
 
 Variable ``num_zones`` sets the number of zones (1 or 2) that the pool spans.
 ``--crush_rule`` names the pool's new CRUSH rule. ``--replica`` gives the copies
-in each zone of a replicated pool, and ``--zone_failure_domain``,
-``--osd_failure_domain``, ``--root``, ``--class`` and ``--no-class`` the CRUSH
-rule generated for the pool; those not given come from the pool creation
-defaults, or from the profile of an erasure-coded pool. These options are
-accepted only with ``num_zones``, and apply when setting it to 1 as well as 2. Setting an erasure-coded pool's ``num_zones`` to 1 needs
-``--yes-i-really-mean-it``. Variable ``replica`` sets the number of copies in
+in each zone of a replicated pool, else the pool creation default.
+``--zone_failure_domain``, ``--osd_failure_domain``, ``--root``, ``--class`` and
+``--no-class`` give the CRUSH rule generated for the pool; those not given are
+those of the pool's current rule, or, for the zone failure domain of a rule over
+one zone, ``osd_pool_default_zone_failure_domain``. If the current rule cannot
+be read, give ``--crush_rule``, or ``--root``, ``--osd_failure_domain`` and
+``--class`` or ``--no-class``. These options are accepted only with
+``num_zones``, and apply when setting it to 1 as well as 2. Setting an
+erasure-coded pool's ``num_zones`` to 1 needs ``--yes-i-really-mean-it``.
+Variable ``replica`` sets the number of copies in
 each zone of a replicated pool. ``size`` cannot be set for a pool with more
 than one zone: set ``replica`` instead. The ``min_size`` of a pool counts the
 OSDs that a PG needs active in each zone. Giving a pool another CRUSH rule,

@@ -921,18 +921,30 @@ public:
   // Recompute the shards of a FastEC pool that cannot become a primary, for
   // its num_zones.
   int update_nonprimary_shards(pg_pool_t& p, std::ostream *ss);
-  // The zone failure domain that ceph osd pool set num_zones gives pool p:
-  // --zone_failure_domain, else for an erasure coded pool its profile's, else
-  // dflt.
-  static std::string num_zones_zone_failure_domain(
-    const cmdmap_t& cmdmap, const pg_pool_t& p,
-    const ceph::ErasureCodeProfile& profile, const std::string& dflt);
-  // The rule enable_stretch_mode generates, without a rule of its own, for a
-  // replicated pool that already has two zones and another replica count:
-  // <pool>-replica-2 over zone_failure_domain, from the pool defaults
-  int prepare_stretch_replica_crush_rule(const std::string& poolstr,
-                                         const std::string& zone_failure_domain,
-                                         int *crush_rule, std::ostream *ss);
+  // The placement of the rule that ceph osd pool set <pool> num_zones
+  // generates for pool p: the command line's, else that of p's rule, with
+  // dflt_zone_failure_domain as the zone type of a rule in one zone. Fails
+  // if the rule's placement cannot be read and the command line does not
+  // give it all.
+  struct NumZonesPlacement {
+    std::string root;
+    std::string zone_failure_domain;
+    std::string osd_failure_domain;
+    std::string device_class;  // empty: none
+  };
+  static int num_zones_placement(const cmdmap_t& cmdmap,
+                                 const CrushWrapper& crush,
+                                 const pg_pool_t& p,
+                                 const std::string& dflt_zone_failure_domain,
+                                 NumZonesPlacement *placement,
+                                 std::ostream *ss);
+  // The rule <pool>-replica-<replica> of a replicated pool p over zones, as
+  // its rule places it with replica copies in each zone. ceph osd pool set
+  // <pool> replica generates it, and so does enable_stretch_mode, without a
+  // rule of its own, for a pool that already has two zones.
+  int prepare_replica_crush_rule(const std::string& poolstr,
+                                 const pg_pool_t& p, int64_t replica,
+                                 int *crush_rule, std::ostream *ss);
   int prepare_num_zones_crush_rule(const cmdmap_t& cmdmap,
                                    const std::string& poolstr,
                                    int64_t n,
@@ -1093,13 +1105,6 @@ public:
                                           OSDMap::Incremental& inc,
                                           int64_t pool, unsigned old_size,
                                           unsigned new_size);
-  // The root and the zone and OSD failure domain types of a replicated rule
-  // over num_zones zones, from which ceph osd pool set <pool> replica builds
-  // the pool's new rule
-  static int stretch_replicated_rule_layout(const CrushWrapper& crush,
-                                            int rule, int64_t num_zones,
-                                            int *root, int *zone_type,
-                                            int *osd_type, std::ostream *ss);
   // validate_stretch_mode_new_pool() for a pool joining stretch mode, which
   // may be entered in the pending update, against the pools it leaves; the
   // joining pool, if it exists, is not compared with itself

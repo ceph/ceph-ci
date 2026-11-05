@@ -626,6 +626,34 @@ public:
   void find_takes_by_rule(int rule, std::set<int> *roots) const;
 
   /**
+   * The placement that a rule gives a pool, for a rule of the shape that
+   * pools are created with: take the root, choose num_zones buckets of
+   * zone_type, choose per_zone buckets of osd_type in each and an OSD under
+   * each, emit. A rule over one zone has no choose of zones. A rule that
+   * takes each zone in turn, as rules for global stretch mode may, has the
+   * zones' parent as its root. Counts are as in the rule's steps: 0 or less
+   * is relative to the pool size.
+   */
+  struct rule_placement_t {
+    int root = 0;
+    std::string device_class;  // empty: none
+    int zone_type = -1;        // -1: one zone
+    int num_zones = 1;
+    int osd_type = 0;
+    int per_zone = 0;
+  };
+
+  /**
+   * The placement of rule, read as a rule over zones if zones, else as a
+   * rule in one zone, which the steps alone do not tell apart: a choose of
+   * buckets and of one OSD in each is of the zones or of the OSD failure
+   * domain. A negative errno, with the reason in *ss, for a rule of another
+   * shape.
+   */
+  int get_rule_placement(int rule, bool zones, rule_placement_t *placement,
+                         std::ostream *ss) const;
+
+  /**
    * find tree roots
    *
    * These are parentless nodes in the map.

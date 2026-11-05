@@ -99,9 +99,8 @@ PoolCreateParams pool_create_params_of(
   const std::map<std::string, std::string>& profile);
 
 // Which parameters a command line may give together. ceph osd pool create
-// describes one pool; ceph osd pool default set describes the defaults of
-// every later pool: the options, and the default profile of erasure coded
-// pools.
+// describes one pool; ceph osd pool default set describes the one template
+// every later pool is created from.
 enum class PoolCommand { CREATE, DEFAULT_SET };
 int check_command_line(const PoolCreateParams& p, PoolCommand command,
                        std::ostream* ss);
@@ -156,10 +155,6 @@ int check_pool_defaults(const PoolCreateParams& p,
 // code profile's, else the default.
 std::string effective_zone_failure_domain(const PoolCreateParams& p);
 
-// An erasure code profile's crush-zone-failure-domain, else dflt.
-std::string profile_zone_failure_domain(
-  const std::map<std::string, std::string>& profile, const std::string& dflt);
-
 // For an error of building or checking the CRUSH rule of a pool over zones:
 // the options that gave the values it was built or checked with, as
 // " (<option>, ...)", or "" when the command line gave them all.
@@ -194,6 +189,12 @@ int check_pool_replica_copies(int64_t n, std::string_view what,
 // not options.
 std::string pool_default_value(const PoolCreateParams& p,
                                const std::string& param);
+
+// The options that ceph osd pool default set writes, with their values: the
+// given parameters except k and m, and except the placement for an erasure
+// default type, which go to the default profile.
+std::map<std::string, std::string> pool_default_values(
+    const PoolCreateParams& p);
 
 // The default profile is the template of erasure coded pools, so it always
 // has their placement: add the CRUSH keys it lacks from the defaults d.

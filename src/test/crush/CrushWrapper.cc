@@ -21,6 +21,7 @@
  *
  */
 
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <gtest/gtest.h>
@@ -1751,6 +1752,212 @@ TEST_F(CrushWrapperTest, stretch_ec_three_zones_device_class) {
         EXPECT_EQ(out[i], out_1[i]) << "x=" << x << " i=" << i;
       }
     }
+  }
+}
+
+// The rule placement tests use root default with data centers a and b, each
+// with three hosts of one ssd OSD, and rules of the steps {op, arg1, arg2}.
+static void add_two_zones(CephContext *cct, CrushWrapper *c)
+{
+  c->create();
+  c->set_type_name(0, "osd");
+  c->set_type_name(1, "host");
+  c->set_type_name(2, "datacenter");
+  c->set_type_name(3, "root");
+  int root;
+  ASSERT_EQ(0, c->add_bucket(0, CRUSH_BUCKET_STRAW2, CRUSH_HASH_DEFAULT,
+                             3, 0, NULL, NULL, &root));
+  c->set_item_name(root, "default");
+  ostringstream err;
+  for (int i = 0; i < 6; ++i) {
+    const string dc = i < 3 ? "a" : "b";
+    map<string,string> loc = {{"root", "default"}, {"datacenter", dc},
+                              {"host", dc + to_string(i)}};
+    c->insert_item(cct, i, 1.0, "osd." + to_string(i), loc);
+    ASSERT_GE(c->update_device_class(i, "ssd", "osd." + to_string(i), &err), 0);
+  }
+}
+
+static int add_rule_of_steps(CrushWrapper *c, const string& name, int type,
+                             const vector<array<int, 3>>& steps)
+{
+  const int rule = c->add_rule(-1, steps.size(), type);
+  for (unsigned i = 0; i < steps.size(); ++i) {
+    c->set_rule_step(rule, i, steps[i][0], steps[i][1], steps[i][2]);
+  }
+  c->set_rule_name(rule, name);
+  return rule;
+}
+
+TEST_F(CrushWrapperTest, rule_placement_of_generated_rules) {
+  CrushWrapper c;
+  add_two_zones(cct, &c);
+  const int root = c.get_item_id("default");
+  ostringstream err;
+  CrushWrapper::rule_placement_t p;
+
+  int rule = c.add_simple_rule("one-zone", "default", "host", 0, "",
+                               "firstn", pg_pool_t::TYPE_REPLICATED, &err);
+  ASSERT_EQ(0, c.get_rule_placement(rule, false, &p, &err)) << err.str();
+  EXPECT_EQ(root, p.root);
+  EXPECT_EQ("", p.device_class);
+  EXPECT_EQ(-1, p.zone_type);
+  EXPECT_EQ(1, p.num_zones);
+  EXPECT_EQ(1, p.osd_type);
+  EXPECT_EQ(0, p.per_zone);
+  EXPECT_EQ(-EINVAL, c.get_rule_placement(rule, true, &p, &err));
+
+  rule = c.add_simple_rule("one-zone-ssd-osd", "default", "", 0, "ssd",
+                           "indep", pg_pool_t::TYPE_ERASURE, &err);
+  ASSERT_EQ(0, c.get_rule_placement(rule, false, &p, &err)) << err.str();
+  EXPECT_EQ(root, p.root);
+  EXPECT_EQ("ssd", p.device_class);
+  EXPECT_EQ(-1, p.zone_type);
+  EXPECT_EQ(0, p.osd_type);
+
+  rule = c.add_simple_stretch_rule("two-zones-ssd", "default", "datacenter",
+                                   "host", 2, 3, "ssd", "firstn",
+                                   pg_pool_t::TYPE_REPLICATED, false, &err);
+  ASSERT_EQ(0, c.get_rule_placement(rule, true, &p, &err)) << err.str();
+  EXPECT_EQ(root, p.root);
+  EXPECT_EQ("ssd", p.device_class);
+  EXPECT_EQ(2, p.zone_type);
+  EXPECT_EQ(2, p.num_zones);
+  EXPECT_EQ(1, p.osd_type);
+  EXPECT_EQ(3, p.per_zone);
+  EXPECT_EQ(-EINVAL, c.get_rule_placement(rule, false, &p, &err));
+
+  rule = c.add_simple_stretch_rule("two-zones-osd", "default", "datacenter",
+                                   "osd", 2, 1, "", "indep",
+                                   pg_pool_t::TYPE_ERASURE, false, &err);
+  ASSERT_EQ(0, c.get_rule_placement(rule, true, &p, &err)) << err.str();
+  EXPECT_EQ(root, p.root);
+  EXPECT_EQ("", p.device_class);
+  EXPECT_EQ(2, p.zone_type);
+  EXPECT_EQ(0, p.osd_type);
+  EXPECT_EQ(1, p.per_zone);
+}
+
+// A choose of buckets and of one OSD in each is of the zones in a rule over
+// zones, and of the OSD failure domain in a rule in one zone
+TEST_F(CrushWrapperTest, rule_placement_of_choose_one_osd_each) {
+  CrushWrapper c;
+  add_two_zones(cct, &c);
+  const int root = c.get_item_id("default");
+  const int rule = add_rule_of_steps(
+    &c, "one-osd-each", CRUSH_RULE_TYPE_REPLICATED,
+    {{CRUSH_RULE_TAKE, root, 0},
+     {CRUSH_RULE_CHOOSE_FIRSTN, 0, 1},
+     {CRUSH_RULE_CHOOSE_FIRSTN, 1, 0},
+     {CRUSH_RULE_EMIT, 0, 0}});
+  ostringstream err;
+  CrushWrapper::rule_placement_t p;
+  ASSERT_EQ(0, c.get_rule_placement(rule, false, &p, &err)) << err.str();
+  EXPECT_EQ(-1, p.zone_type);
+  EXPECT_EQ(1, p.osd_type);
+  EXPECT_EQ(0, p.per_zone);
+  ASSERT_EQ(0, c.get_rule_placement(rule, true, &p, &err)) << err.str();
+  EXPECT_EQ(1, p.zone_type);
+  EXPECT_EQ(0, p.num_zones);
+  EXPECT_EQ(0, p.osd_type);
+  EXPECT_EQ(1, p.per_zone);
+
+  const int zones_rule = add_rule_of_steps(
+    &c, "zones-hosts-osds", CRUSH_RULE_TYPE_REPLICATED,
+    {{CRUSH_RULE_TAKE, root, 0},
+     {CRUSH_RULE_CHOOSE_FIRSTN, 2, 2},
+     {CRUSH_RULE_CHOOSE_FIRSTN, 2, 1},
+     {CRUSH_RULE_CHOOSELEAF_FIRSTN, 1, 0},
+     {CRUSH_RULE_EMIT, 0, 0}});
+  ASSERT_EQ(0, c.get_rule_placement(zones_rule, true, &p, &err)) << err.str();
+  EXPECT_EQ(root, p.root);
+  EXPECT_EQ(2, p.zone_type);
+  EXPECT_EQ(2, p.num_zones);
+  EXPECT_EQ(1, p.osd_type);
+  EXPECT_EQ(2, p.per_zone);
+}
+
+// A rule for global stretch mode may take each zone in turn
+TEST_F(CrushWrapperTest, rule_placement_of_rule_taking_each_zone) {
+  CrushWrapper c;
+  add_two_zones(cct, &c);
+  const int rule = add_rule_of_steps(
+    &c, "each-zone", CRUSH_RULE_TYPE_REPLICATED,
+    {{CRUSH_RULE_TAKE, c.get_item_id("a~ssd"), 0},
+     {CRUSH_RULE_CHOOSELEAF_FIRSTN, 2, 1},
+     {CRUSH_RULE_EMIT, 0, 0},
+     {CRUSH_RULE_TAKE, c.get_item_id("b~ssd"), 0},
+     {CRUSH_RULE_CHOOSELEAF_FIRSTN, 2, 1},
+     {CRUSH_RULE_EMIT, 0, 0}});
+  ostringstream err;
+  CrushWrapper::rule_placement_t p;
+  ASSERT_EQ(0, c.get_rule_placement(rule, true, &p, &err)) << err.str();
+  EXPECT_EQ(c.get_item_id("default"), p.root);
+  EXPECT_EQ("ssd", p.device_class);
+  EXPECT_EQ(2, p.zone_type);
+  EXPECT_EQ(2, p.num_zones);
+  EXPECT_EQ(1, p.osd_type);
+  EXPECT_EQ(2, p.per_zone);
+  EXPECT_EQ(-EINVAL, c.get_rule_placement(rule, false, &p, &err));
+}
+
+TEST_F(CrushWrapperTest, rule_placement_of_other_rules) {
+  CrushWrapper c;
+  add_two_zones(cct, &c);
+  const int root = c.get_item_id("default");
+  const int a = c.get_item_id("a");
+  const int b = c.get_item_id("b");
+  ostringstream err;
+  CrushWrapper::rule_placement_t p;
+  EXPECT_EQ(-ENOENT, c.get_rule_placement(5, true, &p, &err));
+
+  const int msr = c.add_indep_multi_osd_per_failure_domain_rule(
+    "msr", "default", "host", 2, 2, "", &err);
+  ASSERT_GE(msr, 0) << err.str();
+  EXPECT_EQ(-EINVAL, c.get_rule_placement(msr, false, &p, &err));
+
+  const vector<vector<array<int, 3>>> others = {
+    // emits hosts
+    {{CRUSH_RULE_TAKE, root, 0},
+     {CRUSH_RULE_CHOOSE_FIRSTN, 2, 2},
+     {CRUSH_RULE_CHOOSE_FIRSTN, 0, 1},
+     {CRUSH_RULE_EMIT, 0, 0}},
+    // chooses data centers, then hosts, then two OSDs in each
+    {{CRUSH_RULE_TAKE, root, 0},
+     {CRUSH_RULE_CHOOSE_FIRSTN, 2, 2},
+     {CRUSH_RULE_CHOOSE_FIRSTN, 2, 1},
+     {CRUSH_RULE_CHOOSELEAF_FIRSTN, 2, 0},
+     {CRUSH_RULE_EMIT, 0, 0}},
+    // never emits
+    {{CRUSH_RULE_TAKE, root, 0},
+     {CRUSH_RULE_CHOOSE_FIRSTN, 2, 2},
+     {CRUSH_RULE_CHOOSELEAF_FIRSTN, 0, 1}},
+    // takes one zone twice
+    {{CRUSH_RULE_TAKE, a, 0},
+     {CRUSH_RULE_CHOOSELEAF_FIRSTN, 2, 1},
+     {CRUSH_RULE_EMIT, 0, 0},
+     {CRUSH_RULE_TAKE, a, 0},
+     {CRUSH_RULE_CHOOSELEAF_FIRSTN, 2, 1},
+     {CRUSH_RULE_EMIT, 0, 0}},
+    // chooses differently in each zone
+    {{CRUSH_RULE_TAKE, a, 0},
+     {CRUSH_RULE_CHOOSELEAF_FIRSTN, 2, 1},
+     {CRUSH_RULE_EMIT, 0, 0},
+     {CRUSH_RULE_TAKE, b, 0},
+     {CRUSH_RULE_CHOOSELEAF_FIRSTN, 1, 1},
+     {CRUSH_RULE_EMIT, 0, 0}},
+    // takes a zone and the root
+    {{CRUSH_RULE_TAKE, a, 0},
+     {CRUSH_RULE_CHOOSELEAF_FIRSTN, 2, 1},
+     {CRUSH_RULE_EMIT, 0, 0},
+     {CRUSH_RULE_TAKE, root, 0},
+     {CRUSH_RULE_CHOOSELEAF_FIRSTN, 2, 1},
+     {CRUSH_RULE_EMIT, 0, 0}},
+  };
+  for (unsigned i = 0; i < others.size(); ++i) {
+    const int rule = add_rule_of_steps(&c, "other-" + to_string(i),
+                                       CRUSH_RULE_TYPE_REPLICATED, others[i]);
+    EXPECT_EQ(-EINVAL, c.get_rule_placement(rule, true, &p, &err)) << i;
   }
 }
 

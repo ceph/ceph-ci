@@ -1807,37 +1807,15 @@ TEST(OSDMonitor, TargetPgMigratingEmptySet) {
   ASSERT_FALSE(result);
 }
 
-// Test the zone failure domain that ceph osd pool set num_zones gives a pool:
-// an erasure coded pool takes its profile's, as ceph osd pool create does
-TEST(OSDMonitorNumZonesZoneFailureDomainTest, FromCommandProfileOrDefault) {
-  pg_pool_t ec;
-  ec.type = pg_pool_t::TYPE_ERASURE;
-  pg_pool_t rep;
-  rep.type = pg_pool_t::TYPE_REPLICATED;
-  const ErasureCodeProfile profile = {{"crush-zone-failure-domain", "zone"}};
-  const cmdmap_t none;
-  cmdmap_t rack;
-  rack["zone_failure_domain"] = string("rack");
-
-  EXPECT_EQ("zone", OSDMonitor::num_zones_zone_failure_domain(
-                      none, ec, profile, "datacenter"));
-  EXPECT_EQ("rack", OSDMonitor::num_zones_zone_failure_domain(
-                      rack, ec, profile, "datacenter"));
-  EXPECT_EQ("datacenter", OSDMonitor::num_zones_zone_failure_domain(
-                            none, ec, {}, "datacenter"));
-  EXPECT_EQ("datacenter", OSDMonitor::num_zones_zone_failure_domain(
-                            none, rep, profile, "datacenter"));
-  EXPECT_EQ("rack", OSDMonitor::num_zones_zone_failure_domain(
-                      rack, rep, profile, "datacenter"));
-}
-
 // A CRUSH map with the bucket types root, datacenter, host and osd: root
-// default holds dc1 and dc2, each with two hosts of one OSD
-class OSDMonitorStretchReplicatedRuleTest : public ::testing::Test {
+// default holds dc1 and dc2, each with two hosts of one ssd OSD
+class OSDMonitorNumZonesPlacementTest : public ::testing::Test {
 protected:
   unique_ptr<CephContext> cct;
   CrushWrapper crush;
   ostringstream ss;
+  OSDMonitor::NumZonesPlacement placement;
+  pg_pool_t pool;
 
   void SetUp() override {
     cct.reset(new CephContext(CEPH_ENTITY_TYPE_MON));
@@ -1858,42 +1836,103 @@ protected:
         map<string, string>{{"host", "host" + to_string(osd)},
                             {"datacenter", osd < 2 ? "dc1" : "dc2"},
                             {"root", "default"}});
+      crush.update_device_class(osd, "ssd", "osd." + to_string(osd), &ss);
     }
   }
 
   void TearDown() override {
     g_ceph_context = nullptr;
   }
-
-  // The layout of the rule that pool creation generates for a replicated
-  // pool over the two data centers with this OSD failure domain
-  int layout(const string& osd_failure_domain, int *root, int *zone_type,
-             int *osd_type) {
-    int rule = crush.add_simple_stretch_rule(
-      "rule-" + osd_failure_domain, "default", "datacenter",
-      osd_failure_domain, 2, 2, "", "firstn", pg_pool_t::TYPE_REPLICATED,
-      false, &ss);
-    EXPECT_GE(rule, 0) << ss.str();
-    return OSDMonitor::stretch_replicated_rule_layout(
-      crush, rule, 2, root, zone_type, osd_type, &ss);
-  }
 };
 
-// Test the layout of a pool's rule with a host failure domain in each zone
-TEST_F(OSDMonitorStretchReplicatedRuleTest, HostFailureDomain) {
-  int root, zone_type, osd_type;
-  ASSERT_EQ(0, layout("host", &root, &zone_type, &osd_type)) << ss.str();
-  EXPECT_EQ(crush.get_item_id("default"), root);
-  EXPECT_STREQ("datacenter", crush.get_type_name(zone_type));
-  EXPECT_STREQ("host", crush.get_type_name(osd_type));
+// Test the placement of a pool over two zones is its rule's
+TEST_F(OSDMonitorNumZonesPlacementTest, FromRuleOverZones) {
+  const int rule = crush.add_simple_stretch_rule(
+    "zones", "default", "datacenter", "host", 2, 2, "ssd", "indep",
+    pg_pool_t::TYPE_ERASURE, false, &ss);
+  ASSERT_GE(rule, 0) << ss.str();
+  pool.crush_rule = rule;
+  pool.num_zones = 2;
+  ASSERT_EQ(0, OSDMonitor::num_zones_placement(cmdmap_t{}, crush, pool, "rack",
+                                               &placement, &ss)) << ss.str();
+  EXPECT_EQ("default", placement.root);
+  EXPECT_EQ("datacenter", placement.zone_failure_domain);
+  EXPECT_EQ("host", placement.osd_failure_domain);
+  EXPECT_EQ("ssd", placement.device_class);
 }
 
-// Test the layout of a pool's rule with an OSD failure domain in each zone,
-// whose OSDs are chosen with choose rather than chooseleaf
-TEST_F(OSDMonitorStretchReplicatedRuleTest, OsdFailureDomain) {
-  int root, zone_type, osd_type;
-  ASSERT_EQ(0, layout("osd", &root, &zone_type, &osd_type)) << ss.str();
-  EXPECT_EQ(crush.get_item_id("default"), root);
-  EXPECT_STREQ("datacenter", crush.get_type_name(zone_type));
-  EXPECT_STREQ("osd", crush.get_type_name(osd_type));
+// Test a pool in one zone takes the default zone failure domain
+TEST_F(OSDMonitorNumZonesPlacementTest, FromRuleInOneZone) {
+  const int rule = crush.add_simple_rule(
+    "one-zone", "dc1", "osd", 0, "", "firstn", pg_pool_t::TYPE_REPLICATED,
+    &ss);
+  ASSERT_GE(rule, 0) << ss.str();
+  pool.crush_rule = rule;
+  ASSERT_EQ(0, OSDMonitor::num_zones_placement(cmdmap_t{}, crush, pool, "rack",
+                                               &placement, &ss)) << ss.str();
+  EXPECT_EQ("dc1", placement.root);
+  EXPECT_EQ("rack", placement.zone_failure_domain);
+  EXPECT_EQ("osd", placement.osd_failure_domain);
+  EXPECT_EQ("", placement.device_class);
+
+  // a choose of hosts and of one OSD in each is of the OSD failure domain
+  pool.crush_rule = crush.add_rule(-1, 4, CRUSH_RULE_TYPE_REPLICATED);
+  crush.set_rule_step_take(pool.crush_rule, 0, crush.get_item_id("default"));
+  crush.set_rule_step_choose_firstn(pool.crush_rule, 1, 0, 1);
+  crush.set_rule_step_choose_firstn(pool.crush_rule, 2, 1, 0);
+  crush.set_rule_step_emit(pool.crush_rule, 3);
+  crush.set_rule_name(pool.crush_rule, "one-osd-each");
+  ASSERT_EQ(0, OSDMonitor::num_zones_placement(cmdmap_t{}, crush, pool, "rack",
+                                               &placement, &ss)) << ss.str();
+  EXPECT_EQ("default", placement.root);
+  EXPECT_EQ("rack", placement.zone_failure_domain);
+  EXPECT_EQ("host", placement.osd_failure_domain);
+}
+
+// Test the command line gives the placement over the rule's
+TEST_F(OSDMonitorNumZonesPlacementTest, FromCommandLine) {
+  const int rule = crush.add_simple_stretch_rule(
+    "zones", "default", "datacenter", "host", 2, 2, "ssd", "firstn",
+    pg_pool_t::TYPE_REPLICATED, false, &ss);
+  ASSERT_GE(rule, 0) << ss.str();
+  cmdmap_t cmdmap;
+  cmdmap["root"] = string("dc1");
+  cmdmap["zone_failure_domain"] = string("host");
+  cmdmap["osd_failure_domain"] = string("osd");
+  cmdmap["no_class"] = true;
+  pool.crush_rule = rule;
+  pool.num_zones = 2;
+  ASSERT_EQ(0, OSDMonitor::num_zones_placement(cmdmap, crush, pool, "rack",
+                                               &placement, &ss)) << ss.str();
+  EXPECT_EQ("dc1", placement.root);
+  EXPECT_EQ("host", placement.zone_failure_domain);
+  EXPECT_EQ("osd", placement.osd_failure_domain);
+  EXPECT_EQ("", placement.device_class);
+}
+
+// Test the placement of a rule that cannot be read must all be given
+TEST_F(OSDMonitorNumZonesPlacementTest, RuleNotRead) {
+  // chooses the data centers, then hosts, then two OSDs in each
+  const int rule = crush.add_rule(-1, 5, CRUSH_RULE_TYPE_REPLICATED);
+  crush.set_rule_step_take(rule, 0, crush.get_item_id("default"));
+  crush.set_rule_step_choose_firstn(rule, 1, 2, 8);
+  crush.set_rule_step_choose_firstn(rule, 2, 2, 1);
+  crush.set_rule_step_choose_leaf_firstn(rule, 3, 2, 0);
+  crush.set_rule_step_emit(rule, 4);
+  crush.set_rule_name(rule, "hand-written");
+  pool.crush_rule = rule;
+  pool.num_zones = 2;
+  cmdmap_t cmdmap;
+  cmdmap["root"] = string("default");
+  cmdmap["osd_failure_domain"] = string("host");
+  EXPECT_EQ(-EINVAL, OSDMonitor::num_zones_placement(
+                       cmdmap, crush, pool, "datacenter", &placement, &ss));
+  cmdmap["class"] = string("ssd");
+  ASSERT_EQ(0, OSDMonitor::num_zones_placement(
+                 cmdmap, crush, pool, "datacenter", &placement, &ss))
+    << ss.str();
+  EXPECT_EQ("default", placement.root);
+  EXPECT_EQ("datacenter", placement.zone_failure_domain);
+  EXPECT_EQ("host", placement.osd_failure_domain);
+  EXPECT_EQ("ssd", placement.device_class);
 }

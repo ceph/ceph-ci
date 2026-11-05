@@ -411,6 +411,23 @@ function TEST_disable_unstretches_every_pool() {
     grep -q "stretch mode is disabled" $dir/out || return 1
 }
 
+# Test disabling gives a replicated pool whose rule has a device class a rule
+# of its own in one zone, of that class
+function TEST_disable_keeps_placement_of_rule() {
+    local dir=$1
+    setup_zones $dir || return 1
+    setup_osds $dir || return 1
+    ceph osd crush rm-device-class 0 1 2 3 4 5 || return 1
+    ceph osd crush set-device-class ssd 0 1 2 3 4 5 || return 1
+    ceph osd pool create rep 8 8 replicated --num_zones 2 --replica 2 \
+        --zone_failure_domain zone --class ssd || return 1
+
+    ceph mon disable_stretch_mode --yes-i-really-mean-it || return 1
+    test "$(pool_num_zones rep)" = 1 || return 1
+    test "$(pool_rule_name rep)" = rep-single-zone || return 1
+    test "$(ceph osd crush rule dump rep-single-zone | jq -r '.steps[0].item_name')" = default~ssd || return 1
+}
+
 # Test disable resets the defaults after the last pool has left stretch mode
 function TEST_disable_resets_defaults_without_stretch_mode() {
     local dir=$1

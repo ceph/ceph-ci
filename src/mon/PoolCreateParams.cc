@@ -306,16 +306,12 @@ string effective_zone_failure_domain(const PoolCreateParams& p)
   // an erasure coded pool takes it from its profile, named or the default
   if (!p.is_given("zone_failure_domain") &&
       p.pool_type == pg_pool_t::TYPE_ERASURE) {
-    return profile_zone_failure_domain(p.profile, p.zone_failure_domain);
+    const auto i = p.profile.find("crush-zone-failure-domain");
+    if (i != p.profile.end()) {
+      return i->second;
+    }
   }
   return p.zone_failure_domain;
-}
-
-string profile_zone_failure_domain(const std::map<string, string>& profile,
-                                   const string& dflt)
-{
-  const auto i = profile.find("crush-zone-failure-domain");
-  return i != profile.end() ? i->second : dflt;
 }
 
 string rule_from_defaults(const PoolCreateParams& p)
@@ -695,6 +691,21 @@ std::optional<std::map<string, string>> default_profile_after_set(
   }
   fill_default_profile(&profile, p);
   return profile;
+}
+
+std::map<string, string> pool_default_values(const PoolCreateParams& p)
+{
+  static const std::set<string> placement = {
+    "root", "zone_failure_domain", "osd_failure_domain", "class"};
+  const bool erasure = p.pool_type == pg_pool_t::TYPE_ERASURE;
+  std::map<string, string> values;
+  for (const auto& param : p.given) {
+    if (param != "k" && param != "m" &&
+        !(erasure && placement.contains(param))) {
+      values[pool_default_options().at(param)] = pool_default_value(p, param);
+    }
+  }
+  return values;
 }
 
 string pool_default_value(const PoolCreateParams& p, const string& param)

@@ -205,8 +205,8 @@ function default_profile_field() {
 }
 
 # Test the default profile always has the placement of erasure coded
-# pools, which ceph osd pool default set writes only while the default type
-# is erasure
+# pools: ceph osd pool default set writes the placement there, and not to the
+# options, while the default type is erasure, and to the options otherwise
 function TEST_set_placement_in_default_profile() {
     local dir=$1
     run_mon $dir a || return 1
@@ -231,14 +231,18 @@ function TEST_set_placement_in_default_profile() {
     test "$(default_profile_field crush-device-class)" = ssd || return 1
     test "$(default_profile_field crush-root)" = default || return 1
     test "$(default_profile_field crush-zone-failure-domain)" = datacenter || return 1
+    test "$(ceph config get mon osd_pool_default_osd_failure_domain)" = rack || return 1
 
-    # an erasure default type writes it, the built-in values too
+    # an erasure default type writes it, the built-in values too, and leaves
+    # the options
     ceph osd pool default set --pool_type erasure --root altroot \
         --osd_failure_domain host --zone_failure_domain rack --no-class \
         || return 1
     test "$(default_profile_field crush-root)" = altroot || return 1
     test "$(default_profile_field crush-zone-failure-domain)" = rack || return 1
     test "$(default_profile_field crush-failure-domain)" = host || return 1
+    test "$(ceph config get mon osd_pool_default_osd_failure_domain)" = rack || return 1
+    test "$(ceph config get mon osd_pool_default_zone_failure_domain)" = host || return 1
     test "$(ceph osd erasure-code-profile get default -f json | \
             jq -r '."crush-device-class"')" = "" || return 1
     ceph osd pool default set --class ssd || return 1
