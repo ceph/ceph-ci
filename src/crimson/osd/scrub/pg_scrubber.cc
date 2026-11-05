@@ -1809,13 +1809,6 @@ void PGScrubber::emit_chunk_result(
       }
     }
 
-    // Replay fix_digest repair messages (matches classic errstream
-    // logged via clog.error() in compare_smaps(), scrub_backend.cc line 1328).
-    for (const auto& msg : result.repair_messages) {
-      ERRORDPP("{}", pg, msg);
-      pg.get_clog_error() << msg;
-    }
-
     // Log snapset errors (primary-shard errors, stored + counted)
     for (const auto& snapset_error : result.snapset_errors) {
       log_snapset_errors(snapset_error, result.object_hoids);
@@ -1912,6 +1905,18 @@ void PGScrubber::emit_chunk_result(
 
   // Emit cluster-log WARN for large-omap objects, matching classic OSD's
   // ScrubBackend::collect_omap_stats() which calls clog.do_log(CLOG_WARN, ...).
+  // Replay fix_digest repair messages (matches classic errstream logged via
+  // clog.error() in compare_smaps(), scrub_backend.cc line 1328).  Emitted
+  // outside the has_errors() block on purpose: evaluate_object()'s fix_digest
+  // path clears the auth shard's DATA_DIGEST_MISMATCH_INFO so the object is
+  // deliberately not reported as inconsistent, yet the digest is still
+  // rewritten via missing_digest.  Gating on has_errors() silently dropped the
+  // "repairing object info data_digest" line for exactly that case.
+  for (const auto& msg : result.repair_messages) {
+    ERRORDPP("{}", pg, msg);
+    pg.get_clog_error() << msg;
+  }
+
   // Classic gates on m_large_omap_warning_issued so only the first large-omap
   // object per chunk is logged; we collected one entry per large object, so emit
   // them all (in practice the list is almost always length 0 or 1).
