@@ -1789,7 +1789,8 @@ void PGScrubber::emit_chunk_result(
         [&obj_error](const auto& kv) {
           return kv.first.oid.name == obj_error.object.name &&
                  kv.first.snap == snapid_t{obj_error.object.snap} &&
-                 kv.first.nspace == obj_error.object.nspace;
+                 kv.first.nspace == obj_error.object.nspace &&
+                 kv.first.get_key() == obj_error.object.locator;
         });
       if (hoid_it != result.object_hoids.end()) {
         log_object_errors(obj_error, hoid_it->second);
@@ -1978,7 +1979,8 @@ int PGScrubber::scrub_process_inconsistent(
       [&obj_error](const auto& kv) {
         return kv.first.oid.name == obj_error.object.name &&
                kv.first.snap == snapid_t{obj_error.object.snap} &&
-               kv.first.nspace == obj_error.object.nspace;
+               kv.first.nspace == obj_error.object.nspace &&
+               kv.first.get_key() == obj_error.object.locator;
       });
     if (it == object_hoids.end()) {
       ERRORDPP("Could not find hobject_t for inconsistent object: name={}",
