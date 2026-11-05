@@ -838,9 +838,7 @@ ReplicatedRecoveryBackend::handle_pull(Ref<MOSDPGPull> m)
       [FNAME, this, from](auto& pull_op) {
       const hobject_t& soid = pull_op.soid;
       DEBUGDPP("{}", pg, soid);
-      return backend->stat(coll, ghobject_t(soid)).handle_error_interruptible(
-        crimson::ct_error::assert_all("stat failed during recovery push")
-      ).then_interruptible(
+      return backend->stat(coll, ghobject_t(soid)).safe_then_interruptible(
         [this, &pull_op](auto st) {
         ObjectRecoveryInfo &recovery_info = pull_op.recovery_info;
         ObjectRecoveryProgress &progress = pull_op.recovery_progress;
@@ -857,7 +855,25 @@ ReplicatedRecoveryBackend::handle_pull(Ref<MOSDPGPull> m)
           assert(recovery_info.clone_subset.empty());
         }
         return build_push_op(recovery_info, progress, 0);
-      }).then_interruptible([this, from](auto push_op) {
+      }).handle_error_interruptible(
+        crimson::ct_error::all_same_way(
+          [FNAME, this, from, &pull_op](const std::error_code& e) {
+          // The object may legitimately have gone away locally since the peer
+          // decided to pull it (e.g. concurrent removal).  Classic
+          // ReplicatedBackend::handle_pull() logs and answers with a blank
+          // push op; asserting here would take the whole OSD down.
+          ERRORDPP("{} tried to pull {} but stat failed: {}",
+                   pg, from, pull_op.soid, e.message());
+          pg.get_clog_error() << pg.get_pgid() << " " << from
+                              << " tried to pull " << pull_op.soid
+                              << " but got " << e.message();
+          PushOp push_op;
+          push_op.soid = pull_op.soid;
+          push_op.version = eversion_t();
+          push_op.recovery_info.version = eversion_t();
+          return interruptor::make_ready_future<PushOp>(std::move(push_op));
+        })
+      ).then_interruptible([this, from](auto push_op) {
         auto msg = crimson::make_message<MOSDPGPush>();
         msg->from = pg.get_pg_whoami();
         msg->pgid = pg.get_pgid();
@@ -1357,6 +1373,11 @@ ReplicatedRecoveryBackend::prep_push_target(
   auto st = co_await interruptor::make_interruptible(
     crimson::os::with_store<&crimson::os::FuturizedStore::Shard::stat>(
       store, coll, ghobject_t(recovery_info.soid), 0).handle_error(
+      // Deliberately fatal, as in classic ReplicatedBackend (ceph_assert(r == 0)
+      // under "if (recovery_info.object_exist)"): st.st_size selects the byte
+      // ranges that the push did *not* carry and that must be cloned from the
+      // local copy.  Substituting a zero size would silently skip those
+      // clone_range() calls and complete the recovery with a holed object.
       crimson::ct_error::assert_all("stat failed during recovery clone")));
 
   // TODO: pg num bytes counting
