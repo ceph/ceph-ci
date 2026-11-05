@@ -2096,7 +2096,14 @@ void PGScrubber::emit_scrub_result(
         pg_stats.stats.sum = in_stats;
         pg_stats.stats_invalid = false;
         DEBUGDPP(" repaired invalid stats! ", pg);
-        return false;
+        // Deliberately fall through.  Classic OSD performs this replacement in
+        // its own update_stats() call (PrimaryLogScrub::_scrub_finish()) and
+        // then goes on to update the scrub timestamps and error counts in
+        // PgScrubber::scrub_finish().  Returning here would skip all of that,
+        // leaving history.last_scrub_stamp unchanged - so the PG would be
+        // re-selected for scrubbing immediately - and never publishing the
+        // errors this scrub found.  Note the step 1 mismatch check below now
+        // compares in_stats against itself and correctly reports no mismatch.
       }
 
       // Step 1: detect a stat mismatch against the *current* pg_stats before
