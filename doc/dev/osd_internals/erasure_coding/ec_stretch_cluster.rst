@@ -870,14 +870,15 @@ least ``replica`` or ``k+m`` OSD failure domains that contain an OSD ("number of
 profile's keys as in earlier releases.
 
 **The placement of a rule.** ``CrushWrapper::get_rule_placement()`` reads the placement values
-of a rule of the shapes that generated rules have: any ``set_*`` steps, a ``take`` of the root, a
-``choose`` of the zones in a rule over zones, then the OSD failure domain, with ``chooseleaf``, a
-``choose`` of OSDs, or a ``choose`` of buckets and of one OSD in each, and ``emit``. A rule over
-zones may instead take each zone in turn, with the same steps after each, as rules for global
-stretch mode may: the zones' parent is then the root and their bucket type the zone type. A
-``take`` of a class's shadow bucket gives the class. A rule is read as over zones if its pool is
-(``num_zones`` 2, or a pool that kept one zone at the commit), as the steps alone do not tell a
-``choose`` of zones with one OSD in each from a ``choose`` of the OSD failure domain. Other rules,
+of a rule of the shapes that generated rules have: any ``set_*`` steps; a ``take`` step of the
+root; in a rule over zones, a ``choose`` step of the zones; then the OSD failure domain, picked by
+a ``chooseleaf`` step, a ``choose`` step of OSDs, or a ``choose`` step of buckets followed by a
+``choose`` step of one OSD in each; and ``emit``. A rule over zones may instead take each zone in
+turn, with the same steps after each ``take``, as rules for global stretch mode may: the zones'
+parent is then the root and their bucket type the zone type. A ``take`` step of a class's shadow
+bucket gives the class. A rule is read as over zones if its pool is (``num_zones`` 2, or a pool
+that kept one zone at the commit), because the steps alone cannot tell a ``choose`` step of zones
+with one OSD in each from a ``choose`` step of the OSD failure domain. Other rules,
 MSR rules among them, cannot be read ("rule '<rule>' does not take the root and choose zones, or
 take each zone, then choose OSDs", or "... does not take the root and choose OSDs" in one zone).
 It is the one place that reads a rule's placement.

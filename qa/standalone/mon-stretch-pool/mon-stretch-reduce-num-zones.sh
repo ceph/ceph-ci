@@ -396,6 +396,7 @@ function TEST_one_zone_while_monmap_changes() {
     # the leader, mon.a or mon.b, cannot commit a change while the other is
     # stopped
     local leader=$(ceph quorum_status -f json | jq -r .quorum_leader_name)
+    test "$leader" = a -o "$leader" = b || return 1
     local peon=a
     test $leader != a || peon=b
     local addr=CEPH_MON_${leader^^}

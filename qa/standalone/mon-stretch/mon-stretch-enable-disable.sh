@@ -183,8 +183,9 @@ function TEST_enable_generates_rules() {
     test "$(pool_num_zones rep)" = 2 || return 1
     test "$(pool_field rep size)" = 4 || return 1
     test "$(pool_rule_name rep)" = rep || return 1
+    # the zones, then the OSDs that the default rule chooses
     ceph osd crush rule dump rep | \
-        jq -e '[.steps[] | select(.op == "choose_firstn") | .type] == ["zone"]' || return 1
+        jq -e '[.steps[] | select(.op == "choose_firstn") | .type] == ["zone", "osd"]' || return 1
     test "$(pool_field ec size)" = 6 || return 1
     test "$(pool_rule_name ec)" = ec-stretch || return 1
     test "$(pool_field two size)" = 4 || return 1

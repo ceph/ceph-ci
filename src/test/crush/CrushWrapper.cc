@@ -1838,9 +1838,10 @@ TEST_F(CrushWrapperTest, rule_placement_of_generated_rules) {
   EXPECT_EQ(1, p.per_zone);
 }
 
-// A choose of buckets and of one OSD in each is of the zones in a rule over
-// zones, and of the OSD failure domain in a rule in one zone
-TEST_F(CrushWrapperTest, rule_placement_of_choose_one_osd_each) {
+// A choose step of buckets followed by a choose step of one OSD in each picks
+// the zones in a rule over zones, and the OSD failure domain in a rule in one
+// zone
+TEST_F(CrushWrapperTest, rule_placement_of_one_osd_in_each_bucket) {
   CrushWrapper c;
   add_two_zones(cct, &c);
   const int root = c.get_item_id("default");

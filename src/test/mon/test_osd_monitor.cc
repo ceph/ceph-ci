@@ -1875,7 +1875,8 @@ TEST_F(OSDMonitorNumZonesPlacementTest, FromRuleInOneZone) {
   EXPECT_EQ("osd", placement.osd_failure_domain);
   EXPECT_EQ("", placement.device_class);
 
-  // a choose of hosts and of one OSD in each is of the OSD failure domain
+  // a choose step of hosts followed by a choose step of one OSD in each picks
+  // the OSD failure domain
   pool.crush_rule = crush.add_rule(-1, 4, CRUSH_RULE_TYPE_REPLICATED);
   crush.set_rule_step_take(pool.crush_rule, 0, crush.get_item_id("default"));
   crush.set_rule_step_choose_firstn(pool.crush_rule, 1, 0, 1);

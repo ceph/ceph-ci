@@ -644,11 +644,11 @@ public:
   };
 
   /**
-   * The placement of rule, read as a rule over zones if zones, else as a
-   * rule in one zone, which the steps alone do not tell apart: a choose of
-   * buckets and of one OSD in each is of the zones or of the OSD failure
-   * domain. A negative errno, with the reason in *ss, for a rule of another
-   * shape.
+   * The placement of rule, read as a rule over zones if zones is set, else
+   * as a rule in one zone. The steps alone cannot tell them apart: a choose
+   * step of buckets followed by a choose step of one OSD in each can pick
+   * either the zones or the OSD failure domain. Returns a negative errno,
+   * with the reason in *ss, for a rule of another shape.
    */
   int get_rule_placement(int rule, bool zones, rule_placement_t *placement,
                          std::ostream *ss) const;

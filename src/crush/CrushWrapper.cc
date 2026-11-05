@@ -345,11 +345,12 @@ void CrushWrapper::find_takes_by_rule(int rule, set<int> *roots) const
   }
 }
 
-// What the chooses after a take pick: the zones if zone, then the OSD failure
-// domain, with chooseleaf, a choose of OSDs, or a choose of buckets and of one
-// OSD in each
-static bool read_chooses(const vector<crush_rule_step>& chooses, bool zone,
-                         CrushWrapper::rule_placement_t *placement)
+// Read the choose and chooseleaf steps that follow a take: first the zones,
+// if zone is set, then the OSD failure domain, picked by a chooseleaf step, a
+// choose step of OSDs, or a choose step of buckets followed by a choose step
+// of one OSD in each
+static bool read_choose_steps(const vector<crush_rule_step>& steps, bool zone,
+                              CrushWrapper::rule_placement_t *placement)
 {
   const auto of_buckets = [](const crush_rule_step& s) {
     return (s.op == CRUSH_RULE_CHOOSE_FIRSTN ||
@@ -357,22 +358,22 @@ static bool read_chooses(const vector<crush_rule_step>& chooses, bool zone,
   };
   size_t i = 0;
   if (zone) {
-    if (chooses.empty() || !of_buckets(chooses[0])) {
+    if (steps.empty() || !of_buckets(steps[0])) {
       return false;
     }
-    placement->zone_type = chooses[0].arg2;
-    placement->num_zones = chooses[0].arg1;
+    placement->zone_type = steps[0].arg2;
+    placement->num_zones = steps[0].arg1;
     i = 1;
   }
-  const bool leaf = chooses.size() == i + 1 && !of_buckets(chooses[i]);
-  const bool one_osd_each = chooses.size() == i + 2 &&
-    of_buckets(chooses[i]) && chooses[i + 1].arg2 == 0 &&
-    chooses[i + 1].arg1 == 1;
+  const bool leaf = steps.size() == i + 1 && !of_buckets(steps[i]);
+  const bool one_osd_each = steps.size() == i + 2 &&
+    of_buckets(steps[i]) && steps[i + 1].arg2 == 0 &&
+    steps[i + 1].arg1 == 1;
   if (!leaf && !one_osd_each) {
     return false;
   }
-  placement->osd_type = chooses[i].arg2;
-  placement->per_zone = chooses[i].arg1;
+  placement->osd_type = steps[i].arg2;
+  placement->per_zone = steps[i].arg1;
   return true;
 }
 
@@ -394,7 +395,7 @@ int CrushWrapper::get_rule_placement(int rule, bool zones,
     "choose OSDs" :
     "does not take the root and choose OSDs";
 
-  // each take, with the chooses after it
+  // each take step, with the choose and chooseleaf steps after it
   vector<pair<int, vector<crush_rule_step>>> takes;
   bool emitted = true;
   const crush_rule *r = crush->rules[rule];
@@ -453,7 +454,7 @@ int CrushWrapper::get_rule_placement(int rule, bool zones,
     return fail("does not take a bucket");
   }
   if (takes.size() == 1) {
-    if (!read_chooses(takes.front().second, zones, &p)) {
+    if (!read_choose_steps(takes.front().second, zones, &p)) {
       return fail(shape);
     }
   } else {
@@ -465,16 +466,16 @@ int CrushWrapper::get_rule_placement(int rule, bool zones,
     }
     p.zone_type = get_bucket_type(p.root);
     p.num_zones = takes.size();
-    if (!read_chooses(takes.front().second, false, &p) ||
+    if (!read_choose_steps(takes.front().second, false, &p) ||
         get_immediate_parent_id(p.root, &p.root) < 0) {
       return fail(zones_shape);
     }
     set<int> zone_ids;
-    for (const auto& [take, chooses] : takes) {
+    for (const auto& [take, steps] : takes) {
       rule_placement_t chosen;
       int id, parent;
       string device_class;
-      if (!read_chooses(chooses, false, &chosen) ||
+      if (!read_choose_steps(steps, false, &chosen) ||
           chosen.osd_type != p.osd_type || chosen.per_zone != p.per_zone ||
           !bucket_of(take, &id, &device_class) ||
           device_class != p.device_class || !zone_ids.insert(id).second ||
