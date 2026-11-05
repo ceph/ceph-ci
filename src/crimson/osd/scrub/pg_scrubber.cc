@@ -170,6 +170,13 @@ void PGScrubber::flag_reservations_failure()
     requeue_penalized(
         m_active_target->level(), delay_both_targets_t::yes,
         delay_cause_t::replicas, ceph_clock_now());
+    // The session is over: ReservingReplicas transits straight to AwaitScrub
+    // and neither emit_scrub_result() nor on_mid_scrub_abort() runs on this
+    // path.  get_schedule() reports the PG as actively scrubbing for as long
+    // as m_active_target is set, so leaving it behind makes 'pg dump' and
+    // dump_scrub_metrics() claim a scrub is in progress - hiding the delay
+    // just installed - until some later scrub starts.
+    m_active_target.reset();
   }
 }
 
@@ -2468,6 +2475,24 @@ void PGScrubber::cleanup_on_finish()
 
   // PG state flags changed:
   pg.publish_stats_to_osd();
+}
+
+void PGScrubber::notify_scrub_end(bool deep)
+{
+  LOG_PREFIX(PGScrubber::notify_scrub_end);
+  DEBUGDPP("deep: {}", pg, deep);
+  // Scrubbing::exit() calls this on every way out of a scrub, including the
+  // abort paths (noscrub set mid-scrub, replica reservation rejection,
+  // verify_against_abort(), interval change).  emit_scrub_result() only runs
+  // on the success path, so without this the scrub-state flags would stay
+  // published and, more importantly, nothing would restart snap trimming:
+  // PG::initiate_snap_trim() refuses to start while PG_STATE_SCRUBBING is
+  // set, so an aborted scrub would strand a non-empty snap_trimq until the
+  // next on_active_actmap().
+  pg.state_clear(PG_STATE_SCRUBBING);
+  pg.state_clear(PG_STATE_DEEP_SCRUB);
+  pg.publish_stats_to_osd();
+  pg.kick_snap_trim();
 }
 
 void PGScrubber::clear_pgscrub_state()
