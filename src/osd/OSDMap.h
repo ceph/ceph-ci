@@ -883,7 +883,9 @@ public:
 
   void get_stretch_zones(const pg_pool_t& pool,
                          std::map<int, std::set<int>>* zone_osds) const;
-  unsigned stretch_num_acting_below_min_size(const pg_pool_t& pool, const std::vector<int>& acting) const;
+  /// How many OSDs acting lacks to reach min_size: in each zone of a
+  /// stretch pool, or else in the whole set.
+  unsigned num_acting_below_min_size(const pg_pool_t& pool, const std::vector<int>& acting) const;
 
   /// Whether async recovery may leave the PG the acting set candidate_want,
   /// which lacks one OSD of the set it wants: each zone of a stretch pool,
