@@ -1,6 +1,10 @@
 # Multi-zone configuration (stretched pools)
 # Requires ec_optimizations: on
+# Each zone of 6 OSDs holds k+m = 4 shards, so at most 2 OSDs may be out:
+# with more out of one zone its PGs cannot get clean.
 overrides:
+  thrashosds:
+    min_in: 10
   ceph:
     pool-config:
       num_zones: 2
