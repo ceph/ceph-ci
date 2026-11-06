@@ -375,13 +375,22 @@ function TEST_commit_warns_of_unconverted_pools() {
     grep -q "pool 'odd' has size 3" $dir/health || return 1
     ! grep -q "pool 'rep'" $dir/health || return 1
 
+    # a new rule still applies before the commit, and lets it give fix zones
+    ceph osd pool create fix 8 8 replicated || return 1
+    ceph osd pool set fix crush_rule replicated_rule || return 1
+    wait_for_health "2 stretch pool(s) will keep one zone" || return 1
+    ceph osd pool set fix crush_rule stretch_rule || return 1
+    wait_for_health "1 stretch pool(s) will keep one zone" || return 1
+
     ceph osd require-osd-release vampire || return 1
     expect_pool rep 2 2 4 1 || return 1
+    expect_pool fix 2 2 4 1 || return 1
     expect_pool odd 1 3 3 2 || return 1
     wait_for_health "kept one zone when the upgrade was committed" || return 1
     ceph health detail > $dir/health || return 1
     grep -q "pool 'odd' has size 3" $dir/health || return 1
     ! grep -q "pool 'rep'" $dir/health || return 1
+    ! grep -q "pool 'fix'" $dir/health || return 1
 
     # disabling would leave odd stretched, so it waits until odd has zones
     expect_failure $dir "pool(s) 'odd' kept one zone when the upgrade was committed" \

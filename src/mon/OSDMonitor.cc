@@ -8098,7 +8098,7 @@ int OSDMonitor::prepare_new_pool(MonOpRequestRef op)
                          erasure_code_profile, params.root, num_zones,
                          num_zones > 1 ? params.replica : 0, params.replica,
                          zone_failure_domain, params.osd_failure_domain,
-                         params.device_class,
+                         params.device_class, params.crush_params_given(),
                          pg_pool_t::TYPE_REPLICATED, 0, FAST_READ_OFF, {}, bulk,
                          cct->_conf.get_val<bool>("osd_pool_default_crimson"),
                          force_create, std::nullopt, false, false, &ss,
@@ -8731,6 +8731,7 @@ int OSDMonitor::prepare_pool_crush_rule(const unsigned pool_type,
                                         const string &zone_failure_domain,
                                         const string &osd_failure_domain,
                                         const std::optional<std::string> &device_class,
+                                        bool placement_given,
                                         int *crush_rule,
                                         ostream *ss)
 {
@@ -8758,16 +8759,30 @@ int OSDMonitor::prepare_pool_crush_rule(const unsigned pool_type,
             int err = crush_rule_create_replica(pool_name, root, num_zones, num_replica_per_zone, zone_failure_domain, osd_failure_domain, rep_class, false, crush_rule, ss);
             return handle_crush_rule_creation_result(err, pool_name);
 	  }
-          // A single-zone pool whose placement differs from the cluster
-          // default gets its own generated rule; otherwise the default rule.
+          // A single-zone pool gets the default rule if that places it as
+          // asked, or if nothing asks for a placement other than the stock
+          // one, as in earlier releases; else a generated rule of its own.
           {
             const PoolCreateParams dflt = load_pool_defaults(g_conf());
             const string eff_root = !root.empty() ? root : dflt.root;
             const string eff_osd_fd =
               !osd_failure_domain.empty() ? osd_failure_domain
                                           : dflt.osd_failure_domain;
-            if (eff_root != "default" || eff_osd_fd != "host" ||
-                !rep_class.empty()) {
+            const bool stock = eff_root == "default" && eff_osd_fd == "host" &&
+                               rep_class.empty();
+            const auto default_rule_places = [&] {
+              const int rule =
+                osdmap.crush->get_osd_pool_default_crush_replicated_rule(cct);
+              CrushWrapper::rule_placement_t p;
+              ostringstream why;
+              return rule >= 0 &&
+                osdmap.crush->get_rule_placement(rule, false, &p, &why) == 0 &&
+                p.num_zones == 1 &&
+                p.root == osdmap.crush->get_item_id(eff_root) &&
+                p.osd_type == osdmap.crush->get_type_id(eff_osd_fd) &&
+                p.device_class == rep_class;
+            };
+            if ((placement_given || !stock) && !default_rule_places()) {
               int err = crush_rule_create_replica(
                 pool_name + "-single-zone", root, num_zones,
                 num_replica_per_zone, zone_failure_domain, osd_failure_domain,
@@ -9351,6 +9366,7 @@ int OSDMonitor::prepare_new_pool(string& name,
                                  const string &zone_failure_domain,
                                  const string &osd_failure_domain,
                                  const string &device_class,
+                                 bool placement_given,
                                  const unsigned pool_type,
                                  const uint64_t expected_num_objects,
                                  FastReadType fast_read,
@@ -9426,7 +9442,7 @@ int OSDMonitor::prepare_new_pool(string& name,
   const std::optional<std::string> rule_device_class =
     device_class.empty() ? std::nullopt : std::optional<std::string>(device_class);
   r = prepare_pool_crush_rule(pool_type, name, erasure_code_profile,
-                                 crush_rule_name, num_zones, root, num_replica_per_zone, zone_failure_domain, osd_failure_domain, rule_device_class, &crush_rule, ss);
+                                 crush_rule_name, num_zones, root, num_replica_per_zone, zone_failure_domain, osd_failure_domain, rule_device_class, placement_given, &crush_rule, ss);
   if (r) {
     dout(10) << "prepare_pool_crush_rule returns " << r << dendl;
     if (r != -EAGAIN) {
@@ -10281,7 +10297,11 @@ int OSDMonitor::prepare_num_zones_crush_rule(
     placement.root,
     zones ? cmd_getval_or<int64_t>(cmdmap, "replica", d.replica) : 0,
     zones ? placement.zone_failure_domain : "", placement.osd_failure_domain,
-    placement.device_class, crush_rule, ss);
+    placement.device_class,
+    cmdmap.contains("root") || cmdmap.contains("osd_failure_domain") ||
+      cmdmap.contains("class") ||
+      cmd_getval_or<bool>(cmdmap, "no_class", false),
+    crush_rule, ss);
 }
 
 // The pg_temp, primary_temp and pg_upmap of the pool's PGs name an OSD for
@@ -11162,7 +11182,7 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
       ss << "crush rule " << id << " type does not match pool";
       return -EINVAL;
     }
-    if (keeps_one_zone(osdmap, p)) {
+    if (osdmap.stretch_zones() && keeps_one_zone(osdmap, p)) {
       ss << "pool '" << poolstr << "' kept one zone when the upgrade was "
          << "committed and is still stretched, so a new rule alone does not "
          << "change how it peers; give it two zones with 'ceph osd pool set "
@@ -16869,7 +16889,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
                            rule_name,
                            params.pg_num, params.pgp_num, pg_num_min, pg_num_max,
                            repl_size, target_size_bytes, target_size_ratio, min_size,
-                           erasure_code_profile, root, num_zones, replica, num_replica_per_zone, zone_failure_domain, osd_failure_domain, device_class, pool_type,
+                           erasure_code_profile, root, num_zones, replica, num_replica_per_zone, zone_failure_domain, osd_failure_domain, device_class, params.crush_params_given(), pool_type,
                            (uint64_t)expected_num_objects,
                            fast_read,
                            pg_autoscale_mode,
@@ -20203,6 +20223,9 @@ bool OSDMonitor::keeps_one_zone(const OSDMap& osdmap, const pg_pool_t& p)
 int OSDMonitor::check_disable_leaves_no_stretch_pool(const OSDMap& osdmap,
                                                      ostream *ss)
 {
+  if (!osdmap.stretch_zones()) {
+    return 0;
+  }
   string names;
   for (const auto& [id, p] : osdmap.get_pools()) {
     if (keeps_one_zone(osdmap, p)) {

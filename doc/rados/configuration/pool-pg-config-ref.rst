@@ -56,6 +56,7 @@ See :ref:`pg-autoscaler`.
 .. confval:: mon_delta_reset_interval
 .. confval:: osd_crush_chooseleaf_type
 .. confval:: osd_crush_initial_weight
+.. confval:: osd_pool_default_type
 .. confval:: osd_pool_default_crush_rule
 .. confval:: osd_pool_erasure_code_stripe_unit
 .. confval:: osd_pool_default_size
@@ -69,6 +70,8 @@ See :ref:`pg-autoscaler`.
 .. confval:: osd_pool_default_pgp_num
 .. confval:: osd_pool_default_pg_autoscale_mode
 .. confval:: osd_pool_default_flags
+.. confval:: osd_pool_default_flag_bulk
+.. confval:: osd_pool_default_crimson
 .. confval:: osd_max_pgls
 .. confval:: osd_min_pg_log_entries
 .. confval:: osd_max_pg_log_entries

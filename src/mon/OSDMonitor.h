@@ -638,6 +638,7 @@ private:
                               const std::string &zone_failure_domain,
                               const std::string &osd_failure_domain,
                               const std::optional<std::string> &device_class,
+                              bool placement_given,
                               int *crush_rule,
                               std::ostream *ss);
   bool erasure_code_profile_in_use(
@@ -689,6 +690,7 @@ private:
                        const std::string &zone_failure_domain,
                        const std::string &osd_failure_domain,
                        const std::string &device_class,
+                       bool placement_given,
                        const unsigned pool_type,
                        const uint64_t expected_num_objects,
                        FastReadType fast_read,

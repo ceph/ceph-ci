@@ -418,8 +418,8 @@ function TEST_disable_keeps_placement_of_rule() {
     local dir=$1
     setup_zones $dir || return 1
     setup_osds $dir || return 1
-    ceph osd crush rm-device-class 0 1 2 3 4 5 || return 1
-    ceph osd crush set-device-class ssd 0 1 2 3 4 5 || return 1
+    ceph osd crush rm-device-class $(seq 0 5) || return 1
+    ceph osd crush set-device-class ssd $(seq 0 5) || return 1
     ceph osd pool create rep 8 8 replicated --num_zones 2 --replica 2 \
         --zone_failure_domain zone --class ssd || return 1
 

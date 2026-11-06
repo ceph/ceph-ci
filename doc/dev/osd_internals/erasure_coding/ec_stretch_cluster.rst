@@ -475,8 +475,9 @@ exist". The following combinations are then refused with ``EINVAL``, before anyt
 * ``--k`` or ``--m`` for a replicated pool: "cannot specify k/m parameters for replicated
   pools".
 * ``--replica`` for an erasure coded pool: "replica is only applicable to replicated pools".
-* A CRUSH option for a replicated pool with ``num_zones`` 1: "crush parameters (...) require
-  num_zones > 1 for a replicated pool".
+* ``--zone_failure_domain`` for a replicated pool with ``num_zones`` 1: "zone_failure_domain
+  requires num_zones > 1 for a replicated pool". The other CRUSH options give such a pool a rule
+  of its own.
 * ``--size`` with ``--replica``: "cannot specify both 'size' and 'replica' parameters; use
   'replica' and 'num_zones' for new pools".
 
@@ -848,8 +849,10 @@ The CRUSH Rule of a Pool
 2. **The default rule, if it suits the pool**: ``osd_pool_default_crush_rule``, or, for a
    single-zone replicated pool while that is -1, the first replicated rule. It suits the pool when
    no CRUSH option is given and it is of the pool's type and places the pool in its zones. A
-   single-zone replicated pool takes it unless its root, OSD failure domain or class differ from
-   the cluster default (``default``, ``host``, none). ``ceph osd pool default set`` accepts only a
+   single-zone replicated pool takes it if it places the pool in the root, OSD failure domain and
+   class that the CRUSH options and their defaults give (read as in the placement of a rule,
+   below), or, as in earlier releases, if no CRUSH option is given and their defaults are the
+   stock ones (``default``, ``host``, none). ``ceph osd pool default set`` accepts only a
    replicated rule (:ref:`ceph osd pool default set and get
    <ecsc-ceph-osd-pool-default-set-and-get>`).
 3. **A generated rule**, from the :ref:`Placement Options <ecsc-placement-options>` and named after

@@ -2302,7 +2302,8 @@ keeps one zone and the rules of earlier releases.
 Before the commit, this warning names the stretch pools that the commit will
 leave with one zone. Change them so that it can split them, for example with
 ``ceph osd pool set {pool-name} size 4`` if their rule places two replicas in
-each zone.
+each zone, or with ``ceph osd pool set {pool-name} crush_rule {rule-name}`` to
+give a pool of size 4 a rule that does.
 
 After the commit, this warning names the stretch pools that kept one zone. They
 still serve I/O, but ``ceph mon disable_stretch_mode`` is refused while any of

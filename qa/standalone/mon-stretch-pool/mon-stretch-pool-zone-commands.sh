@@ -254,14 +254,15 @@ function TEST_shrink_to_one_zone_placement() {
     ceph osd crush rm-device-class $(seq 0 5) || return 1
     ceph osd crush set-device-class ssd $(seq 0 5) || return 1
 
-    for pool in r_root r_osd r_cls r_plain; do
+    for pool in r_root r_host r_cls r_plain; do
         ceph osd pool create $pool 4 --num_zones 2 --replica 2 || return 1
     done
     ceph osd pool set r_root num_zones 1 --root dc1 --yes-i-really-mean-it || return 1
     test "$(rule_takes r_root-single-zone)" = dc1 || return 1
     test "$(ceph osd pool get r_root crush_rule -f json | jq -r .crush_rule)" = r_root-single-zone || return 1
-    ceph osd pool set r_osd num_zones 1 --osd_failure_domain osd --yes-i-really-mean-it || return 1
-    ceph osd crush rule dump r_osd-single-zone | grep -q '"type": "osd"' || return 1
+    # the default rule here chooses OSDs, so host needs a rule of its own
+    ceph osd pool set r_host num_zones 1 --osd_failure_domain host --yes-i-really-mean-it || return 1
+    test "$(rule_leaf_type r_host-single-zone)" = host || return 1
     ceph osd pool set r_cls num_zones 1 --class ssd --yes-i-really-mean-it || return 1
     test "$(rule_takes r_cls-single-zone)" = default~ssd || return 1
     # with the cluster's default placement the pool takes the default rule
@@ -281,7 +282,7 @@ function TEST_shrink_to_one_zone_placement() {
         ceph osd pool create $pool 4 --num_zones 2 --replica 2 || return 1
     done
     ceph osd pool set r_nc num_zones 1 --no-class --yes-i-really-mean-it || return 1
-    ! rule_exists r_nc-single-zone || return 1
+    test "$(rule_takes $(ceph osd pool get r_nc crush_rule -f json | jq -r .crush_rule))" = default || return 1
     expect_failure $dir "cannot specify both --class and --no-class" \
         ceph osd pool set r_both num_zones 1 --class ssd --no-class --yes-i-really-mean-it || return 1
     # an EC pool whose own profile carries the default class drops it too

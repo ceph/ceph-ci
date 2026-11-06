@@ -263,8 +263,9 @@ following:
 
   :Type: String
   :Required: No.
-  :Default: ``osd_pool_default_type``, which is ``replicated`` unless it is
-            changed, for example with ``ceph osd pool default set --pool_type``.
+  :Default: :confval:`osd_pool_default_type`, which is ``replicated`` unless
+            it is changed, for example with
+            ``ceph osd pool default set --pool_type``.
 
 .. describe:: [crush-rule-name]
 
@@ -397,7 +398,8 @@ following:
    from which each replica or shard in a zone is chosen, and the device class.
    They cannot be given with a CRUSH rule or an erasure code profile. A
    ``replicated`` pool accepts ``--root``, ``--osd_failure_domain`` and
-   ``--class`` with any ``num_zones`` (a one-zone pool gets a rule of its own);
+   ``--class`` with any ``num_zones`` (a one-zone pool gets a rule of its own,
+   unless the default rule already places it so);
    ``--zone_failure_domain`` applies only with ``num_zones`` greater than 1.
 
    :Type: String
@@ -719,7 +721,7 @@ Parameters and Options
      - Option
      - Note
    * - ``--pool_type``
-     - ``osd_pool_default_type``
+     - :confval:`osd_pool_default_type`
      -
    * - ``--num_zones``
      - :confval:`osd_pool_default_num_zones`
@@ -770,10 +772,10 @@ Parameters and Options
      - The pool property ``pg_autoscale_mode`` in ``ceph osd pool set`` and
        ``get``
    * - ``--bulk``
-     - ``osd_pool_default_flag_bulk``
+     - :confval:`osd_pool_default_flag_bulk`
      -
    * - ``--crimson``
-     - ``osd_pool_default_crimson``
+     - :confval:`osd_pool_default_crimson`
      -
 
 .. _pool-creation-defaults-directly:

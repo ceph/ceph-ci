@@ -972,6 +972,14 @@ TEST_F(OSDMonitorStretchCommitTest, DisableRefusedWhilePoolsKeepOneZone) {
     << ss.str();
 }
 
+// before the commit, disable_stretch_mode works as in earlier releases
+TEST_F(OSDMonitorStretchCommitTest, DisableAllowedBeforeCommit) {
+  make_map({{1, legacy_pool(4, 2)}, {2, legacy_pool(3, 2)}}, true);
+  ostringstream ss;
+  EXPECT_EQ(0, OSDMonitor::check_disable_leaves_no_stretch_pool(tmp, &ss))
+    << ss.str();
+}
+
 TEST_F(OSDMonitorStretchCommitTest, DisableAllowedWhenEveryPoolConverted) {
   make_map({{1, legacy_pool(4, 2)}, {2, legacy_pool(4, 1)}}, true);
   convert();

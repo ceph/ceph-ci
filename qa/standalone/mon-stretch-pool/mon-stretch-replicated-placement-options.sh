@@ -35,11 +35,14 @@ function TEST_single_zone_replicated_placement_options() {
         || return 1
     ! ceph osd pool ls | grep -qx rep || return 1
 
-    # --root, --osd_failure_domain and --class now generate a <pool>-single-zone rule
+    # --root, --osd_failure_domain and --class generate a <pool>-single-zone
+    # rule, unless the default rule, which chooses OSDs here, places the pool so
     ceph osd pool create rep_root 8 replicated --root altroot || return 1
     ceph osd crush rule dump rep_root-single-zone | grep -q altroot || return 1
+    ceph osd pool create rep_host 8 replicated --osd_failure_domain host || return 1
+    rule_places $dir rep_host default host || return 1
     ceph osd pool create rep_osd 8 replicated --osd_failure_domain osd || return 1
-    ceph osd crush rule dump rep_osd-single-zone | grep -q '"type": "osd"' || return 1
+    test "$(ceph osd pool get rep_osd crush_rule | awk '{print $2}')" = replicated_rule || return 1
     ceph osd pool create rep_cls 8 replicated --class ssd || return 1
     ceph osd crush rule dump rep_cls-single-zone | grep -q '~ssd' || return 1
 
@@ -60,6 +63,33 @@ function TEST_single_zone_replicated_placement_options() {
     expect_failure $dir "cannot specify both crush rule and crush parameters" \
         ceph osd pool create rep2 8 8 replicated replicated_rule --root altroot \
         || return 1
+}
+
+# The placement options are honoured whatever the default rule places, and a
+# pool given none still gets the default rule
+function TEST_single_zone_options_with_custom_default_rule() {
+    local dir=$1
+    run_mon $dir a || return 1
+    run_mgr $dir x || return 1
+    run_osd $dir 0 || return 1
+    run_osd $dir 1 || return 1
+    run_osd $dir 2 || return 1
+    ceph osd crush rm-device-class osd.0 osd.1 osd.2 || return 1
+    ceph osd crush set-device-class ssd osd.0 osd.1 osd.2 || return 1
+    ceph osd crush add-bucket altroot root || return 1
+    ceph osd crush add-bucket althost host || return 1
+    ceph osd crush move althost root=altroot || return 1
+    ceph osd crush create-or-move osd.2 1.0 root=altroot host=althost || return 1
+    ceph osd crush rule create-replicated alt altroot osd ssd || return 1
+    ceph config set mon osd_pool_default_crush_rule \
+        $(ceph osd crush rule dump alt | jq .rule_id) || return 1
+
+    ceph osd pool create plain 8 replicated || return 1
+    test "$(ceph osd pool get plain crush_rule | awk '{print $2}')" = alt || return 1
+
+    ceph osd pool create data 8 replicated --num_zones 1 --root default \
+        --osd_failure_domain host --no-class || return 1
+    rule_places $dir data default host || return 1
 }
 
 # A single-zone erasure coded pool takes --class, and a class that ceph osd

@@ -1357,7 +1357,8 @@ the pool no device class, overriding any it would otherwise inherit, and cannot
 be given with ``--class``. They cannot be given with a CRUSH rule or an erasure
 code profile. A replicated pool accepts ``--root``, ``--osd_failure_domain``,
 ``--class`` and ``--no-class`` with any number of zones (a one-zone pool gets a
-rule of its own); ``--zone_failure_domain`` needs more than one zone.
+rule of its own, unless the default rule already places it so);
+``--zone_failure_domain`` needs more than one zone.
 
 ``--pg_num_min``, ``--pg_num_max``, ``--autoscale_mode``, ``--bulk``,
 ``--target_size_bytes`` and ``--target_size_ratio`` set the pool's PG

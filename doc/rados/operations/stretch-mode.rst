@@ -509,21 +509,45 @@ The upgrade has three stages:
 
 #. **The commit:** ``ceph osd require-osd-release vampire``. It is refused
    until every Monitor, and every OSD that is up, runs the new release. In
-   this one OSDMap update the Monitors give each pool in stretch mode two
-   zones, with half its copies in each, and ``min_size`` becomes a count in
-   each zone: 2 of 4 becomes 1 of 2 in each zone. An odd value rounds up, so
-   3 of 4 becomes 2 of 2 in each zone: stricter, never weaker. If a zone is
-   down at the commit, the value is worked out from
-   ``mon_stretch_pool_min_size``, so it is right once the zone returns. Every
-   PG of a stretch pool re-peers once. The Monitors also set the pool creation
-   defaults for stretched pools, in the ``global`` section of the
-   configuration database: :confval:`osd_pool_default_num_zones` to ``2``,
-   :confval:`osd_pool_default_zone_failure_domain` to the dividing bucket
-   type, and :confval:`osd_pool_default_size` to half of
-   ``mon_stretch_pool_size``. Each erasure-coded pool that used the
-   ``default`` erasure code profile gets a copy of its own, and ``default``
-   gets the placement keys it lacks from these options, so new erasure-coded
-   pools are placed as before.
+   this one OSDMap update the Monitors convert each pool in stretch mode as
+   follows, and every PG of a stretch pool re-peers once:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 16 36 48
+
+      * - Pool field
+        - Before the commit
+        - After the commit
+      * - ``num_zones``
+        - 1
+        - 2
+      * - ``replica``
+        - Not set
+        - Half of ``size``: the copies in each zone
+      * - ``size``
+        - The copies in all, for example 4
+        - Unchanged
+      * - ``min_size``
+        - The copies in all, for example 2 of 4. The Monitors halve it
+          while a zone is down.
+        - The copies in each zone: half the old value, rounded up, so 2 of
+          4 becomes 1 of 2 in each zone and 3 of 4 becomes 2 of 2, never
+          weaker. If a zone is down at the commit, half of
+          ``mon_stretch_pool_min_size``, rounded up, so that it is right
+          once the zone returns. The Monitors no longer halve it.
+      * - CRUSH rule
+        - The stretch rule
+        - Unchanged
+
+   The Monitors also set the pool creation defaults for stretched pools, in the
+   ``global`` section of the configuration database:
+   :confval:`osd_pool_default_num_zones` to ``2``,
+   :confval:`osd_pool_default_zone_failure_domain` to the dividing bucket type,
+   and :confval:`osd_pool_default_size` to half of ``mon_stretch_pool_size``.
+   Each erasure-coded pool that used the ``default`` erasure code profile gets
+   a copy of its own, and ``default`` gets the placement keys it lacks from
+   these options, so new erasure-coded pools are placed as before.
 
    Only a replicated pool whose CRUSH rule places half of an even number of
    copies in each zone can be split this way. Any other pool, for example one
