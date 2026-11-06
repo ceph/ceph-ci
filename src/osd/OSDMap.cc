@@ -3333,12 +3333,12 @@ bool OSDMap::undo_pre_tentacle_primaryfirst(spg_t *pgid) const
   return true;
 }
 
-bool OSDMap::async_recovery_can_shrink(const pg_pool_t& pool,
-                                       const std::vector<int>& candidate_want) const
+bool OSDMap::acting_set_writeable(const pg_pool_t& pool,
+                                  const std::vector<int>& acting,
+                                  std::ostream *out) const
 {
-  return num_acting_below_min_size(pool, candidate_want) == 0 &&
-    (!pool.is_stretch_pool() ||
-     pool.stretch_set_can_peer(candidate_want, *this, NULL));
+  return num_acting_below_min_size(pool, acting) == 0 &&
+    pool.stretch_set_can_peer(acting, *this, out);
 }
 
 void OSDMap::_get_temp_osds(const pg_pool_t& pool, pg_t pg,

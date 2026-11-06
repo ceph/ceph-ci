@@ -2748,7 +2748,7 @@ void PeeringState::choose_async_recovery_ec(
     candidate_want[cur_shard.shard.id] = CRUSH_ITEM_NONE;
     ceph_assert(want_acting_size > 0);
     if (recoverable(candidate_want) &&
-        osdmap->async_recovery_can_shrink(pool.info, candidate_want)) {
+        osdmap->acting_set_writeable(pool.info, candidate_want)) {
       want->swap(candidate_want);
       async_recovery->insert(cur_shard);
       --want_acting_size;
@@ -2806,7 +2806,7 @@ void PeeringState::choose_async_recovery_replicated(
     for (auto it = candidate_want.begin(); it != candidate_want.end(); ++it) {
       if (*it == cur_shard.osd) {
 	candidate_want.erase(it);
-        if (osdmap->async_recovery_can_shrink(pool.info, candidate_want)) {
+        if (osdmap->acting_set_writeable(pool.info, candidate_want)) {
 	  want->swap(candidate_want);
 	  async_recovery->insert(cur_shard);
 	}

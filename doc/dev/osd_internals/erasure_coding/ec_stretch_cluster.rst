@@ -2760,7 +2760,9 @@ acting set uses, so the "exactly ``num_zones`` zone buckets" of :ref:`The CRUSH 
 its zone (``get_non_shadow_id()``), so a rule that takes a zone with two device classes counts
 it once. For a pool that is not stretched it counts the OSDs of the acting set against
 ``min_size``, so peering, the recovery and backfill priorities, past intervals and the Manager's
-ok-to-stop ask it alone, and judge a stretched pool by its zones only.
+ok-to-stop ask it alone, and judge a stretched pool by its zones only. ``acting_set_writeable()``
+adds ``stretch_set_can_peer`` to it for the acting sets of peering, async recovery and past
+intervals.
 
 
 .. _ecsc-scrub-behavior:

@@ -328,23 +328,24 @@ TEST_F(StretchECMinSizeTest, NumActingBelowMinSize_ReplicatedPool)
   EXPECT_EQ(2u, osdmap->num_acting_below_min_size(rep, acting));
 }
 
-// Async recovery of a stretch pool must not take a zone below its min_size,
-// however many OSDs the other zone has; other pools keep min_size in all.
-TEST_F(StretchECMinSizeTest, AsyncRecoveryKeepsEachZoneAtMinSize)
+// An acting set of a stretch pool, as async recovery may shrink it to, must
+// keep each zone at its min_size, however many OSDs the other zone has; other
+// pools keep min_size in all.
+TEST_F(StretchECMinSizeTest, ActingSetWriteableKeepsEachZoneAtMinSize)
 {
   pg_pool_t rep = *pool;
   rep.type = pg_pool_t::TYPE_REPLICATED;
   rep.min_size = 2;
   // zone dc0 is OSDs 0-2, dc1 OSDs 3-5
-  EXPECT_TRUE(osdmap->async_recovery_can_shrink(rep, {0, 1, 3, 4, 5}));
-  EXPECT_FALSE(osdmap->async_recovery_can_shrink(rep, {0, 3, 4, 5}));
-  EXPECT_TRUE(osdmap->async_recovery_can_shrink(rep, {0, 1, 3, 4}));
+  EXPECT_TRUE(osdmap->acting_set_writeable(rep, {0, 1, 3, 4, 5}));
+  EXPECT_FALSE(osdmap->acting_set_writeable(rep, {0, 3, 4, 5}));
+  EXPECT_TRUE(osdmap->acting_set_writeable(rep, {0, 1, 3, 4}));
 
   pg_pool_t ec = *pool;
   ec.min_size = 2;
   const int none = CRUSH_ITEM_NONE;
-  EXPECT_TRUE(osdmap->async_recovery_can_shrink(ec, {0, 1, none, 3, 4, 5}));
-  EXPECT_FALSE(osdmap->async_recovery_can_shrink(ec, {0, none, none, 3, 4, 5}));
+  EXPECT_TRUE(osdmap->acting_set_writeable(ec, {0, 1, none, 3, 4, 5}));
+  EXPECT_FALSE(osdmap->acting_set_writeable(ec, {0, none, none, 3, 4, 5}));
 
   for (auto p : {&rep, &ec}) {
     p->peering_crush_bucket_count = 0;
@@ -353,10 +354,10 @@ TEST_F(StretchECMinSizeTest, AsyncRecoveryKeepsEachZoneAtMinSize)
     p->num_zones = 1;
     p->size = 3;
   }
-  EXPECT_TRUE(osdmap->async_recovery_can_shrink(rep, {0, 1}));
-  EXPECT_FALSE(osdmap->async_recovery_can_shrink(rep, {0}));
-  EXPECT_TRUE(osdmap->async_recovery_can_shrink(ec, {0, none, 2}));
-  EXPECT_FALSE(osdmap->async_recovery_can_shrink(ec, {0, none, none}));
+  EXPECT_TRUE(osdmap->acting_set_writeable(rep, {0, 1}));
+  EXPECT_FALSE(osdmap->acting_set_writeable(rep, {0}));
+  EXPECT_TRUE(osdmap->acting_set_writeable(ec, {0, none, 2}));
+  EXPECT_FALSE(osdmap->acting_set_writeable(ec, {0, none, none}));
 }
 
 // Degraded stretch mode: only the mandatory zone contributes to the deficit.

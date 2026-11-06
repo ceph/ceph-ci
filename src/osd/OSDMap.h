@@ -887,11 +887,11 @@ public:
   /// stretch pool, or else in the whole set.
   unsigned num_acting_below_min_size(const pg_pool_t& pool, const std::vector<int>& acting) const;
 
-  /// Whether async recovery may leave the PG the acting set candidate_want,
-  /// which lacks one OSD of the set it wants: each zone of a stretch pool,
-  /// or else the whole set, keeps min_size OSDs.
-  bool async_recovery_can_shrink(const pg_pool_t& pool,
-                                 const std::vector<int>& candidate_want) const;
+  /// Whether a PG of pool with this acting set can go active and serve
+  /// writes: it lacks no OSD to min_size, and a stretch pool's set can peer.
+  bool acting_set_writeable(const pg_pool_t& pool,
+                            const std::vector<int>& acting,
+                            std::ostream *out = nullptr) const;
 
   bool subtree_type_is_down(CephContext *cct, int id, int subtree_type, std::set<int> *down_in_osds, std::set<int> *up_in_osds,
                             std::set<int> *subtree_up, std::unordered_map<int, std::set<int> > *subtree_type_down) const;

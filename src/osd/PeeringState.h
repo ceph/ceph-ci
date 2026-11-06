@@ -2796,9 +2796,7 @@ public:
    * applicable stretch cluster constraints.
    */
   bool acting_set_writeable() {
-    return get_osdmap()->num_acting_below_min_size(pool.info, acting) == 0 &&
-      (!pool.info.is_stretch_pool() ||
-       pool.info.stretch_set_can_peer(acting, *get_osdmap(), NULL));
+    return get_osdmap()->acting_set_writeable(pool.info, acting);
   }
 
   /**

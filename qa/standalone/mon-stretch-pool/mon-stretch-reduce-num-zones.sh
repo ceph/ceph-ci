@@ -401,12 +401,14 @@ function TEST_one_zone_while_monmap_changes() {
     # the leader's own monmap: a peon serves no reads while a change is
     # proposed
     local asok=$(get_asok_path mon.$leader)
-    local epoch=$(CEPH_ARGS='' ceph --admin-daemon $asok mon_status | jq .monmap.epoch)
+    local epoch now
+    epoch=$(CEPH_ARGS='' ceph --admin-daemon $asok mon_status | jq -e .monmap.epoch) || return 1
     kill -STOP $(cat $dir/mon.$peon.pid) || return 1
     ceph mon set-weight a 1 &
     local weight=$!
     sleep 1
-    test "$(CEPH_ARGS='' ceph --admin-daemon $asok mon_status | jq .monmap.epoch)" = $epoch || return 1
+    now=$(CEPH_ARGS='' ceph --admin-daemon $asok mon_status | jq -e .monmap.epoch) || return 1
+    test "$now" = "$epoch" || return 1
     ceph osd pool set data0 num_zones 1 --crush_rule data0-one-zone \
         --yes-i-really-mean-it &
     local one_zone=$!
