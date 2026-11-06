@@ -285,8 +285,24 @@ void PGScrubber::update_targets(utime_t scrub_clock_now)
 
 void PGScrubber::schedule_scrub_with_osd()
 {
+  LOG_PREFIX(PGScrubber::schedule_scrub_with_osd);
   ceph_assert(pg.is_primary());
   ceph_assert(m_scrub_job);
+
+  // Erasure-coded pools are not scrubbed yet.  chunk_validation_policy_t
+  // still hardwires is_ec() to false and logical_to_ondisk_size() to the
+  // identity (see the FIXMEs there), while classic's equivalent is
+  // shard-aware and derives the on-disk size from the pool's stripe info.
+  // On an EC pool each shard holds a chunk whose size differs from the
+  // object's logical size, so evaluate_object_shard() sets
+  // OBJ_SIZE_INFO_MISMATCH on practically every object and the entire pool
+  // is reported inconsistent.  Keep the PG out of the scrub queue until EC
+  // support is implemented.
+  if (pg.get_pool().is_erasure()) {
+    DEBUGDPP("erasure-coded pool, scrub not supported yet - not registering",
+             pg);
+    return;
+  }
 
   m_scrub_job->registered = true;
   update_scrub_job();
