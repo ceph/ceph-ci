@@ -348,25 +348,48 @@ def validate_rgw_credentials(
 
 def validate_rgw_bucket(
     executor: ToolExecer, bucket: str, user_id: str
-) -> bool:
+) -> None:
     """
-    Validate that an RGW bucket exists.
+    Validate that an RGW bucket exists and is owned by the given user.
+
+    Buckets created by users that belong to an RGW account are owned by the
+    account (owner is the account id, e.g. "RGW33567154695143645") rather
+    than the user. Such a bucket is accepted when user_id belongs to the
+    account that owns it.
+
     Args:
         executor: Any object with tool_exec() method
         bucket: The RGW bucket name
         user_id: RGW user ID (format: "tenant$user" or "user")
-    Returns:
-        True if bucket exists, False otherwise
+    Raises:
+        ValueError: If the bucket cannot be found, has no owner, the user
+                    cannot be looked up to check its account, or the owner
+                    is neither user_id nor the account of user_id
     """
     # Fetch tenant from user_id if present
-    tenant, _ = _split_tenant_user_id(user_id)
+    tenant, user_id_only = _split_tenant_user_id(user_id)
 
     formatted_bucket = _format_bucket_name(bucket, tenant)
     log.debug(f"Validating bucket {formatted_bucket}")
-    try:
-        stats = _fetch_bucket_stats(executor, bucket, tenant)
-        # If we can parse the output and it has an owner, bucket exists
-        return bool(stats.get('owner'))
-    except ValueError as e:
-        log.debug(f"Bucket {formatted_bucket} validation failed: {e}")
-        return False
+    stats = _fetch_bucket_stats(executor, bucket, tenant)
+    owner = stats.get('owner')
+    if not owner:
+        raise ValueError(f'No owner found for bucket {formatted_bucket}')
+    if owner != user_id:
+        user_info = _fetch_rgw_user_info(executor, user_id_only, tenant)
+        if user_info is None:
+            raise ValueError(
+                f"Bucket {formatted_bucket} is owned by '{owner}', and "
+                f"user '{user_id}' could not be looked up to check its account"
+            )
+        account_id = user_info.get('account_id')
+        if not account_id or owner != account_id:
+            raise ValueError(
+                f"Bucket {formatted_bucket} is owned by '{owner}', "
+                f"not by user '{user_id}' or its account"
+            )
+        log.debug(
+            f"Bucket {formatted_bucket} is owned by account {account_id} "
+            f"of user {user_id}"
+        )
+    log.debug(f"Bucket {formatted_bucket} validation successful")
