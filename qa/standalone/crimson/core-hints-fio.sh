@@ -516,12 +516,17 @@ function _osd_metrics() {
         "{\"prefix\": \"dump_metrics\", \"group\": \"$group\", \"format\": \"json\"}"
 }
 
-# sum of the objecter op_send / op_send_core counters of a mode's running
-# fio clients, printed as "<op_send> <op_send_core> <clients read>".
-# The details go to <out>.
+# sum of the objecter routing counters of a mode's running fio clients,
+# printed as "<op_send> <op_send_core> <clients read> <core_hint_change>
+# <core_route_switch>". The details go to <out>.
+#
+# core_hint_change counts the hints learned, core_route_switch the PGs that
+# acted on one. A PG only moves to its hinted core while none of its ops is
+# in flight, so switches lagging far behind hints means the PGs are too busy
+# to ever move - see _op_route() in src/osdc/Objecter.cc.
 function _client_counters() {
     local dir=$1 mode=$2 out=$3
-    local asok dump send=0 core=0 s c found=0
+    local asok dump send=0 core=0 hints=0 switches=0 s c h w found=0
     : > $out
     for asok in $dir/fio-$mode.*.asok; do
         [ -S "$asok" ] || continue
@@ -532,16 +537,21 @@ function _client_counters() {
         fi
         s=$(jq '.objecter.op_send // 0' <<<"$dump")
         c=$(jq '.objecter.op_send_core // 0' <<<"$dump")
-        echo "$asok: op_send $s op_send_core $c" >> $out
+        h=$(jq '.objecter.core_hint_change // 0' <<<"$dump")
+        w=$(jq '.objecter.core_route_switch // 0' <<<"$dump")
+        echo "$asok: op_send $s op_send_core $c core_hint_change $h" \
+             "core_route_switch $w" >> $out
         send=$((send + s))
         core=$((core + c))
+        hints=$((hints + h))
+        switches=$((switches + w))
         found=$((found + 1))
     done
     if [ $found = 0 ]; then
         echo "WARNING: no fio client ($mode) counters read; see $out" >&2
         { echo "no readable admin socket in $dir:"; ls -l $dir; } >> $out
     fi
-    echo "$send $core $found"
+    echo "$send $core $found $hints $switches"
 }
 
 # per reactor counters of all OSDs, as lines of
@@ -684,9 +694,15 @@ function _fio_run() {
         client_pct=$(awk -v s=${c[0]} -v k=${c[1]} \
                          'BEGIN { printf "%.1f", 100 * k / s }')
     fi
+    # of the hints learned, how many a PG was ever idle enough to act on
+    local switch_pct=n/a
+    if [ ${c[2]} -gt 0 ] && [ ${c[3]} -gt 0 ]; then
+        switch_pct=$(awk -v h=${c[3]} -v w=${c[4]} \
+                         'BEGIN { printf "%.1f", 100 * w / h }')
+    fi
 
     jq -r --arg rw $rw --arg mode $mode --arg rep $rep \
-          --arg hop $hop_pct --arg client $client_pct \
+          --arg hop $hop_pct --arg client $client_pct --arg switch $switch_pct \
           --arg cpu_avg $cpu_avg --arg cpu_max $cpu_max \
           --arg tasks_op $tasks_op --arg polls_op $polls_op \
           --arg segs_op $segs_op --arg clnt_cores $clnt_cores '
@@ -697,7 +713,7 @@ function _fio_run() {
          (($j.read.clat_ns.percentile["99.000000"] // 0) / 1000 | floor),
          ($j.write.clat_ns.mean / 1000 | floor),
          (($j.write.clat_ns.percentile["99.000000"] // 0) / 1000 | floor),
-         $hop, $client, $cpu_avg, $cpu_max,
+         $hop, $client, $switch, $cpu_avg, $cpu_max,
          $tasks_op, $polls_op, $segs_op, $clnt_cores] | @tsv' \
         $RESULTS_DIR/$tag.json >> $RESULTS_DIR/summary.tsv || return 1
     echo "$d_remote $((d_local + d_remote))" > $dir/$tag.hops
@@ -705,7 +721,7 @@ function _fio_run() {
 
 function _print_summary() {
     {
-        printf 'workload\tmode\trep\trd_iops\twr_iops\trd_lat_us\trd_p99_us\twr_lat_us\twr_p99_us\tosd_hop_%%\tcore_send_%%\tcpu_avg_%%\tcpu_max_%%\ttasks/op\tpolls/op\tsegs/op\tclnt_cores\n'
+        printf 'workload\tmode\trep\trd_iops\twr_iops\trd_lat_us\trd_p99_us\twr_lat_us\twr_p99_us\tosd_hop_%%\tcore_send_%%\tswitched_%%\tcpu_avg_%%\tcpu_max_%%\ttasks/op\tpolls/op\tsegs/op\tclnt_cores\n'
         cat $RESULTS_DIR/summary.tsv
     } | column -t -s $'\t' | tee $RESULTS_DIR/summary.txt
     echo "fio outputs and summary in $RESULTS_DIR"
