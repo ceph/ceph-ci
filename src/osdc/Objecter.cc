@@ -1120,11 +1120,11 @@ void Objecter::ms_fast_dispatch2(const MessageRef& m)
   switch (m->get_type()) {
   case CEPH_MSG_OSD_OPREPLY: {
     auto priv = m->get_connection()->get_priv();
-    auto s = static_cast<OSDSession*>(priv.get());
-    if (s && dispatch_to_session_strand) {
-      s->track_enqueue(m, [this, priv, s, m]() {
+    auto cp = _con_priv(priv);
+    if (cp && dispatch_to_session_strand) {
+      cp->track_enqueue(m, [this, priv, cp, m]() {
         handle_osd_op_reply(cref_cast<MOSDOpReply>(m));
-        s->track_dequeue(m);
+        cp->track_dequeue(m);
       });
     } else {
       handle_osd_op_reply(cref_cast<MOSDOpReply>(m));
@@ -1134,11 +1134,11 @@ void Objecter::ms_fast_dispatch2(const MessageRef& m)
 
   case CEPH_MSG_WATCH_NOTIFY: {
     auto priv = m->get_connection()->get_priv();
-    auto s = static_cast<OSDSession*>(priv.get());
-    if (s && dispatch_to_session_strand) {
-      s->track_enqueue(m, [this, priv, s, m]() {
+    auto cp = _con_priv(priv);
+    if (cp && dispatch_to_session_strand) {
+      cp->track_enqueue(m, [this, priv, cp, m]() {
         handle_watch_notify(cref_cast<MWatchNotify>(m));
-        s->track_dequeue(m);
+        cp->track_dequeue(m);
       });
     } else {
       handle_watch_notify(cref_cast<MWatchNotify>(m));
@@ -1157,11 +1157,11 @@ Dispatcher::dispatch_result_t Objecter::ms_dispatch2(const MessageRef& m)
 
   case CEPH_MSG_OSD_BACKOFF: {
     auto priv = m->get_connection()->get_priv();
-    auto s = static_cast<OSDSession*>(priv.get());
-    if (s && dispatch_to_session_strand) {
-      s->track_enqueue(m, [this, priv, s, m]() {
+    auto cp = _con_priv(priv);
+    if (cp && dispatch_to_session_strand) {
+      cp->track_enqueue(m, [this, priv, cp, m]() {
         handle_osd_backoff(cref_cast<MOSDBackoff>(m));
-        s->track_dequeue(m);
+        cp->track_dequeue(m);
       });
     } else {
       handle_osd_backoff(cref_cast<MOSDBackoff>(m));
@@ -1174,11 +1174,11 @@ Dispatcher::dispatch_result_t Objecter::ms_dispatch2(const MessageRef& m)
   case MSG_COMMAND_REPLY:
     if (m->get_source().type() == CEPH_ENTITY_TYPE_OSD) {
       auto priv = m->get_connection()->get_priv();
-      auto s = static_cast<OSDSession*>(priv.get());
-      if (s && dispatch_to_session_strand) {
-        s->track_enqueue(m, [this, priv, s, m]() {
+      auto cp = _con_priv(priv);
+      if (cp && dispatch_to_session_strand) {
+        cp->track_enqueue(m, [this, priv, cp, m]() {
           handle_command_reply(cref_cast<MCommandReply>(m));
-          s->track_dequeue(m);
+          cp->track_dequeue(m);
         });
       } else {
         handle_command_reply(cref_cast<MCommandReply>(m));
@@ -2061,10 +2061,10 @@ int Objecter::_get_session(int osd, OSDSession **session,
   if (!sul.owns_lock()) {
     return -EAGAIN;
   }
-  auto s = new OSDSession(cct, osd, service.get_executor());
+  auto s = new OSDSession(cct, osd);
   osd_sessions[osd] = s;
   s->con = messenger->connect_to_osd(osdmap->get_addrs(osd));
-  s->con->set_priv(RefCountedPtr{s});
+  _attach_con(s->con, s);
   logger->inc(l_osdc_osd_session_open);
   logger->set(l_osdc_osd_sessions, osd_sessions.size());
   s->get();
@@ -2109,7 +2109,7 @@ void Objecter::_reopen_session(OSDSession *s)
   }
   _close_core_cons(s);
   s->con = messenger->connect_to_osd(addrs);
-  s->con->set_priv(RefCountedPtr{s});
+  _attach_con(s->con, s);
   s->incarnation++;
   logger->inc(l_osdc_osd_session_open);
 }
@@ -2347,7 +2347,7 @@ void Objecter::_session_apply_core_hint(OSDSession *s,
   logger->inc(l_osdc_core_hint_change);
   if (!s->core_cons.contains(hint.core)) {
     auto con = messenger->connect_to_osd(hint.addrs);
-    con->set_priv(RefCountedPtr{s});
+    _attach_con(con, s);
     s->core_cons[hint.core] = con;
     logger->inc(l_osdc_core_cons);
     logger->inc(l_osdc_core_con_open);
@@ -4200,7 +4200,7 @@ void Objecter::handle_osd_op_reply(cref_t<MOSDOpReply> m)
 
   ConnectionRef con = m->get_connection();
   auto priv = con->get_priv();
-  auto s = static_cast<OSDSession*>(priv.get());
+  auto s = _con_session(priv);
   if (!s) {
     ldout(cct, 7) << __func__ << " no session on con " << con << dendl;
     return;
@@ -4420,7 +4420,7 @@ void Objecter::handle_osd_backoff(cref_t<MOSDBackoff> m)
 
   ConnectionRef con = m->get_connection();
   auto priv = con->get_priv();
-  auto s = static_cast<OSDSession*>(priv.get());
+  auto s = _con_session(priv);
   if (!s) {
     ldout(cct, 7) << __func__ << " no session on con " << con << dendl;
     return;
@@ -5297,7 +5297,7 @@ bool Objecter::ms_handle_reset(Connection *con)
     unique_lock wl(rwlock);
 
     auto priv = con->get_priv();
-    auto session = static_cast<OSDSession*>(priv.get());
+    auto session = _con_session(priv);
     if (session) {
       ldout(cct, 1) << "ms_handle_reset " << con << " session " << session
 		    << " osd." << session->osd << dendl;
@@ -5588,19 +5588,42 @@ int Objecter::RequestStateHook::call(std::string_view command,
 }
 
 void Objecter::dump_session_strands(Formatter *f) {
-  shared_lock rl(rwlock);
-  f->open_array_section("osd_sessions");
-  for (const auto& [osd, s] : osd_sessions) {
-    f->open_object_section("session");
-    f->dump_int("osd", osd);
-    std::lock_guard l(s->strand_track_lock);
+  // the queue of one connection, as "connection" object
+  auto dump_con = [f](const char *which, const ConnectionRef& con) {
+    if (!con) {
+      return;
+    }
+    auto priv = con->get_priv();
+    auto *cp = _con_priv(priv);
+    if (!cp) {
+      return;
+    }
+    f->open_object_section("connection");
+    f->dump_string("which", which);
+    std::lock_guard l(cp->strand_track_lock);
     f->open_array_section("queued_messages");
-    for (const auto& msg : s->queued_messages) {
+    for (const auto& msg : cp->queued_messages) {
       CachedStackStringStream css;
       *css << *msg;
       f->dump_string("message", css->strv());
     }
     f->close_section(); // queued_messages
+    f->close_section(); // connection
+  };
+
+  shared_lock rl(rwlock);
+  f->open_array_section("osd_sessions");
+  for (const auto& [osd, s] : osd_sessions) {
+    f->open_object_section("session");
+    f->dump_int("osd", osd);
+    f->open_array_section("connections");
+    shared_lock sl(s->lock);
+    dump_con("main", s->con);
+    for (const auto& [core, con] : s->core_cons) {
+      dump_con(fmt::format("core {}", core).c_str(), con);
+    }
+    sl.unlock();
+    f->close_section(); // connections
     f->close_section(); // session
   }
   f->close_section(); // osd_sessions
@@ -5641,7 +5664,7 @@ void Objecter::handle_command_reply(cref_t<MCommandReply> m)
 
   ConnectionRef con = m->get_connection();
   auto priv = con->get_priv();
-  auto s = static_cast<OSDSession*>(priv.get());
+  auto s = _con_session(priv);
   if (!s || s->con != con) {
     ldout(cct, 7) << __func__ << " no session on con " << con << dendl;
     return;
@@ -5900,8 +5923,8 @@ Objecter::Objecter(CephContext *cct,
 		   std::string_view admin_socket_name) :
   Dispatcher(cct), messenger(m), monc(mc), service(service),
   m_admin_socket_name(admin_socket_name),
-  homeless_session(new OSDSession(cct, -1, service.get_executor())),
-  splitop_session(new OSDSession(cct, -2, service.get_executor())) // -2 to differentiate from homeless
+  homeless_session(new OSDSession(cct, -1)),
+  splitop_session(new OSDSession(cct, -2)) // -2 to differentiate from homeless
 {
   mon_timeout = cct->_conf.get_val<std::chrono::seconds>("rados_mon_op_timeout");
   osd_timeout = cct->_conf.get_val<std::chrono::seconds>("rados_osd_op_timeout");

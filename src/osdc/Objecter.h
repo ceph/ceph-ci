@@ -2539,25 +2539,6 @@ public:
     // lockdep (using std::sharedMutex) because lockdep doesn't know
     // that.
     std::shared_mutex lock;
-    boost::asio::strand<boost::asio::io_context::executor_type> strand;
-
-    std::mutex strand_track_lock;
-    std::deque<MessageRef> queued_messages;
-
-    template <typename Callable>
-    void track_enqueue(const MessageRef& m, Callable&& f) {
-      std::lock_guard l(strand_track_lock);
-      queued_messages.push_back(m);
-      boost::asio::post(strand, std::forward<Callable>(f));
-    }
-
-    void track_dequeue(const MessageRef& m) {
-      std::lock_guard l(strand_track_lock);
-      ceph_assert(!queued_messages.empty());
-      auto const& _m = queued_messages.front();
-      ceph_assert(_m == m);
-      queued_messages.pop_front();
-    }
 
     int incarnation;
     ConnectionRef con;
@@ -2583,8 +2564,8 @@ public:
     int num_locks;
     std::unique_ptr<std::mutex[]> completion_locks;
 
-    OSDSession(CephContext *cct, int o, boost::asio::io_context::executor_type ex) :
-      osd(o), strand(ex), incarnation(0), con(NULL),
+    OSDSession(CephContext *cct, int o) :
+      osd(o), incarnation(0), con(NULL),
       num_locks(cct->_conf->objecter_completion_locks_per_session),
       completion_locks(new std::mutex[num_locks]) {}
 
@@ -2601,6 +2582,59 @@ public:
 
     std::unique_lock<std::mutex> get_lock(object_t& oid);
   };
+
+  /// the Objecter's private state on one connection of a session, held by
+  /// Connection::priv. Each connection has its own strand, so that the
+  /// replies arriving on a session's per-core connections (see
+  /// OSDSession::core_cons) are not serialised against one another. A
+  /// session with a single connection - the only case when
+  /// objecter_use_osd_core_hints is off - behaves just as one strand per
+  /// session did.
+  struct ConPriv : public RefCountedObject {
+    /// the session this connection belongs to. Holding a reference here
+    /// mirrors what Connection::priv used to hold directly: the cycle it
+    /// forms with OSDSession::con is broken by the set_priv(NULL) calls.
+    ceph::ref_t<OSDSession> session;
+    boost::asio::strand<boost::asio::io_context::executor_type> strand;
+
+    std::mutex strand_track_lock;
+    std::deque<MessageRef> queued_messages;
+
+    ConPriv(OSDSession *s, boost::asio::io_context::executor_type ex)
+      : session(s), strand(ex) {}
+
+    template <typename Callable>
+    void track_enqueue(const MessageRef& m, Callable&& f) {
+      std::lock_guard l(strand_track_lock);
+      queued_messages.push_back(m);
+      boost::asio::post(strand, std::forward<Callable>(f));
+    }
+
+    void track_dequeue(const MessageRef& m) {
+      std::lock_guard l(strand_track_lock);
+      ceph_assert(!queued_messages.empty());
+      auto const& _m = queued_messages.front();
+      ceph_assert(_m == m);
+      queued_messages.pop_front();
+    }
+  };
+
+  /// the ConPriv of a connection, if the Objecter attached one
+  static ConPriv *_con_priv(const RefCountedPtr& priv) {
+    return static_cast<ConPriv*>(priv.get());
+  }
+
+  /// the session a connection belongs to, or nullptr
+  static OSDSession *_con_session(const RefCountedPtr& priv) {
+    auto *cp = _con_priv(priv);
+    return cp ? cp->session.get() : nullptr;
+  }
+
+  /// attach the Objecter's per-connection state to con, for session s
+  void _attach_con(const ConnectionRef& con, OSDSession *s) {
+    con->set_priv(ceph::make_ref<ConPriv>(s, service.get_executor()));
+  }
+
   std::map<int,OSDSession*> osd_sessions;
 
   bool osdmap_full_flag() const;
