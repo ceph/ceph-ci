@@ -141,15 +141,22 @@ bool ReplicatedBackend::is_cross_zone(pg_shard_t peer) const
   const pg_pool_t &pool = get_parent()->get_pool();
   if (pool.peering_crush_bucket_count == 0)
     return false;
-  int my_zone = get_osdmap()->crush->get_parent_of_type(
-      get_parent()->whoami_shard().osd,
-      pool.peering_crush_bucket_barrier,
-      pool.crush_rule);
-  int peer_zone = get_osdmap()->crush->get_parent_of_type(
-      peer.osd,
-      pool.peering_crush_bucket_barrier,
-      pool.crush_rule);
-  return my_zone != peer_zone;
+  if (cross_zone_epoch != get_osdmap_epoch()) {
+    cross_zone_epoch = get_osdmap_epoch();
+    cross_zone_osds.clear();
+  }
+  auto [i, added] = cross_zone_osds.try_emplace(peer.osd, false);
+  if (added) {
+    const auto &crush = get_osdmap()->crush;
+    i->second =
+      crush->get_parent_of_type(get_parent()->whoami_shard().osd,
+                                pool.peering_crush_bucket_barrier,
+                                pool.crush_rule) !=
+      crush->get_parent_of_type(peer.osd,
+                                pool.peering_crush_bucket_barrier,
+                                pool.crush_rule);
+  }
+  return i->second;
 }
 
 void ReplicatedBackend::run_recovery_op(

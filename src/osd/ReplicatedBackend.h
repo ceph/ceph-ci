@@ -216,7 +216,10 @@ public:
 
  private:
 
+  // whether peer is in another zone, worked out once per osdmap epoch
   bool is_cross_zone(pg_shard_t peer) const;
+  mutable epoch_t cross_zone_epoch = 0;
+  mutable std::map<int, bool> cross_zone_osds;
 
   // push
   struct push_info_t {

@@ -82,8 +82,7 @@ struct ECCommon {
 
   static bool is_cross_zone(ECListener *parent,
                             const ECUtil::stripe_info_t &sinfo,
-                            pg_shard_t peer,
-                            const OSDMapRef &osdmap);
+                            pg_shard_t peer);
 
   virtual void handle_sub_write(
       pg_shard_t from,
