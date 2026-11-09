@@ -422,13 +422,14 @@ function TEST_num_zones_while_pgs_change() {
         per_zone_one rt-single-zone e-single-zone || return 1
 
     # z2 down: rt stays readable from z1, and the pools go to two zones with
-    # it down, and recover when it is back
+    # it down (a PG of r or e whose copies were all in z2 waits for it), and
+    # recover when it is back
     kill_zone $dir 2 || return 1
     check_pools $dir rt || return 1
     ceph osd pool set r num_zones 2 --replica 2 || return 1
     ceph osd pool set e num_zones 2 || return 1
     wait_for_stretch_state 1 0 || return 1
-    check_pools $dir r e || return 1
+    check_pools $dir rt || return 1
     restore_zone $dir 2 || return 1
     wait_for_stretch_state 0 0 || return 1
     check_two_zones r zone 2 || return 1
