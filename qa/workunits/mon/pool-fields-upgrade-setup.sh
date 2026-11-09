@@ -3,18 +3,25 @@
 set -euo pipefail
 
 scenario=${POOL_FIELD_SCENARIO:?POOL_FIELD_SCENARIO must be set}
+# 2az only: the zones' bucket type, the kind of rule global stretch mode is
+# enabled with (take each zone, choose the zones, or choose them in the class
+# of osd.0), and whether each zone is under a region of its own
+zone_type=${POOL_FIELD_ZONE_TYPE:-datacenter}
+rule_kind=${POOL_FIELD_RULE:-take}
+deep=${POOL_FIELD_DEEP:-}
 pool=pool_fields_upgrade
 rule=pool_fields_upgrade_rule
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
 case "$scenario" in
-    2az|3az) ;;
+    2az|3az|ec) ;;
     *)
         echo "unknown pool field scenario: $scenario"
         exit 1
         ;;
 esac
+[[ "$scenario" == 2az ]] || zone_type=datacenter
 
 osd_count=$(ceph osd ls | wc -l)
 if [[ "$osd_count" -lt 8 ]]; then
@@ -24,27 +31,31 @@ fi
 
 ceph config set osd osd_crush_update_on_start false
 
-# stretch mode counts every datacenter bucket: the 2az tiebreaker has none
+# stretch mode counts every zone bucket: the 2az tiebreaker has none
 zones="dc1 dc2"
 [[ "$scenario" == 3az ]] && zones="$zones dc3"
 for zone in $zones; do
-    ceph osd crush add-bucket "$zone" datacenter
-    ceph osd crush move "$zone" root=default
+    ceph osd crush add-bucket "$zone" "$zone_type"
+    if [[ -n "$deep" ]]; then
+        ceph osd crush add-bucket "region-$zone" region
+        ceph osd crush move "region-$zone" root=default
+        ceph osd crush move "$zone" "region=region-$zone"
+    else
+        ceph osd crush move "$zone" root=default
+    fi
 done
 
 for osd in {0..7}; do
     host=$(printf 'host%02d' "$((osd + 1))")
     ceph osd crush add-bucket "$host" host
-    if [[ "$scenario" == 2az ]]; then
-        if [[ "$osd" -lt 4 ]]; then
-            zone=dc1
-        else
-            zone=dc2
-        fi
-    else
+    if [[ "$scenario" == 3az ]]; then
         zone=$(printf 'dc%d' "$((osd % 3 + 1))")
+    elif [[ "$osd" -lt 4 ]]; then
+        zone=dc1
+    else
+        zone=dc2
     fi
-    ceph osd crush move "$host" "datacenter=$zone"
+    ceph osd crush move "$host" "$zone_type=$zone"
     ceph osd crush move "osd.$osd" "host=$host"
 done
 
@@ -53,7 +64,7 @@ crushtool --decompile "$tmpdir/crushmap" > "$tmpdir/crushmap.txt"
 sed 's/^# end crush map$//' "$tmpdir/crushmap.txt" > "$tmpdir/crushmap_modified.txt"
 rule_id=$(ceph osd crush dump -f json | jq '[.rules[].rule_id] | max + 1')
 
-if [[ "$scenario" == 2az ]]; then
+if [[ "$scenario" == 2az && "$rule_kind" == take ]]; then
     cat >> "$tmpdir/crushmap_modified.txt" <<EOF
 rule $rule {
         id $rule_id
@@ -65,9 +76,21 @@ rule $rule {
         step chooseleaf firstn 2 type host
         step emit
 }
-# end crush map
 EOF
-else
+elif [[ "$scenario" == 2az ]]; then
+    take=default
+    [[ "$rule_kind" == class ]] && take="default class $(ceph osd crush get-device-class osd.0)"
+    cat >> "$tmpdir/crushmap_modified.txt" <<EOF
+rule $rule {
+        id $rule_id
+        type replicated
+        step take $take
+        step choose firstn 2 type $zone_type
+        step chooseleaf firstn 2 type host
+        step emit
+}
+EOF
+elif [[ "$scenario" == 3az ]]; then
     cat >> "$tmpdir/crushmap_modified.txt" <<EOF
 rule $rule {
         id $rule_id
@@ -77,27 +100,72 @@ rule $rule {
         step chooseleaf firstn 2 type host
         step emit
 }
-# end crush map
+EOF
+else
+    # an erasure rule that puts 2 of k+m=4 shards in each zone
+    cat >> "$tmpdir/crushmap_modified.txt" <<EOF
+rule ec_hand_rule {
+        id $rule_id
+        type erasure
+        step set_chooseleaf_tries 5
+        step set_choose_tries 100
+        step take default
+        step choose indep 2 type datacenter
+        step chooseleaf indep 2 type host
+        step emit
+}
 EOF
 fi
+echo '# end crush map' >> "$tmpdir/crushmap_modified.txt"
 
 crushtool --compile "$tmpdir/crushmap_modified.txt" -o "$tmpdir/crushmap.bin"
 ceph osd setcrushmap -i "$tmpdir/crushmap.bin"
 
-if [[ "$scenario" == 2az ]]; then
+# objects whose content follows from their names, for the verify workunit
+write_objects() {
+    local p=$1 i
+    for i in {1..10}; do
+        seq "$((i * 1000))" | sed "s/^/$p /" | rados -p "$p" put "upgrade-obj$i" -
+    done
+}
+
+if [[ "$scenario" != 3az ]]; then
     ceph mon set election_strategy connectivity
     ceph mon add disallowed_leader c
-    ceph mon set_location a datacenter=dc1 host=host01
-    ceph mon set_location b datacenter=dc2 host=host05
-    ceph mon set_location c datacenter=dc3 host=arbiter
+    ceph mon set_location a "$zone_type=dc1" host=host01
+    ceph mon set_location b "$zone_type=dc2" host=host05
+    ceph mon set_location c "$zone_type=dc3" host=arbiter
+fi
 
+if [[ "$scenario" == 2az ]]; then
     ceph osd pool create "$pool" 8 8 "$rule"
     ceph osd pool set "$pool" size 4
     ceph osd pool set "$pool" min_size 2
     ceph osd pool application enable "$pool" rados
-    ceph mon enable_stretch_mode c "$rule" datacenter
+    ceph mon enable_stretch_mode c "$rule" "$zone_type"
+    write_objects "$pool"
 elif [[ "$scenario" == 3az ]]; then
     ceph osd pool create "$pool" 8 8 replicated_rule
     ceph osd pool stretch set "$pool" 2 3 datacenter "$rule" 6 3
     ceph osd pool application enable "$pool" rados
+else
+    # erasure coded pools before the commit: FastEC on a profile of its own,
+    # two plain pools that share the rule erasure-code, a legacy EC pool, and
+    # a FastEC pool on a hand-written rule over both zones
+    ceph osd erasure-code-profile set fast22 k=2 m=2 crush-failure-domain=host
+    ceph osd erasure-code-profile set legacy21 k=2 m=1 crush-failure-domain=host
+    ceph osd pool create ec_fast 8 8 erasure fast22
+    ceph osd pool create ec_shared1 8 8 erasure
+    ceph osd pool create ec_shared2 8 8 erasure
+    ceph osd pool create ec_legacy 8 8 erasure legacy21
+    ceph osd pool create ec_hand 8 8 erasure fast22 ec_hand_rule
+    for p in ec_fast ec_shared1 ec_shared2 ec_hand; do
+        ceph osd pool set "$p" allow_ec_optimizations true
+    done
+    for p in ec_fast ec_shared1 ec_shared2 ec_legacy ec_hand; do
+        ceph osd pool application enable "$p" rados
+        write_objects "$p"
+    done
+    test "$(ceph osd pool get ec_shared1 crush_rule -f json | jq -r .crush_rule)" = erasure-code
+    test "$(ceph osd pool get ec_shared2 crush_rule -f json | jq -r .crush_rule)" = erasure-code
 fi
