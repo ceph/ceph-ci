@@ -728,8 +728,8 @@ void ECCommon::ReadPipeline::do_read_op(ReadOp &rop) {
           requested += extent.get<1>();
         }
       }
-      get_parent()->get_logger()->inc(l_osd_stretch_cross_zone_read_ops);
-      get_parent()->get_logger()->inc(l_osd_stretch_cross_zone_read_sent_bytes,
+      get_parent()->get_perf_logger().inc(l_osd_stretch_cross_zone_read_ops);
+      get_parent()->get_perf_logger().inc(l_osd_stretch_cross_zone_read_sent_bytes,
                                       requested);
       rop.cross_zone_read_dispatch_time[pg_shard] = ceph_clock_now();
     }
@@ -1196,8 +1196,8 @@ void ECCommon::RMWPipeline::cache_ready(Op &op) {
       r->min_epoch = get_parent()->get_interval_start_epoch();
       r->trace = trace;
       if (should_send && is_cross_zone(get_parent(), sinfo, pg_shard, get_osdmap())) {
-        get_parent()->get_logger()->inc(l_osd_stretch_cross_zone_write_ops);
-        get_parent()->get_logger()->inc(l_osd_stretch_cross_zone_write_bytes,
+        get_parent()->get_perf_logger().inc(l_osd_stretch_cross_zone_write_ops);
+        get_parent()->get_perf_logger().inc(l_osd_stretch_cross_zone_write_bytes,
                                         sub_write_bytes);
         op.cross_zone_write_dispatch_time[pg_shard] = ceph_clock_now();
       }
@@ -1510,9 +1510,9 @@ void ECCommon::RecoveryBackend::handle_recovery_push_reply(
 
   if (rop.cross_zone_recovery_push_dispatch_time.contains(from)) {
     utime_t lat = ceph_clock_now() - rop.cross_zone_recovery_push_dispatch_time.at(from);
-    get_parent()->get_logger()->tinc(l_osd_stretch_cross_zone_recovery_push_lat,
+    get_parent()->get_perf_logger().tinc(l_osd_stretch_cross_zone_recovery_push_lat,
                                      lat);
-    get_parent()->get_logger()->hinc(l_osd_stretch_cross_zone_recovery_push_lat_hist,
+    get_parent()->get_perf_logger().hinc(l_osd_stretch_cross_zone_recovery_push_lat_hist,
                                      lat.to_nsec(), 0);
   }
 
@@ -1870,8 +1870,8 @@ void ECCommon::RecoveryBackend::continue_recovery_op(
         op.returned_data->get_sparse_buffer(rel_shard, pop.data, pop.data_included);
         ceph_assert(pop.data.length() == pop.data_included.size());
         if (is_cross_zone(get_parent(), sinfo, pg_shard, get_osdmap())) {
-          get_parent()->get_logger()->inc(l_osd_stretch_cross_zone_recovery_push_ops);
-          get_parent()->get_logger()->inc(l_osd_stretch_cross_zone_recovery_push_bytes,
+          get_parent()->get_perf_logger().inc(l_osd_stretch_cross_zone_recovery_push_ops);
+          get_parent()->get_perf_logger().inc(l_osd_stretch_cross_zone_recovery_push_bytes,
                                           pop.data.length());
           op.cross_zone_recovery_push_dispatch_time[pg_shard] = ceph_clock_now();
         }

@@ -263,11 +263,11 @@ public:
     return pg_log;
   }
 
-  PerfCounters *get_logger() override {
+  PerfCounters &get_perf_logger() override {
     if (!perf_logger) {
       perf_logger.reset(build_osd_logger(g_ceph_context));
     }
-    return perf_logger.get();
+    return *perf_logger;
   }
 
   DoutPrefixProvider *get_dpp() override {

@@ -645,6 +645,9 @@ public:
   }
 
   PerfCounters *get_logger() override;
+  PerfCounters &get_perf_logger() override {
+    return PG::get_perf_logger();
+  }
 
   ceph_tid_t get_tid() override { return osd->get_tid(); }
 
