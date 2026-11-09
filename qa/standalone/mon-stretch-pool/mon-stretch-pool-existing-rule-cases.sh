@@ -37,6 +37,8 @@ function TEST_zones_in_opposite_order() {
     local dir=$1
     local -x CEPH_ARGS="$CEPH_ARGS"
     zone_cluster $dir zone || return 1
+    # a pool created on a rule takes the default zone type
+    ceph config set global osd_pool_default_zone_failure_domain zone || return 1
     add_rules $dir << EOF || return 1
 rule rev2 {
         id 10
@@ -93,6 +95,7 @@ EOF
 function TEST_zones_under_a_bucket() {
     local dir=$1
     zone_cluster $dir zone || return 1
+    ceph config set global osd_pool_default_zone_failure_domain zone || return 1
     ceph osd crush add-bucket site region || return 1
     ceph osd crush move site root=default || return 1
     ceph osd crush move z1 region=site || return 1
