@@ -19,31 +19,6 @@ function run() {
 UNSTRETCH_DOC='"Unstretching an Erasure-Coded Pool Without Migration" in the Stretch Clusters documentation'
 DISABLE_DOC='"Disabling Stretch Mode" in the Stretch Clusters documentation'
 
-# write count objects named prefix<i> to pool, keeping what was written
-function write_objects() {
-    local dir=$1 pool=$2 prefix=$3 count=$4 i
-    for i in $(seq 0 $((count - 1))); do
-        dd if=/dev/urandom of=$dir/$prefix$i bs=4k count=$((1 + i % 8)) status=none
-        rados -p $pool put $prefix$i $dir/$prefix$i || return 1
-    done
-}
-
-function check_objects() {
-    local dir=$1 pool=$2 prefix=$3 count=$4 i
-    for i in $(seq 0 $((count - 1))); do
-        timeout 120 rados -p $pool get $prefix$i $dir/got || return 1
-        cmp $dir/got $dir/$prefix$i || return 1
-    done
-}
-
-# the number of PGs of pool that are not active
-function inactive_pgs() {
-    local pool=$1
-    flush_pg_stats > /dev/null || return 1
-    ceph pg ls-by-pool $pool -f json |
-        jq '[.pg_stats[] | select(.state | startswith("active") | not)] | length'
-}
-
 # the number of PGs of pool that are not active, once none is peering
 function settled_inactive_pgs() {
     local pool=$1 i
@@ -55,17 +30,6 @@ function settled_inactive_pgs() {
         sleep 2
     done
     inactive_pgs $pool
-}
-
-# no PG of pool inactive
-function wait_for_active() {
-    local pool=$1 i
-    for i in $(seq 1 150); do
-        test "$(inactive_pgs $pool)" = 0 && return 0
-        sleep 2
-    done
-    ceph pg ls-by-pool $pool
-    return 1
 }
 
 # the PGs of the erasure coded pool whose acting set has fewer than 2 of its
