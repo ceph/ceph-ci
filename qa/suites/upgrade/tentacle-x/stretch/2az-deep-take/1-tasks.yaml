@@ -29,7 +29,7 @@ tasks:
         - mon/pool-fields-upgrade-setup.sh
     env:
       POOL_FIELD_SCENARIO: 2az
-      POOL_FIELD_DEEP: 1
+      POOL_FIELD_DEEP: "1"
 - cephadm.shell:
     env: [sha1]
     mon.a:
@@ -45,4 +45,4 @@ tasks:
         - mon/pool-fields-upgrade-verify.sh
     env:
       POOL_FIELD_SCENARIO: 2az
-      POOL_FIELD_DEEP: 1
+      POOL_FIELD_DEEP: "1"
