@@ -15,7 +15,7 @@ tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
 case "$scenario" in
-    2az|3az|ec) ;;
+    2az|3az|ec|rules) ;;
     *)
         echo "unknown pool field scenario: $scenario"
         exit 1
@@ -101,6 +101,34 @@ rule $rule {
         step emit
 }
 EOF
+elif [[ "$scenario" == rules ]]; then
+    # Rook's stretch rule, a rule whose placement cannot be read for a pool
+    # in one zone, and a rule that no pool uses
+    cat >> "$tmpdir/crushmap_modified.txt" <<EOF
+rule rook_stretch {
+        id $rule_id
+        type replicated
+        step take default
+        step choose firstn 0 type datacenter
+        step chooseleaf firstn 2 type host
+        step emit
+}
+rule per_zone_one {
+        id $((rule_id + 1))
+        type replicated
+        step take default
+        step choose firstn 0 type datacenter
+        step chooseleaf firstn 1 type host
+        step emit
+}
+rule spare {
+        id $((rule_id + 2))
+        type replicated
+        step take default
+        step chooseleaf firstn 0 type host
+        step emit
+}
+EOF
 else
     # an erasure rule that puts 2 of k+m=4 shards in each zone
     cat >> "$tmpdir/crushmap_modified.txt" <<EOF
@@ -148,6 +176,37 @@ elif [[ "$scenario" == 3az ]]; then
     ceph osd pool create "$pool" 8 8 replicated_rule
     ceph osd pool stretch set "$pool" 2 3 datacenter "$rule" 6 3
     ceph osd pool application enable "$pool" rados
+elif [[ "$scenario" == rules ]]; then
+    # pools on rules of every kind, some in pairs: a create-replicated rule
+    # of a class, the erasure-code rule of plain EC pools (one of them a
+    # legacy EC pool), a create-erasure rule, Rook's rule and per_zone_one;
+    # a compat weight-set and pool weight-sets
+    ceph osd crush rule create-replicated class_hosts default host \
+        "$(ceph osd crush get-device-class osd.0)"
+    ceph osd erasure-code-profile set fast22osd k=2 m=2 crush-failure-domain=osd
+    ceph osd crush rule create-erasure osds fast22osd
+    ceph osd pool create rcls1 8 8 replicated class_hosts
+    ceph osd pool create rcls2 8 8 replicated class_hosts
+    ceph osd pool create e1 8 8 erasure
+    ceph osd pool create e2 8 8 erasure
+    ceph osd pool set e1 allow_ec_optimizations true
+    ceph osd pool create eosd 8 8 erasure fast22osd osds
+    ceph osd pool set eosd allow_ec_optimizations true
+    for p in rrook1 rrook2; do
+        ceph osd pool create "$p" 8 8 replicated rook_stretch
+        ceph osd pool set "$p" size 4
+    done
+    ceph osd pool create runread 8 8 replicated per_zone_one
+    ceph osd pool set runread size 2
+    ceph osd crush weight-set create-compat
+    ceph osd crush weight-set reweight-compat osd.0 0.9
+    # not positional on a class rule: https://tracker.ceph.com/issues/82900
+    ceph osd crush weight-set create rcls1 flat
+    ceph osd crush weight-set create rrook1 positional
+    for p in rcls1 rcls2 e1 e2 eosd rrook1 rrook2 runread; do
+        ceph osd pool application enable "$p" rados
+        write_objects "$p"
+    done
 else
     # erasure coded pools before the commit: FastEC on a profile of its own,
     # two plain pools that share the rule erasure-code, a legacy EC pool, and

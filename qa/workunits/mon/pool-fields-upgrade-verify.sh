@@ -158,6 +158,59 @@ case "$scenario" in
             exit 1
         fi
         ;;
+    rules)
+        # the commit removes no rule, moves no pool and keeps the weight-sets
+        for r in class_hosts erasure-code osds rook_stretch per_zone_one spare; do
+            has_rule "$r"
+        done
+        test "$(rule_of rcls1)" = class_hosts
+        test "$(rule_of e1)" = erasure-code
+        test "$(rule_of eosd)" = osds
+        test "$(rule_of rrook1)" = rook_stretch
+        test "$(rule_of runread)" = per_zone_one
+        ceph osd crush weight-set ls | grep -qx '(compat)'
+        ceph osd crush weight-set ls | grep -qx rcls1
+        ceph osd crush weight-set ls | grep -qx rrook1
+        all="rcls1 rcls2 e1 e2 eosd rrook1 rrook2 runread"
+        wait_for_clean
+        for p in $all; do
+            check_objects "$p"
+        done
+
+        # then num_zones 2 keeps or replaces each rule, or is refused, as its
+        # placement allows, and each rule goes with its last pool
+        ceph osd pool set rcls1 num_zones 2 --replica 2
+        has_rule class_hosts
+        ceph osd pool set rcls2 num_zones 2 --replica 2
+        no_rule class_hosts
+        ceph osd pool set e1 num_zones 2
+        has_rule erasure-code
+        expect_refusal "is a legacy EC pool" ceph osd pool set e2 num_zones 2
+        ceph osd pool set e2 allow_ec_optimizations true
+        ceph osd pool set e2 num_zones 2
+        no_rule erasure-code
+        ceph osd pool set eosd num_zones 2
+        no_rule osds
+        expect_refusal "cannot read the placement of its CRUSH rule" \
+            ceph osd pool set rrook1 num_zones 2 --replica 2
+        ceph osd pool set rrook1 num_zones 2 --replica 2 --crush_rule rook_stretch
+        ceph osd pool set rrook2 num_zones 2 --replica 2 --root default \
+            --osd_failure_domain host --no-class
+        has_rule rook_stretch
+        expect_refusal "cannot read the placement of its CRUSH rule" \
+            ceph osd pool set runread num_zones 2 --replica 2
+        ceph osd pool set runread num_zones 2 --replica 2 --root default \
+            --osd_failure_domain host --no-class
+        no_rule per_zone_one
+        has_rule spare
+        for p in $all; do
+            test "$(ceph osd pool get "$p" num_zones -f json | jq .num_zones)" = 2
+        done
+        wait_for_clean
+        for p in $all; do
+            check_objects "$p"
+        done
+        ;;
     *)
         echo "unknown pool field scenario: $scenario"
         exit 1
