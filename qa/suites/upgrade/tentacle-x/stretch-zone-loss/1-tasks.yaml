@@ -38,6 +38,9 @@ overrides:
       - but it is still running
       - do not have an application enabled
       - POOL_APP_NOT_ENABLED
+# dc2's Tentacle OSDs stay down from the second loss until they are upgraded
+watchdog:
+  daemon_timeout: 3600
 tasks:
 - install:
     branch: tentacle
