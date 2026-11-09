@@ -3,8 +3,11 @@
 set -euo pipefail
 
 scenario=${POOL_FIELD_SCENARIO:?POOL_FIELD_SCENARIO must be set}
+zone_type=${POOL_FIELD_ZONE_TYPE:-datacenter}
 pool=pool_fields_upgrade
 rule=pool_fields_upgrade_rule
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
 
 pool_map=$(ceph osd pool ls detail -f json)
 
@@ -13,6 +16,52 @@ if ! ceph osd dump -f json | jq -r .flags | grep -q stretch_zones; then
     echo "the upgrade commit did not set the OSDMap flag stretch_zones"
     exit 1
 fi
+
+# the objects of pool p as the setup workunit wrote them
+check_objects() {
+    local p=$1 i
+    for i in {1..10}; do
+        rados -p "$p" get "upgrade-obj$i" "$tmpdir/got"
+        cmp "$tmpdir/got" <(seq "$((i * 1000))" | sed "s/^/$p /")
+    done
+}
+
+wait_for_clean() {
+    local i
+    for i in $(seq 180); do
+        ceph pg stat -f json | jq -e '[.pg_summary.num_pg_by_state[] |
+            select(.name != "active+clean")] | length == 0' > /dev/null && return 0
+        sleep 5
+    done
+    ceph pg stat
+    return 1
+}
+
+rule_of() {
+    ceph osd pool get "$1" crush_rule -f json | jq -r .crush_rule
+}
+
+has_rule() {
+    ceph osd crush rule ls | grep -qx "$1"
+}
+
+# command "$@" must fail with expected in its error
+expect_refusal() {
+    local expected=$1
+    shift
+    if "$@" 2> "$tmpdir/err"; then
+        echo "not refused: $*"
+        exit 1
+    fi
+    grep -q -- "$expected" "$tmpdir/err"
+}
+
+no_rule() {
+    if has_rule "$1"; then
+        echo "rule $1 was not removed"
+        exit 1
+    fi
+}
 
 check_pool_fields() {
     local zones=$1 replica=$2 size=$3 min_size=$4
@@ -34,6 +83,55 @@ check_pool_fields() {
 case "$scenario" in
     2az)
         check_pool_fields 2 2 4 1
+        # the pool keeps its rule, and its zones the bucket type it had
+        test "$(rule_of "$pool")" = "$rule"
+        type_id=$(ceph osd crush dump -f json |
+            jq --arg t "$zone_type" '.types[] | select(.name == $t) | .type_id')
+        jq -e --arg pool "$pool" --argjson t "$type_id" \
+            'any(.[]; .pool_name == $pool and .peering_crush_bucket_barrier == $t)' \
+            <<< "$pool_map"
+        test "$(ceph config get mon osd_pool_default_zone_failure_domain)" = "$zone_type"
+        wait_for_clean
+        check_objects "$pool"
+        ;;
+    ec)
+        # the commit changes no erasure coded pool: each keeps its rule and
+        # placement, and the plain pools get copies of the default profile
+        test "$(rule_of ec_fast)" = ec_fast
+        test "$(rule_of ec_shared1)" = erasure-code
+        test "$(rule_of ec_shared2)" = erasure-code
+        test "$(rule_of ec_hand)" = ec_hand_rule
+        ceph osd pool get ec_fast erasure_code_profile | grep -qx 'erasure_code_profile: fast22'
+        ceph osd pool get ec_shared1 erasure_code_profile | grep -q 'erasure_code_profile: ec_shared1-'
+        wait_for_clean
+        for p in ec_fast ec_shared1 ec_shared2 ec_legacy ec_hand; do
+            check_objects "$p"
+        done
+
+        # then num_zones 2 refuses the legacy EC pool, and for ec_hand,
+        # whose rule's placement cannot be read in one zone, needs the
+        # placement given; each rule goes with its last pool
+        expect_refusal "is a legacy EC pool" \
+            ceph osd pool set ec_legacy num_zones 2
+        ceph osd pool set ec_fast num_zones 2
+        no_rule ec_fast
+        ceph osd pool set ec_shared1 num_zones 2
+        has_rule erasure-code
+        ceph osd pool set ec_shared2 num_zones 2
+        no_rule erasure-code
+        expect_refusal "cannot read the placement of its CRUSH rule" \
+            ceph osd pool set ec_hand num_zones 2
+        ceph osd pool set ec_hand num_zones 2 --root default \
+            --osd_failure_domain host --no-class
+        no_rule ec_hand_rule
+        for p in ec_fast ec_shared1 ec_shared2 ec_hand; do
+            test "$(ceph osd pool get "$p" num_zones -f json | jq .num_zones)" = 2
+            test "$(rule_of "$p")" = "$p-stretch"
+        done
+        wait_for_clean
+        for p in ec_fast ec_shared1 ec_shared2 ec_legacy ec_hand; do
+            check_objects "$p"
+        done
         ;;
     3az)
         # A stretch pool that was created before the upgrade decodes
