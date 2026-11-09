@@ -15,10 +15,6 @@ function run() {
     run_stretch_tests "$@"
 }
 
-function rule_exists() {
-    ceph osd crush rule ls | grep -qx $1
-}
-
 # CEPH_ARGS for a test that runs mon.a only
 function one_mon_args() {
     echo "${CEPH_ARGS/--mon-host=$CEPH_MON /--mon-host=$CEPH_MON_A }"
@@ -108,20 +104,6 @@ function TEST_default_set_num_zones_changes_nothing() {
     test "$(pool_field new size)" = 4 || return 1
     test "$(ceph osd dump -f json | jq .stretch_mode.stretch_mode_enabled)" = true || return 1
     test "$(pool_field old num_zones)" = 1 || return 1
-}
-
-function rule_takes() {
-    ceph osd crush rule dump $1 | jq -r '[.steps[]|select(.op=="take")|.item_name]|join(",")'
-}
-
-function rule_zone_type() {
-    ceph osd crush rule dump $1 |
-        jq -r '[.steps[]|select(.op=="choose_firstn")|.type]|join(",")'
-}
-
-function rule_leaf_type() {
-    ceph osd crush rule dump $1 |
-        jq -r '[.steps[]|select(.op|startswith("choose"))|.type]|last'
 }
 
 # create-erasure takes the zone type of a rule over zones from the profile,
