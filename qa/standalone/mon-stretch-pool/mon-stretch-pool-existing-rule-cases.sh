@@ -151,16 +151,25 @@ EOF
     check_pools $dir rsite rtake rgen || return 1
 }
 
-# S5: z2 has 3 hosts and z1 4: a pool over zones gets at most 3 copies or
-# shards in each zone, and a larger one is refused with no pool, profile or
-# rule left behind
+# S5: z2 has 3 hosts and z1 4. With the zones' weights more than 10% apart
+# stretch mode refuses a pool over them; with the weights evened out a pool
+# over zones gets at most 3 copies or shards in each zone, and a larger one
+# is refused, with no pool, profile or rule left behind
 function TEST_uneven_hosts() {
-    local dir=$1
+    local dir=$1 osd
     local -x CEPH_ARGS="$CEPH_ARGS"
     zone_cluster $dir zone || return 1
     ceph osd crush add-bucket spare root || return 1
     ceph osd crush move host7 root=spare || return 1
     ceph osd out osd.7 || return 1
+    expect_failure $dir "differing weights" \
+        ceph osd pool create rep 8 --num_zones 2 --replica 3 --zone_failure_domain zone \
+        --osd_failure_domain host || return 1
+    ! pool_exists rep || return 1
+    rules_are replicated_rule || return 1
+    for osd in 4 5 6; do
+        ceph osd crush reweight osd.$osd 1.3333 || return 1
+    done
     ceph osd pool create rep 8 --num_zones 2 --replica 3 --zone_failure_domain zone \
         --osd_failure_domain host || return 1
     expect_failure $dir "zone z2 has only 3 items of type host; replica 4 per zone requires at least 4 hosts" \
