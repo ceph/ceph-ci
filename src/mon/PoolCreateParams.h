@@ -34,7 +34,7 @@ struct PoolCreateParams {
   int64_t min_size = 0; // 0: the default for the size
   std::string erasure_code_profile;           // a named profile, else empty
   std::map<std::string, std::string> profile; // the erasure code profile
-  std::string rule;          // a named rule, else empty for a generated one
+  std::string crush_rule;    // a named rule, else empty for a generated one
   int64_t default_rule = -1; // osd_pool_default_crush_rule
   std::string root;
   std::string zone_failure_domain;
@@ -48,7 +48,7 @@ struct PoolCreateParams {
   bool no_class_conflict = false;
   int64_t pg_num = 0;
   int64_t pgp_num = 0;  // 0: pg_num
-  std::string autoscale_mode;
+  std::string pg_autoscale_mode;
   bool bulk = false;
   bool crimson = false;
   // allows a single-zone pool a stripe_unit that is not a multiple of 4096
@@ -83,6 +83,11 @@ PoolCreateParams load_pool_defaults(const ConfigProxy& conf);
 int use_profile(PoolCreateParams& p, const std::string& name,
                 const std::map<std::string, std::string>* profile,
                 std::ostream* ss);
+
+// crush_rule and pg_autoscale_mode may also be given as rule and
+// autoscale_mode, the names that ceph osd pool create has always taken: give
+// them their new names in cmdmap. Fails if both names of one are given.
+int rename_old_pool_params(cmdmap_t& cmdmap, std::ostream* ss);
 
 // 3. The parameters given on the command line, over the defaults and the
 // profile. --k and --m change the profile.

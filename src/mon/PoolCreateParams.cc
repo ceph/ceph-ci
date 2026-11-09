@@ -92,7 +92,8 @@ PoolCreateParams load_pool_defaults(const ConfigProxy& conf)
   p.device_class = conf.get_val<string>("osd_pool_default_class");
   p.pg_num = conf.get_val<uint64_t>("osd_pool_default_pg_num");
   p.pgp_num = conf.get_val<uint64_t>("osd_pool_default_pgp_num");
-  p.autoscale_mode = conf.get_val<string>("osd_pool_default_pg_autoscale_mode");
+  p.pg_autoscale_mode =
+    conf.get_val<string>("osd_pool_default_pg_autoscale_mode");
   p.bulk = conf.get_val<bool>("osd_pool_default_flag_bulk");
   p.crimson = conf.get_val<bool>("osd_pool_default_crimson");
   return p;
@@ -115,6 +116,25 @@ int use_profile(PoolCreateParams& p, const string& name,
   return 0;
 }
 
+int rename_old_pool_params(cmdmap_t& cmdmap, std::ostream* ss)
+{
+  for (auto [name, old_name] : {std::pair{"crush_rule", "rule"},
+                                std::pair{"pg_autoscale_mode",
+                                          "autoscale_mode"}}) {
+    auto old = cmdmap.find(old_name);
+    if (old == cmdmap.end()) {
+      continue;
+    }
+    if (cmdmap.contains(name)) {
+      *ss << "cannot specify both --" << name << " and --" << old_name;
+      return -EINVAL;
+    }
+    cmdmap[name] = old->second;
+    cmdmap.erase(old);
+  }
+  return 0;
+}
+
 void apply_command_line(PoolCreateParams& p, const cmdmap_t& cmdmap)
 {
   string str;
@@ -130,9 +150,9 @@ void apply_command_line(PoolCreateParams& p, const cmdmap_t& cmdmap)
     p.num_zones = n;
     give("num_zones");
   }
-  if (cmd_getval(cmdmap, "rule", str) && !str.empty()) {
-    p.rule = str;
-    give("rule");
+  if (cmd_getval(cmdmap, "crush_rule", str) && !str.empty()) {
+    p.crush_rule = str;
+    give("crush_rule");
   }
   for (auto [param, value] :
          {std::pair{"root", &p.root},
@@ -180,9 +200,9 @@ void apply_command_line(PoolCreateParams& p, const cmdmap_t& cmdmap)
     p.pgp_num = n;
     give("pgp_num");
   }
-  if (cmd_getval(cmdmap, "autoscale_mode", str) && !str.empty()) {
-    p.autoscale_mode = str;
-    give("autoscale_mode");
+  if (cmd_getval(cmdmap, "pg_autoscale_mode", str) && !str.empty()) {
+    p.pg_autoscale_mode = str;
+    give("pg_autoscale_mode");
   }
   if (cmd_getval(cmdmap, "bulk", b)) {
     p.bulk = b;
@@ -217,7 +237,8 @@ int check_command_line(const PoolCreateParams& p, PoolCommand command,
     *ss << "erasure_code_profile requires both k and m";
     return -EINVAL;
   }
-  if (p.is_given("rule") && p.rule != "none" && p.crush_params_given()) {
+  if (p.is_given("crush_rule") && p.crush_rule != "none" &&
+      p.crush_params_given()) {
     *ss << "cannot specify both crush rule and " << CRUSH_PARAMS;
     return -EINVAL;
   }
@@ -287,7 +308,7 @@ string rule_from_defaults(const PoolCreateParams& p)
   }
   const bool erasure = p.pool_type == pg_pool_t::TYPE_ERASURE;
   const bool named_profile = erasure && !p.erasure_code_profile.empty();
-  const bool generated = !p.is_given("rule") || p.rule == "none";
+  const bool generated = !p.is_given("crush_rule") || p.crush_rule == "none";
   std::vector<string> params = {"num_zones"};
   if (!erasure && !p.is_given("size")) {
     params.push_back("replica");
@@ -447,7 +468,7 @@ int check_pool_params(const PoolCreateParams& p,
     // crimson-osd needs static pg_num and pgp_num
     const char *suffix = " (--crimson specified or osd_pool_default_crimson set)";
     const string autoscale_mode =
-      p.is_given("autoscale_mode") ? p.autoscale_mode : "off";
+      p.is_given("pg_autoscale_mode") ? p.pg_autoscale_mode : "off";
     if (autoscale_mode != "off") {
       *ss << "crimson-osd does not support changing pg_num or pgp_num, "
           << "pg_autoscale_mode must be set to 'off'" << suffix;
@@ -464,7 +485,7 @@ int check_pool_params(const PoolCreateParams& p,
     // the given CRUSH parameters, and those a generated stretch rule of a
     // replicated pool takes from the defaults
     const bool generated_replicated_rule = !erasure && p.num_zones > 1 &&
-      (!p.is_given("rule") || p.rule == "none");
+      (!p.is_given("crush_rule") || p.crush_rule == "none");
     auto used = [&](const char *param) {
       return p.is_given(param) || generated_replicated_rule;
     };
@@ -535,7 +556,7 @@ const std::map<string, string>& pool_default_options()
   static const std::map<string, string> options = {
     {"pool_type", "osd_pool_default_type"},
     {"num_zones", "osd_pool_default_num_zones"},
-    {"rule", "osd_pool_default_crush_rule"},
+    {"crush_rule", "osd_pool_default_crush_rule"},
     {"zone_failure_domain", "osd_pool_default_zone_failure_domain"},
     {"osd_failure_domain", "osd_pool_default_osd_failure_domain"},
     {"root", "osd_pool_default_root"},
@@ -544,7 +565,7 @@ const std::map<string, string>& pool_default_options()
     {"min_size", "osd_pool_default_min_size"},
     {"pg_num", "osd_pool_default_pg_num"},
     {"pgp_num", "osd_pool_default_pgp_num"},
-    {"autoscale_mode", "osd_pool_default_pg_autoscale_mode"},
+    {"pg_autoscale_mode", "osd_pool_default_pg_autoscale_mode"},
     {"bulk", "osd_pool_default_flag_bulk"},
     {"crimson", "osd_pool_default_crimson"},
   };
@@ -679,7 +700,7 @@ string pool_default_value(const PoolCreateParams& p, const string& param)
     return string(pg_pool_t::get_type_name(p.pool_type));
   } else if (param == "num_zones") {
     return std::to_string(p.num_zones);
-  } else if (param == "rule") {
+  } else if (param == "crush_rule") {
     return std::to_string(p.default_rule);
   } else if (param == "zone_failure_domain") {
     return p.zone_failure_domain;
@@ -700,8 +721,8 @@ string pool_default_value(const PoolCreateParams& p, const string& param)
     return std::to_string(p.pg_num);
   } else if (param == "pgp_num") {
     return std::to_string(p.pgp_num);
-  } else if (param == "autoscale_mode") {
-    return p.autoscale_mode;
+  } else if (param == "pg_autoscale_mode") {
+    return p.pg_autoscale_mode;
   } else if (param == "bulk") {
     return p.bulk ? "true" : "false";
   } else if (param == "crimson") {

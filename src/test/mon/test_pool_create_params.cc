@@ -24,6 +24,7 @@
 #include <string>
 
 using namespace std;
+using ceph::common::cmd_getval_or;
 
 namespace {
 
@@ -153,7 +154,7 @@ TEST_F(PoolParamsTest, BuiltInDefaults) {
   EXPECT_EQ("isa", p.profile.at("plugin"));
   EXPECT_EQ(2, p.k().value());
   EXPECT_EQ(2, p.m().value());
-  EXPECT_EQ("", p.rule);
+  EXPECT_EQ("", p.crush_rule);
   EXPECT_EQ(-1, p.default_rule);
   EXPECT_EQ("datacenter", p.zone_failure_domain);
   EXPECT_EQ("host", p.osd_failure_domain);
@@ -161,7 +162,7 @@ TEST_F(PoolParamsTest, BuiltInDefaults) {
   EXPECT_EQ("", p.device_class);
   EXPECT_EQ(32, p.pg_num);
   EXPECT_EQ(0, p.pgp_num);
-  EXPECT_EQ("on", p.autoscale_mode);
+  EXPECT_EQ("on", p.pg_autoscale_mode);
   EXPECT_FALSE(p.bulk);
   EXPECT_FALSE(p.crimson);
   EXPECT_TRUE(p.given.empty());
@@ -269,16 +270,16 @@ TEST_F(PoolParamsTest, EmptyCommandLine) {
 TEST_F(PoolParamsTest, EveryParameterApplied) {
   const PoolCreateParams p = with({
     {"pool_type", string("erasure")}, {"num_zones", int64_t(2)},
-    {"rule", string("r")}, {"root", string("dc1")},
+    {"crush_rule", string("r")}, {"root", string("dc1")},
     {"zone_failure_domain", string("rack")},
     {"osd_failure_domain", string("osd")}, {"class", string("ssd")},
     {"replica", int64_t(2)}, {"size", int64_t(4)}, {"min_size", int64_t(1)},
     {"k", int64_t(6)}, {"m", int64_t(3)}, {"pg_num", int64_t(64)},
-    {"pgp_num", int64_t(16)}, {"autoscale_mode", string("warn")},
+    {"pgp_num", int64_t(16)}, {"pg_autoscale_mode", string("warn")},
     {"bulk", true}, {"crimson", true}});
   EXPECT_EQ(ERASURE, p.pool_type);
   EXPECT_EQ(2, p.num_zones);
-  EXPECT_EQ("r", p.rule);
+  EXPECT_EQ("r", p.crush_rule);
   EXPECT_EQ("dc1", p.root);
   EXPECT_EQ("rack", p.zone_failure_domain);
   EXPECT_EQ("osd", p.osd_failure_domain);
@@ -290,13 +291,13 @@ TEST_F(PoolParamsTest, EveryParameterApplied) {
   EXPECT_EQ(3, p.m().value());
   EXPECT_EQ(64, p.pg_num);
   EXPECT_EQ(16, p.pgp_num);
-  EXPECT_EQ("warn", p.autoscale_mode);
+  EXPECT_EQ("warn", p.pg_autoscale_mode);
   EXPECT_TRUE(p.bulk);
   EXPECT_TRUE(p.crimson);
-  EXPECT_EQ((std::set<string>{"pool_type", "num_zones", "rule", "root",
+  EXPECT_EQ((std::set<string>{"pool_type", "num_zones", "crush_rule", "root",
                          "zone_failure_domain", "osd_failure_domain", "class",
                          "replica", "size", "min_size", "k", "m", "pg_num",
-                         "pgp_num", "autoscale_mode", "bulk", "crimson"}),
+                         "pgp_num", "pg_autoscale_mode", "bulk", "crimson"}),
             p.given);
 }
 
@@ -312,7 +313,7 @@ TEST_F(PoolParamsTest, KChangesProfile) {
 TEST_F(PoolParamsTest, ZeroAndEmptyNotGiven) {
   const PoolCreateParams p = with({
     {"replica", int64_t(0)}, {"size", int64_t(0)}, {"k", int64_t(0)},
-    {"pg_num", int64_t(0)}, {"rule", string("")}, {"root", string("")}});
+    {"pg_num", int64_t(0)}, {"crush_rule", string("")}, {"root", string("")}});
   EXPECT_TRUE(p.given.empty());
 }
 
@@ -321,6 +322,42 @@ TEST_F(PoolParamsTest, FalseIsGiven) {
   const PoolCreateParams p = with({{"bulk", false}});
   EXPECT_TRUE(p.is_given("bulk"));
   EXPECT_FALSE(p.bulk);
+}
+
+// Test rule and autoscale_mode are taken as crush_rule and pg_autoscale_mode
+TEST(RenameOldPoolParamsTest, OldNamesRenamed) {
+  cmdmap_t cmdmap = {{"rule", string("r")},
+                     {"autoscale_mode", string("warn")}};
+  std::stringstream ss;
+  ASSERT_EQ(0, rename_old_pool_params(cmdmap, &ss)) << ss.str();
+  EXPECT_EQ(2u, cmdmap.size());
+  EXPECT_EQ("r", cmd_getval_or<string>(cmdmap, "crush_rule", ""));
+  EXPECT_EQ("warn", cmd_getval_or<string>(cmdmap, "pg_autoscale_mode", ""));
+}
+
+// Test the new names are kept
+TEST(RenameOldPoolParamsTest, NewNamesKept) {
+  cmdmap_t cmdmap = {{"crush_rule", string("r")},
+                     {"pg_autoscale_mode", string("on")}};
+  std::stringstream ss;
+  ASSERT_EQ(0, rename_old_pool_params(cmdmap, &ss)) << ss.str();
+  EXPECT_EQ(2u, cmdmap.size());
+  EXPECT_EQ("r", cmd_getval_or<string>(cmdmap, "crush_rule", ""));
+  EXPECT_EQ("on", cmd_getval_or<string>(cmdmap, "pg_autoscale_mode", ""));
+}
+
+// Test failure when a parameter is given under both its names
+TEST(RenameOldPoolParamsTest, BothNamesFail) {
+  cmdmap_t cmdmap = {{"crush_rule", string("r")}, {"rule", string("r")}};
+  std::stringstream ss;
+  EXPECT_EQ(-EINVAL, rename_old_pool_params(cmdmap, &ss));
+  EXPECT_EQ("cannot specify both --crush_rule and --rule", ss.str());
+  cmdmap = {{"pg_autoscale_mode", string("on")},
+            {"autoscale_mode", string("off")}};
+  ss.str("");
+  EXPECT_EQ(-EINVAL, rename_old_pool_params(cmdmap, &ss));
+  EXPECT_EQ("cannot specify both --pg_autoscale_mode and --autoscale_mode",
+            ss.str());
 }
 
 // Test the copies per zone are the legacy size when it is given
@@ -363,7 +400,7 @@ TEST_F(PoolParamsTest, ProfileWithCrushParamFails) {
 TEST_F(PoolParamsTest, RuleWithCrushParamFails) {
   for (auto command : {PoolCommand::CREATE, PoolCommand::DEFAULT_SET}) {
     const PoolCreateParams p = with(
-      {{"rule", string("r")}, {"root", string("default")},
+      {{"crush_rule", string("r")}, {"root", string("default")},
        {"num_zones", int64_t(2)}});
     EXPECT_EQ(-EINVAL, check_line(p, command));
     EXPECT_EQ("cannot specify both crush rule and " + CRUSH_PARAMS, ss.str());
@@ -373,7 +410,7 @@ TEST_F(PoolParamsTest, RuleWithCrushParamFails) {
 // Test rule none with a CRUSH parameter succeeds for the defaults
 TEST_F(PoolParamsTest, RuleNoneWithCrushParamSucceeds) {
   const PoolCreateParams p = with(
-    {{"rule", string("none")}, {"root", string("default")}});
+    {{"crush_rule", string("none")}, {"root", string("default")}});
   EXPECT_EQ(0, check_line(p, PoolCommand::DEFAULT_SET)) << ss.str();
 }
 
@@ -838,7 +875,7 @@ TEST_F(PoolParamsTest, PgpNumZeroFollowsPgNum) {
 // Test failure when crimson is given with autoscaling on
 TEST_F(PoolParamsTest, CrimsonWithAutoscaleOnFails) {
   EXPECT_EQ(-EINVAL, check(with({{"crimson", true},
-                                 {"autoscale_mode", string("on")}})));
+                                 {"pg_autoscale_mode", string("on")}})));
   EXPECT_EQ("crimson-osd does not support changing pg_num or pgp_num, "
             "pg_autoscale_mode must be set to 'off' (--crimson specified or "
             "osd_pool_default_crimson set)", ss.str());
@@ -918,10 +955,10 @@ TEST_F(PoolParamsTest, RuleSkipsCrushDefaults) {
   set("osd_pool_default_root", "dc1");
   EXPECT_EQ(0, check(with({{"num_zones", int64_t(2)},
                            {"zone_failure_domain", string("zone")},
-                           {"rule", string("r")}}))) << ss.str();
+                           {"crush_rule", string("r")}}))) << ss.str();
   EXPECT_EQ(-ENOENT, check(with({{"num_zones", int64_t(2)},
                                  {"zone_failure_domain", string("zone")},
-                                 {"rule", string("none")}})));
+                                 {"crush_rule", string("none")}})));
 }
 
 // Test the checks of CRUSH names need a CRUSH map
@@ -974,7 +1011,7 @@ TEST_F(PoolParamsTest, RuleErrorsNameDefaults) {
   EXPECT_EQ("", rule_from_defaults(with({{"num_zones", int64_t(2)},
                                          {"replica", int64_t(2)},
                                          {"zone_failure_domain", string("zone")},
-                                         {"rule", string("r")}})));
+                                         {"crush_rule", string("r")}})));
   // an erasure coded pool's rule comes from its profile, and the zone type
   // from the default when the profile has none
   EXPECT_EQ(" (osd_pool_default_zone_failure_domain, "
@@ -1167,10 +1204,10 @@ TEST_F(PoolParamsTest, FillDefaultProfile) {
 // Test every parameter of ceph osd pool default set maps to an option
 TEST(PoolDefaultOptionsTest, EveryParameterHasAnOption) {
   const auto& options = pool_default_options();
-  for (const char *param : {"pool_type", "num_zones", "rule",
+  for (const char *param : {"pool_type", "num_zones", "crush_rule",
                             "zone_failure_domain", "osd_failure_domain",
                             "root", "class", "replica", "min_size",
-                            "pg_num", "pgp_num", "autoscale_mode", "bulk",
+                            "pg_num", "pgp_num", "pg_autoscale_mode", "bulk",
                             "crimson"}) {
     EXPECT_TRUE(options.contains(param)) << param;
   }
@@ -1231,7 +1268,7 @@ TEST_F(PoolParamsTest, DefaultValueKM) {
 // Test the rule is written as its id
 TEST_F(PoolParamsTest, DefaultValueRuleId) {
   set("osd_pool_default_crush_rule", "3");
-  EXPECT_EQ("3", pool_default_value(defaults(), "rule"));
+  EXPECT_EQ("3", pool_default_value(defaults(), "crush_rule"));
 }
 
 // Test an unknown parameter gives an empty value
