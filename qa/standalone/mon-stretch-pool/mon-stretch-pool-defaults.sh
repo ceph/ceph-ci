@@ -37,9 +37,9 @@ function TEST_get_shows_every_default() {
 
     ceph osd pool default get || return 1
     local param
-    for param in pool_type num_zones rule zone_failure_domain \
+    for param in pool_type num_zones crush_rule zone_failure_domain \
                  osd_failure_domain root class replica min_size \
-                 k m pg_num pgp_num autoscale_mode \
+                 k m pg_num pgp_num pg_autoscale_mode \
                  bulk crimson ; do
         test "$(ceph osd pool default get -f json | jq "has(\"$param\")")" = true || return 1
     done
@@ -48,13 +48,13 @@ function TEST_get_shows_every_default() {
     test "$(default_field pool_type value)" = replicated || return 1
     test "$(default_field num_zones value)" = 1 || return 1
     test "$(default_field num_zones source)" = default || return 1
-    test "$(default_field rule value)" = none || return 1
+    test "$(default_field crush_rule value)" = none || return 1
     test "$(default_field zone_failure_domain value)" = datacenter || return 1
     test "$(default_field osd_failure_domain value)" = host || return 1
     test "$(default_field root value)" = default || return 1
     # run_mon sets these on the command line
-    test "$(default_field autoscale_mode value)" = off || return 1
-    test "$(default_field autoscale_mode source)" = cmdline || return 1
+    test "$(default_field pg_autoscale_mode value)" = off || return 1
+    test "$(default_field pg_autoscale_mode source)" = cmdline || return 1
 }
 
 # Test set writes the global section and get shows where values come from
@@ -125,7 +125,7 @@ function TEST_set_checks() {
         ceph osd pool default set --crimson || return 1
     # nothing was written by the failures
     test "$(default_field zone_failure_domain value)" = datacenter || return 1
-    test "$(default_field rule value)" = none || return 1
+    test "$(default_field crush_rule value)" = none || return 1
 }
 
 # Test num_zones 2 needs a cluster that can be stretched
@@ -145,7 +145,7 @@ function TEST_set_rule() {
 
     ceph osd pool default set --rule replicated_rule || return 1
     test "$(ceph config get mon osd_pool_default_crush_rule)" = 0 || return 1
-    test "$(default_field rule value)" = replicated_rule || return 1
+    test "$(default_field crush_rule value)" = replicated_rule || return 1
     ceph osd pool default set --rule none || return 1
     test "$(ceph config get mon osd_pool_default_crush_rule)" = -1 || return 1
 }
@@ -325,6 +325,41 @@ function TEST_set_rule_must_be_replicated() {
     ! ceph osd pool default set --rule ecr > $dir/out 2>&1 || return 1
     grep "rule 'ecr' is not a replicated rule" $dir/out || return 1
     ceph osd pool create r 8 8 || return 1
+}
+
+function pool_autoscale_mode() {
+    ceph osd pool get $1 pg_autoscale_mode -f json | jq -r .pg_autoscale_mode
+}
+
+# Test crush_rule and pg_autoscale_mode are also taken as rule and
+# autoscale_mode, their names in earlier releases, but not under both names
+function TEST_old_param_names() {
+    local dir=$1
+    run_mon $dir a || return 1
+    run_osd $dir 0 || return 1
+
+    local name
+    for name in crush_rule rule ; do
+        ceph osd pool default set --$name replicated_rule || return 1
+        test "$(default_field crush_rule value)" = replicated_rule || return 1
+        ceph osd pool default set --$name none || return 1
+        test "$(default_field crush_rule value)" = none || return 1
+        ceph osd pool create pool_$name --$name replicated_rule || return 1
+        ceph osd pool set pool_$name $name replicated_rule || return 1
+    done
+    for name in pg_autoscale_mode autoscale_mode ; do
+        # run_mon sets osd_pool_default_pg_autoscale_mode on the command line
+        expect_failure $dir "local configuration of mon.a" \
+            ceph osd pool default set --$name on || return 1
+        ceph osd pool create pool_$name --$name warn || return 1
+        test "$(pool_autoscale_mode pool_$name)" = warn || return 1
+        ceph osd pool set pool_$name $name on || return 1
+        test "$(pool_autoscale_mode pool_$name)" = on || return 1
+    done
+    expect_failure $dir "cannot specify both --crush_rule and --rule" \
+        ceph osd pool default set --crush_rule none --rule none || return 1
+    expect_failure $dir "cannot specify both --pg_autoscale_mode and --autoscale_mode" \
+        ceph osd pool create both --pg_autoscale_mode on --autoscale_mode on || return 1
 }
 
 main mon-stretch-pool-defaults "$@"
