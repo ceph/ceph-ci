@@ -376,19 +376,27 @@ def _apply_crush_zones(mon_remote, cluster_name, crush_config):
     """
     zones = crush_config.get('zones', [])
     failure_domain = crush_config.get('failure_domain', 'osd')
+    zone_type = crush_config.get('zone_type', 'datacenter')
     if failure_domain not in ('osd', 'host'):
         raise ValueError(f"crush_map_config failure_domain {failure_domain} "
                          "is not supported: use osd or host")
     
     log.info(f"Applying CRUSH zone configuration with {len(zones)} zones, "
-             f"failure_domain={failure_domain}")
-    
-    for zone in zones:
-        zone_name = zone['name']
-        log.info(f"Creating datacenter bucket: {zone_name}")
+             f"failure_domain={failure_domain}, zone_type={zone_type}")
+    if 'zone_type' in crush_config:
+        # pools over zones take their zone type from it
         mon_remote.run(
             args=['sudo', 'ceph', '--cluster', cluster_name,
-                  'osd', 'crush', 'add-bucket', zone_name, 'datacenter']
+                  'config', 'set', 'global',
+                  'osd_pool_default_zone_failure_domain', zone_type]
+        )
+
+    for zone in zones:
+        zone_name = zone['name']
+        log.info(f"Creating {zone_type} bucket: {zone_name}")
+        mon_remote.run(
+            args=['sudo', 'ceph', '--cluster', cluster_name,
+                  'osd', 'crush', 'add-bucket', zone_name, zone_type]
         )
         
         log.info(f"Moving {zone_name} to root=default")
@@ -405,7 +413,7 @@ def _apply_crush_zones(mon_remote, cluster_name, crush_config):
                 mon_remote.run(
                     args=['sudo', 'ceph', '--cluster', cluster_name,
                           'osd', 'crush', 'set', f'osd.{osd_id}', '1.0',
-                          'root=default', f'datacenter={zone_name}']
+                          'root=default', f'{zone_type}={zone_name}']
                 )
                 
                 # Set crush_location config so OSD maintains this location on restart
@@ -413,7 +421,7 @@ def _apply_crush_zones(mon_remote, cluster_name, crush_config):
                 mon_remote.run(
                     args=['sudo', 'ceph', '--cluster', cluster_name,
                           'config', 'set', f'osd.{osd_id}',
-                          'crush_location', f'datacenter={zone_name} root=default']
+                          'crush_location', f'{zone_type}={zone_name} root=default']
                 )
     
     elif failure_domain == 'host':
@@ -431,10 +439,10 @@ def _apply_crush_zones(mon_remote, cluster_name, crush_config):
                           'osd', 'crush', 'add-bucket', host_name, 'host']
                 )
                 
-                log.info(f"Moving {host_name} to datacenter={zone_name}")
+                log.info(f"Moving {host_name} to {zone_type}={zone_name}")
                 mon_remote.run(
                     args=['sudo', 'ceph', '--cluster', cluster_name,
-                          'osd', 'crush', 'move', host_name, f'datacenter={zone_name}']
+                          'osd', 'crush', 'move', host_name, f'{zone_type}={zone_name}']
                 )
                 
                 for osd_id in host_osds:
@@ -456,18 +464,18 @@ def _apply_crush_zones(mon_remote, cluster_name, crush_config):
     for zone in zones:
         zone_name = zone['name']
         for mon_id in zone.get('monitors', []):
-            log.info(f"Setting mon.{mon_id} location to datacenter={zone_name}")
+            log.info(f"Setting mon.{mon_id} location to {zone_type}={zone_name}")
             mon_remote.run(
                 args=['sudo', 'ceph', '--cluster', cluster_name,
-                      'mon', 'set_location', mon_id, f'datacenter={zone_name}']
+                      'mon', 'set_location', mon_id, f'{zone_type}={zone_name}']
             )
     
     tiebreak_monitor = crush_config.get('tiebreak_monitor')
     if tiebreak_monitor:
-        log.info(f"Setting mon.{tiebreak_monitor} location to datacenter=tiebreak")
+        log.info(f"Setting mon.{tiebreak_monitor} location to {zone_type}=tiebreak")
         mon_remote.run(
             args=['sudo', 'ceph', '--cluster', cluster_name,
-                  'mon', 'set_location', tiebreak_monitor, 'datacenter=tiebreak']
+                  'mon', 'set_location', tiebreak_monitor, f'{zone_type}=tiebreak']
         )
 
 
@@ -487,6 +495,8 @@ def crush_zone_setup(ctx, config):
               num_zones: 2
               crush_map_config:
                 failure_domain: osd
+                # the bucket type of the zones; datacenter if not given
+                zone_type: datacenter
                 zones:
                   - name: zone1
                     osds: [0, 1, 2]
