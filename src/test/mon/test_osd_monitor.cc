@@ -1805,3 +1805,24 @@ TEST_F(OSDMonitorNumZonesPlacementTest, RuleNotRead) {
   EXPECT_EQ("host", placement.osd_failure_domain);
   EXPECT_EQ("ssd", placement.device_class);
 }
+
+// The one check behind refusing an OSD's boot, withholding its osdmaps,
+// marking it down at a commit, and refusing require-osd-release
+TEST(OSDMonitorJoinTest, WhyOsdCannotJoin) {
+  const uint64_t vampire = CEPH_FEATURES_ALL;
+  const uint64_t vampire_no_zones =
+    CEPH_FEATURES_ALL & ~CEPH_FEATURE_OSD_STRETCH_ZONES;
+  const uint64_t umbrella = vampire_no_zones & ~CEPH_FEATURE_SERVER_VAMPIRE;
+  const auto v = ceph_release_t::vampire;
+
+  EXPECT_EQ("", OSDMonitor::why_osd_cannot_join(vampire, v, true));
+  EXPECT_EQ("", OSDMonitor::why_osd_cannot_join(vampire_no_zones, v, false));
+  EXPECT_EQ("", OSDMonitor::why_osd_cannot_join(
+              umbrella, ceph_release_t::umbrella, false));
+  EXPECT_EQ("lacks support for pools over zones",
+            OSDMonitor::why_osd_cannot_join(vampire_no_zones, v, true));
+  EXPECT_EQ("is of a release before vampire",
+            OSDMonitor::why_osd_cannot_join(umbrella, v, false));
+  EXPECT_EQ("is of a release before vampire",
+            OSDMonitor::why_osd_cannot_join(umbrella, v, true));
+}

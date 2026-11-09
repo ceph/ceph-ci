@@ -424,8 +424,10 @@ private:
   // ...
   MOSDMap *build_latest_full(uint64_t features);
   MOSDMap *build_incremental(epoch_t first, epoch_t last, uint64_t features);
-  // whether session, with these features, must not get osdmaps
-  bool withhold_maps(const MonSession *session, uint64_t features) const;
+  // An OSD that cannot join would judge these maps by the rules of its
+  // release, and keep them on disk while its boot is refused
+  bool withhold_maps_from_downlevel_osd(const MonSession *session,
+                                        uint64_t features) const;
   void send_full(MonOpRequestRef op);
   void send_incremental(MonOpRequestRef op, epoch_t first);
 
@@ -1052,6 +1054,17 @@ public:
            osdmap.require_osd_release < NUM_ZONES_RELEASE &&
            pending_inc.new_require_osd_release >= NUM_ZONES_RELEASE;
   }
+  // Why an OSD with these features cannot join a cluster at release, with
+  // the upgrade to pools over zones committed if stretch_zones: it would
+  // judge the osdmaps by the rules of an earlier release. Empty if it can.
+  static std::string why_osd_cannot_join(uint64_t features,
+                                         ceph_release_t release,
+                                         bool stretch_zones);
+  // the same at the committed osdmap, or with the pending update applied
+  std::string why_osd_cannot_join(uint64_t features,
+                                  bool pending = false) const;
+  void mark_down_osds_that_cannot_join(ceph_release_t release,
+                                       bool stretch_zones);
   // What check_pool_params() needs from this cluster, with crush as its
   // CRUSH map. crush must outlive the result.
   PoolCreateCluster pool_create_cluster(CrushWrapper& crush);

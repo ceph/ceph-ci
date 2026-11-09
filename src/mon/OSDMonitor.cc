@@ -2045,7 +2045,8 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
     }
 
     // after the blocks above, which may replace pending pools
-    if (!osdmap.stretch_zones() &&
+    bool stretch_zones = osdmap.stretch_zones();
+    if (!stretch_zones &&
         osdmap.require_osd_release < NUM_ZONES_RELEASE &&
         tmp.require_osd_release >= NUM_ZONES_RELEASE) {
       dout(10) << __func__ << " upgrade to pools over zones committed"
@@ -2054,19 +2055,10 @@ void OSDMonitor::encode_pending(MonitorDBStore::TransactionRef t)
       convert_stretch_pools_at_commit(
         tmp, pending_inc,
         g_conf().get_val<uint64_t>("mon_stretch_pool_min_size"));
-      // an OSD of an earlier release would judge the stretch pools by its
-      // rules, and is refused from this epoch
-      for (int osd = 0; osd < osdmap.get_max_osd(); ++osd) {
-        if (osdmap.is_up(osd) &&
-            !HAVE_FEATURE(osdmap.get_xinfo(osd).features,
-                          OSD_STRETCH_ZONES) &&
-            !(pending_inc.new_state[osd] & CEPH_OSD_UP)) {
-          mon.clog->info() << "marking osd." << osd << " down: the upgrade "
-                           << "to pools over zones is committed and it "
-                           << "lacks support";
-          pending_inc.new_state[osd] |= CEPH_OSD_UP;
-        }
-      }
+      stretch_zones = true;
+    }
+    if (tmp.require_osd_release > osdmap.require_osd_release) {
+      mark_down_osds_that_cannot_join(tmp.require_osd_release, stretch_zones);
     }
   }
 
@@ -3637,15 +3629,9 @@ bool OSDMonitor::preprocess_boot(MonOpRequestRef op)
     goto ignore;
   }
 
-  // once the upgrade to a release is committed, OSDs of earlier releases
-  // must not join
-  if (uint64_t need = ceph_release_server_feature(osdmap.require_osd_release);
-      (m->osd_features & need) != need) {
+  if (auto why = why_osd_cannot_join(m->osd_features); !why.empty()) {
     mon.clog->info() << "disallowing boot of OSD "
-                     << m->get_orig_source_inst()
-                     << " because require_osd_release is "
-                     << osdmap.require_osd_release
-                     << " and the osd is of an earlier release";
+                     << m->get_orig_source_inst() << " because it " << why;
     goto ignore;
   }
 
@@ -3679,14 +3665,6 @@ bool OSDMonitor::preprocess_boot(MonOpRequestRef op)
     mon.clog->info() << "disallowing boot of OSD "
 		      << m->get_orig_source_inst()
 		      << " because stretch mode is on and OSD lacks support";
-    goto ignore;
-  }
-  if (osdmap.stretch_zones() &&
-      !HAVE_FEATURE(m->osd_features, OSD_STRETCH_ZONES)) {
-    mon.clog->info() << "disallowing boot of OSD "
-                     << m->get_orig_source_inst()
-                     << " because the upgrade to pools over zones is "
-                     << "committed and the OSD lacks support";
     goto ignore;
   }
 
@@ -3750,10 +3728,9 @@ bool OSDMonitor::prepare_boot(MonOpRequestRef op)
   ceph_assert(m->get_orig_source().is_osd());
   int from = m->get_orig_source().num();
 
-  if ((num_zones_supported() || num_zones_commit_pending()) &&
-      !HAVE_FEATURE(m->osd_features, OSD_STRETCH_ZONES)) {
-    dout(1) << "boot from osd." << from << " lacks OSD_STRETCH_ZONES, which"
-            << " the upgrade commit requires" << dendl;
+  if (auto why = why_osd_cannot_join(m->osd_features, true); !why.empty()) {
+    dout(1) << "refusing boot from osd." << from << ", which " << why
+            << dendl;
     return false;
   }
 
@@ -4751,25 +4728,76 @@ MOSDMap *OSDMonitor::build_incremental(epoch_t from, epoch_t to, uint64_t featur
   return m;
 }
 
-bool OSDMonitor::withhold_maps(const MonSession *session,
-                               uint64_t features) const
+std::string OSDMonitor::why_osd_cannot_join(uint64_t features,
+                                            ceph_release_t release,
+                                            bool stretch_zones)
 {
-  // An OSD of an earlier release would judge the intervals of these maps
-  // by its rules and keep them on disk, even while its boot is refused.
-  if (osdmap.stretch_zones() && session->name.is_osd() &&
-      !HAVE_FEATURE(features, OSD_STRETCH_ZONES)) {
-    dout(1) << "not sending osdmaps to " << session->name
-            << ", which lacks OSD_STRETCH_ZONES" << dendl;
-    return true;
+  if (uint64_t need = ceph_release_server_feature(release);
+      (features & need) != need) {
+    return std::string("is of a release before ")
+      .append(::to_string(release));
   }
-  return false;
+  if (stretch_zones && !HAVE_FEATURE(features, OSD_STRETCH_ZONES)) {
+    return "lacks support for pools over zones";
+  }
+  return {};
+}
+
+std::string OSDMonitor::why_osd_cannot_join(uint64_t features,
+                                            bool pending) const
+{
+  ceph_release_t release = osdmap.require_osd_release;
+  bool stretch_zones = num_zones_supported();
+  if (pending) {
+    release = std::max(release, pending_inc.new_require_osd_release);
+    stretch_zones = stretch_zones || num_zones_commit_pending();
+  }
+  return why_osd_cannot_join(features, release, stretch_zones);
+}
+
+void OSDMonitor::mark_down_osds_that_cannot_join(ceph_release_t release,
+                                                 bool stretch_zones)
+{
+  for (int osd = 0; osd < osdmap.get_max_osd(); ++osd) {
+    if (!osdmap.is_up(osd)) {
+      continue;
+    }
+    if (auto s = pending_inc.new_state.find(osd);
+        s != pending_inc.new_state.end() && (s->second & CEPH_OSD_UP)) {
+      continue;
+    }
+    if (auto why = why_osd_cannot_join(osdmap.get_xinfo(osd).features,
+                                       release, stretch_zones);
+        !why.empty()) {
+      mon.clog->info() << "marking osd." << osd << " down because it " << why;
+      // XORed onto previous state.
+      pending_inc.new_state[osd] |= CEPH_OSD_UP;
+      pending_inc.new_last_up_change = pending_inc.modified;
+    }
+  }
+}
+
+bool OSDMonitor::withhold_maps_from_downlevel_osd(const MonSession *session,
+                                                  uint64_t features) const
+{
+  if (!session->name.is_osd()) {
+    return false;
+  }
+  auto why = why_osd_cannot_join(features);
+  if (why.empty()) {
+    return false;
+  }
+  dout(1) << "not sending osdmaps to " << session->name << ", which " << why
+          << dendl;
+  return true;
 }
 
 void OSDMonitor::send_full(MonOpRequestRef op)
 {
   op->mark_osdmon_event(__func__);
   dout(5) << "send_full to " << op->get_req()->get_orig_source_inst() << dendl;
-  if (withhold_maps(op->get_session(), op->get_session()->con_features)) {
+  if (withhold_maps_from_downlevel_osd(op->get_session(),
+                                       op->get_session()->con_features)) {
     return;
   }
   mon.send_reply(op, build_latest_full(op->get_session()->con_features));
@@ -4808,7 +4836,7 @@ void OSDMonitor::send_incremental(epoch_t first,
   // use quorum_con_features, if it's an anonymous connection.
   uint64_t features = session->con_features ? session->con_features :
     mon.get_quorum_con_features();
-  if (withhold_maps(session, features)) {
+  if (withhold_maps_from_downlevel_osd(session, features)) {
     return;
   }
 
@@ -13985,17 +14013,19 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       err = -EPERM;
       goto reply_no_propose;
     }
+    if (auto why = why_osd_cannot_join(
+          osdmap.get_up_osd_features(), rel,
+          num_zones_supported() || rel >= NUM_ZONES_RELEASE);
+        !why.empty() && !sure) {
+      ss << "an up OSD " << why;
+      err = -EPERM;
+      goto reply_no_propose;
+    }
+    // an OSD that boots in the pending update would escape this check
+    if (!pending_inc.new_up_client.empty()) {
+      goto wait;
+    }
     if (rel >= NUM_ZONES_RELEASE && !num_zones_supported()) {
-      if (!HAVE_FEATURE(osdmap.get_up_osd_features(), OSD_STRETCH_ZONES) &&
-          !sure) {
-        ss << "not all up OSDs have CEPH_FEATURE_OSD_STRETCH_ZONES feature";
-        err = -EPERM;
-        goto reply_no_propose;
-      }
-      // an OSD that boots in the pending update would escape these checks
-      if (!pending_inc.new_up_client.empty()) {
-        goto wait;
-      }
       const auto defaults = stretch_mode_defaults_at_commit(
         osdmap.stretch_mode_enabled, *osdmap.crush, osdmap.stretch_mode_bucket,
         g_conf().get_val<uint64_t>("mon_stretch_pool_size"));
