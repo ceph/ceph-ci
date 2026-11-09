@@ -193,7 +193,7 @@ function TEST_uneven_hosts() {
 }
 
 # S5: zones named like bucket types: --root names the bucket, and the bucket
-# type of that name is not a zone type here
+# type of that name, which has no buckets here, is refused as a zone type
 function TEST_zone_names_like_types() {
     local dir=$1
     zone_cluster $dir zone || return 1
@@ -204,8 +204,9 @@ function TEST_zone_names_like_types() {
     ceph osd pool create r 8 --num_zones 2 --replica 2 --zone_failure_domain zone || return 1
     ceph osd pool create e 8 erasure --k 2 --m 2 --num_zones 2 \
         --zone_failure_domain zone || return 1
-    expect_failure $dir "for type rack is not equal to num_failure_domains 2" \
+    expect_failure $dir "there are 0rack's in the cluster" \
         ceph osd pool create r2 8 --num_zones 2 --replica 2 --zone_failure_domain rack || return 1
+    ! pool_exists r2 || return 1
     wait_for_clean || return 1
     write_pools $dir r e || return 1
     ceph osd pool set r num_zones 1 --root rack || return 1
