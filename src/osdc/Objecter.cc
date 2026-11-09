@@ -3333,9 +3333,13 @@ int Objecter::_calc_target(op_target_t *t, snapid_t snap, bool any_change)
       if (root_pool >= 0) {
         const pg_pool_t *spi = osdmap->get_pg_pool(root_pool);
         if (!spi) {
+          // Don't park the op via NEED_RESEND: returning before the t->pgid /
+          // acting refresh means a later map resolving to the same mapping
+          // sees no change and strands it behind newer ops. Instead let
+          // _check_op_pool_dne confirm absence against the mon's latest map
+          // (op stays in its session, in order) rather than failing -ENOENT now.
           t->osd = -1;
-          if (force_resend)
-            return RECALC_OP_TARGET_NEED_RESEND;
+          t->pool_ever_existed = false;
           return RECALC_OP_TARGET_POOL_DNE;
         }
         t->target_oloc.pool = root_pool;
@@ -3346,8 +3350,6 @@ int Objecter::_calc_target(op_target_t *t, snapid_t snap, bool any_change)
                                                pgid);
         if (ret == -ENOENT) {
           t->osd = -1;
-          if (force_resend)
-            return RECALC_OP_TARGET_NEED_RESEND;
           return RECALC_OP_TARGET_POOL_DNE;
         }
         actual_ps = ceph_stable_mod(pgid.ps(), pg_num, pg_num_mask);
@@ -3358,9 +3360,9 @@ int Objecter::_calc_target(op_target_t *t, snapid_t snap, bool any_change)
       // pool is migrating or has finished migration
       const pg_pool_t *tpi = osdmap->get_pg_pool(*pi->migration_target);
       if (!tpi) {
+        // As for the missing root pool above.
         t->osd = -1;
-        if (force_resend)
-          return RECALC_OP_TARGET_NEED_RESEND;
+        t->pool_ever_existed = false;
         return RECALC_OP_TARGET_POOL_DNE;
       }
       if (tpi->has_flag(pg_pool_t::FLAG_EIO)) {
@@ -3376,9 +3378,9 @@ int Objecter::_calc_target(op_target_t *t, snapid_t snap, bool any_change)
           // first, then work out the state of this migration
           const pg_pool_t *spi = osdmap->get_pg_pool(*tpi->migration_src);
           if (!spi) {
+            // As for the missing root pool above.
             t->osd = -1;
-            if (force_resend)
-              return RECALC_OP_TARGET_NEED_RESEND;
+            t->pool_ever_existed = false;
             return RECALC_OP_TARGET_POOL_DNE;
           }
           if (spi->has_flag(pg_pool_t::FLAG_EIO)) {
@@ -3393,8 +3395,6 @@ int Objecter::_calc_target(op_target_t *t, snapid_t snap, bool any_change)
                                                  pgid);
           if (ret == -ENOENT) {
             t->osd = -1;
-            if (force_resend)
-              return RECALC_OP_TARGET_NEED_RESEND;
             return RECALC_OP_TARGET_POOL_DNE;
           }
           actual_ps = ceph_stable_mod(pgid.ps(), pg_num, pg_num_mask);
@@ -3421,8 +3421,6 @@ int Objecter::_calc_target(op_target_t *t, snapid_t snap, bool any_change)
                                                pgid);
         if (ret == -ENOENT) {
           t->osd = -1;
-          if (force_resend)
-            return RECALC_OP_TARGET_NEED_RESEND;
           return RECALC_OP_TARGET_POOL_DNE;
         }
         actual_ps = ceph_stable_mod(pgid.ps(), pg_num, pg_num_mask);
