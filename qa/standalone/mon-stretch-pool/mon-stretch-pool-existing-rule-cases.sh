@@ -61,8 +61,7 @@ rule ec_rev {
 EOF
     ceph osd erasure-code-profile set p22 plugin=isa k=2 m=2 \
         crush-failure-domain=host || return 1
-    ceph osd pool create r 8 8 replicated rev2 --num_zones 2 --replica 2 \
-        --zone_failure_domain zone || return 1
+    ceph osd pool create r 8 8 replicated rev2 --num_zones 2 --replica 2 || return 1
     ceph osd pool create e 8 8 erasure p22 || return 1
     ceph osd pool set e allow_ec_optimizations true || return 1
     ceph osd pool set e num_zones 2 --crush_rule ec_rev --zone_failure_domain zone || return 1
