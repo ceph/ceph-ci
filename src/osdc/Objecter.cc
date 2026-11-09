@@ -2306,6 +2306,8 @@ void Objecter::_close_core_cons(OSDSession *s)
   s->has_drained_holds = false;
   // the ops sent on these connections are no longer in flight
   for (auto& [tid, op] : s->ops) {
+    // the holds ended
+    op->switch_held = false;
     if (op->routed_core) {
       _op_unroute(op);
     }
@@ -2369,9 +2371,13 @@ void Objecter::_reset_core_con(OSDSession *s,
     ++p;
     if (op->switch_held) {
       // not sent yet, so even if !should_resend
-      if (released_holds.contains(op->target.actual_pgid) &&
-	  !op->target.paused) {
-	resend[op->tid] = op;
+      if (released_holds.contains(op->target.actual_pgid)) {
+	if (op->target.paused) {
+	  // to be sent when unpaused
+	  op->switch_held = false;
+	} else {
+	  resend[op->tid] = op;
+	}
       }
       continue;
     }
@@ -2710,8 +2716,13 @@ void Objecter::_release_core_switch_hold(OSDSession *s,
   // in tid order. If drained, the first one switches the PG's route
   std::vector<Op*> held;
   for (auto& [tid, op] : s->ops) {
-    if (op->switch_held && op->target.actual_pgid == pgid &&
-	!op->target.paused) {
+    if (!op->switch_held || op->target.actual_pgid != pgid) {
+      continue;
+    }
+    if (op->target.paused) {
+      // to be sent when unpaused
+      op->switch_held = false;
+    } else {
       held.push_back(op);
     }
   }
@@ -4238,6 +4249,8 @@ void Objecter::_session_op_remove(OSDSession *from, Op *op)
   // from->lock is locked
 
   _op_unroute(op);
+  // a hold is of a session's PG: the op is no longer held by it
+  op->switch_held = false;
 
   if (from->is_homeless()) {
     num_homeless_ops--;
