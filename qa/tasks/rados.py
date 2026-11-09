@@ -49,6 +49,12 @@ class CephTestRados(WatchedProcess):
             proc.stdin.close()
 
 def _validate_pool_config(config):
+    num_zones = config.get('num_zones', 1)
+    if num_zones > 1:
+        log.info(
+            "num_zones=%d detected. Ensure osd_pool_default_flag_ec_optimizations "
+            "is set to true in ceph configuration.", num_zones
+        )
     
     if 'erasure_code_profile' in config and not config.get('ec_pool', False):
         raise ValueError(
@@ -143,6 +149,7 @@ def task(ctx, config):
                 m: 2
                 technique: reed_sol_van
                 crush-failure-domain: osd
+              num_zones: 2
               fast_read: true
         tasks:
         - ceph:

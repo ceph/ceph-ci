@@ -90,6 +90,9 @@ stretch-writes:
 
 #################
 
+# cephadm drops a daemon stop or start that is scheduled while it reconfigures
+# that daemon, as it does for the new monmap after the mons are upgraded:
+# each step repeats the command until the daemons have changed state.
 zone-loss-sequence:
 - cephadm.shell:
     env: [sha1]
@@ -101,13 +104,11 @@ zone-loss-sequence:
       - while ceph orch upgrade status | jq '.in_progress' | grep true && ! ceph orch upgrade status | jq '.message' | grep Error ; do ceph orch ps ; ceph versions ; sleep 30 ; done
 
       - echo dc2 lost while the mons are mixed - min_size is halved as before
-      - ceph orch daemon stop mon.b
-      - for o in 4 5 6 7 ; do ceph orch daemon stop osd.$o ; done
+      - timeout 900 bash -c 'until (for d in mon.b osd.4 osd.5 osd.6 osd.7 ; do ceph orch ps --daemon_type ${d%%.*} --daemon_id ${d#*.} --refresh --format json | jq -e ".[0].status_desc == \"stopped\"" || exit 1 ; done) ; do for d in mon.b osd.4 osd.5 osd.6 osd.7 ; do ceph orch daemon stop $d ; done ; sleep 30 ; done'
       - timeout 900 bash -c 'until ceph osd dump -f json | jq -e ".stretch_mode.degraded_stretch_mode == 1" ; do sleep 10 ; done'
       - ceph osd pool get pool_fields_upgrade min_size -f json | jq -e '.min_size == 1'
       - sleep 120
-      - ceph orch daemon start mon.b
-      - for o in 4 5 6 7 ; do ceph orch daemon start osd.$o ; done
+      - timeout 900 bash -c 'until (for d in mon.b osd.4 osd.5 osd.6 osd.7 ; do ceph orch ps --daemon_type ${d%%.*} --daemon_id ${d#*.} --refresh --format json | jq -e ".[0].status_desc == \"running\"" || exit 1 ; done) ; do for d in mon.b osd.4 osd.5 osd.6 osd.7 ; do ceph orch daemon start $d ; done ; sleep 30 ; done'
       - timeout 1800 bash -c 'until ceph osd dump -f json | jq -e ".stretch_mode.degraded_stretch_mode == 0" ; do sleep 10 ; done'
       - ceph osd pool get pool_fields_upgrade min_size -f json | jq -e '.min_size == 2'
 
@@ -118,8 +119,7 @@ zone-loss-sequence:
       - while ceph orch upgrade status | jq '.in_progress' | grep true && ! ceph orch upgrade status | jq '.message' | grep Error ; do ceph orch ps ; ceph versions ; sleep 30 ; done
 
       - echo dc2 lost again, its OSDs still on Tentacle, and the upgrade committed
-      - ceph orch daemon stop mon.b
-      - for o in 4 5 6 7 ; do ceph orch daemon stop osd.$o ; done
+      - timeout 900 bash -c 'until (for d in mon.b osd.4 osd.5 osd.6 osd.7 ; do ceph orch ps --daemon_type ${d%%.*} --daemon_id ${d#*.} --refresh --format json | jq -e ".[0].status_desc == \"stopped\"" || exit 1 ; done) ; do for d in mon.b osd.4 osd.5 osd.6 osd.7 ; do ceph orch daemon stop $d ; done ; sleep 30 ; done'
       - timeout 900 bash -c 'until ceph osd dump -f json | jq -e ".stretch_mode.degraded_stretch_mode == 1" ; do sleep 10 ; done'
       - ceph osd require-osd-release vampire
       - ceph osd dump -f json | jq -r .flags | grep stretch_zones
@@ -127,8 +127,7 @@ zone-loss-sequence:
       - sleep 120
 
       - echo dc2 back - its Tentacle OSDs cannot connect and stay down
-      - ceph orch daemon start mon.b
-      - for o in 4 5 6 7 ; do ceph orch daemon start osd.$o ; done
+      - timeout 900 bash -c 'until (for d in mon.b osd.4 osd.5 osd.6 osd.7 ; do ceph orch ps --daemon_type ${d%%.*} --daemon_id ${d#*.} --refresh --format json | jq -e ".[0].status_desc != \"stopped\"" || exit 1 ; done) ; do for d in mon.b osd.4 osd.5 osd.6 osd.7 ; do ceph orch daemon start $d ; done ; sleep 30 ; done'
       - sleep 180
       - for o in 4 5 6 7 ; do ceph osd dump -f json | jq -e ".osds[] | select(.osd == $o) | .up == 0" ; done
 

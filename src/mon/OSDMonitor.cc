@@ -10764,6 +10764,12 @@ int OSDMonitor::prepare_command_pool_set(const cmdmap_t& cmdmap,
   }
   string var;
   cmd_getval(cmdmap, "var", var);
+  // the names that ceph osd pool create also takes
+  if (var == "rule") {
+    var = "crush_rule";
+  } else if (var == "autoscale_mode") {
+    var = "pg_autoscale_mode";
+  }
   if (var != "num_zones") {
     for (const char *opt : {"replica", "crush_rule", "zone_failure_domain",
                             "osd_failure_domain", "root", "class",
@@ -15297,10 +15303,17 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     // Optimized EC does not cope with pg temp with a mismatched size, and
     // num_zones can change the pool's size in this update.
     const auto q = pending_inc.new_pools.find(pgid.pool());
-    pending_inc.new_pg_temp[pgid].resize(
+    auto& temp = pending_inc.new_pg_temp[pgid];
+    temp.resize(
       q != pending_inc.new_pools.end() ? q->second.size
                                        : osdmap.get_pg_size(pgid),
       CRUSH_ITEM_NONE);
+    // An erasure coded PG can still have this pg_temp from an earlier repeer,
+    // which its primary may have asked to remove: remove it, so that the
+    // acting set changes
+    if (std::equal(temp.begin(), temp.end(), acting.begin(), acting.end())) {
+      temp.clear();
+    }
     goto update;
   } else if (prefix == "osd pg-upmap" ||
              prefix == "osd rm-pg-upmap" ||
@@ -16613,6 +16626,10 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       args["rule"] = positional_rule;
       args.erase("erasure_code_profile");
     }
+    err = rename_old_pool_params(args, &ss);
+    if (err) {
+      goto reply_no_propose;
+    }
 
     // 1. the defaults, 2. the profile, 3. the command line, 4. the checks
     PoolCreateParams params = load_pool_defaults(g_conf());
@@ -16673,7 +16690,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
 
     const int64_t num_zones = params.num_zones;
     string erasure_code_profile = params.erasure_code_profile;
-    string rule_name = params.rule;
+    string rule_name = params.crush_rule;
     bool implicit_rule_creation = false;
     // An EC pool's rule takes the CRUSH parameters from its profile unless
     // they are given.
@@ -16836,7 +16853,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     cmd_getval(cmdmap, "target_size_bytes", target_size_bytes);
     cmd_getval(cmdmap, "target_size_ratio", target_size_ratio);
     const string pg_autoscale_mode =
-      given_value("autoscale_mode", params.autoscale_mode);
+      given_value("pg_autoscale_mode", params.pg_autoscale_mode);
     const bool bulk = params.is_given("bulk") && params.bulk;
     bool force_create = false;
     cmd_getval(cmdmap, "force_pg_limit", force_create);

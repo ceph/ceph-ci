@@ -14,6 +14,12 @@ log = logging.getLogger(__name__)
 
 
 def _validate_pool_config(config):
+    num_zones = config.get('num_zones', 1)
+    if num_zones > 1:
+        log.info(
+            "num_zones=%d detected. Ensure osd_pool_default_flag_ec_optimizations "
+            "is set to true in ceph configuration.", num_zones
+        )
     
     if 'erasure_code_profile' in config and not config.get('ec_pool', False):
         raise ValueError(
@@ -66,6 +72,7 @@ def task(ctx, config):
         erasure_code_use_overwrites: test overwrites, default false
         fast_read: enable ec_pool's fast_read
         min_size: set the min_size of created pool
+        num_zones: number of zones for stretched pools
         cleanup: false (defaults to true)
         type: <write|seq|rand> (defaults to write)
         use-pool-config: if true, read pool configuration from overrides/ceph/pool-config
