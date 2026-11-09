@@ -997,9 +997,16 @@ optional:
 * Setting a pool to one zone assigns a one-zone rule with the placement of
   the previous rule, or the default replicated rule for a replicated pool on
   the ``default`` root with the ``host`` failure domain and no device class.
-  Replaced rules are removed when no other pool references them.
+  The default replicated rule is used as it is: if it places the copies
+  differently, for example on OSDs rather than hosts, the pool takes that
+  placement. To keep the pool's placement, give ``--root``,
+  ``--osd_failure_domain`` or ``--class`` with ``num_zones 1``: the pool then
+  gets the default replicated rule only if it places the pool that way, else a
+  rule of its own. Replaced rules are removed when no other pool references
+  them.
 * ``ceph mon disable_stretch_mode {rule} --yes-i-really-mean-it`` moves every
-  replicated pool to ``{rule}`` instead.
+  replicated pool to ``{rule}`` instead. Without ``{rule}``, each pool is set
+  to one zone as ``num_zones 1`` with no options sets it.
 
 To use a custom rule:
 
