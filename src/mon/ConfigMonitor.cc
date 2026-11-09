@@ -722,6 +722,10 @@ bool ConfigMonitor::prepare_command(MonOpRequestRef op)
       goto update;
     }
   } else if (prefix == "osd pool default set") {
+    err = rename_old_pool_params(cmdmap, &ss);
+    if (err) {
+      goto reply;
+    }
     // k and m are kept in the OSDMap's default profile
     if ((cmdmap.contains("k") || cmdmap.contains("m")) &&
         !mon.osdmon()->is_writeable()) {
@@ -730,7 +734,8 @@ bool ConfigMonitor::prepare_command(MonOpRequestRef op)
     }
     // a rule that the pending OSDMap update removes is found gone once the
     // update has committed
-    if (string rule; cmd_getval(cmdmap, "rule", rule) && rule != "none") {
+    if (string rule;
+        cmd_getval(cmdmap, "crush_rule", rule) && rule != "none") {
       const int id = mon.osdmon()->osdmap.crush->get_rule_id(rule);
       if (id >= 0 && mon.osdmon()->crush_rule_removal_pending(rule, id)) {
         mon.osdmon()->wait_for_finished_proposal(
@@ -1040,9 +1045,9 @@ namespace {
 
 // The parameters that ceph osd pool default get shows, in order.
 const vector<string> POOL_DEFAULT_PARAMS = {
-  "pool_type", "num_zones", "rule", "zone_failure_domain",
+  "pool_type", "num_zones", "crush_rule", "zone_failure_domain",
   "osd_failure_domain", "root", "class", "replica", "min_size", "k", "m",
-  "pg_num", "pgp_num", "autoscale_mode", "bulk", "crimson"};
+  "pg_num", "pgp_num", "pg_autoscale_mode", "bulk", "crimson"};
 
 } // anonymous namespace
 
@@ -1106,7 +1111,7 @@ void ConfigMonitor::dump_pool_defaults(Formatter *f, ostream& out)
     d.profile = osdmap.get_erasure_code_profile("default");
   }
   auto value_of = [&](const string& param) -> string {
-    if (param == "rule") {
+    if (param == "crush_rule") {
       const auto id = d.default_rule;
       if (id < 0) {
         return "none";
@@ -1181,16 +1186,16 @@ int ConfigMonitor::prepare_pool_default_set(
     return err;
   }
   int64_t rule_id = -1;
-  if (p.is_given("rule") && p.rule != "none") {
-    rule_id = osdmap.crush->get_rule_id(p.rule);
+  if (p.is_given("crush_rule") && p.crush_rule != "none") {
+    rule_id = osdmap.crush->get_rule_id(p.crush_rule);
     if (rule_id < 0) {
-      ss << "rule '" << p.rule << "' does not exist";
+      ss << "rule '" << p.crush_rule << "' does not exist";
       return -ENOENT;
     }
     // replicated pools fall back on the default rule
     if (!osdmap.crush->rule_valid_for_pool_type(rule_id,
                                                 pg_pool_t::TYPE_REPLICATED)) {
-      ss << "rule '" << p.rule << "' is not a replicated rule";
+      ss << "rule '" << p.crush_rule << "' is not a replicated rule";
       return -EINVAL;
     }
   }
@@ -1211,7 +1216,7 @@ int ConfigMonitor::prepare_pool_default_set(
   }
 
   // the options to write
-  if (p.is_given("rule")) {
+  if (p.is_given("crush_rule")) {
     p.default_rule = rule_id;
   }
   map<string,string> values = pool_default_values(p);

@@ -1326,10 +1326,10 @@ where <options> are any of::
 
     {--size <int[0-]>} {--replica <int[1-]>} {--min_size <int[1-]>}
     {--num_zones <int[1-]>} {--k <int[2-]>} {--m <int[1-]>}
-    {--root <root>} {--zone_failure_domain <type>}
+    {--crush_rule <rule>} {--root <root>} {--zone_failure_domain <type>}
     {--osd_failure_domain <type>} {--class <class>} {--no-class}
     {--pg_num_min <int[0-]>} {--pg_num_max <int[0-]>}
-    {--autoscale_mode <on|off|warn>} {--bulk}
+    {--pg_autoscale_mode <on|off|warn>} {--bulk}
     {--target_size_bytes <int[0-]>} {--target_size_ratio <float[0.0-]>}
     {--force-pg-limit} {--crimson} {--yes-i-really-mean-it}
 
@@ -1338,7 +1338,8 @@ The positional parameters are pg_num, pgp_num and the pool type (default
 replicated pool, or the erasure code profile, the CRUSH rule and
 expected_num_objects for an erasure-coded pool. Each can also be given by
 name, for example
-``--pg_num 32 --pool_type erasure --erasure_code_profile myprofile``.
+``--pg_num 32 --pool_type erasure --erasure_code_profile myprofile``, and the
+CRUSH rule as ``--crush_rule``.
 
 ``--num_zones`` is the number of zones (1 or 2), each holding a full copy of
 the pool. ``--replica`` is the number of copies in each zone of a replicated
@@ -1362,7 +1363,7 @@ code profile. A replicated pool accepts ``--root``, ``--osd_failure_domain``,
 rule of its own, unless the default rule already places it so);
 ``--zone_failure_domain`` needs more than one zone.
 
-``--pg_num_min``, ``--pg_num_max``, ``--autoscale_mode``, ``--bulk``,
+``--pg_num_min``, ``--pg_num_max``, ``--pg_autoscale_mode``, ``--bulk``,
 ``--target_size_bytes`` and ``--target_size_ratio`` set the pool's PG
 autoscaler properties. ``--force-pg-limit`` creates the pool even if it exceeds
 ``mon_max_pg_per_osd``. ``--crimson`` creates a pool for Crimson OSDs
@@ -1388,8 +1389,8 @@ is ``erasure``, ``--root``, ``--zone_failure_domain``, ``--osd_failure_domain``,
 changes an existing pool. It refuses defaults that fail the checks that ``osd pool create``
 makes on its parameters, such as ``--k`` and ``--m`` for a replicated default
 type, and values that a ``mon`` section of the configuration database or a
-Monitor's local configuration would override. ``--rule`` must
-name a replicated rule, and ``--rule none`` sets
+Monitor's local configuration would override. ``--crush_rule`` must
+name a replicated rule, and ``--crush_rule none`` sets
 ``osd_pool_default_crush_rule`` back to -1. A default of one copy needs
 ``mon_allow_pool_size_one`` and ``--yes-i-really-mean-it``. See "Pool Creation
 Defaults" in the Ceph documentation.
@@ -1397,11 +1398,12 @@ Defaults" in the Ceph documentation.
 Usage::
 
     ceph osd pool default set {--pool_type <replicated|erasure>}
-    {--num_zones <int[1-]>} {--rule <rule>} {--zone_failure_domain <type>}
-    {--osd_failure_domain <type>} {--root <root>} {--class <class>} {--no-class}
+    {--num_zones <int[1-]>} {--crush_rule <rule>}
+    {--zone_failure_domain <type>} {--osd_failure_domain <type>}
+    {--root <root>} {--class <class>} {--no-class}
     {--replica <int[1-]>} {--min_size <int[0-]>}
     {--k <int[2-]>} {--m <int[1-]>} {--pg_num <int[1-]>}
-    {--pgp_num <int[0-]>} {--autoscale_mode <on|off|warn>} {--bulk}
+    {--pgp_num <int[0-]>} {--pg_autoscale_mode <on|off|warn>} {--bulk}
     {--crimson} {--yes-i-really-mean-it}
 
 Subcommand ``delete`` deletes pool. It also deletes the pool's CRUSH rule if no
