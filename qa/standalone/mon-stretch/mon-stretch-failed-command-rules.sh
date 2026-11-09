@@ -18,10 +18,6 @@ function run() {
     run_stretch_tests $dir "$@"
 }
 
-function rule_exists() {
-    ceph osd crush rule ls | grep -qx "$1"
-}
-
 # The PG limit is checked with the rule generated for the new pool
 function TEST_failed_pool_create_removes_its_rule() {
     local dir=$1
