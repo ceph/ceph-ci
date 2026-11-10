@@ -306,6 +306,23 @@ TEST_F(PgPoolStretchEncodingTest, OlderThenFullFormatKeepsPool) {
   EXPECT_EQ(2u, full.get_min_size());
 }
 
+// Test a client without OSD_STRETCH_ZONES is not offered split reads of an EC
+// pool over zones, whose shards it would work out wrongly, and still is of an
+// EC pool in one zone
+TEST_F(PgPoolStretchEncodingTest, OlderFormatHidesSplitReadsOverZones) {
+  const auto split_reads = pg_pool_t::FLAG_CLIENT_SPLIT_READS;
+  pg_pool_t over_zones = make_stretch_pool(2, 2, 1);
+  over_zones.type = pg_pool_t::TYPE_ERASURE;
+  over_zones.set_flag(split_reads);
+  pg_pool_t one_zone = make_local_pool(4, 3);
+  one_zone.type = pg_pool_t::TYPE_ERASURE;
+  one_zone.set_flag(split_reads);
+  EXPECT_FALSE(round_trip(over_zones, older_features).has_flag(split_reads));
+  EXPECT_TRUE(round_trip(over_zones, full_features).has_flag(split_reads));
+  EXPECT_TRUE(round_trip(one_zone, older_features).has_flag(split_reads));
+  EXPECT_TRUE(round_trip(one_zone, full_features).has_flag(split_reads));
+}
+
 TEST(hobject, prefixes0)
 {
   uint32_t mask = 0xE947FA20;

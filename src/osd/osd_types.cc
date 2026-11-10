@@ -2213,7 +2213,8 @@ void pg_pool_t::encode(ceph::buffer::list& bl, uint64_t features) const
   encode(snaps, bl, features);
   encode(removed_snaps, bl);
   encode(auid, bl);
-  if (v >= 33) {
+  // before v34, a client works out the shards of a pool over zones wrongly
+  if (v >= 34 || (v == 33 && num_zones <= 1)) {
     encode(flags, bl);
   } else if (v >= 27) {
     auto tmp = flags;

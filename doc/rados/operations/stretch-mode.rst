@@ -571,7 +571,9 @@ The upgrade has three stages:
    OSD that was down during the commit, for example in a lost zone, before it
    returns. With ``--yes-i-really-mean-it`` the commit goes ahead while older
    OSDs are up; they are marked down and cannot rejoin until they are
-   upgraded.
+   upgraded. Clients of earlier releases keep working, but read an
+   erasure-coded pool over zones through its primary OSD, never directly from
+   the other OSDs.
 
 Erasure code profiles and their CRUSH rules change in two ways, on every
 cluster. A profile is deleted with the last pool that uses it: in earlier
