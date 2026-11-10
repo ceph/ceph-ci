@@ -22,8 +22,15 @@
 #include "common/JSONFormatter.h"
 #include "common/StackStringStream.h"
 
+#include <cstring>
 #include <limits>
+#include <memory>
 #include <sstream>
+
+#ifndef _WIN32
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using namespace std;
 
@@ -229,6 +236,37 @@ JSONObj* assert_find(JSONObj& obj, const char *name)
   return child;
 }
 
+void expect_bounded_json(string_view input, bool valid, ceph_json::parse_options options)
+{
+  SCOPED_TRACE(input);
+  SCOPED_TRACE(options.validate_trailing_whitespace);
+
+  ceph_json::value value;
+  EXPECT_EQ(valid, ceph_json::parse(input, value, options));
+  if (valid) {
+    EXPECT_NO_THROW(ceph_json::parse(input, options));
+  }
+  if (!valid) {
+    EXPECT_THROW(ceph_json::parse(input, options), JSONDecoderErr);
+  }
+
+  JSONParser parser(options);
+  EXPECT_EQ(valid, parser.parse(input));
+  EXPECT_EQ(valid, parser.parse(input.data(), static_cast<int>(input.size())));
+
+  buffer::list buffers;
+  buffers.append(buffer::ptr {
+    buffer::create_static(input.size(), const_cast<char*>(input.data()))});
+  EXPECT_EQ(valid, ceph_json::parse(buffers, value, options));
+  EXPECT_EQ(valid, parser.parse(buffers));
+  if (valid) {
+    EXPECT_NO_THROW(ceph_json::parse(buffers, options));
+  }
+  if (!valid) {
+    EXPECT_THROW(ceph_json::parse(buffers, options), JSONDecoderErr);
+  }
+}
+
 struct compat_record {
   string name;
   int count = 0;
@@ -339,7 +377,7 @@ TEST(formatter, ceph_json_parse_validation)
   };
 
   for (const string_view input : {
-         "truegarbage", "nullgarbage", R"({"key":1}garbage)"}) {
+         "truegarbage", "nullgarbage", R"({"key":1}garbage)", "1e"}) {
     ceph_json::value parsed;
     EXPECT_FALSE(ceph_json::parse(input, parsed));
     EXPECT_THROW(ceph_json::parse(input), JSONDecoderErr);
@@ -380,6 +418,120 @@ TEST(formatter, ceph_json_parse_validation)
   EXPECT_FALSE(ceph_json::parse(empty, parsed));
   EXPECT_FALSE(parser.parse(empty));
 }
+
+TEST(formatter, ceph_json_bounded_input)
+{
+  for (const string_view json : {
+         "[]\n", "{}\n", "true\n", "false\n", "null\n", "1234\n", "-1.25e+3\n",
+         "\"escaped\\nstring\"\n",
+         "[{\"name\":\"a\",\"hostname\":\"mon-a\"},"
+         "{\"name\":\"b\",\"hostname\":\"mon-b\"},"
+         "{\"name\":\"c\",\"hostname\":\"mon-c\"}]\n"}) {
+    for (const string_view suffix : {" X", " \t\r\nX", "X", "0"}) {
+      for (size_t alignment = 0; alignment < 16; ++alignment) {
+        string backing(alignment, 'X');
+        backing += json;
+        backing += suffix;
+        const string_view input {backing.data() + alignment, json.size()};
+
+        for (const bool strict : {true, false}) {
+          expect_bounded_json(input, true, {.validate_trailing_whitespace = strict});
+        }
+      }
+    }
+  }
+
+  // A number must end at the view's boundary even when more digits follow it.
+  const string backing = "123456789";
+  const string_view number {backing.data(), 2};
+  EXPECT_EQ(12, ceph_json::decode_value<int>(ceph_json::parse(number)));
+
+  // Garbage inside the view must retain the selected validation policy.
+  for (const bool strict : {true, false}) {
+    expect_bounded_json("[]\nX", !strict, {.validate_trailing_whitespace = strict});
+  }
+}
+
+TEST(formatter, ceph_json_bounded_truncated_input)
+{
+  const string json = R"({"nested":[true,false,null,-123.5e+6,"escaped\n\u1234"]})";
+  for (size_t length = 0; length < json.size(); ++length) {
+    const string_view prefix {json.data(), length};
+    for (const bool strict : {true, false}) {
+      // The remaining bytes in the allocation must not complete a truncated document.
+      expect_bounded_json(prefix, false, {.validate_trailing_whitespace = strict});
+    }
+  }
+}
+
+#ifndef _WIN32
+TEST(formatter, ceph_json_guarded_input)
+{
+  const long page_size = sysconf(_SC_PAGESIZE);
+  ASSERT_GT(page_size, 0);
+  const auto mapping_length = 2 * static_cast<size_t>(page_size);
+  auto *mapping = static_cast<char*>(mmap(
+    nullptr, mapping_length, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+  ASSERT_NE(MAP_FAILED, mapping);
+  const auto unmap = [mapping_length](char *p) { munmap(p, mapping_length); };
+  const unique_ptr<char, decltype(unmap)> pages {mapping, unmap};
+  char *boundary = mapping + page_size;
+  ASSERT_EQ(0, mprotect(boundary, page_size, PROT_NONE));
+
+  for (const string_view json : {
+         "[]\n", "{}", "true", "false", "null", "1234", "-1.25e+3",
+         "\"escaped\\nstring\"", "\"utf8 \xE2\x82\xAC\"",
+         R"({"nested":[true,false,null,-123.5e+6,"escaped\n\u1234"]})"}) {
+    ASSERT_LE(json.size(), static_cast<size_t>(page_size));
+    auto *input = boundary - json.size();
+    memcpy(input, json.data(), json.size());
+    for (const bool strict : {true, false}) {
+      expect_bounded_json({input, json.size()}, true, {.validate_trailing_whitespace = strict});
+    }
+  }
+
+  // Exercise string scanning across word boundaries without readable padding.
+  for (size_t length = 0; length < 256; ++length) {
+    const string json = '"' + string(length, 'a') + '"';
+    ASSERT_LE(json.size(), static_cast<size_t>(page_size));
+    auto *input = boundary - json.size();
+    memcpy(input, json.data(), json.size());
+    for (const bool strict : {true, false}) {
+      expect_bounded_json({input, json.size()}, true, {.validate_trailing_whitespace = strict});
+    }
+  }
+
+  for (const size_t depth : {128uz, 512uz}) {
+    const string json = string(depth, '[') + '0' + string(depth, ']');
+    ASSERT_LE(json.size(), static_cast<size_t>(page_size));
+    auto *input = boundary - json.size();
+    memcpy(input, json.data(), json.size());
+    for (const bool strict : {true, false}) {
+      expect_bounded_json({input, json.size()}, true, {.validate_trailing_whitespace = strict});
+    }
+  }
+
+  for (const string_view json : {
+         R"({"nested":[true,false,null,-123.5e+6,"escaped\n\u1234"]})",
+         "\"escaped\\n\\u1234\""}) {
+    for (size_t length = 0; length < json.size(); ++length) {
+      auto *input = boundary - length;
+      memcpy(input, json.data(), length);
+      for (const bool strict : {true, false}) {
+        expect_bounded_json({input, length}, false, {.validate_trailing_whitespace = strict});
+      }
+    }
+  }
+
+  for (const string_view json : {"tru", "fals", "nul", "-", "1.", "[1e]", "[1,]", "{]"}) {
+    auto *input = boundary - json.size();
+    memcpy(input, json.data(), json.size());
+    for (const bool strict : {true, false}) {
+      expect_bounded_json({input, json.size()}, false, {.validate_trailing_whitespace = strict});
+    }
+  }
+}
+#endif
 
 TEST(formatter, ceph_json_duplicate_metadata_compatibility)
 {

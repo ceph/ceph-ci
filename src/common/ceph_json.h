@@ -166,11 +166,20 @@ try
   // Glaze reuses an existing object value, so start each document afresh:
   out = nullptr;
 
-  if (options.validate_trailing_whitespace) {
-    return glz::read<glz::opts_validate {}>(out, input);
+  // A view can end inside another allocation or at an inaccessible page. Its
+  // length, rather than a NUL outside that range, must bound every read.
+  constexpr glz::opts bounded {.null_terminated = false};
+  glz::context context;
+  auto error = options.validate_trailing_whitespace
+    ? glz::read<glz::opts_validate {bounded}>(out, input, context)
+    : glz::read<bounded>(out, input, context);
+
+  // Glaze 7.6 can report success at a bounded end inside an unclosed container.
+  if (!error && 0 != context.depth) {
+    error.ec = glz::error_code::unexpected_end;
   }
 
-  return glz::read_json(out, input);
+  return error;
 }
 catch (const duplicate_object_key&)
 {
