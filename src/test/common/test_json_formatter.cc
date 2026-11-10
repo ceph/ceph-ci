@@ -394,6 +394,21 @@ TEST(formatter, ceph_json_parse_validation)
   ceph_json::value parsed;
   EXPECT_TRUE(ceph_json::parse("1234 \t\n", parsed));
 
+  for (const bool strict : {true, false}) {
+    const ceph_json::parse_options options {.validate_trailing_whitespace = strict};
+    expect_bounded_json(" \t\r\n", false, options);
+    expect_bounded_json(" \t\r\nnull", true, options);
+
+    const auto numbers = ceph_json::parse("[18446744073709551615,-9223372036854775808,1.25]",
+                                         options);
+    const auto* array = ceph_json::array(numbers);
+    ASSERT_NE(nullptr, array);
+    ASSERT_EQ(3uz, array->size());
+    EXPECT_EQ(numeric_limits<uint64_t>::max(), array->at(0).get<uint64_t>());
+    EXPECT_EQ(numeric_limits<int64_t>::min(), array->at(1).get<int64_t>());
+    EXPECT_DOUBLE_EQ(1.25, array->at(2).get<double>());
+  }
+
   // Reusing the output must not carry object keys between documents:
   EXPECT_TRUE(ceph_json::parse(R"({"same":1})", parsed));
   EXPECT_TRUE(ceph_json::parse(R"({"same":2})", parsed));

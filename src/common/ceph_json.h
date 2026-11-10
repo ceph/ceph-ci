@@ -154,6 +154,71 @@ using value = glz::generic_json<glz::num_mode::u64, detail::duplicate_rejecting_
 
 namespace detail {
 
+// Glaze's generic variant tries every alternative when it has multiple numeric
+// types. In bounded mode that includes copying input for integer readers even
+// on strings and containers. Select the reader by token, retaining Glaze's
+// uint64_t, int64_t, double order for numbers.
+template <typename Value>
+struct generic_json_reader {
+  using variant = typename Value::val_t;
+
+  template <auto Options>
+  static void op(Value& value, glz::is_context auto& ctx, auto& it, auto end)
+  {
+    if constexpr (Options.null_terminated) {
+      glz::from<glz::JSON, variant>::template op<Options>(value.data, ctx, it, end);
+    } else {
+      if constexpr (!glz::check_ws_handled(Options)) {
+        if (glz::skip_ws<Options>(ctx, it, end)) {
+          if (ctx.error == glz::error_code::end_reached) {
+            ctx.error = glz::error_code::unexpected_end;
+          }
+          return;
+        }
+      }
+      if (it == end) [[unlikely]] {
+        ctx.error = glz::error_code::unexpected_end;
+        return;
+      }
+
+      constexpr auto opts = glz::ws_handled<Options>();
+      auto read_as = [&]<typename T> {
+        if (!std::holds_alternative<T>(value.data)) {
+          value.data.template emplace<T>();
+        }
+        glz::parse<glz::JSON>::template op<opts>(std::get<T>(value.data), ctx, it, end);
+      };
+
+      switch (*it) {
+      case '{': read_as.template operator()<typename Value::object_t>(); break;
+      case '[': read_as.template operator()<typename Value::array_t>(); break;
+      case '"': read_as.template operator()<std::string>(); break;
+      case 't':
+      case 'f': read_as.template operator()<bool>(); break;
+      case 'n': read_as.template operator()<std::nullptr_t>(); break;
+      default:
+        glz::process_variant_alternatives<variant, glz::is_variant_num>::template op<opts>(
+          value.data, ctx, it, end);
+        break;
+      }
+    }
+  }
+};
+
+} // namespace detail
+} // namespace ceph_json
+
+template <>
+struct glz::from<glz::JSON, ceph_json::value>
+  : ceph_json::detail::generic_json_reader<ceph_json::value> {};
+
+template <>
+struct glz::from<glz::JSON, ceph_json::detail::tree_value>
+  : ceph_json::detail::generic_json_reader<ceph_json::detail::tree_value> {};
+
+namespace ceph_json {
+namespace detail {
+
 constexpr glz::error_ctx duplicate_key_error {
   .ec = glz::error_code::syntax_error,
   .custom_error_message = "duplicate object key"
