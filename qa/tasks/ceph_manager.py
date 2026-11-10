@@ -694,14 +694,14 @@ class OSDThrasher(Thrasher):
 
     def _zones_of_blocks(self, pool, up):
         """
-        For an erasure coded pool over zones, the OSDs of the zone of each
-        of the PG's zone blocks, in block order. The monitors cancel an
-        upmap that puts a zone block in more than one zone, or two blocks
-        in one zone. None for other pools, or when up does not show a zone
-        for every block: a block's zone is that of any of its OSDs.
+        For a pool over zones, the OSDs of each zone the PG uses, each
+        holding size / num_zones of its OSDs. For an erasure coded pool
+        they are in block order: the monitors cancel an upmap that puts a
+        zone block in more than one zone, or two blocks in one zone. They
+        keep an upmap that leaves a replicated PG in fewer zones, and the
+        PG then cannot peer. None when up does not show every zone: a
+        zone is that of any of its OSDs in up.
         """
-        if pool['type'] != 3 or pool.get('num_zones', 1) <= 1:
-            return None
         out = self.ceph_manager.raw_cluster_cmd('osd', 'tree', '-f', 'json')
         nodes = {n['id']: n for n in json.loads(out)['nodes']}
         osd_zone = {}
@@ -718,11 +718,15 @@ class OSDThrasher(Thrasher):
                     zone_osds.setdefault(zone['id'], []).append(node['id'])
                 todo += node.get('children', [])
         block = pool['size'] // pool['num_zones']
-        zones = []
-        for i in range(0, len(up), block):
-            found = {osd_zone[o] for o in up[i:i + block] if o in osd_zone}
-            zones.append(found.pop() if len(found) == 1 else None)
-        if None in zones or len(set(zones)) != len(zones) or \
+        if pool['type'] == 3:
+            zones = []
+            for i in range(0, len(up), block):
+                found = {osd_zone[o] for o in up[i:i + block] if o in osd_zone}
+                zones.append(found.pop() if len(found) == 1 else None)
+        else:
+            zones = list(dict.fromkeys(osd_zone[o] for o in up if o in osd_zone))
+        if len(zones) != pool['num_zones'] or None in zones or \
+           len(set(zones)) != len(zones) or \
            any(len(zone_osds[z]) < block for z in zones):
             return None
         return [zone_osds[z] for z in zones]
@@ -751,9 +755,12 @@ class OSDThrasher(Thrasher):
                     return
                 n = sizes[0]
                 pool = [x for x in j['pools'] if x['pool'] == poolid][0]
-                zones = self._zones_of_blocks(pool, pg['up'])
-                if zones is not None:
-                    # each block to its own zone, perhaps swapping zones
+                if pool.get('num_zones', 1) > 1:
+                    zones = self._zones_of_blocks(pool, pg['up'])
+                    if zones is None:
+                        self.log('No zones for %s; doing nothing' % pgid)
+                        return
+                    # the same share of OSDs in each zone, perhaps swapping zones
                     shuffle(zones)
                     osds = []
                     for zone in zones:
@@ -805,15 +812,18 @@ class OSDThrasher(Thrasher):
                     return
                 n = sizes[0]
                 pool = [x for x in j['pools'] if x['pool'] == poolid][0]
-                zones = self._zones_of_blocks(pool, pg['up'])
-                if zones is not None:
-                    # each moved shard stays in its zone
+                if pool.get('num_zones', 1) > 1:
+                    zones = self._zones_of_blocks(pool, pg['up'])
+                    if zones is None:
+                        self.log('No zones for %s; doing nothing' % pgid)
+                        return
+                    # each moved OSD stays in its zone
                     osds = []
-                    for i, src in enumerate(pg['up']):
-                        zone = zones[i * len(zones) // n]
+                    for src in pg['up']:
+                        zone = next((z for z in zones if src in z), [])
                         dsts = [o for o in zone
                                 if o not in pg['up'] and o not in osds]
-                        if src in zone and dsts and random.random() < .5:
+                        if dsts and random.random() < .5:
                             osds += [src, random.choice(dsts)]
                     if not osds:
                         self.log('No OSD to move %s to; doing nothing' % pgid)
