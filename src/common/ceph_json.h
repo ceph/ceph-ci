@@ -19,8 +19,11 @@
 #include <strings.h>
 
 #include <algorithm>
+#include <charconv>
+#include <cstddef>
 #include <deque>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -162,6 +165,38 @@ template <typename Value>
 struct generic_json_reader {
   using variant = typename Value::val_t;
 
+  // Read a complete decimal integer in place. Glaze handles other numeric
+  // forms, including decimals, exponents, and values outside the integer range.
+  template <typename Integer>
+  static bool read_integer(Value& value, const char*& it, const char* end)
+  {
+    constexpr auto sign_size = std::is_signed_v<Integer> ? 1 : 0;
+    constexpr auto max_length = std::numeric_limits<Integer>::digits10 + 1 + sign_size;
+    const auto limit = it + std::min<std::ptrdiff_t>(end - it, max_length);
+    Integer number;
+    const auto [next, error] = std::from_chars(it, limit, number);
+    if (error != std::errc {}) {
+      return false;
+    }
+
+    const auto digits = it + sign_size;
+    if (*digits == '0' && next - digits > 1) {
+      return false;
+    }
+    if (next != end) {
+      switch (*next) {
+      case ' ': case '\t': case '\n': case '\r':
+      case ',': case ']': case '}':
+        break;
+      default:
+        return false;
+      }
+    }
+    value.data.template emplace<Integer>(number);
+    it = next;
+    return true;
+  }
+
   template <auto Options>
   static void op(Value& value, glz::is_context auto& ctx, auto& it, auto end)
   {
@@ -197,6 +232,10 @@ struct generic_json_reader {
       case 'f': read_as.template operator()<bool>(); break;
       case 'n': read_as.template operator()<std::nullptr_t>(); break;
       default:
+        if (*it == '-' ? read_integer<int64_t>(value, it, end)
+                       : read_integer<uint64_t>(value, it, end)) {
+          return;
+        }
         glz::process_variant_alternatives<variant, glz::is_variant_num>::template op<opts>(
           value.data, ctx, it, end);
         break;

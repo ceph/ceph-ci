@@ -495,6 +495,7 @@ TEST(formatter, ceph_json_guarded_input)
 
   for (const string_view json : {
          "[]\n", "{}", "true", "false", "null", "1234", "-1.25e+3",
+         "18446744073709551615", "-9223372036854775808",
          "\"escaped\\nstring\"", "\"utf8 \xE2\x82\xAC\"",
          R"({"nested":[true,false,null,-123.5e+6,"escaped\n\u1234"]})"}) {
     ASSERT_LE(json.size(), static_cast<size_t>(page_size));
