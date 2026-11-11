@@ -468,6 +468,12 @@ another pool uses them or they are the default replicated rule or the
 ``default`` profile. If a name that the migration needs is taken, the command
 fails with ``EEXIST`` and changes nothing.
 
+``ceph osd pool migrate`` can be run again, as the monitors do when an
+election interrupts it. On a pool that is already being migrated, a migration
+with no options succeeds without changing anything; one with options succeeds
+without changing anything if it asks for the layout that the pool is being
+migrated to, and fails otherwise.
+
 .. _associate-pool-to-application:
 
 Associating a Pool with an Application

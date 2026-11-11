@@ -8954,6 +8954,121 @@ int OSDMonitor::pool_own_profile(const string &pool,
   return normalize_profile(pool, *profile, true, ss);
 }
 
+static bool same_rule_steps(const CrushWrapper &crush, int a, int b)
+{
+  const int len = crush.get_rule_len(a);
+  if (crush.get_rule_type(a) != crush.get_rule_type(b) ||
+      crush.get_rule_len(b) != len) {
+    return false;
+  }
+  for (int step = 0; step < len; ++step) {
+    if (crush.get_rule_op(a, step) != crush.get_rule_op(b, step) ||
+        crush.get_rule_arg1(a, step) != crush.get_rule_arg1(b, step) ||
+        crush.get_rule_arg2(a, step) != crush.get_rule_arg2(b, step)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Whether pool p, named pool, has the layout that ceph osd pool migrate with
+// params gives its target: its type, zones, size, erasure code profile and
+// EC optimizations, and a rule with the same steps, with the value of each
+// other argument given. An argument it does not compare is a difference.
+bool OSDMonitor::pool_has_layout(const pg_pool_t &p,
+                                 const string &pool,
+                                 const PoolCreateParams &params,
+                                 const cmdmap_t &args,
+                                 bool enable_ec_optimizations,
+                                 const string &zone_failure_domain,
+                                 const string &root,
+                                 const string &osd_failure_domain,
+                                 const string &device_class,
+                                 int64_t repl_size,
+                                 int replica)
+{
+  static const std::set<string> compared = {
+    "prefix", "pool", "format", "yes_i_really_mean_it", "force_pg_limit",
+    "pool_type", "erasure_code_profile", "crush_rule", "size", "min_size",
+    "k", "m", "num_zones", "root", "zone_failure_domain", "osd_failure_domain",
+    "replica", "class", "no_class", "enable_ec_optimizations", "pg_num",
+    "pgp_num", "pg_autoscale_mode", "bulk", "crimson"};
+  if (std::ranges::any_of(args, [](const auto &arg) {
+        return !compared.contains(arg.first);
+      })) {
+    return false;
+  }
+  if (static_cast<int>(p.get_type()) != params.pool_type ||
+      p.get_num_zones() != params.num_zones ||
+      p.is_crimson() != params.crimson ||
+      (params.is_given("pg_num") && p.get_pg_num() != params.pg_num) ||
+      ((params.is_given("pg_num") || params.is_given("pgp_num")) &&
+       p.get_pgp_num() != params.pgp_num) ||
+      (params.is_given("min_size") && p.min_size != params.min_size) ||
+      (params.is_given("pg_autoscale_mode") &&
+       pg_pool_t::get_pg_autoscale_mode_name(p.pg_autoscale_mode) !=
+         params.pg_autoscale_mode) ||
+      (params.is_given("bulk") && p.is_bulk() != params.bulk)) {
+    return false;
+  }
+
+  stringstream ss;
+  string profile;
+  if (p.is_erasure()) {
+    if (params.is_given("erasure_code_profile")) {
+      if (p.erasure_code_profile != params.erasure_code_profile) {
+        return false;
+      }
+    } else {
+      map<string,string> own;
+      if (pool_own_profile(pool, params, root, osd_failure_domain,
+                           device_class, &own, &ss) ||
+          !osdmap.has_erasure_code_profile(p.erasure_code_profile) ||
+          osdmap.get_erasure_code_profile(p.erasure_code_profile) != own) {
+        return false;
+      }
+    }
+    profile = p.erasure_code_profile;
+    // as prepare_new_pool() gives them, an unsupported default aside
+    const bool optimized = params.crimson || params.num_zones > 1 ||
+      enable_ec_optimizations ||
+      cct->_conf.get_val<bool>("osd_pool_default_flag_ec_optimizations");
+    if (p.allows_ecoptimizations() != optimized) {
+      return false;
+    }
+  }
+
+  unsigned size, min_size;
+  int pool_replica = replica;
+  int64_t num_zones = params.num_zones;
+  if (prepare_pool_size(params.pool_type, profile, repl_size, pool_replica,
+                        num_zones, &size, &min_size, &ss) ||
+      p.size != size) {
+    return false;
+  }
+
+  CrushWrapper crush = _get_pending_crush();
+  if (params.num_zones > 1 &&
+      static_cast<int>(p.peering_crush_bucket_barrier) !=
+        crush.get_type_id(zone_failure_domain)) {
+    return false;
+  }
+  if (!crush.rule_exists(p.get_crush_rule())) {
+    return false;
+  }
+  if (params.is_given("crush_rule") && params.crush_rule != "none") {
+    return crush.get_rule_id(params.crush_rule) == p.get_crush_rule();
+  }
+  string name = pool + ".layout";
+  while (crush.rule_exists(name)) {
+    name += "_";
+  }
+  const int rule = add_target_rule(crush, name, -1, params, profile,
+                                   zone_failure_domain, root,
+                                   osd_failure_domain, device_class, &ss);
+  return rule >= 0 && same_rule_steps(crush, rule, p.get_crush_rule());
+}
+
 // A migration's target gets its own rule, named after it, unless the command
 // names one, and the source pool's own rule and erasure code profile take
 // suffix unless another pool uses them. erasure_code_profile is the target's
@@ -16285,6 +16400,8 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     int64_t pool_id = osdmap.lookup_pg_pool_name(poolstr);
 
     string source_pool_name = "";
+    // the named pool is the target of a migration already
+    bool migrating_to = false;
 
     // a migration with no parameters gives the target the source pool's
     // settings, its zones and replica among them
@@ -16367,7 +16484,15 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       }
 
       const pg_pool_t *src = osdmap.get_pg_pool(pool_id);
-      if (src->is_migrating()) {
+      // the monitors run a command again, as after an election: a
+      // migration with no parameters leaves a pool that is being migrated
+      // as it is
+      if (src->is_migration_target() && migrate_no_params) {
+        ss << "pool '" << poolstr << "' is already being migrated";
+        err = 0;
+        goto reply_no_propose;
+      }
+      if (src->is_migration_src()) {
         ss << "Cannot migrate pool '" << poolstr << "': it is part of an ongoing migration.";
         err = -EINVAL;
         goto reply_no_propose;
@@ -16378,20 +16503,25 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
         err = -EINVAL;
         goto reply_no_propose;
       }
-      int ret = _prepare_rename_pool(pool_id, old_pool_name);
-      if (ret < 0) {
-        ss << "failed to rename pool '" << poolstr << "' to '" << old_pool_name << "': " << cpp_strerror(ret);
-        err = ret;
-        goto reply_no_propose;
-      }
+      // the target of a migration is compared with the command below
+      migrating_to = src->is_migration_target();
 
-      migrate_pool_id = pool_id;
+      if (!migrating_to) {
+        int ret = _prepare_rename_pool(pool_id, old_pool_name);
+        if (ret < 0) {
+          ss << "failed to rename pool '" << poolstr << "' to '" << old_pool_name << "': " << cpp_strerror(ret);
+          err = ret;
+          goto reply_no_propose;
+        }
 
-      // Resolve source_pool_name to the pending renamed pool name
-      for (auto& [id, name] : pending_inc.new_pool_names) {
-        if (id == migrate_pool_id) {
-          source_pool_name = name;
-          break;
+        migrate_pool_id = pool_id;
+
+        // Resolve source_pool_name to the pending renamed pool name
+        for (auto& [id, name] : pending_inc.new_pool_names) {
+          if (id == migrate_pool_id) {
+            source_pool_name = name;
+            break;
+          }
         }
       }
     }
@@ -16401,7 +16531,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
       err = 0;
       goto reply_no_propose;
     }
-    if (pool_id >= 0 &&
+    if (!migrating_to && pool_id >= 0 &&
         (!pending_inc.new_pool_names.count(pool_id) ||
          pending_inc.new_pool_names[pool_id] == poolstr)) {
       const pg_pool_t *p = osdmap.get_pg_pool(pool_id);
@@ -16426,7 +16556,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     std::optional<int64_t> source_pool_id;
     const pg_pool_t *source_pool = nullptr;
     if (is_migrate) {
-      source_pool_id = migrate_pool_id;
+      source_pool_id = migrating_to ? pool_id : migrate_pool_id;
       source_pool = &std::as_const(*this).get_pg_pool(*source_pool_id);
       if (migrate_no_params) {
         pool_type_str = source_pool->get_type_name();
@@ -16452,7 +16582,7 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     }
 
     bool enable_ec_optimizations = cmd_getval_or<bool>(cmdmap, "enable_ec_optimizations", false);
-    if (source_pool) {
+    if (source_pool && !migrating_to) {
       bool source_not_legacy_ec = source_pool->get_type() == pg_pool_t::TYPE_REPLICATED ||
         source_pool->allows_ecoptimizations();
       bool target_is_legacy_ec = (pool_type_explicit &&
@@ -16582,6 +16712,22 @@ bool OSDMonitor::prepare_command_impl(MonOpRequestRef op,
     const int replica = params.is_given("replica") ||
       (pool_type == pg_pool_t::TYPE_REPLICATED && num_zones > 1)
         ? params.replica : 0;
+
+    // A migration of a pool that is being migrated to the layout it asks for
+    // changes nothing: the monitors run a command again after an election
+    if (migrating_to) {
+      if (pool_has_layout(*source_pool, poolstr, params, args,
+                          enable_ec_optimizations, zone_failure_domain, root,
+                          osd_failure_domain, device_class, repl_size,
+                          replica)) {
+        ss << "pool '" << poolstr << "' is already being migrated to that layout";
+        err = 0;
+        goto reply_no_propose;
+      }
+      ss << "Cannot migrate pool '" << poolstr << "': it is part of an ongoing migration.";
+      err = -EINVAL;
+      goto reply_no_propose;
+    }
 
     // For osd pool migrate with no parameters: the new pool is a full copy of
     // the source pool, so the migration would be pointless.  Warn the user and
