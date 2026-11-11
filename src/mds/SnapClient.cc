@@ -33,7 +33,8 @@ using namespace std;
 
 void SnapClient::resend_queries()
 {
-  if (!waiting_for_version.empty() || (!synced && sync_reqid > 0)) {
+  if (!waiting_for_version.empty() || !waiting_for_commit.empty() ||
+      (!synced && sync_reqid > 0)) {
     version_t want;
     if (!waiting_for_version.empty())
       want = std::max<version_t>(cached_version, waiting_for_version.rbegin()->first);
@@ -98,6 +99,8 @@ void SnapClient::handle_query_result(const cref_t<MMDSTableRequest> &m)
     }
   }
 
+  kick_commit_waiters();
+
   if (m->op == TABLESERVER_OP_QUERY_REPLY && m->reqid >= sync_reqid)
     synced = true;
 
@@ -144,6 +147,8 @@ void SnapClient::notify_commit(version_t tid)
   } else {
     ceph_abort();
   }
+
+  kick_commit_waiters();
 }
 
 void SnapClient::prepare_create(inodeno_t dirino, std::string_view name, utime_t stamp,
@@ -232,6 +237,72 @@ void SnapClient::get_snaps(set<snapid_t>& result) const
     auto r = cached_pending_destroy.find(tid);
     if (r != cached_pending_destroy.end())
       result.erase(r->second.first);
+  }
+}
+
+bool SnapClient::is_pending(version_t tid) const
+{
+  if (committing_tids.count(tid)) {
+    return false;
+  }
+  return cached_pending_update.count(tid) || cached_pending_destroy.count(tid);
+}
+
+version_t SnapClient::get_pending_tid(snapid_t seq) const
+{
+  const snapid_t last_seq = get_last_seq();
+  version_t tid = 0;
+  snapid_t tid_seq = 0;
+
+  auto consider = [&](version_t t, snapid_t s) {
+    // a rename (TABLE_OP_UPDATE) carries an existing snapid <= last_seq
+    if (s <= last_seq || s < seq || !is_pending(t)) {
+      return;
+    }
+    if (!tid || s < tid_seq) {
+      tid = t;
+      tid_seq = s;
+    }
+  };
+  for (const auto& [t, info] : cached_pending_update) {
+    consider(t, info.snapid);
+  }
+  for (const auto& [t, p] : cached_pending_destroy) {
+    consider(t, p.second);
+  }
+  return tid;
+}
+
+void SnapClient::wait_for_commit(version_t tid, MDSContext *c)
+{
+  ceph_assert(is_pending(tid));
+  auto& waiters = waiting_for_commit[tid];
+  if (waiters.empty()) {
+    /*
+     * The commit normally arrives with MMDSSnapUpdate. A prepare that was
+     * rolled back is never committed and stays in the cache until the next
+     * refresh, so ask for one.
+     */
+    dout(10) << __func__ << " tid " << tid << ", refreshing" << dendl;
+    refresh(cached_version, nullptr);
+  }
+  waiters.push_back(c);
+}
+
+void SnapClient::kick_commit_waiters()
+{
+  MDSContext::vec finished;
+  for (auto it = waiting_for_commit.begin(); it != waiting_for_commit.end(); ) {
+    if (is_pending(it->first)) {
+      ++it;
+      continue;
+    }
+    dout(10) << __func__ << " tid " << it->first << dendl;
+    finished.insert(finished.end(), it->second.begin(), it->second.end());
+    it = waiting_for_commit.erase(it);
+  }
+  if (!finished.empty()) {
+    mds->queue_waiters(finished);
   }
 }
 

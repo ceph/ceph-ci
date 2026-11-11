@@ -64,6 +64,19 @@ public:
   snapid_t get_last_destroyed() const { return cached_last_destroyed; }
   snapid_t get_last_seq() const { return std::max(cached_last_destroyed, cached_last_created); }
 
+  /*
+   * Snap creates/destroys are prepared on every rank (notify_prep) before
+   * the snapserver agrees, but a rank other than the requester only learns
+   * of the commit from MMDSSnapUpdate. Clients are notified of the new seq
+   * at the same time, so they can be ahead of this rank for a while.
+   *
+   * Return the tid of the prepared-but-not-yet-committed snap create or
+   * destroy with the smallest seq >= @seq, or 0 if there is none.
+   */
+  version_t get_pending_tid(snapid_t seq) const;
+  /* complete @c once @tid is committed or no longer pending on this rank */
+  void wait_for_commit(version_t tid, MDSContext *c);
+
   void get_snaps(std::set<snapid_t>& snaps) const;
   std::set<snapid_t> filter(const std::set<snapid_t>& snaps) const;
   const SnapInfo* get_snap_info(snapid_t snapid) const;
@@ -81,6 +94,10 @@ private:
   std::set<version_t> committing_tids;
 
   std::map<version_t, std::vector<MDSContext*> > waiting_for_version;
+  std::map<version_t, std::vector<MDSContext*> > waiting_for_commit;
+
+  bool is_pending(version_t tid) const;
+  void kick_commit_waiters();
 
   uint64_t sync_reqid = 0;
   bool synced = false;
