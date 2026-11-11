@@ -86,7 +86,7 @@ auto consume_next_field(std::string_view& remaining, iso_8601_mode mode,
       if (!f) {
         return std::unexpected(fail{});
       } else {
-        return f;
+        return *f;
       }
     } else {
       return std::nullopt;
@@ -100,7 +100,7 @@ auto consume_next_field(std::string_view& remaining, iso_8601_mode mode,
       if (!f) {
         return std::unexpected(fail{});
       } else {
-        return f;
+        return *f;
       }
     } else {
       return std::nullopt;
