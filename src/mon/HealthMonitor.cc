@@ -728,6 +728,33 @@ bool HealthMonitor::check_member_health()
       d.detail.swap(detail);
     }
   }
+  // OSD_RELEASE_TOO_OLD
+  {
+    const OSDMap& osdmap = mon.osdmon()->osdmap;
+    const uint64_t need =
+      ceph_release_server_feature(osdmap.require_osd_release);
+    list<std::string> detail;
+    unsigned count = 0;
+    std::lock_guard l(mon.session_map_lock);
+    for (const auto& [osd, s] : mon.session_map.by_osd) {
+      if ((s->con_features & need) == need) {
+        continue;
+      }
+      if (++count <= max) {
+        ostringstream ds;
+        ds << "osd." << osd << " at " << s->addrs
+           << " is older than require_osd_release "
+           << osdmap.require_osd_release;
+        detail.push_back(ds.str());
+      }
+    }
+    if (count > 0) {
+      auto& d = next.add("OSD_RELEASE_TOO_OLD", HEALTH_WARN,
+                         "OSDs older than require_osd_release cannot boot",
+                         count);
+      d.detail.swap(detail);
+    }
+  }
   // AUTH_INSECURE_GLOBAL_ID_RECLAIM_ALLOWED
   if (g_conf().get_val<bool>("mon_warn_on_insecure_global_id_reclaim_allowed") &&
       g_conf().get_val<bool>("auth_allow_insecure_global_id_reclaim")) {

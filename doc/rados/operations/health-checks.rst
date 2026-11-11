@@ -984,6 +984,17 @@ Run the following command to clear the warning:
 
 See :ref:`OSD_UPGRADE_FINISHED` for full details.
 
+OSD_RELEASE_TOO_OLD
+___________________
+
+One or more OSDs that are connected to the monitors run a release older than
+``require_osd_release``. The monitors do not allow these OSDs to boot, so they
+stay ``down``. This can happen, for example, when a host that was down during
+an upgrade comes back after ``require_osd_release`` was raised.
+
+Upgrade the OSDs listed by ``ceph health detail`` to the release of the rest of
+the cluster and restart them.
+
 OSD_UNREACHABLE
 _______________
 
