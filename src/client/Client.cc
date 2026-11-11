@@ -248,6 +248,8 @@ int Client::CommandHook::call(
       m_client->dump_mds_sessions(f, cap_dump);
     } else if (command == "dump_cache")
       m_client->dump_cache(f);
+    else if (command == "flush_cap_releases")
+      m_client->flush_cap_releases();
     else if (command == "kick_stale_sessions")
       m_client->_kick_stale_sessions();
     else if (command == "status")
@@ -723,6 +725,13 @@ void Client::_finish_init()
   ret = admin_socket->register_command("dump_cache",
 				       &m_command_hook,
 				       "show in-memory metadata cache contents");
+  if (ret < 0) {
+    lderr(cct) << "error registering admin socket command: "
+	       << cpp_strerror(-ret) << dendl;
+  }
+  ret = admin_socket->register_command("flush_cap_releases",
+				       &m_command_hook,
+				       "send queued cap releases");
   if (ret < 0) {
     lderr(cct) << "error registering admin socket command: "
 	       << cpp_strerror(-ret) << dendl;
@@ -7518,6 +7527,11 @@ int Client::fscrypt_dummy_encryption() {
 #endif
 void Client::flush_cap_releases()
 {
+  if (cct->_conf.get_val<bool>("client_debug_hold_cap_releases")) {
+    ldout(cct, 10) << __func__ << " holding queued cap releases" << dendl;
+    return;
+  }
+
   uint64_t nr_caps = 0;
 
   // send any cap releases
