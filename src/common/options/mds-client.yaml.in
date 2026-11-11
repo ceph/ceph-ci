@@ -251,6 +251,17 @@ options:
   default: 0
   services:
   - mds_client
+- name: client_debug_hold_cap_releases
+  type: bool
+  level: dev
+  default: false
+  desc: Keep queued cap releases instead of flushing them
+  fmt_desc: When ``true``, the client leaves ``MClientCapRelease`` batches queued
+    across ticks and ``sync``. Tests use this to re-acquire a cap before a
+    previously queued release is sent. ``client_inject_release_failure`` drops
+    the batch instead, so the MDS never sees it.
+  services:
+  - mds_client
 - name: client_debug_inject_features
   type: str
   level: dev
