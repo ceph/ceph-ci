@@ -3,7 +3,8 @@ meta:
    Once require-osd-release is set, an OSD of an earlier release must not
    boot. Stop osd.3, upgrade the rest of the cluster from umbrella and set
    require-osd-release, then check that osd.3, still on umbrella, stays
-   down, and that it joins once its node is upgraded.
+   down and is reported by OSD_RELEASE_TOO_OLD, and that it joins once its
+   node is upgraded.
 overrides:
   ceph:
     log-ignorelist:
@@ -12,6 +13,7 @@ overrides:
       - \(MGR_DOWN\)
       - Monitor daemon marked osd
       - wrongly marked me down
+      - \(OSD_RELEASE_TOO_OLD\)
 tasks:
 - install:
     branch: umbrella
@@ -66,6 +68,7 @@ tasks:
       - sleep 30
       - ceph osd dump | grep '^osd\.3 down '
       - grep 'disallowing boot of OSD osd\.3 .*require_osd_release' /var/log/ceph/ceph.log
+      - ceph health detail | grep 'osd\.3 .* is older than require_osd_release vampire'
 - install.upgrade:
     osd.3:
 - ceph.restart:
