@@ -1,4 +1,5 @@
 import errno
+import json
 import logging
 import signal
 from textwrap import dedent
@@ -421,6 +422,108 @@ class TestSnapshots(CephFSTestCase):
         self.mount_a.validate_test_pattern("d0/.snap/s1/d1/file_a", 8 * 1024 * 1024, timeout=20)
 
         self.mount_a.run_shell(["rmdir", "d0/.snap/s1"])
+        self.mount_a.run_shell(["rm", "-rf", "d0"])
+
+    def test_multimds_mksnap_cap_flush_before_snap_update(self):
+        """
+        check that a cap flush following a new snap is COWed into the snap on
+        a rank that has not yet handled the snap update for it
+
+        The rank taking the snap notifies the client and sends the snap update
+        to the other ranks at the same time. Delay messages between MDSs on
+        rank 1 so that the client flushes caps (follows=<new snap>) to rank 1
+        before rank 1 learns about the snap.
+        """
+        nfiles = 32
+        nsnaps = 5
+        chunk = 4096
+
+        # The delay queue is set up when a connection is established, so
+        # ms_inject_delay_type has to be in place before rank 1 talks to
+        # rank 0. Messages are only delayed once the probability is raised.
+        for mds_id in self.mds_cluster.mds_ids:
+            self.fs.mds_asok(['config', 'set', 'ms_inject_delay_type', 'mds'],
+                             mds_id=mds_id)
+            self.fs.mds_asok(['config', 'set', 'ms_inject_delay_max', '6'],
+                             mds_id=mds_id)
+
+        self.fs.set_allow_new_snaps(True)
+        self.fs.set_max_mds(2)
+        status = self.fs.wait_for_daemons()
+
+        # an empty directory is never exported, so create the files first
+        self.mount_a.run_shell(["mkdir", "-p", "d0/d1"])
+        self.mount_a.run_shell_payload(f"touch d0/d1/f{{0..{nfiles - 1}}}")
+        self.mount_a.setfattr("d0", "ceph.dir.pin", "0")
+        self.mount_a.setfattr("d0/d1", "ceph.dir.pin", "1")
+        self._wait_subtrees([("/d0", 0), ("/d0/d1", 1)], rank="all", status=status, path="/d0")
+
+        rank1 = self.fs.get_rank(rank=1, status=status)
+
+        # Keep the files open throughout: the writes and fsyncs after a snap
+        # then need nothing from rank 0. Anything that did (an open, say)
+        # would be queued behind the snap update on rank 1, and rank 1 would
+        # learn about the snap before the cap flush.
+        #
+        # Each file is s*chunk bytes long when snap s<s> is taken. After the
+        # writes, sleep past ms_inject_delay_max so the delayed messages to
+        # rank 1 drain before the next round.
+        self.fs.mds_asok(['config', 'set', 'ms_inject_delay_probability', '1'],
+                         mds_id=rank1['name'])
+        try:
+            self.mount_a.run_python(dedent(f"""
+                import os, time
+                root = "{self.mount_a.mountpoint}"
+                fds = [os.open(os.path.join(root, "d0/d1/f%d" % i), os.O_RDWR)
+                       for i in range({nfiles})]
+                for s in range(1, {nsnaps} + 1):
+                    size = s * {chunk}
+                    for fd in fds:
+                        os.pwrite(fd, b"A" * size, 0)
+                        os.fsync(fd)
+                    t0 = time.time()
+                    os.mkdir(os.path.join(root, "d0/.snap/s%d" % s))
+                    t1 = time.time()
+                    for fd in fds:
+                        os.pwrite(fd, b"B" * ({chunk} // 2), size)
+                        os.fsync(fd)
+                    print("s%d: mksnap %.1fs, flushes %.1fs" %
+                          (s, t1 - t0, time.time() - t1), flush=True)
+                    time.sleep(8)
+                for fd in fds:
+                    os.close(fd)
+                """), timeout=600)
+        finally:
+            self.fs.mds_asok(['config', 'set', 'ms_inject_delay_probability', '0'],
+                             mds_id=rank1['name'])
+
+        # rank 1 must not have aborted on a newly corrupt dentry
+        status = self.fs.status()
+        self.assertEqual(self.fs.get_rank(rank=1, status=status)['gid'], rank1['gid'])
+
+        # check the snaps from a fresh client, not from cached snap inodes
+        self.mount_a.umount_wait()
+        self.mount_a.mount_wait()
+        out = self.mount_a.run_python(dedent(f"""
+            import json, os
+            root = "{self.mount_a.mountpoint}"
+            sizes = {{}}
+            for s in range(1, {nsnaps} + 1):
+                for i in range({nfiles}):
+                    p = "d0/.snap/s%d/d1/f%d" % (s, i)
+                    try:
+                        sizes[p] = os.stat(os.path.join(root, p)).st_size
+                    except FileNotFoundError:
+                        sizes[p] = -1
+            print(json.dumps(sizes))
+            """))
+        sizes = json.loads(out)
+        bad = {p: sz for p, sz in sizes.items()
+               if sz != int(p.split("/")[2][1:]) * chunk}
+        self.assertEqual(bad, {}, "snapshot files missing (-1) or with wrong size")
+
+        for s in range(1, nsnaps + 1):
+            self.mount_a.run_shell(["rmdir", f"d0/.snap/s{s}"])
         self.mount_a.run_shell(["rm", "-rf", "d0"])
 
     def test_multimds_past_parents(self):
