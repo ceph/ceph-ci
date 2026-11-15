@@ -3371,7 +3371,7 @@ int Objecter::_calc_target(op_target_t *t, snapid_t snap, bool any_change)
       bool migrated = false;
       if (!tpi->is_migration_target()) {
         // pool migration has finished
-        migrated = true;
+        migrated = !force_resend;
       } else {
         if (*tpi->migration_src != t->target_oloc.pool) {
           // cascaded pool migration, redirect to latest source pool
@@ -3401,8 +3401,9 @@ int Objecter::_calc_target(op_target_t *t, snapid_t snap, bool any_change)
           actual_pgid = pg_t(actual_ps, pgid.pool());
         }
         if (pi->has_pg_migrated(actual_pgid)) {
-          // PG has finished migration
-          migrated = true;
+          // PG has finished migration; route forced resends to the source PG
+          // so it can answer idempotently from pg_log/dups or redirect
+          migrated = !force_resend;
         } else if (pi->is_pg_migrating(actual_pgid)) {
           // PG is migrating - check watermark
           const auto& iter = pool_migration_watermarks.find(actual_pgid);
