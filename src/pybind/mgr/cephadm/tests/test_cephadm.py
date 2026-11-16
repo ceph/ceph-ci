@@ -898,7 +898,8 @@ class TestCephadm(object):
                 )
 
     @mock.patch("cephadm.serve.CephadmServe._run_cephadm")
-    def test_crash_fqdn_host_keyring_uses_inventory_host(self, _run_cephadm, cephadm_module: CephadmOrchestrator):
+    def test_crash_fqdn_host_keyring_uses_inventory_host(
+            self, _run_cephadm, cephadm_module: CephadmOrchestrator):
         # The daemon id is the short hostname. The cephx key stays
         # client.crash.<inventory host>, which is the FQDN here.
         _run_cephadm.side_effect = async_side_effect(('{}', '', 0))
@@ -915,6 +916,10 @@ class TestCephadm(object):
                 assert deploys[0].args[0] == host
                 payload = json.loads(deploys[0].kwargs['stdin'])
                 assert payload['name'] == 'crash.node1'
+                # the mgr passes the auth entity explicitly so the binary
+                # does not have to work it out from the keyring text
+                assert payload['params']['auth_entity'] == \
+                    'client.crash.node1.example.org'
                 assert payload['config_blobs']['keyring'].startswith(
                     '[client.crash.node1.example.org]\n')
 

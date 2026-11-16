@@ -51,6 +51,15 @@ def _auth_entity_from_keyring(keyring: Optional[str]) -> Optional[str]:
     return None
 
 
+def _auth_entity_from_keyring_file(keyring_path: str) -> Optional[str]:
+    """Return the first [entity] section in a keyring file, if readable."""
+    try:
+        with open(keyring_path, 'r') as f:
+            return _auth_entity_from_keyring(f.read())
+    except OSError:
+        return None
+
+
 def _valid_crash_entity(entity: str) -> bool:
     if not entity.startswith('client.crash.') or entity == 'client.crash.':
         return False
@@ -61,20 +70,30 @@ def _valid_crash_entity(entity: str) -> bool:
     return True
 
 
-def crash_client_name(ctx: CephadmContext, daemon_id: str) -> str:
+def crash_client_name(ctx: CephadmContext, ident: DaemonIdentity) -> str:
     """Return the cephx entity ceph-crash must authenticate as.
 
     ``get_unique_name()`` strips a domain suffix from the daemon id, but the
     mgr creates the key as ``client.crash.<inventory host>``. On a host
     registered by FQDN those names differ, and passing the short daemon id to
-    ``ceph-crash -n`` makes every post fail. Prefer the entity stored in the
-    deployed keyring so ``-n`` and the keyring filename match the key.
+    ``ceph-crash -n`` makes every post fail. Prefer the auth entity the mgr
+    passes in the deploy payload, then the deployed keyring (from the deploy
+    payload, or already on disk), so ``-n`` and the keyring filename match
+    the key.
     """
-    configs = fetch_configs(ctx) or {}
-    entity = _auth_entity_from_keyring(configs.get('keyring'))
-    if entity and _valid_crash_entity(entity):
-        return entity
-    return 'client.crash.%s' % daemon_id
+    candidates = (
+        # auth entity explicitly passed by the mgr in the deploy payload
+        getattr(ctx, 'auth_entity', None),
+        # keyring blob passed in the deploy payload
+        _auth_entity_from_keyring((fetch_configs(ctx) or {}).get('keyring')),
+        # keyring already deployed at <data_dir>/keyring
+        _auth_entity_from_keyring_file(
+            os.path.join(ident.data_dir(ctx.data_dir), 'keyring')),
+    )
+    for entity in candidates:
+        if entity and _valid_crash_entity(entity):
+            return entity
+    return 'client.crash.%s' % ident.daemon_id
 
 
 @register_daemon_form
@@ -227,7 +246,7 @@ class Ceph(ContainerDaemonForm):
             # entity passed to -n. Crash keys use the inventory hostname,
             # which is not always the daemon id.
             if ident.daemon_type == 'crash':
-                client_name = crash_client_name(ctx, ident.daemon_id)
+                client_name = crash_client_name(ctx, ident)
             else:
                 client_name = 'client.%s.%s' % (
                     ident.daemon_type,
@@ -335,7 +354,7 @@ class Ceph(ContainerDaemonForm):
         elif ident.daemon_type == 'cephfs-mirror':
             name = 'client.cephfs-mirror.%s' % ident.daemon_id
         elif ident.daemon_type == 'crash':
-            name = crash_client_name(ctx, ident.daemon_id)
+            name = crash_client_name(ctx, ident)
         elif ident.daemon_type in ['mon', 'mgr', 'mds', 'osd']:
             name = ident.daemon_name
         else:
