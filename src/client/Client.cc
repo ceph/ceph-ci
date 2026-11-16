@@ -16,6 +16,8 @@
 
 // unix-ey fs stuff
 #include <algorithm>
+#include <cerrno>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 
@@ -250,7 +252,25 @@ int Client::CommandHook::call(
       m_client->dump_cache(f);
     else if (command == "flush_cap_releases")
       m_client->flush_cap_releases();
-    else if (command == "kick_stale_sessions")
+    else if (command == "queue_held_cap_release") {
+      std::string ino_str;
+      cmd_getval(cmdmap, "ino", ino_str);
+      char *end = nullptr;
+      errno = 0;
+      unsigned long long inoval = std::strtoull(ino_str.c_str(), &end, 0);
+      if (ino_str.empty() || end == ino_str.c_str() || *end != '\0' ||
+          errno == ERANGE) {
+        errss << "invalid ino " << ino_str;
+        f->close_section();
+        return -EINVAL;
+      }
+      int r = m_client->queue_held_cap_release(inodeno_t(inoval));
+      if (r < 0) {
+        errss << "inode " << ino_str << " has no auth cap";
+        f->close_section();
+        return r;
+      }
+    } else if (command == "kick_stale_sessions")
       m_client->_kick_stale_sessions();
     else if (command == "status")
       m_client->dump_status(f);
@@ -732,6 +752,14 @@ void Client::_finish_init()
   ret = admin_socket->register_command("flush_cap_releases",
 				       &m_command_hook,
 				       "send queued cap releases");
+  if (ret < 0) {
+    lderr(cct) << "error registering admin socket command: "
+	       << cpp_strerror(-ret) << dendl;
+  }
+  ret = admin_socket->register_command("queue_held_cap_release "
+				       "name=ino,type=CephString,req=true",
+				       &m_command_hook,
+				       "queue a CapRelease for a cap the client still holds");
   if (ret < 0) {
     lderr(cct) << "error registering admin socket command: "
 	       << cpp_strerror(-ret) << dendl;
@@ -7525,6 +7553,34 @@ int Client::fscrypt_dummy_encryption() {
     return r;
 }
 #endif
+int Client::queue_held_cap_release(inodeno_t ino)
+{
+  ceph_assert(ceph_mutex_is_locked_by_me(client_lock));
+
+  auto it = inode_map.find(vinodeno_t(ino, CEPH_NOSNAP));
+  if (it == inode_map.end() || !it->second->auth_cap) {
+    return -ENOENT;
+  }
+  Inode *in = it->second;
+  Cap *cap = in->auth_cap;
+
+  // The cap stays. flush_cap_releases() sends this item while the client
+  // still holds it, which is the state a late CapRelease reaches after the
+  // client has re-acquired the cap. A lookup cannot build that state: the
+  // reply's encode_inodestat() calls set_last_issue(), and _do_cap_release
+  // then ignores a release whose issue_seq is older.
+  ldout(cct, 1) << __func__ << " ino " << ino
+                << " cap_id " << cap->cap_id
+                << " issue_seq " << cap->issue_seq
+                << " seq " << cap->seq << dendl;
+  cap->session->enqueue_cap_release(
+    in->ino, cap->cap_id, cap->issue_seq, cap->mseq, cap_epoch_barrier);
+  // remove_cap(queue_release=true) defers the pin drop of a cap that was
+  // counted in add_update_cap(). This item has no such deferred drop.
+  inc_pinned_icaps();
+  return 0;
+}
+
 void Client::flush_cap_releases()
 {
   if (cct->_conf.get_val<bool>("client_debug_hold_cap_releases")) {
