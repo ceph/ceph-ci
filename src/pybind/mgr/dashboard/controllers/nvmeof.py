@@ -31,6 +31,7 @@ NVME_SCHEMA = {
 try:
     from ..services.nvmeof_client import NVMeoFClient, convert_to_model, \
         empty_response, handle_nvmeof_error, namedtuple_to_dict, pick
+    from ..services.nvmeof_failover import FailoverNVMeoFClient, FailoverPolicy, failover
 except ImportError as e:
     logger.error("Failed to import NVMeoFClient and related components: %s", e)
 else:
@@ -56,7 +57,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.get_gateway_info(
@@ -138,7 +139,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            gw_info = NVMeoFClient(
+            gw_info = FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.get_gateway_info(
@@ -171,7 +172,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            gw_log_level = NVMeoFClient(
+            gw_log_level = FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.get_gateway_log_level(
@@ -203,8 +204,10 @@ else:
                 traddr=traddr
             )
             log_level = log_level.strip().lower()
-            gw_log_level = NVMeoFClient(gw_group=gw_group,
-                                        server_address=server_address).stub.set_gateway_log_level(
+            gw_log_level = FailoverNVMeoFClient(
+                gw_group=gw_group,
+                server_address=server_address
+            ).stub.set_gateway_log_level(
                 NVMeoFClient.pb2.set_gateway_log_level_req(log_level=log_level)
             )
             return gw_log_level
@@ -230,7 +233,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            gw_stats = NVMeoFClient(
+            gw_stats = FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.get_gateway_stats(
@@ -261,7 +264,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            gw_listener_info = NVMeoFClient(
+            gw_listener_info = FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.show_gateway_listeners_info(
@@ -293,8 +296,10 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            io_stats = NVMeoFClient(gw_group=gw_group,
-                                    server_address=server_address).stub.set_gateway_io_stats_mode(
+            io_stats = FailoverNVMeoFClient(
+                gw_group=gw_group,
+                server_address=server_address
+            ).stub.set_gateway_io_stats_mode(
                 NVMeoFClient.pb2.set_gateway_io_stats_mode_req(enabled=enabled)
             )
             return io_stats
@@ -323,7 +328,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.get_thread_stats(
@@ -363,7 +368,7 @@ else:
                 traddr=traddr,
                 require=True
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.gw_refresh_network(
@@ -396,7 +401,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            spdk_log_level = NVMeoFClient(
+            spdk_log_level = FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.get_spdk_nvmf_log_flags_and_level(
@@ -436,7 +441,7 @@ else:
             )
             log_level = log_level.strip().upper() if log_level else None
             print_level = print_level.strip().upper() if print_level else None
-            spdk_log_level = NVMeoFClient(
+            spdk_log_level = FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.set_spdk_nvmf_logs(
@@ -471,7 +476,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            spdk_log_level = NVMeoFClient(
+            spdk_log_level = FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.disable_spdk_nvmf_logs(
@@ -496,6 +501,7 @@ else:
         )
         @convert_to_model(model.SubsystemList)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.ALWAYS)
         def list(self, nqn: Optional[str] = None, serial_number: Optional[str] = None,
                  gw_group: Optional[str] = None, server_address: Optional[str] = None,
                  traddr: Optional[str] = None):
@@ -503,7 +509,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.list_subsystems(
@@ -524,6 +530,7 @@ else:
         )
         @convert_to_model(model.SubsystemList)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.ALWAYS)
         def get(self, nqn: str, gw_group: Optional[str] = None,
                 server_address: Optional[str] = None,
                 traddr: Optional[str] = None):
@@ -531,7 +538,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.list_subsystems(
@@ -570,6 +577,7 @@ else:
         )
         @convert_to_model(model.SubsystemStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def create(self, nqn: str,
                    max_namespaces: Optional[int] = None, no_group_append: Optional[bool] = False,
                    serial_number: Optional[str] = None, dhchap_key: Optional[str] = None,
@@ -582,7 +590,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.create_subsystem(
@@ -612,6 +620,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def delete(self, nqn: str, force: Optional[str] = "false", gw_group: Optional[str] = None,
                    server_address: Optional[str] = None,
                    traddr: Optional[str] = None):
@@ -619,7 +628,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.delete_subsystem(
@@ -645,6 +654,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def change_key(self, nqn: str, dhchap_key: str, gw_group: Optional[str] = None,
                        server_address: Optional[str] = None,
                        traddr: Optional[str] = None):
@@ -652,7 +662,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.change_subsystem_key(
@@ -676,6 +686,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def del_key(self, nqn: str, gw_group: Optional[str] = None,
                     server_address: Optional[str] = None,
                     traddr: Optional[str] = None):
@@ -683,7 +694,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.change_subsystem_key(
@@ -710,6 +721,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def add_network(self, nqn: str, network_mask: str, gw_group: Optional[str] = None,
                         server_address: Optional[str] = None,
                         traddr: Optional[str] = None):
@@ -717,7 +729,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.add_subsystem_network(
@@ -744,6 +756,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def del_network(self, nqn: str, network_mask: str, gw_group: Optional[str] = None,
                         server_address: Optional[str] = None,
                         traddr: Optional[str] = None):
@@ -751,7 +764,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.del_subsystem_network(
@@ -785,6 +798,7 @@ else:
         )
         @convert_to_model(model.NetworkMaskUpdateStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def set_use_group_config_network_masks(self, nqn: str,
                                                use_group_config_network_masks: bool,
                                                gw_group: Optional[str] = None,
@@ -794,7 +808,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.set_subsystem_use_group_config_network_masks(
@@ -825,6 +839,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def add_kmip_server_endpoint(self, nqn: str, server_name: str,
                                      address: Optional[str] = None,
                                      port: Optional[int] = 5696, gw_group: Optional[str] = None,
@@ -835,7 +850,7 @@ else:
                 traddr=traddr
             )
             ep = NVMeoFClient.pb2.kmip_server_endpoint(address=address, port=port)
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.add_kmip_server_endpoints(
@@ -872,6 +887,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def del_kmip_server_endpoint(self, nqn: str, server_name: str,
                                      address: Optional[str] = None,
                                      port: Optional[int] = 5696, gw_group: Optional[str] = None,
@@ -883,7 +899,7 @@ else:
                 traddr=traddr
             )
             ep = NVMeoFClient.pb2.kmip_server_endpoint(address=address, port=port)
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.del_kmip_server_endpoints(
@@ -909,6 +925,7 @@ else:
         )
         @convert_to_model(model.SubsystemListKMIPEndpoints)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.ALWAYS)
         def list_eps(self, nqn: Optional[str] = None, server_name: Optional[str] = None,
                      gw_group: Optional[str] = None, server_address: Optional[str] = None,
                      traddr: Optional[str] = None):
@@ -916,7 +933,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.list_kmip_server_endpoints(
@@ -935,6 +952,7 @@ else:
         )
         @convert_to_model(model.GetSubsystems)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.ALWAYS)
         def get_subsystems(
             self,
             gw_group: Optional[str] = None,
@@ -945,7 +963,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.get_subsystems(
@@ -968,6 +986,7 @@ else:
         )
         @convert_to_model(model.ListenerList)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.ALWAYS)
         def list(self, nqn: str, gw_group: Optional[str] = None,
                  server_address: Optional[str] = None,
                  traddr: Optional[str] = None):
@@ -975,7 +994,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.list_listeners(
@@ -1026,7 +1045,7 @@ else:
             force: Optional[bool] = False,
             verify_host_name: Optional[bool] = False,
         ):
-            client = NVMeoFClient(
+            client = FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             )
@@ -1092,7 +1111,7 @@ else:
             gw_group: Optional[str] = None,
             server_address: Optional[str] = None
         ):
-            client = NVMeoFClient(
+            client = FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             )
@@ -1128,6 +1147,7 @@ else:
         )
         @convert_to_model(model.NamespaceList)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.ALWAYS)
         def list(self, nqn: Optional[str] = None, nsid: Optional[str] = None,
                  uuid: Optional[str] = None,
                  gw_group: Optional[str] = None, server_address: Optional[str] = None,
@@ -1136,7 +1156,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.list_namespaces(
@@ -1160,6 +1180,7 @@ else:
         )
         @convert_to_model(model.NamespaceList)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.ALWAYS)
         def get(self, nqn: str, nsid: str, gw_group: Optional[str] = None,
                 server_address: Optional[str] = None,
                 traddr: Optional[str] = None):
@@ -1167,7 +1188,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.list_namespaces(
@@ -1192,6 +1213,7 @@ else:
         )
         @convert_to_model(model.NamespaceIOStats)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.ALWAYS)
         def io_stats(self, nqn: str, nsid: str, gw_group: Optional[str] = None,
                      server_address: Optional[str] = None,
                      traddr: Optional[str] = None):
@@ -1199,7 +1221,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.namespace_get_io_stats(
@@ -1252,6 +1274,7 @@ else:
         )
         @convert_to_model(model.NamespaceCreation)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def create(
             self,
             nqn: str,
@@ -1298,7 +1321,7 @@ else:
                     key_id=k.strip()
                 ) for f, k in zip(encryption_format, key_id)]
             enc_alg = encryption_algorithm.strip().lower() if encryption_algorithm else None
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.namespace_add(
@@ -1377,6 +1400,7 @@ else:
         )
         @convert_to_model(model.NamespaceCreation)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def create_cli(
             self,
             nqn: str,
@@ -1438,7 +1462,7 @@ else:
                     key_id=k.strip()
                 ) for f, k in zip(encryption_format, key_id)]
             enc_alg = encryption_algorithm.strip().lower() if encryption_algorithm else None
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.namespace_add(
@@ -1490,6 +1514,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def set_qos(
             self,
             nqn: str,
@@ -1507,7 +1532,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.namespace_set_qos_limits(
@@ -1544,6 +1569,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def change_load_balancing_group(
             self,
             nqn: str,
@@ -1557,7 +1583,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.namespace_change_load_balancing_group(
@@ -1581,6 +1607,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def resize(
             self,
             nqn: str,
@@ -1597,7 +1624,7 @@ else:
             mib = 1024 * 1024
             new_size_mib = int((rbd_image_size + mib - 1) / mib)
 
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.namespace_resize(
@@ -1626,6 +1653,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def resize_cli(
             self,
             nqn: str,
@@ -1644,7 +1672,7 @@ else:
             mib = 1024 * 1024
             rbd_image_size_mb = rbd_image_size_b // mib
 
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.namespace_resize(
@@ -1680,6 +1708,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def add_host(
             self,
             nqn: str,
@@ -1694,7 +1723,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.namespace_add_host(
@@ -1726,6 +1755,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def del_host(
             self,
             nqn: str,
@@ -1739,7 +1769,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.namespace_delete_host(
@@ -1780,6 +1810,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def change_visibility(
             self,
             nqn: str,
@@ -1794,7 +1825,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.namespace_change_visibility(
@@ -1829,6 +1860,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def change_location(
             self,
             nqn: str,
@@ -1842,7 +1874,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.namespace_change_location(
@@ -1872,6 +1904,7 @@ else:
             },
         )
         @handle_nvmeof_error
+        @failover(FailoverPolicy.ALWAYS)
         def list_hosts(
             self, nqn: Optional[str] = None, nsid: Optional[str] = None,
             uuid: Optional[str] = None,
@@ -1882,7 +1915,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            ns_list = NVMeoFClient(
+            ns_list = FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.list_namespaces(
@@ -1925,6 +1958,7 @@ else:
             },
         )
         @handle_nvmeof_error
+        @failover(FailoverPolicy.ALWAYS)
         def list_locations(
             self, nqn: Optional[str] = None, nsid: Optional[str] = None,
             uuid: Optional[str] = None,
@@ -1935,7 +1969,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            ns_list = NVMeoFClient(
+            ns_list = FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.list_namespaces(
@@ -2004,6 +2038,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def set_auto_resize(
             self,
             nqn: str,
@@ -2017,7 +2052,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.namespace_set_auto_resize(
@@ -2059,6 +2094,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def set_rbd_trash_image(
             self,
             nqn: str,
@@ -2072,7 +2108,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address,
             ).stub.namespace_set_rbd_trash_image(
@@ -2102,6 +2138,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def refresh_size(
             self,
             nqn: str,
@@ -2114,7 +2151,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.namespace_resize(
@@ -2148,6 +2185,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def unpin_ns(
             self,
             nqn: str,
@@ -2160,7 +2198,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.namespace_unpin(
@@ -2220,9 +2258,10 @@ else:
                 mib = 1024 * 1024
                 new_size_mib = int((rbd_image_size + mib - 1) / mib)
 
-                resp = NVMeoFClient(
+                resp = FailoverNVMeoFClient(
                     gw_group=gw_group,
-                    server_address=server_address
+                    server_address=server_address,
+                    failover=FailoverPolicy.IF_NOT_SENT
                 ).stub.namespace_resize(
                     NVMeoFClient.pb2.namespace_resize_req(
                         subsystem_nqn=nqn, nsid=int(nsid), new_size=new_size_mib
@@ -2232,7 +2271,9 @@ else:
                     contains_failure = True
 
             if load_balancing_group:
-                resp = NVMeoFClient().stub.namespace_change_load_balancing_group(
+                resp = FailoverNVMeoFClient(
+                    failover=FailoverPolicy.IF_NOT_SENT
+                ).stub.namespace_change_load_balancing_group(
                     NVMeoFClient.pb2.namespace_change_load_balancing_group_req(
                         subsystem_nqn=nqn, nsid=int(nsid), anagrpid=load_balancing_group
                     )
@@ -2242,7 +2283,9 @@ else:
 
             if rw_ios_per_second or rw_mbytes_per_second or r_mbytes_per_second \
                or w_mbytes_per_second:
-                resp = NVMeoFClient().stub.namespace_set_qos_limits(
+                resp = FailoverNVMeoFClient(
+                    failover=FailoverPolicy.IF_NOT_SENT
+                ).stub.namespace_set_qos_limits(
                     NVMeoFClient.pb2.namespace_set_qos_req(
                         subsystem_nqn=nqn,
                         nsid=int(nsid),
@@ -2256,7 +2299,9 @@ else:
                     contains_failure = True
 
             if trash_image is not None:
-                resp = NVMeoFClient().stub.namespace_set_rbd_trash_image(
+                resp = FailoverNVMeoFClient(
+                    failover=FailoverPolicy.IF_NOT_SENT
+                ).stub.namespace_set_rbd_trash_image(
                     NVMeoFClient.pb2.namespace_set_rbd_trash_image_req(
                         subsystem_nqn=nqn,
                         nsid=int(nsid),
@@ -2267,9 +2312,10 @@ else:
                     contains_failure = True
 
             if location is not None:
-                resp = NVMeoFClient(
+                resp = FailoverNVMeoFClient(
                     gw_group=gw_group,
-                    server_address=server_address
+                    server_address=server_address,
+                    failover=FailoverPolicy.IF_NOT_SENT
                 ).stub.namespace_change_location(
                     NVMeoFClient.pb2.namespace_change_location_req(
                         subsystem_nqn=nqn,
@@ -2283,9 +2329,10 @@ else:
             if contains_failure:
                 cherrypy.response.status = 202
 
-            response = NVMeoFClient(
+            response = FailoverNVMeoFClient(
                 gw_group=gw_group,
-                server_address=server_address
+                server_address=server_address,
+                failover=FailoverPolicy.ALWAYS
             ).stub.list_namespaces(
                 NVMeoFClient.pb2.list_namespaces_req(subsystem=nqn, nsid=int(nsid))
             )
@@ -2310,6 +2357,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def delete(
             self,
             nqn: str,
@@ -2323,7 +2371,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.namespace_delete(
@@ -2366,6 +2414,7 @@ else:
         )
         @convert_to_model(model.HostsInfo, finalize=_update_hosts)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.ALWAYS)
         def list(
             self, nqn: str,
             gw_group: Optional[str] = None, server_address: Optional[str] = None,
@@ -2375,7 +2424,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.list_hosts(
@@ -2404,6 +2453,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def create(
             self, nqn: str, host_nqn: str, dhchap_key: Optional[str] = None,
             dhchap_controller_key: Optional[str] = None,
@@ -2415,7 +2465,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.add_host(
@@ -2456,6 +2506,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def delete(self, nqn: str, host_nqn: str, force: Optional[bool] = False,
                    gw_group: Optional[str] = None,
                    server_address: Optional[str] = None,
@@ -2465,7 +2516,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.remove_host(
@@ -2495,6 +2546,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def change_key(
             self, nqn: str, host_nqn: str, dhchap_key: str,
             gw_group: Optional[str] = None, server_address: Optional[str] = None,
@@ -2504,7 +2556,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.change_host_key(
@@ -2537,6 +2589,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def change_controller_key(
             self, nqn: str, host_nqn: str, dhchap_controller_key: str,
             gw_group: Optional[str] = None, server_address: Optional[str] = None,
@@ -2546,7 +2599,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.change_host_key(
@@ -2577,6 +2630,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def del_key(
             self, nqn: str, host_nqn: str, gw_group: Optional[str] = None,
             server_address: Optional[str] = None,
@@ -2586,7 +2640,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.change_host_key(
@@ -2617,6 +2671,7 @@ else:
         )
         @convert_to_model(model.RequestStatus)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         def del_controller_key(
             self, nqn: str, host_nqn: str, gw_group: Optional[str] = None,
             server_address: Optional[str] = None,
@@ -2626,7 +2681,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.change_host_key(
@@ -2663,6 +2718,7 @@ else:
         )
         @convert_to_model(model.ConnectionList, finalize=_update_connections)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.ALWAYS)
         def list(self, nqn: Optional[str] = None,
                  gw_group: Optional[str] = None, server_address: Optional[str] = None,
                  traddr: Optional[str] = None):
@@ -2672,7 +2728,7 @@ else:
             )
             if not nqn:
                 nqn = '*'
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.list_connections(
@@ -2696,6 +2752,7 @@ else:
         )
         @convert_to_model(model.ConnectionIOStatistics)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.ALWAYS)
         def get_io_stats(
             self,
             nqn: str,
@@ -2708,7 +2765,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.get_connection_io_statistics(
@@ -2737,6 +2794,7 @@ else:
         )
         @convert_to_model(model.ConnectionExtendedIOStatistics)
         @handle_nvmeof_error
+        @failover(FailoverPolicy.ALWAYS)
         def get_extended_io_stats(
             self,
             nqn: Optional[str] = None,
@@ -2750,7 +2808,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.get_connection_extended_io_statistics(
@@ -2792,7 +2850,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.get_connection_io_statistics(
@@ -2832,7 +2890,7 @@ else:
                 server_address=server_address,
                 traddr=traddr
             )
-            return NVMeoFClient(
+            return FailoverNVMeoFClient(
                 gw_group=gw_group,
                 server_address=server_address
             ).stub.get_connection_extended_io_statistics(
@@ -2871,6 +2929,7 @@ else:
                      })
         @empty_response
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         @CreatePermission
         def add(self, subsystem_nqn: str,
                 gw_group: str,
@@ -2885,8 +2944,10 @@ else:
             response = None
 
             if allow_all:
-                return NVMeoFClient(gw_group=gw_group,
-                                    server_address=server_address).stub.add_host(
+                return FailoverNVMeoFClient(
+                    gw_group=gw_group,
+                    server_address=server_address
+                ).stub.add_host(
                     NVMeoFClient.pb2.add_host_req(
                         subsystem_nqn=subsystem_nqn,
                         host_nqn="*",
@@ -2897,8 +2958,10 @@ else:
                 nqn = h["host_nqn"]
                 key = h.get("dhchap_key")
 
-                response = NVMeoFClient(gw_group=gw_group,
-                                        server_address=server_address).stub.add_host(
+                response = FailoverNVMeoFClient(
+                    gw_group=gw_group,
+                    server_address=server_address
+                ).stub.add_host(
                     NVMeoFClient.pb2.add_host_req(
                         subsystem_nqn=subsystem_nqn,
                         host_nqn=nqn,
@@ -2922,6 +2985,7 @@ else:
                      })
         @empty_response
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         @DeletePermission
         def remove(self, subsystem_nqn: str,
                    host_nqn: str,
@@ -2936,8 +3000,10 @@ else:
             to_delete_nqns = host_nqn.split(',')
 
             for del_nqn in to_delete_nqns:
-                response = NVMeoFClient(gw_group=gw_group,
-                                        server_address=server_address).stub.remove_host(
+                response = FailoverNVMeoFClient(
+                    gw_group=gw_group,
+                    server_address=server_address
+                ).stub.remove_host(
                     NVMeoFClient.pb2.remove_host_req(subsystem_nqn=subsystem_nqn, host_nqn=del_nqn)
                 )
                 if response.status != 0:
@@ -2964,6 +3030,7 @@ else:
                      })
         @empty_response
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         @CreatePermission
         def add_namesapce_initiator(self, nsid: str,
                                     subsystem_nqn: str,
@@ -2981,8 +3048,10 @@ else:
             force = str_to_bool(force) if force else None
 
             for nqn in all_host_nqns:
-                response = NVMeoFClient(gw_group=gw_group,
-                                        server_address=server_address).stub.namespace_add_host(
+                response = FailoverNVMeoFClient(
+                    gw_group=gw_group,
+                    server_address=server_address
+                ).stub.namespace_add_host(
                     NVMeoFClient.pb2.namespace_add_host_req(subsystem_nqn=subsystem_nqn,
                                                             nsid=int(nsid),
                                                             host_nqn=nqn,
@@ -3005,6 +3074,7 @@ else:
                      })
         @empty_response
         @handle_nvmeof_error
+        @failover(FailoverPolicy.IF_NOT_SENT)
         @DeletePermission
         def remove_namespace_initiator(self,
                                        nsid: str,
@@ -3021,8 +3091,10 @@ else:
             to_delete_nqns = host_nqn.split(',')
 
             for del_nqn in to_delete_nqns:
-                response = NVMeoFClient(gw_group=gw_group,
-                                        server_address=server_address).stub.namespace_delete_host(
+                response = FailoverNVMeoFClient(
+                    gw_group=gw_group,
+                    server_address=server_address
+                ).stub.namespace_delete_host(
                     NVMeoFClient.pb2.namespace_delete_host_req(
                         subsystem_nqn=subsystem_nqn,
                         nsid=int(nsid),
