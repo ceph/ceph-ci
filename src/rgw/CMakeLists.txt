@@ -25,6 +25,12 @@ if(WITH_RADOSGW_ARROW_FLIGHT)
   message("-- arrow flight is installed")
 endif(WITH_RADOSGW_ARROW_FLIGHT)
 
+if(WITH_RADOSGW_LANCEDB AND NOT ARROW_LIBRARIES AND NOT ARROW_FLIGHT_LIBRARIES)
+  # rgw_s3vector.cc uses the Arrow C++ API; Arrow::Arrow is provided by
+  # find_package(Arrow) or build_arrow() in src/CMakeLists.txt
+  set(S3VECTOR_ARROW_LIBRARIES Arrow::Arrow)
+endif()
+
 if(CEPH_HAVE_ISAL)
   message("-- building RGW with ISA-L support")
   add_definitions(-DSPDK_CONFIG_ISAL)
@@ -380,6 +386,7 @@ target_link_libraries(rgw_common
     ${EXPAT_LIBRARIES}
     ${ARROW_LIBRARIES}
     ${ARROW_FLIGHT_LIBRARIES}
+    ${S3VECTOR_ARROW_LIBRARIES}
     ${LMDB_LIBRARIES}
   PUBLIC
     ${LUA_LIBRARIES}
@@ -493,6 +500,7 @@ if(WITH_RADOSGW_STANDALONE)
     ${EXPAT_LIBRARIES}
     ${ARROW_LIBRARIES}
     ${ARROW_FLIGHT_LIBRARIES}
+    ${S3VECTOR_ARROW_LIBRARIES}
     ${LMDB_LIBRARIES}
     PUBLIC
     ${LUA_LIBRARIES}
@@ -755,6 +763,7 @@ target_link_libraries(rgw_a
     ${CRYPTO_LIBS}
     ${ARROW_LIBRARIES}
     ${ARROW_FLIGHT_LIBRARIES}
+    ${S3VECTOR_ARROW_LIBRARIES}
     OATH::OATH
   PUBLIC
     rgw_common
@@ -794,6 +803,7 @@ if(WITH_RADOSGW_STANDALONE)
     ${CRYPTO_LIBS}
     ${ARROW_LIBRARIES}
     ${ARROW_FLIGHT_LIBRARIES}
+    ${S3VECTOR_ARROW_LIBRARIES}
     OATH::OATH
     PUBLIC
     rgw_common_standalone
