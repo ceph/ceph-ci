@@ -4084,6 +4084,8 @@ int RGWCopyObj_ObjStore_S3::get_params(optional_yield y)
   if_unmod = s->info.env->get("HTTP_X_AMZ_COPY_SOURCE_IF_UNMODIFIED_SINCE");
   if_match = s->info.env->get("HTTP_X_AMZ_COPY_SOURCE_IF_MATCH");
   if_nomatch = s->info.env->get("HTTP_X_AMZ_COPY_SOURCE_IF_NONE_MATCH");
+  dest_if_match = s->info.env->get("HTTP_IF_MATCH");
+  dest_if_nomatch = s->info.env->get("HTTP_IF_NONE_MATCH");
 
   if (s->system_request) {
     source_zone = s->info.args.get(RGW_SYS_PARAM_PREFIX "source-zone");
@@ -7467,7 +7469,7 @@ rgw::auth::s3::LocalEngine::authenticate(
   // if this is a system request and we have rgwx-perm-check-uid passed,
   // we do impersonation
   if (user->get_info().system) {
-    const std::string perm_check_uid = s->info.args.get(RGW_SYS_PARAM_PREFIX "perm-check-uid");
+    const std::string perm_check_uid = s->info.args.sys_get(RGW_SYS_PARAM_PREFIX "perm-check-uid");
     if (!perm_check_uid.empty()) {
       auto perm_check_user = driver->get_user(rgw_user(perm_check_uid));
       if (int r = perm_check_user->load_user(dpp, y); r < 0) {
@@ -7561,7 +7563,7 @@ rgw::auth::s3::STSEngine::get_session_token(const DoutPrefixProvider* dpp, const
       auto iter = dec_output.cbegin();
       decode(token, iter);
     } catch (const buffer::error& e) {
-      ldpp_dout(dpp, 0) << "ERROR: decode SessionToken failed: " << error << dendl;
+      ldpp_dout(dpp, 0) << "ERROR: decode SessionToken failed: " << e.what() << dendl;
       return -EINVAL;
     }
   }
