@@ -1025,6 +1025,7 @@ public:
   void renew_caps(MetaSession *session);
   void flush_cap_releases();
   void renew_and_flush_cap_releases();
+  int queue_held_cap_release(inodeno_t ino);
   void tick();
   void start_tick_thread();
 
