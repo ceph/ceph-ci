@@ -132,6 +132,9 @@ class TestOkToStop(HostManagementTestCase):
             self.run_cmd(['osd', 'pool', 'delete', self.POOL, self.POOL, '--yes-i-really-really-mean-it'])
             self.run_cmd(['config', 'set', 'mon', 'mon_allow_pool_delete', 'false'])
 
+        # wait until ALL PGs across all pools reach active+clean
+        self.poll('all PGs active+clean', self._all_pgs_active_clean)
+        
         # restore verified: ok-to-stop flips back to success
         self.assertEqual(
             self.run_cmd(
