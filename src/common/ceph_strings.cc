@@ -171,6 +171,10 @@ uint64_t ceph_release_features(int r)
 	if (r <= CEPH_RELEASE_SQUID)
 		return req;
 
+	if (r <= CEPH_RELEASE_UMBRELLA)
+		return req;
+
+	req |= CEPH_FEATUREMASK_POOL_MIGRATION; // and pools over zones
 	return req;
 }
 
