@@ -36,6 +36,7 @@ from mgr_util import format_bytes
 from cephadm.services.service_registry import service_registry
 from cephadm.services.nfs import NFSService
 from cephadm.services.ingress import IngressService
+from cephadm.services.nvmeof import NvmeofService
 
 from . import utils
 from . import exchange
@@ -1213,6 +1214,7 @@ class CephadmServe:
         self.log.debug('_check_daemons')
         daemons = self.mgr.cache.get_daemons()
         daemons_post: Dict[str, List[orchestrator.DaemonDescription]] = defaultdict(list)
+        nvmeof_redeploy_groups: Set[Tuple[str, str]] = set()
         for dd in daemons:
             # orphan?
             spec = self.mgr.spec_store.active_specs.get(dd.service_name(), None)
@@ -1267,6 +1269,12 @@ class CephadmServe:
             action = scheduled_action = (
                 self.mgr.cache.get_scheduled_daemon_action(
                     dd.hostname, dd.name()
+                )
+            )
+            scheduled_action_force = (
+                self.mgr.cache.get_scheduled_daemon_action_force(
+                    dd.hostname,
+                    dd.name(),
                 )
             )
             skip_restart_for_reconfig = False
@@ -1370,6 +1378,46 @@ class CephadmServe:
                             action, dd.name(), r.stderr,
                         )
                         continue
+                nvmeof_redeploy_group = None
+                nvmeof_gateway_disabled = False
+                nvmeof_service: Optional[NvmeofService] = None
+
+                if (
+                    dd.daemon_type == 'nvmeof'
+                    and (
+                        action == 'redeploy'
+                        or (
+                            action == 'reconfig'
+                            and not skip_restart_for_reconfig
+                        )
+                    )
+                ):
+                    forced_redeploy = (
+                        scheduled_action == 'redeploy'
+                        and scheduled_action_force
+                    )
+
+                    nvmeof_service = cast(NvmeofService, svc_obj)
+
+                    (
+                        r,
+                        nvmeof_redeploy_group,
+                        nvmeof_gateway_disabled,
+                    ) = nvmeof_service.ok_to_redeploy(
+                        dd,
+                        nvmeof_redeploy_groups,
+                        force=forced_redeploy,
+                    )
+
+                    if r.retval:
+                        self.log.info(
+                            'Delaying %s of %s: %s',
+                            action,
+                            dd.name(),
+                            r.stderr,
+                        )
+                        continue
+
                 try:
                     daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(dd)
                     reconfig_extras: dict[str, Any] = {}
@@ -1377,9 +1425,43 @@ class CephadmServe:
                         reconfig_extras['skip_restart_for_reconfig'] = True
                     if send_signal_to_daemon:
                         reconfig_extras['send_signal_to_daemon'] = send_signal_to_daemon
-                    self.mgr._daemon_action(daemon_spec, action=action, **reconfig_extras)
-                    if self.mgr.cache.rm_scheduled_daemon_action(dd.hostname, dd.name()):
+                    self.mgr._daemon_action(
+                        daemon_spec,
+                        action=action,
+                        **reconfig_extras,
+                    )
+                    # The daemon action itself completed successfully, so we record the
+                    # NVMe-oF group as handled for this serve iteration.
+                    if nvmeof_redeploy_group is not None:
+                        nvmeof_redeploy_groups.add(nvmeof_redeploy_group)
+
+                    # The requested daemon action completed successfully. Clear it before
+                    # any NVMe-oF post-action handling so an enable failure does not cause
+                    # the daemon to be redeployed again in the next serve iteration.
+                    if self.mgr.cache.rm_scheduled_daemon_action(
+                        dd.hostname, dd.name()
+                    ):
                         self.mgr.cache.save_host(dd.hostname)
+
+                    if nvmeof_gateway_disabled:
+                        assert nvmeof_service is not None
+
+                        enable_result = nvmeof_service.enable_gateway(dd)
+
+                        if enable_result.retval:
+                            spec = nvmeof_service._get_gateway_spec(dd)
+                            assert spec is not None
+
+                            gw_id = nvmeof_service._gateway_id(dd)
+
+                            raise OrchestratorError(
+                                f'Failed to re-enable NVMe-oF gateway {dd.name()} '
+                                f'after {action}: {enable_result.stderr}. '
+                                f'Gateway {gw_id} remains administratively disabled. '
+                                f'You can enable it manually by running: '
+                                f'ceph nvme-gw enable {gw_id} {spec.pool} {spec.group}'
+                            )
+
                 except OrchestratorError as e:
                     self.log.exception(e)
                     self.mgr.events.from_orch_error(e)
@@ -1681,12 +1763,15 @@ class CephadmServe:
                     # deployment failed the daemon is present and we should handle
                     # this as if the deploy command "succeeded" and mark the daemon
                     # as failed later when we fetch its status
-                    self.mgr.log.error(f'Deployment of {daemon_spec.name()} failed during "systemctl start" command')
+                    self.mgr.log.error(
+                        f'[{daemon_spec.host}] Deployment of {daemon_spec.name()} '
+                        f'failed during "systemctl start" command')
                 elif code:
                     # some other failure earlier in the deploy process. Just raise an exception
                     # the same as we would in _run_cephadm on a nonzero rc
                     raise OrchestratorError(
-                        f'cephadm exited with an error code: {code}, stderr: {err}')
+                        f'cephadm exited with an error code: {code} on host '
+                        f'{daemon_spec.host}, stderr: {err}')
 
                 # refresh daemon state?  (ceph daemon reconfig does not need it)
                 if not reconfig or daemon_spec.daemon_type not in CEPH_TYPES:
@@ -1895,8 +1980,8 @@ class CephadmServe:
 
         await self.mgr.ssh._remote_connection(host, addr)
 
-        self.log.debug(f"_run_cephadm : command = {command}")
-        self.log.debug(f"_run_cephadm : args = {args}")
+        self.log.debug(f"[{host}] _run_cephadm : command = {command}")
+        self.log.debug(f"[{host}] _run_cephadm : args = {args}")
 
         bypass_image = ('agent')
 
@@ -1962,16 +2047,16 @@ class CephadmServe:
         final_args += args
 
         # exec
-        self.log.debug('args: %s' % (' '.join(final_args)))
+        self.log.debug('[%s] args: %s' % (host, ' '.join(final_args)))
         if self.mgr.mode == 'root':
             # agent has cephadm binary as an extra file which is
             # therefore passed over stdin. Even for debug logs it's too much
             if stdin and 'agent' not in str(entity):
                 if isinstance(stdin, bytes):
-                    self.log.debug('stdin: <binary len %d>', len(stdin))
+                    self.log.debug('[%s] stdin: <binary len %d>', host, len(stdin))
                 else:
                     if self.mgr.log_deploy_configuration:
-                        self.log.debug('stdin: %s', stdin)
+                        self.log.debug('[%s] stdin: %s', host, stdin)
 
             # If SSH hardening is enabled, call invoker directly without which python
             if self.mgr.sudo_hardening and self.mgr.invoker_path:
@@ -2041,14 +2126,15 @@ class CephadmServe:
             assert False, 'unsupported mode'
 
         if log_output:
-            self.log.debug(f'code: {code}')
+            self.log.debug(f'[{host}] code: {code}')
             if out:
-                self.log.debug(f'out: {out}')
+                self.log.debug(f'[{host}] out: {out}')
             if err:
-                self.log.debug(f'err: {err}')
+                self.log.debug(f'[{host}] err: {err}')
         if code and not error_ok:
             raise OrchestratorError(
-                f'cephadm exited with an error code: {code}, stderr: {err}')
+                f'cephadm exited with an error code: {code} on host {host}, '
+                f'stderr: {err}')
         return [out], [err], code
 
     async def _get_container_image_info(self, image_name: str) -> ContainerInspectInfo:

@@ -1241,6 +1241,7 @@ class TestIngressService:
             '        Enable_UDP = false;\n'
             '        NFS_Port = 2049;\n'
             '        allow_set_io_flusher_fail = true;\n'
+            '        Cluster_Members = 192.168.122.111, 192.168.122.222;\n'
             '}\n'
             '\n'
             'NFSv4 {\n'
@@ -1255,10 +1256,6 @@ class TestIngressService:
             '        nodeid = "0";\n'
             '        pool = ".nfs";\n'
             '        namespace = "foo";\n'
-            '}\n'
-            '\n'
-            'CEPH_NODES_LIST {\n'
-            '        Ceph_Nodes = 192.168.122.111, 192.168.122.222;\n'
             '}\n'
             '\n'
             'RADOS_URLS {\n'
@@ -1284,6 +1281,7 @@ class TestIngressService:
                 '[client.nfs.foo]\n'
                 'key = None\n'
             ),
+            'log_to_file': False,
             'namespace': 'foo',
             'pool': '.nfs',
             'rgw': {

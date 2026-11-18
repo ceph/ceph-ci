@@ -18,7 +18,6 @@ from cephadm.utils import (
     CEPH_UPGRADE_ORDER,
     CEPH_TYPES,
     CEPH_IMAGE_TYPES,
-    INGRESS_TYPES,
     NON_CEPH_IMAGE_TYPES,
     MONITORING_STACK_TYPES,
     GATEWAY_TYPES,
@@ -29,11 +28,13 @@ from cephadm.utils import (
     allowed_ciphers_are_aes256k_only,
     auth_allowed_cipher_names_from_mon_map,
     auth_service_cipher_name_from_mon_map,
+    SUPPORTED_UPGRADE_DAEMON_TYPE_FILTER_TYPES,
 )
 from cephadm.ssh import HostConnectionError
 from orchestrator import OrchestratorError, DaemonDescription, DaemonDescriptionStatus, daemon_type_to_service
 from ceph.cephadm.version_entry import UpgradeStatus
-
+from ceph.deployment.service_spec import NvmeofServiceSpec
+from cephadm.services.nvmeof import NvmeofService
 from mgr_module import MonCommandFailed
 
 if TYPE_CHECKING:
@@ -53,6 +54,10 @@ CEPH_MDSMAP_NOT_JOINABLE = (1 << 0)
 # Health warnings to mute when upgrade starts and unmute
 # when upgrade completes as they could be handled by the
 # upgrade process.
+#
+# Mutes an operator already applied are left alone. Cephadm records
+# the warnings it mutes itself and clears only those when the upgrade
+# finishes or is stopped, so an existing sticky mute is not removed.
 #
 # TODO: need a better way to handle these for staggered upgrades
 # currently they just disappear and re-appear as each bit of the
@@ -90,6 +95,32 @@ def x86_64_isa_level_to_int(level: Optional[str]) -> Optional[int]:
         return int(level[len(prefix):])
     except ValueError:
         return None
+
+
+def health_mute_flags_from_report(health: Any) -> Optional[Dict[str, bool]]:
+    """Map muted health-check code to its sticky flag.
+
+    ``None`` means the report has no usable ``mutes`` array. An empty
+    dict means nothing is currently muted.
+    """
+    if not isinstance(health, dict):
+        return None
+    if 'mutes' in health:
+        mutes = health.get('mutes')
+    elif isinstance(health.get('health'), dict) and 'mutes' in health['health']:
+        mutes = health['health'].get('mutes')
+    else:
+        return None
+    if not isinstance(mutes, list):
+        return None
+    flags: Dict[str, bool] = {}
+    for mute in mutes:
+        if not isinstance(mute, dict):
+            continue
+        code = mute.get('code')
+        if isinstance(code, str) and code:
+            flags[code] = bool(mute.get('sticky', False))
+    return flags
 
 
 def normalize_image_digest(digest: str, default_registry: str) -> str:
@@ -270,6 +301,7 @@ class UpgradeState:
                  has_set_cephx_allowed_ciphers: Optional[bool] = False,
                  health_warnings_muted: Optional[bool] = False,
                  health_warnings_mute_skipped: Optional[bool] = False,
+                 health_warnings_muted_by_upgrade: Optional[List[str]] = None,
                  ):
 
         self._target_name: str = target_name  # Use CephadmUpgrade.target_image instead.
@@ -303,6 +335,9 @@ class UpgradeState:
         # set when the mutes were deliberately not applied, so the decision is
         # made once per upgrade rather than on every _do_upgrade pass
         self.health_warnings_mute_skipped = health_warnings_mute_skipped
+        # Warnings this upgrade muted. None means the upgrade started
+        # before that list was stored, so every mid-upgrade mute is cleared.
+        self.health_warnings_muted_by_upgrade = health_warnings_muted_by_upgrade
 
     def to_json(self) -> dict:
         return {
@@ -330,6 +365,7 @@ class UpgradeState:
             'has_set_cephx_allowed_ciphers': self.has_set_cephx_allowed_ciphers,
             'health_warnings_muted': self.health_warnings_muted,
             'health_warnings_mute_skipped': self.health_warnings_mute_skipped,
+            'health_warnings_muted_by_upgrade': self.health_warnings_muted_by_upgrade,
         }
 
     @classmethod
@@ -376,6 +412,8 @@ class CephadmUpgrade:
         # report (``osds_in_crush_bucket``). Used so ok-to-stop ``known`` (cluster-wide)
         # cannot schedule OSDs outside the bucket.
         self._ok_to_upgrade_osds_in_crush_bucket: Optional[Set[str]] = None
+        self._logged_health_mute_read_failure = False
+        self._nvmeof_disabled_daemons: Set[str] = set()
 
     @property
     def target_image(self) -> str:
@@ -447,13 +485,13 @@ class CephadmUpgrade:
         for d in daemons:
             if not d.daemon_type:
                 continue
-            if d.daemon_type in INGRESS_TYPES:
-                completed = any(dig in self.upgrade_state.target_digests
-                                for dig in (d.deployed_by or []))
+            if d.daemon_type in NON_CEPH_IMAGE_TYPES:
+                upgraded = any(dig in self.upgrade_state.target_digests
+                               for dig in (d.deployed_by or []))
             else:
-                completed = any(dig in self.upgrade_state.target_digests
-                                for dig in (d.container_image_digests or []))
-            completed_daemons.append((d.daemon_type, completed))
+                upgraded = any(dig in self.upgrade_state.target_digests
+                               for dig in (d.container_image_digests or []))
+            completed_daemons.append((d.daemon_type, upgraded))
 
         done = len([True for completion in completed_daemons if completion[1]])
 
@@ -796,15 +834,69 @@ class CephadmUpgrade:
         # the upgrade is going to rotate for us
         return not any(w in health_checks for w in MID_UPGRADE_MUTED_WARNINGS)
 
-    def _mute_upgrade_related_health_warnings(self) -> bool:
+    def _current_health_mute_flags(self) -> Optional[Dict[str, bool]]:
+        """Return code -> sticky for mutes currently set on the cluster.
+
+        ``None`` means the current mutes could not be read. Callers must
+        not add or remove mutes in that case.
+        """
+        try:
+            _, out, _ = self.mgr.check_mon_command({
+                'prefix': 'health',
+                'format': 'json',
+            })
+            health = json.loads(out)
+        except Exception as e:
+            self._log_health_mute_read_failure(str(e))
+            return None
+        flags = health_mute_flags_from_report(health)
+        if flags is None:
+            self._log_health_mute_read_failure('health report has no mutes array')
+        return flags
+
+    def _log_health_mute_read_failure(self, reason: str) -> None:
+        # _do_upgrade retries until this succeeds, so log the first failure
+        # loudly and keep later ones quiet.
+        message = 'Failed to read health mutes before changing them for upgrade: %s'
+        if self._logged_health_mute_read_failure:
+            self.mgr.log.debug(message, reason)
+            return
+        self._logged_health_mute_read_failure = True
+        self.mgr.log.error(message, reason)
+
+    def _mute_upgrade_related_health_warnings(self) -> Optional[bool]:
+        """Mute the upgrade warnings the operator has not already muted.
+
+        Returns True when the mute pass ran, False when muting was
+        skipped because the cluster's cephx state is already secure and
+        None when the mutes currently set on the cluster could not be
+        read -- no mute is changed in that case and the caller should
+        retry on its next pass.
+        """
         if self._should_skip_cephx_health_mutes():
             logger.info(
                 'Upgrade: cephx keys and ciphers are already secure, not muting auth health warnings'
             )
             return False
+        already_muted = self._current_health_mute_flags()
+        if already_muted is None:
+            return None
+        to_mute: List[str] = []
         for health_warning_name in MID_UPGRADE_MUTED_WARNINGS:
+            if health_warning_name in already_muted:
+                self.mgr.log.info(
+                    'Leaving existing mute for %s (sticky=%s) in place during upgrade',
+                    health_warning_name, already_muted[health_warning_name])
+                continue
+            to_mute.append(health_warning_name)
+        if self.upgrade_state is not None:
+            self.upgrade_state.health_warnings_muted_by_upgrade = list(to_mute)
+        muted: List[str] = []
+        for health_warning_name in to_mute:
             try:
-                self.mgr.log.info('Muting %s warning for the duration of the upgrade', health_warning_name)
+                self.mgr.log.info(
+                    'Muting %s warning for the duration of the upgrade',
+                    health_warning_name)
                 self.mgr.check_mon_command({
                     'prefix': 'health mute',
                     'code': health_warning_name,
@@ -814,12 +906,48 @@ class CephadmUpgrade:
                 self.mgr.log.error(
                     f'Failed to mute health warning {health_warning_name} during upgrade: {str(e)}'
                 )
+            else:
+                muted.append(health_warning_name)
+        if self.upgrade_state is not None and muted != to_mute:
+            self.upgrade_state.health_warnings_muted_by_upgrade = muted
         return True
 
+    def _ensure_upgrade_health_mutes(self) -> None:
+        """Mute upgrade warnings that the operator has not already muted.
+
+        The list of warnings muted by the upgrade is recorded on the
+        upgrade state, so only those mutes are cleared when the upgrade
+        finishes or is stopped and operator-set mutes survive it.
+        """
+        assert self.upgrade_state
+        if (self.upgrade_state.health_warnings_muted
+                or self.upgrade_state.health_warnings_mute_skipped):
+            return
+        ret = self._mute_upgrade_related_health_warnings()
+        if ret is None:
+            # the mutes currently set could not be read; retry on the
+            # next pass through _do_upgrade
+            return
+        if ret:
+            self.upgrade_state.health_warnings_muted = True
+        else:
+            self.upgrade_state.health_warnings_mute_skipped = True
+        self._save_upgrade_state()
+
+    def _warnings_muted_by_this_upgrade(self) -> List[str]:
+        assert self.upgrade_state
+        recorded = self.upgrade_state.health_warnings_muted_by_upgrade
+        if not isinstance(recorded, list):
+            # Upgrade began before the added mutes were recorded.
+            return list(MID_UPGRADE_MUTED_WARNINGS)
+        return [code for code in recorded if isinstance(code, str)]
+
     def _unmute_upgrade_related_health_warnings(self) -> None:
-        for health_warning_name in MID_UPGRADE_MUTED_WARNINGS:
+        for health_warning_name in self._warnings_muted_by_this_upgrade():
             try:
-                self.mgr.log.info('Unmuting %s warning as upgrade is completed or has been stopped', health_warning_name)
+                self.mgr.log.info(
+                    'Unmuting %s warning as upgrade is completed or has been stopped',
+                    health_warning_name)
                 self.mgr.check_mon_command({
                     'prefix': 'health unmute',
                     'code': health_warning_name,
@@ -1021,8 +1149,14 @@ class CephadmUpgrade:
         # what we need to do here is build a list of daemons that must already be upgraded
         # in order for the user's selection of daemons to upgrade to be valid. for example,
         # if they say --daemon-types 'osd,mds' but mons have not been upgraded, we block.
+        # We include NON_CEPH_IMAGE_TYPES that are supported as --daemon-types filter
+        # targets (e.g. nvmeof) so ordering is validated between them and other types.
+        # Types that are NOT supported filter targets (monitoring, mgmt-gateway) are
+        # excluded as they only need redeploying and don't participate in ordering checks.
+        non_filter_types = [t for t in NON_CEPH_IMAGE_TYPES
+                            if t not in SUPPORTED_UPGRADE_DAEMON_TYPE_FILTER_TYPES]
         daemons = [d for d in self.mgr.cache.get_daemons(
-        ) if d.daemon_type not in NON_CEPH_IMAGE_TYPES]
+        ) if d.daemon_type not in non_filter_types]
         err_msg_base = 'Cannot start upgrade. '
         # "dtypes" will later be filled in with the types of daemons that will be upgraded with the given parameters
         dtypes = []
@@ -1830,6 +1964,8 @@ class CephadmUpgrade:
         selected_rgws_by_host: Dict[str, List[DaemonDescription]] = {}
         known_ok_to_stop: List[str] = []
         known_ok_to_upgrade: List[str] = []
+        nvmeof_upgrade_groups: Set[Tuple[str, str]] = set()
+        nvmeof_seen = False
         self._ok_to_upgrade_all_osds_upgraded = False
         for d_entry in need_upgrade:
             d = d_entry[0]
@@ -1918,6 +2054,27 @@ class CephadmUpgrade:
                         and not self._wait_for_ok_to_stop(d, known_ok_to_stop):
                     return False, to_upgrade
 
+            if d.daemon_type == 'nvmeof':
+                nvme_spec = self.mgr.spec_store.all_specs.get(
+                    d.service_name()
+                )
+                if not nvme_spec:
+                    logger.warning(
+                        'Upgrade: unable to find NVMe-oF service spec for %s; '
+                        'continuing upgrade without NVMe-oF group safety checks',
+                        d.name(),
+                    )
+                else:
+                    nvmeof_seen = True
+                    nvme_spec = cast(NvmeofServiceSpec, nvme_spec)
+                    group_key = (
+                        nvme_spec.pool,
+                        nvme_spec.group,
+                    )
+                    if group_key in nvmeof_upgrade_groups:
+                        continue
+                    nvmeof_upgrade_groups.add(group_key)
+
             if (
                 d.daemon_type == 'osd'
                 and self._upgrade_uses_ok_to_upgrade_for_osds()
@@ -1984,6 +2141,9 @@ class CephadmUpgrade:
                         and self.upgrade_state.fail_fs):
                     continue  # do not break
                 break
+
+        if nvmeof_seen and not to_upgrade:
+            return False, to_upgrade
 
         return True, self._limit_gateway_upgrade_batch(to_upgrade)
 
@@ -2091,7 +2251,14 @@ class CephadmUpgrade:
             target_digests = []
         self._rotate_mgr_mon_auth_keys(target_image, target_digests)
         for d_entry in to_upgrade:
-            if self.upgrade_state.remaining_count is not None and self.upgrade_state.remaining_count <= 0 and not d_entry[1]:
+            # d_entry[1] is True for redeploys, False for image upgrades.
+            # For NON_CEPH_IMAGE_TYPES that are supported as --daemon-types
+            # targets (e.g. nvmeof), redeploys are real upgrades that must
+            # count toward the --limit quota.
+            is_real_upgrade = not d_entry[1] or (
+                d_entry[0].daemon_type in SUPPORTED_UPGRADE_DAEMON_TYPE_FILTER_TYPES
+                and d_entry[0].daemon_type not in CEPH_IMAGE_TYPES)
+            if self.upgrade_state.remaining_count is not None and self.upgrade_state.remaining_count <= 0 and is_real_upgrade:
                 self.mgr.log.info(
                     f'Hit upgrade limit of {self.upgrade_state.total_count}. Stopping upgrade')
                 return
@@ -2200,7 +2367,9 @@ class CephadmUpgrade:
                 self.mgr.log.info(
                     f'Hit upgrade limit of {self.upgrade_state.total_count}. Stopping upgrade')
                 return
-            daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(d_entry[0])
+
+            daemon = d_entry[0]
+            daemon_spec = CephadmDaemonDeploySpec.from_daemon_description(daemon)
 
             if daemon_spec.daemon_type in ['osd', 'mds'] and daemon_spec.name() in insecure_key_daemons:
                 # if _rotate_key fails fails it will mark the upgrade as
@@ -2209,12 +2378,69 @@ class CephadmUpgrade:
                     return
 
             action = 'Upgrading' if not d_entry[1] else 'Redeploying'
+            nvmeof_service: Optional[NvmeofService] = None
+            gateway_disabled = (
+                daemon_spec.name() in self._nvmeof_disabled_daemons
+            )
             try:
+                if daemon_spec.daemon_type == 'nvmeof':
+                    nvmeof_service = cast(
+                        NvmeofService,
+                        service_registry.get_service(
+                            daemon_type_to_service('nvmeof')
+                        ),
+                    )
+
+                    # Only ask MON to stop a gateway which is currently
+                    # running. An already-down gateway must remain repairable.
+                    #
+                    # If this gateway was disabled by a previous failed
+                    # redeploy attempt, don't disable it again.
+                    if (
+                        daemon.status == DaemonDescriptionStatus.running
+                        and not gateway_disabled
+                        and self.mgr.spec_store.all_specs.get(
+                            daemon.service_name()
+                        )
+                    ):
+                        result, gateway_disabled = (
+                            nvmeof_service.check_and_disable_gateway(
+                                daemon
+                            )
+                        )
+
+                        if result.retval:
+                            logger.info(
+                                'Upgrade: %s is not safe to stop: %s',
+                                daemon.name(),
+                                result.stderr,
+                            )
+                            continue
+
+                        if gateway_disabled:
+                            self._nvmeof_disabled_daemons.add(
+                                daemon_spec.name()
+                            )
                 self.mgr._daemon_action(
                     daemon_spec,
                     'redeploy',
                     image=target_image if not d_entry[1] else None
                 )
+                if gateway_disabled:
+                    assert nvmeof_service is not None
+                    enable_result = nvmeof_service.enable_gateway(
+                        daemon
+                    )
+                    if enable_result.retval:
+                        raise OrchestratorError(
+                            f'Failed to re-enable NVMe-oF gateway '
+                            f'{daemon_spec.name()} after '
+                            f'{action.lower()}: '
+                            f'{enable_result.stderr}'
+                        )
+                    self._nvmeof_disabled_daemons.discard(
+                        daemon_spec.name()
+                    )
                 self.mgr.cache.metadata_up_to_date[daemon_spec.host] = False
             except Exception as e:
                 logger.exception(
@@ -2232,7 +2458,10 @@ class CephadmUpgrade:
                 })
                 return
             num += 1
-            if self.upgrade_state.remaining_count is not None and not d_entry[1]:
+            is_real_upgrade = not d_entry[1] or (
+                d_entry[0].daemon_type in SUPPORTED_UPGRADE_DAEMON_TYPE_FILTER_TYPES
+                and d_entry[0].daemon_type not in CEPH_IMAGE_TYPES)
+            if self.upgrade_state.remaining_count is not None and is_real_upgrade:
                 self.upgrade_state.remaining_count -= 1
                 self._save_upgrade_state()
 
@@ -2693,25 +2922,22 @@ class CephadmUpgrade:
 
         image_settings = self.get_distinct_container_image_settings()
 
-        if not (self.upgrade_state.health_warnings_muted
-                or self.upgrade_state.health_warnings_mute_skipped):
-            if self._mute_upgrade_related_health_warnings():
-                self.upgrade_state.health_warnings_muted = True
-            else:
-                self.upgrade_state.health_warnings_mute_skipped = True
-            self._save_upgrade_state()
+        self._ensure_upgrade_health_mutes()
         daemons = self._get_filtered_daemons()
-
         upgraded_daemon_count: int = 0
         for daemon_type in CEPH_UPGRADE_ORDER:
             if self.upgrade_state.remaining_count is not None and self.upgrade_state.remaining_count <= 0:
                 # we hit our limit and should end the upgrade
                 # except for cases where we only need to redeploy, but not actually upgrade
                 # the image (which we don't count towards our limit). This case only occurs with mgr
-                # and monitoring stack daemons. Additionally, this case is only valid if
+                # and monitoring/mgmt-gateway daemons. Additionally, this case is only valid if
                 # the active mgr is already upgraded.
+                # NON_CEPH_IMAGE_TYPES that are supported as --daemon-types targets
+                # (e.g. nvmeof) get real upgrades and must respect the limit.
+                redeploy_only_types = [t for t in NON_CEPH_IMAGE_TYPES
+                                       if t not in SUPPORTED_UPGRADE_DAEMON_TYPE_FILTER_TYPES]
                 if any(d in target_digests for d in self.mgr.get_active_mgr_digests()):
-                    if daemon_type not in NON_CEPH_IMAGE_TYPES and daemon_type != 'mgr':
+                    if daemon_type not in redeploy_only_types and daemon_type != 'mgr':
                         continue
                 else:
                     self._mark_upgrade_complete(target_digests, target_image)
@@ -2755,13 +2981,18 @@ class CephadmUpgrade:
                     ceph_daemons = [d for d in self.mgr.cache.get_daemons() if d.daemon_type in CEPH_IMAGE_TYPES]
                     _, n1, n2, __ = self._detect_need_upgrade(ceph_daemons, target_digests, target_image)
                     if not n1 and not n2:
-                        # no ceph daemons need upgrade
-                        need_upgrade_names = [d[0].name() for d in need_upgrade] + \
-                            [d[0].name() for d in need_upgrade_deployer]
-                        dds = [d for d in self.mgr.cache.get_daemons_by_daemon_type(
-                            daemon_type) if d.name() not in need_upgrade_names]
-                        _, ___, n2, ____ = self._detect_need_upgrade(dds, target_digests, target_image)
-                        need_upgrade_deployer += n2
+                        # no ceph daemons need upgrade.
+                        # Types selectable via --daemon-types (nvmeof) are already in
+                        # daemons_of_type, which honours the upgrade filters, reading
+                        # the cache here would redeploy them cluster wide. The rest
+                        # can never be filtered, so they come from the cache.
+                        if daemon_type not in SUPPORTED_UPGRADE_DAEMON_TYPE_FILTER_TYPES:
+                            need_upgrade_names = [d[0].name() for d in need_upgrade] + \
+                                [d[0].name() for d in need_upgrade_deployer]
+                            dds = [d for d in self.mgr.cache.get_daemons_by_daemon_type(
+                                daemon_type) if d.name() not in need_upgrade_names]
+                            _, ___, n2, ____ = self._detect_need_upgrade(dds, target_digests, target_image)
+                            need_upgrade_deployer += n2
                     else:
                         # don't upgrade if ceph image daemons are not yet fully upgraded.
                         need_upgrade_deployer = []

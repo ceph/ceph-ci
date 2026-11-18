@@ -210,8 +210,17 @@ class HostPlacementSpec(NamedTuple):
                 else:
                     ip_address(unwrap_ipv6(network))
             except ValueError as e:
-                # logging?
+                try:
+                    port_val = int(host_spec.network)
+                except ValueError:
+                    port_val = None
+                if port_val not in (None, 0):
+                    validate_port(port_val, 'rgw_frontend_port')
                 raise e
+
+        if not require_network:
+            return host_spec
+
         host_spec.validate()
         return host_spec
 
@@ -1447,6 +1456,7 @@ class NFSServiceSpec(ServiceSpec):
                  cephfs_client_log_dir: Optional[str] = None,
                  mem_stats_disable: bool = False,
                  clients_per_pool: Optional[int] = None,
+                 log_to_file: bool = False,
                  ):
         assert service_type == 'nfs'
         super(NFSServiceSpec, self).__init__(
@@ -1492,6 +1502,8 @@ class NFSServiceSpec(ServiceSpec):
         # Disables per-component memory-statistics capture in NFS_CORE_PARAM.
         # Applied at daemon startup only; requires daemon restart to take effect.
         self.mem_stats_disable = mem_stats_disable
+        # When True, NFS-Ganesha writes server logs to a file instead of STDERR.
+        self.log_to_file = log_to_file
 
         # Max independent CephFS client handles Ganesha may use per filesystem.
         self.clients_per_pool = clients_per_pool
@@ -2064,6 +2076,14 @@ class RGWSpec(ServiceSpec):
                     'Cannot add RGW: Realm specified but no zone specified')
         if self.rgw_zone and not self.rgw_realm:
             raise SpecValidationError('Cannot add RGW: Zone specified but no realm specified')
+
+        if self.rgw_frontend_port is not None:
+            try:
+                port_val = int(self.rgw_frontend_port)
+            except (TypeError, ValueError):
+                port_val = None
+            if port_val not in (None, 0):
+                validate_port(port_val, 'rgw_frontend_port')
 
         if self.rgw_frontend_type is not None:
             if self.rgw_frontend_type not in ['beast', 'civetweb']:
