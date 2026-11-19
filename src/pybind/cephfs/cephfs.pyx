@@ -3786,6 +3786,7 @@ class CptreeDir:
         self.dst_fd = self.fs.openat(self.parent_dir_dst_fd, self.dst_rel_path,
                                      os.O_RDONLY | os.O_DIRECTORY, 0o755)
 
+        copy_user_xattrs(self.fs, self.src_fd, self.dst_fd)
         # Filename ciphertext was produced with this directory's nonce.
         copy_fscrypt_xattrs(self.fs, self.src_fd, self.dst_fd)
 
@@ -3913,6 +3914,7 @@ def copy_reg_file(fs, src_fd, dst_fd, file_name, should_sync_attrs=False):
             while written < len(data):
                 written += fs.write(dst_file_fd, data[written:], -1)
 
+        copy_user_xattrs(fs, src_file_fd, dst_file_fd)
         # The bytes just written are the source ciphertext. Keep the nonce
         # that decrypts them, then the logical size.
         copy_fscrypt_xattrs(fs, src_file_fd, dst_file_fd)
@@ -3954,6 +3956,7 @@ def copy_sym_link(fs, src_fd, dst_fd, de_name, should_sync_attrs=False):
     try:
         src_sl_fd = fs.openat(src_fd, de_name, os.O_PATH | os.O_NOFOLLOW, 0)
         dst_sl_fd = fs.openat(dst_fd, de_name, os.O_PATH | os.O_NOFOLLOW, 0)
+        copy_user_xattrs(fs, src_sl_fd, dst_sl_fd)
         copy_fscrypt_xattrs(fs, src_sl_fd, dst_sl_fd)
     finally:
         if src_sl_fd is not None:
@@ -3973,6 +3976,18 @@ _FSCRYPT_CLONE_XATTRS = (
     'ceph.alternate_name',
 )
 
+def copy_user_xattrs(fs, src_fd, dst_fd):
+    try:
+        # Getter uses a 256-byte buffer. alternate_name is at most 255.
+        log.info(fs.flistxattr(src_fd))
+        len, buf = fs.flistxattr(src_fd)
+        xattrs = buf.decode('utf-8').split('\x00')[:-1]
+        for xattr in xattrs:
+            value = fs.fgetxattr(src_fd, xattr, 256)
+            fs.fsetxattr(dst_fd, xattr, value, 0)
+
+    except NoData:
+        raise
 
 def copy_fscrypt_xattrs(fs, src_fd, dst_fd):
     for name in _FSCRYPT_CLONE_XATTRS:
