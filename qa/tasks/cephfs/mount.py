@@ -1648,6 +1648,14 @@ class CephFSMountBase(object):
                 md5.update(contents.encode("utf-8"))
                 return md5.hexdigest()
 
+            def _compare_xattrs(file1, file2):
+                src_xattrs = os.listxattr(file1)
+                dst_xattrs = os.listxattr(file2)
+                for xattr in src_xattrs:
+                    if not xattr in dst_xattrs:
+                        return False
+                return True
+
             compare_data = {compare_data}
             files = os.listdir('{src}')
             for file in files:
@@ -1676,6 +1684,8 @@ class CephFSMountBase(object):
                         dest_hash = _md5hash_file(dst_file)
                         if src_hash != dest_hash:
                             raise
+                if not _compare_xattrs(src_file, dst_file):
+                    raise
             """).format(src=src, dst=dst, compare_data=compare_data)
         proc = self._run_python(pyscript)
         proc.wait()

@@ -7547,6 +7547,14 @@ class TestSubvolumeSnapshotGetpath(TestVolumesHelper):
 
 
 class TestSubvolumeSnapshotClones(TestVolumesHelper):
+    def _get_sv_path(self, v, sv):
+        sv_path = self.get_ceph_cmd_stdout(f'fs subvolume getpath {v} {sv}')
+        sv_path = sv_path.strip()
+        # delete slash at the beginning of path
+        sv_path = sv_path[1:]
+
+        sv_path = os.path.join(self.mount_a.mountpoint, sv_path)
+        return sv_path
     """ Tests for FS subvolume snapshot clone operations."""
     def test_clone_subvolume_info(self):
         # tests the 'fs subvolume info' command for a clone
@@ -7627,6 +7635,44 @@ class TestSubvolumeSnapshotClones(TestVolumesHelper):
         self.assertEqual(subvol_info['source']['subvolume'], subvol_name)
         self.assertEqual(subvol_info['source']['snapshot'], snap_name)
         self.assertEqual(subvol_info['source']['group'], group_name)
+
+    def test_clone_user_xattrs(self):
+        '''
+        Test that clone's source subvolume's user defined xattrs are copied during a clone.
+        '''
+
+        subvol_name = self._gen_subvol_name()
+        snap_name = self._gen_subvol_snap_name()
+        clone_name = self._gen_subvol_clone_name()
+
+        self.run_ceph_cmd(f'fs subvolume create {self.volname} {subvol_name} --mode=777')
+        src_path = self._get_sv_path("cephfs", subvol_name)
+        #self._do_subvolume_io(subvol_name, group_name, number_of_files=1)
+        dir1 = f'{src_path}/dir1'
+        self.mount_a.run_shell_payload(f"mkdir {dir1}")
+        self.mount_a.setfattr(dir1, "user.foo1", "bar")
+
+        filea = f'{src_path}/filea'
+        self.mount_a.run_shell_payload(f"touch {filea}")
+        self.mount_a.setfattr(filea, "user.fooa", "bara")
+        self.mount_a.setfattr(filea, "user.foob", "barb")
+        self.mount_a.setfattr(filea, "user.fooc", "barc")
+
+        self.run_ceph_cmd(f'fs subvolume snapshot create {self.volname} '
+                          f'{subvol_name} {snap_name}')
+        self.run_ceph_cmd(f'fs subvolume snapshot clone {self.volname} '
+                          f'{subvol_name} {snap_name} {clone_name} ')
+        self._wait_for_clone_to_complete(clone_name)
+
+        subvol_info = self.get_ceph_cmd_stdout(
+            f'fs subvolume info {self.volname} {clone_name}')
+        subvol_info = json.loads(subvol_info)
+        self.assertEqual(subvol_info['source']['volume'], self.volname)
+        self.assertEqual(subvol_info['source']['subvolume'], subvol_name)
+        self.assertEqual(subvol_info['source']['snapshot'], snap_name)
+
+        dst_path = self._get_sv_path("cephfs", clone_name)
+        self.mount_a.compare_trees(src_path, dst_path)
 
     def test_subvolume_snapshot_info_without_snapshot_clone(self):
         """
