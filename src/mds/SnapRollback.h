@@ -20,10 +20,10 @@
 #include "include/object.h"
 #include "include/fs_types.h"
 #include "common/snap_types.h"
+#include "mds/CDentry.h"
 #include "mds/Mutation.h"
 #include "mds/ScrubHeader.h"
 
-class CDentry;
 class CDir;
 class CInode;
 class MDCache;
@@ -38,6 +38,11 @@ class MDSContext;
  * scrub recurses into directories which exist in both head and the
  * snapshot as the same inode.
  *
+ * An entry is a link to an inode. Each name ends up linking the inode
+ * that it linked in the snapshot, as a primary or a remote dentry
+ * regardless of which of the two it was then, and an inode is rolled
+ * back once, when the first of its links is reached.
+ *
  * Clients are expected to have been evicted before the rollback starts,
  * i.e., there are no caps on any inode under the directory.
  */
@@ -45,11 +50,12 @@ class SnapRollback {
 public:
   enum action_t {
     ACTION_NONE = 0,      // nothing to do
-    ACTION_SKIP,          // unsupported (directory, hardlink, ...)
+    ACTION_SKIP,          // unsupported (directory, linked outside, ...)
     ACTION_ROLLBACK,      // same inode in snapshot and head
-    ACTION_REMOVE,        // remove head inode (created/replaced after snapshot)
+    ACTION_REMOVE,        // remove head link (created/replaced after snapshot)
     ACTION_REINSTATE,     // recreate head inode from snapshot (head inode is gone)
     ACTION_RELINK,        // move live head inode back to this name
+    ACTION_LINK,          // add a link to the live head inode at this name
   };
 
   /**
@@ -60,7 +66,8 @@ public:
     HEAD_GONE = 0,        // not in cache
     HEAD_PURGING,         // being purged; gone once the purge finishes
     HEAD_RELINKABLE,      // can be moved back to the name
-    HEAD_PINNED,          // alive, but can't be moved (other links, ...)
+    HEAD_LINKABLE,        // stays where it is, the name gets a link to it
+    HEAD_PINNED,          // alive, but must not be touched (linked outside, ...)
   };
 
   explicit SnapRollback(MDCache *mdc) : mdcache(mdc) {}
@@ -88,19 +95,29 @@ public:
 private:
   struct dirfrag_rollback_t;
   struct rollback_op_t;
+  struct snap_version_t;
 
   friend class C_SnapRollback_Next;
   friend class C_SnapRollback_EntryDone;
   friend class C_SnapRollback_Logged;
   friend class C_IO_SnapRollback_Data;
   friend class C_IO_SnapRollback_Stat;
+  friend class C_SnapRollback_Loaded;
 
   action_t classify(CDir *dir, std::string_view name,
                     const ScrubHeaderRef& header, std::string *why);
-  head_state_t get_head_state(inodeno_t ino, const ScrubHeaderRef& header,
-                              std::string *why);
+  head_state_t get_head_state(CDentry::linkage_t *sl,
+                              const ScrubHeaderRef& header, std::string *why);
   bool head_gone_from_disk(const MDRequestRef& mdr, rollback_op_t *op,
                            CInode *sin);
+
+  bool get_snap_version(CDentry::linkage_t *sl, CInode *in, snapid_t snapid,
+                        snap_version_t *sv);
+  bool is_linked_outside(CInode *in, const ScrubHeaderRef& header);
+  bool is_snapshot_covered(CInode *in, snapid_t snapid);
+  CInode *get_linked_inode(const MDRequestRef& mdr, rollback_op_t *op,
+                           CDentry::linkage_t *dnl);
+  void load_inode(const MDRequestRef& mdr, rollback_op_t *op, inodeno_t ino);
 
   void next_entry(dirfrag_rollback_t *dr);
   void entry_done(dirfrag_rollback_t *dr, action_t action, int r);
@@ -113,14 +130,17 @@ private:
   void remove_inode(const MDRequestRef& mdr, rollback_op_t *op);
   void reinstate_inode(const MDRequestRef& mdr, rollback_op_t *op);
   void relink_inode(const MDRequestRef& mdr, rollback_op_t *op);
+  void link_inode(const MDRequestRef& mdr, rollback_op_t *op);
 
-  void _rollback_inode_logged(const MDRequestRef& mdr);
+  void _rollback_inode_logged(const MDRequestRef& mdr, CInode *in, bool track);
   void _remove_inode_logged(const MDRequestRef& mdr, CDentry *dn,
                             CDentry *straydn, version_t dnpv);
   void _reinstate_inode_logged(const MDRequestRef& mdr, CDentry *dn,
-                               CInode *in);
+                               CInode *in, bool track);
   void _relink_inode_logged(const MDRequestRef& mdr, CDentry *srcdn,
                             CDentry *destdn, CInode *in);
+  void _link_inode_logged(const MDRequestRef& mdr, CDentry *dn, CInode *in,
+                          version_t dnpv, bool adjust_realm);
 
   /**
    * Issue CEPH_OSD_OP_ROLLBACK for the data objects of an inode, in

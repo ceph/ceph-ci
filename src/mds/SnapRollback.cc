@@ -75,6 +75,33 @@ struct SnapRollback::rollback_op_t {
   uint64_t purge_progress = 0;
 };
 
+/*
+ * The version of an inode that a snapshot sees: a snapshot inode of its
+ * own (the dentry was COWed along with the inode), an old_inode of the
+ * head inode (multiversion: hardlinked, or with a snaprealm), or the
+ * head itself if it wasn't modified since. The references keep what the
+ * pointers point into alive across projecting the head inode.
+ */
+struct SnapRollback::snap_version_t {
+  const CInode::mempool_inode *inode = nullptr;
+  const CInode::mempool_xattr_map *xattrs = nullptr;
+
+  CInode::inode_const_ptr inode_ref;
+  CInode::xattr_map_const_ptr xattrs_ref;
+  CInode::old_inode_map_const_ptr old_inodes_ref;
+};
+
+static inodeno_t linkage_ino(const CDentry::linkage_t *dnl)
+{
+  return dnl->is_remote() ? dnl->get_remote_ino() : dnl->get_inode()->ino();
+}
+
+static bool linkage_is_dir(const CDentry::linkage_t *dnl)
+{
+  return dnl->is_remote() ? dnl->get_remote_d_type() == DT_DIR
+                          : dnl->get_inode()->is_dir();
+}
+
 class C_SnapRollback_Next : public MDSInternalContext {
   SnapRollback *sr;
   SnapRollback::dirfrag_rollback_t *dr;
@@ -150,6 +177,21 @@ public:
   }
 };
 
+class C_SnapRollback_Loaded : public MDSInternalContext {
+  SnapRollback *sr;
+  MDRequestRef mdr;
+public:
+  C_SnapRollback_Loaded(SnapRollback *s, const MDRequestRef& r)
+    : MDSInternalContext(s->mdcache->mds), sr(s), mdr(r) {}
+  void finish(int r) override {
+    if (r < 0) {
+      sr->finish_request(mdr, r);
+      return;
+    }
+    sr->dispatch(mdr);
+  }
+};
+
 std::string_view SnapRollback::action_name(action_t action)
 {
   switch (action) {
@@ -159,6 +201,7 @@ std::string_view SnapRollback::action_name(action_t action)
   case ACTION_REMOVE: return "remove";
   case ACTION_REINSTATE: return "reinstate";
   case ACTION_RELINK: return "relink";
+  case ACTION_LINK: return "link";
   }
   return "unknown";
 }
@@ -173,9 +216,14 @@ bool SnapRollback::should_recurse(CDentry *dn, snapid_t snapid)
 }
 
 /*
- * Compare what `name` refers to in head and in the snapshot. Directory
+ * Compare what `name` links in head and in the snapshot. Directory
  * inodes are multiversion, so a directory that existed in the snapshot
  * as the same inode has a head dentry that covers the snapshot.
+ *
+ * For anything else only the inode number matters: whether a link is the
+ * primary or a remote one says where the inode is stored, and that may
+ * have changed since the snapshot (unlinking the primary link moves the
+ * inode to another link).
  */
 SnapRollback::action_t SnapRollback::classify(CDir *dir, std::string_view name,
                                               const ScrubHeaderRef& header,
@@ -197,67 +245,83 @@ SnapRollback::action_t SnapRollback::classify(CDir *dir, std::string_view name,
   if (!hl && !sl) {
     return ACTION_NONE;
   }
-  if ((hl && hl->is_remote()) || (sl && sl->is_remote())) {
-    *why = "remote dentry";
-    return ACTION_SKIP;
-  }
 
-  CInode *hin = hl ? hl->get_inode() : nullptr;
-  CInode *sin = sl ? sl->get_inode() : nullptr;
-
-  if ((hin && hin->is_dir()) || (sin && sin->is_dir())) {
-    if (hdn == sdn) {
+  if ((hl && linkage_is_dir(hl)) || (sl && linkage_is_dir(sl))) {
+    if (hdn == sdn && hl->is_primary()) {
       // same directory in head and snapshot -- recursed into by the scrub
       return ACTION_NONE;
     }
     *why = "directory";
     return ACTION_SKIP;
   }
-  // A file that was unlinked while covered by a snapshot has a (non-global)
-  // snaprealm for its past parents; that is not a hardlink.
-  if ((hin && (hin->get_projected_inode()->nlink > 1 ||
-               hin->is_projected_snaprealm_global())) ||
-      (sin && sin->get_inode()->nlink > 1)) {
-    *why = "hardlinked inode";
-    return ACTION_SKIP;
-  }
 
-  if (!sin) {
-    // created after the snapshot
+  if (!sl) {
+    // linked after the snapshot
     return ACTION_REMOVE;
   }
-  if (hin && hin->ino() == sin->ino()) {
-    if (hin == sin && hin->is_any_old_inodes()) {
-      // the snapshot's metadata may be in old_inodes, which is not handled
-      *why = "metadata in old_inodes";
-      return ACTION_SKIP;
+
+  inodeno_t sino = linkage_ino(sl);
+  if (hl && linkage_ino(hl) == sino) {
+    if (header->is_rollback_done(sino)) {
+      // rolled back from another of its links
+      return ACTION_NONE;
+    }
+    // rollback_inode() loads the inode if it isn't in cache, after which
+    // the entry is classified again.
+    CInode *in = hl->is_primary() ? hl->get_inode() : mdcache->get_inode(sino);
+    if (in) {
+      if (is_linked_outside(in, header)) {
+        *why = "inode linked outside the rollback directory";
+        return ACTION_SKIP;
+      }
+      if (!is_snapshot_covered(in, snapid)) {
+        *why = "inode not covered by the snapshot";
+        return ACTION_SKIP;
+      }
     }
     return ACTION_ROLLBACK;
   }
 
-  // The snapshot inode is not linked at this name. Decide what can be done
-  // about it before touching the head inode at this name, if any: removing
-  // can't be undone.
-  auto state = get_head_state(sin->ino(), header, why);
+  // The name doesn't link the snapshot inode. Decide what can be done
+  // about that before touching what the name links now, if anything:
+  // removing can't be undone.
+  auto state = get_head_state(sl, header, why);
   if (state == HEAD_PINNED) {
     return ACTION_SKIP;
   }
-  if (hin) {
-    // the entry is reclassified after the head inode has been removed
+  if (hl) {
+    // the entry is reclassified after the head link has been removed
     return ACTION_REMOVE;
   }
-  return state == HEAD_RELINKABLE ? ACTION_RELINK : ACTION_REINSTATE;
+  switch (state) {
+  case HEAD_RELINKABLE:
+    return ACTION_RELINK;
+  case HEAD_LINKABLE:
+    return ACTION_LINK;
+  case HEAD_PURGING:
+    // waits for the purge, then the entry gets classified again
+    return ACTION_REINSTATE;
+  default:
+    break;
+  }
+  // Not in cache. An inode that a remote dentry of the snapshot refers to
+  // is kept (in stray, if it has no links) for its old_inodes: it has to
+  // be loaded. Otherwise it may have been purged.
+  return sl->is_primary() ? ACTION_REINSTATE : ACTION_LINK;
 }
 
 /*
- * Find out what happened to the head version of a snapshot inode that
- * isn't linked at the snapshot's name anymore. An inode that isn't in
- * cache is reported as gone; head_gone_from_disk() tells whether it is.
+ * Find out what happened to the head version of the inode that the
+ * snapshot dentry `sl` links, which isn't linked at the snapshot's name
+ * anymore. An inode that isn't in cache is reported as gone;
+ * head_gone_from_disk() tells whether it is.
  */
 SnapRollback::head_state_t
-SnapRollback::get_head_state(inodeno_t ino, const ScrubHeaderRef& header,
-                             std::string *why)
+SnapRollback::get_head_state(CDentry::linkage_t *sl,
+                             const ScrubHeaderRef& header, std::string *why)
 {
+  inodeno_t ino = linkage_ino(sl);
+  snapid_t snapid = header->get_rollback_snapid();
   CInode *in = mdcache->get_inode(ino);
   if (!in) {
     return HEAD_GONE;
@@ -277,30 +341,167 @@ SnapRollback::get_head_state(inodeno_t ino, const ScrubHeaderRef& header,
     *why = "head inode without a parent";
     return HEAD_PINNED;
   }
-
-  const auto& pi = in->get_projected_inode();
-  CInode *pdiri = pdn->get_dir()->get_inode();
-  if (pdiri->is_stray()) {
-    if (pi->nlink != 0) {
-      // remote dentries refer to it, it can't be moved from under them
-      *why = "head inode with other links";
-      return HEAD_PINNED;
-    }
-    return HEAD_RELINKABLE;
-  }
-
-  if (pi->nlink != 1 || in->is_projected_snaprealm_global()) {
-    *why = "head inode with other links";
-    return HEAD_PINNED;
-  }
-  // renamed after the snapshot: don't take it away from outside the
-  // directory being rolled back.
-  CInode *origin = mdcache->get_inode(header->get_origin());
-  if (!origin || !origin->is_projected_ancestor_of(pdiri)) {
+  // Rolling it back changes what its other links show: leave it alone if
+  // any of them is outside of the directory being rolled back.
+  if (is_linked_outside(in, header)) {
     *why = "head inode linked outside the rollback directory";
     return HEAD_PINNED;
   }
-  return HEAD_RELINKABLE;
+  // Its data can't be rolled back otherwise; find out before the name is
+  // changed for it.
+  if (!is_snapshot_covered(in, snapid)) {
+    *why = "head inode not covered by the snapshot";
+    return HEAD_PINNED;
+  }
+
+  snap_version_t sv;
+  if (!get_snap_version(sl, in, snapid, &sv)) {
+    *why = "head inode without a version at the snapshot";
+    return HEAD_PINNED;
+  }
+
+  if (pdn->get_dir()->get_inode()->is_stray()) {
+    // Unlinked, or its primary link was removed and it is waiting to be
+    // moved to one of its remote links (not during a rollback). Remote
+    // dentries refer to it by number, so it can become primary here.
+    return HEAD_RELINKABLE;
+  }
+
+  const auto& pi = in->get_projected_inode();
+  if (pi->nlink == 1 && !in->is_projected_snaprealm_global()) {
+    if (sv.inode->nlink == 1) {
+      // Renamed after the snapshot: its only link in the snapshot is the
+      // name being rolled back, so the link it has now is not in the
+      // snapshot. Move it back.
+      return HEAD_RELINKABLE;
+    }
+  }
+  // Hardlinked now or in the snapshot. The link it is stored at may be in
+  // the snapshot, too: leave it, any link that isn't in the snapshot gets
+  // removed when the rollback gets there.
+  return HEAD_LINKABLE;
+}
+
+bool SnapRollback::get_snap_version(CDentry::linkage_t *sl, CInode *in,
+                                    snapid_t snapid, snap_version_t *sv)
+{
+  CInode *sin = sl->is_primary() ? sl->get_inode() : nullptr;
+  if (sin && sin->last != CEPH_NOSNAP) {
+    sv->inode_ref = sin->get_inode();
+    sv->xattrs_ref = sin->get_xattrs();
+    sv->inode = sv->inode_ref.get();
+    sv->xattrs = sv->xattrs_ref.get();
+    return true;
+  }
+  if (sin) {
+    // the head dentry covers the snapshot
+    in = sin;
+  }
+  ceph_assert(in && in->last == CEPH_NOSNAP);
+
+  // same as what a stat of the snapshot gets, see CInode::encode_inodestat()
+  if (in->is_any_old_inodes()) {
+    sv->old_inodes_ref = in->get_old_inodes();
+    auto& old_inodes = *sv->old_inodes_ref;
+    auto it = old_inodes.lower_bound(snapid);
+    if (it != old_inodes.end()) {
+      if (it->second.first > snapid && it != old_inodes.begin()) {
+        --it;
+      }
+      if (it->second.first <= snapid && snapid <= it->first) {
+        sv->inode = &it->second.inode;
+        sv->xattrs = &it->second.xattrs;
+        return true;
+      }
+    }
+  }
+  if (in->first > snapid) {
+    // modified since, without the snapshot's version having been kept
+    return false;
+  }
+  sv->inode_ref = in->get_projected_inode();
+  sv->xattrs_ref = in->get_projected_xattrs();
+  sv->inode = sv->inode_ref.get();
+  sv->xattrs = sv->xattrs_ref.get();
+  return true;
+}
+
+/*
+ * Does `in` have a link outside of the directory being rolled back? Only
+ * the primary link is always known: remote links are found if they are in
+ * cache. Hardlinks do not cross subvolumes, so there is none when a
+ * subvolume is rolled back.
+ */
+bool SnapRollback::is_linked_outside(CInode *in, const ScrubHeaderRef& header)
+{
+  CInode *origin = mdcache->get_inode(header->get_origin());
+  if (!origin) {
+    return true;
+  }
+  if (CDentry *pdn = in->get_projected_parent_dn(); pdn) {
+    CInode *pdiri = pdn->get_dir()->get_inode();
+    if (!pdiri->is_stray() && !origin->is_projected_ancestor_of(pdiri)) {
+      return true;
+    }
+  }
+  for (auto rdn : in->get_remote_parents()) {
+    if (rdn->last != CEPH_NOSNAP || !rdn->get_projected_linkage()->is_remote()) {
+      continue;
+    }
+    if (!origin->is_projected_ancestor_of(rdn->get_dir()->get_inode())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/*
+ * A link in the directory at the snapshot doesn't mean that the snapshot
+ * is one of the inode's: the inode may be stored in, and get its snapshots
+ * from, somewhere else. The OSD removes an object that has no clone for the
+ * snapshot it is asked to roll back to.
+ */
+bool SnapRollback::is_snapshot_covered(CInode *in, snapid_t snapid)
+{
+  return in->find_snaprealm()->get_snaps().count(snapid);
+}
+
+/*
+ * The head inode that `dnl` links. If it isn't in cache, returns nullptr
+ * and the request gets redispatched once it is.
+ */
+CInode *SnapRollback::get_linked_inode(const MDRequestRef& mdr, rollback_op_t *op,
+                                       CDentry::linkage_t *dnl)
+{
+  if (dnl->is_primary()) {
+    return dnl->get_inode();
+  }
+  CInode *in = dnl->get_inode();
+  if (!in) {
+    in = mdcache->get_inode(dnl->get_remote_ino());
+  }
+  if (!in) {
+    load_inode(mdr, op, dnl->get_remote_ino());
+  }
+  return in;
+}
+
+/*
+ * Load an inode that a remote dentry refers to. The request must not hold
+ * any locks, loading the inode may have to traverse the directories it
+ * would lock.
+ */
+void SnapRollback::load_inode(const MDRequestRef& mdr, rollback_op_t *op,
+                              inodeno_t ino)
+{
+  if (++op->retries > max_retries) {
+    dout(5) << __func__ << " " << op->name << ": can't load inode " << ino
+            << dendl;
+    finish_request(mdr, -EBUSY);
+    return;
+  }
+  dout(10) << __func__ << " " << op->name << ": loading inode " << ino << dendl;
+  mdcache->open_ino(ino, -1, new C_SnapRollback_Loaded(this, mdr), false);
 }
 
 /*
@@ -453,6 +654,10 @@ void SnapRollback::entry_done(dirfrag_rollback_t *dr, action_t action, int r)
       // reclassify -- same inode now, data and metadata get rolled back
       stats.relinked++;
       break;
+    case ACTION_LINK:
+      // reclassify -- same inode now, rolled back unless it already was
+      stats.linked++;
+      break;
     default:
       ceph_abort();
     }
@@ -500,6 +705,9 @@ void SnapRollback::dispatch(const MDRequestRef& mdr)
     break;
   case ACTION_RELINK:
     relink_inode(mdr, op);
+    break;
+  case ACTION_LINK:
+    link_inode(mdr, op);
     break;
   default:
     ceph_abort();
@@ -666,10 +874,14 @@ static void copy_snap_inode(CInode::mempool_inode& ni,
 }
 
 /*
- * CASE I/II: the name refers to the same inode in head and in the
- * snapshot. The head dentry/inode is COWed for snapshots taken after
- * the rollback snapshot (head becomes [newest_seq+1, head]) and the
- * head inode is replaced with the snapshot version.
+ * CASE I/II: the name links the same inode in head and in the snapshot.
+ * The head inode is COWed for snapshots taken after the rollback snapshot
+ * (a snapshot inode along with its dentry, or an old_inode if it is
+ * multiversion; head becomes [newest_seq+1, head]) and is replaced with
+ * the snapshot version.
+ *
+ * The inode may be stored elsewhere (the name is a remote link), in which
+ * case its other links see it rolled back as well.
  */
 void SnapRollback::rollback_inode(const MDRequestRef& mdr, rollback_op_t *op)
 {
@@ -678,15 +890,27 @@ void SnapRollback::rollback_inode(const MDRequestRef& mdr, rollback_op_t *op)
   snapid_t snapid = op->header->get_rollback_snapid();
 
   CDentry *dn = dir->lookup(op->name);
-  CInode *in = dn->get_projected_linkage()->get_inode();
+  CDentry::linkage_t *hl = dn->get_projected_linkage();
   CDentry *sdn = dir->lookup(op->name, snapid);
-  CInode *sin = sdn->get_projected_linkage()->get_inode();
+  CDentry::linkage_t *sl = sdn->get_projected_linkage();
+
+  CInode *in = get_linked_inode(mdr, op, hl);
+  if (!in) {
+    return;
+  }
 
   if (!acquire_locks(mdr, op, dn, in, nullptr)) {
     return;
   }
 
-  const auto& si = *sin->get_inode();
+  snap_version_t sv;
+  if (!get_snap_version(sl, in, snapid, &sv)) {
+    dout(5) << __func__ << " no version at snap " << snapid << " of " << *in << dendl;
+    finish_request(mdr, -ESTALE);
+    return;
+  }
+  const auto& si = *sv.inode;
+
   if (in->is_file() && !op->data_done) {
     if (op->num_objs == 0) {
       const auto& hi = *in->get_projected_inode();
@@ -704,7 +928,12 @@ void SnapRollback::rollback_inode(const MDRequestRef& mdr, rollback_op_t *op)
     return;
   }
 
-  dout(10) << __func__ << " " << *in << " from " << *sin << dendl;
+  dout(10) << __func__ << " " << *in << " to snap " << snapid << " via " << *sdn
+           << dendl;
+
+  // more links, now or in the snapshot: don't roll it back again from those
+  bool track = hl->is_remote() || sl->is_remote() ||
+               in->get_projected_inode()->nlink > 1 || si.nlink > 1;
 
   MDLog *mdlog = mds->mdlog;
   mdr->ls = mdlog->get_current_segment();
@@ -714,29 +943,35 @@ void SnapRollback::rollback_inode(const MDRequestRef& mdr, rollback_op_t *op)
   copy_snap_inode(*pi.inode, si, mdr->get_op_stamp());
   pi.inode->version = in->pre_dirty();
   pi.inode->update_backtrace();
-  if (auto& sx = sin->get_xattrs(); sx) {
-    *pi.xattrs = *sx;
+  if (sv.xattrs) {
+    *pi.xattrs = *sv.xattrs;
   } else {
     pi.xattrs->clear();
   }
-  if (sin != in) {
+  if (CInode *sin = sl->is_primary() ? sl->get_inode() : nullptr; sin && sin != in) {
     in->symlink = sin->symlink;
   }
 
   mdcache->predirty_journal_parents(mdr, &le->metablob, in, nullptr, PREDIRTY_PRIMARY);
-  // COWs the head dentry for snapshots newer than the rollback snapshot
+  // COWs the head inode for snapshots newer than the rollback snapshot
   mdcache->journal_dirty_inode(mdr.get(), &le->metablob, in);
 
   mdr->committing = true;
-  mdlog->submit_entry(le, new C_SnapRollback_Logged(mds, [this, mdr]() {
-    _rollback_inode_logged(mdr);
+  mdlog->submit_entry(le, new C_SnapRollback_Logged(mds, [this, mdr, in, track]() {
+    _rollback_inode_logged(mdr, in, track);
   }));
   mdlog->flush();
 }
 
-void SnapRollback::_rollback_inode_logged(const MDRequestRef& mdr)
+void SnapRollback::_rollback_inode_logged(const MDRequestRef& mdr, CInode *in,
+                                          bool track)
 {
+  auto op = static_cast<rollback_op_t*>(mdr->internal_op_private);
+
   mdr->apply();
+  if (track) {
+    op->header->set_rollback_done(in->ino());
+  }
   finish_request(mdr, 0);
 }
 
@@ -773,10 +1008,15 @@ CDentry *SnapRollback::prepare_stray_dentry(const MDRequestRef& mdr, CInode *in)
 }
 
 /*
- * The head inode did not exist at the snapshot (or is a different inode
- * than the one in the snapshot): unlink it into the stray directory, the
- * same as an unlink(2). Snapshots taken after the rollback snapshot keep
- * seeing it via the COWed dentry; the stray manager purges the head.
+ * The head link did not exist at the snapshot (or links a different inode
+ * than the one in the snapshot): remove it, the same as an unlink(2).
+ * Snapshots taken after the rollback snapshot keep seeing it via the COWed
+ * dentry.
+ *
+ * A primary link has its inode moved to the stray directory. With no links
+ * left the stray manager purges the head; otherwise it would normally move
+ * the inode to one of its remote links, which is on hold until the
+ * rollback is done with all of them. A remote link just goes away.
  */
 void SnapRollback::remove_inode(const MDRequestRef& mdr, rollback_op_t *op)
 {
@@ -784,20 +1024,34 @@ void SnapRollback::remove_inode(const MDRequestRef& mdr, rollback_op_t *op)
   CDir *dir = op->dir;
 
   CDentry *dn = dir->lookup(op->name);
-  CInode *in = dn->get_projected_linkage()->get_inode();
+  CDentry::linkage_t *dnl = dn->get_projected_linkage();
 
   // Replaced after the snapshot: classify() can only rule out that the
   // snapshot inode is unreachable if it's in cache. Find out before removing.
   CDentry *sdn = dir->lookup(op->name, op->header->get_rollback_snapid());
   CDentry::linkage_t *sl = sdn ? sdn->get_projected_linkage() : nullptr;
-  if (sl && !sl->is_null() && !mdcache->get_inode(sl->get_inode()->ino()) &&
-      !head_gone_from_disk(mdr, op, sl->get_inode())) {
+  if (sl && !sl->is_null() && !mdcache->get_inode(linkage_ino(sl))) {
+    if (!sl->is_primary()) {
+      load_inode(mdr, op, linkage_ino(sl));
+      return;
+    }
+    if (!head_gone_from_disk(mdr, op, sl->get_inode())) {
+      return;
+    }
+  }
+
+  CInode *in = get_linked_inode(mdr, op, dnl);
+  if (!in) {
     return;
   }
 
-  CDentry *straydn = prepare_stray_dentry(mdr, in);
-  if (!straydn) {
-    return;
+  bool primary = dnl->is_primary();
+  CDentry *straydn = nullptr;
+  if (primary) {
+    straydn = prepare_stray_dentry(mdr, in);
+    if (!straydn) {
+      return;
+    }
   }
   if (!acquire_locks(mdr, op, dn, in, straydn)) {
     return;
@@ -805,15 +1059,31 @@ void SnapRollback::remove_inode(const MDRequestRef& mdr, rollback_op_t *op)
 
   dout(10) << __func__ << " " << *dn << " " << *in << dendl;
 
-  straydn->first = mdcache->get_global_snaprealm()->get_newest_seq() + 1;
+  if (straydn) {
+    straydn->first = mdcache->get_global_snaprealm()->get_newest_seq() + 1;
+  }
 
   if (!mdr->more()->desti_srnode) {
-    SnapRealm *realm = in->find_snaprealm();
-    snapid_t follows = realm->get_newest_seq();
-    if (in->snaprealm || follows + 1 > in->get_oldest_snap()) {
-      sr_t *new_srnode = in->prepare_new_srnode(follows);
-      in->record_snaprealm_past_parent(new_srnode, straydn->get_dir()->inode->find_snaprealm());
+    if (in->is_projected_snaprealm_global()) {
+      sr_t *new_srnode = in->prepare_new_srnode(0);
+      in->record_snaprealm_parent_dentry(new_srnode, nullptr, dn, primary);
+      // dropping the last linkage or dropping the last remote linkage,
+      // detach the inode from global snaprealm
+      auto nlink = in->get_projected_inode()->nlink;
+      if (nlink == 1 ||
+          (nlink == 2 && !primary &&
+           !in->get_projected_parent_dir()->inode->is_stray())) {
+        in->clear_snaprealm_global(new_srnode);
+      }
       mdr->more()->desti_srnode = new_srnode;
+    } else if (primary) {
+      SnapRealm *realm = in->find_snaprealm();
+      snapid_t follows = realm->get_newest_seq();
+      if (in->snaprealm || follows + 1 > in->get_oldest_snap()) {
+        sr_t *new_srnode = in->prepare_new_srnode(follows);
+        in->record_snaprealm_past_parent(new_srnode, straydn->get_dir()->inode->find_snaprealm());
+        mdr->more()->desti_srnode = new_srnode;
+      }
     }
   }
 
@@ -821,7 +1091,9 @@ void SnapRollback::remove_inode(const MDRequestRef& mdr, rollback_op_t *op)
   mdr->ls = mdlog->get_current_segment();
   EUpdate *le = new EUpdate(mdlog, "snap_rollback_remove");
 
-  straydn->push_projected_linkage(in);
+  if (straydn) {
+    straydn->push_projected_linkage(in);
+  }
   dn->pre_dirty();
 
   auto pi = in->project_inode(mdr);
@@ -847,21 +1119,32 @@ void SnapRollback::remove_inode(const MDRequestRef& mdr, rollback_op_t *op)
     desti_srnode = NULL;
   }
 
-  mdcache->predirty_journal_parents(mdr, &le->metablob, in, dn->get_dir(),
-                                    PREDIRTY_PRIMARY|PREDIRTY_DIR, -1);
-  mdcache->predirty_journal_parents(mdr, &le->metablob, in, straydn->get_dir(),
-                                    PREDIRTY_PRIMARY|PREDIRTY_DIR, 1);
+  if (straydn) {
+    mdcache->predirty_journal_parents(mdr, &le->metablob, in, dn->get_dir(),
+                                      PREDIRTY_PRIMARY|PREDIRTY_DIR, -1);
+    mdcache->predirty_journal_parents(mdr, &le->metablob, in, straydn->get_dir(),
+                                      PREDIRTY_PRIMARY|PREDIRTY_DIR, 1);
 
-  pi.inode->update_backtrace();
-  le->metablob.add_primary_dentry(straydn, in, true, true);
+    pi.inode->update_backtrace();
+    le->metablob.add_primary_dentry(straydn, in, true, true);
+  } else {
+    // remote link: the inode stays where it is
+    mdcache->predirty_journal_parents(mdr, &le->metablob, in, dn->get_dir(),
+                                      PREDIRTY_DIR, -1);
+    mdcache->predirty_journal_parents(mdr, &le->metablob, in, nullptr,
+                                      PREDIRTY_PRIMARY);
+    mdcache->journal_dirty_inode(mdr.get(), &le->metablob, in);
+  }
 
   mdcache->journal_cow_dentry(mdr.get(), &le->metablob, dn);
   le->metablob.add_null_dentry(dn, true);
 
   dn->push_projected_linkage();
 
-  ceph_assert(in->first <= straydn->first);
-  in->first = straydn->first;
+  if (straydn) {
+    ceph_assert(in->first <= straydn->first);
+    in->first = straydn->first;
+  }
 
   version_t dnpv = dn->get_projected_version();
   mdr->committing = true;
@@ -874,28 +1157,34 @@ void SnapRollback::remove_inode(const MDRequestRef& mdr, rollback_op_t *op)
 void SnapRollback::_remove_inode_logged(const MDRequestRef& mdr, CDentry *dn,
                                         CDentry *straydn, version_t dnpv)
 {
-  CInode *strayin = dn->get_linkage()->get_inode();
-  bool hadrealm = strayin->snaprealm ? true : false;
-  strayin->early_pop_projected_snaprealm();
+  CInode *strayin = nullptr;
+  bool hadrealm = false;
+  if (straydn) {
+    strayin = dn->get_linkage()->get_inode();
+    hadrealm = strayin->snaprealm ? true : false;
+    strayin->early_pop_projected_snaprealm();
+  }
 
   dn->get_dir()->unlink_inode(dn);
   dn->pop_projected_linkage();
   dn->mark_dirty(dnpv, mdr->ls);
 
-  straydn->pop_projected_linkage();
-  mdcache->touch_dentry_bottom(straydn);
+  if (straydn) {
+    straydn->pop_projected_linkage();
+    mdcache->touch_dentry_bottom(straydn);
+  }
 
   mdr->apply();
 
   mdcache->send_dentry_unlink(dn, straydn, mdr);
-  if (strayin->snaprealm && !hadrealm) {
+  if (straydn && strayin->snaprealm && !hadrealm) {
     mdcache->do_realm_invalidate_and_update_notify(strayin, CEPH_SNAP_OP_SPLIT, false);
   }
 
   finish_request(mdr, 0);
 
   dn->get_dir()->try_remove_unlinked_dn(dn);
-  if (!straydn->get_projected_linkage()->is_null()) {
+  if (straydn && !straydn->get_projected_linkage()->is_null()) {
     mdcache->notify_stray(straydn);
   }
 }
@@ -904,8 +1193,11 @@ void SnapRollback::_remove_inode_logged(const MDRequestRef& mdr, CDentry *dn,
  * The name does not exist in head and the head inode is gone (purged):
  * create the head inode again under its original inode number, so that
  * the data objects (rolled back from their snapshot clones) are reachable
- * again. If the head inode is alive it gets relinked instead, see
- * relink_inode().
+ * again. If the head inode is alive it gets relinked or linked instead,
+ * see relink_inode() and link_inode().
+ *
+ * An inode with more links in the snapshot comes back with this one; the
+ * others are added when the rollback gets to them.
  */
 void SnapRollback::reinstate_inode(const MDRequestRef& mdr, rollback_op_t *op)
 {
@@ -914,14 +1206,18 @@ void SnapRollback::reinstate_inode(const MDRequestRef& mdr, rollback_op_t *op)
   snapid_t snapid = op->header->get_rollback_snapid();
 
   CDentry *sdn = dir->lookup(op->name, snapid);
-  CInode *sin = sdn->get_projected_linkage()->get_inode();
+  CDentry::linkage_t *sl = sdn->get_projected_linkage();
 
   // A purge in progress; a head inode in any other state means the action
   // changes (see classify()).
-  if (mdcache->get_inode(sin->ino())) {
+  if (mdcache->get_inode(linkage_ino(sl))) {
     wait_for_purge(mdr, op, "head inode being purged");
     return;
   }
+  // classify() has an inode that isn't in cache loaded if a remote dentry
+  // refers to it
+  ceph_assert(sl->is_primary());
+  CInode *sin = sl->get_inode();
   if (!head_gone_from_disk(mdr, op, sin)) {
     return;
   }
@@ -984,16 +1280,21 @@ void SnapRollback::reinstate_inode(const MDRequestRef& mdr, rollback_op_t *op)
                                     PREDIRTY_PRIMARY|PREDIRTY_DIR, 1);
   le->metablob.add_primary_dentry(dn, in, true, true, true);
 
+  // more links in the snapshot: they find it rolled back
+  bool track = si.nlink > 1;
+
   mdr->committing = true;
-  mdlog->submit_entry(le, new C_SnapRollback_Logged(mds, [this, mdr, dn, in]() {
-    _reinstate_inode_logged(mdr, dn, in);
+  mdlog->submit_entry(le, new C_SnapRollback_Logged(mds, [this, mdr, dn, in, track]() {
+    _reinstate_inode_logged(mdr, dn, in, track);
   }));
   mdlog->flush();
 }
 
 void SnapRollback::_reinstate_inode_logged(const MDRequestRef& mdr, CDentry *dn,
-                                           CInode *in)
+                                           CInode *in, bool track)
 {
+  auto op = static_cast<rollback_op_t*>(mdr->internal_op_private);
+
   dn->pop_projected_linkage();
 
   in->mark_dirty(mdr->ls);
@@ -1001,13 +1302,19 @@ void SnapRollback::_reinstate_inode_logged(const MDRequestRef& mdr, CDentry *dn,
 
   mdr->apply();
 
+  if (track) {
+    // its data and metadata are the snapshot's
+    op->header->set_rollback_done(in->ino());
+  }
+
   mdcache->send_dentry_link(dn, MDRequestRef());
   finish_request(mdr, 0);
 }
 
 /*
- * The name does not exist in head but the head inode is alive: in stray
- * (not purged yet, or kept for its old_inodes) or at another name (renamed
+ * The name does not exist in head but the head inode is alive and can be
+ * moved: in stray (not purged yet, kept for its old_inodes, or its primary
+ * link was removed) or at another name that isn't in the snapshot (renamed
  * after the snapshot). Move it back to this name with the rename machinery,
  * which also takes care of snapshots covering the location it is moved
  * away from. The entry then classifies as ACTION_ROLLBACK, which restores
@@ -1019,12 +1326,13 @@ void SnapRollback::relink_inode(const MDRequestRef& mdr, rollback_op_t *op)
   CDir *dir = op->dir;
 
   CDentry *sdn = dir->lookup(op->name, op->header->get_rollback_snapid());
-  CInode *sin = sdn->get_projected_linkage()->get_inode();
+  CDentry::linkage_t *sl = sdn->get_projected_linkage();
 
   // dispatch() just classified this entry, so the head inode is in cache
-  CInode *in = mdcache->get_inode(sin->ino());
+  CInode *in = mdcache->get_inode(linkage_ino(sl));
   ceph_assert(in);
   CDentry *srcdn = in->get_projected_parent_dn();
+  bool from_stray = srcdn->get_dir()->get_inode()->is_stray();
 
   if (in->state_test(CInode::STATE_NEEDSRECOVER) ||
       in->state_test(CInode::STATE_RECOVERING)) {
@@ -1046,12 +1354,18 @@ void SnapRollback::relink_inode(const MDRequestRef& mdr, rollback_op_t *op)
   if (!mdr->more()->srci_srnode) {
     SnapRealm *src_realm = srcdn->get_dir()->inode->find_snaprealm();
     SnapRealm *dest_realm = dir->inode->find_snaprealm();
-    snapid_t follows = src_realm->get_newest_seq();
-    if (src_realm != dest_realm &&
-        (in->snaprealm || follows + 1 > in->get_oldest_snap())) {
-      sr_t *new_srnode = in->prepare_new_srnode(follows);
-      in->record_snaprealm_past_parent(new_srnode, dest_realm);
+    if (in->is_projected_snaprealm_global()) {
+      sr_t *new_srnode = in->prepare_new_srnode(0);
+      in->record_snaprealm_parent_dentry(new_srnode, src_realm, srcdn, true);
       mdr->more()->srci_srnode = new_srnode;
+    } else {
+      snapid_t follows = src_realm->get_newest_seq();
+      if (src_realm != dest_realm &&
+          (in->snaprealm || follows + 1 > in->get_oldest_snap())) {
+        sr_t *new_srnode = in->prepare_new_srnode(follows);
+        in->record_snaprealm_past_parent(new_srnode, dest_realm);
+        mdr->more()->srci_srnode = new_srnode;
+      }
     }
   }
 
@@ -1062,10 +1376,13 @@ void SnapRollback::relink_inode(const MDRequestRef& mdr, rollback_op_t *op)
   mds->server->_rename_prepare(mdr, &le->metablob, nullptr, srcdn, destdn,
                                sdn->get_alternate_name(), nullptr);
 
-  // A stray inode is linked again. The journal event refers to the projected
-  // inode and gets encoded after submitting, so this makes it to the journal.
+  // An inode in stray gets this link on top of the remote links it has, if
+  // any. The journal event refers to the projected inode, so this makes it
+  // to the journal.
   auto pi = in->_get_projected_inode();
-  pi->nlink = 1;
+  if (from_stray) {
+    pi->nlink++;
+  }
   pi->stray_prior_path.clear();
 
   mdr->committing = true;
@@ -1082,5 +1399,106 @@ void SnapRollback::_relink_inode_logged(const MDRequestRef& mdr, CDentry *srcdn,
   in->state_clear(CInode::STATE_ORPHAN);
 
   mdcache->send_dentry_link(destdn, mdr);
+  finish_request(mdr, 0);
+}
+
+/*
+ * The name does not exist in head and the head inode is alive at a link
+ * that may be in the snapshot as well (it is hardlinked, or was at the
+ * snapshot): add a remote link to it at this name, the same as a link(2).
+ * The entry then classifies as ACTION_ROLLBACK, unless the inode was
+ * rolled back from another link already.
+ */
+void SnapRollback::link_inode(const MDRequestRef& mdr, rollback_op_t *op)
+{
+  MDSRank *mds = mdcache->mds;
+  CDir *dir = op->dir;
+
+  CDentry *sdn = dir->lookup(op->name, op->header->get_rollback_snapid());
+  CDentry::linkage_t *sl = sdn->get_projected_linkage();
+
+  CInode *in = mdcache->get_inode(linkage_ino(sl));
+  if (!in) {
+    // the action changes if it turns out to be in stray, or linked outside
+    load_inode(mdr, op, linkage_ino(sl));
+    return;
+  }
+
+  CDentry *dn = dir->lookup(op->name);
+  if (!dn) {
+    dn = dir->add_null_dentry(op->name, mdcache->get_global_snaprealm()->get_newest_seq() + 1);
+    dn->mark_new();
+  }
+  if (!acquire_locks(mdr, op, dn, in, nullptr)) {
+    return;
+  }
+
+  dout(10) << __func__ << " " << *dn << " to " << *in << dendl;
+
+  dn->first = mdcache->get_global_snaprealm()->get_newest_seq() + 1;
+  dn->set_alternate_name(sdn->get_alternate_name());
+
+  MDLog *mdlog = mds->mdlog;
+  mdr->ls = mdlog->get_current_segment();
+
+  version_t dnpv = dn->pre_dirty();
+
+  auto pi = in->project_inode(mdr);
+  pi.inode->version = in->pre_dirty();
+  pi.inode->nlink++;
+  pi.inode->ctime = mdr->get_op_stamp();
+  if (mdr->get_op_stamp() > pi.inode->rstat.rctime) {
+    pi.inode->rstat.rctime = mdr->get_op_stamp();
+  }
+  pi.inode->change_attr++;
+
+  // hardlinked now: unless in a subvolume, any snapshot may see it
+  bool adjust_realm = false;
+  SnapRealm *target_realm = in->get_projected_parent_dir()->inode->find_snaprealm();
+  if (!target_realm->get_subvolume_ino() && !in->is_projected_snaprealm_global()) {
+    sr_t *newsnap = in->project_snaprealm();
+    in->mark_snaprealm_global(newsnap);
+    in->record_snaprealm_parent_dentry(newsnap, target_realm,
+                                       in->get_projected_parent_dn(), true);
+    adjust_realm = true;
+  }
+
+  EUpdate *le = new EUpdate(mdlog, "snap_rollback_link");
+  mdcache->predirty_journal_parents(mdr, &le->metablob, in, dn->get_dir(),
+                                    PREDIRTY_DIR, 1);
+  mdcache->predirty_journal_parents(mdr, &le->metablob, in, nullptr,
+                                    PREDIRTY_PRIMARY);
+  le->metablob.add_remote_dentry(dn, true, in->ino(), in->d_type());
+  mdcache->journal_dirty_inode(mdr.get(), &le->metablob, in);
+
+  dn->push_projected_linkage(in->ino(), in->d_type());
+
+  mdr->committing = true;
+  mdlog->submit_entry(le, new C_SnapRollback_Logged(mds, [this, mdr, dn, in, dnpv, adjust_realm]() {
+    _link_inode_logged(mdr, dn, in, dnpv, adjust_realm);
+  }));
+  mdlog->flush();
+}
+
+void SnapRollback::_link_inode_logged(const MDRequestRef& mdr, CDentry *dn,
+                                      CInode *in, version_t dnpv,
+                                      bool adjust_realm)
+{
+  CDentry::linkage_t *dnl = dn->pop_projected_linkage();
+  if (!dnl->get_inode()) {
+    dn->link_remote(dnl, in);
+  }
+  dn->mark_dirty(dnpv, mdr->ls);
+
+  mdr->apply();
+
+  mdcache->send_dentry_link(dn, MDRequestRef());
+
+  if (adjust_realm) {
+    int snap_op = CEPH_SNAP_OP_SPLIT;
+    mdcache->send_snap_update(in, 0, snap_op);
+    mdcache->do_realm_invalidate_and_update_notify(in, snap_op);
+  }
+
   finish_request(mdr, 0);
 }
