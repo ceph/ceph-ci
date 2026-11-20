@@ -54,4 +54,9 @@ tasks:
 - exec:
     client.1:
       - "! timeout 120 rados -p data ls"
-- ceph.healthy:
+- print: "**** healthy, checked through the mon's image (ceph.healthy would use the umbrella shell)"
+- exec:
+    mon.a:
+      - for i in $(seq 1 90) ; do sudo $TESTDIR/cephadm shell --name mon.a -- ceph health | grep -q HEALTH_OK && break ; sleep 10 ; done
+      - sudo $TESTDIR/cephadm shell --name mon.a -- ceph health detail
+      - sudo $TESTDIR/cephadm shell --name mon.a -- ceph health | grep HEALTH_OK
