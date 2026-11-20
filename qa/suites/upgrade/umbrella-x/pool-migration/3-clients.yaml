@@ -4,7 +4,8 @@ meta:
    require_min_compat_client cannot be set to vampire without force, and its
    session then still blocks a migration; once it is gone a migration runs;
    umbrella clients are refused from the moment vampire is required, during
-   the migration and after it
+   the migration and after it. The bootstrap shell is an umbrella client too,
+   so from that moment the cluster is driven through the mon's own image.
 tasks:
 - print: "**** an umbrella client writes, then stays connected"
 - exec:
@@ -19,10 +20,14 @@ tasks:
       - if ceph osd pool migrate data 64 ; then echo migrated-without-the-requirement ; exit 1 ; fi
       - if ceph osd set-require-min-compat-client vampire ; then echo required-with-an-umbrella-client-connected ; exit 1 ; fi
       - ceph osd set-require-min-compat-client vampire --yes-i-really-mean-it
-      - ceph osd dump | grep -w require_pool_migration
-      - ceph health detail
-      - if ceph health detail | grep INCOMPATIBLE_CLIENTS ; then echo unexpected-health-check ; exit 1 ; fi
-      - if ceph osd pool migrate data 64 ; then echo migrated-with-an-umbrella-client-connected ; exit 1 ; fi
+- print: "**** from here the umbrella shell is refused too: use the mon's image"
+- exec:
+    mon.a:
+      - sudo $TESTDIR/cephadm shell --name mon.a -- ceph osd dump | grep -w require_pool_migration
+      - sudo $TESTDIR/cephadm shell --name mon.a -- ceph health detail
+      - if sudo $TESTDIR/cephadm shell --name mon.a -- ceph health detail | grep INCOMPATIBLE_CLIENTS ; then echo unexpected-health-check ; exit 1 ; fi
+      - if sudo $TESTDIR/cephadm shell --name mon.a -- ceph osd set-require-min-compat-client umbrella ; then echo lowered-below-the-requirement ; exit 1 ; fi
+      - if sudo $TESTDIR/cephadm shell --name mon.a -- ceph osd pool migrate data 64 ; then echo migrated-with-an-umbrella-client-connected ; exit 1 ; fi
 - print: "**** the umbrella client leaves and cannot come back"
 - exec:
     client.1:
@@ -30,21 +35,21 @@ tasks:
       - sleep 10
       - "! timeout 120 rados -p data ls"
 - print: "**** the migration"
-- cephadm.shell:
+- exec:
     mon.a:
       - sleep 20
-      - ceph osd pool migrate data 64
-      - ceph osd pool ls --show-all | grep migrate-1
-      - rados -p data ls | wc -l
+      - sudo $TESTDIR/cephadm shell --name mon.a -- ceph osd pool migrate data 64
+      - sudo $TESTDIR/cephadm shell --name mon.a -- ceph osd pool ls --show-all | grep migrate-1
+      - sudo $TESTDIR/cephadm shell --name mon.a -- rados -p data ls | wc -l
 - exec:
     client.1:
       - "! timeout 120 rados -p data ls"
-- cephadm.shell:
+- exec:
     mon.a:
-      - while ceph osd pool ls detail -f json | jq -e 'map(select(.migration_src != null or .migration_target != null)) | length > 0' ; do sleep 15 ; done
-      - ceph osd pool ls detail
-      - rados -p data ls | wc -l
-      - rados -p data stat obj-before-the-migration
+      - sudo $TESTDIR/cephadm shell --name mon.a -- bash -c 'while ceph osd pool ls detail -f json | jq -e "map(select(.migration_src != null or .migration_target != null)) | length > 0" ; do sleep 15 ; done'
+      - sudo $TESTDIR/cephadm shell --name mon.a -- ceph osd pool ls detail
+      - sudo $TESTDIR/cephadm shell --name mon.a -- rados -p data ls | wc -l
+      - sudo $TESTDIR/cephadm shell --name mon.a -- rados -p data stat obj-before-the-migration
 - print: "**** after the migration: umbrella clients stay refused"
 - exec:
     client.1:
