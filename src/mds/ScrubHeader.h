@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <set>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -40,6 +41,7 @@ struct rollback_stats_t {
   uint64_t removed = 0;
   uint64_t reinstated = 0;
   uint64_t relinked = 0;
+  uint64_t linked = 0;
   uint64_t skipped = 0;
   uint64_t failed = 0;
 };
@@ -133,6 +135,13 @@ public:
   void set_rollback_snapid(snapid_t snapid) { rollback_snapid = snapid; }
   snapid_t get_rollback_snapid() const { return rollback_snapid; }
 
+  // Inodes with more than one link are rolled back when the first of
+  // their links is reached.
+  void set_rollback_done(inodeno_t ino) { rollback_done_inos.insert(ino); }
+  bool is_rollback_done(inodeno_t ino) const {
+    return rollback_done_inos.count(ino);
+  }
+
   rollback_stats_t& get_rollback_stats() { return rollback_stats; }
   const rollback_stats_t& get_rollback_stats() const { return rollback_stats; }
 
@@ -161,6 +170,7 @@ protected:
   std::string rollback_snap_name;
   snapid_t rollback_snapid = CEPH_NOSNAP;
   rollback_stats_t rollback_stats;
+  std::set<inodeno_t> rollback_done_inos;
 };
 
 typedef std::shared_ptr<ScrubHeader> ScrubHeaderRef;
