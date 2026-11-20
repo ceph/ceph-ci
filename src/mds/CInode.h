@@ -1021,6 +1021,10 @@ class CInode : public MDSCacheObject, public InodeStoreBase, public Counter<CIno
   int num_remote_parents() {
     return remote_parents.size(); 
   }
+  // remote dentries in cache that link this inode, snapshotted ones included
+  const auto& get_remote_parents() const {
+    return remote_parents;
+  }
 
   void push_projected_parent(CDentry *dn) {
     projected_parent.push_back(dn);
