@@ -1594,6 +1594,9 @@ CInode *MDCache::cow_inode(CInode *in, snapid_t last)
 
   if (in->first < in->oldest_snap)
     in->oldest_snap = in->first;
+  // the snapshot inode may outlive the head inode: have it know, too, how
+  // far back the snapshots of the inode go
+  oldin->oldest_snap = in->oldest_snap;
 
   in->first = last+1;
 
