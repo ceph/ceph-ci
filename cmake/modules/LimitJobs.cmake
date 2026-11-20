@@ -52,4 +52,44 @@ if(NINJA_MAX_LINK_JOBS)
     avg_link_job_pool=${NINJA_MAX_LINK_JOBS}
     heavy_link_job_pool=${_heavy_link_jobs})
   set(CMAKE_JOB_POOL_LINK avg_link_job_pool)
+
+  # Share the CPU threads among the heavy links. Links in either pool
+  # can use LTO, so apply the same limit to both.
+  math(EXPR _ltrans_jobs "${_num_cores} / ${_heavy_link_jobs}")
+  if(_ltrans_jobs LESS 1)
+    set(_ltrans_jobs 1)
+  endif()
+
+  set(_flag_vars CMAKE_C_FLAGS CMAKE_CXX_FLAGS CMAKE_EXE_LINKER_FLAGS
+    CMAKE_SHARED_LINKER_FLAGS CMAKE_MODULE_LINKER_FLAGS)
+  string(TOUPPER "${CMAKE_BUILD_TYPE}" _config)
+  if(_config)
+    foreach(_var IN LISTS _flag_vars)
+      list(APPEND _flag_vars "${_var}_${_config}")
+    endforeach()
+  endif()
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # GCC 11 keeps automatic parallelism enabled if it sees -flto=auto
+    # anywhere, even when a later option specifies the number of jobs.
+    foreach(_var IN LISTS _flag_vars)
+      string(REPLACE "-flto=auto" "-flto=${_ltrans_jobs}" ${_var} "${${_var}}")
+    endforeach()
+    foreach(_lang C CXX)
+      list(TRANSFORM CMAKE_${_lang}_COMPILE_OPTIONS_IPO
+        REPLACE "^-flto=auto$" "-flto=${_ltrans_jobs}")
+    endforeach()
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(_lto ${CMAKE_INTERPROCEDURAL_OPTIMIZATION})
+    if(_config AND CMAKE_INTERPROCEDURAL_OPTIMIZATION_${_config})
+      set(_lto TRUE)
+    endif()
+    foreach(_var IN LISTS _flag_vars)
+      if("${${_var}}" MATCHES "(^|[ \t])-flto(=[^ \t]+)?([ \t]|$)")
+        set(_lto TRUE)
+      endif()
+    endforeach()
+    if(_lto)
+      add_link_options(-flto-jobs=${_ltrans_jobs})
+    endif()
+  endif()
 endif()
