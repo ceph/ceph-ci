@@ -1468,6 +1468,37 @@ options:
   services:
   - mds
   with_legacy: true
+- name: mds_trash_max_inflight
+  type: uint
+  level: advanced
+  desc: maximum number of concurrent unlink/rmdir operations issued while reclaiming trashed directory trees, shared between the trees
+  default: 8
+  services:
+  - mds
+  with_legacy: true
+- name: mds_trash_pause
+  type: bool
+  level: advanced
+  desc: pause background reclamation of trashed directory trees
+  default: false
+  services:
+  - mds
+  with_legacy: true
+- name: mds_trash_parked_warn_after
+  type: float
+  level: advanced
+  desc: seconds a trashed tree may sit parked on snapshots before raising a health warning
+  default: 600
+  services:
+  - mds
+  with_legacy: true
+- name: mds_inject_rmtree_skip_snap_check
+  type: bool
+  level: dev
+  desc: let a recursive unlink take a tree that has snapshots, so that the trash walker meets them
+  default: false
+  services:
+  - mds
 # Maximum number of concurrent stray files to purge
 - name: mds_max_purge_files
   type: uint

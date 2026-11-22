@@ -113,6 +113,13 @@ public:
 
   uint64_t get_num_events() const { return num_events; }
   uint64_t get_num_segments() const { return segments.size(); }
+  // Segments that trim() is not done with. An expired segment stays in the
+  // map until the trim position reaches the next major segment, so the map
+  // alone overstates how far trimming is behind.
+  uint64_t get_num_unexpired_segments() {
+    std::lock_guard l(submit_mutex);
+    return segments.size() - expired_segments.size();
+  }
 
   auto get_debug_subtrees() const {
     return events_per_segment;
