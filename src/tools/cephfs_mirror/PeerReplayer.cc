@@ -1992,6 +1992,19 @@ int PeerReplayer::cleanup_remote_dir(const std::string &dir_root,
     return r;
   }
 
+  if (S_ISDIR(tstx.stx_mode)) {
+    r = ceph_rmtreeat(m_remote_mount, fh.r_fd_dir_root, epath.c_str());
+    if (r >= 0)
+      return 0;
+    if (r != -EOPNOTSUPP && r != -EPERM) {
+      derr << ": failed to rmtree remote directory=" << epath << ": "
+           << cpp_strerror(r) << dendl;
+      return r;
+    }
+    dout(10) << ": rmtree unavailable (" << cpp_strerror(r)
+             << "), walking " << epath << dendl;
+  }
+
   ceph_dir_result *tdirp;
   r = opendirat(m_remote_mount, fh.r_fd_dir_root, epath, AT_SYMLINK_NOFOLLOW,
                 &tdirp);
