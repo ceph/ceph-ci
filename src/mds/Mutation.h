@@ -369,6 +369,13 @@ struct MDRequestImpl : public MutationImpl {
     // for internal ops doing lookup
     filepath filepath1;
     filepath filepath2;
+
+    // CEPH_MDS_OP_RMTREE has locked the source and rewritten the paths so
+    // the following rename moves the directory into this rank's trash.
+    bool rmtree_ready = false;
+    // internal CEPH_MDS_OP_RMTREE: record on a trash entry that its
+    // snapshots are to be removed, instead of recalling caps
+    bool trash_mark_rmsnaps = false;
   } *_more = nullptr;
 
   // ---------------------------------------------------

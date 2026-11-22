@@ -348,6 +348,7 @@ class CInode : public MDSCacheObject, public InodeStoreBase, public Counter<CIno
   static const int PIN_EXPORTINGCAPS =    22;
   static const int PIN_DIRTYPARENT =      23;
   static const int PIN_DIRWAITER =        24;
+  static const int PIN_TRASH =            25; // trash directory, or a tree the walker is scanning
 
   // -- dump flags --
   static const int DUMP_INODE_STORE_BASE = (1 << 0);
@@ -384,6 +385,7 @@ class CInode : public MDSCacheObject, public InodeStoreBase, public Counter<CIno
   static const int STATE_DISTEPHEMERALPIN       = (1<<20);
   static const int STATE_RANDEPHEMERALPIN       = (1<<21);
   static const int STATE_CLIENTWRITEABLE	= (1<<22);
+  static const int STATE_TRASHED		= (1<<23); // memory only; under a trash dir
 
   // orphan inode needs notification of releasing reference
   static const int STATE_ORPHAN =	STATE_NOTIFYREF;
@@ -672,6 +674,9 @@ class CInode : public MDSCacheObject, public InodeStoreBase, public Counter<CIno
   int d_type() const { return IFTODT(get_inode()->mode); }
   bool is_root() const { return ino() == CEPH_INO_ROOT; }
   bool is_stray() const { return MDS_INO_IS_STRAY(ino()); }
+  bool is_trash() const;
+  bool is_under_trash() const;
+  bool make_trash_prior_path(std::string& out) const;
   mds_rank_t get_stray_owner() const {
     return (mds_rank_t)MDS_INO_STRAY_OWNER(ino());
   }
