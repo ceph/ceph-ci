@@ -180,6 +180,7 @@ MDCache::MDCache(MDSRank *m, PurgeQueue &purge_queue_) :
   open_file_table(m),
   filer(m->objecter, m->finisher),
   stray_manager(m, purge_queue_),
+  trash_manager(m),
   recovery_queue(m),
   trim_counter(g_conf().get_val<double>("mds_cache_trim_decay_rate")),
   quiesce_counter(g_conf().get_val<double>("mds_cache_quiesce_decay_rate")),
@@ -582,6 +583,24 @@ void MDCache::create_mydir_hierarchy(MDSGather *gather)
   myin->store(gather->new_sub());
 }
 
+struct C_MDC_CreateTrash : public MDCacheLogContext {
+  MutationRef mut;
+  CDentry *dn;
+  version_t dpv;
+  inodeno_t ino;
+  MDSContext *fin;
+  C_MDC_CreateTrash(MDCache *c, MutationRef& mu, CDentry *d, version_t v,
+                    inodeno_t i, MDSContext *f) :
+    MDCacheLogContext(c), mut(mu), dn(d), dpv(v), ino(i), fin(f) {}
+  void finish(int r) override {
+    mdcache->mds->inotable->apply_alloc_id(ino);
+    // The dirfrag object needs a backtrace like that of any other directory.
+    // CDir::fetch verifies it.
+    dn->get_projected_linkage()->get_inode()->mark_dirty_parent(mut->ls, true);
+    mdcache->_create_system_file_finish(mut, dn, dpv, fin);
+  }
+};
+
 struct C_MDC_CreateSystemFile : public MDCacheLogContext {
   MutationRef mut;
   CDentry *dn;
@@ -690,6 +709,53 @@ struct C_MDS_RetryOpenRoot : public MDSInternalContext {
     }
   }
 };
+
+void MDCache::create_trash(CDir *dir)
+{
+  dout(10) << "create_trash in " << *dir << dendl;
+  ceph_assert(mds->inotable->is_active());
+
+  CInode *in = new CInode(this);
+  inodeno_t ino = mds->inotable->project_alloc_id();
+  create_unlinked_system_inode(in, ino, S_IFDIR | 0700);
+  in->_get_inode()->uid = 0;
+  in->_get_inode()->gid = 0;
+  add_inode(in);
+
+  CDentry *dn = dir->add_null_dentry(TrashManager::TRASH_NAME);
+  dn->push_projected_linkage(in);
+  version_t dpv = dn->pre_dirty();
+
+  auto inode = in->_get_inode();
+  inode->rstat.rsubdirs = 1;
+  CDir *mdir = in->get_or_open_dirfrag(this, frag_t());
+  mdir->mark_complete();
+  mdir->_get_fnode()->version = mdir->pre_dirty();
+  inode->version = dn->pre_dirty();
+  inode->update_backtrace();
+
+  SnapRealm *realm = dir->get_inode()->find_snaprealm();
+  dn->first = in->first = realm->get_newest_seq() + 1;
+
+  MutationRef mut(new MutationImpl());
+  mds->locker->wrlock_force(&dir->inode->filelock, mut);
+  mds->locker->wrlock_force(&dir->inode->nestlock, mut);
+  mut->ls = mds->mdlog->get_current_segment();
+
+  EUpdate *le = new EUpdate(mds->mdlog, "create trash");
+  predirty_journal_parents(mut, &le->metablob, in, dir,
+                           PREDIRTY_PRIMARY | PREDIRTY_DIR, 1);
+  le->metablob.add_primary_dentry(dn, in, true, true);
+  le->metablob.add_new_dir(mdir);
+  interval_set<inodeno_t> none;
+  le->metablob.set_ino_alloc(ino, inodeno_t(), none,
+                             entity_name_t::MDS(mds->get_nodeid()),
+                             0, mds->inotable->get_projected_version());
+
+  mds->mdlog->submit_entry(le, new C_MDC_CreateTrash(this, mut, dn, dpv, ino,
+                                                     new C_MDS_RetryOpenRoot(this)));
+  mds->mdlog->flush();
+}
 
 void MDCache::open_root_inode(MDSContext *c)
 {
@@ -901,6 +967,30 @@ void MDCache::populate_mydir()
     }
   }
 
+  CDentry *trashdn = mydir->lookup(TrashManager::TRASH_NAME);
+  if (!trashdn || !trashdn->get_linkage()->get_inode()) {
+    create_trash(mydir);
+    return;
+  }
+  CInode *tin = trashdn->get_linkage()->get_inode();
+  ceph_assert(tin->is_dir());
+  if (!trash_inode) {
+    trash_inode = tin;
+    tin->get(CInode::PIN_TRASH);
+    tin->get_stickydirs();
+  }
+  frag_vec_t trash_leaves;
+  tin->dirfragtree.get_leaves(trash_leaves);
+  for (const auto& leaf : trash_leaves) {
+    CDir *tdir = tin->get_dirfrag(leaf);
+    if (!tdir)
+      tdir = tin->get_or_open_dirfrag(this, leaf);
+    if (tdir->get_version() == 0) {
+      tdir->fetch_keys({}, new C_MDS_RetryOpenRoot(this));
+      return;
+    }
+  }
+
   // okay!
   dout(10) << "populate_mydir done" << dendl;
   ceph_assert(!open);    
@@ -909,6 +999,7 @@ void MDCache::populate_mydir()
 
   stray_manager.set_num_strays(num_strays);
   stray_manager.activate();
+  trash_manager.activate();
 
   scan_stray_dir();
 }
@@ -3869,8 +3960,11 @@ bool MDCache::expire_recursive(CInode *in, expiremap &expiremap)
 
         /* Remote strays with linkage (i.e. hardlinks) should not be
          * expired, because they may be the target of
-         * a rename() as the owning MDS shuts down */
-        if (!tin->is_stray() && tin->get_inode()->nlink) {
+         * a rename() as the owning MDS shuts down.
+         * The rank's trash directory holds entries as its stray
+         * directories do. Look inside it; an entry that has not been
+         * migrated yet keeps it. */
+        if (!tin->is_stray() && !tin->is_trash() && tin->get_inode()->nlink) {
           dout(10) << __func__ << ": stray still has linkage " << *tin << dendl;
           return true;
         }
@@ -8235,7 +8329,8 @@ bool MDCache::shutdown_pass()
     return true;
   }
 
-  // empty stray dir
+  // empty stray dir and move or purge trash
+  bool trash_done = trash_manager.shutdown_pass();
   bool strays_all_exported = shutdown_export_strays();
 
   // trim cache
@@ -8279,8 +8374,8 @@ bool MDCache::shutdown_pass()
 
   ceph_assert(kill_shutdown_at != KILL_SHUTDOWN_AT::SHUTDOWN_POSTALLEXPORTS);
 
-  if (!strays_all_exported) {
-    dout(5) << "waiting for strays to migrate" << dendl;
+  if (!trash_done || !strays_all_exported) {
+    dout(5) << "waiting for strays to migrate or trash to purge" << dendl;
     return false;
   }
 
@@ -8328,6 +8423,15 @@ bool MDCache::shutdown_pass()
       strays[i]->put(CInode::PIN_STRAY);
       strays[i]->put_stickydirs();
     }
+  }
+  if (trash_inode) {
+    trash_inode->put(CInode::PIN_TRASH);
+    trash_inode->put_stickydirs();
+    trash_inode = nullptr;
+    // count_entries() reports incomplete when the pointer is gone. Tell the
+    // walker this was an intentional release, or the next pass stalls in
+    // up:stopping after the log is capped.
+    trash_manager.note_cache_released();
   }
   ceph_assert(kill_shutdown_at != KILL_SHUTDOWN_AT::SHUTDOWN_STRAYPUT);
 
@@ -10172,7 +10276,10 @@ void MDCache::request_forward(const MDRequestRef& mdr, mds_rank_t who, int port)
             << " was from mds" << dendl;
     // the requesting mds holds the stray dentry until it gets a reply,
     // see Server::handle_client_reply()
-    if (mdr->client_request->get_op() == CEPH_MDS_OP_RENAME) {
+    int op = mdr->client_request->get_op();
+    if (op == CEPH_MDS_OP_RENAME || op == CEPH_MDS_OP_UNLINK ||
+        op == CEPH_MDS_OP_RMDIR || op == CEPH_MDS_OP_RMTREE ||
+        op == CEPH_MDS_OP_RMSNAP) {
       auto reply = make_message<MClientReply>(*mdr->client_request, -EAGAIN);
       mds->send_message(reply, mdr->client_request->get_connection());
     }
@@ -10243,6 +10350,9 @@ void MDCache::dispatch_request(const MDRequestRef& mdr)
       break;
     case CEPH_MDS_OP_QUARANTINEDIR_WORK:
       quarantine_work(mdr);
+      break;
+    case CEPH_MDS_OP_RMTREE:
+      trash_manager.dispatch_internal(mdr);
       break;
     default:
       ceph_abort();
@@ -12079,6 +12189,10 @@ bool MDCache::can_fragment(CInode *diri, const std::vector<CDir*>& dirs)
   if (diri->get_parent_dir() &&
       diri->get_parent_dir()->get_inode()->is_stray()) {
     dout(7) << "can_fragment: i won't merge|split anything in stray" << dendl;
+    return false;
+  }
+  if (diri->is_under_trash()) {
+    dout(7) << "can_fragment: i won't merge|split anything under trash" << dendl;
     return false;
   }
   if (diri->is_mdsdir() || diri->ino() == CEPH_INO_CEPH) {
@@ -14159,6 +14273,12 @@ void MDCache::register_perfcounters()
     pcb.add_u64_counter(l_mdc_cache_trim_throttle, "cache_trim_throttle",
                         "Cache trim throttle counter", "ctt",
                         PerfCountersBuilder::PRIO_INTERESTING);
+    pcb.add_u64_counter(l_mdc_trash_dirs, "trash_dirs",
+                        "Directories removed while reclaiming trashed trees");
+    pcb.add_u64_counter(l_mdc_trash_files, "trash_files",
+                        "Files removed while reclaiming trashed trees");
+    pcb.add_u64_counter(l_mdc_trash_parked, "trash_parked",
+                        "Trashed trees parked because they contain snapshots");
 
     logger.reset(pcb.create_perf_counters());
     g_ceph_context->get_perfcounters_collection()->add(logger.get());

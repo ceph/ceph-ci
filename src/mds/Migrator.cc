@@ -951,6 +951,12 @@ void Migrator::export_dir(CDir *dir, mds_rank_t dest)
              && parent->get_parent_dir()->ino() != MDS_INO_MDSDIR(dest)) {
     dout(7) << "Cannot export to mds." << dest << " " << *dir << ": in stray directory" << dendl;
     return;
+  } else if (dir->inode->is_trash()) {
+    dout(7) << "Cannot export to mds." << dest << " " << *dir << ": is the trash directory" << dendl;
+    return;
+  } else if (dir->inode->is_under_trash() && !mds->is_stopping()) {
+    dout(7) << "Cannot export to mds." << dest << " " << *dir << ": under trash" << dendl;
+    return;
   } else if (dir->inode->is_quiesced()) {
     dout(7) << "Cannot export to mds." << dest << " " << *dir << ": is quiesced" << dendl;
     return;
@@ -3355,6 +3361,8 @@ void Migrator::import_finish(CDir *dir, bool notify, bool last)
   // did i just import mydir?
   if (dir->ino() == MDS_INO_MDSDIR(mds->get_nodeid()))
     mdcache->populate_mydir();
+
+  mdcache->get_trash_manager().note_imported(dir->inode);
 
   // is it empty?
   if (dir->get_num_head_items() == 0 &&
