@@ -1,0 +1,12 @@
+overrides:
+  ceph:
+    log-ignorelist:
+      - slow request
+      - MDS_TRASH_PARKED
+      - has snapshots and will not be purged
+      - MDS_CACHE_OVERSIZED
+tasks:
+  - cephfs_test_runner:
+      fail_on_skip: false
+      modules:
+        - tasks.cephfs.test_rmtree
