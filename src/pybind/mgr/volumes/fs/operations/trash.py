@@ -64,7 +64,10 @@ class Trash(GroupTemplate):
         storing paths relative to trash path instead of absolute paths.
 
         :praram trash_entry: the trash entry to purge
-        :praram should_cancel: callback to check if the purge should be aborted
+        :praram should_cancel: callback to check if the purge should be aborted.
+            Once the MDS has accepted a recursive unlink, should_cancel cannot
+            stop that reclamation; it only applies to the client-side walk
+            used when the MDS does not support the request.
         :return: None
         """
         log.debug(f'purge(): trashpath = {trashpath}')
