@@ -203,3 +203,29 @@ def test_write_rpcs_are_never_retried_after_unavailable():
         checked += 1
     # Guard against the scan silently matching nothing.
     assert checked == 16
+
+
+def test_refused_gateway_is_detected_quickly():
+    # A closed port reports TRANSIENT_FAILURE right away; the check must not wait the full timeout.
+    import socket
+    import time
+
+    sock = socket.socket()
+    sock.bind(('127.0.0.1', 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    channel = grpc.insecure_channel(f'127.0.0.1:{port}')
+    try:
+        start = time.monotonic()
+        assert FailoverNVMeoFClient._is_connected(channel) is False
+        assert time.monotonic() - start < 2.0
+    finally:
+        channel.close()
+
+
+def test_unresponsive_channel_times_out_without_state_change():
+    # A channel that never settles (silently dropped packets) falls back to the timeout.
+    channel = MagicMock()
+    with patch('dashboard.services.nvmeof_failover.CONNECT_TIMEOUT_SECONDS', 0.05):
+        assert FailoverNVMeoFClient._is_connected(channel) is False
+    channel.unsubscribe.assert_called_once()

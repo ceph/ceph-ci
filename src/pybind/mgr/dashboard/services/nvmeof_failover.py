@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import threading
 from typing import Any, Dict, List, Optional
 
 from ..exceptions import DashboardException
@@ -89,15 +90,28 @@ class FailoverNVMeoFClient(NVMeoFClient):
 
     @staticmethod
     def _is_connected(channel: Any) -> bool:
+        """Wait until the channel is READY or has failed, up to CONNECT_TIMEOUT_SECONDS.
+
+        A refused connection reports TRANSIENT_FAILURE within milliseconds. Only a host
+        that silently drops packets produces no state change, and then the timeout applies.
+        """
         if channel is None:
             return False
-        ready = grpc.channel_ready_future(channel)
+        settled = threading.Event()
+        result: List[bool] = []
+
+        def on_state(state: Any) -> None:
+            if state in (grpc.ChannelConnectivity.READY,
+                         grpc.ChannelConnectivity.TRANSIENT_FAILURE):
+                result.append(state == grpc.ChannelConnectivity.READY)
+                settled.set()
+
+        channel.subscribe(on_state, try_to_connect=True)
         try:
-            ready.result(timeout=CONNECT_TIMEOUT_SECONDS)
-            return True
-        except grpc.FutureTimeoutError:
-            ready.cancel()
-            return False
+            settled.wait(CONNECT_TIMEOUT_SECONDS)
+        finally:
+            channel.unsubscribe(on_state)
+        return bool(result and result[0])
 
     def _call(self, method_name: str, request: Any, idempotent: bool) -> Any:
         if not self._urls:
