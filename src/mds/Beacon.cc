@@ -527,6 +527,9 @@ void Beacon::notify_health(MDSRank const *mds)
     health.metrics.push_back(m);
   }
 
+  if (mds->mdcache)
+    mds->mdcache->get_trash_manager().gather_health(health.metrics);
+
   // Report laggy client(s) due to laggy OSDs
   {
     bool defer_client_eviction =

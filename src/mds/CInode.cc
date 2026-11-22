@@ -152,6 +152,7 @@ std::string_view CInode::pin_name(int p) const
     case PIN_DIRTYRSTAT: return "dirtyrstat";
     case PIN_DIRTYPARENT: return "dirtyparent";
     case PIN_DIRWAITER: return "dirwaiter";
+    case PIN_TRASH: return "trash";
     default: return generic_pin_name(p);
   }
 }
@@ -1168,6 +1169,71 @@ void CInode::make_path(filepath& fp, bool projected, int path_comp_count) const
   } else {
     fp = filepath(ino());
   }
+}
+
+bool CInode::is_trash() const
+{
+  if (is_base())
+    return false;
+  const CDentry *dn = get_projected_parent_dn();
+  if (!dn || dn->get_name() != "trash")
+    return false;
+  const CInode *parent = dn->get_dir()->inode;
+  return parent && parent->is_mdsdir();
+}
+
+bool CInode::is_under_trash() const
+{
+  if (state_test(STATE_TRASHED))
+    return true;
+  const CInode *cur = this;
+  while (cur && !cur->is_base()) {
+    const CDentry *dn = cur->get_projected_parent_dn();
+    if (!dn)
+      return false;
+    const CInode *parent = dn->get_dir()->inode;
+    if (!parent)
+      return false;
+    if (parent->is_trash() || parent->state_test(STATE_TRASHED)) {
+      const_cast<CInode*>(this)->state_set(STATE_TRASHED);
+      return true;
+    }
+    cur = parent;
+  }
+  return false;
+}
+
+bool CInode::make_trash_prior_path(std::string& out) const
+{
+  std::vector<std::string> comps;
+  const CInode *cur = this;
+  const CInode *entry = nullptr;
+  while (cur && !cur->is_base()) {
+    const CDentry *dn = cur->get_projected_parent_dn();
+    if (!dn)
+      return false;
+    const CInode *parent = dn->get_dir()->inode;
+    if (!parent)
+      return false;
+    if (parent->is_trash()) {
+      entry = cur;
+      break;
+    }
+    comps.emplace_back(dn->get_name());
+    cur = parent;
+  }
+  if (!entry)
+    return false;
+  const auto& prior = entry->get_projected_inode()->stray_prior_path;
+  if (prior.empty())
+    return false;
+  out = prior;
+  for (auto it = comps.rbegin(); it != comps.rend(); ++it) {
+    if (out.empty() || out.back() != '/')
+      out.push_back('/');
+    out.append(*it);
+  }
+  return true;
 }
 
 void CInode::name_stray_dentry(string& dname)
