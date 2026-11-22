@@ -1620,6 +1620,19 @@ cdef class LibCephFS(object):
         if ret < 0:
             raise make_ex(ret, "error in rmdir {}".format(path.decode('utf-8')))
 
+    def _rmtree_rpc(self, path):
+        """
+        Ask the MDS to remove a directory tree. The name disappears before
+        the contents are reclaimed, so should_cancel cannot stop that work.
+        """
+        self.require_state("mounted")
+        path = cstr(path, 'path')
+        cdef char* _path = path
+        with nogil:
+            ret = ceph_rmtree(self.cluster, _path)
+        if ret < 0:
+            raise make_ex(ret, "error in rmtree {}".format(path.decode('utf-8')))
+
     def open(self, path, flags, mode=0):
         """
         Create and/or open a file.
@@ -3282,10 +3295,19 @@ cdef class LibCephFS(object):
 
         If trash_path is a path to regfile, symlink or something else, delete
         them and return.
+
+        Directories are removed with one MDS request. should_cancel cannot
+        stop work the MDS has already accepted; an older MDS, or a caller
+        that is not root, falls back to the client walk.
         '''
         # st_b = stat buffer
         st_b = self.stat(trash_path, AT_SYMLINK_NOFOLLOW)
         if stat.S_ISDIR(st_b.st_mode):
+            try:
+                self._rmtree_rpc(trash_path)
+                return
+            except (OperationNotSupported, PermissionError):
+                pass
             unlink_tree_worker = UnlinkTreeWorker(self, trash_path,
                                                   should_cancel,
                                                   suppress_errors)

@@ -186,6 +186,8 @@ cdef extern from "cephfs/libcephfs.h" nogil:
     int ceph_close_snapdiff(ceph_snapdiff_info *snapdiff)
     int ceph_close_snapdiff2(ceph_snapdiff_info2 *snapdiff)
     int ceph_rmdir(ceph_mount_info *cmount, const char *path)
+    int ceph_rmtree(ceph_mount_info *cmount, const char *path)
+    int ceph_rmtreeat(ceph_mount_info *cmount, int dirfd, const char *relpath)
     const char* ceph_getcwd(ceph_mount_info *cmount)
     int ceph_sync_fs(ceph_mount_info *cmount)
     int ceph_fsync(ceph_mount_info *cmount, int fd, int syncdataonly)
