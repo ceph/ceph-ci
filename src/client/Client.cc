@@ -771,6 +771,7 @@ void Client::_finish_init()
     plb.add_time_avg(l_c_fscrypt_dec_lat, "fscrypt_dec_lat", "Decryption time");
     plb.add_time_avg(l_c_fscrypt_rd_lat, "fscrypt_rd_lat", "Overall fscrypt read latency");
     plb.add_time_avg(l_c_fscrypt_wr_lat, "fscrypt_wr_lat", "Overall fscrypt write latency");
+    plb.add_u64_counter(l_c_mds_req_rmtree, "mds_req_rmtree", "MDS recursive unlink requests");
     logger.reset(plb.create_perf_counters());
     cct->get_perfcounters_collection()->add(logger.get());
 
@@ -1938,7 +1939,8 @@ Inode* Client::insert_trace(MetaRequest *request, MetaSession *session)
 	ceph_assert(od);
 	unlink(od, true, true);  // keep dir, dentry
       } else if (op == CEPH_MDS_OP_RMDIR ||
-		 op == CEPH_MDS_OP_UNLINK) {
+		 op == CEPH_MDS_OP_UNLINK ||
+		 op == CEPH_MDS_OP_RMTREE) {
 	// unlink, rmdir
 	ldout(cct, 10) << " unlinking unlink/rmdir dn " << d << " for traceless reply" << dendl;
 	unlink(d, true, true);  // keep dir, dentry
@@ -2574,7 +2576,8 @@ void Client::put_request(MetaRequest *request)
     if (other_in &&
 	(op == CEPH_MDS_OP_RMDIR ||
 	 op == CEPH_MDS_OP_RENAME ||
-	 op == CEPH_MDS_OP_RMSNAP)) {
+	 op == CEPH_MDS_OP_RMSNAP ||
+	 op == CEPH_MDS_OP_RMTREE)) {
       _try_to_trim_inode(other_in.get(), false);
     }
   }
@@ -3098,6 +3101,7 @@ void Client::send_request(MetaRequest *request, MetaSession *session,
     case CEPH_MDS_OP_RENAME: logger->inc(l_c_mds_req_rename); break;
     case CEPH_MDS_OP_MKDIR: logger->inc(l_c_mds_req_mkdir); break;
     case CEPH_MDS_OP_RMDIR: logger->inc(l_c_mds_req_rmdir); break;
+    case CEPH_MDS_OP_RMTREE: logger->inc(l_c_mds_req_rmtree); break;
     case CEPH_MDS_OP_SYMLINK: logger->inc(l_c_mds_req_symlink); break;
     case CEPH_MDS_OP_CREATE: logger->inc(l_c_mds_req_create); break;
     case CEPH_MDS_OP_OPEN: logger->inc(l_c_mds_req_open); break;
@@ -3257,6 +3261,7 @@ bool Client::is_dir_operation(MetaRequest *req)
   if (op == CEPH_MDS_OP_MKNOD || op == CEPH_MDS_OP_LINK ||
       op == CEPH_MDS_OP_UNLINK || op == CEPH_MDS_OP_RENAME ||
       op == CEPH_MDS_OP_MKDIR || op == CEPH_MDS_OP_RMDIR ||
+      op == CEPH_MDS_OP_RMTREE ||
       op == CEPH_MDS_OP_SYMLINK || op == CEPH_MDS_OP_CREATE)
     return true;
   return false;
@@ -8598,6 +8603,30 @@ int Client::mkdirs(const char *relpath, mode_t mode, const UserPerm& perms)
 int Client::rmdir(const char *relpath, const UserPerm& perms)
 {
   return unlinkat(CEPHFS_AT_FDCWD, relpath, AT_REMOVEDIR, perms);
+}
+
+int Client::rmtree(const char *relpath, const UserPerm& perms)
+{
+  return rmtreeat(CEPHFS_AT_FDCWD, relpath, perms);
+}
+
+int Client::rmtreeat(int dirfd, const char *relpath, const UserPerm& perms)
+{
+  RWRef_t mref_reader(mount_state, CLIENT_MOUNTING);
+  if (!mref_reader.is_state_satisfied())
+    return -ENOTCONN;
+
+  tout(cct) << __func__ << std::endl;
+  tout(cct) << dirfd << std::endl;
+  tout(cct) << relpath << std::endl;
+
+  std::scoped_lock lock(client_lock);
+
+  InodeRef dirinode;
+  int r = get_fd_inode(dirfd, &dirinode);
+  if (r < 0)
+    return r;
+  return _rmtree(dirinode.get(), relpath, perms);
 }
 
 int Client::mknod(const char *relpath, mode_t mode, const UserPerm& perms, dev_t rdev) 
@@ -17132,6 +17161,51 @@ int Client::_rmdir(Inode *dir, const char *name, const UserPerm& perms, bool che
 
   trim_cache();
   ldout(cct, 8) << "_rmdir(" << wdr.getpath() << ") = " << res << dendl;
+  return res;
+}
+
+int Client::_rmtree(Inode *dir, const char *name, const UserPerm& perms)
+{
+  const auto path = filepath(name, {.drop_trailing = true});
+  std::string trimmed_path = path.get_trimmed_path();
+
+  ldout(cct, 8) << "_rmtree(" << dir->ino << " " << trimmed_path << " uid "
+                << perms.uid() << " gid " << perms.gid() << ")" << dendl;
+
+  walk_dentry_result wdr;
+  if (int rc = path_walk(dir, path, &wdr, perms, {.followsym = false}, trimmed_path); rc < 0)
+    return rc;
+  if (!wdr.target || !wdr.dn)
+    return -EINVAL;
+  if (!wdr.target->is_dir())
+    return -ENOTDIR;
+  if (wdr.target->ino == CEPH_INO_ROOT)
+    return -EBUSY;
+
+  if (should_check_perms()) {
+    if (perms.uid() != 0)
+      return -EPERM;
+    if (int rc = may_delete(wdr, perms, true); rc < 0)
+      return rc;
+  }
+
+  if (wdr.diri->snapid != CEPH_NOSNAP)
+    return -EROFS;
+
+  MetaRequest *req = new MetaRequest(CEPH_MDS_OP_RMTREE);
+  req->set_dentry(wdr.dn);
+  req->dentry_drop = CEPH_CAP_FILE_SHARED;
+  req->dentry_unless = CEPH_CAP_FILE_EXCL;
+  req->other_inode_drop = CEPH_CAP_LINK_SHARED | CEPH_CAP_LINK_EXCL |
+                          CEPH_CAP_FILE_SHARED | CEPH_CAP_FILE_EXCL;
+  req->set_inode(wdr.diri);
+  req->set_filepath(wdr.getpath());
+  req->set_other_inode(wdr.target);
+
+  int res = make_request(req, perms, nullptr, nullptr, -1, nullptr,
+                         CEPHFS_FEATURE_RMTREE);
+  trim_cache();
+  ldout(cct, 8) << "_rmtree(" << wdr.getpath() << ") = " << res << dendl;
   return res;
 }
 
