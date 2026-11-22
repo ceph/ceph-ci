@@ -1204,6 +1204,21 @@ extern "C" int ceph_rmdir(struct ceph_mount_info *cmount, const char *path)
   return cmount->get_client()->rmdir(path, cmount->default_perms);
 }
 
+extern "C" int ceph_rmtree(struct ceph_mount_info *cmount, const char *path)
+{
+  if (!cmount->is_mounted())
+    return -ENOTCONN;
+  return cmount->get_client()->rmtree(path, cmount->default_perms);
+}
+
+extern "C" int ceph_rmtreeat(struct ceph_mount_info *cmount, int dirfd,
+                            const char *relpath)
+{
+  if (!cmount->is_mounted())
+    return -ENOTCONN;
+  return cmount->get_client()->rmtreeat(dirfd, relpath, cmount->default_perms);
+}
+
 // symlinks
 extern "C" int ceph_readlink(struct ceph_mount_info *cmount, const char *path,
 			     char *buf, int64_t size)
