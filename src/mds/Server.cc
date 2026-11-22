@@ -274,6 +274,8 @@ void Server::create_logger()
 		   "Request type snapshot difference latency");
     plb.add_time_avg(l_mdss_req_file_blockdiff_latency, "req_blockdiff_latency",
 		   "Request type file blockdiff latency");
+  plb.add_time_avg(l_mdss_req_rmtree_latency, "req_rmtree_latency",
+                   "Request type recursive unlink latency");
 
   plb.set_prio_default(PerfCountersBuilder::PRIO_DEBUGONLY);
   plb.add_u64_counter(l_mdss_dispatch_client_request, "dispatch_client_request",
@@ -2279,6 +2281,9 @@ void Server::perf_gather_op_latency(const cref_t<MClientRequest> &req, utime_t l
   case CEPH_MDS_OP_RMDIR:
     code = l_mdss_req_rmdir_latency;
     break;
+  case CEPH_MDS_OP_RMTREE:
+    code = l_mdss_req_rmtree_latency;
+    break;
   case CEPH_MDS_OP_RENAME:
     code = l_mdss_req_rename_latency;
     break;
@@ -2355,7 +2360,8 @@ void Server::early_reply(const MDRequestRef& mdr, CInode *tracei, CDentry *trace
   //_rename_finish() does not send dentry link/unlink message to replicas.
   // so do not set xlocks on dentries "done", the xlocks prevent dentries
   // that have projected linkages from getting new replica.
-  mds->locker->set_xlocks_done(mdr.get(), req->get_op() == CEPH_MDS_OP_RENAME);
+  mds->locker->set_xlocks_done(mdr.get(), req->get_op() == CEPH_MDS_OP_RENAME ||
+                                           req->get_op() == CEPH_MDS_OP_RMTREE);
 
   dout(10) << "early_reply " << reply->get_result() 
 	   << " (" << cpp_strerror(reply->get_result())
@@ -2479,8 +2485,12 @@ void Server::reply_client_request(const MDRequestRef& mdr, const ref_t<MClientRe
     mds->send_message_client(reply, session);
   }
 
-  if (client_inst.name.is_mds() && reply->get_op() == CEPH_MDS_OP_RENAME) {
-    mds->send_message(reply, mdr->client_request->get_connection());
+  if (client_inst.name.is_mds()) {
+    int op = reply->get_op();
+    if (op == CEPH_MDS_OP_RENAME || op == CEPH_MDS_OP_UNLINK ||
+        op == CEPH_MDS_OP_RMDIR || op == CEPH_MDS_OP_RMTREE ||
+        op == CEPH_MDS_OP_RMSNAP)
+      mds->send_message(reply, mdr->client_request->get_connection());
   }
 
   if (req->is_queued_for_replay()) {
@@ -2492,7 +2502,10 @@ void Server::reply_client_request(const MDRequestRef& mdr, const ref_t<MClientRe
   }
 
   // clean up request
+  bool kick_trash = req->get_op() == CEPH_MDS_OP_RMTREE;
   mdcache->request_finish(mdr);
+  if (kick_trash)
+    mdcache->get_trash_manager().kick();
 
   // take a closer look at tracei, if it happens to be a remote link
   if (tracei && 
@@ -2761,6 +2774,10 @@ void Server::handle_client_reply(const cref_t<MClientReply> &reply)
 
   switch (reply->get_op()) {
   case CEPH_MDS_OP_RENAME:
+  case CEPH_MDS_OP_UNLINK:
+  case CEPH_MDS_OP_RMDIR:
+  case CEPH_MDS_OP_RMTREE:
+  case CEPH_MDS_OP_RMSNAP:
     break;
   default:
     dout(5) << " unknown client op " << reply->get_op() << dendl;
@@ -2770,10 +2787,13 @@ void Server::handle_client_reply(const cref_t<MClientReply> &reply)
   // MDCache::shutdown_export_strays(). -EAGAIN comes from
   // MDCache::request_forward(): the rename was not done, so migrate
   // the stray again.
+  std::unique_ptr<MDSMetaRequest> owned = std::move(it->second);
+  mds->internal_client_requests.erase(it);
+
   inodeno_t again;
   bool retry = false;
   if (reply->get_result() == -EAGAIN && mds->is_stopping()) {
-    auto req = dynamic_cast<StrayManager::StrayEvalRequest*>(it->second.get());
+    auto req = dynamic_cast<StrayManager::StrayEvalRequest*>(owned.get());
     if (req) {
       auto dnl = req->dentry->get_projected_linkage();
       if (dnl->is_primary()) {
@@ -2782,9 +2802,12 @@ void Server::handle_client_reply(const cref_t<MClientReply> &reply)
       }
     }
   }
+  if (auto *treq = dynamic_cast<TrashManager::TrashMetaRequest*>(owned.get()))
+    mdcache->get_trash_manager().handle_reply(treq, reply->get_result());
 
-  // releases the dentry
-  mds->internal_client_requests.erase(it);
+  // releases the dentry. A stray that is migrated again below must not
+  // still carry this request's reintegration_reqid.
+  owned.reset();
 
   if (retry)
     mdcache->shutdown_export_stray_finish(again);
@@ -2964,6 +2987,9 @@ void Server::dispatch_client_request(const MDRequestRef& mdr)
   case CEPH_MDS_OP_UNLINK:
   case CEPH_MDS_OP_RMDIR:
     handle_client_unlink(mdr);
+    break;
+  case CEPH_MDS_OP_RMTREE:
+    handle_client_rmtree(mdr);
     break;
   case CEPH_MDS_OP_RENAME:
     handle_client_rename(mdr);
@@ -3540,6 +3566,12 @@ void Server::handle_peer_auth_pin_ack(const MDRequestRef& mdr, const cref_t<MMDS
  */
 bool Server::check_access(const MDRequestRef& mdr, CInode *in, unsigned mask)
 {
+  // Internal purge and rmtree run as the MDS. Path caps do not apply.
+  if (mdr->reqid.name.is_mds() && mdr->client_request &&
+      (mdr->client_request->get_op() == CEPH_MDS_OP_RMTREE ||
+       in->is_trash() || in->is_under_trash()))
+    return true;
+
   if (mdr->session) {
     std::string_view fs_name = mds->mdsmap->get_fs_name();
     bool check_qtine = in->is_under_quarantine()
@@ -4094,6 +4126,20 @@ CDentry* Server::rdlock_path_xlock_dentry(const MDRequestRef& mdr,
     return nullptr;
   }
 
+  // Names inside a trashed tree are gone from the namespace. Unlink and
+  // rmdir stay allowed so a client can still drop a cached child. The
+  // MDS itself, and the rmtree rename into the trash directory, proceed.
+  if ((diri->is_trash() || diri->is_under_trash()) &&
+      !(mdr->has_more() && mdr->more()->rmtree_ready) &&
+      !mdr->reqid.name.is_mds()) {
+    int op = mdr->client_request ? mdr->client_request->get_op() : -1;
+    if (op != CEPH_MDS_OP_UNLINK && op != CEPH_MDS_OP_RMDIR) {
+      dout(10) << "client op in trash on " << *diri << dendl;
+      respond_to_request(mdr, -ENOENT);
+      return nullptr;
+    }
+  }
+
   CDentry::linkage_t *dnl = dn->get_projected_linkage();
   if (dnl->is_null()) {
     if (!create && okexist) {
@@ -4197,6 +4243,34 @@ Server::rdlock_two_paths_xlock_destdn(const MDRequestRef& mdr, bool xlock_srcdn)
   if (!destdir->get_inode()->is_base() &&
       destdir->get_inode()->get_projected_parent_dir()->inode->is_stray()) {
     respond_to_request(mdr, -ENOENT);
+    return std::make_pair(nullptr, nullptr);
+  }
+
+  auto trash_blocked = [&](CInode *diri) {
+    return diri->is_trash() || diri->is_under_trash();
+  };
+  if ((trash_blocked(srcdir->get_inode()) || trash_blocked(destdir->get_inode())) &&
+      !(mdr->has_more() && mdr->more()->rmtree_ready) &&
+      !mdr->reqid.name.is_mds()) {
+    int op = mdr->client_request ? mdr->client_request->get_op() : -1;
+    if (op != CEPH_MDS_OP_UNLINK && op != CEPH_MDS_OP_RMDIR) {
+      dout(10) << "client rename touches trash" << dendl;
+      respond_to_request(mdr, -ENOENT);
+      return std::make_pair(nullptr, nullptr);
+    }
+  }
+
+  // The rank that holds the name moves the tree into its own trash.
+  // handle_client_rmtree() unlocked the path before it started the rename,
+  // and the name can be exported until it is locked again. Carrying on from
+  // here would be a rename between two ranks that holds a wrlock on a replica
+  // of the directory's filelock. The rank that holds the name cannot freeze
+  // the inode for the rename once it starts to change the state of that lock.
+  if (mdr->has_more() && mdr->more()->rmtree_ready && !srcdn->is_auth()) {
+    mds_rank_t auth = srcdn->authority().first;
+    dout(7) << "rmtree: " << *srcdn << " is not auth here any more, forwarding to mds."
+            << auth << dendl;
+    mdcache->request_forward(mdr, auth);
     return std::make_pair(nullptr, nullptr);
   }
 
@@ -8749,6 +8823,14 @@ void Server::handle_client_unlink(const MDRequestRef& mdr)
   ceph_assert(!dnl->is_null());
   CInode *in = dnl->get_inode();
 
+  // A client cannot name a stray dentry, an MDS can. What it links to is
+  // unlinked already, and the stray dentry to move it to would be this one.
+  if (dn->get_dir()->get_inode()->is_stray()) {
+    dout(7) << "handle_client_unlink on stray " << *dn << dendl;
+    respond_to_request(mdr, -ENOENT);
+    return;
+  }
+
   if (rmdir) {
     dout(7) << "handle_client_rmdir on " << *dn << dendl;
   } else {
@@ -8929,7 +9011,8 @@ void Server::_unlink_local(const MDRequestRef& mdr, CDentry *dn, CDentry *strayd
   auto pi = in->project_inode(mdr);
   {
     std::string t;
-    dn->make_path_string(t, true);
+    if (!in->make_trash_prior_path(t))
+      dn->make_path_string(t, true);
     dout(20) << " stray_prior_path = " << t << dendl;
     pi.inode->stray_prior_path = std::move(t);
   }
@@ -9505,13 +9588,64 @@ public:
  * destdn replicas need not also replicate srci.  this only works when 
  * destdn is leader.
  */
+void Server::handle_client_rmtree(const MDRequestRef& mdr)
+{
+  if (mdr->has_more() && mdr->more()->rmtree_ready) {
+    handle_client_rename(mdr);
+    return;
+  }
+
+  CDentry *dn = rdlock_path_xlock_dentry(mdr, false, true);
+  if (!dn)
+    return;
+
+  CDentry::linkage_t *dnl = dn->get_projected_linkage();
+  if (dnl->is_remote() || !dnl->is_primary() || !dnl->get_inode()->is_dir()) {
+    respond_to_request(mdr, -ENOTDIR);
+    return;
+  }
+  CInode *in = dnl->get_inode();
+  if (!check_access(mdr, dn->get_dir()->get_inode(), MAY_WRITE))
+    return;
+  if (!g_conf().get_val<bool>("mds_inject_rmtree_skip_snap_check") &&
+      (in->get_projected_inode()->rstat.rsnaps > 0 ||
+       (in->snaprealm && !in->snaprealm->srnode.snaps.empty()))) {
+    respond_to_request(mdr, -ENOTEMPTY);
+    return;
+  }
+  CInode *trash = mdcache->get_trash_inode();
+  if (!trash) {
+    respond_to_request(mdr, -EAGAIN);
+    return;
+  }
+
+  std::string hex;
+  in->name_stray_dentry(hex);
+  mdr->more()->filepath2 = filepath(dn->get_name(), dn->get_dir()->ino());
+  mdr->more()->filepath1 = filepath(hex, trash->ino());
+  mdr->more()->rmtree_ready = true;
+
+  // The source path is locked. Drop it and run the move as a depth-1 rename
+  // into this rank's trash directory, which takes locks in tree order.
+  mds->locker->request_drop_locks(mdr);
+  mdr->drop_local_auth_pins();
+  mdr->put_stickydirs();
+  mdr->locking_state = 0;
+  mdr->dir_root[0] = 0;
+  mdr->dir_root[1] = 0;
+  mdr->dn[0].clear();
+  mdr->dn[1].clear();
+
+  handle_client_rename(mdr);
+}
+
 void Server::handle_client_rename(const MDRequestRef& mdr)
 {
   const auto& req = mdr->client_request;
   dout(7) << "handle_client_rename " << *req << dendl;
 
-  filepath destpath = req->get_filepath();
-  filepath srcpath = req->get_filepath2();
+  filepath destpath = mdr->get_filepath();
+  filepath srcpath = mdr->get_filepath2();
   if (srcpath.is_last_dot_or_dotdot() || destpath.is_last_dot_or_dotdot()) {
     respond_to_request(mdr, -EBUSY);
     return;
@@ -9558,9 +9692,13 @@ void Server::handle_client_rename(const MDRequestRef& mdr)
   }
 
   // is this a stray migration, reintegration or merge? (sanity checks!)
+  bool into_trash = destdir->inode->is_trash() ||
+                    (mdr->has_more() && mdr->more()->rmtree_ready);
+  bool from_trash = srcdir->inode->is_trash() || srcdir->inode->is_under_trash();
   if (mdr->reqid.name.is_mds() &&
       !(MDS_INO_IS_STRAY(srcpath.get_ino()) &&
 	MDS_INO_IS_STRAY(destpath.get_ino())) &&
+      !into_trash && !from_trash &&
       !(destdnl->is_remote() &&
 	destdnl->get_remote_ino() == srci->ino())) {
     respond_to_request(mdr, -EINVAL);  // actually, this won't reply, but whatev.
@@ -9606,7 +9744,10 @@ void Server::handle_client_rename(const MDRequestRef& mdr)
   // src+dest traces _must_ share a common ancestor for locking to prevent orphans
   if (destpath.get_ino() != srcpath.get_ino() &&
       !(req->get_source().is_mds() &&
-	MDS_INO_IS_STRAY(srcpath.get_ino()))) {  // <-- mds 'rename' out of stray dir is ok!
+	MDS_INO_IS_STRAY(srcpath.get_ino())) &&  // <-- mds 'rename' out of stray dir is ok!
+      !(mdr->has_more() && mdr->more()->rmtree_ready) &&
+      !destdir->inode->is_trash() &&
+      !srcdir->inode->is_trash()) {
     CInode *srcbase = srctrace[0]->get_dir()->get_inode();
     CInode *destbase = desttrace[0]->get_dir()->get_inode();
     // ok, extend srctrace toward root until it is an ancestor of desttrace.
@@ -9653,6 +9794,11 @@ void Server::handle_client_rename(const MDRequestRef& mdr)
     // we need to update srci's ctime.  xlock its least contended lock to do that...
     lov.add_xlock(&srci->linklock);
     lov.add_xlock(&srci->snaplock);
+    if (mdr->has_more() && mdr->more()->rmtree_ready && srci->is_dir()) {
+      // Drop cached children and async-dirop lock caches on every client.
+      lov.add_wrlock(&srci->filelock);
+      lov.add_wrlock(&srci->nestlock);
+    }
 
     if (oldin) {
       // xlock oldin (for nlink--)
@@ -9691,20 +9837,37 @@ void Server::handle_client_rename(const MDRequestRef& mdr)
   if (linkmerge)
     ceph_assert(srcdir->inode->is_stray() && srcdnl->is_primary() && destdnl->is_remote());
 
+  // Only before a witness is asked to prepare. A witness that has prepared
+  // commits when this request finishes, whatever the result.
+  if (mdr->has_more() && mdr->more()->rmtree_ready &&
+      mdr->more()->witnessed.empty() && mdr->more()->waiting_on_peer.empty()) {
+    if (!srci->is_dir()) {
+      respond_to_request(mdr, -ENOTDIR);
+      return;
+    }
+    if (!g_conf().get_val<bool>("mds_inject_rmtree_skip_snap_check") &&
+        (srci->get_projected_inode()->rstat.rsnaps > 0 ||
+         (srci->snaprealm && !srci->snaprealm->srnode.snaps.empty()))) {
+      respond_to_request(mdr, -ENOTEMPTY);
+      return;
+    }
+  }
+
+  bool dest_is_trash = destdir->inode->is_trash();
   if ((!mdr->has_more() || mdr->more()->witnessed.empty())) {
     if (!check_access(mdr, srcdir->get_inode(), MAY_WRITE))
       return;
 
-    if (!check_access(mdr, destdn->get_dir()->get_inode(), MAY_WRITE))
+    if (!dest_is_trash && !check_access(mdr, destdn->get_dir()->get_inode(), MAY_WRITE))
       return;
 
-    if (!linkmerge && !check_fragment_space(mdr, destdn->get_dir()))
+    if (!dest_is_trash && !linkmerge && !check_fragment_space(mdr, destdn->get_dir()))
       return;
 
-    if (!linkmerge && !check_dir_max_entries(mdr, destdn->get_dir()))
+    if (!dest_is_trash && !linkmerge && !check_dir_max_entries(mdr, destdn->get_dir()))
       return;
 
-    if (!check_access(mdr, srci, MAY_WRITE))
+    if (!dest_is_trash && !check_access(mdr, srci, MAY_WRITE))
       return;
   }
 
@@ -9745,7 +9908,8 @@ void Server::handle_client_rename(const MDRequestRef& mdr)
     dout(20) << "src_realm " << *src_realm << dendl;
     dout(20) << "dest_realm " << *dest_realm << dendl;
     if (src_realm != dest_realm &&
-	src_realm->get_subvolume_ino() != dest_realm->get_subvolume_ino()) {
+	src_realm->get_subvolume_ino() != dest_realm->get_subvolume_ino() &&
+	!destdir->inode->is_trash()) {
       respond_to_request(mdr, -EXDEV);
       return;
     }
@@ -9815,8 +9979,15 @@ void Server::handle_client_rename(const MDRequestRef& mdr)
 	mdr->more()->srci_srnode = new_srnode;
       } else if (srcdnl->is_primary()) {
 	snapid_t follows = src_realm->get_newest_seq();
+	// A tree that goes to trash leaves its realm with everything in it.
+	// The inodes below it that have client caps are moved to the new
+	// realm only when the tree gets one of its own, here and on every
+	// rank that holds part of it. Left on the old realm's lists, they
+	// outlive it on a rank that is stopping.
+	bool to_trash = destdir->inode->is_trash() && srci->is_dir();
 	if (src_realm != dest_realm &&
-	    (srci->snaprealm || follows + 1 > srci->get_oldest_snap())) {
+	    (srci->snaprealm || to_trash ||
+	     follows + 1 > srci->get_oldest_snap())) {
 	  sr_t *new_srnode = srci->prepare_new_srnode(follows);
 	  srci->record_snaprealm_past_parent(new_srnode, dest_realm);
 	  mdr->more()->srci_srnode = new_srnode;
@@ -9836,6 +10007,9 @@ void Server::handle_client_rename(const MDRequestRef& mdr)
    * (currently, it can ignore rename effects, because the resolve
    * stage will sort them out.)
    */
+  if (destdir->inode->is_trash() && srci->is_dir())
+    mdcache->get_trash_manager().add_subtree_witnesses(mdr, srci);
+
   set<mds_rank_t> witnesses = mdr->more()->extra_witnesses;
   if (srcdn->is_auth())
     srcdn->list_replicas(witnesses);
@@ -9949,7 +10123,10 @@ void Server::handle_client_rename(const MDRequestRef& mdr)
   // -- commit locally --
   C_MDS_rename_finish *fin = new C_MDS_rename_finish(this, mdr, srcdn, destdn, straydn);
 
-  journal_and_reply(mdr, srci, destdn, le, fin);
+  if (mdr->has_more() && mdr->more()->rmtree_ready)
+    journal_and_reply(mdr, nullptr, nullptr, le, fin);
+  else
+    journal_and_reply(mdr, srci, destdn, le, fin);
   mds->balancer->maybe_fragment(destdn->get_dir(), false);
 }
 
@@ -10261,6 +10438,11 @@ void Server::_rename_prepare(const MDRequestRef& mdr,
       spi->change_attr++;
       if (linkmerge)
 	spi->nlink--;
+      if (destdn->get_dir()->inode->is_trash()) {
+        std::string t;
+        srcdn->make_path_string(t, false);
+        spi->stray_prior_path = std::move(t);
+      }
     }
     if (tpi) {
       tpi->ctime = mdr->get_op_stamp();
@@ -10669,6 +10851,12 @@ void Server::_rename_apply(const MDRequestRef& mdr, CDentry *srcdn, CDentry *des
   // removing a new dn?
   if (srcdn->is_auth())
     srcdn->get_dir()->try_remove_unlinked_dn(srcdn);
+
+  if (destdn->get_linkage()->is_primary()) {
+    CInode *moved = destdn->get_linkage()->get_inode();
+    if (moved && moved->is_dir() && destdn->get_dir()->inode->is_trash())
+      mdcache->get_trash_manager().note_trashed(moved);
+  }
 }
 
 
@@ -11805,6 +11993,11 @@ void Server::handle_client_mksnap(const MDRequestRef& mdr)
     // no snaps in system dirs (root is ok)
     dout(5) << "is an internal system dir" << dendl;
     respond_to_request(mdr, -EPERM);
+    return;
+  }
+  if (diri->is_trash() || diri->is_under_trash()) {
+    dout(5) << "no snapshots under trash" << dendl;
+    respond_to_request(mdr, -ENOENT);
     return;
   }
   
