@@ -1082,6 +1082,8 @@ class CephFSShell(Cmd):
         return self.complete_filenames(text, line, begidx, endidx)
 
     rm_parser = argparse.ArgumentParser(description='Remove File.')
+    rm_parser.add_argument('-r', '-R', '--recursive', action='store_true',
+                           help='Remove a directory and its contents.')
     rm_parser.add_argument('paths', help='File Path.', nargs='+',
                            action=path_to_bytes)
 
@@ -1097,7 +1099,10 @@ class CephFSShell(Cmd):
                     path) if is_file_exists(i)])
             else:
                 try:
-                    cephfs.unlink(path)
+                    if args.recursive:
+                        cephfs.rmtree(path)
+                    else:
+                        cephfs.unlink(path)
                 except libcephfs.Error as e:
                     # NOTE: perhaps we need a better msg here
                     if e.get_error_code() == 2:
