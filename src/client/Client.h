@@ -173,6 +173,7 @@ enum {
   l_c_fscrypt_dec_lat,
   l_c_fscrypt_rd_lat,
   l_c_fscrypt_wr_lat,
+  l_c_mds_req_rmtree,
   l_c_last,
 };
 
@@ -556,6 +557,8 @@ public:
   }
   int mkdirs(const char *path, mode_t mode, const UserPerm& perms);
   int rmdir(const char *path, const UserPerm& perms);
+  int rmtree(const char *path, const UserPerm& perms);
+  int rmtreeat(int dirfd, const char *relpath, const UserPerm& perms);
 
   // symlinks
   int readlink(const char *path, char *buf, loff_t size, const UserPerm& perms);
@@ -2246,6 +2249,7 @@ private:
 	     InodeRef *inp = 0, const std::map<std::string, std::string> &metadata={},
              std::string alternate_name="", FSCrypt_Options={});
   int _rmdir(Inode *dir, const char *name, const UserPerm& perms, bool check_perms=true);
+  int _rmtree(Inode *dir, const char *name, const UserPerm& perms);
   int _symlink(Inode *dir, const char *name, const char *target,
 	       const UserPerm& perms, std::string alternate_name, InodeRef *inp = 0, FSCrypt_Options fscrypt_options = {});
   int _mknod(Inode *dir, const char *name, mode_t mode, dev_t rdev,
