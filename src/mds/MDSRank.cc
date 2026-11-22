@@ -780,6 +780,7 @@ void MDSRankDispatcher::tick()
       scrubstack->advance_scrub_status();
       scrubstack->purge_old_scrub_counters();
     }
+    mdcache->get_trash_manager().advance();
   }
 
   if (is_active() || is_stopping()) {
@@ -2424,6 +2425,7 @@ void MDSRankDispatcher::handle_mds_map(
 	    restart.insert(r);
 	    mdcache->migrator->handle_mds_failure_or_stop(r);
 	    mdcache->drop_stray_requests_to(r);
+	    mdcache->drop_trash_requests_to(r);
 	    if (mdsmap->get_tableserver() == whoami)
 	      snapserver->handle_mds_failure_or_stop(r);
 	  }
@@ -2611,6 +2613,7 @@ void MDSRankDispatcher::handle_mds_map(
       if (oldstopped.count(r) == 0) {     // newly so?
 	mdcache->migrator->handle_mds_failure_or_stop(r);
 	mdcache->drop_stray_requests_to(r);
+	mdcache->drop_trash_requests_to(r);
 	if (mdsmap->get_tableserver() == whoami)
 	  snapserver->handle_mds_failure_or_stop(r);
       }
@@ -2677,6 +2680,7 @@ void MDSRank::handle_mds_failure(mds_rank_t who)
 
   mdcache->handle_mds_failure(who);
   mdcache->drop_stray_requests_to(who);
+  mdcache->drop_trash_requests_to(who);
 
   if (mdsmap->get_tableserver() == whoami)
     snapserver->handle_mds_failure_or_stop(who);
@@ -3088,6 +3092,14 @@ void MDSRankDispatcher::handle_asok_command(
   } else if (command == "cache status") {
     std::lock_guard l(mds_lock);
     mdcache->cache_status(f);
+  } else if (command == "trash ls" || command == "trash pause" ||
+             command == "trash resume") {
+    std::lock_guard l(mds_lock);
+    if (command == "trash pause")
+      mdcache->get_trash_manager().pause();
+    else if (command == "trash resume")
+      mdcache->get_trash_manager().resume();
+    mdcache->get_trash_manager().dump(f);
   } else if (command == "quiesce path") {
     command_quiesce_path(f, cmdmap, std::move(on_finish));
     return;

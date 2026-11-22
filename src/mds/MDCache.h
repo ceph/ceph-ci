@@ -37,6 +37,7 @@
 #include "include/Context.h"
 #include "RecoveryQueue.h"
 #include "StrayManager.h"
+#include "TrashManager.h"
 #include "OpenFileTable.h"
 #include "MDSContext.h"
 #include "LogSegmentRef.h"
@@ -129,6 +130,10 @@ enum {
 
   l_mdc_cache_trim_throttle,
 
+  l_mdc_trash_dirs,
+  l_mdc_trash_files,
+  l_mdc_trash_parked,
+
   l_mdc_last,
 };
 
@@ -216,6 +221,7 @@ class MDCache {
   // StrayManager needs to be able to remove_inode() from us
   // when it is done purging
   friend class StrayManager;
+  friend class TrashManager;
 
   explicit MDCache(MDSRank *m, PurgeQueue &purge_queue_);
   ~MDCache();
@@ -322,6 +328,17 @@ class MDCache {
   {
     stray_manager.drop_requests_to(who);
   }
+  void drop_trash_requests_to(mds_rank_t who)
+  {
+    trash_manager.drop_requests_to(who);
+  }
+  void enqueue_trash(CInode *in, MDSContext *fin = nullptr)
+  {
+    trash_manager.move_to_trash(in, fin);
+  }
+  TrashManager &get_trash_manager() { return trash_manager; }
+  const TrashManager &get_trash_manager() const { return trash_manager; }
+  CInode *get_trash_inode() const { return trash_inode; }
 
   void _send_discover(discover_info_t& dis);
   discover_info_t& _create_discover(mds_rank_t mds) {
@@ -983,6 +1000,7 @@ private:
   void populate_mydir();
 
   void _create_system_file(CDir *dir, std::string_view name, CInode *in, MDSContext *fin);
+  void create_trash(CDir *dir);
   void _create_system_file_finish(MutationRef& mut, CDentry *dn,
                                   version_t dpv, MDSContext *fin);
 
@@ -1404,6 +1422,7 @@ private:
   std::map<vinodeno_t, CInode*> snap_inode_map;  // map of snap inodes by ino
   CInode *root = nullptr; // root inode
   CInode *myin = nullptr; // .ceph/mds%d dir
+  CInode *trash_inode = nullptr;
 
   bool readonly = false;
 
@@ -1483,6 +1502,7 @@ private:
   std::unique_ptr<MDSContext> resolve_done;
 
   StrayManager stray_manager;
+  TrashManager trash_manager;
 
  private:
   enum dirfrag_killpoint : std::int8_t {

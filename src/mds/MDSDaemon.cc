@@ -426,6 +426,18 @@ void MDSDaemon::set_up_admin_socket()
                                      asok_hook,
                                      "show cache status");
   ceph_assert(r == 0);
+  r = admin_socket->register_command("trash ls",
+                                     asok_hook,
+                                     "list trashed directory trees being reclaimed");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command("trash pause",
+                                     asok_hook,
+                                     "pause background reclamation of trashed directory trees");
+  ceph_assert(r == 0);
+  r = admin_socket->register_command("trash resume",
+                                     asok_hook,
+                                     "resume background reclamation of trashed directory trees");
+  ceph_assert(r == 0);
   r = admin_socket->register_command("quiesce path"
                                      " name=path,type=CephString,req=true"
                                      " name=await,type=CephBool,req=false"
