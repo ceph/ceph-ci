@@ -189,13 +189,18 @@ class TestRmtree(RmtreeTestCase):
         self.assertEqual(nlink, "1")
 
     def test_ancestor_snapshot_keeps_tree(self):
-        self.mount_a.run_shell(["mkdir", "-p", "tree"])
-        self.mount_a.write_file("tree/file", "snapdata")
-        self.mount_a.run_shell(["mkdir", ".snap/ancestor"])
-        self._rmtree("/tree")
-        self.assertEqual(self.mount_a.read_file(".snap/ancestor/tree/file"), "snapdata")
-        self._stat_fails(self.mount_a, "tree")
-        self.mount_a.run_shell(["rmdir", ".snap/ancestor"])
+        # Snapshot a directory this client owns. The mount root is chmod
+        # 1777 and owned by root, so rmdir of its .snap fails with EPERM
+        # for the unprivileged test user.
+        self.mount_a.run_shell(["mkdir", "-p", "parent/tree"])
+        self.mount_a.write_file("parent/tree/file", "snapdata")
+        self.mount_a.run_shell(["mkdir", "parent/.snap/ancestor"])
+        self._rmtree("/parent/tree")
+        self.assertEqual(
+            self.mount_a.read_file("parent/.snap/ancestor/tree/file"),
+            "snapdata")
+        self._stat_fails(self.mount_a, "parent/tree")
+        self.mount_a.run_shell(["rmdir", "parent/.snap/ancestor"])
         self._wait_trash_idle()
 
     def test_own_snapshot_is_refused(self):
