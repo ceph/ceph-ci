@@ -54,6 +54,7 @@ enum mds_metric_t {
   MDS_HEALTH_CLIENTS_BROKEN_ROOTSQUASH,
   MDS_HEALTH_ESTIMATED_REPLAY_TIME,
   MDS_HEALTH_DUMMY, // not a real health warning, for testing
+  MDS_HEALTH_TRASH_PARKED,
 };
 
 inline const char *mds_metric_name(mds_metric_t m)
@@ -76,6 +77,7 @@ inline const char *mds_metric_name(mds_metric_t m)
   case MDS_HEALTH_CLIENTS_BROKEN_ROOTSQUASH: return "MDS_CLIENTS_BROKEN_ROOTSQUASH";
   case MDS_HEALTH_ESTIMATED_REPLAY_TIME: return "MDS_ESTIMATED_REPLAY_TIME";
   case MDS_HEALTH_DUMMY: return "MDS_DUMMY";
+  case MDS_HEALTH_TRASH_PARKED: return "MDS_TRASH_PARKED";
   default:
     return "???";
   }
@@ -115,6 +117,8 @@ inline const char *mds_metric_summary(mds_metric_t m)
     return "%num% MDS report clients with broken root_squash implementation";
   case MDS_HEALTH_ESTIMATED_REPLAY_TIME:
     return "%num% estimated journal replay time";
+  case MDS_HEALTH_TRASH_PARKED:
+    return "%num% MDSs have trash trees parked on snapshots";
   default:
     return "???";
   }

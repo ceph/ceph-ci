@@ -130,6 +130,7 @@ enum {
   l_mdss_cap_acquisition_throttle,
   l_mdss_req_getvxattr_latency,
   l_mdss_req_file_blockdiff_latency,
+  l_mdss_req_rmtree_latency,
   l_mdss_last,
 };
 
@@ -324,6 +325,7 @@ public:
 
   // unlink
   void handle_client_unlink(const MDRequestRef& mdr);
+  void handle_client_rmtree(const MDRequestRef& mdr);
   bool _dir_is_nonempty_unlocked(const MDRequestRef& mdr, CInode *rmdiri);
   bool _dir_is_nonempty(const MDRequestRef& mdr, CInode *rmdiri);
   bool _dir_has_snaps(const MDRequestRef& mdr, CInode *diri);
