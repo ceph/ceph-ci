@@ -406,6 +406,8 @@ void MDRequestImpl::drop_local_auth_pins()
 
 const filepath& MDRequestImpl::get_filepath() const
 {
+  if (has_more() && more()->rmtree_ready)
+    return more()->filepath1;
   if (client_request)
     return client_request->get_filepath();
   return more()->filepath1;
@@ -413,6 +415,8 @@ const filepath& MDRequestImpl::get_filepath() const
 
 const filepath& MDRequestImpl::get_filepath2() const
 {
+  if (has_more() && more()->rmtree_ready)
+    return more()->filepath2;
   if (client_request)
     return client_request->get_filepath2();
   return more()->filepath2;

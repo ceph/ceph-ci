@@ -1119,7 +1119,9 @@ int Session::check_access(std::string_view fs_name, CInode *in, unsigned mask,
            << dendl;
 
   string path;
-  if (!in->is_base()) {
+  if (in->make_trash_prior_path(path)) {
+    dout(20) << __func__ << " trash prior path " << path << dendl;
+  } else if (!in->is_base()) {
     auto* dn = in->get_projected_parent_dn();
     auto* pdiri = dn->get_dir()->get_inode();
     if (pdiri) {
