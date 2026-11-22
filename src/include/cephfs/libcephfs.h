@@ -41,7 +41,7 @@ extern "C" {
 #endif
 
 #define LIBCEPHFS_VER_MAJOR 11
-#define LIBCEPHFS_VER_MINOR 1
+#define LIBCEPHFS_VER_MINOR 2
 #define LIBCEPHFS_VER_EXTRA 0
 
 #define LIBCEPHFS_VERSION(maj, min, extra) ((maj << 16) + (min << 8) + extra)
@@ -962,6 +962,28 @@ int ceph_mkdirs(struct ceph_mount_info *cmount, const char *path, mode_t mode);
  * @returns 0 on success or a negative return code on error.
  */
 int ceph_rmdir(struct ceph_mount_info *cmount, const char *path);
+
+/**
+ * Remove a directory tree.
+ *
+ * The directory disappears from the namespace before its contents are
+ * reclaimed. Non-directories are not accepted.
+ *
+ * @param cmount the ceph mount handle to use.
+ * @param path the path of the directory to remove.
+ * @returns 0 on success or a negative return code on error.
+ */
+int ceph_rmtree(struct ceph_mount_info *cmount, const char *path);
+
+/**
+ * Remove a directory tree relative to a directory file descriptor.
+ *
+ * @param cmount the ceph mount handle to use.
+ * @param dirfd directory file descriptor, or CEPHFS_AT_FDCWD.
+ * @param relpath path relative to dirfd.
+ * @returns 0 on success or a negative return code on error.
+ */
+int ceph_rmtreeat(struct ceph_mount_info *cmount, int dirfd, const char *relpath);
 
 /** @} dir */
 
