@@ -768,6 +768,7 @@ Cost MDSDmclockScheduler::get_op_cost(const int op)
     case CEPH_MDS_OP_RENAME:
     case CEPH_MDS_OP_MKDIR:
     case CEPH_MDS_OP_RMDIR:
+    case CEPH_MDS_OP_RMTREE:
     case CEPH_MDS_OP_SYMLINK:
     case CEPH_MDS_OP_CREATE:
     case CEPH_MDS_OP_MKSNAP:

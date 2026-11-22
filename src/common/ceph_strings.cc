@@ -312,6 +312,7 @@ const char *ceph_mds_op_name(int op)
 	case CEPH_MDS_OP_RENAME: return "rename";
 	case CEPH_MDS_OP_MKDIR: return "mkdir";
 	case CEPH_MDS_OP_RMDIR: return "rmdir";
+	case CEPH_MDS_OP_RMTREE: return "rmtree";
 	case CEPH_MDS_OP_SYMLINK: return "symlink";
 	case CEPH_MDS_OP_CREATE: return "create";
 	case CEPH_MDS_OP_OPEN: return "open";
