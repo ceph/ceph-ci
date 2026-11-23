@@ -1,8 +1,0 @@
-overrides:
-  ceph:
-    subvols:
-      version: 2
-      create: 1
-      create_options: "--namespace-isolated"
-      mount_type: fuse
-      mount_client_id: testclient1
