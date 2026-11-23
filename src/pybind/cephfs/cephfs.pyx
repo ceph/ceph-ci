@@ -3978,8 +3978,6 @@ _FSCRYPT_CLONE_XATTRS = (
 
 def copy_user_xattrs(fs, src_fd, dst_fd):
     try:
-        # Getter uses a 256-byte buffer. alternate_name is at most 255.
-        log.info(fs.flistxattr(src_fd))
         len, buf = fs.flistxattr(src_fd)
         xattrs = buf.decode('utf-8').split('\x00')[:-1]
         for xattr in xattrs:

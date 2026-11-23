@@ -233,14 +233,6 @@ class SubvolumeBase(object):
             attrs["quota"] = None
 
         try:
-            fs_earmark = CephFSVolumeEarmarking(self.fs, pathname)
-            attrs["earmark"] = fs_earmark.get_earmark()
-        except cephfs.NoData:
-            attrs["earmark"] = ''
-        except EarmarkException:
-            attrs["earmark"] = ''
-
-        try:
             attrs["normalization"] = self.fs.getxattr(pathname,
                                                       'ceph.dir.normalization'
                                                       ).decode('utf-8')
@@ -252,14 +244,6 @@ class SubvolumeBase(object):
             attrs["casesensitive"] = casesensitive == "1"
         except cephfs.NoData:
             attrs["casesensitive"] = True
-
-        try:
-            fs_enctag = CephFSVolumeEncryptionTag(self.fs, pathname)
-            attrs["enctag"] = fs_enctag.get_tag()
-        except cephfs.NoData:
-            attrs["enctag"] = ''
-        except EncryptionTagException:
-            attrs["enctag"] = ''
 
         try:
             attrs["fscrypt_auth"] = self.fs.getxattr(pathname,
