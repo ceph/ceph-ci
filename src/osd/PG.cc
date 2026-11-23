@@ -1804,7 +1804,8 @@ bool PG::try_reserve_recovery_space(
       space_info->target_usage_before =
 	backfill_reservation_space_info_t::encode_usage_ratio(before);
       space_info->target_usage_after =
-	backfill_reservation_space_info_t::encode_usage_ratio(after);
+        std::max(space_info->target_usage_after,
+                 backfill_reservation_space_info_t::encode_usage_ratio(after));
     }
     // Don't reserve space if skipped reservation check, this is used
     // to test the other backfill full check AND in case a corruption
