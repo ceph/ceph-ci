@@ -5706,6 +5706,9 @@ def _add_deploy_parser_args(
         default=CONTAINER_INIT,
         help=argparse.SUPPRESS)
     parser_deploy.add_argument(
+        '--auth-entity',
+        help=argparse.SUPPRESS)
+    parser_deploy.add_argument(
         '--memory-request',
         help='Container memory request/target'
     )
