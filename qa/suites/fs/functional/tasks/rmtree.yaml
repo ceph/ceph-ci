@@ -8,5 +8,6 @@ overrides:
 tasks:
   - cephfs_test_runner:
       fail_on_skip: false
+      failfast: false
       modules:
         - tasks.cephfs.test_rmtree
