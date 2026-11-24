@@ -11,3 +11,5 @@ tasks:
       failfast: false
       modules:
         - tasks.cephfs.test_rmtree
+        - tasks.cephfs.test_strays.TestStrays.test_reintegration_forwarded
+        - tasks.cephfs.test_strays.TestStrays.test_migration_on_shutdown_target_forwards
