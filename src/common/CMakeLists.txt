@@ -251,6 +251,8 @@ if(HAVE_INTEL)
     list(APPEND crc32_asm_flags "-i${PROJECT_SOURCE_DIR}/src/isa-l/include/")
     list(APPEND crc32_srcs
       ${PROJECT_SOURCE_DIR}/src/isa-l/crc/crc32_iscsi_01.asm
+      ${PROJECT_SOURCE_DIR}/src/isa-l/crc/crc32_iscsi_by8_02.asm
+      ${PROJECT_SOURCE_DIR}/src/isa-l/crc/crc_const.asm
       crc32c_intel_fast_zero_asm.s)
   endif(HAVE_NASM_X64)
   if(HAVE_NASM_X64_AVX512_VPCLMUL)
@@ -258,7 +260,6 @@ if(HAVE_INTEL)
       "-DAS_FEATURE_LEVEL=10"
       "-i${PROJECT_SOURCE_DIR}/src/isa-l/crc/")
     list(APPEND crc32_srcs
-      ${PROJECT_SOURCE_DIR}/src/isa-l/crc/crc_const.asm
       ${PROJECT_SOURCE_DIR}/src/isa-l/crc/crc32_iscsi_by16_10.asm)
   endif(HAVE_NASM_X64_AVX512_VPCLMUL)
 elseif(HAVE_POWER8)

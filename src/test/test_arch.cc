@@ -72,6 +72,10 @@ TEST(Arch, all)
   expected = strstr(flags, " sse4_2 ") ? 1 : 0;
   EXPECT_EQ(expected, ceph_arch_intel_sse42);
 
+  // (the kernel lists 'avx' only if it enables the AVX state)
+  expected = strstr(flags, " avx ") ? 1 : 0;
+  EXPECT_EQ(expected, ceph_arch_intel_avx);
+
   expected = strstr(flags, " sse4_1 ") ? 1 : 0;
   EXPECT_EQ(expected, ceph_arch_intel_sse41);
 

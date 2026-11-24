@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <string.h>
+#include <vector>
 
 #include "include/types.h"
 #include "include/crc32c.h"
@@ -16,6 +17,10 @@
 #include "common/crc32c_aarch64.h"
 #include "common/crc32c_riscv.h"
 #include "common/crc32c_ppc.h"
+#if defined(__x86_64__)
+#include "arch/intel.h"
+#include "common/crc32c_intel_fast.h"
+#endif
 
 TEST(Crc32c, Small) {
   const char *a = "foo bar baz";
@@ -86,6 +91,26 @@ TEST(Crc32c, Performance) {
     std::cout << "intel baseline = " << rate << " MB/sec" << std::endl;
     ASSERT_EQ(261108528u, val);
   }
+#if defined(__x86_64__)
+  if (ceph_arch_intel_sse42 && ceph_arch_intel_pclmul &&
+      ceph_crc32c_intel_fast_exists()) {
+    utime_t start = ceph_clock_now();
+    unsigned val = ceph_crc32c_intel_fast_pclmul(0, (unsigned char *)a, len);
+    utime_t end = ceph_clock_now();
+    float rate = (float)len / (float)(1024*1024) / (float)(end - start);
+    std::cout << "intel pclmul (crc32 instruction) = " << rate << " MB/sec" << std::endl;
+    ASSERT_EQ(261108528u, val);
+  }
+  if (ceph_arch_intel_avx && ceph_arch_intel_pclmul &&
+      ceph_crc32c_intel_fast_exists()) {
+    utime_t start = ceph_clock_now();
+    unsigned val = ceph_crc32c_intel_fast_avx_pclmul(0, (unsigned char *)a, len);
+    utime_t end = ceph_clock_now();
+    float rate = (float)len / (float)(1024*1024) / (float)(end - start);
+    std::cout << "intel avx pclmul (folding) = " << rate << " MB/sec" << std::endl;
+    ASSERT_EQ(261108528u, val);
+  }
+#endif
 #if defined(__arm__) || defined(__aarch64__)
   if (ceph_arch_aarch64_crc32) // Skip if CRC32C instructions are not defined.
   {
@@ -188,6 +213,40 @@ static uint32_t crc_check_table[] = {
 0xb6b9d769, 0x59e5802c, 0x118c7ff7, 0x46326e0b, 0xa7376fbe, 0x7218aed1, 0x28c8f707, 0x44610a2f,
 0xf8eafea1, 0xfe36fdae, 0xb4b546f1, 0x2e27ce89, 0xc1fde8a0, 0x99f2f157, 0xfde687a1, 0x40a75f50,
 0x6c653330, 0xf3e38821, 0xf4663e43, 0x2f7e801e, 0xfca360af, 0x53cd3c59, 0xd20da292, 0x812a0241 };
+
+#if defined(__x86_64__)
+// the PCLMULQDQ folding variant agrees with the baseline: lengths around its
+// block sizes, unaligned buffers, any initial value; and for zeros (no buffer)
+TEST(Crc32c, IntelAvxPclmulMatchesBaseline) {
+  if (!(ceph_arch_intel_avx && ceph_arch_intel_pclmul &&
+        ceph_crc32c_intel_fast_exists())) {
+    GTEST_SKIP() << "no AVX and PCLMULQDQ";
+  }
+  const unsigned max_len = (1 << 20) + 64;
+  std::vector<unsigned char> buf(max_len + 64);
+  for (size_t i = 0; i < buf.size(); i++) {
+    buf[i] = (unsigned char)(i * 131 + (i >> 8));
+  }
+  const unsigned lens[] = {0, 1, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 129,
+                           255, 256, 257, 511, 1000, 1024, 4095, 4096, 4097,
+                           65536, 65537, 1 << 20, max_len};
+  for (unsigned offset = 0; offset < 16; offset += 3) {
+    for (unsigned len : lens) {
+      for (uint32_t init : {0u, 0xffffffffu, 0x12345678u}) {
+        const unsigned char *p = buf.data() + offset;
+        ASSERT_EQ(ceph_crc32c_intel_baseline(init, p, len),
+                  ceph_crc32c_intel_fast_avx_pclmul(init, p, len))
+          << "offset " << offset << " len " << len << " init " << init;
+      }
+    }
+  }
+  for (unsigned len : lens) {
+    ASSERT_EQ(ceph_crc32c_intel_baseline(0x12345678u, nullptr, len),
+              ceph_crc32c_intel_fast_avx_pclmul(0x12345678u, nullptr, len))
+      << "zeros, len " << len;
+  }
+}
+#endif
 
 TEST(Crc32c, Range) {
   int len = sizeof(crc_check_table) / sizeof(crc_check_table[0]);
