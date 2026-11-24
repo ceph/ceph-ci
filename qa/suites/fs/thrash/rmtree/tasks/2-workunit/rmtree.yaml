@@ -1,0 +1,12 @@
+# Trees are built through the mount and removed with CEPH_MDS_OP_RMTREE
+# through libcephfs. When the time is up the script waits for trash to be
+# empty on every rank and checks that it removed all of the trees and nothing
+# else.
+tasks:
+- workunit:
+    timeout: 3h
+    env:
+      RMTREE_DURATION: "1200"
+    clients:
+      all:
+        - fs/rmtree/rmtree_stress.py
