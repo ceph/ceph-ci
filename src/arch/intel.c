@@ -18,6 +18,7 @@
 /* flags we export */
 int ceph_arch_intel_avx512_vpclmul = 0;
 int ceph_arch_intel_pclmul = 0;
+int ceph_arch_intel_avx = 0;
 int ceph_arch_intel_sse42 = 0;
 int ceph_arch_intel_sse41 = 0;
 int ceph_arch_intel_ssse3 = 0;
@@ -39,6 +40,9 @@ int ceph_arch_intel_aesni = 0;
 #define CPUID_SSE2	(1 << 26)
 #define CPUID_AESNI 	(1 << 25)
 #define CPUID_OSXSAVE	(1 << 27)
+#define CPUID_AVX	(1 << 28)
+/* SSE:[1] AVX:[2] */
+#define XCR0_AVX		(0x00000006ULL)
 
 /* SSE:[1] AVX:[2] Opmask:[5] ZMM_HI256:[6] ZMM16-31:[7]*/
 #define XCR0_AVX512		(0x000000E6ULL)
@@ -83,6 +87,11 @@ int ceph_arch_intel_probe(void)
 	        ceph_arch_intel_aesni = 1;
 	}
 
+	/* AVX: the CPU has it, and the OS saves its state (OSXSAVE, XCR0) */
+	if ((ecx & CPUID_AVX) && (ecx & CPUID_OSXSAVE) &&
+	    ((ceph_xgetbv(0) & XCR0_AVX) == XCR0_AVX)) {
+		ceph_arch_intel_avx = 1;
+	}
 	/*
 	 * AVX512 feature: check these conditions IN ORDER
 	 *     a. OSXSAVE/XGETBV is available

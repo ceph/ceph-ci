@@ -32,6 +32,11 @@ ceph_crc32c_func_t ceph_choose_crc32(void)
   }
   // crc32_iscsi_01 uses PCLMULQDQ as well as SSE 4.2.
   if (ceph_arch_intel_sse42 && ceph_arch_intel_pclmul && ceph_crc32c_intel_fast_exists()) {
+    if (ceph_arch_intel_avx) {
+      // folding with PCLMULQDQ (crc32_iscsi_by8_02, which also needs AVX):
+      // faster than the crc32 instruction on large buffers
+      return ceph_crc32c_intel_fast_avx_pclmul;
+    }
     return ceph_crc32c_intel_fast_pclmul;
   }
 #elif defined(__arm__) || defined(__aarch64__)
