@@ -1,0 +1,11 @@
+# MDS daemons fail and max_mds changes more often than in fs:thrash/workloads,
+# so that a rank is likely to fail, or to stop, with trees in its trash.
+tasks:
+- mds_thrash:
+    thrash_delay: 45
+    thrash_max_mds: 0.4
+
+overrides:
+  ceph:
+    log-ignorelist:
+      - Replacing daemon mds
