@@ -1,4 +1,5 @@
 import datetime
+import errno
 import ipaddress
 import hashlib
 import json
@@ -70,6 +71,7 @@ class CephadmServe:
         self.mgr: "CephadmOrchestrator" = mgr
         self.log = logger
         self.last_certificates_check: Optional[datetime.datetime] = None
+        self._daemon_retry_requested = False
 
     def serve(self) -> None:
         """
@@ -117,6 +119,7 @@ class CephadmServe:
                     if self._apply_all_services():
                         continue  # did something, refresh
 
+                    self._daemon_retry_requested = False
                     self._check_daemons()
 
                     self._check_certificates()
@@ -186,7 +189,10 @@ class CephadmServe:
             # agent-down detection on its own thread.
             down_mult = max(self.mgr.agent_down_multiplier, 1.5)
             candidates.append(int(down_mult * self.mgr.agent_refresh_rate))
-        sleep_interval = max(30, min(candidates))
+        if self._daemon_retry_requested:
+            sleep_interval = 10
+        else:
+            sleep_interval = max(30, min(candidates))
         self.log.debug('Sleeping for %d seconds', sleep_interval)
         self.mgr.event.wait(sleep_interval)
         self.mgr.event.clear()
@@ -1416,6 +1422,8 @@ class CephadmServe:
                             dd.name(),
                             r.stderr,
                         )
+                        if r.retval == -errno.EBUSY:
+                            self._daemon_retry_requested = False
                         continue
 
                 try:
