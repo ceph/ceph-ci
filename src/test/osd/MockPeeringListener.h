@@ -488,6 +488,7 @@ class MockPeeringListener : public PeeringState::PeeringListener {
   }
 
   OstreamTemp get_clog_error() override {
+    ++clog_error_count;
     return OstreamTemp(CLOG_ERROR, nullptr);
   }
 
@@ -590,5 +591,7 @@ class MockPeeringListener : public PeeringState::PeeringListener {
   int remote_recovery_reservations_requested = 0;
   int events_on_commit_scheduled = 0;
   bool first_write_in_interval = false;
+  // Number of cluster log errors written through get_clog_error()
+  int clog_error_count = 0;
 };
 
