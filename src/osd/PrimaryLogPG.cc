@@ -14484,7 +14484,8 @@ void PrimaryLogPG::on_change(ObjectStore::Transaction &t)
     reply->claim_op_out_data(m->ops);
     osd->send_message_osd_client(reply, m->get_connection());
   }
-  pending_pool_migration_reservation_ops.clear();
+  // Refuse queued requests rather than dropping them; sources re-request.
+  reply_pending_pool_migration_reservation_ops(-EAGAIN);
   pool_migration_reservations_granted_source = false;
   cancel_pool_migration_reservation_op();
 }
@@ -16210,6 +16211,11 @@ struct C_PoolMigrationReservationCallback : public Context {
     if (last_peering_reset != pg->get_last_peering_reset() ||
         gen != pg->pool_migration_reservation_gen) {
       ldpp_dout(pg, 10) << "C_PoolMigrationReservationCallback::finish stale, ignoring" << dendl;
+      // Whoever invalidated us should have cleared the tid; match on our own
+      // so this cannot clobber a newer request.
+      if (pg->pool_migration_reservation_tid == tid) {
+        pg->pool_migration_reservation_tid = 0;
+      }
       return;
     }
 
@@ -17296,6 +17302,31 @@ void PrimaryLogPG::on_pool_migration_source_suspended()
   PG::on_pool_migration_source_suspended();
 }
 
+// Drain the target's pending list, replying to every queued request. A
+// dropped request strands the source for ever. r must not be -ECANCELED;
+// use -EAGAIN for a retryable refusal.
+void PrimaryLogPG::reply_pending_pool_migration_reservation_ops(int r)
+{
+  ceph_assert(r != -ECANCELED);
+
+  if (pending_pool_migration_reservation_ops.empty()) {
+    return;
+  }
+
+  dout(20) << __func__ << " replying to "
+           << pending_pool_migration_reservation_ops.size()
+           << " pending reservation op(s) with r=" << r << dendl;
+
+  for (auto& op : pending_pool_migration_reservation_ops) {
+    MOSDOp *m = static_cast<MOSDOp*>(op->get_nonconst_req());
+    MOSDOpReply *reply = new MOSDOpReply(m, r, get_osdmap_epoch(),
+                                       CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK, false);
+    reply->claim_op_out_data(m->ops);
+    osd->send_message_osd_client(reply, m->get_connection());
+  }
+  pending_pool_migration_reservation_ops.clear();
+}
+
 void PrimaryLogPG::on_pool_migration_target_reserved(HBHandle *handle) {
   dout(20) << __func__ << dendl;
 
@@ -17323,15 +17354,7 @@ void PrimaryLogPG::on_pool_migration_target_reserved(HBHandle *handle) {
   pg_t source_pg = get_source_pg_from_hash(start_obj);
   pool_migration_target_delete(source_pg, start_obj, handle);
 
-  int result = 0;
-  for (auto& op : pending_pool_migration_reservation_ops) {
-    MOSDOp *m = static_cast<MOSDOp*>(op->get_nonconst_req());
-    MOSDOpReply *reply = new MOSDOpReply(m, result, get_osdmap_epoch(),
-                                       CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK, false);
-    reply->claim_op_out_data(m->ops);
-    osd->send_message_osd_client(reply, m->get_connection());
-  }
-  pending_pool_migration_reservation_ops.clear();
+  reply_pending_pool_migration_reservation_ops(0);
 }
 
 void PrimaryLogPG::on_pool_migration_target_suspended(bool toofull)
@@ -17340,17 +17363,8 @@ void PrimaryLogPG::on_pool_migration_target_suspended(bool toofull)
 
   pool_migration_reservations_granted_target = false;
 
-  if (!pending_pool_migration_reservation_ops.empty()) {
-    int result = toofull ? -ENOSPC : -ECANCELED;
-    for (auto& op : pending_pool_migration_reservation_ops) {
-      MOSDOp *m = static_cast<MOSDOp*>(op->get_nonconst_req());
-      MOSDOpReply *reply = new MOSDOpReply(m, result, get_osdmap_epoch(),
-                                       CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK, false);
-      reply->claim_op_out_data(m->ops);
-      osd->send_message_osd_client(reply, m->get_connection());
-    }
-    pending_pool_migration_reservation_ops.clear();
-  }
+  // -EAGAIN, not -ECANCELED: the source must not mistake this for its own cancellation
+  reply_pending_pool_migration_reservation_ops(toofull ? -ENOSPC : -EAGAIN);
 }
 
 void PrimaryLogPG::pool_migration_request_target_reservation() {
@@ -17391,7 +17405,9 @@ void PrimaryLogPG::pool_migration_request_target_reservation() {
     op,
     snapc,
     ceph::real_clock::zero(),
-    0,
+    // Without FAIL_ON_EAGAIN the Objecter swallows a -EAGAIN refusal and
+    // silently resubmits, spinning against a busy target.
+    CEPH_OSD_FLAG_FAIL_ON_EAGAIN,
     new C_OnFinisher(fin,
       osd->get_objecter_finisher(get_pg_shard())));
   ceph_tid_t tid;
