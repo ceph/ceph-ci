@@ -1490,6 +1490,7 @@ protected:
   void pool_migration_request_target_reservation() override;
   void pool_migration_release_target_reservation() override;
   void cancel_pool_migration_reservation_op();
+  void reply_pool_migration_reservation_op(OpRequestRef& op, int r);
   void reply_pending_pool_migration_reservation_ops(int r);
   bool drop_pending_pool_migration_reservation_ops(const pg_t& source_pg);
 

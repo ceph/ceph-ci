@@ -1317,6 +1317,33 @@ void PrimaryLogPG::do_command(
 
 // ==========================================================
 
+// Decode the payload of a queued CEPH_OSD_OP_PG_POOL_MIGRATION_RESERVE. The op
+// was validated when it was queued, so this only fails on a malformed op that
+// slipped through, in which case the caller leaves it to the normal paths.
+static bool decode_queued_pool_migration_reserve(const MOSDOp *m,
+                                                 hobject_t *start_obj,
+                                                 pg_t *source_pg)
+{
+  using ceph::decode;
+  for (const auto& osd_op : m->ops) {
+    if (osd_op.op.op != CEPH_OSD_OP_PG_POOL_MIGRATION_RESERVE) {
+      continue;
+    }
+    auto bp = osd_op.indata.cbegin();
+    try {
+      epoch_t source_epoch;
+      decode(*start_obj, bp);
+      decode(source_epoch, bp);
+      decode(*source_pg, bp);
+    }
+    catch (const ceph::buffer::error&) {
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 void PrimaryLogPG::do_pg_op(OpRequestRef op, ThreadPool::TPHandle *handle)
 {
   const MOSDOp *m = static_cast<const MOSDOp *>(op->get_req());
@@ -1744,6 +1771,28 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op, ThreadPool::TPHandle *handle)
           pool_migration_target_delete(source_pg, start_obj, handle);
           result = 0;
           break;
+        }
+
+        // Keep one request per source. A source that is waiting re-asks every
+        // osd_pool_migration_retry_interval, and the duplicates would pile up
+        // here until the list is next drained. Replacing in place leaves the
+        // emptiness test below to decide whether an attempt needs starting.
+        for (auto& queued : pending_pool_migration_reservation_ops) {
+          hobject_t queued_obj;
+          pg_t queued_pg;
+          if (!decode_queued_pool_migration_reserve(
+                 static_cast<const MOSDOp*>(queued->get_req()),
+                 &queued_obj, &queued_pg) ||
+              queued_pg != source_pg) {
+            continue;
+          }
+          dout(10) << __func__ << " superseding queued request from "
+                   << source_pg << dendl;
+          // The source cancelled this one before re-asking, so the reply is
+          // dropped; answer it anyway rather than leave it unanswered.
+          reply_pool_migration_reservation_op(queued, -EAGAIN);
+          queued = op;
+          return;
         }
 
         if (!pending_pool_migration_reservation_ops.empty()) {
@@ -17327,13 +17376,23 @@ void PrimaryLogPG::on_pool_migration_source_suspended()
   PG::on_pool_migration_source_suspended();
 }
 
-// Drain the target's pending list, replying to every queued request. A
-// dropped request strands the source for ever. r must not be -ECANCELED;
-// use -EAGAIN for a retryable refusal.
-void PrimaryLogPG::reply_pending_pool_migration_reservation_ops(int r)
+// Reply to one queued reservation request. A request we neither keep nor
+// answer strands the source for ever. r must not be -ECANCELED; use -EAGAIN
+// for a retryable refusal.
+void PrimaryLogPG::reply_pool_migration_reservation_op(OpRequestRef& op, int r)
 {
   ceph_assert(r != -ECANCELED);
 
+  MOSDOp *m = static_cast<MOSDOp*>(op->get_nonconst_req());
+  MOSDOpReply *reply = new MOSDOpReply(m, r, get_osdmap_epoch(),
+                                       CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK, false);
+  reply->claim_op_out_data(m->ops);
+  osd->send_message_osd_client(reply, m->get_connection());
+}
+
+// Drain the target's pending list, replying to every queued request.
+void PrimaryLogPG::reply_pending_pool_migration_reservation_ops(int r)
+{
   if (pending_pool_migration_reservation_ops.empty()) {
     return;
   }
@@ -17343,40 +17402,9 @@ void PrimaryLogPG::reply_pending_pool_migration_reservation_ops(int r)
            << " pending reservation op(s) with r=" << r << dendl;
 
   for (auto& op : pending_pool_migration_reservation_ops) {
-    MOSDOp *m = static_cast<MOSDOp*>(op->get_nonconst_req());
-    MOSDOpReply *reply = new MOSDOpReply(m, r, get_osdmap_epoch(),
-                                       CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK, false);
-    reply->claim_op_out_data(m->ops);
-    osd->send_message_osd_client(reply, m->get_connection());
+    reply_pool_migration_reservation_op(op, r);
   }
   pending_pool_migration_reservation_ops.clear();
-}
-
-// Decode the payload of a queued CEPH_OSD_OP_PG_POOL_MIGRATION_RESERVE. The op
-// was validated when it was queued, so this only fails on a malformed op that
-// slipped through, in which case the caller leaves it to the normal paths.
-static bool decode_queued_pool_migration_reserve(const MOSDOp *m,
-                                                 hobject_t *start_obj,
-                                                 pg_t *source_pg)
-{
-  using ceph::decode;
-  for (const auto& osd_op : m->ops) {
-    if (osd_op.op.op != CEPH_OSD_OP_PG_POOL_MIGRATION_RESERVE) {
-      continue;
-    }
-    auto bp = osd_op.indata.cbegin();
-    try {
-      epoch_t source_epoch;
-      decode(*start_obj, bp);
-      decode(source_epoch, bp);
-      decode(*source_pg, bp);
-    }
-    catch (const ceph::buffer::error&) {
-      return false;
-    }
-    return true;
-  }
-  return false;
 }
 
 // Drop source_pg's queued request(s), replying -EAGAIN. Requests from other
@@ -17404,11 +17432,7 @@ bool PrimaryLogPG::drop_pending_pool_migration_reservation_ops(const pg_t& sourc
       continue;
     }
 
-    MOSDOp *m = static_cast<MOSDOp*>(op->get_nonconst_req());
-    MOSDOpReply *reply = new MOSDOpReply(m, -EAGAIN, get_osdmap_epoch(),
-                                       CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK, false);
-    reply->claim_op_out_data(m->ops);
-    osd->send_message_osd_client(reply, m->get_connection());
+    reply_pool_migration_reservation_op(op, -EAGAIN);
     ++dropped;
   }
 
@@ -17434,6 +17458,10 @@ void PrimaryLogPG::on_pool_migration_target_reserved(HBHandle *handle) {
     return;
   }
 
+  // One entry per source, so front() is that source's live request.
+  // pool_migration_target_delete() deletes target objects at or above its
+  // watermark on the premise that the source re-sends from there; granting
+  // against a stale watermark would delete objects that are never re-sent.
   OpRequestRef& retry_op = pending_pool_migration_reservation_ops.front();
   const MOSDOp *m = static_cast<const MOSDOp*>(retry_op->get_req());
   hobject_t start_obj;
@@ -17515,6 +17543,38 @@ void PrimaryLogPG::pool_migration_request_target_reservation() {
            << " objects=" << num_objects
            << " epoch=" << epoch
            << " tid=" << tid << dendl;
+
+  // The reply can be lost: should_resend=false means an OSDMap change makes
+  // the Objecter discard the op via _cancel_linger_op(), nulling the
+  // completion, while the target still grants and replies into the void.
+  // Re-request if no reply arrives; an already-granted target replies at once.
+  {
+    PrimaryLogPGRef pgref = this;
+    const uint64_t my_gen = pool_migration_reservation_gen;
+    const ceph_tid_t my_tid = tid;
+    const double retry =
+      cct->_conf.get_val<double>("osd_pool_migration_retry_interval");
+    std::lock_guard timer_lock(osd->recovery_request_lock);
+    osd->recovery_request_timer.add_event_after(
+      retry,
+      bless_context(new LambdaContext([pgref, my_gen, my_tid](int) {
+        if (my_gen != pgref->pool_migration_reservation_gen) {
+          return;  // superseded by a newer request
+        }
+        if (pgref->pool_migration_reservations_granted_source) {
+          return;  // the reply arrived, nothing to do
+        }
+        if (pgref->pool_migration_reservation_tid != my_tid) {
+          return;  // tid moved on under us
+        }
+        ldpp_dout(pgref.get(), 1)
+          << "pool migration reservation tid " << my_tid
+          << " got no reply within the retry interval, re-requesting" << dendl;
+        // Clears the tid so recover_pool_migration() re-requests.
+        pgref->cancel_pool_migration_reservation_op();
+        pgref->queue_recovery();
+      })));
+  }
 }
 
 void PrimaryLogPG::cancel_pool_migration_reservation_op()
