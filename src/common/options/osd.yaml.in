@@ -1697,6 +1697,14 @@ options:
   desc: Feed a pullee, and force primary to pull a currently missing object from it
   default: -1
   with_legacy: true
+- name: osd_debug_reject_internal_versions_v2
+  type: bool
+  level: dev
+  desc: Reject GET_INTERNAL_VERSIONS_V2 with EOPNOTSUPP to simulate a pre-V2 OSD (testing)
+  default: false
+  flags:
+  - runtime
+  with_legacy: true
 - name: osd_backfill_scan_min
   type: int
   level: advanced

@@ -7058,6 +7058,10 @@ int PrimaryLogPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
     break;
 
     case CEPH_OSD_OP_GET_INTERNAL_VERSIONS_V2: {
+      if (cct->_conf->osd_debug_reject_internal_versions_v2) {
+        result = -EOPNOTSUPP;
+        break;
+      }
       ++ctx->num_read;
       std::map<shard_id_t, eversion_t> out;
       result = get_internal_versions_v2(soid, &out);
