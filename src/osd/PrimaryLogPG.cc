@@ -1764,9 +1764,32 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op, ThreadPool::TPHandle *handle)
       {
         dout(20) << __func__ << " target CEPH_OSD_OP_PG_POOL_MIGRATION_RELEASE" << dendl;
 
+        hobject_t start_obj;
+        try {
+          decode(start_obj, bp);
+        }
+        catch (const ceph::buffer::error& e) {
+          dout(0) << __func__ << " unable to decode PG_POOL_MIGRATION_RELEASE payload in "
+                  << *m << dendl;
+          result = -EINVAL;
+          break;
+        }
+
+        // The source may be releasing a request we have not granted yet; drop
+        // it, or we grant a reservation nobody is waiting for.
+        const pg_t source_pg = get_source_pg_from_hash(start_obj);
+        const bool dropped = drop_pending_pool_migration_reservation_ops(source_pg);
+
         if (pool_migration_reservations_granted_target) {
           stop_target_pool_migration();
           pool_migration_reservations_granted_target = false;
+        } else if (dropped && pending_pool_migration_reservation_ops.empty()) {
+          // We were still acquiring shard reservations on behalf of the
+          // request we just dropped; abandon the attempt so the slots are
+          // returned rather than being held for an absent source.
+          dout(20) << __func__ << " last pending request withdrawn, stopping"
+                   << " target migration" << dendl;
+          stop_target_pool_migration();
         }
 
         // Send success, the source PG ignores this reply
@@ -16973,6 +16996,58 @@ void PrimaryLogPG::reply_pending_pool_migration_reservation_ops(int r)
   pending_pool_migration_reservation_ops.clear();
 }
 
+// Drop source_pg's queued request(s), replying -EAGAIN. Requests from other
+// sources are left alone. Returns true if anything was dropped.
+bool PrimaryLogPG::drop_pending_pool_migration_reservation_ops(const pg_t& source_pg)
+{
+  if (pending_pool_migration_reservation_ops.empty()) {
+    return false;
+  }
+
+  std::vector<OpRequestRef> keep;
+  keep.reserve(pending_pool_migration_reservation_ops.size());
+  int dropped = 0;
+
+  for (auto& op : pending_pool_migration_reservation_ops) {
+    const MOSDOp *mop = static_cast<const MOSDOp*>(op->get_req());
+    bool mine = false;
+    for (const auto& osd_op : mop->ops) {
+      if (osd_op.op.op != CEPH_OSD_OP_PG_POOL_MIGRATION_RESERVE) {
+        continue;
+      }
+      hobject_t obj;
+      auto bp = osd_op.indata.cbegin();
+      try {
+        decode(obj, bp);
+      }
+      catch (const ceph::buffer::error&) {
+        break;  // undecodable: keep it, the normal paths will reply
+      }
+      mine = (get_source_pg_from_hash(obj) == source_pg);
+      break;
+    }
+
+    if (!mine) {
+      keep.push_back(op);
+      continue;
+    }
+
+    MOSDOp *m = static_cast<MOSDOp*>(op->get_nonconst_req());
+    MOSDOpReply *reply = new MOSDOpReply(m, -EAGAIN, get_osdmap_epoch(),
+                                       CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK, false);
+    reply->claim_op_out_data(m->ops);
+    osd->send_message_osd_client(reply, m->get_connection());
+    ++dropped;
+  }
+
+  if (dropped) {
+    dout(20) << __func__ << " dropped " << dropped
+             << " queued reservation request(s) from " << source_pg << dendl;
+    pending_pool_migration_reservation_ops.swap(keep);
+  }
+  return dropped > 0;
+}
+
 void PrimaryLogPG::on_pool_migration_target_reserved(HBHandle *handle) {
   dout(20) << __func__ << dendl;
 
@@ -17082,22 +17157,31 @@ void PrimaryLogPG::cancel_pool_migration_reservation_op()
 
 void PrimaryLogPG::pool_migration_release_target_reservation()
 {
+  // The watermark identifies us to the target: every object of ours hashes to
+  // the same source PG, so it stays valid as the watermark advances.
+  const hobject_t start_obj = pool_migration_watermark;
+  const bool was_granted = pool_migration_reservations_granted_source;
+
   // Cancel any in-flight (requested but not-yet-granted) target reservation.
   // This is to try to avoid stale callbacks firing when we think we've exited migration state.
-  // Must run before the early return below.
   cancel_pool_migration_reservation_op();
 
-  if (!pool_migration_reservations_granted_source || !pool_migration_target_pg.has_value()) {
-    return;  // nothing granted to release
+  if (!pool_migration_target_pg.has_value()) {
+    return;  // we never asked anybody
   }
+
+  // Release even when only requested: cancelling above removes our half only.
+  // Left queued, the target grants it, enters MigratingTarget for a source
+  // that is gone, and holds a reservation on every shard for ever.
   dout(20) << __func__ << " Sending release to target PG "
-           << *pool_migration_target_pg << dendl;
+           << *pool_migration_target_pg
+           << " granted=" << was_granted << dendl;
 
   object_locator_t target_oloc(*pool.info.migration_target,
                                 pool_migration_target_pg->ps());
 
   ObjectOperation op;
-  op.pg_pool_migration_release();
+  op.pg_pool_migration_release(start_obj);
 
   SnapContext snapc;
   osd->objecter->mutate(
@@ -17108,6 +17192,10 @@ void PrimaryLogPG::pool_migration_release_target_reservation()
     ceph::real_clock::zero(),
     0,
     nullptr);
+
+  if (!was_granted) {
+    return;  // nothing granted locally to unwind
+  }
 
   pool_migration_reservations_granted_source = false;
   pool_migration_target_pg.reset();

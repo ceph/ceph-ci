@@ -325,9 +325,13 @@ struct ObjectOperation {
     osd_op.op.pool_migration_reserve.num_bytes = num_bytes;
     osd_op.op.pool_migration_reserve.num_objects = num_objects;
   }
-  void add_pg_pool_migration_release(int op) {
+  // start_obj identifies the releasing source PG (via its hash), so the target
+  // can drop that source's still-queued reservation request as well as an
+  // already-granted reservation.
+  void add_pg_pool_migration_release(int op, const hobject_t& start_obj) {
     using ceph::encode;
-    add_op(op);
+    OSDOp& osd_op = add_op(op);
+    encode(start_obj, osd_op.indata);
   }
 
   // ------
@@ -361,8 +365,9 @@ struct ObjectOperation {
     flags |= CEPH_OSD_FLAG_PGOP;
   }
 
-  void pg_pool_migration_release() {
-    add_pg_pool_migration_release(CEPH_OSD_OP_PG_POOL_MIGRATION_RELEASE);
+  void pg_pool_migration_release(const hobject_t& start_obj) {
+    add_pg_pool_migration_release(CEPH_OSD_OP_PG_POOL_MIGRATION_RELEASE,
+                                  start_obj);
     flags |= CEPH_OSD_FLAG_PGOP;
   }
 
