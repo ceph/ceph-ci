@@ -17139,6 +17139,38 @@ void PrimaryLogPG::pool_migration_request_target_reservation() {
            << " objects=" << num_objects
            << " epoch=" << epoch
            << " tid=" << tid << dendl;
+
+  // The reply can be lost: should_resend=false means an OSDMap change makes
+  // the Objecter discard the op via _cancel_linger_op(), nulling the
+  // completion, while the target still grants and replies into the void.
+  // Re-request if no reply arrives; an already-granted target replies at once.
+  {
+    PrimaryLogPGRef pgref = this;
+    const uint64_t my_gen = pool_migration_reservation_gen;
+    const ceph_tid_t my_tid = tid;
+    const double retry =
+      cct->_conf.get_val<double>("osd_pool_migration_retry_interval");
+    std::lock_guard timer_lock(osd->recovery_request_lock);
+    osd->recovery_request_timer.add_event_after(
+      retry,
+      bless_context(new LambdaContext([pgref, my_gen, my_tid](int) {
+        if (my_gen != pgref->pool_migration_reservation_gen) {
+          return;  // superseded by a newer request
+        }
+        if (pgref->pool_migration_reservations_granted_source) {
+          return;  // the reply arrived, nothing to do
+        }
+        if (pgref->pool_migration_reservation_tid != my_tid) {
+          return;  // tid moved on under us
+        }
+        ldpp_dout(pgref.get(), 1)
+          << "pool migration reservation tid " << my_tid
+          << " got no reply within the retry interval, re-requesting" << dendl;
+        // Clears the tid so recover_pool_migration() re-requests.
+        pgref->cancel_pool_migration_reservation_op();
+        pgref->queue_recovery();
+      })));
+  }
 }
 
 void PrimaryLogPG::cancel_pool_migration_reservation_op()
