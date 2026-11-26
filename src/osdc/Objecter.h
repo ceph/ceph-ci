@@ -315,19 +315,27 @@ struct ObjectOperation {
     osd_op.op.alloc_hint.expected_write_size = expected_write_size;
     osd_op.op.alloc_hint.flags = flags;
   }
+  // source_pg identifies the requesting source PG. start_obj is a position,
+  // not an identity: it can be a sentinel (min/max), so the target must not
+  // derive the source PG from its hash.
   void add_pg_pool_migration_reserve(int op, const hobject_t& start_obj,
                                      int64_t num_bytes, int64_t num_objects,
-                                     epoch_t epoch) {
+                                     epoch_t epoch, const pg_t& source_pg) {
     using ceph::encode;
     OSDOp& osd_op = add_op(op);
     encode(start_obj, osd_op.indata);
     encode(epoch, osd_op.indata);
+    encode(source_pg, osd_op.indata);
     osd_op.op.pool_migration_reserve.num_bytes = num_bytes;
     osd_op.op.pool_migration_reserve.num_objects = num_objects;
   }
-  void add_pg_pool_migration_release(int op) {
+  // source_pg identifies the releasing source PG, so the target can drop that
+  // source's still-queued reservation request as well as an already-granted
+  // reservation.
+  void add_pg_pool_migration_release(int op, const pg_t& source_pg) {
     using ceph::encode;
-    add_op(op);
+    OSDOp& osd_op = add_op(op);
+    encode(source_pg, osd_op.indata);
   }
 
   // ------
@@ -354,15 +362,17 @@ struct ObjectOperation {
   void pg_pool_migration_reserve(const hobject_t& start_obj,
                                  int64_t num_bytes,
                                  int64_t num_objects,
-                                 epoch_t epoch) {
+                                 epoch_t epoch,
+                                 const pg_t& source_pg) {
     add_pg_pool_migration_reserve(CEPH_OSD_OP_PG_POOL_MIGRATION_RESERVE,
                                   start_obj, num_bytes, num_objects,
-                                  epoch);
+                                  epoch, source_pg);
     flags |= CEPH_OSD_FLAG_PGOP;
   }
 
-  void pg_pool_migration_release() {
-    add_pg_pool_migration_release(CEPH_OSD_OP_PG_POOL_MIGRATION_RELEASE);
+  void pg_pool_migration_release(const pg_t& source_pg) {
+    add_pg_pool_migration_release(CEPH_OSD_OP_PG_POOL_MIGRATION_RELEASE,
+                                  source_pg);
     flags |= CEPH_OSD_FLAG_PGOP;
   }
 

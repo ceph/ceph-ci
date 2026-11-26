@@ -1697,12 +1697,14 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op, ThreadPool::TPHandle *handle)
 
         hobject_t start_obj;
         epoch_t source_epoch;
+        pg_t source_pg;
         int64_t source_num_bytes = p->op.pool_migration_reserve.num_bytes;
         int64_t source_num_objects = p->op.pool_migration_reserve.num_objects;
 
         try {
           decode(start_obj, bp);
           decode(source_epoch, bp);
+          decode(source_pg, bp);
         }
         catch (const ceph::buffer::error& e) {
           dout(0) << __func__ << " unable to decode PG_POOL_MIGRATION_RESERVE payload in "
@@ -1739,7 +1741,6 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op, ThreadPool::TPHandle *handle)
 
         if (pool_migration_reservations_granted_target) {
           dout(20) << __func__ << " reservations already granted, returning success to source PG" << dendl;
-          pg_t source_pg = get_source_pg_from_hash(start_obj);
           pool_migration_target_delete(source_pg, start_obj, handle);
           result = 0;
           break;
@@ -1772,9 +1773,33 @@ void PrimaryLogPG::do_pg_op(OpRequestRef op, ThreadPool::TPHandle *handle)
           break;
         }
 
+        std::optional<pg_t> source_pg;
+        try {
+          pg_t pgid;
+          decode(pgid, bp);
+          source_pg = pgid;
+        }
+        catch (const ceph::buffer::error& e) {
+          // Carry on regardless: a reservation we fail to release is held for
+          // ever and stalls the migration.
+          dout(0) << __func__ << " unable to decode PG_POOL_MIGRATION_RELEASE payload in "
+                  << *m << dendl;
+        }
+
+        // The source may be releasing a request we have not granted yet; drop
+        // it, or we grant a reservation nobody is waiting for.
         if (pool_migration_reservations_granted_target) {
           stop_target_pool_migration();
           pool_migration_reservations_granted_target = false;
+        } else if (source_pg &&
+                   drop_pending_pool_migration_reservation_ops(*source_pg) &&
+                   pending_pool_migration_reservation_ops.empty()) {
+          // We were still acquiring shard reservations on behalf of the
+          // request we just dropped; abandon the attempt so the slots are
+          // returned rather than being held for an absent source.
+          dout(10) << __func__ << " last pending request withdrawn, stopping"
+                   << " target migration" << dendl;
+          stop_target_pool_migration();
         }
 
         // Send success, the source PG ignores this reply
@@ -17327,6 +17352,74 @@ void PrimaryLogPG::reply_pending_pool_migration_reservation_ops(int r)
   pending_pool_migration_reservation_ops.clear();
 }
 
+// Decode the payload of a queued CEPH_OSD_OP_PG_POOL_MIGRATION_RESERVE. The op
+// was validated when it was queued, so this only fails on a malformed op that
+// slipped through, in which case the caller leaves it to the normal paths.
+static bool decode_queued_pool_migration_reserve(const MOSDOp *m,
+                                                 hobject_t *start_obj,
+                                                 pg_t *source_pg)
+{
+  using ceph::decode;
+  for (const auto& osd_op : m->ops) {
+    if (osd_op.op.op != CEPH_OSD_OP_PG_POOL_MIGRATION_RESERVE) {
+      continue;
+    }
+    auto bp = osd_op.indata.cbegin();
+    try {
+      epoch_t source_epoch;
+      decode(*start_obj, bp);
+      decode(source_epoch, bp);
+      decode(*source_pg, bp);
+    }
+    catch (const ceph::buffer::error&) {
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+// Drop source_pg's queued request(s), replying -EAGAIN. Requests from other
+// sources are left alone. Returns true if anything was dropped.
+bool PrimaryLogPG::drop_pending_pool_migration_reservation_ops(const pg_t& source_pg)
+{
+  if (pending_pool_migration_reservation_ops.empty()) {
+    return false;
+  }
+
+  std::vector<OpRequestRef> keep;
+  keep.reserve(pending_pool_migration_reservation_ops.size());
+  int dropped = 0;
+
+  for (auto& op : pending_pool_migration_reservation_ops) {
+    const MOSDOp *mop = static_cast<const MOSDOp*>(op->get_req());
+    hobject_t obj;
+    pg_t op_source_pg;
+    // Undecodable: keep it, the normal paths will reply.
+    const bool mine = decode_queued_pool_migration_reserve(mop, &obj, &op_source_pg) &&
+                      op_source_pg == source_pg;
+
+    if (!mine) {
+      keep.push_back(op);
+      continue;
+    }
+
+    MOSDOp *m = static_cast<MOSDOp*>(op->get_nonconst_req());
+    MOSDOpReply *reply = new MOSDOpReply(m, -EAGAIN, get_osdmap_epoch(),
+                                       CEPH_OSD_FLAG_ACK | CEPH_OSD_FLAG_ONDISK, false);
+    reply->claim_op_out_data(m->ops);
+    osd->send_message_osd_client(reply, m->get_connection());
+    ++dropped;
+  }
+
+  if (dropped) {
+    dout(20) << __func__ << " dropped " << dropped
+             << " queued reservation request(s) from " << source_pg << dendl;
+    pending_pool_migration_reservation_ops.swap(keep);
+  }
+  return dropped > 0;
+}
+
 void PrimaryLogPG::on_pool_migration_target_reserved(HBHandle *handle) {
   dout(20) << __func__ << dendl;
 
@@ -17344,14 +17437,13 @@ void PrimaryLogPG::on_pool_migration_target_reserved(HBHandle *handle) {
   OpRequestRef& retry_op = pending_pool_migration_reservation_ops.front();
   const MOSDOp *m = static_cast<const MOSDOp*>(retry_op->get_req());
   hobject_t start_obj;
-  for (const auto& osd_op : m->ops) {
-    if (osd_op.op.op == CEPH_OSD_OP_PG_POOL_MIGRATION_RESERVE) {
-      auto bp = osd_op.indata.cbegin();
-      decode(start_obj, bp);
-      break;
-    }
+  pg_t source_pg;
+  if (!decode_queued_pool_migration_reserve(m, &start_obj, &source_pg)) {
+    dout(0) << __func__ << " queued reservation request is undecodable, refusing"
+            << dendl;
+    reply_pending_pool_migration_reservation_ops(-EAGAIN);
+    return;
   }
-  pg_t source_pg = get_source_pg_from_hash(start_obj);
   pool_migration_target_delete(source_pg, start_obj, handle);
 
   reply_pending_pool_migration_reservation_ops(0);
@@ -17394,7 +17486,8 @@ void PrimaryLogPG::pool_migration_request_target_reservation() {
     pool_migration_watermark,
     num_bytes,
     num_objects,
-    epoch);
+    epoch,
+    info.pgid.pgid);
 
   C_PoolMigrationReservationCallback *fin = new C_PoolMigrationReservationCallback(
     this, get_last_peering_reset(), pool_migration_reservation_gen);
@@ -17440,22 +17533,28 @@ void PrimaryLogPG::cancel_pool_migration_reservation_op()
 
 void PrimaryLogPG::pool_migration_release_target_reservation()
 {
+  const bool was_granted = pool_migration_reservations_granted_source;
+
   // Cancel any in-flight (requested but not-yet-granted) target reservation.
   // This is to try to avoid stale callbacks firing when we think we've exited migration state.
-  // Must run before the early return below.
   cancel_pool_migration_reservation_op();
 
-  if (!pool_migration_reservations_granted_source || !pool_migration_target_pg.has_value()) {
-    return;  // nothing granted to release
+  if (!pool_migration_target_pg.has_value()) {
+    return;  // we never asked anybody
   }
+
+  // Release even when only requested: cancelling above removes our half only.
+  // Left queued, the target grants it, enters MigratingTarget for a source
+  // that is gone, and holds a reservation on every shard for ever.
   dout(20) << __func__ << " Sending release to target PG "
-           << *pool_migration_target_pg << dendl;
+           << *pool_migration_target_pg
+           << " granted=" << was_granted << dendl;
 
   object_locator_t target_oloc(*pool.info.migration_target,
                                 pool_migration_target_pg->ps());
 
   ObjectOperation op;
-  op.pg_pool_migration_release();
+  op.pg_pool_migration_release(info.pgid.pgid);
 
   SnapContext snapc;
   osd->objecter->mutate(
@@ -17467,9 +17566,14 @@ void PrimaryLogPG::pool_migration_release_target_reservation()
     0,
     nullptr);
 
-  pool_migration_reservations_granted_source = false;
+  // Always forget the target: we have withdrawn from it, and leaving it set
+  // makes the migration-complete path re-send this release on every pass.
   pool_migration_target_pg.reset();
-  queue_recovery();
+
+  if (was_granted) {
+    pool_migration_reservations_granted_source = false;
+    queue_recovery();
+  }
 }
 
 // ===========================
