@@ -2729,6 +2729,33 @@ class TestSubvolumes(TestVolumesHelper):
         # verify trash dir is clean
         self._wait_for_trash_empty()
 
+    def test_subvolume_rm_non_utf8_dir_names(self):
+        """
+        A subvolume containing non-empty directories with non-UTF-8 (Latin-1)
+        names must be fully purged from the trash.
+        """
+        subvolume = self._gen_subvol_name()
+        self._fs_cmd("subvolume", "create", self.volname, subvolume)
+        subvolpath = self._get_subvolume_path(self.volname, subvolume)
+
+        # printf is used to build the names since run_shell_payload() wraps
+        # the payload in single quotes.
+        long_name = "d" * 40
+        self.mount_a.run_shell_payload(
+            f'mkdir -p "{subvolpath}/$(printf "dir\\xaa/sub")"')
+        self.mount_a.run_shell_payload(
+            f'touch "{subvolpath}/$(printf "dir\\xaa/sub/S\\xaa Menera.xls")"')
+        # deeper tree, with a long path leading to the non-UTF-8 component
+        self.mount_a.run_shell_payload(
+            f'mkdir -p "{subvolpath}/{long_name}/{long_name}/$(printf "x\\xa2y/z")"')
+        self.mount_a.run_shell_payload(
+            f'touch "{subvolpath}/{long_name}/{long_name}/$(printf "x\\xa2y/z/f")"')
+
+        self._fs_cmd("subvolume", "rm", self.volname, subvolume)
+
+        # times out if the purge job is stuck retrying on this subtree
+        self._wait_for_trash_empty()
+
     def test_subvolume_create_and_rm_in_group(self):
         subvolume = self._gen_subvol_name()
         group = self._gen_subvol_grp_name()
