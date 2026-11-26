@@ -199,6 +199,14 @@ struct ShardedTrackingData {
     : ops_in_flight_lock_sharded(ceph::make_mutex(lock_name)) {}
 };
 
+// Age of an op, clamped at zero. Callers sample `now` before walking the
+// shards, so an op arriving mid-walk can have initiated > now; utime_t is
+// unsigned, so a plain subtraction wraps to ~2^32 seconds.
+static inline utime_t op_age(const utime_t& now, const utime_t& initiated)
+{
+  return now > initiated ? now - initiated : utime_t();
+}
+
 OpTracker::OpTracker(CephContext *cct_, bool tracking, uint32_t num_shards):
   seq(0),
   history(cct_),
@@ -299,7 +307,7 @@ bool OpTracker::dump_ops_in_flight(Formatter *f, bool print_only_blocked, set<st
     ceph_assert(NULL != sdata); 
     std::lock_guard locker(sdata->ops_in_flight_lock_sharded);
     for (auto& op : sdata->ops_in_flight_sharded) {
-      if (print_only_blocked && (now - op.get_initiated() <= complaint_time))
+      if (print_only_blocked && (op_age(now, op.get_initiated()) <= complaint_time))
         break;
       if (!op.filter_out(filters))
         continue;
@@ -495,13 +503,11 @@ bool OpTracker::check_ops_in_flight(std::string* summary,
 				    int *num_slow_ops)
 {
   const utime_t now = ceph_clock_now();
-  auto too_old = now;
-  too_old -= complaint_time;
   int warned = 0;
   utime_t oldest_secs;
   auto warn_on_slow_op = [&](TrackedOp& op) {
     stringstream ss;
-    utime_t age = now - op.get_initiated();
+    utime_t age = op_age(now, op.get_initiated());
     ss << "slow request " << age << " seconds old, received at "
        << op.get_initiated() << ": " << op.get_desc()
        << " currently "
@@ -538,7 +544,7 @@ void OpTracker::get_age_ms_histogram(pow2_hist_t *h)
     std::lock_guard locker(sdata->ops_in_flight_lock_sharded);
 
     for (auto& i : sdata->ops_in_flight_sharded) {
-      utime_t age = now - i.get_initiated();
+      utime_t age = op_age(now, i.get_initiated());
       uint32_t ms = (long)(age * 1000.0);
       h->add(ms);
     }
@@ -634,7 +640,7 @@ void TrackedOp::dump(utime_t now, Formatter *f, OpTracker::dumper lambda) const
     return;
   f->dump_string("description", get_desc());
   f->dump_stream("initiated_at") << get_initiated();
-  f->dump_float("age", now - get_initiated());
+  f->dump_float("age", op_age(now, get_initiated()));
   f->dump_float("duration", get_duration());
   f->dump_bool("continuous", is_continuous());
   {
