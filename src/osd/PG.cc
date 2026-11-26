@@ -1838,7 +1838,8 @@ void PG::add_local_num_bytes(int64_t num_bytes) {
     prev_bytes = osd->reserved_pg_bytes.load();
     do {
       new_bytes = prev_bytes - delta_bytes;
-      ceph_assert(new_bytes >= 0);
+      if (new_bytes < 0)
+        break;
     } while(!osd->reserved_pg_bytes.compare_exchange_weak(prev_bytes, new_bytes));
   }
 }
