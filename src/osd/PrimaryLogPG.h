@@ -1478,6 +1478,7 @@ protected:
   void pool_migration_request_target_reservation() override;
   void pool_migration_release_target_reservation() override;
   void cancel_pool_migration_reservation_op();
+  void reply_pending_pool_migration_reservation_ops(int r);
 
   void start_target_pool_migration(int64_t num_bytes, int64_t num_objects);
   void stop_target_pool_migration();
