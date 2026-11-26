@@ -492,6 +492,21 @@ def cstr_list(list_str, name, encoding="utf-8"):
     return [cstr(s, name) for s in list_str]
 
 
+def _path_repr(path):
+    """
+    Render a path (normally bytes at this point) for use in an error message.
+
+    CephFS paths are arbitrary byte strings and need not be valid UTF-8. A
+    strict decode while building an error message raises UnicodeDecodeError
+    and masks the real error (for example ENOTEMPTY from rmdir()/unlinkat(),
+    which rmtree() relies on). backslashreplace never raises and keeps the
+    offending bytes visible in the message.
+    """
+    if isinstance(path, bytes):
+        return path.decode('utf-8', errors='backslashreplace')
+    return str(path)
+
+
 def decode_cstr(val, encoding="utf-8") -> Optional[str]:
     """
     Decode a byte string into a Python string.
@@ -1086,7 +1101,7 @@ cdef class LibCephFS(object):
         with nogil:
             ret = ceph_opendir(self.cluster, _path, &handle);
         if ret < 0:
-            raise make_ex(ret, "opendir failed at {}".format(path.decode('utf-8')))
+            raise make_ex(ret, "opendir failed at {}".format(_path_repr(path)))
         d = DirResult()
         d.lib = self
         d.handle = handle
@@ -1158,7 +1173,7 @@ cdef class LibCephFS(object):
             ret = ceph_open_snapdiff(self.cluster, _root, _relp, _snap1, _snap2, &h.handle);
         if ret < 0:
             raise make_ex(ret, "open_snapdiff failed for {} vs. {}"
-                .format(snap1.decode('utf-8'), snap2.decode('utf-8')))
+                .format(_path_repr(snap1), _path_repr(snap2)))
         h.opened = 1
         return h
 
@@ -1196,7 +1211,7 @@ cdef class LibCephFS(object):
 
         if ret < 0:
             raise make_ex(ret, "open_snapdiff2 failed for {} vs. {}"
-                .format(snap1.decode('utf-8'), snap2.decode('utf-8')))
+                .format(_path_repr(snap1), _path_repr(snap2)))
         h.opened = 1
         return h
 
@@ -1250,7 +1265,7 @@ cdef class LibCephFS(object):
         with nogil:
             ret = ceph_mkdir(self.cluster, _path, _mode)
         if ret < 0:
-            raise make_ex(ret, "error in mkdir {}".format(path.decode('utf-8')))
+            raise make_ex(ret, "error in mkdir {}".format(_path_repr(path)))
 
     def mkdirat(self, dirfd, relpath, mode):
         self.require_state("mounted")
@@ -1269,7 +1284,7 @@ cdef class LibCephFS(object):
             ret = ceph_mkdirat(self.cluster, _dirfd, _relpath, _mode)
 
         if ret < 0:
-            raise make_ex(ret, f"error in mkdirat: {relpath.decode('utf-8')}")
+            raise make_ex(ret, f"error in mkdirat: {_path_repr(relpath)}")
 
     def mksnap(self, path, name, mode, metadata={}) -> int:
         """
@@ -1416,7 +1431,7 @@ cdef class LibCephFS(object):
         with nogil:
             ret = ceph_chmod(self.cluster, _path, _mode)
         if ret < 0:
-            raise make_ex(ret, "error in chmod {}".format(path.decode('utf-8')))
+            raise make_ex(ret, "error in chmod {}".format(_path_repr(path)))
 
     def chmodat(self, dirfd, relpath, mode, flags) -> None:
         self.require_state("mounted")
@@ -1439,7 +1454,7 @@ cdef class LibCephFS(object):
             ret = ceph_chmodat(self.cluster, _dirfd, _relpath, _mode, _flags)
 
         if ret < 0:
-            raise make_ex(ret, f"error in chmod {relpath.decode('utf-8')}")
+            raise make_ex(ret, f"error in chmod {_path_repr(relpath)}")
 
     def lchmod(self, path, mode) -> None:
         """
@@ -1459,7 +1474,7 @@ cdef class LibCephFS(object):
         with nogil:
             ret = ceph_lchmod(self.cluster, _path, _mode)
         if ret < 0:
-            raise make_ex(ret, "error in chmod {}".format(path.decode('utf-8')))
+            raise make_ex(ret, "error in chmod {}".format(_path_repr(path)))
 
     def fchmod(self, fd, mode) :
         """
@@ -1511,7 +1526,7 @@ cdef class LibCephFS(object):
             with nogil:
                 ret = ceph_lchown(self.cluster, _path, _uid, _gid)
         if ret < 0:
-            raise make_ex(ret, "error in chown {}".format(path.decode('utf-8')))
+            raise make_ex(ret, "error in chown {}".format(_path_repr(path)))
 
     def lchown(self, path, uid, gid):
         """
@@ -1583,7 +1598,7 @@ cdef class LibCephFS(object):
         with nogil:
             ret = ceph_chownat(self.cluster, _fd, _relpath, _uid, _gid, _flags)
         if ret < 0:
-            raise make_ex(ret, f"error in chownat {relpath.decode('utf-8')}")
+            raise make_ex(ret, f"error in chownat {_path_repr(relpath)}")
 
     def mkdirs(self, path, mode):
         """
@@ -1604,7 +1619,7 @@ cdef class LibCephFS(object):
         with nogil:
             ret = ceph_mkdirs(self.cluster, _path, _mode)
         if ret < 0:
-            raise make_ex(ret, "error in mkdirs {}".format(path.decode('utf-8')))
+            raise make_ex(ret, "error in mkdirs {}".format(_path_repr(path)))
 
     def rmdir(self, path):
         """
@@ -1618,7 +1633,7 @@ cdef class LibCephFS(object):
         with nogil:
             ret = ceph_rmdir(self.cluster, _path)
         if ret < 0:
-            raise make_ex(ret, "error in rmdir {}".format(path.decode('utf-8')))
+            raise make_ex(ret, "error in rmdir {}".format(_path_repr(path)))
 
     def open(self, path, flags, mode=0):
         """
@@ -1673,7 +1688,7 @@ cdef class LibCephFS(object):
         with nogil:
             ret = ceph_open(self.cluster, _path, _flags, _mode)
         if ret < 0:
-            raise make_ex(ret, "error in open {}".format(path.decode('utf-8')))
+            raise make_ex(ret, "error in open {}".format(_path_repr(path)))
         return ret
 
     def openat(self, dirfd, relpath, flags, mode):
@@ -1935,7 +1950,7 @@ cdef class LibCephFS(object):
         with nogil:
             ret = ceph_mknod(self.cluster, _path, _mode, _rdev)
         if ret < 0:
-            raise make_ex(ret, "error in mknod {}".format(path.decode('utf-8')))
+            raise make_ex(ret, "error in mknod {}".format(_path_repr(path)))
 
     def getxattr(self, path, name, size=255, follow_symlink=True):
         """
@@ -2276,7 +2291,7 @@ cdef class LibCephFS(object):
                                  CEPH_STATX_BASIC_STATS_CDEF, AT_SYMLINK_NOFOLLOW_CDEF)
 
         if ret < 0:
-            raise make_ex(ret, "error in stat: {}".format(path.decode('utf-8')))
+            raise make_ex(ret, "error in stat: {}".format(_path_repr(path)))
         return StatResult(st_dev=stx.stx_dev, st_ino=stx.stx_ino,
                           st_mode=stx.stx_mode, st_nlink=stx.stx_nlink,
                           st_uid=stx.stx_uid, st_gid=stx.stx_gid,
@@ -2406,7 +2421,7 @@ cdef class LibCephFS(object):
             ret = ceph_statxat(self.cluster, _fd, _relpath, &stx, _mask, _flag)
 
         if ret < 0:
-            raise make_ex(ret, f"error in statxat {relpath.decode('utf-8')}")
+            raise make_ex(ret, f"error in statxat {_path_repr(relpath)}")
 
         dict_result = dict()
         if (_mask & CEPH_STATX_MODE):
@@ -2637,7 +2652,7 @@ cdef class LibCephFS(object):
             with nogil:
                 ret = ceph_readlinkat(self.cluster, _dirfd, _relpath, buf, _size)
             if ret < 0:
-                raise make_ex(ret, f"error in readlinkat: {relpath.decode('utf-8')}")
+                raise make_ex(ret, f"error in readlinkat: {_path_repr(relpath)}")
             return buf[:ret]
         finally:
             free(buf)
@@ -2655,7 +2670,7 @@ cdef class LibCephFS(object):
         with nogil:
             ret = ceph_unlink(self.cluster, _path)
         if ret < 0:
-            raise make_ex(ret, "error in unlink: {}".format(path.decode('utf-8')))
+            raise make_ex(ret, "error in unlink: {}".format(_path_repr(path)))
 
     def unlinkat(self, dirfd, relpath, flags):
         self.require_state("mounted")
@@ -2669,7 +2684,7 @@ cdef class LibCephFS(object):
         with nogil:
             ret = ceph_unlinkat(self.cluster, dirfd_, relpath_, flags_)
         if ret < 0:
-            raise make_ex(ret, f"error in unlinkat: {relpath.decode('utf-8')}")
+            raise make_ex(ret, f"error in unlinkat: {_path_repr(relpath)}")
 
     def rename(self, src, dst):
         """
@@ -2691,8 +2706,7 @@ cdef class LibCephFS(object):
         with nogil:
             ret = ceph_rename(self.cluster, _src, _dst)
         if ret < 0:
-            raise make_ex(ret, "error in rename {} to {}".format(src.decode(
-                          'utf-8'), dst.decode('utf-8')))
+            raise make_ex(ret, "error in rename {} to {}".format(_path_repr(src), _path_repr(dst)))
 
     def mds_command2(self, result, mds_spec, args, input_data=None, one_shot=False):
         """
@@ -2843,7 +2857,7 @@ cdef class LibCephFS(object):
         with nogil:
             ret = ceph_utime(self.cluster, pth, &buf)
         if ret < 0:
-            raise make_ex(ret, "error in utime {}".format(path.decode('utf-8')))
+            raise make_ex(ret, "error in utime {}".format(_path_repr(path)))
 
     def futime(self, fd, times=None):
         """
@@ -2910,7 +2924,7 @@ cdef class LibCephFS(object):
             with nogil:
                 ret = ceph_lutimes(self.cluster, pth, buf)
         if ret < 0:
-            raise make_ex(ret, "error in utimes {}".format(path.decode('utf-8')))
+            raise make_ex(ret, "error in utimes {}".format(_path_repr(path)))
 
     def lutimes(self, path, times=None):
         """
