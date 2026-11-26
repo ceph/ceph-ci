@@ -10873,6 +10873,17 @@ void MDCache::discover_path(CDir *base,
       onfinish = new C_MDC_RetryDiscoverPath2(this, base, snap, want_path);
     base->add_waiter(CDir::WAIT_SINGLEAUTH, onfinish);
     return;
+  } else if (from == mds->get_nodeid()) {
+    // This rank imported the dirfrag while the discover waited for a single
+    // auth. There is nothing to discover. Whoever waits for the dentry looks
+    // at the dirfrag again.
+    MDSContext::vec finished;
+    base->take_dentry_waiting(want_path[0], snap, snap, finished);
+    if (onfinish) {
+      finished.push_back(onfinish);
+    }
+    mds->queue_waiters(finished);
+    return;
   }
 
   if ((path_locked && want_path.depth() == 1) ||
