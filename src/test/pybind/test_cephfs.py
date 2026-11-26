@@ -1610,6 +1610,19 @@ class TestWithRootUser:
         cephfs.unlink(b'file-fsetattrx')
 
 
+def test_rmdir_non_empty_non_utf8_dir(testdir):
+    # rmdir() on a non-empty directory whose name is not valid UTF-8 must
+    # raise ObjectNotEmpty, not UnicodeDecodeError while formatting the
+    # error message.
+    d = b'/nonutf8_dir\xaa'
+    cephfs.mkdir(d, 0o755)
+    fd = cephfs.open(d + b'/f', 'w', 0o755)
+    cephfs.close(fd)
+    assert_raises(libcephfs.ObjectNotEmpty, cephfs.rmdir, d)
+    cephfs.rmtree(d)
+    assert_raises(libcephfs.ObjectNotFound, cephfs.stat, d)
+
+
 class TestRmtree:
     '''
     Test rmtree() method of CephFS python bindings.
@@ -2049,6 +2062,57 @@ class TestRmtree:
         cephfs.rmsnap('/dir1', 'snap1')
         cephfs.rmtree('dir1', should_cancel)
         assert_raises(libcephfs.ObjectNotFound, cephfs.stat, 'dir1')
+
+    def test_rmtree_non_utf8_names(self, testdir):
+        '''
+        Test that rmtree() deletes a file hierarchy whose directory and file
+        names are not valid UTF-8 (e.g. Latin-1 encoded names).
+        '''
+        should_cancel = lambda: False
+
+        root = b'/nonutf8_tree\xaa'
+        sub = root + b'/a\xa2b'
+        deep = sub + b'/c\xb4d'
+        cephfs.mkdir(root, 0o755)
+        cephfs.mkdir(sub, 0o755)
+        cephfs.mkdir(deep, 0o755)
+        for d in (root, sub, deep):
+            fd = cephfs.open(d + b'/S\xaa Menera.xls', 'w', 0o755)
+            cephfs.write(fd, b'abcd', 0)
+            cephfs.close(fd)
+
+        # Errors are not expected from the call to this method. Therefore, set
+        # suppress_errors to False so that tests abort as soon as any errors
+        # occur.
+        cephfs.rmtree(root, should_cancel, suppress_errors=False)
+        assert_raises(libcephfs.ObjectNotFound, cephfs.stat, root)
+
+    def test_rmtree_on_tree_with_snaps_non_utf8_dir_name(self, testdir):
+        '''
+        Like test_rmtree_on_tree_with_snaps_on_root, but the directory holding
+        the snapshot has a name that is not valid UTF-8. Removing it fails
+        with ENOTEMPTY, which must surface as ObjectNotEmpty (and be handled
+        inside rmtree()), not as UnicodeDecodeError raised while formatting
+        the error message.
+        '''
+        should_cancel = lambda: False
+
+        d = b'/nonutf8_snapdir\xaa'
+        cephfs.mkdir(d, 0o755)
+        for i in range(1, 6):
+            fd = cephfs.open(d + f'/file{i}'.encode(), 'w', 0o755)
+            cephfs.write(fd, b'abcd', 0)
+            cephfs.close(fd)
+        cephfs.mksnap(d, 'snap1', 0o755)
+
+        cephfs.rmtree(d, should_cancel, suppress_errors=False)
+        # ensure the dir wasn't deleted
+        cephfs.stat(d)
+
+        # cleanup
+        cephfs.rmsnap(d, 'snap1')
+        cephfs.rmtree(d, should_cancel)
+        assert_raises(libcephfs.ObjectNotFound, cephfs.stat, d)
 
     def get_file_count(self, dir_path):
         '''
