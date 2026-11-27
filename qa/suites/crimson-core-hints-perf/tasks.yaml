@@ -1,0 +1,24 @@
+overrides:
+  install:
+    # to build fio, when the distro's has no rados engine
+    ceph:
+      extra_packages:
+        rpm:
+        - librados-devel
+        deb:
+        - librados-dev
+    extra_system_packages:
+      rpm:
+      - git
+      - gcc
+      - make
+      - zlib-devel
+      deb:
+      - git
+      - gcc
+      - make
+      - zlib1g-dev
+tasks:
+- ceph:
+    wait-for-scrub: false
+- crimson_core_hints_perf:

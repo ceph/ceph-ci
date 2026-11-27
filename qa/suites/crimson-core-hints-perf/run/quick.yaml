@@ -1,0 +1,9 @@
+# About 20 minutes of measurements: 5 object sizes x 3 workloads x hints
+# off/on, 20 s each (and 5 s of ramp), once. For checking the test itself.
+# A longer run: a yaml of its own here, e.g. runtime 120, ramp 10, repeat 2
+# (about 2.3 hours); schedule it with --filter.
+overrides:
+  crimson_core_hints_perf:
+    runtime: 20
+    ramp: 5
+    repeat: 1

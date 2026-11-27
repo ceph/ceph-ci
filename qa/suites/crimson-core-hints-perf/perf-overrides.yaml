@@ -1,0 +1,43 @@
+# The OSD and client settings of the measurements. Merged after
+# crimson_qa_overrides.yaml and optimized.yaml, it overrides their settings
+# that would skew the results.
+#
+# The OSDs listen on a port per reactor core (and hint the cores in their
+# replies) in all the runs. Do not set objecter_use_osd_core_hints here: the
+# crimson_core_hints_perf task sets it per run, in client configuration
+# files of its own.
+overrides:
+  ceph:
+    log-ignorelist:
+    - \(SLOW_OPS\)
+    - slow request
+    - \(POOL_
+    conf:
+      global:
+        ms cluster mode: crc
+        ms service mode: crc
+        ms client mode: crc
+        ms mon service mode: crc
+        ms mon cluster mode: crc
+        ms mon client mode: crc
+      osd:
+        crimson cpu num: 16
+        crimson osd core listeners: true
+        osd objectstore: seastore
+        seastore data device type: SSD
+        seastore data backend type: RANDOM_BLOCK
+        # crimson_qa_overrides.yaml's, back to the defaults
+        crimson osd obc lru size: 512
+        seastore cachepin size pershard: 2G
+        seastore max concurrent transactions: 128
+        debug ms: 0/0
+        debug osd: 0/0
+        debug monc: 0/0
+        debug seastore: 0/0
+      client:
+        # (a [client] setting wins over optimized.yaml's [global] ones. Spelled
+        # as in crimson_qa_overrides.yaml, to replace its value)
+        debug_objecter: 0/0
+        debug ms: 0/0
+        debug rados: 0/0
+        debug monc: 0/0
