@@ -241,6 +241,13 @@ void StrayManager::_purge_stray_purged(
     CDir *dir = dn->get_dir();
     auto pf = dir->project_fnode(mut);
     pf->version = dir->pre_dirty();
+    // A scatter gather that ran while this dirfrag was frozen, for a split
+    // or merge, took its stats into the inode and left the accounted copies
+    // as they were. Bring them in line before changing the stats, as
+    // predirty_journal_parents() does. Otherwise the next resync sets
+    // accounted = current and the inode never sees this change.
+    dir->resync_accounted_fragstat();
+    dir->resync_accounted_rstat();
     if (in->is_dir())
       pf->fragstat.nsubdirs--;
     else

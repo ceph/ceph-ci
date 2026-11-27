@@ -1690,3 +1690,212 @@ class TestStrayRenameRace(CephFSTestCase):
         self.assertGreater(splits, 0)
 
         self.mount_a.run_shell(["rm", "-rf", "shared"])
+
+
+class TestStrayDirfragStats(CephFSTestCase):
+    MDSS_REQUIRED = 3
+
+    # stray directories of rank 0 that the test fills
+    STRAYS = [4, 5, 6, 7]
+    # entries left in each of them, enough for a split, and entries purged before
+    KEEP = 30
+    DROP = 10
+
+    def _stray_tree(self, n):
+        return self.fs.rank_asok(['dump', 'tree', f'~mds0/stray{n}', '0'])[0]
+
+    def _num_strays(self):
+        return self.fs.rank_asok(['perf', 'dump', 'mds_cache', 'num_strays']
+                                 )['mds_cache']['num_strays']
+
+    def _open_and_unlink(self, path, count):
+        """
+        Open files in a new directory, unlink them and keep them open.
+        Return the process that holds them and the stray directory of
+        rank 0 they went to.
+        """
+        p = self.mount_a.open_n_background(path, count)
+        self.mount_a.wait_for_visible(f"{path}/file_{count - 1}")
+        ino = self.mount_a.path_to_ino(f"{path}/file_0")
+        self.mount_a.run_shell(["rm", "-rf", path])
+        stray_path = self.fs.rank_asok(['dump', 'inode', hex(ino)])['path']
+        self.assertTrue(stray_path.startswith("~mds0/stray"), stray_path)
+        return p, int(stray_path[len("~mds0/stray")])
+
+    def _mds_config(self, key, value):
+        """
+        Set an option for the MDS daemons and wait until rank 0 has it.
+        """
+        self.config_set('mds', key, value)
+        self.wait_until_true(
+            lambda: float(self.fs.rank_asok(['config', 'get', key])[key]) ==
+            float(value),
+            timeout=60, period=1)
+
+    def _osd_dispatch_delay(self, on):
+        # 0.1 and 0 are the defaults
+        for key, val in (('osd_debug_inject_dispatch_delay_duration',
+                          '1.0' if on else '0.1'),
+                         ('osd_debug_inject_dispatch_delay_probability',
+                          '1' if on else '0')):
+            self.run_ceph_cmd('tell', 'osd.*', 'config', 'set', key, val)
+
+    def test_purge_from_stale_stray_dirfrag(self):
+        """
+        That a stray directory's inode does not go on counting entries
+        that were purged while its dirfrags were stale.
+
+        A dirfrag is stale when a scatter gather ran while it was frozen:
+        the gather took its stats into the inode and could not update the
+        accounted copies. That happens to the new dirfrags of a stray
+        directory when the directory is split, another rank has a replica
+        of its inode (the nestlock is in mix) and the lock is nudged
+        before the new dirfrags are stored. A purge then changed the stats
+        of a stale dirfrag without bringing the accounted copies in line
+        first, and the next resync dropped the change. With
+        mds_verify_scatter the MDS asserts when the directory is merged
+        and used again.
+
+        The stats are pending and the nestlock is dirty after rank 0
+        replays purges from its journal, so the test fails rank 0 once.
+        """
+        self.config_set('mds', 'mds_verify_scatter', True)
+        self.config_set('mds', 'mds_bal_split_size', 20)
+        self.config_set('mds', 'mds_bal_merge_size', 5)
+        self.config_set('mds', 'mds_bal_split_bits', 3)
+        self.config_set('mds', 'mds_tick_interval', 0.25)
+        # nothing starts a log segment or nudges a scatterlock but the test
+        self.config_set('mds', 'mds_log_events_per_segment', 100000)
+        self.config_set('mds', 'mds_scatter_nudge_interval', 600)
+
+        self.fs.set_max_mds(2)
+        self.fs.wait_for_daemons()
+        self._mds_config('mds_scatter_nudge_interval', 600)
+
+        # An empty subtree goes back to the rank that has its inode, so
+        # there is a file in each directory that stays.
+        self.mount_a.run_shell_payload(
+            "mkdir r0 r1 && touch r0/keep r1/keep")
+        self.mount_a.setfattr("r0", "ceph.dir.pin", "0")
+        self.mount_a.setfattr("r1", "ceph.dir.pin", "1")
+        self._wait_subtrees([("/r1", 1)], rank=1, path="/r1")
+
+        # Unlinked inodes go to one stray directory until the next log
+        # segment starts. Start segments until that is the first directory
+        # to fill.
+        for _ in range(12):
+            p, cur = self._open_and_unlink("r0/probe", 1)
+            self.mount_a.kill_background(p)
+            if cur == self.STRAYS[0]:
+                break
+            self.fs.rank_tell(["flush", "journal"])
+        self.assertEqual(cur, self.STRAYS[0])
+
+        keep = {}
+        drop = {}
+        for n in self.STRAYS:
+            if n != self.STRAYS[0]:
+                self.fs.rank_tell(["flush", "journal"])
+            # A second link on rank 1: unlinking the primary link puts the
+            # inode in this stray directory and rank 1 comes for it, which
+            # leaves rank 1 with a replica of the stray directory.
+            self.mount_a.run_shell_payload(
+                f"touch r0/l{n} && ln r0/l{n} r1/l{n} && stat r1/l{n} && "
+                f"rm r0/l{n} && stat r1/l{n}")
+            keep[n], where = self._open_and_unlink(f"r0/keep{n}", self.KEEP)
+            self.assertEqual(where, n)
+            drop[n], where = self._open_and_unlink(f"r0/drop{n}", self.DROP)
+            self.assertEqual(where, n)
+            self.wait_until_true(
+                lambda: '1' in self._stray_tree(n)['auth_state']['replicas'],
+                timeout=60, period=2)
+
+        # Purges whose changes to the dirfrag stats are pending, and in
+        # the part of the journal that rank 0 replays.
+        for n in self.STRAYS:
+            self.mount_a.kill_background(drop[n])
+        self.wait_until_equal(self._num_strays,
+                              self.KEEP * len(self.STRAYS), timeout=120)
+
+        self.fs.rank_fail()
+        self.fs.wait_for_daemons()
+        gid = self.fs.get_rank()['gid']
+
+        def in_mix():
+            for n in self.STRAYS:
+                tree = self._stray_tree(n)
+                if tree.get('nestlock', {}).get('state') != 'mix' or \
+                   '1' not in tree['auth_state']['replicas']:
+                    return False
+            return True
+        self.wait_until_true(in_mix, timeout=60, period=2)
+        before = {n: self._stray_tree(n)['rstat']['version']
+                  for n in self.STRAYS}
+
+        # Split a stray directory, then let the tick nudge its nestlock
+        # while the new dirfrags are frozen. The OSDs answer slowly, which
+        # keeps them frozen until the test has seen it.
+        split = []
+
+        def is_split():
+            split[:] = [n for n in self.STRAYS
+                        if self._stray_tree(n)['dirfragtree']['splits']]
+            return len(split) > 0
+
+        frozen = None
+        self._osd_dispatch_delay(True)
+        try:
+            # the next journal event starts a segment, which splits the
+            # stray directory three ahead of the one in use
+            self._mds_config('mds_log_events_per_segment', 1)
+            self.mount_a.run_shell_payload(
+                "mkdir r0/trigger && rmdir r0/trigger")
+            self.wait_until_true(is_split, timeout=300, period=1)
+            self._mds_config('mds_log_events_per_segment', 100000)
+            n = split[0]
+            self._mds_config('mds_scatter_nudge_interval', 0)
+            end = time.time() + 120
+            while time.time() < end:
+                # one dump is one snapshot of the cache
+                tree = self._stray_tree(n)
+                if tree.get('nestlock', {}).get('state', 'mix') != 'mix' or \
+                   tree['rstat']['version'] > before[n]:
+                    frozen = len(tree['dirfrags']) > 1 and \
+                        all(f['is_frozen'] for f in tree['dirfrags'])
+                    break
+                time.sleep(0.1)
+            self._mds_config('mds_scatter_nudge_interval', 600)
+        finally:
+            self._osd_dispatch_delay(False)
+        log.info(f"stray{n} was split; the gather found its dirfrags "
+                 f"frozen: {frozen}")
+        self.wait_until_true(
+            lambda: self._stray_tree(n)['rstat']['version'] > before[n],
+            timeout=120, period=2)
+        self.wait_until_true(
+            lambda: not any(f['is_frozen']
+                            for f in self._stray_tree(n)['dirfrags']),
+            timeout=120, period=2)
+
+        # purges from the stale dirfrags
+        for i in self.STRAYS:
+            self.mount_a.kill_background(keep[i])
+        self.wait_until_equal(self._num_strays, 0, timeout=180)
+
+        # Each stray directory is merged when it is three ahead of the one
+        # in use, and used again three segments later.
+        for _ in range(30):
+            try:
+                self.fs.rank_tell(["flush", "journal"])
+                self.mount_a.run_shell_payload(
+                    "touch r0/again && rm r0/again")
+            except CommandFailedError:
+                break
+            if self.fs.get_rank()['gid'] != gid:
+                break
+        self.assertEqual(self.fs.get_rank()['gid'], gid,
+                         "rank 0 was replaced, see its log for the assert")
+
+        if not frozen:
+            self.skipTest("the scatter gather did not find the new dirfrags "
+                          "frozen, so nothing was tested")
