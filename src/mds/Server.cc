@@ -5431,7 +5431,6 @@ public:
 
     int snap_op = (in->snaprealm ? CEPH_SNAP_OP_UPDATE : CEPH_SNAP_OP_SPLIT);
 
-    in->mark_dirty_parent(mdr->ls, true);
     // apply
     mdr->apply();
 
