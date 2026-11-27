@@ -13,7 +13,7 @@ import pytest
 from tasks.crimson_core_hints_perf import (
     COLLECTOR, COMPARISON_COLUMNS, SUMMARY_COLUMNS, compare, fio_job,
     format_table, merge_fio, osd_deltas, parse_fio_output, parse_size,
-    percentile_from_bins, sum_client_counters, summarize)
+    percentile_from_bins, read_failures, sum_client_counters, summarize)
 
 
 def test_parse_size():
@@ -218,12 +218,31 @@ def test_collector(tmp_path):
     assert host['cpus'] >= 1
     log = tmp_path / 'osd.log'
     # the needle across the collector's read chunks is not tested here
-    log.write_text('x std::bad_alloc\nbad_alloc\n')
+    log.write_text('x std::bad_alloc\nbad_alloc\n'
+                   'osd - full-object read crc 1 != expected 2 on x\n')
     snap = json.loads(subprocess.check_output(
         [sys.executable, str(script), 'snap',
          json.dumps({'osd_logs': {'0': str(log),
                                   '1': str(tmp_path / 'missing.log')},
                      'client_glob': str(tmp_path / '*.asok')})]))
-    assert snap['bad_alloc'] == {'0': 2, '1': -1}
+    assert snap['logs'] == {'0': {'bad_alloc': 2, 'read_crc': 1},
+                            '1': {'bad_alloc': -1, 'read_crc': -1}}
     assert snap['clients'] == {}
     assert len(snap['tcp']) == 2
+
+
+def test_read_failures():
+    def snap(crc):
+        return {'osdhost': {'logs': {'0': {'read_crc': crc, 'bad_alloc': 0}}}}
+    # randrw 70% reads of 4k objects: at least 2867 bytes sent per op
+    row = {'rd_iops': 700, 'wr_iops': 300, 'osd_ops': 1000, 'tx_kb_op': 3.0}
+    assert read_failures(dict(row), snap(5), snap(5), 4096) is None
+    r = dict(row)
+    assert 'digest' in read_failures(r, snap(5), snap(9), 4096)
+    assert r['rd_crc_errs'] == 4
+    # no read errors logged, but (almost) no data sent: the reads failed
+    r = dict(row, tx_kb_op=0.3)
+    assert 'under half' in read_failures(r, snap(0), snap(0), 4096)
+    # writes only: nothing to check
+    r = dict(row, rd_iops=0, wr_iops=1000, tx_kb_op=0.1)
+    assert read_failures(r, snap(0), snap(0), 4096) is None

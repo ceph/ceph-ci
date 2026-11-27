@@ -34,7 +34,12 @@ It writes, under <archive>/core-hints/:
 
 Report only: the numbers never fail the test. It fails only if it cannot
 run: fio cannot be set up, a fio run fails or does no I/O, the
-measurements cannot be read, or an OSD runs out of memory.
+measurements cannot be read, or an OSD runs out of memory; or if the reads
+of a run failed. fio's rados engine counts failed reads as completed: the
+test checks the OSD logs for failed full-object reads, and that the OSDs
+sent the data the reads should return. A run whose reads failed is marked
+invalid (column 'valid'), the others still run, and the test fails at the
+end.
 
 Configuration (the defaults are a ~20 minute run; lists set in an override
 replace the defaults, but are appended to by other overrides):
@@ -111,6 +116,12 @@ REACTOR_KEYS = ['reactor_cpu_busy_ms', 'reactor_polls',
                 'reactor_tasks_processed', 'network_bytes_sent',
                 'network_bytes_received']
 
+# what the collector counts in the OSD logs: out of memory (the reactor's
+# share of it); a full-object read whose data does not match the object's
+# data digest (the read fails: EILSEQ)
+LOG_NEEDLES = {'bad_alloc': b'bad_alloc',
+               'read_crc': b'full-object read crc'}
+
 # The collector, run (as root) on every node. Prints a JSON object.
 #   collect.py host
 #   collect.py osds '{"<id>": "<asok>", ...}'
@@ -121,6 +132,7 @@ COLLECTOR = r'''
 import glob, json, os, socket, struct, sys, time
 
 REACTOR_KEYS = %(reactor_keys)s
+LOG_NEEDLES = %(log_needles)s
 
 
 def asok(path, cmd):
@@ -234,8 +246,9 @@ def snap(arg):
                 r["clients"][path] = d.get("objecter", {})
             except Exception as e:
                 r["clients"][path] = {"error": repr(e)}
-    r["bad_alloc"] = {osd: count_in_file(path, b"bad_alloc")
-                      for osd, path in arg.get("osd_logs", {}).items()}
+    r["logs"] = {osd: {k: count_in_file(path, needle)
+                       for k, needle in LOG_NEEDLES.items()}
+                 for osd, path in arg.get("osd_logs", {}).items()}
     return r
 
 
@@ -291,8 +304,9 @@ def osd_pid(osd):
                 argv = f.read().decode(errors="replace").split("\0")
         except OSError:
             continue
-        # (not the wrappers starting it: their argv[0] differs)
-        if not os.path.basename(argv[0]).startswith("ceph-osd"):
+        # (not the wrappers starting it: their argv[0] differs. ceph-osd:
+        # the alternative installed for Crimson; crimson-osd: run directly)
+        if not os.path.basename(argv[0]).startswith(("ceph-osd", "crimson-osd")):
             continue
         for i, a in enumerate(argv[:-1]):
             if a in ("-i", "--id") and argv[i + 1] == osd:
@@ -348,7 +362,7 @@ cmd = sys.argv[1]
 arg = json.loads(sys.argv[2]) if len(sys.argv) > 2 else {}
 out = {"host": host, "osds": osds, "snap": snap}[cmd]
 print(json.dumps(out(arg) if cmd != "host" else out()))
-''' % {'reactor_keys': repr(REACTOR_KEYS)}
+''' % {'reactor_keys': repr(REACTOR_KEYS), 'log_needles': repr(LOG_NEEDLES)}
 
 
 #
@@ -512,6 +526,33 @@ def _pct(a, b):
     return 100.0 * a / b if b else 0.0
 
 
+def log_counts(snapshot, key):
+    """{osd: count} of an OSD log needle (see LOG_NEEDLES) in a snapshot"""
+    return {osd: c.get(key, 0) for h in snapshot.values()
+            for osd, c in h.get('logs', {}).items()}
+
+
+def read_failures(row, s0, s1, object_bytes):
+    """why the reads of a run are not valid, or None. fio's rados engine
+    counts failed reads as completed: check the OSDs' read errors over the
+    window, and that the OSDs sent at least half the data the reads should
+    have returned."""
+    before = log_counts(s0, 'read_crc')
+    errors = sum(max(0, n - before.get(osd, 0))
+                 for osd, n in log_counts(s1, 'read_crc').items())
+    row['rd_crc_errs'] = errors
+    if errors:
+        return f'{errors} full-object reads failed their data digest check'
+    ops = row['rd_iops'] + row['wr_iops']
+    if row['rd_iops'] and row['osd_ops']:
+        expected = row['rd_iops'] / ops * object_bytes
+        sent = row['tx_kb_op'] * 1024
+        if sent < expected / 2:
+            return (f'the OSDs sent {sent:.0f} bytes per op, under half the '
+                    f'{expected:.0f} the reads should return')
+    return None
+
+
 def summarize(meta, fio, s0, s1, counters, osd_hosts, client_hosts):
     """a summary row (dict) of one run"""
     cores = osd_deltas(s0, s1)
@@ -586,6 +627,7 @@ SUMMARY_COLUMNS = [
     ('tasks_op', 'tasks/op', '{:.1f}'), ('polls_op', 'polls/op', '{:.1f}'),
     ('segs_op', 'segs/op', '{:.2f}'), ('tx_kb_op', 'tx_KB/op', '{:.1f}'),
     ('clnt_cores', 'clnt_cores', '{:.1f}'), ('clients', 'clients', '{}'),
+    ('rd_crc_errs', 'rd_crc_errs', '{}'), ('valid', 'valid', '{}'),
 ]
 
 
@@ -615,6 +657,7 @@ COMPARISON_COLUMNS = [
     ('cpu_op_delta', 'cpu/op_%', '{:+.1f}'),
     ('cpu_max', 'cpu_max_%', '{}'),
     ('hop', 'osd_hop_%', '{}'), ('core_send_on', 'core_send_%_on', '{:.1f}'),
+    ('valid', 'valid', '{}'),
 ]
 
 
@@ -644,6 +687,8 @@ def compare(rows):
             'cpu_max': pair('cpu_max_pct'),
             'hop': pair('osd_hop_pct', '{:.1f}'),
             'core_send_on': on['core_send_pct'],
+            'valid': ('yes' if off.get('valid', 'yes') == 'yes' and
+                      on.get('valid', 'yes') == 'yes' else 'no'),
         })
     return out
 
@@ -698,6 +743,8 @@ class CoreHintsBench(object):
         self.rows = []
         self.failures = []
         self.broken = False
+        # runs whose reads failed (see read_failures())
+        self.invalid = []
         self.params = {}
 
     #
@@ -956,7 +1003,7 @@ class CoreHintsBench(object):
             # the measured window: from just after the ramp to just before
             # the end, while the fio clients still run (to be sampled too)
             self._sleep_until(launched + c['ramp'] + 2)
-            s0 = self._snapshot()
+            s0 = self._snapshot(logs=True)
             self._sleep_until(launched + c['ramp'] + c['runtime'] - 3)
             s1 = self._snapshot(objecter=True, logs=True)
             ended = [f'client.{client}' for _, client, proc, _ in procs
@@ -969,8 +1016,7 @@ class CoreHintsBench(object):
             log.warning('core-hints: %s: fio ended before the end of the '
                         'window on %s: the OSD and client figures are not '
                         'reliable', tag, ', '.join(ended))
-        oom = {osd: n for h in s1.values()
-               for osd, n in h.get('bad_alloc', {}).items() if n}
+        oom = {osd: n for osd, n in log_counts(s1, 'bad_alloc').items() if n}
         if oom:
             # the OSD's connections keep failing: no later run is meaningful
             self.broken = True
@@ -987,6 +1033,12 @@ class CoreHintsBench(object):
         row['window_s'] = max(s1[h]['t'] - s0[h]['t'] for h in s1)
         row['window_skew_s'] = (max(s0[h]['t'] for h in s0) -
                                 min(s0[h]['t'] for h in s0))
+        reason = read_failures(row, s0, s1, parse_size(size))
+        row['valid'] = 'no' if reason else 'yes'
+        if reason:
+            row['invalid'] = reason
+            self.invalid.append(f'{tag}: {reason}')
+            log.error('core-hints: %s: the reads failed: %s', tag, reason)
         self._save(f'raw/{tag}.cores.tsv',
                    'osd\tshard\tlocal\tremote\tbusy_%\tbusy_ms\tpolls\t'
                    'tasks\tbytes_sent\tbytes_received\n' +
@@ -1034,7 +1086,8 @@ class CoreHintsBench(object):
         self._save('comparison.txt', cmp_text)
         self._save('comparison.tsv', cmp_tsv)
         self._save('results.json', {'params': self.params, 'rows': self.rows,
-                                    'failures': self.failures})
+                                    'failures': self.failures,
+                                    'invalid': self.invalid})
         return text, cmp_text
 
     def final_report(self):
@@ -1091,6 +1144,7 @@ def task(ctx, config):
             bench.final_report()
         finally:
             bench.cleanup()
-    if bench.failures:
-        raise BenchBroken('core-hints: failed runs: ' + '; '.join(bench.failures))
+    if bench.failures or bench.invalid:
+        raise BenchBroken('core-hints: failed runs: ' +
+                          '; '.join(bench.failures + bench.invalid))
     yield
