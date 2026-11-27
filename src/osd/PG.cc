@@ -1817,6 +1817,7 @@ bool PG::try_reserve_recovery_space(
       if (likely(primary_bytes >= local_bytes)) {
         std::ignore = osd->reserved_pg_bytes.fetch_add(primary_bytes - local_bytes);
       }
+      dout(10) << __func__ << " reserved_pg_bytes: " << osd->reserved_pg_bytes.load() << dendl;
     } else {
       unreserve_recovery_space();
     }
