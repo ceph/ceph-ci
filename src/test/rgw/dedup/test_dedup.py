@@ -25,6 +25,7 @@ from botocore.awsrequest import AWSRequest
 
 from . import(
     configfile,
+    setup as _load_config,
     get_config_zonegroup,
     get_config_zone,
     get_config_cluster,
@@ -1008,9 +1009,19 @@ def _s3_credentials(conn):
     return creds.access_key, creds.secret_key
 
 
+def _transfer_config_kwargs(config):
+    """TransferConfig doesn't survive pickling into spawned workers."""
+    # Add any other TransferConfig field the tests start setting here.
+    return {'multipart_threshold': config.multipart_threshold,
+            'multipart_chunksize': config.multipart_chunksize}
+
+
 #---------------------------------------------------------------------------
 def proc_upload(proc_id, num_procs, files, access_key, secret_key,
-                bucket_name, indices, config):
+                bucket_name, indices, config_kwargs):
+    # Reload config: spawned workers (py3.14 default) don't inherit it.
+    _load_config()
+    config = TransferConfig(**config_kwargs)
     conn = _make_s3_client(access_key, secret_key)
     count=0
     for (f, idx) in zip(files, indices):
@@ -1037,7 +1048,8 @@ def procs_upload_objects(files, conns, bucket_names, indices, config, check_obj_
         access_key, secret_key = _s3_credentials(conns[idx])
         p=Process(target=proc_upload,
                   args=(idx, num_procs, files, access_key, secret_key,
-                        bucket_names[idx], indices, config))
+                        bucket_names[idx], indices,
+                        _transfer_config_kwargs(config)))
         proc_list.append(p)
         proc_list[idx].start()
 
@@ -3935,7 +3947,10 @@ def test_cleanup():
 
 #---------------------------------------------------------------------------
 def proc_upload_identical(proc_id, num_procs, filename, access_key, secret_key,
-                          bucket_name, num_copies, config):
+                          bucket_name, num_copies, config_kwargs):
+    # See proc_upload(): reload config in case we were spawned, not forked.
+    _load_config()
+    config = TransferConfig(**config_kwargs)
     conn = _make_s3_client(access_key, secret_key)
     log.debug("Proc_ID=%d/%d::num_copies=%d", proc_id, num_procs, num_copies)
     for idx in range(num_copies):
@@ -3958,7 +3973,8 @@ def proc_parallel_upload_identical(files, conns, bucket_name, config):
         access_key, secret_key = _s3_credentials(conns[idx])
         p=Process(target=proc_upload_identical,
                   args=(idx, num_procs, filename, access_key, secret_key,
-                        bucket_name, num_copies, config))
+                        bucket_name, num_copies,
+                        _transfer_config_kwargs(config)))
         proc_list.append(p)
         proc_list[idx].start()
 
