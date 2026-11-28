@@ -1,0 +1,14 @@
+# About 1.7 hours of measurements: 4 object sizes x 3 workloads x hints
+# off/on, unlimited and then capped at half the slower mode's unlimited
+# IOPS, twice (alternating the mode order): 96 runs of 45 s (and 10 s of
+# ramp). 256k is left out: with 2 client nodes, reads of 16k and more are
+# capped by the clients' network links.
+# run/ holds alternatives: schedule one with --filter run/long (or
+# run/quick).
+overrides:
+  crimson_core_hints_perf:
+    sizes: [1k, 4k, 16k, 64k]
+    runtime: 45
+    ramp: 10
+    repeat: 2
+    rate_fractions: [0.5]

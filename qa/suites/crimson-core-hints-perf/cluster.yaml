@@ -1,9 +1,10 @@
-# 4 Crimson OSDs, each on a node of its own, and 2 client nodes (the first
+# 5 Crimson OSDs, each on a node of its own, and 2 client nodes (the first
 # also hosting the monitor and the manager)
 roles:
 - [osd.0]
 - [osd.1]
 - [osd.2]
 - [osd.3]
+- [osd.4]
 - [mon.a, mgr.x, client.0]
 - [client.1]

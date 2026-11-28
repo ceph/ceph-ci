@@ -56,12 +56,22 @@ replace the defaults, but are appended to by other overrides):
         runtime: 20                          # seconds per run
         ramp: 5                              # not measured
         repeat: 1                            # alternating the mode order
+        rate_fractions: []                   # e.g. [0.5]: see below
+        rate_process: poisson                # fio's, for the capped runs
         pool: corehints
         pg_num: 256
         pool_size: 3
         clients: [client.0, client.1]        # default: all the clients
         client_conf: {}                      # more [client.admin] settings
         fio_version: fio-3.38                # if fio must be built
+
+Rate-limited runs (rate_fractions): at saturation, the latencies mostly
+show where the ops in flight queue up. To compare the modes at the same
+load below it, each size and workload, after its two unlimited runs, runs
+again in both modes with fio capped (rate_iops, split evenly among all the
+fio jobs; randrw: by rwmixread) at each fraction of the lower of the two
+unlimited runs' total IOPS. Their rows have the load ('50%'), the
+unlimited ones 'max'.
 """
 import contextlib
 import json
@@ -91,6 +101,8 @@ DEFAULTS = {
     'runtime': 20,
     'ramp': 5,
     'repeat': 1,
+    'rate_fractions': [],
+    'rate_process': 'poisson',
     'pool': 'corehints',
     'pg_num': 256,
     'pool_size': 3,
@@ -425,6 +437,19 @@ def fio_job(conf, pool, name, rw, bs, numjobs, iodepth, nrfiles, extra=()):
     return '\n'.join(lines) + '\n'
 
 
+def rate_options(rw, target_iops, fio_jobs, rwmixread, process):
+    """the fio options capping <fio_jobs> jobs (over all the clients) at
+    <target_iops> in total. randrw: split by rwmixread (fio's rate_iops
+    caps reads and writes separately)."""
+    job_iops = -(-int(target_iops) // fio_jobs)
+    if rw == 'randrw':
+        rate = (f'{max(1, job_iops * rwmixread // 100)},'
+                f'{max(1, job_iops * (100 - rwmixread) // 100)}')
+    else:
+        rate = str(max(1, job_iops))
+    return [f'rate_iops={rate}', f'rate_process={process}']
+
+
 def parse_fio_output(text):
     """fio's JSON output (fio may print notes before it)"""
     start = text.find('{')
@@ -632,7 +657,8 @@ def summarize(meta, fio, s0, s1, counters, osd_hosts, client_hosts):
 # (key, header, format) of the summary columns
 SUMMARY_COLUMNS = [
     ('size', 'size', '{}'), ('workload', 'workload', '{}'),
-    ('mode', 'mode', '{}'), ('rep', 'rep', '{}'),
+    ('mode', 'mode', '{}'), ('load', 'load', '{}'), ('rep', 'rep', '{}'),
+    ('target_iops', 'target_iops', '{:.0f}'),
     ('rd_iops', 'rd_iops', '{:.0f}'), ('wr_iops', 'wr_iops', '{:.0f}'),
     ('rd_lat_us', 'rd_lat_us', '{:.0f}'), ('rd_p50_us', 'rd_p50_us', '{:.0f}'),
     ('rd_p99_us', 'rd_p99_us', '{:.0f}'),
@@ -672,7 +698,8 @@ def _delta_pct(off, on):
 
 
 COMPARISON_COLUMNS = [
-    ('size', 'size', '{}'), ('workload', 'workload', '{}'), ('rep', 'rep', '{}'),
+    ('size', 'size', '{}'), ('workload', 'workload', '{}'),
+    ('load', 'load', '{}'), ('rep', 'rep', '{}'),
     ('iops_off', 'iops_off', '{:.0f}'), ('iops_on', 'iops_on', '{:.0f}'),
     ('iops_delta', 'iops_%', '{:+.1f}'),
     ('rd_p50', 'rd_p50_us', '{}'), ('rd_p99', 'rd_p99_us', '{}'),
@@ -685,13 +712,14 @@ COMPARISON_COLUMNS = [
 
 
 def compare(rows):
-    """hints on vs off, per (size, workload, rep): one row each where both
-    modes ran. Pairs of values are 'off->on'."""
+    """hints on vs off, per (size, workload, load, rep): one row each where
+    both modes ran. Pairs of values are 'off->on'."""
     by_key = {}
     for r in rows:
-        by_key.setdefault((r['size'], r['workload'], r['rep']), {})[r['mode']] = r
+        key = (r['size'], r['workload'], r.get('load', 'max'), r['rep'])
+        by_key.setdefault(key, {})[r['mode']] = r
     out = []
-    for (size, workload, rep), m in by_key.items():
+    for (size, workload, load, rep), m in by_key.items():
         off, on = m.get('off'), m.get('on')
         if not off or not on:
             continue
@@ -701,7 +729,7 @@ def compare(rows):
         iops_off = off['rd_iops'] + off['wr_iops']
         iops_on = on['rd_iops'] + on['wr_iops']
         out.append({
-            'size': size, 'workload': workload, 'rep': rep,
+            'size': size, 'workload': workload, 'load': load, 'rep': rep,
             'iops_off': iops_off, 'iops_on': iops_on,
             'iops_delta': _delta_pct(iops_off, iops_on),
             'rd_p50': pair('rd_p50_us'), 'rd_p99': pair('rd_p99_us'),
@@ -1011,9 +1039,13 @@ class CoreHintsBench(object):
         if delay > 0:
             time.sleep(delay)
 
-    def run_one(self, size, rw, mode, rep):
+    def run_one(self, size, rw, mode, rep, fraction=None, target_iops=None):
+        """one run: unlimited, or capped at <target_iops> (<fraction> of
+        the unlimited IOPS). Returns its summary row."""
         c = self.config
-        tag = f'{size}-{rw}-{mode}-{rep}'
+        load = 'max' if fraction is None else f'{100 * fraction:g}%'
+        tag = (f'{size}-{rw}-{mode}-{rep}' if fraction is None else
+               f'{size}-{rw}-{mode}-r{100 * fraction:g}-{rep}')
         log.info('core-hints: run %s', tag)
         for name in self.client_hosts:
             self.nodes[name]['remote'].run(
@@ -1024,6 +1056,11 @@ class CoreHintsBench(object):
                  f"ramp_time={c['ramp']}", 'touch_objects=0']
         if rw == 'randrw':
             extra.append(f"rwmixread={c['rwmixread']}")
+        if target_iops is not None:
+            fio_jobs = c['numjobs'] * sum(len(self.nodes[n]['clients'])
+                                          for n in self.client_hosts)
+            extra += rate_options(rw, target_iops, fio_jobs, c['rwmixread'],
+                                  c['rate_process'])
         launched = time.time()
         procs = self._fio(tag, size, rw, mode, extra,
                           c['ramp'] + c['runtime'] + c['fio_grace'])
@@ -1055,7 +1092,8 @@ class CoreHintsBench(object):
             log.warning('core-hints: %s: read the counters of %d fio '
                         'clients, failed on %d', tag, counters['clients'],
                         counters['errors'])
-        meta = {'size': size, 'workload': rw, 'mode': mode, 'rep': rep}
+        meta = {'size': size, 'workload': rw, 'mode': mode, 'load': load,
+                'rep': rep, 'target_iops': target_iops}
         row, cores = summarize(meta, merge_fio(outputs), s0, s1, counters,
                                self.osd_hosts, self.client_hosts)
         row['window_s'] = max(s1[h]['t'] - s0[h]['t'] for h in s1)
@@ -1076,6 +1114,7 @@ class CoreHintsBench(object):
         self.rows.append(row)
         text, _ = format_table([row], SUMMARY_COLUMNS)
         log.info('core-hints: %s:\n%s', tag, text)
+        return row
 
     def run(self):
         c = self.config
@@ -1092,13 +1131,29 @@ class CoreHintsBench(object):
                 modes.reverse()
             for size in c['sizes']:
                 for rw in c['workloads']:
-                    for mode in modes:
+                    # unlimited, then capped at fractions of the IOPS of
+                    # the slower mode
+                    runs = [(mode, None) for mode in modes]
+                    runs += [(mode, f) for f in c['rate_fractions']
+                             for mode in modes]
+                    unlimited = {}
+                    for mode, fraction in runs:
+                        target = None
+                        if fraction is not None:
+                            if len(unlimited) < len(modes):
+                                continue   # an unlimited run failed
+                            target = fraction * min(unlimited.values())
                         try:
-                            self.run_one(size, rw, mode, rep)
+                            row = self.run_one(size, rw, mode, rep,
+                                               fraction, target)
+                            if fraction is None and row['valid'] == 'yes':
+                                unlimited[mode] = row['rd_iops'] + row['wr_iops']
                         except (BenchBroken, CommandFailedError) as e:
-                            log.error('core-hints: %s-%s-%s-%s failed: %s',
-                                      size, rw, mode, rep, e)
-                            self.failures.append(f'{size}-{rw}-{mode}-{rep}: {e}')
+                            log.error('core-hints: %s-%s-%s-%s (%s) failed: %s',
+                                      size, rw, mode, rep, fraction or 'max', e)
+                            self.failures.append(
+                                f'{size}-{rw}-{mode}-{rep} '
+                                f'({fraction or "max"}): {e}')
                             if (self.broken or
                                     len(self.failures) >= c['max_failed_runs']):
                                 return

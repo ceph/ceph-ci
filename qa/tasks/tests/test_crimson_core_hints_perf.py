@@ -13,7 +13,8 @@ import pytest
 from tasks.crimson_core_hints_perf import (
     COLLECTOR, COMPARISON_COLUMNS, SUMMARY_COLUMNS, compare, fio_job,
     format_table, merge_fio, osd_deltas, parse_fio_output, parse_size,
-    percentile_from_bins, read_failures, sum_client_counters, summarize)
+    percentile_from_bins, rate_options, read_failures, sum_client_counters,
+    summarize)
 
 
 def test_parse_size():
@@ -259,3 +260,31 @@ def test_collector_osds(tmp_path):
     assert osds['99']['pid'] is None
     assert osds['99']['reactors'] == {}
     assert osds['99']['crimson_cpu_set'].startswith('error')
+
+
+def test_rate_options():
+    # 1000 IOPS over 16 jobs: 63 each (rounded up)
+    assert rate_options('randread', 1000, 16, 70, 'poisson') == \
+        ['rate_iops=63', 'rate_process=poisson']
+    # randrw: reads and writes capped separately, 70/30
+    assert rate_options('randrw', 1000, 10, 70, 'linear') == \
+        ['rate_iops=70,30', 'rate_process=linear']
+    # never 0 (no cap at all, for fio)
+    assert rate_options('randrw', 5, 16, 70, 'poisson')[0] == 'rate_iops=1,1'
+
+
+def test_compare_by_load():
+    def row(mode, load, iops):
+        return {'size': '4k', 'workload': 'randread', 'mode': mode,
+                'load': load, 'rep': 1, 'rd_iops': iops, 'wr_iops': 0,
+                'rd_p50_us': 100, 'rd_p99_us': 400, 'wr_p50_us': 0,
+                'wr_p99_us': 0, 'cpu_us_op': 20.0, 'cpu_max_pct': 50,
+                'osd_hop_pct': 90.0, 'core_send_pct': 99.0}
+    rows = [row('off', 'max', 1000), row('on', 'max', 1100),
+            row('off', '50%', 500), row('on', '50%', 500)]
+    out = {c['load']: c for c in compare(rows)}
+    assert set(out) == {'max', '50%'}
+    assert out['max']['iops_delta'] == pytest.approx(10.0)
+    assert out['50%']['iops_delta'] == pytest.approx(0.0)
+    text, _ = format_table(list(out.values()), COMPARISON_COLUMNS)
+    assert '50%' in text
