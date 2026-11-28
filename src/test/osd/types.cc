@@ -19,6 +19,7 @@
 #include "include/types.h"
 #include "osd/osd_types.h"
 #include "osd/OSDMap.h"
+#include "common/ceph_releases.h"
 #include "crush/crush.h"
 #include "gtest/gtest.h"
 #include "include/coredumpctl.h"
@@ -209,6 +210,46 @@ TEST_F(PgPoolStretchEncodingTest, OlderFeaturesEncodeBeforeVersion35) {
   EXPECT_EQ(34u, encoded_struct_v(make_stretch_pool(2, 2, 1), older_features));
   EXPECT_EQ(32u, encoded_struct_v(make_stretch_pool(2, 2, 1),
                                   older_features & ~CEPH_FEATURE_SERVER_UMBRELLA));
+}
+
+// Test a client of an earlier release that has OSD_STRETCH_ZONES, such as a
+// kernel that can follow a pool migration, gets the full format, and one
+// without the bit gets its release's
+TEST_F(PgPoolStretchEncodingTest, EarlierReleaseWithTheBitEncodesVersion35) {
+  // an umbrella client: everything but vampire's bits
+  const uint64_t umbrella = CEPH_FEATURES_ALL & ~CEPH_FEATURE_SERVER_VAMPIRE &
+    ~CEPH_FEATURE_OSD_STRETCH_ZONES;
+  ASSERT_FALSE(HAVE_FEATURE(umbrella, OSD_STRETCH_ZONES));
+  ASSERT_FALSE(HAVE_FEATURE(umbrella, SERVER_VAMPIRE));
+  EXPECT_EQ(33u, encoded_struct_v(make_stretch_pool(2, 2, 1), umbrella));
+  const uint64_t with_bit = umbrella | CEPH_FEATUREMASK_OSD_STRETCH_ZONES;
+  EXPECT_EQ(35u, encoded_struct_v(make_stretch_pool(2, 2, 1), with_bit));
+  // a kernel of the Nautilus era that gains the bit (with its incarnation
+  // bits, Octopus's among them) and no release bit after it
+  const uint64_t nautilus = umbrella & ~CEPH_FEATURE_SERVER_OCTOPUS &
+    ~CEPH_FEATURE_SERVER_PACIFIC & ~CEPH_FEATURE_SERVER_QUINCY &
+    ~CEPH_FEATURE_SERVER_REEF & ~CEPH_FEATURE_SERVER_SQUID &
+    ~CEPH_FEATURE_SERVER_TENTACLE & ~CEPH_FEATURE_SERVER_UMBRELLA;
+  EXPECT_GT(33u, encoded_struct_v(make_stretch_pool(2, 2, 1), nautilus));
+  const uint64_t kernel = nautilus | CEPH_FEATUREMASK_OSD_STRETCH_ZONES;
+  EXPECT_EQ(35u, encoded_struct_v(make_stretch_pool(2, 2, 1), kernel));
+  const pg_pool_t k = round_trip(make_stretch_pool(2, 2, 1), kernel);
+  EXPECT_EQ(2u, k.get_num_zones());
+  EXPECT_EQ(2u, k.get_replica());
+  // and it is told that the pool takes direct reads, which earlier formats
+  // hide from clients of earlier releases
+  pg_pool_t direct = make_stretch_pool(2, 2, 1);
+  direct.set_flag(pg_pool_t::FLAG_CLIENT_SPLIT_READS);
+  EXPECT_TRUE(round_trip(direct, kernel).has_flag(pg_pool_t::FLAG_CLIENT_SPLIT_READS));
+  EXPECT_FALSE(round_trip(direct, nautilus).has_flag(pg_pool_t::FLAG_CLIENT_SPLIT_READS));
+  pg_pool_t in = make_stretch_pool(2, 2, 1);
+  in.migration_src = 4;
+  in.migration_root = 4;
+  const pg_pool_t out = round_trip(in, with_bit);
+  EXPECT_EQ(2u, out.get_num_zones());
+  EXPECT_EQ(2u, out.get_replica());
+  EXPECT_EQ(in.migration_src, out.migration_src);
+  EXPECT_EQ(in.migration_root, out.migration_root);
 }
 
 // Test a peer without OSD_STRETCH_ZONES keeps a pool's migration

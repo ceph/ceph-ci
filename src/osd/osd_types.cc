@@ -2238,16 +2238,20 @@ void pg_pool_t::encode(ceph::buffer::list& bl, uint64_t features) const
   uint8_t v = 35;
   // NOTE: any new encoding dependencies must be reflected by
   // SIGNIFICANT_FEATURES
+  // OSD_STRETCH_ZONES (POOL_MIGRATION) promises the whole current format:
+  // a peer that has it reads the migration fields and the zones whatever
+  // release it is, as a kernel client of an earlier release does. Without
+  // the bit the format steps down by release.
   if (!HAVE_SIGNIFICANT_FEATURE(features, OSD_STRETCH_ZONES)) {
     v = 34;
+    if (!HAVE_SIGNIFICANT_FEATURE(features, SERVER_VAMPIRE)) {
+      v = 33;
+    }
+    if (!HAVE_SIGNIFICANT_FEATURE(features, SERVER_UMBRELLA)) {
+      v = 32;
+    }
   }
-  if (!HAVE_SIGNIFICANT_FEATURE(features, SERVER_VAMPIRE)) {
-    v = 33;
-  }
-  if (!HAVE_SIGNIFICANT_FEATURE(features, SERVER_UMBRELLA)) {
-    v = 32;
-  }
-  if (!HAVE_SIGNIFICANT_FEATURE(features, SERVER_TENTACLE)) {
+  if (v < 33 && !HAVE_SIGNIFICANT_FEATURE(features, SERVER_TENTACLE)) {
     if (!HAVE_SIGNIFICANT_FEATURE(features, NEW_OSDOP_ENCODING)) {
       // this was the first post-hammer thing we added; if it's missing, encode
       // like hammer.

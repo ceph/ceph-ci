@@ -3622,7 +3622,14 @@ bool OSDMap::primary_changed_broken(
 uint64_t OSDMap::get_encoding_features() const
 {
   uint64_t f = SIGNIFICANT_FEATURES;
-  if (!stretch_zones()) {
+  // The bit also carries a pool's migration fields and the current EC
+  // layout, so it stays once clients that can follow a migration are
+  // required and every up OSD reads the format, which a backport's OSDs
+  // do at their own release. A client's map is encoded with no more than
+  // this.
+  if (!stretch_zones() &&
+      !(test_flag(CEPH_OSDMAP_REQUIRE_POOL_MIGRATION) &&
+        HAVE_FEATURE(get_up_osd_features(), OSD_STRETCH_ZONES))) {
     f &= ~CEPH_FEATURE_OSD_STRETCH_ZONES;
   }
   if (require_osd_release < ceph_release_t::vampire) {

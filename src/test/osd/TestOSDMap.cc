@@ -541,6 +541,76 @@ TEST_F(OSDMapTest, PoolMigrationFeatures) {
   // Luminous to Nautilus send bit 54 for OSD_HITSET_GMT
   uint64_t nautilus = CEPH_FEATUREMASK_SERVER_NAUTILUS | (1ull << 54);
   ASSERT_NE(needed, nautilus & needed);
+
+  // A client's map is encoded with its features and the map's own: with no
+  // pool over zones the bit was dropped, and with it a pool's migration
+  // fields; once migration clients are required and the OSDs are vampire,
+  // the map keeps the bit for a client of an earlier release that has it
+  OSDMap plain;
+  uuid_d fsid;
+  plain.build_simple(g_ceph_context, 1, fsid, 4);
+  {
+    // as an Umbrella-based cluster with these OSDs has it: no pool over
+    // zones yet, its OSDs up and all reading the format
+    OSDMap::Incremental inc(plain.get_epoch() + 1);
+    inc.new_flags = plain.get_flags() & ~CEPH_OSDMAP_STRETCH_ZONES;
+    inc.new_require_osd_release = ceph_release_t::umbrella;
+    entity_addrvec_t addrs;
+    addrs.v.push_back(entity_addr_t());
+    for (int i = 0; i < 4; ++i) {
+      addrs.v[0].nonce = i;
+      inc.new_state[i] = CEPH_OSD_EXISTS | CEPH_OSD_NEW;
+      inc.new_up_client[i] = addrs;
+      inc.new_up_cluster[i] = addrs;
+      inc.new_hb_back_up[i] = addrs;
+      inc.new_hb_front_up[i] = addrs;
+      inc.new_weight[i] = CEPH_OSD_IN;
+      inc.new_uuid[i] = uuid_d();
+      inc.new_xinfo[i].features = CEPH_FEATURES_ALL;
+    }
+    plain.apply_incremental(inc);
+  }
+  ASSERT_FALSE(plain.stretch_zones());
+  ASSERT_TRUE(HAVE_FEATURE(plain.get_up_osd_features(), OSD_STRETCH_ZONES));
+  ASSERT_FALSE(HAVE_FEATURE(plain.get_encoding_features(), OSD_STRETCH_ZONES));
+  {
+    OSDMap::Incremental inc(plain.get_epoch() + 1);
+    inc.new_flags = plain.get_flags() | CEPH_OSDMAP_REQUIRE_POOL_MIGRATION;
+    plain.apply_incremental(inc);
+  }
+  ASSERT_TRUE(HAVE_FEATURE(plain.get_encoding_features(), OSD_STRETCH_ZONES));
+  {
+    // a kernel of the Nautilus era that has the bit, and the bit alone
+    const uint64_t kernel =
+      (CEPH_FEATURES_ALL & ~CEPH_FEATURE_SERVER_OCTOPUS &
+       ~CEPH_FEATURE_SERVER_PACIFIC & ~CEPH_FEATURE_SERVER_QUINCY &
+       ~CEPH_FEATURE_SERVER_REEF & ~CEPH_FEATURE_SERVER_SQUID &
+       ~CEPH_FEATURE_SERVER_TENTACLE & ~CEPH_FEATURE_SERVER_UMBRELLA &
+       ~CEPH_FEATURE_SERVER_VAMPIRE) | CEPH_FEATUREMASK_OSD_STRETCH_ZONES;
+    pg_pool_t p;
+    p.type = pg_pool_t::TYPE_REPLICATED;
+    p.size = 3;
+    p.set_pg_num(8);
+    p.set_pgp_num(8);
+    p.migration_src = 7;
+    p.migration_root = 7;
+    bufferlist bl;
+    p.encode(bl, kernel & plain.get_encoding_features());
+    EXPECT_EQ(35u, static_cast<uint8_t>(bl[0]));
+    auto q = bl.cbegin();
+    pg_pool_t out;
+    out.decode(q);
+    EXPECT_EQ(p.migration_src, out.migration_src);
+  }
+  // but not while an up OSD does not read the format
+  {
+    OSDMap::Incremental inc(plain.get_epoch() + 1);
+    inc.new_xinfo[3] = plain.get_xinfo(3);
+    inc.new_xinfo[3].features = CEPH_FEATURES_ALL & ~CEPH_FEATURE_OSD_STRETCH_ZONES;
+    plain.apply_incremental(inc);
+  }
+  ASSERT_FALSE(HAVE_FEATURE(plain.get_up_osd_features(), OSD_STRETCH_ZONES));
+  ASSERT_FALSE(HAVE_FEATURE(plain.get_encoding_features(), OSD_STRETCH_ZONES));
 }
 
 TEST_F(OSDMapTest, MapPG) {
@@ -4098,8 +4168,11 @@ TEST_F(OSDMapTest, PoolRawUsedRateCountsZones) {
 // that commits the upgrade gives a pool of global stretch mode its zones.
 TEST_F(OSDMapTest, LegacyStretchPoolDecode) {
   set_up_map(6);
+  // an older monitor has neither the release nor the zones bit
   const uint64_t older_features =
-    (CEPH_FEATURES_ALL & ~CEPH_FEATURE_SERVER_UMBRELLA) | CEPH_FEATURE_RESERVED;
+    (CEPH_FEATURES_ALL & ~CEPH_FEATURE_SERVER_UMBRELLA &
+     ~CEPH_FEATURE_SERVER_VAMPIRE & ~CEPH_FEATURE_OSD_STRETCH_ZONES) |
+    CEPH_FEATURE_RESERVED;
   for (bool stretch_mode : {false, true}) {
     SCOPED_TRACE(stretch_mode ? "global stretch mode" : "individual stretch pool");
     OSDMap m;

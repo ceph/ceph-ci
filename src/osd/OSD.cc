@@ -7771,9 +7771,16 @@ void OSD::dispatch_session_waiting(const ceph::ref_t<Session>& session, OSDMapRe
       pgid = m->get_spg();
       //Pre-tentacle clients encode the shard_id_t incorrectly for optimized EC
       //pools with pg_temp set, and later ones without OSD_STRETCH_ZONES for
-      //such pools over zones. Correct the mistake here.
+      //such pools over zones. Correct the mistake here. A client of an
+      //earlier release with OSD_STRETCH_ZONES computes the shard the current
+      //way once its map carries the current pool format, which the map's
+      //encoding features say.
       const auto& con = m->get_connection();
-      if (!con->has_features(CEPH_FEATUREMASK_SERVER_TENTACLE)
+      const bool current_format =
+        con->has_features(CEPH_FEATUREMASK_SERVER_TENTACLE) ||
+        (con->has_features(CEPH_FEATUREMASK_OSD_STRETCH_ZONES) &&
+         HAVE_FEATURE(osdmap->get_encoding_features(), OSD_STRETCH_ZONES));
+      if (!current_format
           ? !osdmap->undo_pre_tentacle_primaryfirst(&pgid)
           : (con->get_peer_type() == CEPH_ENTITY_TYPE_CLIENT &&
              !con->has_features(CEPH_FEATUREMASK_OSD_STRETCH_ZONES) &&
