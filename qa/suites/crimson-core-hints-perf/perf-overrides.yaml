@@ -26,6 +26,12 @@ overrides:
         osd objectstore: seastore
         seastore data device type: SSD
         seastore data backend type: RANDOM_BLOCK
+        # the block file seastore creates on the OSD's scratch device. Each
+        # reactor gets an even share of it, including its own journal
+        # (seastore_cbjournal_size: 5G): with the default 50G, a share of
+        # 50G/16 leaves no space for data, and mkfs fails ("eagain
+        # impossible"). 400G: 25G per reactor
+        seastore device size: 400G
         # crimson_qa_overrides.yaml's, back to the defaults
         crimson osd obc lru size: 512
         seastore cachepin size pershard: 2G
