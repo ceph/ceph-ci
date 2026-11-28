@@ -288,3 +288,20 @@ def test_compare_by_load():
     assert out['50%']['iops_delta'] == pytest.approx(0.0)
     text, _ = format_table(list(out.values()), COMPARISON_COLUMNS)
     assert '50%' in text
+
+
+def test_compare_modes_vs_off():
+    def row(mode, iops, to_main=0):
+        return {'size': '4k', 'workload': 'randrw', 'mode': mode, 'load': 'max',
+                'rep': 1, 'rd_iops': iops, 'wr_iops': 0, 'rd_p50_us': 100,
+                'rd_p99_us': 400, 'wr_p50_us': 0, 'wr_p99_us': 0,
+                'cpu_us_op': 20.0, 'cpu_max_pct': 50, 'osd_hop_pct': 90.0,
+                'core_send_pct': 99.0, 'to_main': to_main}
+    out = compare([row('off', 1000), row('on', 1100), row('unhint', 1200, 7)])
+    by_mode = {c['mode']: c for c in out}
+    assert set(by_mode) == {'on', 'unhint'}
+    assert by_mode['on']['iops_delta'] == pytest.approx(10.0)
+    assert by_mode['unhint']['iops_delta'] == pytest.approx(20.0)
+    assert by_mode['unhint']['to_main'] == 7
+    text, _ = format_table(out, COMPARISON_COLUMNS)
+    assert 'vs_off' in text.splitlines()[0]

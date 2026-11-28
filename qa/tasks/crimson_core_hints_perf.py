@@ -49,7 +49,7 @@ replace the defaults, but are appended to by other overrides):
         sizes: [1k, 4k, 16k, 64k, 256k]     # object = I/O size
         workloads: [randread, randwrite, randrw]
         rwmixread: 70                        # randrw: % reads
-        modes: [off, on]                     # objecter_use_osd_core_hints
+        modes: ['off', 'on']                 # and 'unhint': see below
         numjobs: 8                           # fio jobs per client
         iodepth: 16                          # per job
         objects_per_job: 256
@@ -58,12 +58,23 @@ replace the defaults, but are appended to by other overrides):
         repeat: 1                            # alternating the mode order
         rate_fractions: []                   # e.g. [0.5]: see below
         rate_process: poisson                # fio's, for the capped runs
+        unhint_conf: {}                      # more OSD settings for unhint
         pool: corehints
         pg_num: 256
         pool_size: 3
         clients: [client.0, client.1]        # default: all the clients
         client_conf: {}                      # more [client.admin] settings
         fio_version: fio-3.38                # if fio must be built
+
+Modes: 'off' and 'on' set the clients' objecter_use_osd_core_hints.
+'unhint' is 'on', with the OSDs' automatic un-hinting enabled for the run
+(crimson_osd_core_hint_withhold, set with 'ceph config set osd', and the
+settings in unhint_conf, e.g. crimson_osd_core_hint_withhold_busy): a core
+staying busy sends its clients back to the OSD's main connection. Its
+'to_main' column counts the PGs the clients moved back from a core
+connection that way (a PG whose core was withheld before the PG's first
+hint never leaves the main connection, and is not counted: 'core_send_%'
+shows the overall effect). Every mode is compared with 'off'.
 
 Rate-limited runs (rate_fractions): at saturation, the latencies mostly
 show where the ops in flight queue up. To compare the modes at the same
@@ -103,6 +114,7 @@ DEFAULTS = {
     'repeat': 1,
     'rate_fractions': [],
     'rate_process': 'poisson',
+    'unhint_conf': {},
     'pool': 'corehints',
     'pg_num': 256,
     'pool_size': 3,
@@ -120,7 +132,7 @@ CLIENT_COUNTERS = [
     'op_send', 'op_send_core', 'op_send_switch_pending', 'core_switch_hold',
     'core_switch_hold_expired', 'op_switch_held', 'op_unanswered',
     'op_unanswered_forgotten', 'op_unanswered_answered', 'op_unanswered_reset',
-    'core_switch_delayed_unanswered',
+    'core_switch_delayed_unanswered', 'core_hint_to_main',
 ]
 
 # per reactor, in this order (see collect.py: REACTOR_KEYS)
@@ -251,6 +263,13 @@ def snap(arg):
          "clk_tck": os.sysconf("SC_CLK_TCK"), "osds": {}, "clients": {}}
     for osd, path in arg.get("osds", {}).items():
         r["osds"][osd] = osd_snapshot(path)
+        try:
+            r["osds"][osd]["withhold"] = asok(
+                path, {"prefix": "config get",
+                       "var": "crimson_osd_core_hint_withhold"}).get(
+                           "crimson_osd_core_hint_withhold")
+        except Exception as e:
+            r["osds"][osd]["withhold"] = "error: %%r" %% e
     if arg.get("client_glob"):
         for path in sorted(glob.glob(arg["client_glob"])):
             try:
@@ -651,6 +670,7 @@ def summarize(meta, fio, s0, s1, counters, osd_hosts, client_hosts):
     else:
         row['sw_delay_ms'] = '-'
     row['unans'] = f"{c['op_unanswered']}/{c['op_unanswered_forgotten']}"
+    row['to_main'] = c['core_hint_to_main']
     return row, cores
 
 
@@ -670,6 +690,7 @@ SUMMARY_COLUMNS = [
     ('core_send_pct', 'core_send_%', '{:.1f}'),
     ('pend_pct', 'pend_%', '{:.1f}'), ('holds', 'holds/exp', '{}'),
     ('sw_delay_ms', 'sw_delay_ms', '{}'), ('unans', 'unans/forg', '{}'),
+    ('to_main', 'to_main', '{}'),
     ('cpu_avg_pct', 'cpu_avg_%', '{:.1f}'),
     ('cpu_max_pct', 'cpu_max_%', '{:.1f}'),
     ('cpu_us_op', 'cpu_us/op', '{:.1f}'),
@@ -699,49 +720,57 @@ def _delta_pct(off, on):
 
 COMPARISON_COLUMNS = [
     ('size', 'size', '{}'), ('workload', 'workload', '{}'),
-    ('load', 'load', '{}'), ('rep', 'rep', '{}'),
-    ('iops_off', 'iops_off', '{:.0f}'), ('iops_on', 'iops_on', '{:.0f}'),
+    ('load', 'load', '{}'), ('rep', 'rep', '{}'), ('mode', 'vs_off', '{}'),
+    ('iops_off', 'iops_off', '{:.0f}'), ('iops_on', 'iops_mode', '{:.0f}'),
     ('iops_delta', 'iops_%', '{:+.1f}'),
     ('rd_p50', 'rd_p50_us', '{}'), ('rd_p99', 'rd_p99_us', '{}'),
     ('wr_p50', 'wr_p50_us', '{}'), ('wr_p99', 'wr_p99_us', '{}'),
     ('cpu_op_delta', 'cpu/op_%', '{:+.1f}'),
     ('cpu_max', 'cpu_max_%', '{}'),
-    ('hop', 'osd_hop_%', '{}'), ('core_send_on', 'core_send_%_on', '{:.1f}'),
-    ('valid', 'valid', '{}'),
+    ('hop', 'osd_hop_%', '{}'), ('core_send_on', 'core_send_%', '{:.1f}'),
+    ('to_main', 'to_main', '{}'), ('valid', 'valid', '{}'),
 ]
 
 
 def compare(rows):
-    """hints on vs off, per (size, workload, load, rep): one row each where
-    both modes ran. Pairs of values are 'off->on'."""
+    """every mode vs off ('on', 'unhint'), per (size, workload, load,
+    rep): one row each where both ran. Pairs of values are 'off->mode'."""
     by_key = {}
     for r in rows:
         key = (r['size'], r['workload'], r.get('load', 'max'), r['rep'])
         by_key.setdefault(key, {})[r['mode']] = r
     out = []
     for (size, workload, load, rep), m in by_key.items():
-        off, on = m.get('off'), m.get('on')
-        if not off or not on:
+        off = m.get('off')
+        if not off:
             continue
-
-        def pair(key, fmt='{:.0f}'):
-            return f"{fmt.format(off[key])}->{fmt.format(on[key])}"
-        iops_off = off['rd_iops'] + off['wr_iops']
-        iops_on = on['rd_iops'] + on['wr_iops']
-        out.append({
-            'size': size, 'workload': workload, 'load': load, 'rep': rep,
-            'iops_off': iops_off, 'iops_on': iops_on,
-            'iops_delta': _delta_pct(iops_off, iops_on),
-            'rd_p50': pair('rd_p50_us'), 'rd_p99': pair('rd_p99_us'),
-            'wr_p50': pair('wr_p50_us'), 'wr_p99': pair('wr_p99_us'),
-            'cpu_op_delta': _delta_pct(off['cpu_us_op'], on['cpu_us_op']),
-            'cpu_max': pair('cpu_max_pct'),
-            'hop': pair('osd_hop_pct', '{:.1f}'),
-            'core_send_on': on['core_send_pct'],
-            'valid': ('yes' if off.get('valid', 'yes') == 'yes' and
-                      on.get('valid', 'yes') == 'yes' else 'no'),
-        })
+        for mode, on in sorted(m.items()):
+            if mode != 'off':
+                out.append(_compare_one(size, workload, load, rep, mode,
+                                        off, on))
     return out
+
+
+def _compare_one(size, workload, load, rep, mode, off, on):
+    """one comparison row: <mode>'s run <on> vs the 'off' run <off>"""
+    def pair(key, fmt='{:.0f}'):
+        return f"{fmt.format(off[key])}->{fmt.format(on[key])}"
+    iops_off = off['rd_iops'] + off['wr_iops']
+    iops_on = on['rd_iops'] + on['wr_iops']
+    return {
+        'size': size, 'workload': workload, 'load': load, 'rep': rep,
+        'mode': mode, 'iops_off': iops_off, 'iops_on': iops_on,
+        'iops_delta': _delta_pct(iops_off, iops_on),
+        'rd_p50': pair('rd_p50_us'), 'rd_p99': pair('rd_p99_us'),
+        'wr_p50': pair('wr_p50_us'), 'wr_p99': pair('wr_p99_us'),
+        'cpu_op_delta': _delta_pct(off['cpu_us_op'], on['cpu_us_op']),
+        'cpu_max': pair('cpu_max_pct'),
+        'hop': pair('osd_hop_pct', '{:.1f}'),
+        'core_send_on': on['core_send_pct'],
+        'to_main': on.get('to_main', 0),
+        'valid': ('yes' if off.get('valid', 'yes') == 'yes' and
+                  on.get('valid', 'yes') == 'yes' else 'no'),
+    }
 
 
 #
@@ -922,7 +951,7 @@ class CoreHintsBench(object):
                 lines = [
                     '', '[client.admin]',
                     'objecter use osd core hints = '
-                    f"{'true' if mode == 'on' else 'false'}",
+                    f"{'false' if mode == 'off' else 'true'}",
                     f'admin socket = {self.dir}/asok/'
                     f'fio-{client}-{mode}.$pid.$cctid.asok',
                     f'log file = {self.dir}/logs/fio-{client}-{mode}.$pid.log',
@@ -931,6 +960,22 @@ class CoreHintsBench(object):
                           self.config['client_conf'].items()]
                 remote.write_file(self._conf(client, mode),
                                   base + '\n'.join(lines) + '\n')
+
+    def _set_unhint(self, on):
+        """enable (or disable) the OSDs' automatic un-hinting, for an
+        'unhint' run"""
+        conf = {'crimson_osd_core_hint_withhold': 'true' if on else 'false'}
+        if on:
+            conf.update({k: str(v) for k, v in
+                         self.config['unhint_conf'].items()})
+        for k, v in conf.items():
+            self.manager.raw_cluster_cmd('config', 'set', 'osd', k, v)
+        if not on:
+            for k in self.config['unhint_conf']:
+                self.manager.raw_cluster_cmd('config', 'rm', 'osd', k)
+        # the reactors apply it on their next tick, once a second (when
+        # disabled: every withheld core is hinted again)
+        time.sleep(2)
 
     def _create_pool(self):
         c = self.config
@@ -1061,9 +1106,16 @@ class CoreHintsBench(object):
                                           for n in self.client_hosts)
             extra += rate_options(rw, target_iops, fio_jobs, c['rwmixread'],
                                   c['rate_process'])
+        if mode == 'unhint':
+            self._set_unhint(True)
         launched = time.time()
-        procs = self._fio(tag, size, rw, mode, extra,
-                          c['ramp'] + c['runtime'] + c['fio_grace'])
+        try:
+            procs = self._fio(tag, size, rw, mode, extra,
+                              c['ramp'] + c['runtime'] + c['fio_grace'])
+        except Exception:
+            if mode == 'unhint':
+                self._set_unhint(False)
+            raise
         try:
             # the measured window: from just after the ramp to just before
             # the end, while the fio clients still run (to be sampled too)
@@ -1074,7 +1126,11 @@ class CoreHintsBench(object):
             ended = [f'client.{client}' for _, client, proc, _ in procs
                      if proc.finished]
         finally:
-            outputs = self._fio_wait(tag, procs)
+            try:
+                outputs = self._fio_wait(tag, procs)
+            finally:
+                if mode == 'unhint':
+                    self._set_unhint(False)
         self._save(f'raw/{tag}.s0.json', s0)
         self._save(f'raw/{tag}.s1.json', s1)
         if ended:
@@ -1099,6 +1155,13 @@ class CoreHintsBench(object):
         row['window_s'] = max(s1[h]['t'] - s0[h]['t'] for h in s1)
         row['window_skew_s'] = (max(s0[h]['t'] for h in s0) -
                                 min(s0[h]['t'] for h in s0))
+        # the OSDs' automatic un-hinting, as they report it
+        withhold = sorted({str(o.get('withhold')) for h in s0.values()
+                           for o in h.get('osds', {}).values()})
+        row['withhold'] = ','.join(withhold)
+        if withhold != (['true'] if mode == 'unhint' else ['false']):
+            log.warning('core-hints: %s: crimson_osd_core_hint_withhold is %s '
+                        'on the OSDs, in mode %s', tag, row['withhold'], mode)
         reason = read_failures(row, s0, s1, parse_size(size))
         row['valid'] = 'no' if reason else 'yes'
         if reason:
@@ -1216,6 +1279,13 @@ def task(ctx, config):
         raise ValueError(f'crimson_core_hints_perf: unknown options {unknown}')
     for size in c['sizes']:
         parse_size(size)
+    # unquoted in yaml, off and on are booleans
+    c['modes'] = [{True: 'on', False: 'off'}.get(m, m) if isinstance(m, bool)
+                  else m for m in c['modes']]
+    bad = set(c['modes']) - {'off', 'on', 'unhint'}
+    if bad or 'off' not in c['modes']:
+        raise ValueError(f"crimson_core_hints_perf: modes must include 'off', "
+                         f"and be off, on or unhint: {c['modes']}")
     log.info('core-hints: config %s', json.dumps(c, sort_keys=True))
 
     bench = CoreHintsBench(ctx, c)
