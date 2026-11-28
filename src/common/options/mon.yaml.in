@@ -98,6 +98,15 @@ options:
   default: 7
   services:
   - mon
+- name: mon_nvmeofgw_delay_internal_failovers
+  type: secs
+  level: advanced
+  desc: Period in seconds in which no failovers are performed in GW's pool-group.
+        Used for self initiated failovers to prevent IO errors due to early blocklist
+        Examples of scenarios - GW delete, GW admin down.
+  default: 3
+  services:
+  - mon
 - name: mon_nvmeofgw_skip_failovers_interval
   type: secs
   level: advanced

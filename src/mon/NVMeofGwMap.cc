@@ -177,7 +177,11 @@ int NVMeofGwMap::cfg_delete_gw(
 		   /*prevent failover because blocklisting right now cause IO errors */
 		   dout(4) << "Delete GW: set skip-failovers for group " << gw_id
 				   << " group " << group_key << dendl;
-		   skip_failovers_for_group(group_key, DELAY_FAILOVERS_INTERVAL_SEC);
+		   const auto delay_sec = g_conf().get_val<std::chrono::seconds>(
+		     "mon_nvmeofgw_delay_internal_failovers").count();
+		   if (delay_sec > 0) {
+		     skip_failovers_for_group(group_key, delay_sec);
+		   }
 		}
         state.availability = gw_availability_t::GW_DELETING;
         dout(4) << " Deleting  GW :"<< gw_id  << " in state  "
@@ -268,6 +272,11 @@ int NVMeofGwMap::cfg_admin_state_change(const NvmeGwId &gw_id,
       if (st.gw_admin_state == gw_admin_state_t::GW_ADMIN_ENABLED) {
         dout(4) << "GW-id set admin Disabled " << group_key
                 << " " << gw_id << dendl;
+        const auto delay_sec = g_conf().get_val<std::chrono::seconds>(
+          "mon_nvmeofgw_delay_internal_failovers").count();
+        if (delay_sec > 0) {
+          skip_failovers_for_group(group_key, delay_sec);
+        }
         if (st.availability == gw_availability_t::GW_AVAILABLE) {
           process_gw_map_gw_down(gw_id, group_key, propose_pending);
         }
@@ -821,6 +830,23 @@ void NVMeofGwMap::process_gw_map_ka(
     validate_gw_map(group_key);
     increment_gw_epoch(group_key);
   }
+}
+
+bool NVMeofGwMap::consume_expired_skip_failovers()
+{
+  const std::chrono::system_clock::time_point not_set{};
+  const auto now = std::chrono::system_clock::now();
+  bool expired = false;
+  for (auto& [group_key, gws_states] : created_gws) {
+    for (auto& [gw_id, state] : gws_states) {
+      if (state.allow_failovers_ts != not_set &&
+          state.allow_failovers_ts <= now) {
+        state.allow_failovers_ts = not_set;
+        expired = true;
+      }
+    }
+  }
+  return expired;
 }
 
 void NVMeofGwMap::handle_abandoned_ana_groups(bool& propose)

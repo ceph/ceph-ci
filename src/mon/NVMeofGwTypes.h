@@ -67,7 +67,6 @@ enum class subsystem_change_t {
 };
 
 #define REDUNDANT_GW_ANA_GROUP_ID 0xFF
-#define DELAY_FAILOVERS_INTERVAL_SEC 3
 using SmState = std::map < NvmeAnaGrpId, gw_states_per_group_t>;
 
 using ana_state_t =
@@ -177,8 +176,8 @@ struct NvmeGwMonState {
   */
   gw_admin_state_t gw_admin_state = gw_admin_state_t::GW_ADMIN_ENABLED;
   std::string location = "";
-  std::chrono::system_clock::time_point allow_failovers_ts =
-             std::chrono::system_clock::now();
+  // default (epoch) means "skip-failovers is not set"
+  std::chrono::system_clock::time_point allow_failovers_ts{};
   std::chrono::system_clock::time_point last_gw_down_ts =
              std::chrono::system_clock::now() - std::chrono::seconds(30);
   std::chrono::system_clock::time_point delay_failbacks_ts =

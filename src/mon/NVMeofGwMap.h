@@ -118,6 +118,9 @@ public:
     bool &propose_pending);
   void update_active_timers(bool &propose_pending);
   void handle_abandoned_ana_groups(bool &propose_pending);
+  // true (once) if "allow_failovers_ts" of some GW has expired; expired
+  // timestamps are cleared so the same expiration is reported only once
+  bool consume_expired_skip_failovers();
   void handle_removed_subsystems(
     const NvmeGwId &gw_id, const NvmeGroupKey& group_key,
     const std::vector<NvmeNqnId> &current_subsystems, bool &propose_pending);

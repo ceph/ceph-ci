@@ -104,6 +104,18 @@ void NVMeofGwMon::check_beacon_timeout(ceph::coarse_mono_clock::time_point now,
     }
   }
   last_beacon_check = now;
+
+  // check_beacon_timeout() is called on every beacon, so it gives much finer
+  // resolution than the monitor tick (5 sec). If "skip failovers" interval of
+  // some GW has expired, handle abandoned ANA groups right now (once) instead
+  // of waiting for the next tick (tick still serves as a fallback).
+  if (pending_map.consume_expired_skip_failovers()) {
+    dout(10) << "skip-failovers just expired, handle abandoned ANA groups"
+             << dendl;
+    bool abandoned_propose = false;
+    pending_map.handle_abandoned_ana_groups(abandoned_propose);
+    propose_pending |= abandoned_propose;
+  }
 }
 
 void NVMeofGwMon::tick()
@@ -202,7 +214,6 @@ version_t NVMeofGwMon::get_trim_to() const
  * "last_gw_map_epoch_valid", "beacon_sequence", "beacon_index" variables are restored
  */
 void NVMeofGwMon::restore_pending_map_info(NVMeofGwMap & tmp_map) {
-  std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
   for (auto& created_map_pair: tmp_map.created_gws) {
     auto group_key = created_map_pair.first;
     NvmeGwMonStates& gw_created_map = created_map_pair.second;
@@ -213,12 +224,11 @@ void NVMeofGwMon::restore_pending_map_info(NVMeofGwMap & tmp_map) {
       if (gw_state == pending_gws_states.end()) {
         continue;
       }
-      if (gw_created_pair.second.allow_failovers_ts > now) {
-        // restore not persistent information upon new epochs
-        dout(10) << " restore skip-failovers timeout for gw  " << gw_id  << dendl;
-        pending_map.created_gws[group_key][gw_id].allow_failovers_ts =
-          gw_created_pair.second.allow_failovers_ts;
-      }
+      // restore not persistent information upon new epochs, including an
+      // already expired value, so the expiration is handled (once)
+      // by consume_expired_skip_failovers()
+      pending_map.created_gws[group_key][gw_id].allow_failovers_ts =
+        gw_created_pair.second.allow_failovers_ts;
       pending_map.created_gws[group_key][gw_id].last_gw_down_ts =
           gw_created_pair.second.last_gw_down_ts;
       pending_map.created_gws[group_key][gw_id].delay_failbacks_ts =
