@@ -292,6 +292,11 @@ def host():
         "no_turbo": read("/sys/devices/system/cpu/intel_pstate/no_turbo", "n/a"),
         "init_on_alloc": "init_on_alloc=1" in read("/proc/cmdline"),
         "nics": nics,
+        # the distinct sets of SMT siblings, e.g. ["0,12", "1,13", ...]
+        "cpu_siblings": sorted(
+            {read(p) for p in glob.glob(
+                "/sys/devices/system/cpu/cpu[0-9]*/topology/thread_siblings_list")},
+            key=lambda s: [int(x) for x in s.replace("-", ",").split(",")]),
     }
 
 
@@ -338,13 +343,31 @@ def listening(pid):
     return sorted(ports)
 
 
+def reactors(pid):
+    """{thread name: the CPUs it may run on} of a process's Seastar reactor
+    threads"""
+    r = {}
+    for task in glob.glob("/proc/%%d/task/*" %% pid):
+        name = read(task + "/comm")
+        if os.path.basename(task) == str(pid):
+            # shard 0 runs on the main thread, which keeps its name
+            name = "reactor-0"
+        if name.startswith("reactor"):
+            try:
+                r[name] = sorted(os.sched_getaffinity(int(os.path.basename(task))))
+            except OSError:
+                continue
+    return r
+
+
 def osds(arg):
     r = {}
     for osd, path in arg.items():
         pid = osd_pid(osd)
         e = {"pid": pid,
              "listening": listening(pid) if pid else [],
-             "threads": len(os.listdir("/proc/%%d/task" %% pid)) if pid else 0}
+             "threads": len(os.listdir("/proc/%%d/task" %% pid)) if pid else 0,
+             "reactors": reactors(pid) if pid else {}}
         for var in ("crimson_cpu_num", "crimson_cpu_set",
                     "crimson_osd_core_listeners", "crimson_memory",
                     "osd_objectstore", "seastore_data_backend_type",
@@ -796,13 +819,18 @@ class CoreHintsBench(object):
         for name in self.osd_hosts:
             info = self._collect(name, 'osds', self.nodes[name]['osds'])
             self.params['osds'].update(info)
-        want = None
+        want = 0
         for osd, info in sorted(self.params['osds'].items()):
             log.info('core-hints: osd.%s: %s', osd, json.dumps(info, sort_keys=True))
-            try:
-                want = int(info.get('crimson_cpu_num') or 0)
-            except ValueError:
-                want = 0
+            # the OSD's reactor threads, as found on its node
+            want = len(info.get('reactors', {}))
+            if not want:
+                log.warning('core-hints: osd.%s: no reactor threads found', osd)
+            pinned = [t for t, cpus in info.get('reactors', {}).items()
+                      if len(cpus) == 1]
+            if len(pinned) != want:
+                log.warning('core-hints: osd.%s: %d of its %d reactors are not '
+                            'pinned to a CPU', osd, want - len(pinned), want)
             if str(info.get('crimson_osd_core_listeners')).lower() != 'true':
                 log.warning('core-hints: osd.%s: crimson_osd_core_listeners '
                             'is not set: the clients will get no hints', osd)

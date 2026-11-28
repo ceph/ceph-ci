@@ -216,6 +216,7 @@ def test_collector(tmp_path):
     host = json.loads(subprocess.check_output(
         [sys.executable, str(script), 'host']))
     assert host['cpus'] >= 1
+    assert host['cpu_siblings']
     log = tmp_path / 'osd.log'
     # the needle across the collector's read chunks is not tested here
     log.write_text('x std::bad_alloc\nbad_alloc\n'
@@ -246,3 +247,15 @@ def test_read_failures():
     # writes only: nothing to check
     r = dict(row, rd_iops=0, wr_iops=1000, tx_kb_op=0.1)
     assert read_failures(r, snap(0), snap(0), 4096) is None
+
+
+def test_collector_osds(tmp_path):
+    """the collector's OSD info, for an OSD not running here"""
+    script = tmp_path / 'collect.py'
+    script.write_text(COLLECTOR)
+    osds = json.loads(subprocess.check_output(
+        [sys.executable, str(script), 'osds',
+         json.dumps({'99': str(tmp_path / 'osd.99.asok')})]))
+    assert osds['99']['pid'] is None
+    assert osds['99']['reactors'] == {}
+    assert osds['99']['crimson_cpu_set'].startswith('error')

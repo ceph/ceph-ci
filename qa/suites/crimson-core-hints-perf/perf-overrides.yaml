@@ -21,7 +21,12 @@ overrides:
         ms mon cluster mode: crc
         ms mon client mode: crc
       osd:
-        crimson cpu num: 16
+        # 10 reactors, each pinned to a physical core of its own (the trial
+        # nodes: AMD EPYC 4464P, 12 cores / 24 threads, CPUs 12-23 being the
+        # SMT siblings of 0-11). Cores 0-1, and the siblings, are left to
+        # the kernel (network) and the OSD's other threads. The task records
+        # the CPU topology and the reactors' affinity.
+        crimson cpu set: 2-11
         crimson osd core listeners: true
         osd objectstore: seastore
         seastore data device type: SSD
@@ -30,7 +35,7 @@ overrides:
         # reactor gets an even share of it, including its own journal
         # (seastore_cbjournal_size: 5G): with the default 50G, a share of
         # 50G/16 leaves no space for data, and mkfs fails ("eagain
-        # impossible"). 400G: 25G per reactor
+        # impossible"). 400G: 40G per reactor (10 of them), 25G with 16
         seastore device size: 400G
         # crimson_qa_overrides.yaml's, back to the defaults
         crimson osd obc lru size: 512
